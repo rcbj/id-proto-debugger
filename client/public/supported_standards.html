@@ -1,0 +1,1585 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Supported Standards &mdash; IDPTools</title>
+    <meta name="description" content="Every specification the Identity
+      Protocol Debugger implements: RFCs, OASIS and W3C recommendations,
+      OpenID Foundation specifications, drafts, NIST/FIPS publications and
+      Microsoft Open Specifications.">
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <style>
+      /* Local to this page. It is a long reference document rather than a
+         workflow, so it borrows the legal pages' single-column measure and
+         adds a two-column table: the specification on the left, what this
+         tool actually does against it on the right. */
+      .std-content {
+        max-width: 1000px;
+        margin: 0 auto;
+        line-height: 1.55;
+      }
+      .std-content h1 { margin-top: 16px; }
+      .std-content h2 {
+        margin-top: 34px;
+        padding-top: 8px;
+        border-top: 1px solid #eee;
+        font-size: 1.35em;
+      }
+      .std-content .updated { color: #666; }
+      .std-content .std-lead { max-width: 820px; }
+      .std-content table {
+        width: 100%;
+        border-collapse: collapse;
+        margin: 12px 0 8px 0;
+      }
+      .std-content th,
+      .std-content td {
+        text-align: left;
+        vertical-align: top;
+        padding: 7px 10px;
+        border-bottom: 1px solid #eee;
+      }
+      .std-content th {
+        background: #f7f7f7;
+        font-weight: bold;
+        border-bottom: 2px solid #ddd;
+      }
+      .std-content td:first-child { width: 34%; }
+      .std-content td:first-child a { font-weight: bold; }
+      .std-content .std-where { color: #666; display: block; font-size: 0.9em; }
+      .std-content .std-note {
+        background: #f7f9fc;
+        border-left: 4px solid #b9cbe6;
+        padding: 10px 14px;
+        margin: 14px 0;
+      }
+      .std-content .std-toc { columns: 2; margin: 12px 0 0 20px; }
+      .std-content .std-toc li { margin-bottom: 3px; }
+      @media screen and (max-width: 700px) {
+        .std-content .std-toc { columns: 1; }
+        .std-content td:first-child { width: auto; }
+      }
+    </style>
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+      <div class="std-content">
+
+        <h1>Supported Standards</h1>
+        <p class="updated"><strong>Last updated:</strong> August 28, 2026</p>
+
+        <p class="std-lead">Every specification this debugger implements, in
+        the workflow that implements it. The right-hand column says what the
+        tool actually <em>does</em> against the document rather than claiming
+        the document whole: a debugger that overstates its coverage is worse
+        than one that lists nothing, because people use this to learn the
+        protocols.</p>
+
+        <p class="std-lead">Two things this list is not. It is not the list of
+        specifications the <em>test</em> identity provider implements &mdash;
+        the mock STS bundled with this project publishes its own list at
+        <code>/admin/sts-metadata</code>, and it speaks the server side of most
+        of what is below. And it is not a conformance claim: nothing here has
+        been through a certification programme.</p>
+
+        <!-- FOUR WORKFLOWS ARE NAMED HERE AND NEVER LINKED, and that is
+             deliberate rather than an oversight: kerberos*.html, spnego.html,
+             ldap.html and spiffe.html are in client/static_site.js's
+             EXCLUDED_PAGES, so the static build drops them from dist/ — and
+             assertNoLinksToExcluded() in client/build.js THROWS on any page
+             that still points at one. A link added to any of those four here
+             breaks the static build outright, with a message naming this file.
+             Everything else on the site ships, so ordinary links are fine. -->
+        <div class="std-note">
+          <strong>Where the work happens.</strong> Almost all of it is in your
+          browser &mdash; the signing, the verification, the decoding and the
+          key generation. Four protocols cannot be done from a browser at all
+          and run in this tool&rsquo;s API backend instead: Kerberos and SPNEGO
+          (DER over port 88), LDAP (BER over port 389), SPIFFE&rsquo;s two gRPC
+          surfaces, and the TLS / mutual-TLS connection test. Those pages are
+          greyed out on the hosted site and work in the containerized
+          deployment.
+        </div>
+
+        <ul class="std-toc">
+          <li><a href="#oauth2">OAuth 2.0</a></li>
+          <li><a href="#oidc">OpenID Connect</a></li>
+          <li><a href="#jose">JOSE &mdash; JWS, JWE, JWK, JWA, JWT</a></li>
+          <li><a href="#saml">SAML 2.0 and SAML 1.1</a></li>
+          <li><a href="#ws">WS-Trust, WS-Federation, WS-Security</a></li>
+          <li><a href="#xmldsig">XML Signature and XML Encryption</a></li>
+          <li><a href="#vc">Verifiable credentials &mdash; SD-JWT VC,
+              OID4VCI, OID4VP</a></li>
+          <li><a href="#did">Decentralized identifiers and Data
+              Integrity</a></li>
+          <li><a href="#webauthn">WebAuthn</a></li>
+          <li><a href="#krb5">Kerberos v5</a></li>
+          <li><a href="#spnego">SPNEGO</a></li>
+          <li><a href="#ldap">LDAP</a></li>
+          <li><a href="#scim">SCIM 2.0</a></li>
+          <li><a href="#spiffe">SPIFFE and SPIRE</a></li>
+          <li><a href="#pki">PKI, X.509 and TLS</a></li>
+          <li><a href="#crypto">Cryptographic algorithms and key
+              formats</a></li>
+          <li><a href="#encoding">Encoding, registries and infrastructure</a></li>
+          <li><a href="#notimpl">Named here, and deliberately not
+              implemented</a></li>
+        </ul>
+
+        <!-- ===================== OAuth 2.0 ===================== -->
+        <h2 id="oauth2">OAuth 2.0</h2>
+        <p>The OAuth2 / OIDC workflow (<a href="/oauth2_oidc_1.html">request</a>
+        and <a href="/oauth2_oidc_2.html">response</a> pages), plus the
+        introspection and UserInfo tools.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc6749"
+                   target="_blank" rel="noopener noreferrer">RFC 6749</a>
+              &mdash; The OAuth 2.0 Authorization Framework
+              <span class="std-where">IETF</span></td>
+            <td>Authorization Code, Implicit, Client Credentials, Resource
+              Owner Password and Refresh Token grants, built parameter by
+              parameter and sent either from the browser or through this
+              tool&rsquo;s backend. Error responses are decoded rather than
+              swallowed.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc6750"
+                   target="_blank" rel="noopener noreferrer">RFC 6750</a>
+              &mdash; Bearer Token Usage
+              <span class="std-where">IETF</span></td>
+            <td>The <code>Authorization: Bearer</code> presentation used by the
+              UserInfo, Introspection, SCIM and OID4VCI credential
+              requests.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7009"
+                   target="_blank" rel="noopener noreferrer">RFC 7009</a>
+              &mdash; Token Revocation
+              <span class="std-where">IETF</span></td>
+            <td>Revokes an access or refresh token at the revocation endpoint,
+              with the <code>token_type_hint</code>.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7591"
+                   target="_blank" rel="noopener noreferrer">RFC 7591</a>
+              &mdash; Dynamic Client Registration
+              <span class="std-where">IETF</span></td>
+            <td>Registers a client at the registration endpoint from the
+              <a href="/oauth2_oidc_1.html#dcr_fieldset">DCR pane</a>, with the
+              full metadata set.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7592"
+                   target="_blank" rel="noopener noreferrer">RFC 7592</a>
+              &mdash; Dynamic Client Registration Management
+              <span class="std-where">IETF</span></td>
+            <td>Read, update and delete of a registered client using the
+              Registration Access Token and the client configuration
+              endpoint.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7636"
+                   target="_blank" rel="noopener noreferrer">RFC 7636</a>
+              &mdash; PKCE
+              <span class="std-where">IETF</span></td>
+            <td>Generates and carries <code>code_challenge</code> /
+              <code>code_challenge_method</code> at the authorization endpoint
+              and <code>code_verifier</code> at the token endpoint; both
+              <code>S256</code> and <code>plain</code>, so a downgrade can be
+              demonstrated.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7662"
+                   target="_blank" rel="noopener noreferrer">RFC 7662</a>
+              &mdash; Token Introspection
+              <span class="std-where">IETF</span></td>
+            <td>The <a href="/introspection.html">introspection page</a>: posts
+              a token to the introspection endpoint and describes every member
+              of the response.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7800"
+                   target="_blank" rel="noopener noreferrer">RFC 7800</a>
+              &mdash; Proof-of-Possession Key Semantics
+              <span class="std-where">IETF</span></td>
+            <td>The <code>cnf</code> claim, read wherever it appears:
+              <code>cnf.jkt</code> on a DPoP-bound token and
+              <code>cnf.jwk</code> as an SD-JWT VC&rsquo;s holder
+              binding.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8252"
+                   target="_blank" rel="noopener noreferrer">RFC 8252</a>
+              &mdash; OAuth 2.0 for Native Apps
+              <span class="std-where">IETF</span></td>
+            <td>Section 7.3&rsquo;s loopback port exception, which is the one
+              carve-out the RFC 9700 exact-match redirect URI rule makes.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8414"
+                   target="_blank" rel="noopener noreferrer">RFC 8414</a>
+              &mdash; Authorization Server Metadata
+              <span class="std-where">IETF</span></td>
+            <td>Loads <code>/.well-known/oauth-authorization-server</code>,
+              fills the endpoints from it, and <em>validates the document</em>
+              member by member &mdash; type, required/optional, and the
+              members whose absence changes what a client may assume.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8628"
+                   target="_blank" rel="noopener noreferrer">RFC 8628</a>
+              &mdash; Device Authorization Grant
+              <span class="std-where">IETF</span></td>
+            <td>The device authorization request, the user code and
+              verification URI, and the polling token request with
+              <code>authorization_pending</code> and <code>slow_down</code>
+              handled as the specification requires.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8693"
+                   target="_blank" rel="noopener noreferrer">RFC 8693</a>
+              &mdash; Token Exchange
+              <span class="std-where">IETF</span></td>
+            <td>Impersonation and delegation: a <code>subject_token</code>, an
+              optional <code>actor_token</code>, an audience and a requested
+              token type. The test suite chains two exchanges and draws the
+              resulting delegation map.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8707"
+                   target="_blank" rel="noopener noreferrer">RFC 8707</a>
+              &mdash; Resource Indicators
+              <span class="std-where">IETF</span></td>
+            <td>The <code>resource</code> parameter, repeatable, at the
+              authorization and token endpoints, and the <code>aud</code> it
+              produces.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9068"
+                   target="_blank" rel="noopener noreferrer">RFC 9068</a>
+              &mdash; JWT Profile for OAuth 2.0 Access Tokens
+              <span class="std-where">IETF</span></td>
+            <td>The <a href="/token_detail.html">token detail</a> and
+              <a href="/jwt_tools.html">JWT tools</a> pages recognise the
+              <code>at+jwt</code> type and check the claims the profile
+              requires.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9101"
+                   target="_blank" rel="noopener noreferrer">RFC 9101</a>
+              &mdash; JWT-Secured Authorization Request (JAR)
+              <span class="std-where">IETF</span></td>
+            <td>Fetches a signed Request Object from a
+              <code>request_uri</code> and verifies it, on the
+              <a href="/vc-presentation-0.html">VC presentation</a>
+              workflow.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9207"
+                   target="_blank" rel="noopener noreferrer">RFC 9207</a>
+              &mdash; Authorization Server Issuer Identification
+              <span class="std-where">IETF</span></td>
+            <td>Reads the <code>iss</code> authorization response parameter and
+              checks it against the issuer the metadata named &mdash; a mixed-up
+              issuer is reported rather than ignored.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9396"
+                   target="_blank" rel="noopener noreferrer">RFC 9396</a>
+              &mdash; Rich Authorization Requests
+              <span class="std-where">IETF</span></td>
+            <td><code>authorization_details</code> as a first-class request
+              parameter, including the OID4VCI use of it to ask for a
+              particular credential configuration and a subset of its
+              claims.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9449"
+                   target="_blank" rel="noopener noreferrer">RFC 9449</a>
+              &mdash; DPoP
+              <span class="std-where">IETF</span></td>
+            <td>Builds the proof JWT (<code>htm</code>, <code>htu</code>,
+              <code>jti</code>, <code>iat</code>, <code>ath</code>), carries
+              <code>dpop_jkt</code>, follows the <code>DPoP-Nonce</code>
+              handshake, and reads <code>cnf.jkt</code> off the issued
+              token.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9700"
+                   target="_blank" rel="noopener noreferrer">RFC 9700</a>
+              &mdash; OAuth 2.0 Security Best Current Practice
+              <span class="std-where">IETF</span></td>
+            <td>A compliance mode on the request page: exact-string redirect
+              URI matching, PKCE with S256 required of public clients, no
+              response type that returns an access token from the
+              authorization endpoint, no password grant, and the rest. Off by
+              default, because the point of a debugger is to be able to send
+              the request the BCP forbids and see what happens.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html"
+                   target="_blank" rel="noopener noreferrer">OAuth 2.0 Form
+              Post Response Mode</a>
+              <span class="std-where">OpenID Foundation</span></td>
+            <td><code>response_mode=form_post</code>, including the POST
+              landing that a static deployment answers with an edge
+              function.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== OpenID Connect ===================== -->
+        <h2 id="oidc">OpenID Connect</h2>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-connect-core-1_0.html"
+                   target="_blank" rel="noopener noreferrer">OpenID Connect
+              Core 1.0</a>
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>All three authentication flows &mdash; Authorization Code,
+              Implicit and Hybrid &mdash; with <code>nonce</code>,
+              <code>prompt</code>, <code>max_age</code>,
+              <code>acr_values</code>, <code>login_hint</code> and
+              <code>display</code>; the ID Token decoded, its signature
+              verified against the OP&rsquo;s JWKS, and every claim
+              described.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-connect-discovery-1_0.html"
+                   target="_blank" rel="noopener noreferrer">OpenID Connect
+              Discovery 1.0</a>
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>Loads <code>/.well-known/openid-configuration</code> and
+              validates it against the specification&rsquo;s own table of
+              members, side by side with the RFC 8414 document &mdash; the two
+              differ in where the path is inserted for a tenant issuer, which
+              is a real interoperability trap.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-connect-rpinitiated-1_0.html"
+                   target="_blank" rel="noopener noreferrer">OpenID Connect
+              RP-Initiated Logout 1.0</a>
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>The logout pane: <code>end_session_endpoint</code> with
+              <code>id_token_hint</code>, <code>client_id</code>,
+              <code>post_logout_redirect_uri</code> and <code>state</code>, and
+              a <a href="/logout.html">landing page</a> to come back to.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-connect-registration-1_0.html"
+                   target="_blank" rel="noopener noreferrer">OpenID Connect
+              Dynamic Client Registration 1.0</a>
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>The same DCR pane as RFC 7591/7592, with the OIDC-specific
+              client metadata members.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-connect-core-1_0.html#UserInfo"
+                   target="_blank" rel="noopener noreferrer">UserInfo
+              endpoint</a> (Core 1.0 section 5.3)
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>The <a href="/userinfo.html">UserInfo page</a>: calls the
+              endpoint with the access token, from the browser or through this
+              tool&rsquo;s backend, and describes the claims that come back
+              &mdash; in all four shapes section 5.3.2 allows. A plain JSON
+              response, a signed one (a JWS), an encrypted one (a JWE), or a
+              JWS <em>inside</em> a JWE, which is what a client that registered
+              both gets. Every step is reported separately, because
+              &ldquo;decrypted&rdquo; is not &ldquo;verified&rdquo;: an
+              encrypted response proves who it was encrypted <em>to</em> and
+              says nothing about who wrote it. The section 5.3.2 checks are
+              made and named: <code>iss</code>, an <code>aud</code> that must
+              include this client, and a <code>sub</code> that must match the
+              ID Token&rsquo;s.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== JOSE ===================== -->
+        <h2 id="jose">JOSE &mdash; JWS, JWE, JWK, JWA and JWT</h2>
+        <p>One JWS implementation serves every workflow here
+        (<a href="/digital_signature.html">Digital Signature</a>,
+        <a href="/jwt_tools.html">JWT Tools</a>, <a href="/jwks.html">JWKS</a>,
+        DPoP, SD-JWT VC and the OID4VP Key Binding JWT), so a signature that
+        verifies on one page verifies on all of them.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7515"
+                   target="_blank" rel="noopener noreferrer">RFC 7515</a>
+              &mdash; JSON Web Signature
+              <span class="std-where">IETF</span></td>
+            <td>Signs and verifies in all three serializations &mdash; compact,
+              flattened JSON and general JSON with multiple signatures &mdash;
+              with detached payloads, protected and unprotected headers, and
+              every registered algorithm.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7516"
+                   target="_blank" rel="noopener noreferrer">RFC 7516</a>
+              &mdash; JSON Web Encryption
+              <span class="std-where">IETF</span></td>
+            <td>Compact serialization on the
+              <a href="/encryption_tools.html">Encryption</a> page, behind the
+              password-protected JWK export, and for an encrypted UserInfo
+              response. Key management: <code>RSA-OAEP</code> and
+              <code>RSA-OAEP-256</code>, <code>ECDH-ES</code> direct and its
+              three key-wrapping variants, <code>A256KW</code>, and
+              <code>PBES2-HS256+A128KW</code>. Content encryption: <strong>all
+              six</strong> of section 5 &mdash; <code>A128GCM</code>,
+              <code>A192GCM</code>, <code>A256GCM</code> and the AES-CBC-HMAC
+              family, <code>A128CBC-HS256</code>, <code>A192CBC-HS384</code>
+              and <code>A256CBC-HS512</code>, whose construction is checked
+              against RFC 7518&rsquo;s own Appendix B vector and against
+              OpenSSL. <strong>All of it works in the browser, and none
+              of it depends on what the browser implements</strong>: Chrome
+              does AES at 128 and 256 and refuses 192 outright &mdash; for GCM,
+              CBC and key wrapping alike &mdash; so <code>A192GCM</code>,
+              <code>A192CBC-HS384</code> and <code>ECDH-ES+A192KW</code> are
+              performed in JavaScript instead, with the key wrap checked
+              against RFC 3394&rsquo;s own vectors. What a browser can do
+              decides which engine runs here, never which algorithms you are
+              offered.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7517"
+                   target="_blank" rel="noopener noreferrer">RFC 7517</a>
+              &mdash; JSON Web Key
+              <span class="std-where">IETF</span></td>
+            <td>The <a href="/jwks.html">JWKS page</a> and every key pane:
+              JWK and JWK Set parsing, key selection by <code>kid</code>,
+              <code>use</code> and <code>alg</code>, and conversion to and from
+              PEM in both directions.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7518"
+                   target="_blank" rel="noopener noreferrer">RFC 7518</a>
+              &mdash; JSON Web Algorithms
+              <span class="std-where">IETF</span></td>
+            <td>HS256/384/512, RS256/384/512, PS256/384/512, ES256/384/512,
+              EdDSA and <code>none</code> for signatures; the JWE algorithm and
+              encryption identifiers above; and the JWK member layout for every
+              key type.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7519"
+                   target="_blank" rel="noopener noreferrer">RFC 7519</a>
+              &mdash; JSON Web Token
+              <span class="std-where">IETF</span></td>
+            <td>Decode, describe, verify, edit and re-sign. Registered claims
+              are checked for type and time-validity; every claim gets a
+              description from the IANA registry or from a vendor
+              dictionary.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7638"
+                   target="_blank" rel="noopener noreferrer">RFC 7638</a>
+              &mdash; JWK Thumbprint
+              <span class="std-where">IETF</span></td>
+            <td>Computed for DPoP&rsquo;s <code>jkt</code>, for
+              <code>cnf.jwk</code> comparisons in the SD-JWT VC workflow, and
+              shown beside any key you generate.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7797"
+                   target="_blank" rel="noopener noreferrer">RFC 7797</a>
+              &mdash; JWS Unencoded Payload Option
+              <span class="std-where">IETF</span></td>
+            <td><code>b64: false</code> with the required
+              <code>crit</code> member, signing and verifying &mdash; including
+              the detached-and-unencoded combination that most libraries get
+              wrong.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8037"
+                   target="_blank" rel="noopener noreferrer">RFC 8037</a>
+              &mdash; CFRG Curves in JOSE
+              <span class="std-where">IETF</span></td>
+            <td>The <code>OKP</code> key type and <code>EdDSA</code> over
+              Ed25519 and Ed448, plus X25519/X448 for ECDH-ES.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8725"
+                   target="_blank" rel="noopener noreferrer">RFC 8725</a>
+              &mdash; JSON Web Token Best Current Practices
+              <span class="std-where">IETF</span></td>
+            <td>The checks the BCP asks for are applied and reported: the
+              algorithm is chosen by the verifier and never taken from the
+              header alone, <code>none</code> is refused unless explicitly
+              asked for, and a key confusion between an HMAC secret and a
+              public key is called out.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8812"
+                   target="_blank" rel="noopener noreferrer">RFC 8812</a>
+              &mdash; secp256k1 in JOSE / COSE
+              <span class="std-where">IETF</span></td>
+            <td><code>ES256K</code> signing and verification, and the
+              <code>secp256k1</code> curve in a JWK.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== SAML ===================== -->
+        <h2 id="saml">SAML 2.0 and SAML 1.1</h2>
+        <p>The <a href="/saml_request.html">SAML workflow</a> speaks both
+        versions of the protocol &mdash; and SAML 1.1 is a different protocol
+        rather than an older spelling of the same one: no request message, a
+        QName status code, and no Single Logout.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf"
+                   target="_blank" rel="noopener noreferrer">SAML 2.0 Core</a>
+              <span class="std-where">OASIS</span></td>
+            <td>Builds an <code>AuthnRequest</code> field by field; parses a
+              <code>Response</code>, its <code>Assertion</code>, conditions,
+              subject confirmation, authentication statement and attribute
+              statements, and checks every condition against the clock.
+              Also builds and validates assertions offline on the
+              <a href="/saml_tools.html">SAML Tools</a> page.</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf"
+                   target="_blank" rel="noopener noreferrer">SAML 2.0
+              Bindings</a>
+              <span class="std-where">OASIS</span></td>
+            <td>HTTP-Redirect (with the DEFLATE encoding and the query-string
+              signature), HTTP-POST, HTTP-Artifact with an
+              <code>ArtifactResolve</code> over SOAP, and the SOAP binding
+              itself.</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf"
+                   target="_blank" rel="noopener noreferrer">SAML 2.0
+              Profiles</a>
+              <span class="std-where">OASIS</span></td>
+            <td>SP-initiated Web Browser SSO end to end, and Single Logout
+              &mdash; <code>LogoutRequest</code> and
+              <code>LogoutResponse</code>, front channel and SOAP.</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf"
+                   target="_blank" rel="noopener noreferrer">SAML 2.0
+              Metadata</a>
+              <span class="std-where">OASIS</span></td>
+            <td>Reads an IdP&rsquo;s metadata to fill the endpoints and the
+              signing certificate, and generates the SP metadata document to
+              hand back to the IdP.</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/security/saml/v2.0/saml-authn-context-2.0-os.pdf"
+                   target="_blank" rel="noopener noreferrer">SAML 2.0
+              Authentication Context</a>
+              <span class="std-where">OASIS</span></td>
+            <td>The <code>RequestedAuthnContext</code> classes offered on the
+              request and named in the assertion &mdash; password, TLS client,
+              Kerberos, smartcard PKI and the rest.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.oasis-open.org/committees/download.php/3406/oasis-sstc-saml-core-1.1.pdf"
+                   target="_blank" rel="noopener noreferrer">SAML 1.1
+              Core</a>
+              <span class="std-where">OASIS</span></td>
+            <td>Parses and builds a SAML 1.1 <code>Response</code> and
+              <code>Assertion</code> &mdash; the QName
+              <code>StatusCode</code>, <code>AuthenticationStatement</code>,
+              <code>AudienceRestrictionCondition</code>, and the
+              <code>AssertionID</code> rules that differ from 2.0.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.oasis-open.org/committees/download.php/3405/oasis-sstc-saml-bindings-1.1.pdf"
+                   target="_blank" rel="noopener noreferrer">SAML 1.1
+              Bindings</a> and
+              <a href="https://www.oasis-open.org/committees/download.php/3404/oasis-sstc-saml-profile-1.1.pdf"
+                 target="_blank" rel="noopener noreferrer">Profiles</a>
+              <span class="std-where">OASIS</span></td>
+            <td>Browser/POST and Browser/Artifact, with
+              <code>TARGET</code> in place of <code>RelayState</code> and no
+              request message at all &mdash; the IdP-initiated shape.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== WS-* ===================== -->
+        <h2 id="ws">WS-Trust, WS-Federation and WS-Security</h2>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html"
+                   target="_blank" rel="noopener noreferrer">WS-Trust
+              1.4</a> (and 1.0, 1.1, 1.2, 1.3)
+              <span class="std-where">OASIS</span></td>
+            <td>Builds a <code>RequestSecurityToken</code> for Issue, Renew,
+              Validate and Cancel against an STS, in whichever of the five
+              namespace versions the STS wants, and parses the
+              <code>RequestSecurityTokenResponse</code>. Delegation both ways:
+              <code>&lt;wst:OnBehalfOf&gt;</code> for impersonation and
+              <code>&lt;wst14:ActAs&gt;</code> for composite delegation.</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/wss/v1.1/wss-v1.1-spec-os-UsernameTokenProfile.pdf"
+                   target="_blank" rel="noopener noreferrer">WS-Security
+              UsernameToken Profile 1.1</a>
+              <span class="std-where">OASIS</span></td>
+            <td>The <code>UsernameToken</code> in the SOAP security header,
+              with a password type, nonce and created timestamp.</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0.pdf"
+                   target="_blank" rel="noopener noreferrer">WS-Security
+              SOAP Message Security</a> and
+              <a href="https://www.w3.org/TR/ws-addr-core/"
+                 target="_blank" rel="noopener noreferrer">WS-Addressing</a>
+              <span class="std-where">OASIS / W3C</span></td>
+            <td>Signs the SOAP request with an X.509 token in the security
+              header, adds the <code>wsa:Action</code>,
+              <code>wsa:To</code>, <code>wsa:MessageID</code> and
+              <code>wsa:ReplyTo</code> headers, and speaks both SOAP 1.1 and
+              SOAP 1.2.</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/wsfed/federation/v1.2/os/ws-federation-1.2-spec-os.html"
+                   target="_blank" rel="noopener noreferrer">WS-Federation
+              1.2</a>
+              <span class="std-where">OASIS</span></td>
+            <td>The Passive Requestor Profile: reads federation metadata,
+              builds a <code>wa=wsignin1.0</code> request with
+              <code>wtrealm</code>, <code>wreply</code>, <code>wctx</code> and
+              <code>whr</code>, optionally signs it, and decodes the SAML token
+              inside the <code>wresult</code> &mdash; including an encrypted
+              one. <code>wsignout1.0</code> as well.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== XMLDSIG ===================== -->
+        <h2 id="xmldsig">XML Signature and XML Encryption</h2>
+        <p>One implementation, shared by the SAML, WS-Trust, WS-Federation and
+        <a href="/digital_signature.html">Digital Signature</a> pages and by
+        the backend&rsquo;s SAML binding signer. A canonicalizer is a
+        <em>reading</em> of a specification, and two readings are two chances
+        to disagree with the identity provider at the far end.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/xmldsig-core1/"
+                   target="_blank" rel="noopener noreferrer">XML Signature
+              Syntax and Processing 1.1</a>
+              (<a href="https://www.rfc-editor.org/rfc/rfc3275"
+                  target="_blank" rel="noopener noreferrer">RFC 3275</a>)
+              <span class="std-where">W3C / IETF</span></td>
+            <td>Enveloped, enveloping and detached signatures; signing and
+              verification; a configurable transform chain; and the
+              <code>KeyInfo</code> forms an identity provider actually
+              sends.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/xml-exc-c14n/"
+                   target="_blank" rel="noopener noreferrer">Exclusive XML
+              Canonicalization 1.0</a> and
+              <a href="https://www.w3.org/TR/xml-c14n/"
+                 target="_blank" rel="noopener noreferrer">Canonical XML
+              1.0</a>
+              <span class="std-where">W3C</span></td>
+            <td>All four methods &mdash; inclusive and exclusive, with and
+              without comments &mdash; with the
+              <code>InclusiveNamespaces</code> prefix list, processing
+              instructions retained, and namespace rendering done per
+              element.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/xmlenc-core1/"
+                   target="_blank" rel="noopener noreferrer">XML Encryption
+              Syntax and Processing 1.1</a>
+              <span class="std-where">W3C</span></td>
+            <td>Decrypts a SAML <code>EncryptedAssertion</code> and a
+              WS-Federation encrypted token: <code>EncryptedKey</code> with
+              RSA-OAEP or RSA-1.5, <code>EncryptedData</code> with AES-CBC or
+              AES-GCM at 128/192/256.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4051"
+                   target="_blank" rel="noopener noreferrer">RFC 4051</a>,
+              <a href="https://www.rfc-editor.org/rfc/rfc6931"
+                 target="_blank" rel="noopener noreferrer">RFC 6931</a> and
+              <a href="https://www.rfc-editor.org/rfc/rfc9231"
+                 target="_blank" rel="noopener noreferrer">RFC 9231</a>
+              &mdash; additional XML Security URIs
+              <span class="std-where">IETF</span></td>
+            <td>The <code>xmldsig-more</code> algorithm identifiers: the
+              RSA-SHA-2 family, ECDSA, HMAC variants and the digest URIs that
+              go with each, so a <code>SignatureMethod</code> from any of the
+              three documents is recognised rather than reported as
+              unknown.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== VC ===================== -->
+        <h2 id="vc">Verifiable credentials &mdash; SD-JWT VC, OID4VCI and
+          OID4VP</h2>
+        <p>Two workflows: <a href="/vc-issuance-0.html">issuance</a> (a wallet
+        obtaining a credential) and <a href="/vc-presentation-0.html">
+        presentation</a> (a wallet showing one to a verifier).</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html"
+                   target="_blank" rel="noopener noreferrer">OpenID for
+              Verifiable Credential Issuance 1.0</a>
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>Both entry points &mdash; wallet-initiated, and from an
+              issuer&rsquo;s Credential Offer with the pre-authorized code
+              grant and its <code>tx_code</code>. Issuer metadata, the
+              Credential Endpoint with a <code>jwt</code> proof of possession,
+              deferred issuance, the Notification Endpoint, batch issuance and
+              response encryption.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html"
+                   target="_blank" rel="noopener noreferrer">OpenID for
+              Verifiable Presentations 1.0</a>
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>Reads the verifier&rsquo;s authorization request in any of its
+              three forms (by value, by <code>request_uri</code>, or pasted),
+              evaluates the <strong>DCQL</strong> query against the held
+              credential, and returns a <code>vp_token</code> in the direct
+              POST or redirect response mode.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9901"
+                   target="_blank" rel="noopener noreferrer">RFC 9901</a>
+              &mdash; Selective Disclosure for JWTs (SD-JWT)
+              <span class="std-where">IETF</span></td>
+            <td>Builds and parses the SD-JWT combined format: salted digests,
+              individual and recursive disclosures, decoy digests, array
+              element disclosures, and the Key Binding JWT over the
+              verifier&rsquo;s nonce and audience with the
+              <code>sd_hash</code>.</td>
+          </tr>
+          <tr>
+            <td><a href="https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/"
+                   target="_blank" rel="noopener noreferrer">SD-JWT-based
+              Verifiable Credentials</a>
+              <span class="std-where">IETF draft
+              (draft-ietf-oauth-sd-jwt-vc)</span></td>
+            <td>The <code>dc+sd-jwt</code> credential format: the
+              <code>vct</code> type, <code>cnf</code> holder binding, status
+              and the two key-resolution routes the draft defines &mdash;
+              <code>/.well-known/jwt-vc-issuer</code> and an inline
+              <code>x5c</code>.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/vc-data-model-2.0/"
+                   target="_blank" rel="noopener noreferrer">Verifiable
+              Credentials Data Model 1.1 and 2.0</a>
+              <span class="std-where">W3C</span></td>
+            <td>The <code>jwt_vc_json</code> and <code>ldp_vc</code> formats,
+              with both context versions bundled locally so the workflow does
+              not depend on a live context fetch.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== DID ===================== -->
+        <h2 id="did">Decentralized identifiers and Data Integrity</h2>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/did-1.0/"
+                   target="_blank" rel="noopener noreferrer">DID Core
+              1.0</a>
+              <span class="std-where">W3C</span></td>
+            <td>The <a href="/did-tools.html">DID Tools page</a> resolves and
+              describes a DID document, and the issuance workflow verifies a
+              credential whose issuer is named by DID. Methods:
+              <strong>did:web</strong>, <strong>did:key</strong> and
+              <strong>did:jwk</strong>, with the verification relationships
+              honoured &mdash; a key authorised to authenticate is not
+              thereby authorised to assert.</td>
+          </tr>
+          <tr>
+            <td><a href="https://identity.foundation/well-known-did-configuration/resources/did-configuration/"
+                   target="_blank" rel="noopener noreferrer">Well Known DID
+              Configuration</a>
+              <span class="std-where">DIF</span></td>
+            <td>Verifies domain linkage: the Domain Linkage Credential is
+              fetched from the origin, its signature checked against the keys
+              the DID authorises to assert, and
+              <code>credentialSubject.origin</code> required to be the origin
+              it came from &mdash; and to be for <em>the DID asked
+              about</em>.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/vc-di-bbs/"
+                   target="_blank" rel="noopener noreferrer">Data Integrity
+              BBS Cryptosuites &mdash; bbs-2023</a>
+              <span class="std-where">W3C</span></td>
+            <td>Selective disclosure over an <code>ldp_vc</code>: the
+              credential is canonicalized to N-Quads, each statement becomes
+              one BBS message, and the holder derives an unlinkable proof over
+              the subset it chooses to reveal.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/rdf-canon/"
+                   target="_blank" rel="noopener noreferrer">RDF Dataset
+              Canonicalization (RDFC-1.0 / URDNA2015)</a> and
+              <a href="https://www.w3.org/TR/json-ld11/"
+                 target="_blank" rel="noopener noreferrer">JSON-LD 1.1</a>
+              <span class="std-where">W3C</span></td>
+            <td>Expansion to RDF quads and canonical blank-node labelling, the
+              step everything about a Data Integrity proof depends on: one
+              byte of difference and every signature fails while looking
+              exactly like a broken signature.</td>
+          </tr>
+          <tr>
+            <td><a href="https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/"
+                   target="_blank" rel="noopener noreferrer">BBS
+              Signatures</a>
+              <span class="std-where">IRTF draft
+              (draft-irtf-cfrg-bbs-signatures)</span></td>
+            <td>Both ciphersuites over BLS12-381, on the Digital Signature
+              page as a primitive and behind <code>bbs-2023</code>: sign a
+              list of messages, then derive a proof revealing any subset of
+              them.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== WebAuthn ===================== -->
+        <h2 id="webauthn">WebAuthn</h2>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/webauthn-3/"
+                   target="_blank" rel="noopener noreferrer">Web
+              Authentication Level 3</a>
+              <span class="std-where">W3C</span></td>
+            <td>The <a href="/webauthn.html">Lab</a> runs a real registration
+              and authentication ceremony against a security key with this
+              origin as the relying party; the
+              <a href="/webauthn_analyzer.html">Analyzer</a> decodes and
+              verifies somebody else&rsquo;s artifacts with no ceremony at all
+              &mdash; client data, authenticator data and its flags,
+              attestation object, the COSE public key, the signature counter,
+              and extension outputs. Attestation statement formats recognised:
+              <code>packed</code>, <code>tpm</code>,
+              <code>android-key</code>, <code>android-safetynet</code>,
+              <code>apple</code>, <code>fido-u2f</code> and
+              <code>none</code>.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9052"
+                   target="_blank" rel="noopener noreferrer">RFC 9052</a> and
+              <a href="https://www.rfc-editor.org/rfc/rfc9053"
+                 target="_blank" rel="noopener noreferrer">RFC 9053</a>
+              &mdash; COSE
+              <span class="std-where">IETF</span></td>
+            <td>Reads a <code>COSE_Key</code> into a JWK and a SPKI PEM,
+              handling the negative labels correctly per key type &mdash;
+              <code>-1</code> is the curve for an EC2 key and the modulus for
+              an RSA one.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8949"
+                   target="_blank" rel="noopener noreferrer">RFC 8949</a>
+              &mdash; CBOR
+              <span class="std-where">IETF</span></td>
+            <td>A decode-only, bounded reader. Maps decode to a real
+              <code>Map</code>, because COSE keys include negative integers;
+              indefinite lengths are refused, because canonical CBOR forbids
+              them and one in an attestation object is a finding rather than
+              something to absorb.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== Kerberos ===================== -->
+        <h2 id="krb5">Kerberos v5</h2>
+        <p>Six pages, and the only workflow here that is not HTTP: DER over TCP
+        and UDP port 88, relayed byte for byte by this tool&rsquo;s
+        backend.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4120"
+                   target="_blank" rel="noopener noreferrer">RFC 4120</a>
+              &mdash; The Kerberos Network Authentication Service (V5)
+              <span class="std-where">IETF</span></td>
+            <td>The AS exchange with the <code>KDC_ERR_PREAUTH_REQUIRED</code>
+              round trip and <code>PA-ETYPE-INFO2</code>, the TGS exchange,
+              renewals, cross-realm referrals and the AP exchange. Every
+              message, ticket and error is decoded field by field and the
+              encrypted parts are opened when you hold the key.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc3961"
+                   target="_blank" rel="noopener noreferrer">RFC 3961</a>,
+              <a href="https://www.rfc-editor.org/rfc/rfc3962"
+                 target="_blank" rel="noopener noreferrer">3962</a>,
+              <a href="https://www.rfc-editor.org/rfc/rfc8009"
+                 target="_blank" rel="noopener noreferrer">8009</a> and
+              <a href="https://www.rfc-editor.org/rfc/rfc4757"
+                 target="_blank" rel="noopener noreferrer">4757</a>
+              &mdash; Kerberos encryption
+              <span class="std-where">IETF</span></td>
+            <td>The encryption-type framework and five etypes:
+              <code>aes128-cts-hmac-sha1-96</code>,
+              <code>aes256-cts-hmac-sha1-96</code>,
+              <code>aes128-cts-hmac-sha256-128</code>,
+              <code>aes256-cts-hmac-sha384-192</code> and
+              <code>rc4-hmac</code> &mdash; with string-to-key, salting and key
+              derivation, verified against the RFCs&rsquo; own test
+              vectors.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4121"
+                   target="_blank" rel="noopener noreferrer">RFC 4121</a> and
+              <a href="https://www.rfc-editor.org/rfc/rfc2743"
+                 target="_blank" rel="noopener noreferrer">RFC 2743</a>
+              &mdash; the Kerberos GSS-API mechanism
+              <span class="std-where">IETF</span></td>
+            <td>The GSS token framing a real service is handed: the InitialToken
+              wrapper, the checksum with its channel-binding and flag fields,
+              the delegated credential, and the AP-REP that proves the service
+              back.</td>
+          </tr>
+          <tr>
+            <td><a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-pac/"
+                   target="_blank" rel="noopener noreferrer">[MS-PAC]</a>
+              &mdash; Privilege Attribute Certificate
+              <span class="std-where">Microsoft Open Specifications</span></td>
+            <td>Decodes the PAC inside a ticket &mdash; logon info, group
+              membership, the UPN and client name buffers, and the two
+              signatures &mdash; including the NDR encoding
+              (<a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rpce/"
+                  target="_blank" rel="noopener noreferrer">[MS-RPCE]</a>) and
+              the types from
+              <a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-dtyp/"
+                 target="_blank" rel="noopener noreferrer">[MS-DTYP]</a> and
+              <a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-samr/"
+                 target="_blank" rel="noopener noreferrer">[MS-SAMR]</a> that
+              it carries.</td>
+          </tr>
+          <tr>
+            <td><a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/"
+                   target="_blank" rel="noopener noreferrer">[MS-SFU]</a>
+              &mdash; Service for User and Constrained Delegation
+              <span class="std-where">Microsoft Open Specifications</span></td>
+            <td>The delegation page:
+              S4U2Self, S4U2Proxy under either authorization model, and
+              forwarded tickets &mdash; with the refusals shown as clearly as
+              the successes.</td>
+          </tr>
+          <tr>
+            <td><a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/"
+                   target="_blank" rel="noopener noreferrer">[MS-KILE]</a>
+              &mdash; Kerberos Protocol Extensions
+              <span class="std-where">Microsoft Open Specifications</span></td>
+            <td>The Windows-specific fields and flag semantics a real domain
+              controller sends, which is what the AWS-hosted Windows Server
+              2025 test run exists to keep honest.</td>
+          </tr>
+          <tr>
+            <td><a href="https://web.mit.edu/kerberos/krb5-latest/doc/formats/keytab_file_format.html"
+                   target="_blank" rel="noopener noreferrer">MIT keytab file
+              format</a>
+              <span class="std-where">MIT Kerberos</span></td>
+            <td>The decoder reads a keytab:
+              versions 0x0501 and 0x0502, every entry, principal, key version
+              and encryption type.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== SPNEGO ===================== -->
+        <h2 id="spnego">SPNEGO</h2>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4178"
+                   target="_blank" rel="noopener noreferrer">RFC 4178</a>
+              &mdash; SPNEGO (and its predecessor
+              <a href="https://www.rfc-editor.org/rfc/rfc2478"
+                 target="_blank" rel="noopener noreferrer">RFC 2478</a>)
+              <span class="std-where">IETF</span></td>
+            <td>Encodes and decodes <code>NegTokenInit</code> with the
+              optimistic mechToken and <code>NegTokenResp</code> in all four
+              <code>negState</code> values, with the
+              <code>mechListMIC</code> in both directions and section 5&rsquo;s
+              rule for when it is mandatory.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4559"
+                   target="_blank" rel="noopener noreferrer">RFC 4559</a>
+              &mdash; SPNEGO-based HTTP Authentication
+              <span class="std-where">IETF</span></td>
+            <td>The SPNEGO page: the
+              <code>401 WWW-Authenticate: Negotiate</code> challenge, the token
+              a browser would send, and the AP-REP that comes back in the
+              response header &mdash; every byte visible, which a
+              cross-origin <code>fetch</code> cannot give you.</td>
+          </tr>
+          <tr>
+            <td><a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-spng/"
+                   target="_blank" rel="noopener noreferrer">[MS-SPNG]</a>
+              <span class="std-where">Microsoft Open Specifications</span></td>
+            <td>The Windows variations on the negotiation, including where
+              they differ from RFC 4178 in a way a client has to
+              tolerate.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== LDAP ===================== -->
+        <h2 id="ldap">LDAP</h2>
+        <p>RFC 4511 is BER over a TCP socket, so the whole protocol runs in
+        this tool&rsquo;s backend and the page is
+        available only in the containerized deployment.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4511"
+                   target="_blank" rel="noopener noreferrer">RFC 4511</a>
+              &mdash; LDAP v3: The Protocol
+              <span class="std-where">IETF</span></td>
+            <td>Bind and unbind, search, add, delete, modify, modifyDN and
+              compare, over plain TCP or LDAPS, with every result code
+              reported by name rather than by number.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4512"
+                   target="_blank" rel="noopener noreferrer">RFC 4512</a>
+              &mdash; Directory Information Models
+              <span class="std-where">IETF</span></td>
+            <td>The root DSE, the naming model, and the object class rules a
+              directory enforces on an add.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4514"
+                   target="_blank" rel="noopener noreferrer">RFC 4514</a>
+              &mdash; String Representation of Distinguished Names
+              <span class="std-where">IETF</span></td>
+            <td>Parses and composes DNs, with the escaping rules that decide
+              whether a comma in a CN is a separator.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4515"
+                   target="_blank" rel="noopener noreferrer">RFC 4515</a>
+              &mdash; String Representation of Search Filters
+              <span class="std-where">IETF</span></td>
+            <td>The full filter grammar &mdash; presence, equality, substring,
+              greater/less, approximate, extensible match and the boolean
+              combinators &mdash; with all three search scopes.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4519"
+                   target="_blank" rel="noopener noreferrer">RFC 4519</a>
+              &mdash; Schema for User Applications
+              <span class="std-where">IETF</span></td>
+            <td>The attribute types and object classes the user and group
+              forms are built from.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc2696"
+                   target="_blank" rel="noopener noreferrer">RFC 2696</a>
+              &mdash; Simple Paged Results Control
+              <span class="std-where">IETF</span></td>
+            <td>Pages a large search, carrying the cookie from one page to the
+              next.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== SCIM ===================== -->
+        <h2 id="scim">SCIM 2.0</h2>
+        <p>The <a href="/scim.html">provisioning page</a>: every endpoint by
+        hand, or scenario batches that create, modify and deprovision
+        populations of users and groups and check each step against what the
+        plan said would happen.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7642"
+                   target="_blank" rel="noopener noreferrer">RFC 7642</a>
+              &mdash; SCIM: Definitions, Overview, Concepts and Requirements
+              <span class="std-where">IETF</span></td>
+            <td>The use cases the scenario harness is built from &mdash;
+              onboarding, change, offboarding &mdash; and the vocabulary the
+              page uses.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7643"
+                   target="_blank" rel="noopener noreferrer">RFC 7643</a>
+              &mdash; SCIM: Core Schema
+              <span class="std-where">IETF</span></td>
+            <td>User, Group, EnterpriseUser and the common attributes,
+              including a generator for a User carrying every optional
+              attribute section 4.1 defines &mdash; which is how you find out
+              what a server silently drops.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7644"
+                   target="_blank" rel="noopener noreferrer">RFC 7644</a>
+              &mdash; SCIM: Protocol
+              <span class="std-where">IETF</span></td>
+            <td>Create, read, list, replace, PATCH (section 3.5.2 in full,
+              including <code>emails[type eq "work"].value</code> paths),
+              delete, both shapes of <code>.search</code>, bulk, filtering,
+              sorting, pagination, attribute projection and the three discovery
+              documents.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7235"
+                   target="_blank" rel="noopener noreferrer">RFC 7235</a>,
+              <a href="https://www.rfc-editor.org/rfc/rfc7617"
+                 target="_blank" rel="noopener noreferrer">7617</a>,
+              <a href="https://www.rfc-editor.org/rfc/rfc7616"
+                 target="_blank" rel="noopener noreferrer">7616</a> and
+              <a href="https://www.rfc-editor.org/rfc/rfc7486"
+                 target="_blank" rel="noopener noreferrer">7486</a>
+              &mdash; HTTP authentication schemes
+              <span class="std-where">IETF</span></td>
+            <td>All the schemes RFC 7644 section 2 names: Basic, Digest (all
+              three registered algorithms &mdash; SHA-256, SHA-512-256 and MD5
+              &mdash; with the <code>-sess</code> variants and the
+              <code>stale</code> retry), HOBA, bearer and DPoP tokens, a
+              session cookie, and a TLS client certificate.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== SPIFFE ===================== -->
+        <h2 id="spiffe">SPIFFE and SPIRE</h2>
+        <p>Two of SPIFFE&rsquo;s three surfaces are gRPC, which a browser
+        cannot produce, so the page runs against
+        this tool&rsquo;s backend and is available only in the containerized
+        deployment.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md"
+                   target="_blank" rel="noopener noreferrer">SPIFFE-ID</a>
+              <span class="std-where">SPIFFE (CNCF)</span></td>
+            <td>The whole grammar, checked on the <em>raw text</em> rather than
+              through a URL parser &mdash; which is the point, because
+              <code>new URL()</code> lower-cases a host for you and hides an
+              upper-case trust domain that is invalid.</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/spiffe/spiffe/blob/main/standards/X509-SVID.md"
+                   target="_blank" rel="noopener noreferrer">X509-SVID</a> and
+              <a href="https://github.com/spiffe/spiffe/blob/main/standards/JWT-SVID.md"
+                 target="_blank" rel="noopener noreferrer">JWT-SVID</a>
+              <span class="std-where">SPIFFE (CNCF)</span></td>
+            <td>Fetches and inspects both: the URI subjectAltName and the
+              constraints an X509-SVID must satisfy, and the JWT-SVID&rsquo;s
+              audience and claims.</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE_Trust_Domain_and_Bundle.md"
+                   target="_blank" rel="noopener noreferrer">SPIFFE Trust
+              Domain and Bundle</a>
+              <span class="std-where">SPIFFE (CNCF)</span></td>
+            <td>Reads a trust bundle document, including the rule that costs
+              people days: a JWK with no <code>use</code> is one a consumer
+              MUST ignore, so a bundle of them verifies nothing and reports no
+              error anywhere.</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE_Workload_API.md"
+                   target="_blank" rel="noopener noreferrer">SPIFFE Workload
+              API and Workload Endpoint</a>
+              <span class="std-where">SPIFFE (CNCF)</span></td>
+            <td>Calls the Workload API over a Unix domain socket or TCP,
+              unauthenticated as the specification requires &mdash; a workload
+              has no root of trust until that call gives it one.</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/spiffe/spire-api-sdk"
+                   target="_blank" rel="noopener noreferrer">SPIRE Server
+              API</a>
+              <span class="std-where">SPIRE (CNCF)</span></td>
+            <td>All forty-two methods across its six services &mdash;
+              Agent, Bundle, Debug, Entry, SVID and TrustDomain &mdash;
+              over mutual TLS &mdash; where hostname verification cannot apply,
+              because a SPIRE server&rsquo;s certificate carries no DNS name,
+              and is replaced by a check on the SPIFFE ID in its URI
+              subjectAltName. The <code>.proto</code> files are vendored
+              verbatim.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== PKI ===================== -->
+        <h2 id="pki">PKI, X.509 and TLS</h2>
+        <p>The <a href="/pki.html">certificate authority page</a> builds a
+        Root, an Intermediate and an Issuing CA in the browser, and then makes
+        a real connection with what it issued.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc5280"
+                   target="_blank" rel="noopener noreferrer">RFC 5280</a>
+              &mdash; X.509 certificates and CRLs
+              <span class="std-where">IETF</span></td>
+            <td>Issues certificates with full X.509v3 extension control &mdash;
+              basic constraints, key usage, extended key usage, SAN in every
+              name form, name constraints, policies and policy mapping, AIA and
+              CRL distribution points, SKI and AKI &mdash; and validates a
+              chain: signatures, validity, path length, and the extension rules
+              that decide whether a CA may sign what it signed. CRLs are
+              referenced rather than issued: the CRL distribution point and
+              freshest-CRL extensions are built and read, and nothing here
+              produces a revocation list.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc2986"
+                   target="_blank" rel="noopener noreferrer">RFC 2986</a>
+              &mdash; PKCS#10 Certification Request
+              <span class="std-where">IETF / RSA</span></td>
+            <td>Generates and parses a CSR, with the requested extensions in
+              the attribute set.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7633"
+                   target="_blank" rel="noopener noreferrer">RFC 7633</a>
+              &mdash; TLS Feature (&ldquo;must-staple&rdquo;)
+              <span class="std-where">IETF</span></td>
+            <td>Available as an extension when issuing, and named when
+              describing a certificate that carries it.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4556"
+                   target="_blank" rel="noopener noreferrer">RFC 4556</a>
+              &mdash; PKINIT
+              <span class="std-where">IETF</span></td>
+            <td>The <code>KRB5PrincipalName</code> otherName SAN and the
+              PKINIT extended key usages, so a certificate meant for smartcard
+              logon can be built and recognised.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8446"
+                   target="_blank" rel="noopener noreferrer">RFC 8446</a>
+              (TLS 1.3) and
+              <a href="https://www.rfc-editor.org/rfc/rfc5246"
+                 target="_blank" rel="noopener noreferrer">RFC 5246</a>
+              (TLS 1.2)
+              <span class="std-where">IETF</span></td>
+            <td>Makes a real TLS or <strong>mutual</strong>-TLS connection with
+              a certificate you just issued and reports the handshake: version,
+              cipher suite, the chain the server sent, the anchor it verified
+              against, and whether the client certificate was accepted. A
+              browser can do none of that &mdash; it cannot choose a client
+              certificate, cannot be given a truststore, and cannot read the
+              handshake it made &mdash; so this runs in the backend.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== crypto ===================== -->
+        <h2 id="crypto">Cryptographic algorithms and key formats</h2>
+        <p>The <a href="/digital_signature.html">Digital Signature</a> and
+        <a href="/encryption_tools.html">Encryption / Decryption</a> pages, and
+        the key-material pane every workflow shares. All of it runs in your
+        browser and none of it is stored.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8017"
+                   target="_blank" rel="noopener noreferrer">RFC 8017</a>
+              &mdash; PKCS #1 v2.2 (RSA)
+              <span class="std-where">IETF / RSA</span></td>
+            <td>RSASSA-PKCS1-v1_5 and RSASSA-PSS signing; RSAES-OAEP and
+              RSAES-PKCS1-v1_5 encryption, with the maximum message length
+              reported the moment a key is generated, because it depends on the
+              modulus, the padding <em>and</em> the hash.</td>
+          </tr>
+          <tr>
+            <td><a href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-5.pdf"
+                   target="_blank" rel="noopener noreferrer">FIPS 186-5</a>
+              and <a href="https://www.secg.org/sec2-v2.pdf"
+                     target="_blank" rel="noopener noreferrer">SEC 2</a>
+              &mdash; ECDSA and the named curves
+              <span class="std-where">NIST / SECG</span></td>
+            <td>ECDSA over P-256, P-384, P-521 and secp256k1, against any hash
+              on the page; Schnorr (BIP-340) over secp256k1; and the curve
+              parameters used by <code>did:key</code> point
+              decompression.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8032"
+                   target="_blank" rel="noopener noreferrer">RFC 8032</a>
+              &mdash; EdDSA
+              <span class="std-where">IETF</span></td>
+            <td>Ed25519 and Ed448 signing and verification, and the
+              <code>OKP</code> JWK and PEM encodings that carry those
+              keys.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7748"
+                   target="_blank" rel="noopener noreferrer">RFC 7748</a>
+              and <a href="https://www.rfc-editor.org/rfc/rfc8410"
+                     target="_blank" rel="noopener noreferrer">RFC 8410</a>
+              &mdash; X25519/X448 and their ASN.1 encoding
+              <span class="std-where">IETF</span></td>
+            <td>ECDH over the CFRG curves for ECIES and for JWE
+              <code>ECDH-ES</code>, and the SubjectPublicKeyInfo /
+              PKCS#8 forms that carry Ed and X keys.</td>
+          </tr>
+          <tr>
+            <td><a href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf"
+                   target="_blank" rel="noopener noreferrer">FIPS 203</a>,
+              <a href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.204.pdf"
+                 target="_blank" rel="noopener noreferrer">FIPS 204</a> and
+              <a href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.205.pdf"
+                 target="_blank" rel="noopener noreferrer">FIPS 205</a>
+              &mdash; ML-KEM, ML-DSA, SLH-DSA
+              <span class="std-where">NIST</span></td>
+            <td>Post-quantum, at every parameter set: ML-KEM-512/768/1024 for
+              encapsulation (alone or hybridised with X25519), ML-DSA-44/65/87
+              and all twelve SLH-DSA parameter sets for signing.</td>
+          </tr>
+          <tr>
+            <td><a href="https://csrc.nist.gov/pubs/fips/197/final"
+                   target="_blank" rel="noopener noreferrer">FIPS 197</a> and
+              <a href="https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38a.pdf"
+                 target="_blank" rel="noopener noreferrer">NIST SP
+              800-38A/D</a> &mdash; AES and its modes
+              <span class="std-where">NIST</span></td>
+            <td>AES at 128/192/256 in GCM, CBC, CTR, CFB, OFB and ECB, with
+              PKCS#7 padding where the mode needs it &mdash; and ECB offered
+              precisely so its failure mode can be seen.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8439"
+                   target="_blank" rel="noopener noreferrer">RFC 8439</a>
+              &mdash; ChaCha20 and Poly1305
+              <span class="std-where">IETF</span></td>
+            <td>The AEAD construction, the bare Poly1305 MAC and the raw
+              ChaCha20 keystream, verified against the RFC&rsquo;s own
+              vectors.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc2104"
+                   target="_blank" rel="noopener noreferrer">RFC 2104</a> and
+              <a href="https://www.rfc-editor.org/rfc/rfc4493"
+                 target="_blank" rel="noopener noreferrer">RFC 4493</a>
+              &mdash; HMAC and AES-CMAC
+              <span class="std-where">IETF</span></td>
+            <td>The MAC panes: HMAC over any hash, KMAC, keyed BLAKE,
+              AES-CMAC, CBC-MAC, GMAC, Poly1305 and SipHash &mdash; labelled
+              separately from the signature panes, because a MAC uses a shared
+              secret and is not a digital signature.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc5869"
+                   target="_blank" rel="noopener noreferrer">RFC 5869</a>
+              (HKDF),
+              <a href="https://www.rfc-editor.org/rfc/rfc8018"
+                 target="_blank" rel="noopener noreferrer">RFC 8018</a>
+              (PBKDF2 / PKCS #5) and
+              <a href="https://www.rfc-editor.org/rfc/rfc7914"
+                 target="_blank" rel="noopener noreferrer">RFC 7914</a>
+              (scrypt)
+              <span class="std-where">IETF</span></td>
+            <td>Key derivation: the password-based pane, the PBES2 JWE that
+              protects an exported key, and the HKDF step inside ECIES and
+              DHIES.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc3526"
+                   target="_blank" rel="noopener noreferrer">RFC 3526</a>
+              &mdash; MODP Diffie-Hellman groups
+              <span class="std-where">IETF</span></td>
+            <td>Groups 14 and 15 behind ElGamal and DHIES on the finite-field
+              pane. (There is no such thing as DSA encryption, and the pane
+              says so rather than mislabelling something else.)</td>
+          </tr>
+          <tr>
+            <td><a href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf"
+                   target="_blank" rel="noopener noreferrer">FIPS 180-4</a>,
+              <a href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.202.pdf"
+                 target="_blank" rel="noopener noreferrer">FIPS 202</a> and
+              <a href="https://www.rfc-editor.org/rfc/rfc7693"
+                 target="_blank" rel="noopener noreferrer">RFC 7693</a>
+              &mdash; hash functions
+              <span class="std-where">NIST / IETF</span></td>
+            <td>SHA-1, the SHA-2 family, SHA-3 and SHAKE, BLAKE2b, BLAKE3,
+              RIPEMD-160 and MD5 &mdash; the broken ones included and labelled
+              as such, because interoperating with something old is a real
+              debugging need.</td>
+          </tr>
+          <tr>
+            <td>PKCS #8
+              (<a href="https://www.rfc-editor.org/rfc/rfc5958"
+                  target="_blank" rel="noopener noreferrer">RFC 5958</a>),
+              PKCS #12
+              (<a href="https://www.rfc-editor.org/rfc/rfc7292"
+                  target="_blank" rel="noopener noreferrer">RFC 7292</a>),
+              PKCS #9, PEM
+              (<a href="https://www.rfc-editor.org/rfc/rfc7468"
+                  target="_blank" rel="noopener noreferrer">RFC 7468</a>) and
+              <a href="https://www.rfc-editor.org/rfc/rfc5915"
+                 target="_blank" rel="noopener noreferrer">RFC 5915</a>
+              <span class="std-where">IETF / RSA</span></td>
+            <td>The export matrix every key pane offers: PEM, DER, JWK and
+              PKCS#12, encrypted or not, in both directions &mdash; and a
+              keystore you can hand straight to OpenSSL, Java or a browser.
+              PKCS #1 and SEC 1 private key framings are read as well as
+              written.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.itu.int/rec/T-REC-X.690"
+                   target="_blank" rel="noopener noreferrer">ITU-T X.680 /
+              X.690</a> &mdash; ASN.1 and DER
+              <span class="std-where">ITU-T</span></td>
+            <td>Underneath all of the above, and visible in its own right in
+              the Kerberos decoder and the certificate describer.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== encoding ===================== -->
+        <h2 id="encoding">Encoding, registries and infrastructure</h2>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4648"
+                   target="_blank" rel="noopener noreferrer">RFC 4648</a>
+              &mdash; Base16, Base32, Base64 and Base64url
+              <span class="std-where">IETF</span></td>
+            <td>The <a href="/encoding_tools.html">encoding tools</a>, and
+              every place a token, certificate or key is shown &mdash;
+              base64url without padding where the specification says so, which
+              is a surprisingly common source of &ldquo;invalid
+              signature&rdquo;.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc3986"
+                   target="_blank" rel="noopener noreferrer">RFC 3986</a>
+              &mdash; Uniform Resource Identifier
+              <span class="std-where">IETF</span></td>
+            <td>Percent-encoding and decoding on the encoding tools page, the
+              exact-match redirect URI comparison in RFC 9700 mode, and the
+              <code>htu</code> normalization a DPoP proof needs.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4122"
+                   target="_blank" rel="noopener noreferrer">RFC 4122</a>
+              &mdash; UUIDs
+              <span class="std-where">IETF</span></td>
+            <td>Message and assertion identifiers, in the NCName form XML
+              requires (an XML <code>ID</code> may not start with a
+              digit).</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc1951"
+                   target="_blank" rel="noopener noreferrer">RFC 1951</a>
+              &mdash; DEFLATE
+              <span class="std-where">IETF</span></td>
+            <td>The SAML HTTP-Redirect binding&rsquo;s compression, used
+              when composing a request and when reading somebody else&rsquo;s
+              on the SAML decoder pages. <strong>Raw</strong> DEFLATE, with no
+              zlib header, which is the detail that makes a redirect message
+              undecodable in half the tools that try. (WS-Federation does not
+              compress: its sign-in request is plain query parameters.)</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.iana.org/assignments/jwt/jwt.xml"
+                   target="_blank" rel="noopener noreferrer">IANA JSON Web
+              Token Claims Registry</a>
+              <span class="std-where">IANA</span></td>
+            <td>Every registered claim gets its registered description in the
+              JWT and token detail views, from a cached copy of the registry
+              &mdash; alongside a dictionary of vendor claims that are not
+              registered anywhere.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.w3.org/TR/xml/"
+                   target="_blank" rel="noopener noreferrer">XML 1.0</a> and
+              <a href="https://www.w3.org/TR/xml-names/"
+                 target="_blank" rel="noopener noreferrer">Namespaces in
+              XML</a>
+              <span class="std-where">W3C</span></td>
+            <td>Parsed inertly &mdash; no external entities, no DTD, no network
+              fetch &mdash; because a SAML response is a document from
+              somebody you are still deciding whether to trust.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== not implemented ===================== -->
+        <h2 id="notimpl">Named here, and deliberately not implemented</h2>
+        <p>Things the pages mention, and that a reader could reasonably read
+        as a claim. They are not.</p>
+        <table>
+          <tr><th>Specification</th><th>Why not</th></tr>
+          <tr>
+            <td>CTAP2 <span class="std-where">FIDO Alliance</span></td>
+            <td>JavaScript receives a WebAuthn ceremony&rsquo;s
+              <em>artifacts</em> and never the authenticator: no commands, no
+              USB frames, no PIN protocol. This is a WebAuthn debugger and not
+              a CTAP one; a CTAP debugger needs a native application with HID
+              access.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8705"
+                   target="_blank" rel="noopener noreferrer">RFC 8705</a>
+              &mdash; mTLS client authentication and certificate-bound tokens
+              <span class="std-where">IETF</span></td>
+            <td>Named on the DPoP pane as the other way to sender-constrain a
+              token. The debugger does mutual TLS on the PKI page, but it does
+              not do RFC 8705 token binding at an OAuth token endpoint.</td>
+          </tr>
+          <tr>
+            <td><a href="https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kkdcp/"
+                   target="_blank" rel="noopener noreferrer">[MS-KKDCP]</a>
+              &mdash; Kerberos KDC Proxy
+              <span class="std-where">Microsoft Open Specifications</span></td>
+            <td>The bundled mock KDC answers it; the debugger&rsquo;s own
+              Kerberos transport is raw TCP and UDP only.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc6113"
+                   target="_blank" rel="noopener noreferrer">RFC 6113</a>
+              &mdash; Kerberos FAST
+              <span class="std-where">IETF</span></td>
+            <td>The <code>FX-COOKIE</code> pre-authentication type is
+              recognised and named in a decoded message. The armoured exchange
+              itself is not performed.</td>
+          </tr>
+        </table>
+
+        <div class="std-note">
+          <strong>Found something wrong?</strong> A list like this is only
+          worth having if it is accurate. Corrections and additions go to the
+          <a href="https://github.com/rcbj/id-proto-debugger/issues"
+             target="_blank" rel="noopener noreferrer">issue tracker</a>.
+        </div>
+
+      </div>
+
+    </div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

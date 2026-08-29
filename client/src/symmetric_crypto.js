@@ -577,6 +577,27 @@ function aesBlock(key, block16) {
   return fromForge(engine.output.getBytes()).slice(0, 16);
 }
 
+// The other half of aesBlock(): ONE raw AES block, decrypted, with no padding
+// removed. RFC 3394 key unwrapping needs it and there is nowhere else in this
+// tree to get it — the cipher catalogue above has no AES-192-ECB entry, and a
+// full-cipher decrypt would strip a PKCS#7 padding that a raw block does not
+// have and then refuse the block as malformed.
+//
+// forge's finish() takes a padding callback; one that simply reports success is
+// how you tell it "this block is the whole message, leave it alone".
+function aesBlockDecrypt(key, block16) {
+  log.debug("Entering aesBlockDecrypt().");
+  var engine = forge.cipher.createDecipher('AES-ECB',
+      forge.util.createBuffer(toForge(key)));
+  engine.start();
+  engine.update(forge.util.createBuffer(toForge(block16)));
+  engine.finish(function () {
+    return true;
+  });
+  log.debug("Leaving aesBlockDecrypt().");
+  return fromForge(engine.output.getBytes()).slice(0, 16);
+}
+
 function shl1(block) {
   log.debug("Entering shl1().");
   var out = new Uint8Array(16), carry = 0;
@@ -726,6 +747,7 @@ module.exports = {
   chacha20Poly1305Decrypt: chacha20Poly1305Decrypt,
   // MACs over a block cipher
   aesBlock: aesBlock,
+  aesBlockDecrypt: aesBlockDecrypt,
   aesCmac: aesCmac,
   aesCbcMac: aesCbcMac,
   aesGmac: aesGmac,

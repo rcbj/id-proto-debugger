@@ -343,6 +343,24 @@ async function pageStructure(driver) {
       ". Either an algorithm was added without a case here, or one was " +
       "removed.");
   }
+
+  // THE SAME RULE FOR THE KEY-AGREEMENT PANES, WHICH DID NOT HAVE IT — and
+  // its absence cost exactly what it was there to prevent. When seven
+  // standardised hybrid KEMs were added to the ML-KEM pane's Mode list, this
+  // job kept passing and kept driving the two modes it already knew about:
+  // the new options round-tripped in nobody's test. A selector list that the
+  // page can outgrow silently is not a check, so every selector named in
+  // AGREEMENT_PANES is now asserted against what the page actually offers.
+  for (const pane of AGREEMENT_PANES) {
+    for (const selector of pane.selectors) {
+      const offered = await optionsOf(driver, selector.id);
+      assert.deepStrictEqual(offered, selector.values,
+        "the " + pane.name + " pane's " + selector.id + " offers " +
+        offered.join(", ") + " but this test knows about " +
+        selector.values.join(", ") + ". Either an option was added without " +
+        "a case here, or one was removed.");
+    }
+  }
   log.info("[structure] OK — nine panes, all collapsed, " +
            SYMMETRIC_PANES.reduce(function (n, p) {
              return n + p.algs.length;
@@ -713,10 +731,47 @@ var AGREEMENT_PANES = [
                   values: ['P-256', 'P-384', 'P-521', 'secp256k1',
                            'X25519'] }],
     generate: 'Generate Keys', usesInfo: true },
+  // THE ML-KEM PANE IS THE ONE THAT DOES NOT TAKE A CARTESIAN PRODUCT, and
+  // the reason is semantic rather than a saving. Its Mode list now holds four
+  // different kinds of thing: plain ML-KEM (FIPS 203), X-Wing
+  // (draft-connolly-cfrg-xwing-kem), six Composite ML-KEM pairings
+  // (draft-ietf-lamps-pq-composite-kem-08) and this page's own ad-hoc
+  // concatenation. A standardised hybrid FIXES its own ML-KEM parameter set —
+  // "ML-KEM-768 + ECDH P-256" is always ML-KEM-768 — so crossing those seven
+  // with the three parameter sets would drive twenty-one combinations of
+  // which fourteen are the same run with an ignored selector. `cases` is
+  // therefore explicit: every parameter set for the two modes that use one,
+  // and every standardised mode once.
+  //
+  // `selectors` still lists the complete option sets, because that is what
+  // the structure check asserts the page against — see assertOptionsComplete.
   { prefix: 'kem', pane: 'pane_kem', name: 'ML-KEM',
     selectors: [{ id: 'enc_kem_set',
                   values: ['ML-KEM-768', 'ML-KEM-512', 'ML-KEM-1024'] },
-                { id: 'enc_kem_mode', values: ['hybrid', 'pq'] }],
+                { id: 'enc_kem_mode',
+                  values: ['pq', 'X-Wing', 'MLKEM768-ECDH-P256',
+                           'MLKEM768-ECDH-P384', 'MLKEM768-X25519',
+                           'MLKEM1024-ECDH-P384', 'MLKEM1024-ECDH-P521',
+                           'MLKEM1024-X448', 'hybrid'] }],
+    cases: [
+      // The two modes the parameter set applies to, at all three sets.
+      { enc_kem_set: 'ML-KEM-768', enc_kem_mode: 'pq' },
+      { enc_kem_set: 'ML-KEM-512', enc_kem_mode: 'pq' },
+      { enc_kem_set: 'ML-KEM-1024', enc_kem_mode: 'pq' },
+      { enc_kem_set: 'ML-KEM-768', enc_kem_mode: 'hybrid' },
+      { enc_kem_set: 'ML-KEM-512', enc_kem_mode: 'hybrid' },
+      { enc_kem_set: 'ML-KEM-1024', enc_kem_mode: 'hybrid' },
+      // The seven standardised hybrids, each once. The parameter set is left
+      // where it is on purpose: these must ignore it, and a run that changed
+      // it would hide a pane that quietly read it anyway.
+      { enc_kem_mode: 'X-Wing' },
+      { enc_kem_mode: 'MLKEM768-ECDH-P256' },
+      { enc_kem_mode: 'MLKEM768-ECDH-P384' },
+      { enc_kem_mode: 'MLKEM768-X25519' },
+      { enc_kem_mode: 'MLKEM1024-ECDH-P384' },
+      { enc_kem_mode: 'MLKEM1024-ECDH-P521' },
+      { enc_kem_mode: 'MLKEM1024-X448' }
+    ],
     generate: 'Generate Keys', usesInfo: true },
   { prefix: 'ffc', pane: 'pane_ffc', name: 'DSA family',
     selectors: [{ id: 'enc_ffc_group',
@@ -746,7 +801,7 @@ function combinations(selectors) {
 
 async function agreementPane(driver, pane) {
   log.debug("Entering agreementPane(). " + pane.name);
-  const cases = combinations(pane.selectors);
+  const cases = pane.cases || combinations(pane.selectors);
   log.info("[" + pane.prefix + "] " + pane.name + " — " + cases.length +
            " combinations.");
   await expand(driver, pane.pane);

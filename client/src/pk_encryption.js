@@ -45,6 +45,12 @@ var x25519 = require("@noble/curves/ed25519").x25519;
 var nobleHkdf = require("@noble/hashes/hkdf").hkdf;
 var nobleSha256 = require("@noble/hashes/sha256").sha256;
 var bytes = require("./crypto_bytes");
+// The post-quantum registry. This module keeps its own ML-KEM path for the
+// two modes that predate it (see mlkemEncrypt below); everything with a
+// standardised hybrid construction goes through pqc.js so that the labels
+// and combiners live in one place and are checked against the drafts' own
+// hexadecimal by tests/pqc_engines.js.
+var pqc = require("./pqc");
 var symmetric = require("./symmetric_crypto");
 
 // A node consumer (the tests load this module directly) may have no
@@ -697,6 +703,97 @@ function ffcHybridDecrypt(options) {
   return plain;
 }
 
+
+// ===========================================================================
+// STANDARDISED POST-QUANTUM KEMs — X-Wing and Composite ML-KEM
+// ===========================================================================
+// The `hybrid` mode above is this project's OWN construction: it concatenates
+// an ML-KEM shared secret with an X25519 one and feeds the pair to HKDF. That
+// is a perfectly reasonable thing to do and it is what the pane has always
+// done, but it is NOT a wire format anybody else implements — two peers would
+// have to have read this file. It is kept, and relabelled on the page as
+// non-standard, because removing it would break every saved ciphertext and
+// its own test.
+//
+// What is added beside it is the constructions that other implementations can
+// actually read:
+//
+//   X-Wing              draft-connolly-cfrg-xwing-kem — ML-KEM-768 + X25519,
+//                       verified here against all three of the draft's own
+//                       test vectors.
+//   Composite ML-KEM    draft-ietf-lamps-pq-composite-kem-08 — six concrete
+//                       pairings, each with the label that draft assigns it.
+//
+// THE SHAPE IS DIFFERENT FROM THE MODES ABOVE, and it is worth being precise
+// about how. A standardised hybrid runs its OWN combiner and hands back one
+// uniformly random 32-byte secret, where the `hybrid` mode above hands back
+// two concatenated secrets that have had no combiner applied at all. Both
+// then go through this module's sealWith()/openWith(), so the HKDF step and
+// the "KDF info" context binding still apply to both — the difference is that
+// for a standardised KEM the secret was already uniform before HKDF saw it,
+// which is belt and braces rather than the load-bearing step it is above.
+function pqKemGenerateKeyPair(algName) {
+  log.debug("Entering pqKemGenerateKeyPair(). alg=" + algName);
+  var pair = pqc.kemAlg(algName).keygen();
+  log.debug("Leaving pqKemGenerateKeyPair().");
+  return { privateKeyHex: bytesToHex(pair.secretKey),
+           publicKeyHex: bytesToHex(pair.publicKey) };
+}
+
+function pqKemEncrypt(options) {
+  log.debug("Entering pqKemEncrypt().");
+  var opts = options || {};
+  var kem = pqc.kemAlg(opts.algName);
+  var encapsulated = kem.encapsulate(hexToBytes(opts.publicKeyHex));
+  // sealWith() applies HKDF and the caller's `info` exactly as it does for
+  // every other mechanism on the page. That is redundant here — the KEM's own
+  // combiner already produced a uniform key — but keeping one path means the
+  // "KDF info" field behaves the same way in every pane, which is worth more
+  // than the hash it saves.
+  var sealed = sealWith(asBytes(encapsulated.sharedSecret),
+                        { info: opts.info, aad: opts.aad,
+                          cipherId: opts.cipherId,
+                          plaintext: opts.plaintext });
+  log.debug("Leaving pqKemEncrypt().");
+  return { encapsulationHex: bytesToHex(encapsulated.cipherText),
+           iv: sealed.iv, ciphertext: sealed.ciphertext, tag: sealed.tag,
+           cipherId: sealed.cipherId };
+}
+
+function pqKemDecrypt(options) {
+  log.debug("Entering pqKemDecrypt().");
+  var opts = options || {};
+  var kem = pqc.kemAlg(opts.algName);
+  var secret = asBytes(kem.decapsulate(hexToBytes(opts.encapsulationHex),
+                                       hexToBytes(opts.privateKeyHex)));
+  var plain = openWith(secret, { info: opts.info, aad: opts.aad,
+                                 cipherId: opts.cipherId, iv: opts.iv,
+                                 ciphertext: opts.ciphertext,
+                                 tag: opts.tag });
+  log.debug("Leaving pqKemDecrypt().");
+  return plain;
+}
+
+// The list the pane's dropdown is built from, in the order it shows them, with
+// the standard each one rests on so the page can mark the drafts.
+function pqKemModes() {
+  log.debug("Entering pqKemModes().");
+  var out = [];
+  var names = Object.keys(pqc.KEM_ALGS);
+  for (var i = 0; i < names.length; i++) {
+    var entry = pqc.KEM_ALGS[names[i]];
+    if (!entry.hybrid) {
+      continue;
+    }
+    out.push({ name: names[i], spec: entry.spec,
+               draft: pqc.isDraft(entry.spec),
+               note: pqc.specNote(entry.spec),
+               lengths: entry.lengths });
+  }
+  log.debug("Leaving pqKemModes().");
+  return out;
+}
+
 module.exports = {
   DEFAULT_CIPHER: DEFAULT_CIPHER,
   deriveKey: deriveKey,
@@ -723,6 +820,10 @@ module.exports = {
   mlkemSet: mlkemSet,
   mlkemGenerateKeyPair: mlkemGenerateKeyPair,
   mlkemEncrypt: mlkemEncrypt,
+  pqKemGenerateKeyPair: pqKemGenerateKeyPair,
+  pqKemEncrypt: pqKemEncrypt,
+  pqKemDecrypt: pqKemDecrypt,
+  pqKemModes: pqKemModes,
   mlkemDecrypt: mlkemDecrypt,
   // FFC / DSA-family
   FFC_GROUPS: FFC_GROUPS,

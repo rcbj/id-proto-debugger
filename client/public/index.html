@@ -22,7 +22,20 @@
 
 <div class="landing">
   <h1 class="landing-title">Choose a debugger Protocol</h1>
-  <p class="landing-sub">Which identity protocol do you want to debug?</p>
+  <!-- The Supported Standards link rides the SUBTITLE rather than sitting
+       under the grid, and that is a layout decision rather than a
+       stylistic one. A line of its own below the last row lands at 645px
+       against a 625px headless viewport — below the fold, on the one page
+       in this application whose whole point is that nothing on it is —
+       and a line of its own ABOVE the grid pushes every card down by its
+       height, straight into the 640px budget landingFitsOnOneScreen()
+       enforces (the lowest card already ends at 597px). On this line it
+       costs nothing at all: the subtitle is one short line at every width
+       that fits the grid, and measured either way the cards still end at
+       597px. Keep the added text short enough to stay on that line. -->
+  <p class="landing-sub">Which identity protocol do you want to debug?
+    &nbsp;&middot;&nbsp; <a class="landing-sub-link"
+       href="/supported_standards.html">Supported Standards</a></p>
 
   <div class="landing-choices">
     <a class="landing-card" href="/oauth2_oidc_1.html">
@@ -289,6 +302,21 @@
       <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: two of SPIFFE&rsquo;s three surfaces are gRPC, which a browser cannot produce. Run the debugger locally for it.</span>
     </a>
   </div>
+  <!-- The counterpart to the greyed cards above, and the only thing on this
+       page that appears ONLY on the static deployments: each dead card says
+       why it is dead, and none of them says what to do about it. This does.
+       It is display:none here and on every api-backed deployment — the
+       container serves a site where nothing is greyed, so a note about
+       greyed cards would be describing something that is not there.
+       client/build.js reveals it, keyed off the data-static-only attribute,
+       the same way it kills the cards; see client/static_site.js. -->
+  <p class="landing-static-note" data-static-only>
+    A workflow greyed out above needs this tool&rsquo;s API backend, which a
+    hosted static site does not have. To use one, deploy the containerized
+    version &mdash; api and client together &mdash; from
+    <a href="https://github.com/rcbj/id-proto-debugger"
+       >github.com/rcbj/id-proto-debugger</a>.
+  </p>
 </div>
 
     </div>

@@ -196,9 +196,19 @@ function vcSetAllPanes(expand) {
           <td>
             <select class="stored" id="vc_dpop_alg" name="vc_dpop_alg"
                     onchange="return vcissuance2.onDpopAlgChange();">
-              <option value="ES256">ES256</option>
-              <option value="RS256">RS256</option>
-            </select>
+                <option value="RS256">RS256</option>
+                <option value="RS384">RS384</option>
+                <option value="RS512">RS512</option>
+                <option value="ES256" selected="selected">ES256</option>
+                <option value="ES384">ES384</option>
+                <option value="ES512">ES512</option>
+                <option value="PS256">PS256</option>
+                <option value="PS384">PS384</option>
+                <option value="PS512">PS512</option>
+                <option value="EdDSA-Ed25519">EdDSA-Ed25519</option>
+                <option value="EdDSA-Ed448">EdDSA-Ed448</option>
+                <option value="ES256K">ES256K</option>
+              </select>
             <input class="btn2" id="vc_dpop_regenerate_button" type="button" value="New Key Pair"
                    onclick="return vcissuance2.regenerateDpopKey();" />
             <span class="vc-note" id="vc_dpop_alg_note">&nbsp;</span>

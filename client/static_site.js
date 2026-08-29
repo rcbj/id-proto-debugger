@@ -130,6 +130,19 @@ var EXCLUDED_ASSETS = [
 // it for nothing; the static build turns the card it is on into a dead one.
 var CARD_MARKER = 'data-not-on-static';
 
+// The marker an element in client/public/index.html carries to say "this text
+// belongs to the static deployments only". The container-served page uses it
+// for nothing; the static build reveals what it is on. It exists for the note
+// under the card grid — the greyed cards each say why they are dead, and none
+// of them says what to do about it, so the note names the containerized build
+// and the repository it comes from.
+var NOTE_MARKER = 'data-static-only';
+
+// Added to that element's class list by the static build. client/public/css/
+// landing.css keeps .landing-static-note display:none and shows the element
+// once it carries this, which is the mirror image of the card rule below.
+var NOTE_SHOWN_CLASS = 'landing-static-note-shown';
+
 // Added to that card's class list by the static build. client/public/css/
 // landing.css greys the card, drops the hover lift, and swaps the description
 // for the .landing-card-unavailable one that is display:none everywhere else.
@@ -192,6 +205,34 @@ function disableUnavailableCards(html) {
   return { html: out, count: count };
 }
 
+// Reveal every element marked NOTE_MARKER by adding NOTE_SHOWN_CLASS to it.
+// The tag name is preserved rather than assumed — the note is a <p> today and
+// the marker is the contract, not the element.
+//
+// Returns the rewritten html and the number of elements changed, so the caller
+// can fail on zero: a marker that stopped matching leaves a static site whose
+// greyed cards say why they are dead and nothing at all about where to get a
+// build that carries them.
+function showStaticOnlyNotes(html) {
+  log.debug("Entering showStaticOnlyNotes().");
+  var count = 0;
+  var re = new RegExp('<([a-z][a-z0-9]*)\\b([^>]*\\b' + NOTE_MARKER +
+      '\\b[^>]*)>', 'gi');
+  var out = html.replace(re, function (match, tag, attrs) {
+    count++;
+    var rest = attrs;
+    if (/class\s*=\s*"[^"]*"/i.test(rest)) {
+      rest = rest.replace(/class\s*=\s*"([^"]*)"/i,
+          'class="$1 ' + NOTE_SHOWN_CLASS + '"');
+    } else {
+      rest = ' class="' + NOTE_SHOWN_CLASS + '"' + rest;
+    }
+    return '<' + tag + rest + '>';
+  });
+  log.debug("Leaving showStaticOnlyNotes().");
+  return { html: out, count: count };
+}
+
 // Every href in `html` that points at a file this build is not shipping. Used
 // by both the build and the test: a link to a deleted page is a 404 nobody sees
 // until a user clicks it, and it is exactly what adding a page to the lists
@@ -212,9 +253,12 @@ module.exports = {
   EXCLUDED_PAGES: EXCLUDED_PAGES,
   EXCLUDED_ASSETS: EXCLUDED_ASSETS,
   CARD_MARKER: CARD_MARKER,
+  NOTE_MARKER: NOTE_MARKER,
+  NOTE_SHOWN_CLASS: NOTE_SHOWN_CLASS,
   DISABLED_CLASS: DISABLED_CLASS,
   excludedFiles: excludedFiles,
   bundleIsExcluded: bundleIsExcluded,
   disableUnavailableCards: disableUnavailableCards,
+  showStaticOnlyNotes: showStaticOnlyNotes,
   linksToExcludedFiles: linksToExcludedFiles
 };
