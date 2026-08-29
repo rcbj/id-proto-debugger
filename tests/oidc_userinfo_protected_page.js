@@ -361,6 +361,19 @@ async function test() {
   // access, the insecure origin the page itself is served from (no
   // `crypto.subtle` without it), and the api's origin.
   browserFlags.addBrowserAccessFlags(options, baseUrl, [stsBase]);
+  // AND Ed25519 in Web Crypto, because one of the algorithms this page is
+  // handed is EdDSA. The containerized Chrome refuses `Ed25519` to importKey
+  // without the flag, and what the page reports for that is
+  //
+  //   ** signature: Failed to execute 'importKey' on 'SubtleCrypto':
+  //          Algorithm: Unrecognized name
+  //
+  // followed by "the page produced no claims at all" — a message naming
+  // importKey and claims, on a test whose subject is a signed UserInfo
+  // response, with nothing anywhere naming the curve or the flag. It cost the
+  // containerized run of 2026-08-29, and a HOST run passes without it because
+  // a desktop Chrome ships the curve enabled. See addWebCryptoEd25519Flags().
+  browserFlags.addWebCryptoEd25519Flags(options);
   options.setLoggingPrefs(prefs);
   var driver = await new Builder().forBrowser("chrome")
     .setChromeOptions(options).build();

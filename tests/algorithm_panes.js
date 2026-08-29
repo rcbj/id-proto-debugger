@@ -179,10 +179,27 @@ async function test() {
   log.info("Starting Test run. url=" + baseUrl);
   var prefs = new logging.Preferences();
   prefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
-  var options = browserFlags.chromeOptions
-    ? browserFlags.chromeOptions()
-    : new chrome.Options().addArguments("--headless=new", "--no-sandbox",
-                                        "--disable-dev-shm-usage");
+  var options = new chrome.Options().addArguments("--headless=new",
+    "--no-sandbox", "--disable-dev-shm-usage");
+  // THE ORIGIN THIS PAGE IS SERVED FROM MUST BE TREATED AS SECURE, and there
+  // is no `browserFlags.chromeOptions()` to do it — that name was never
+  // exported, so the `?:` this replaced ALWAYS took its else branch and built
+  // a plain Chrome with none of the flags. On a host run that is invisible:
+  // the base url is http://localhost:3000, and localhost is potentially
+  // trustworthy all by itself, so `crypto.subtle` exists and every algorithm
+  // here signs. In the containerized run the client is http://client:3000,
+  // which is not, so `crypto.subtle` is UNDEFINED and the first signature the
+  // page attempts fails with
+  //
+  //   HS256: ... The page said: Error: Cannot read properties of undefined
+  //       (reading 'importKey')
+  //
+  // naming HS256 and importKey and nothing about the origin. See
+  // tests/CLAUDE.md on the secure-context hazard, and addBrowserAccessFlags().
+  browserFlags.addBrowserAccessFlags(options, baseUrl);
+  // EdDSA is one of the twenty-seven signature algorithms this job drives, and
+  // the containerized Chrome refuses `Ed25519` to importKey without this.
+  browserFlags.addWebCryptoEd25519Flags(options);
   options.setLoggingPrefs(prefs);
   var driver = await new Builder().forBrowser("chrome")
     .setChromeOptions(options).build();
