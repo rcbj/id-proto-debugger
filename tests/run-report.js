@@ -211,6 +211,25 @@ function jobTypeOf(script) {
 //     STS's own suite now (see the note in docs/mock-sts.md), which is the
 //     tree that changes them.
 //
+//     A SECOND SHAPE NEEDS IT, and two jobs are it: one that makes the mock
+//     BLOCK. `sts_userinfo_protected.js` and `sts_jws_verification.js` walk
+//     every algorithm the mock advertises, SLH-DSA among them — and the mock is
+//     one process whose signing is synchronous, so for the duration of one of
+//     those signatures it answers NOBODY: not another HTTP caller, not the KDC
+//     on port 88. Stalls of 14.6, 15.4, 17.8 and 23.3 SECONDS were measured in
+//     the containerized run of 2026-08-29, and each failed some unrelated job
+//     in a way that named anything but the cause — a Kerberos reply that never
+//     came, a Populate button never drawn, a login screen that never arrived, a
+//     refresh whose socket the mock closed on its way back. This is the shape a
+//     named lock cannot express: the set they collide with is the suite, so
+//     listing it would be listing the suite. They run alone instead, which
+//     costs the parallelism of two jobs out of 281 and is deterministic where
+//     retrying is not.
+//
+//     THAT PAIR IS INTERIM. The cause is the mock blocking and the fix is over
+//     there — a front process owning the sockets and the state, with the
+//     signing moved to workers. When that lands, take these two out again.
+//
 // A script that is not in the table runs unlocked, which is the right default:
 // nearly every test here mints an identity of its own (random_username.js, and
 // the `stamp` prefixes in scim_page.js and ldap_page.js) and asserts on what it
@@ -310,6 +329,10 @@ const JOB_LOCKS = {
   "kerberos_spnego_signin.js": "sts-spnego-signin",
   "kerberos_spnego_page.js": "sts-spnego-signin",
   "kerberos_tgs_ap_page.js": "sts-spnego-signin",
+  // The two that make the mock BLOCK rather than the two that share state with
+  // anything: every advertised algorithm, SLH-DSA among them. See EXCLUSIVE.
+  "sts_userinfo_protected.js": EXCLUSIVE,
+  "sts_jws_verification.js": EXCLUSIVE,
   // And the MIT-client job, for both of the same reasons: it turns
   // `krb5.spnegoAuthentication` off to assert the closed door, and it asserts
   // that a REPLAYED AP-REQ is refused — which a concurrent job spending its
