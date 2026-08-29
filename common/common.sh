@@ -58,6 +58,54 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} BUILD_NUMBER GIT_COMMIT"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_CONCURRENCY TEST_JOB_TIMEOUT_MS"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_LOG_LEVEL"
 
+# Does docker on this machine need sudo? Answered by RUNNING it rather than by
+# looking for a group in `id -nG`, which is neither necessary (a rootless
+# daemon needs no group) nor sufficient (a group added since this shell logged
+# in is not in this shell's credentials). It is the same probe clean.sh and
+# infra/terraform-local.sh already make, moved here so the four launchers get
+# it too.
+#
+# THE ANSWER IS "" WHENEVER THE DAEMON IS REACHABLE DIRECTLY, and that case is
+# what this file did not have: docker_compose() prefixed `sudo`
+# unconditionally, so a member of the `docker` group was asked for a password
+# anyway, and a run with no terminal to type it into — CI, or anything driving
+# these scripts unattended — died at the FIRST compose call with `sudo: a
+# password is required`, before one container had been built. That message
+# names sudo and not the suite, which is three steps from the thing to fix.
+#
+# Only PASSWORDLESS sudo is chosen deliberately. If neither probe succeeds the
+# answer stays "yes" and sudo prompts exactly as it always did — this is a
+# path that is added, never one that is taken away.
+#
+# Cached, because a run makes a dozen compose calls and each probe is a round
+# trip to the daemon.
+DOCKER_SUDO="${DOCKER_SUDO-unset}"
+
+resolveDockerSudo()
+{
+  echo "Entering resolveDockerSudo()."
+  if [ "${DOCKER_SUDO}" != "unset" ];
+  then
+    echo "Leaving resolveDockerSudo(). Cached: '${DOCKER_SUDO}'."
+    return 0
+  fi
+  if docker info > /dev/null 2>&1;
+  then
+    DOCKER_SUDO=""
+    echo "Leaving resolveDockerSudo(). The daemon is reachable directly."
+    return 0
+  fi
+  if sudo -n docker info > /dev/null 2>&1;
+  then
+    DOCKER_SUDO="yes"
+    echo "Leaving resolveDockerSudo(). Using passwordless sudo."
+    return 0
+  fi
+  DOCKER_SUDO="yes"
+  echo "Leaving resolveDockerSudo(). Neither probe worked; sudo may prompt."
+  return 0
+}
+
 docker_compose() {
   echo "Entering docker_compose()."
   # Capture the real exit code of the compose command. sudo propagates the
@@ -79,19 +127,43 @@ docker_compose() {
       env_args="${env_args} ${_v}=${_val}"
     fi
   done
+  resolveDockerSudo
+  # Which compose. Unquoted where it is used, so that the two words of
+  # `docker compose` split into a command and its subcommand.
+  local compose_cmd=""
   if [ -x ~/.local/bin/docker-compose ];
   then
-    sudo ${env_args} docker-compose "$@"
-    rc=$?
-  elif docker compose version >/dev/null 2>&1; then
-    sudo ${env_args} docker compose "$@"
-    rc=$?
-  elif command -v docker-compose >/dev/null 2>&1; then
-    sudo ${env_args} docker-compose "$@"
-    rc=$?
+    # By FULL PATH when this runs without sudo. sudo builds its own PATH from
+    # secure_path and finds the binary there; an ordinary login shell's PATH
+    # need not carry ~/.local/bin at all, and a bare `docker-compose` would
+    # then be a `command not found` naming compose rather than the PATH.
+    if [ -n "${DOCKER_SUDO}" ];
+    then
+      compose_cmd="docker-compose"
+    else
+      compose_cmd="${HOME}/.local/bin/docker-compose"
+    fi
+  elif docker compose version >/dev/null 2>&1;
+  then
+    compose_cmd="docker compose"
+  elif command -v docker-compose >/dev/null 2>&1;
+  then
+    compose_cmd="docker-compose"
   else
     echo "Error: Docker Compose not found." >&2
+    echo "Leaving docker_compose(). rc=1"
     return 1
+  fi
+  if [ -n "${DOCKER_SUDO}" ];
+  then
+    sudo ${env_args} ${compose_cmd} "$@"
+    rc=$?
+  else
+    # `env` rather than a bare prefix assignment, because compose_cmd may be
+    # two words and `NAME=v docker compose ...` would then set the variable for
+    # `docker` only. Same effect as sudo's command-line assignments.
+    env ${env_args} ${compose_cmd} "$@"
+    rc=$?
   fi
   echo "Leaving docker_compose(). rc=${rc}"
   return ${rc}
@@ -1944,16 +2016,31 @@ configureKeycloak()
       | cut -d '/' -f 1 \
       | rev \
       | tr -d ' \n\r')
-    if [ -z "${CLIENT_ID}" ] || \
-       [ -z "${CLIENT_CLIENTID}" ] || \
-       [ -z "${CLIENT_SECRET}" ] || \
-       [ -z "${SCOPE_ID}" ] || \
-       [ -z "${SCOPE_NAME}" ] || \
-       [ -z "${USER_ID}" ];
+    # Name the variable that is blank rather than only the fact that one is.
+    # Each of these is read out of a curl response, so a blank one is a failed
+    # call — and the failure that actually happens is a 409 on the user POST
+    # (no Location header, so USER_ID is empty) when a debugger-testing realm
+    # survived from a previous run. The old message named nothing and the
+    # caller had to re-run the curl by hand to find out which.
+    BLANK_VARIABLES=""
+    for REQUIRED_VARIABLE in CLIENT_ID CLIENT_CLIENTID CLIENT_SECRET \
+                             SCOPE_ID SCOPE_NAME USER_ID
+    do
+      if [ -z "${!REQUIRED_VARIABLE}" ];
+      then
+        BLANK_VARIABLES="${BLANK_VARIABLES} ${REQUIRED_VARIABLE}"
+      fi
+    done
+    if [ -n "${BLANK_VARIABLES}" ];
     then
-      echo "Required variable is blank."
+      echo "Required variable is blank, provisioning ${FLOW_NAME}:" \
+           "${BLANK_VARIABLES# }" >&2
+      echo "A blank USER_ID here is a 409 from Keycloak — the" \
+           "debugger-testing realm already holds this user, so the realm" \
+           "was not reset before configureKeycloak. See" \
+           "resetKeycloakRealm()." >&2
       exit 1
-    fi 
+    fi
     curl \
       -X PUT \
       "${KEYCLOAK_LOCALHOST_BASE_URL}/admin/realms/debugger-testing/users/${USER_ID}/reset-password" \

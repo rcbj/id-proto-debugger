@@ -2320,6 +2320,29 @@ try {
                 JSON.stringify(response.data));
       log.debug('Headers: ' + response.headers);
       res.status(response.status);
+      // THE CONTENT TYPE IS CARRIED THROUGH, AND THAT IS THE WHOLE POINT.
+      //
+      // OIDC Core section 5.3.2 lets a UserInfo Response be a JWT — signed,
+      // encrypted, or signed then encrypted — and then the content type is
+      // `application/jwt` and the body is a compact serialization, not JSON.
+      // This used to answer `res.json(response.data)` unconditionally, which
+      // turned that JWT into a JSON *string*: the browser was handed
+      // `"eyJhbGciOi..."` under `application/json`, quotes and all, so the page
+      // could not tell an encrypted response from an OP that had returned a
+      // quoted string, and the signature over the real octets was gone.
+      //
+      // Anything that is not JSON is therefore relayed VERBATIM under the type
+      // the OP gave it. A JWT is a signature over exact bytes, so re-encoding
+      // one in transit destroys the only thing it is for.
+      var upstreamType = (response.headers &&
+          (response.headers['content-type'] ||
+           response.headers['Content-Type'])) || '';
+      if (upstreamType && upstreamType.indexOf('json') === -1) {
+        res.type(upstreamType);
+        res.send(typeof response.data === 'string' ? response.data
+                                                   : String(response.data));
+        return;
+      }
       res.json(response.data);
     })
     .catch(function (error) {

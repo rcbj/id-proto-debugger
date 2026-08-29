@@ -72,7 +72,7 @@ COPY client/src/env/ /usr/src/app/public/js/env/
 COPY common/data.js /usr/src/app/src
 # The XML Signature / XML Encryption engine, staged the same way and for the
 # same reason: it is in common/ because api/server.js signs with it too, and
-# the eight bundles that require('./xmldsig') resolve it from src/.
+# the ten bundles that require('./xmldsig') resolve it from src/.
 COPY common/xmldsig.js /usr/src/app/src
 # The Kerberos codec, staged into src/ the same way and for the same reason:
 # kerberos_decoder.js requires('./krb5_describe.js'), which requires its siblings,
@@ -104,6 +104,16 @@ RUN browserify src/saml_request.js -o public/js/saml_request.js --debug --standa
 RUN browserify src/saml_cert.js -o public/js/saml_cert.js --debug --standalone saml_cert -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/saml_tools.js -o public/js/saml_tools.js --debug --standalone saml_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/saml_response.js -o public/js/saml_response.js --debug --standalone saml_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+# The SAML Request Decoder. It requires ./saml_message, a sibling in src/, and
+# ./xmldsig, staged into src/ by the COPY above — so nothing extra is needed
+# here, but the bundle itself must be listed in all THREE places (this line,
+# the coverage loop below, and BUNDLES in client/build.js).
+RUN browserify src/saml_authnrequest.js -o public/js/saml_authnrequest.js --debug --standalone saml_authnrequest -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+# The SAML Response Decoder — the same page on the other half of the exchange.
+# It requires ./saml_message and ./xmldsig, both already in src/, so nothing
+# extra is needed here; the bundle itself must be listed in all THREE places
+# (this line, the coverage loop below, and BUNDLES in client/build.js).
+RUN browserify src/saml_response_decoder.js -o public/js/saml_response_decoder.js --debug --standalone saml_response_decoder -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wstrust_tools.js -o public/js/wstrust_tools.js --debug --standalone wstrust_tools -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/wstrust_response.js -o public/js/wstrust_response.js --debug --standalone wstrust_response -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 RUN browserify src/vc_issuance_0.js -o public/js/vc_issuance_0.js --debug --standalone vcissuance0 -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
@@ -181,7 +191,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "encryption_tools:encryption_tools" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "kerberos_decoder:kerberos_decoder" "kerberos:kerberos" "kerberos_tgs:kerberos_tgs" "kerberos_ap:kerberos_ap" "kerberos_delegation:kerberos_delegation" "spnego:spnego" "ldap:ldap" "pki:pki" "scim:scim" "spiffe:spiffe" ; do \
+      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "encryption_tools:encryption_tools" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "saml_authnrequest:saml_authnrequest" "saml_response_decoder:saml_response_decoder" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "kerberos_decoder:kerberos_decoder" "kerberos:kerberos" "kerberos_tgs:kerberos_tgs" "kerberos_ap:kerberos_ap" "kerberos_delegation:kerberos_delegation" "spnego:spnego" "ldap:ldap" "pki:pki" "scim:scim" "spiffe:spiffe" ; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

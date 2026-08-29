@@ -48,7 +48,7 @@ var log = bunyan.createLogger({ name: "xml_parse_inert",
 log.info("Log initialized. logLevel=" + log.level());
 
 // The two roots that hold in-browser XML code. `common/` joined the sweep on
-// 2026-08-24, when xmldsig.js moved there: it is now required by eight browser
+// 2026-08-24, when xmldsig.js moved there: it is now required by nine browser
 // bundles AND by api/server.js, so it is exactly the file this test is most
 // about — and for a day it was the one file none of the three checks could
 // see. A root that is swept for parseFromString must be swept for the sinks as

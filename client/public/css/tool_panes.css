@@ -120,6 +120,24 @@
 .ds-asym { background: #e6f0ff; color: #1b4b8f; border: 1px solid #b9d3f2; }
 .ds-sym  { background: #f3e9ff; color: #5a2a8f; border: 1px solid #d8bef0; }
 
+/* "Draft standard" — a THIRD kind of claim, and deliberately the loudest of
+   the three. `ds-asym` and `ds-sym` say what a scheme IS; this one says how
+   much you can rely on the bytes. Post-quantum cryptography is currently a
+   mixture of published standards and Internet-Drafts that still change their
+   algorithm names and key encodings between revisions, and a debugger that
+   showed both the same way would be teaching the wrong thing. Red rather
+   than another pastel, because it is a warning and not a category. */
+.ds-draft { background: #fdecea; color: #8a1c12; border: 1px solid #f2b8b1; }
+
+/* The paragraph that goes with that badge. Same box as .ds-note (which a
+   pane also applies) with the border and text pushed to the warning colour,
+   so a draft note is distinguishable at a glance from an ordinary one. */
+.ds-note.ds-draft-note {
+  color: #8a1c12;
+  background: #fdecea;
+  border-color: #f2b8b1;
+}
+
 /* In-pane performance note (SLH-DSA) */
 .ds-note {
   font-size: 0.72em;
@@ -263,4 +281,15 @@
 .ds-inline-check input {
   width: auto;
   margin: 0;
+}
+
+
+/* The standards-status paragraph under the page intro. It is prose rather
+   than a pane, and it earns a box because the distinction it draws —
+   published standard versus Internet-Draft — is the one thing a reader of a
+   post-quantum tool most needs and is least likely to look for. */
+.ds-standards-note {
+  border-left: 3px solid #8a1c12;
+  padding-left: 10px;
+  background: #fffafa;
 }

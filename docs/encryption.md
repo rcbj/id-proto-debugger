@@ -13,7 +13,7 @@ browser — and it ships to the static deployments like every other tool page.
 | 3DES / DES | CBC and ECB, three-key and two-key | `symmetric_crypto.js` (node-forge) |
 | RSA | OAEP (SHA-1/256/384/512) and PKCS#1 v1.5, direct **and hybrid** | `pk_encryption.js` (node-forge) |
 | ECC (ECIES) | ephemeral ECDH over P-256/384/521/secp256k1/X25519 → HKDF → AEAD | `pk_encryption.js` (@noble/curves) |
-| ML-KEM | FIPS 203 at three parameter sets, alone or hybridised with X25519 | `pk_encryption.js` (@noble/post-quantum) |
+| ML-KEM | FIPS 203 at three parameter sets, alone; **X-Wing** (draft-connolly-cfrg-xwing-kem); six **Composite ML-KEM** pairings (draft-ietf-lamps-pq-composite-kem-08); and this page's own ad-hoc ML-KEM ‖ X25519 concatenation | `pk_encryption.js`, `pqc.js` (@noble/post-quantum) |
 | DSA family | ElGamal and DHIES over RFC 3526 MODP groups | `pk_encryption.js` (forge's BigInteger) |
 | JWE | RFC 7516 compact serialization | `jose_jwe.js` — **the same module the VC panes use** |
 | Password-based | PBKDF2, scrypt, HKDF, and the PBES2 JWE | `@noble/hashes` + `jose_jwe.js` |
@@ -34,6 +34,43 @@ every TLS cipher suite actually do. So the four asymmetric panes all emit the
 same four fields (an encapsulation, an IV, a ciphertext and a tag) and each
 says which part its own algorithm produced. ML-KEM makes the point unavoidable:
 a KEM takes **no message at all**, so that pane has no direct mode to offer.
+
+### The four kinds of ML-KEM mode, and why the distinction is on the page
+
+The Mode selector in the ML-KEM pane mixes a published standard, two
+Internet-Drafts and one construction of our own, and the page says which is
+which rather than presenting them as equivalent:
+
+* **ML-KEM alone** — FIPS 203. Settled.
+* **X-Wing** — `draft-connolly-cfrg-xwing-kem`. ML-KEM-768 + X25519 with a
+  fixed combiner, `SHA3-256(ss_M ‖ ss_X ‖ ct_X ‖ pk_X ‖ label)` where the
+  label is the six bytes `5c2e2f2f5e5c`. Implemented from the draft's own
+  pseudocode and checked in `tests/pqc_engines.js` against **all three of its
+  published test vectors** — public key, ciphertext and shared secret.
+* **Composite ML-KEM** — `draft-ietf-lamps-pq-composite-kem-08`, six concrete
+  pairings, same combiner shape with a per-algorithm label taken verbatim from
+  section 7 of that draft.
+* **Ad-hoc** — this page's original hybrid: the two shared secrets
+  concatenated and run through HKDF. Sound, but not a wire format anybody else
+  implements. Kept so existing ciphertexts still open, and labelled on the page
+  as non-standard.
+
+**The QSF presets that ship in `@noble/post-quantum` are deliberately not
+used.** `draft-irtf-cfrg-hybrid-kems` defines the QSF *frameworks* but creates
+its "Hybrid KEM Labels" registry **empty**, so the label those presets hash is
+the library's own invention rather than anybody's wire format. The ML-KEM +
+P-256 pairing is available here under Composite ML-KEM, where a draft does name
+the label.
+
+**There is no post-quantum `alg` in the JWE pane, and that is a fact about the
+standards.** `draft-ietf-jose-pqc-kem-06` is named for the JOSE working group
+but specifies only the *COSE* binding — its running header reads "PQ KEM for
+COSE", its IANA section registers COSE codepoints only, and its KDF section
+begins "The key derivation for COSE is performed using KMAC". So there is no
+registered `alg`, no defined header parameter for the encapsulated key, and no
+JOSE-side KDF context to implement. Signatures are the other way round: ML-DSA
+in JOSE is published as **RFC 9964** and the Digital Signature page's JWS pane
+offers eleven post-quantum `alg` values today.
 
 ## DSA cannot encrypt, and the pane says so
 

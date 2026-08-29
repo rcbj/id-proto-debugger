@@ -33,6 +33,11 @@
 //    and the card shows BOTH texts (taller — and this page's one hard
 //    requirement is that every card fits without scrolling); lose the span and
 //    it explains nothing.
+//  * **The note under the grid going missing.** The greyed cards say why they
+//    are dead; none of them says what to do about it, and the note that does
+//    is the one thing on that page which appears ONLY on a static site. It is
+//    display:none everywhere else, so losing its marker or its CSS is
+//    invisible on every deployment anybody develops against.
 //  * **The exclusion escaping into the CONTAINER build.** This is static-only.
 //    client/Dockerfile must still browserify every one of these pages, because
 //    the containerized app is where the workflow works.
@@ -108,6 +113,11 @@ const CLIENT_DOCKERFILE_PATH = locate([
 // can ever come to contain it, whereas any file inside one of them is a single
 // COPY line away from being there. Pick a marker the mirror cannot reach, not
 // merely one it does not hold today.
+// The repository the static-only note points a visitor at. Spelled out here
+// rather than read from the note, so the check is against what the URL should
+// be rather than against whatever it happens to say.
+const REPO_URL = "https://github.com/rcbj/id-proto-debugger";
+
 function checkoutPublicDir() {
   log.debug("Entering checkoutPublicDir().");
   const dir = path.join(__dirname, "..", "client", "public");
@@ -294,6 +304,70 @@ function theGreyedCardSaysWhy(staticSite, index, css) {
 }
 
 // ---------------------------------------------------------------------------
+// The static site says where to get what it does not carry. The greyed cards
+// each explain themselves and none of them names a remedy, so the note under
+// the grid is the whole of it — and it is the one piece of this page that
+// exists ONLY on a static deployment, which is exactly why it needs a check
+// here: hidden by default, it can be lost without anything looking wrong on a
+// container-served page.
+// ---------------------------------------------------------------------------
+function theStaticSiteSaysWhereToGetTheRest(staticSite, index, css) {
+  log.debug("Entering theStaticSiteSaysWhereToGetTheRest().");
+  const note = (index.match(
+      new RegExp("<([a-z][a-z0-9]*)\\b[^>]*" + staticSite.NOTE_MARKER +
+                 "[^>]*>[\\s\\S]*?</\\1>")) || [])[0];
+  assert.ok(note,
+    "nothing in index.html carries " + staticSite.NOTE_MARKER + ", so the " +
+    "static build has no note telling a visitor where to get the workflows " +
+    "it greys out. (client/build.js throws on this too — this is the same " +
+    "check one commit earlier.)");
+  assert.ok(note.indexOf(REPO_URL) >= 0,
+    "the static-only note does not link to " + REPO_URL + ", which is the " +
+    "only thing it is there to say.");
+  assert.ok(/containeri[sz]ed/i.test(note),
+    "the static-only note does not name the containerized build, so it " +
+    "points at a repository without saying what to do with it.");
+
+  const noteClass = (note.match(/class\s*=\s*"([^"]*)"/i) || [])[1] || "";
+  const hidden = noteClass.split(/\s+/).filter(function (name) {
+    return name && new RegExp("\\." + name +
+        "\\s*\\{[^}]*display:\\s*none").test(css);
+  });
+  assert.ok(hidden.length > 0,
+    "landing.css hides none of the static-only note's classes (" +
+    noteClass + ") by default, so every api-backed deployment shows a note " +
+    "about greyed cards on a page where nothing is greyed.");
+  assert.ok(new RegExp("\\." + staticSite.NOTE_SHOWN_CLASS +
+      "\\s*\\{[^}]*display:\\s*block").test(css),
+    "landing.css never shows ." + staticSite.NOTE_SHOWN_CLASS +
+    ", so the static build reveals the note by adding a class that displays " +
+    "nothing.");
+
+  const revealed = staticSite.showStaticOnlyNotes(index);
+  assert.ok(revealed.count > 0,
+    "showStaticOnlyNotes() revealed nothing on the real index.html.");
+  const openTag = (revealed.html.match(
+      new RegExp("<[a-z][a-z0-9]*\\b[^>]*" + staticSite.NOTE_MARKER +
+                 "[^>]*>", "i")) || [])[0];
+  assert.ok(openTag.indexOf(staticSite.NOTE_SHOWN_CLASS) >= 0,
+    "the rewritten note does not carry " + staticSite.NOTE_SHOWN_CLASS +
+    ", so it stays display:none on the one deployment it is written for.");
+  assert.ok(openTag.indexOf(noteClass) >= 0,
+    "the rewrite dropped the note's own classes (" + noteClass +
+    ") instead of adding to them.");
+
+  const plain = '<p class="landing-sub">Which protocol?</p>';
+  const untouched = staticSite.showStaticOnlyNotes(plain);
+  assert.strictEqual(untouched.count, 0,
+    "showStaticOnlyNotes() revealed an element carrying no marker.");
+  assert.strictEqual(untouched.html, plain,
+    "showStaticOnlyNotes() rewrote markup it should not have touched.");
+  log.info("[exclusions] OK — the static build reveals a note pointing at " +
+    REPO_URL + ", hidden everywhere else.");
+  log.debug("Leaving theStaticSiteSaysWhereToGetTheRest().");
+}
+
+// ---------------------------------------------------------------------------
 // Nothing that still ships links to something that does not. The build checks
 // dist/ for this too; here it is checked at the SOURCE, where the fix is.
 // ---------------------------------------------------------------------------
@@ -420,6 +494,7 @@ function test() {
   theLandingPageMarksExactlyTheDroppedCards(staticSite, index);
   theRewriteKillsOnlyTheMarkedCards(staticSite, index);
   theGreyedCardSaysWhy(staticSite, index, css);
+  theStaticSiteSaysWhereToGetTheRest(staticSite, index, css);
   nothingThatShipsLinksToADroppedPage(staticSite);
   theContainerBuildStillCarriesThem(staticSite);
   anUnmarkedPageIsLeftAlone(staticSite);

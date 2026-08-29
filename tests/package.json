@@ -1,5 +1,5 @@
 {
-  "name": "idptools-tests",
+  "name": "id-proto-debugger-tests",
   "version": "0.9.0",
   "private": true,
   "scripts": {

@@ -368,6 +368,12 @@ function samlSetAllPanes(expand) {
     <table class="saml-table">
       <tbody>
         <tr>
+          <td><a href="/saml_authnrequest.html?from=saml_request.html">SAML Request Decoder</a> &mdash; take an <code>AuthnRequest</code> off the wire and read it: paste a redirect URL, a POST form body, a bare <code>SAMLRequest</code>, an artifact or the XML, and get the pretty-printed message, its important values, an optional signature check (enveloped for POST, query-string for Redirect) and optional decryption.</td>
+        </tr>
+        <tr>
+          <td><a href="/saml_response_decoder.html?from=saml_request.html">SAML Response Decoder</a> &mdash; take a SAML <strong>response</strong> off the wire and read it, in SAML 2.0 or SAML 1.1: paste a POST form body, a redirect URL, a bare <code>SAMLResponse</code>, an artifact, a bare <code>&lt;saml:Assertion&gt;</code> or the XML, and get the status, every assertion and its attributes, a check of <strong>every</strong> signature it carries (message, assertion and query-string, reported separately) and optional decryption.</td>
+        </tr>
+        <tr>
           <td><a href="/saml_tools.html?from=saml_request.html">SAML Assertion Tool</a> &mdash; compose a spec-compliant SAML 1.0/1.1/2.0 assertion (optional elements, NameID, custom attributes), sign it with XML Signature, and encrypt it with XML Encryption.</td>
         </tr>
         <tr>

@@ -1139,8 +1139,9 @@ async function theClosedDoorSignsNobodyIn() {
         "and the protected page is untouched");
   } finally {
     // RESTORED THROUGH `reset` RATHER THAN BY WRITING THE OLD VALUE BACK: a
-    // `set` leaves `source: override` behind for admin_api.js to trip over on
-    // the next run. In a `finally` because a failed assertion above must not
+    // `set` leaves `source: override` behind for the mock's own suite to trip
+    // over on the next run. In a `finally` because a failed assertion above
+    // must not
     // leave the door shut for every other Kerberos job.
     const back = await adminPost("/config/reset",
         { key: "krb5.spnegoAuthentication" });

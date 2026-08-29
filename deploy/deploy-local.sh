@@ -26,11 +26,24 @@ IMAGE_NAME="${IMAGE_NAME:-idptools-static-deploy}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # The pipeline runs in a container, so Docker is always required on the host.
-command -v sudo docker >/dev/null 2>&1 || {
+command -v docker >/dev/null 2>&1 || {
   echo "ERROR: docker is not installed or not on PATH. This pipeline runs" >&2
   echo "       entirely inside a container, so Docker is required." >&2
   exit 1
 }
+
+# How to invoke it. The same probe clean.sh, infra/terraform-local.sh and
+# common/common.sh make: `sudo` only where the socket is not readable, because
+# a member of the `docker` group does not need it and an unattended run has no
+# terminal to type a password into — this script would otherwise die at the
+# build step with `sudo: a password is required`, which names sudo rather than
+# the deploy. Passwordless sudo is chosen where it works; where neither does,
+# the prefix stays `sudo` and it prompts exactly as before.
+DOCKER_CMD=(docker)
+if ! docker info >/dev/null 2>&1;
+then
+  DOCKER_CMD=(sudo docker)
+fi
 
 run_args=(--rm)
 run_args+=(-e "DEPLOY_ENV=${DEPLOY_ENV:-prod}")
@@ -73,7 +86,8 @@ if [ "${SKIP_DEPLOY:-false}" != "true" ]; then
 fi
 
 echo "==> Building deploy image: ${IMAGE_NAME}"
-sudo docker build -t "${IMAGE_NAME}" -f "${REPO_ROOT}/deploy/Dockerfile" "${REPO_ROOT}"
+"${DOCKER_CMD[@]}" build -t "${IMAGE_NAME}" \
+  -f "${REPO_ROOT}/deploy/Dockerfile" "${REPO_ROOT}"
 
 echo "==> Running build + deploy in container"
-sudo docker run "${run_args[@]}" "${IMAGE_NAME}"
+"${DOCKER_CMD[@]}" run "${run_args[@]}" "${IMAGE_NAME}"

@@ -6,8 +6,8 @@
 // THE MOCK STS'S SAML 1.1 BROWSER PROFILES, END TO END, OVER HTTP, WITH NO
 // BROWSER.
 //
-// It sits here beside the four other tests that drive that service DIRECTLY —
-// `sts_metadata.js`, `sts_dpop.js`, `admin_api.js`, `vc_did.js` — rather than in
+// It sits here beside the other tests that drive that service DIRECTLY —
+// `sts_dpop.js`, `vc_did.js`, `sts_saml_encryption.js` — rather than in
 // the mock's own repository, where it was written on 2026-08-25 and from where
 // it was moved the same day. The reason for the move is not tidiness: a second
 // suite, with a second runner, a second report and a second reason to be
@@ -17,7 +17,8 @@
 //
 // **NOTHING IN THE DEBUGGER IS UNDER TEST HERE**, and that is the whole point
 // of the file rather than a limitation of it. It is named `sts_saml11.js` for
-// the same reason `sts_dpop.js` and `sts_metadata.js` are named as they are:
+// the same reason `sts_dpop.js` and `sts_saml_encryption.js` are named as they
+// are:
 // the mock is the thing under test.
 //
 // **It was called `saml11_sso.js` until the debugger grew a SAML 1.1 service
@@ -87,7 +88,7 @@
 // `/admin-api/config/reset` rather than by writing the old value back. That
 // distinction is `tests/CLAUDE.md`'s and it has already cost a run: the mock
 // records where each value came from, a `set` always produces `source:
-// override` even when the value is byte-identical, and `admin_api.js`'s "no
+// override` even when the value is byte-identical, and the mock's own "no
 // runtime override should be in force" check then fails on the NEXT run against
 // that same container, naming settings and no test at all. A setting that was
 // ALREADY an override when this test arrived is put back with a `set`, because
@@ -406,10 +407,10 @@ async function setSetting(key, value) {
 // always produces the second, even when the value written back is byte
 // identical to what was there. A test that "restored" its settings with `set`
 // therefore leaves a row reading `source: override` on a live container for
-// ever, and `admin_api.js`'s "no runtime override should be in force before
-// this check runs" then fails on the NEXT run against that same container,
-// naming settings and no test at all. `spiffe_protocol.js` did exactly that
-// with four of them.
+// ever, and the mock's own "no runtime override should be in force before
+// this check runs" check then fails on the NEXT run against that same
+// container, naming settings and no test at all. `spiffe_protocol.js` did
+// exactly that with four of them.
 //
 // So `reset` is the operation that undoes an override rather than covering it,
 // and the ONE exception is a setting that was ALREADY an override when this
@@ -1109,9 +1110,10 @@ async function main() {
   res = await request('GET', '/saml2/metadata');
   check('the SAML 2.0 profile still publishes its metadata', res.status === 200,
         'status ' + res.status);
-  // The drift checks the parent project's tests/sts_metadata.js enforces. Even
-  // without that test here, a 200 with the group on it says the endpoints were
-  // described rather than silently added.
+  // The drift checks the mock's own sts-metadata test enforces — it drove that
+  // page from this suite until 2026-08-28 and drives it from the submodule's
+  // now. Even with no such test here, a 200 with the group on it says the
+  // endpoints were described rather than silently added.
   res = await request('GET', '/admin-api/sts-metadata');
   if (res.status === 200) {
     check('every /saml11 route is described on /admin/sts-metadata',

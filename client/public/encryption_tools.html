@@ -24,7 +24,7 @@
 
 <p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a> &nbsp;|&nbsp; <a href="/digital_signature.html?from=encryption_tools.html">Digital Signature &rarr;</a></p>
 
-<p class="ds-intro">Encrypt and decrypt with every mechanism, entirely in your browser &mdash; one pane per mechanism. <strong>Symmetric:</strong> <strong>AES</strong> in every mode (GCM, CBC, CTR, CFB, OFB, ECB) at every key size, <strong>ChaCha20-Poly1305</strong> (RFC 8439), the legacy <strong>3DES / DES</strong>, and <strong>password-based</strong> encryption through PBKDF2, scrypt or PBES2. <strong>Asymmetric:</strong> <strong>RSA</strong> (OAEP and PKCS#1 v1.5, direct or hybrid), <strong>ECC</strong> as ECIES over five curves, the post-quantum <strong>ML-KEM</strong> (FIPS 203) alone or hybridised with X25519, and the finite-field family <strong>DSA</strong> belongs to &mdash; ElGamal and DHIES. <strong>Protocol:</strong> <strong>JWE</strong> compact serialization, the same code the rest of this debugger reads tokens with. One thing is worth knowing before you start: <strong>only RSA encrypts a message directly</strong>, and only a short one &mdash; every other asymmetric mechanism here agrees a key and encrypts the message symmetrically under it, which is what ECIES, HPKE, JWE and TLS all do. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+<p class="ds-intro">Encrypt and decrypt with every mechanism, entirely in your browser &mdash; one pane per mechanism. <strong>Symmetric:</strong> <strong>AES</strong> in every mode (GCM, CBC, CTR, CFB, OFB, ECB) at every key size, <strong>ChaCha20-Poly1305</strong> (RFC 8439), the legacy <strong>3DES / DES</strong>, and <strong>password-based</strong> encryption through PBKDF2, scrypt or PBES2. <strong>Asymmetric:</strong> <strong>RSA</strong> (OAEP and PKCS#1 v1.5, direct or hybrid), <strong>ECC</strong> as ECIES over five curves, the post-quantum <strong>ML-KEM</strong> (FIPS 203) alone, as <strong>X-Wing</strong>, or as one of six <strong>Composite ML-KEM</strong> pairings, and the finite-field family <strong>DSA</strong> belongs to &mdash; ElGamal and DHIES. <strong>Protocol:</strong> <strong>JWE</strong> compact serialization, the same code the rest of this debugger reads tokens with. One thing is worth knowing before you start: <strong>only RSA encrypts a message directly</strong>, and only a short one &mdash; every other asymmetric mechanism here agrees a key and encrypts the message symmetrically under it, which is what ECIES, HPKE, JWE and TLS all do. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
 
 <p class="ds-controls">
   <label class="ds-toggle" title="Expand or collapse every pane.">
@@ -415,7 +415,11 @@
   <!-- ===================== ML-KEM ===================== -->
   <fieldset id="pane_kem">
     <legend>ML-KEM <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-pq">Post-quantum</span></legend>
-    <p class="ds-note">FIPS 203, formerly CRYSTALS-Kyber — the post-quantum key encapsulation mechanism NIST standardised in 2024, and the one to reach for against "harvest now, decrypt later". A KEM takes <em>no message</em>: it produces a ciphertext and a fresh shared secret together, which is why this pane has no direct mode. <strong>Hybrid</strong> concatenates an X25519 secret with the ML-KEM one so that a break of either leaves the other holding — the arrangement TLS ships as X25519MLKEM768, and the default here. Note the key sizes: an ML-KEM-768 public key is 1,184 bytes against P-256's 33.</p>
+    <p class="ds-note">FIPS 203, formerly CRYSTALS-Kyber &mdash; the post-quantum key encapsulation mechanism NIST standardised in 2024, and the one to reach for against &ldquo;harvest now, decrypt later&rdquo;. A KEM takes <em>no message</em>: it produces a ciphertext and a fresh shared secret together, which is why this pane has no direct mode. A <strong>hybrid</strong> combines it with a classical key agreement so that a break of either leaves the other holding. Note the key sizes: an ML-KEM-768 public key is 1,184 bytes against P-256&rsquo;s 33.</p>
+
+    <p class="ds-note ds-draft-note" title="The four groups in the Mode list are four different kinds of claim."><strong>The Mode list mixes a published standard, two drafts and one construction of our own, and the difference matters more than the cryptography.</strong> <em>ML-KEM alone</em> is FIPS 203 and settled. <em>X-Wing</em> (draft-connolly-cfrg-xwing-kem) and the six <em>Composite</em> pairings (draft-ietf-lamps-pq-composite-kem-08) are Internet-Drafts &mdash; but each has a fixed combiner and a published domain-separation label, so two implementations following the draft agree; this page&rsquo;s X-Wing is checked against all three of that draft&rsquo;s own test vectors. The last entry, <em>Ad-hoc</em>, is <strong>this page&rsquo;s own construction</strong>: it simply concatenates the two shared secrets and runs HKDF over them. It is sound and it is what this pane has always done, but it is <em>not</em> a wire format anybody else implements &mdash; a peer would have to have read our source. It is kept so old ciphertexts still open; prefer X-Wing for anything you want another implementation to read.</p>
+
+    <p class="ds-note" title="Which selector wins.">When Mode names a specific hybrid, that algorithm fixes its own ML-KEM parameter set &mdash; <em>ML-KEM-768 + ECDH P-256</em> is always ML-KEM-768 &mdash; so the <strong>Parameter Set</strong> selector at left applies only to <em>ML-KEM alone</em> and to the ad-hoc hybrid. The status line always names what was actually used.</p>
 
       <div class="ds-field">
         <label class="ds-has-copy" title="The value to encrypt, or where a decrypted value is put.">Plaintext <span class="ds-label-controls"><label class="ds-inline-check" title="Read and write this box as hexadecimal instead of text. Ticked automatically when a decrypted value is not valid UTF-8."><input type="checkbox" id="enc_kem_hex" /> hex</label><button type="button" class="ds-copy" onclick="return encryption_tools.copyField('enc_kem_plaintext');" title="Copy to clipboard">Copy</button></span></label>
@@ -434,9 +438,24 @@
           </div>
           <div class="ds-grow">
             <label title="Post-quantum alone, or concatenated with a classical X25519 secret.">Mode</label>
-          <select id="enc_kem_mode" name="enc_kem_mode" title="Whether a classical X25519 secret is mixed in.">
-            <option value="hybrid" selected="selected">Hybrid — ML-KEM + X25519</option>
-            <option value="pq">ML-KEM alone</option>
+          <select id="enc_kem_mode" name="enc_kem_mode" title="Plain ML-KEM, this page's own ad-hoc hybrid, or one of the standardised hybrid constructions.">
+            <optgroup label="FIPS 203 (published)">
+              <option value="pq">ML-KEM alone &mdash; the parameter set selected at left</option>
+            </optgroup>
+            <optgroup label="draft-connolly-cfrg-xwing-kem (DRAFT)">
+              <option value="X-Wing" selected="selected">X-Wing &mdash; ML-KEM-768 + X25519</option>
+            </optgroup>
+            <optgroup label="draft-ietf-lamps-pq-composite-kem-08 (DRAFT)">
+              <option value="MLKEM768-ECDH-P256">Composite &mdash; ML-KEM-768 + ECDH P-256</option>
+              <option value="MLKEM768-ECDH-P384">Composite &mdash; ML-KEM-768 + ECDH P-384</option>
+              <option value="MLKEM768-X25519">Composite &mdash; ML-KEM-768 + X25519</option>
+              <option value="MLKEM1024-ECDH-P384">Composite &mdash; ML-KEM-1024 + ECDH P-384</option>
+              <option value="MLKEM1024-ECDH-P521">Composite &mdash; ML-KEM-1024 + ECDH P-521</option>
+              <option value="MLKEM1024-X448">Composite &mdash; ML-KEM-1024 + X448</option>
+            </optgroup>
+            <optgroup label="This page's own construction &mdash; NOT a standard">
+              <option value="hybrid">Ad-hoc &mdash; ML-KEM ‖ X25519 concatenated, then HKDF</option>
+            </optgroup>
           </select>
           </div>
         </div>
@@ -606,6 +625,8 @@
   <!-- ===================== JWE (JSON Web Encryption) ===================== -->
   <fieldset id="pane_jwe">
     <legend>JWE (JSON Web Encryption) <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-badge-note">RFC 7516</span></legend>
+
+    <p class="ds-note" title="This absence was checked against the draft itself, not assumed.">&#9432; <strong>There is no post-quantum <code>alg</code> here, and that is a fact about the standards rather than a gap in this page.</strong> The pane above will encrypt to ML-KEM, X-Wing and six Composite ML-KEM pairings &mdash; but none of them can go in a JWE yet, because <strong>no JOSE binding for a post-quantum KEM has been specified</strong>. The document that will carry one is <code>draft-ietf-jose-pqc-kem</code>; despite the name, revision 06 specifies only the <em>COSE</em> binding &mdash; its running header reads &ldquo;PQ KEM for COSE&rdquo;, every binding section registers COSE codepoints, its key-derivation section begins &ldquo;The key derivation for COSE is performed using KMAC&rdquo;, and the word &ldquo;JOSE&rdquo; appears in it three times, twice in its own filename. So there is currently no registered <code>alg</code> value, no defined header parameter for the encapsulated key, and no JOSE-side KDF context to implement. Inventing them would produce a token nothing else could read. <strong>Signatures are the other way round</strong>: ML-DSA&rsquo;s JOSE binding is published as RFC 9964, and the Digital Signature page&rsquo;s JWS pane offers all thirteen post-quantum <code>alg</code> values today.</p>
     <p class="ds-note">The one pane whose output is a <em>protocol artifact</em> rather than raw bytes, and the reason it belongs in this debugger: a compact JWE is what an encrypted ID Token, a JAR request object and an OID4VCI encrypted credential response all are. It is the same module (<code>jose_jwe.js</code>) the VC issuance panes and JWT Tools use, so what this pane produces is what the rest of the debugger consumes. Note <code>A192GCM</code>: the RFC defines it and Chrome refuses every AES-192 operation, so the status line will say so rather than failing with an OperationError.</p>
 
       <div class="ds-field">
@@ -632,6 +653,9 @@
             <option value="A256GCM" selected="selected">A256GCM</option>
             <option value="A192GCM">A192GCM</option>
             <option value="A128GCM">A128GCM</option>
+            <option value="A128CBC-HS256">A128CBC-HS256</option>
+            <option value="A192CBC-HS384">A192CBC-HS384</option>
+            <option value="A256CBC-HS512">A256CBC-HS512</option>
           </select>
           </div>
         </div>

@@ -45,7 +45,7 @@
               <select class="stored" id="userinfo_method" name="userinfo_method"  >
                 <option value="GET" selected="selected">GET</option>
                 <option value="POST">POST</option>
-              </select
+              </select>
             </td>
           </tr>
           <tr>
@@ -85,6 +85,67 @@
               <input class="stored" id="token_access_token" name="token_access_token" type="text" max="150"/>
             </td>
           </tr>
+          <!-- ===================================================================
+               OIDC Core section 5.3.2: the UserInfo Response may be a JWT.
+
+               These five fields are everything needed to open one, and they are
+               HERE rather than on a pane of their own because they are settings
+               like the ones above them: a client registers once for a signed or
+               encrypted response and then every call comes back that way.
+
+               The two key fields are NOT SAVED — see loadValuesFromLocalStorage()
+               in client/src/userinfo.js. This page reads a response and
+               generates nothing, so it takes a private key and keeps none.
+               =================================================================== -->
+          <tr>
+            <td>
+              <div class="tooltip"><label>OP Signing Keys: </label><span class="tooltiptext">Where to get the key that verifies a signed UserInfo Response (userinfo_signed_response_alg). Prefilled from the JWKS endpoint the OAuth2/OIDC workflow loaded. An HS* response ignores this and uses the Client Secret below instead.</span>
+              </div>
+            </td>
+            <td>
+              <select class="stored" id="userinfo_jwks_source" name="userinfo_jwks_source">
+                <option value="jwks_url" selected="selected">JWKS URL (fetched)</option>
+                <option value="jwks_inline">JWK Set (pasted below)</option>
+              </select>
+              <input class="stored" id="userinfo_jwks" name="userinfo_jwks" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>Client Secret (HS* only): </label><span class="tooltiptext">The client_secret, used to verify an HS256/HS384/HS512 signed UserInfo Response — OIDC Core section 10.1's symmetric case, where the signing key is the client secret and there is no published key at all. NOT SAVED: this field is read when you press the button and never written to storage.</span>
+              </div>
+            </td>
+            <td>
+              <input id="userinfo_client_secret" name="userinfo_client_secret" type="password" size="60" autocomplete="off" /> (not saved)
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>Decryption Key: </label><span class="tooltiptext">The client's PRIVATE key, for an encrypted UserInfo Response (userinfo_encrypted_response_alg) — the private half of whichever key the client registered in its jwks. A private JWK or a PKCS#8 PEM. NOT SAVED: read when you press the button and never written to storage.</span>
+              </div>
+            </td>
+            <td>
+              <textarea rows=4 cols=60 id="userinfo_decryption_key" name="userinfo_decryption_key" autocomplete="off" placeholder="private JWK or PKCS#8 PEM — not saved"></textarea>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>Expected Issuer: </label><span class="tooltiptext">A signed UserInfo Response carries iss, and section 5.3.2 has the client check it. Prefilled from the issuer the OAuth2/OIDC workflow loaded. Leave it empty and the iss is reported but not checked.</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="userinfo_expected_issuer" name="userinfo_expected_issuer" type="text" size="60" />
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label>Expected Audience: </label><span class="tooltiptext">A signed UserInfo Response carries aud, which must be or include this client's client_id — the member that stops a signed profile issued for one client being believed by another. Prefilled from the client_id. Leave it empty and the aud is reported but not checked.</span>
+              </div>
+            </td>
+            <td>
+              <input class="stored" id="userinfo_expected_audience" name="userinfo_expected_audience" type="text" size="60" />
+            </td>
+          </tr>
         <tr>
           <td>
             <input class="btn2" type="submit" value="Retrieve UserInfo" onclick="return userinfo.callUserInfoEndpoint();" />
@@ -111,12 +172,30 @@
         </tr>
         <tr>
           <td>
-            <div class="tooltip"><label>Userinfo Output:</label><span class="tooltiptext">UserInfo Output.</span>
+            <div class="tooltip"><label>Userinfo Output:</label><span class="tooltiptext">The claims, after any signature has been verified and any encryption undone.</span>
             </div>
           </td>
           <td>
             <textarea rows=10 cols=75 id="userinfo_output" name="userinfo_output">
             </textarea>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Response Protection:</label><span class="tooltiptext">What was done to this response and what held: the content type, the JWE and JWS headers, whether the signature verified, and the section 5.3.2 checks on iss, aud and sub. Every step is named separately — "decrypted" is not "verified", because encryption says nothing about who issued a response.</span>
+            </div>
+          </td>
+          <td>
+            <textarea rows=9 cols=75 readonly="readonly" id="userinfo_protection_report" name="userinfo_protection_report"></textarea>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Raw Response:</label><span class="tooltiptext">The response exactly as it arrived, before anything was done to it. For a signed response these are the octets the signature is over, so this is the pane to copy out of — anything that has been parsed and re-serialized is no longer the signed bytes.</span>
+            </div>
+          </td>
+          <td>
+            <textarea rows=5 cols=75 readonly="readonly" id="userinfo_raw_response" name="userinfo_raw_response"></textarea>
           </td>
         </tr>
       </tbody>
@@ -127,7 +206,7 @@
   <div class="navbar">
     <a href="#" class="active" onclick="return userinfo.clickLink();">Home</a>
     <a href="/privacypolicy.html" onclick="return userinfo.clickLink();">Privacy Policy</a>
-    <a href="https://github.com/rcbj/oauth2-oidc-debugger/issues" target="_blank" rel="noopener noreferrer" onclick="return userinfo.clickLink();">Contact</a>
+    <a href="https://github.com/rcbj/id-proto-debugger/issues" target="_blank" rel="noopener noreferrer" onclick="return userinfo.clickLink();">Contact</a>
   </div>
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
 <link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">

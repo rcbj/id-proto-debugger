@@ -1,7 +1,14 @@
 ![OAuth2 / OIDC / SAML2 Debugger](docs/images/oauth2oidcdebugger+iyasec-logo-black.png)
 
-# OAuth2 + OpenID Connect (OIDC) Debugger
-[This](https://github.com/rcbj/oauth2-oidc-debugger) is the official home of the community Project.
+# id-proto-debugger
+[This](https://github.com/rcbj/id-proto-debugger) is the official home of the community Project.
+
+*Formerly `oauth2-oidc-debugger`.* The project was renamed on 2026-08-28: it debugs a
+good deal more than OAuth2 and OIDC now — SAML 2.0 and 1.1, WS-Trust, WS-Federation,
+SD-JWT VC, WebAuthn, Kerberos v5, SPNEGO, LDAP, SCIM 2.0, SPIFFE, X.509 PKI and
+standalone encryption — and the old name described the first two of them. Only the
+name changed; nothing about the code, the layout or the commands below did. The
+deployed sites keep their own names (`idptools.com`, `test.idptools.com`).
 
 This is a simple OAuth2 and OpenID Connect (OIDC) debugger (test tool) that I created as part of a Red Hat SSO blog post I wrote in November, 2017.  Since then, I have expanded support to include several major Identity Providers (see the complete list below). The blog post uses this debugger for testing the OpenID Connect setup.  So, checkout the blog for usage examples. This project builds a docker container that runs the debugger application.
 
@@ -128,8 +135,8 @@ The debugger has been tested with recent versions of Chrome.
 ## Getting Started
 If you have docker / docker-compose installed already:
 ```
-git clone --recurse-submodules https://github.com/rcbj/oauth2-oidc-debugger.git
-cd oauth2-oidc-debugger
+git clone --recurse-submodules https://github.com/rcbj/id-proto-debugger.git
+cd id-proto-debugger
 sudo CONFIG_FILE=./env/local.js docker-compose build
 sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
@@ -166,10 +173,10 @@ uninitialised `api/node-ldapjs/` does not break anything today; the bare
 From a bash command prompt on Fedora or RHEL 7.x, run the following::
 ```
 dnf install git # Or, yum install git
-git clone --recurse-submodules https://github.com/rcbj/oauth2-oidc-debugger.git
+git clone --recurse-submodules https://github.com/rcbj/id-proto-debugger.git
 dnf install docker
 systemctl start docker
-cd oauth2-oidc-debugger
+cd id-proto-debugger
 sudo CONFIG_FILE=./env/local.js docker-compose build
 sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
@@ -267,10 +274,10 @@ To run this project you will need to install docker.
 
 ## Building the docker image
 ``` yum install git
- git clone --recurse-submodules https://github.com/rcbj/oauth2-oidc-debugger.git
+ git clone --recurse-submodules https://github.com/rcbj/id-proto-debugger.git
  yum install docker
  system start docker
- cd oauth2-oidc-debugger/client
+ cd id-proto-debugger/client
  sudo docker build -t rcbj/debugger-client --build-arg CONFIG_FILE=./env/local.js -f client/Dockerfile .
  sudo docker run -p 3000:3000 -e CONFIG_FILE=./env/local.js -d rcbj/debugger-client
  sudo docker build -t rcbj/debugger-api --build-arg CONFIG_FILE=./env/local.js -f api/Dockerfile .

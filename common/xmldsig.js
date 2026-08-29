@@ -2068,6 +2068,108 @@ function verifyXml(xml, opts) {
   return result;
 }
 
+// --- Verifying a redirect-binding query-string signature --------------------
+// The counterpart of signQueryString() above, and it lives down here rather
+// than beside it because it reads the GENERAL engine's tables: a message
+// arriving from somebody else's identity provider may be signed with anything
+// the registry names, while what this application SENDS is the RSA family
+// signQueryString() covers. SIG_METHODS knows ECDSA and the RFC 9231 PSS URIs
+// as well, and saying "ECDSA-SHA256, pass a verifier" is worth more to
+// somebody debugging than "unsupported SigAlg".
+//
+// What is verified is the octet string EXACTLY as given. saml-bindings-2.0-os
+// section 3.4.4.1 signs the query string as it will be SENT — the
+// percent-encoded `SAMLRequest=…&RelayState=…&SigAlg=…`, in that order, with
+// the Signature parameter itself excluded — so a caller that re-orders the
+// parameters or decodes them first has changed the message and will get a
+// clean INVALID for a signature that is in fact good. saml_message.js's
+// redirectSignedOctets() is what rebuilds them from a URL in the order they
+// appeared, which is the only order that can be right.
+//
+// opts: { signature (base64), sigAlg, certPem | publicKeyPem, verifier }
+// Returns { valid, error, signatureMethod, label, signerSubject } — an `error`
+// rather than a throw for every reason a debugger's user can cause, because
+// this is called on a paste.
+function verifyQueryString(queryString, opts) {
+  log.debug("Entering verifyQueryString().");
+  opts = opts || {};
+  if (!opts.signature) {
+    log.debug("Leaving verifyQueryString(). No signature.");
+    return { valid: false, error: 'No Signature parameter to verify.' };
+  }
+  var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
+  var spec;
+  try {
+    spec = sigMethod(sigAlg);
+  } catch (e) {
+    log.debug("Leaving verifyQueryString(). Unknown SigAlg.");
+    return { valid: false, error: e.message, signatureMethod: sigAlg };
+  }
+  var certPem = opts.certPem ? pemWrapCert(opts.certPem) : '';
+  var cert = null, publicKey = null;
+  if (certPem) {
+    try {
+      cert = forge.pki.certificateFromPem(certPem);
+      publicKey = cert.publicKey;
+    } catch (e) {
+      log.debug("Leaving verifyQueryString(). Bad certificate.");
+      return { valid: false, signatureMethod: sigAlg, label: spec.label,
+              error: 'Could not parse the signing certificate: ' + e.message };
+    }
+  } else if (opts.publicKeyPem) {
+    try {
+      publicKey = forge.pki.publicKeyFromPem(opts.publicKeyPem);
+    } catch (e) {
+      log.debug("Leaving verifyQueryString(). Bad public key.");
+      return { valid: false, signatureMethod: sigAlg, label: spec.label,
+              error: 'Could not parse the public key: ' + e.message };
+    }
+  }
+  // A redirect-binding signature is DETACHED and carries no KeyInfo — there is
+  // nowhere in the query string to put one. So unlike verifyXml(), which can
+  // fall back to the certificate the document brought with it, this cannot
+  // proceed without a key from the caller, and saying so is the whole message.
+  if (!publicKey && !opts.verifier) {
+    log.debug("Leaving verifyQueryString(). No key.");
+    return { valid: false, signatureMethod: sigAlg, label: spec.label,
+            error: 'A redirect-binding signature is detached and carries no ' +
+                   'KeyInfo, so the signer\'s certificate has to be ' +
+                   'supplied.' };
+  }
+  var signature;
+  try {
+    signature = forge.util.decode64(opts.signature);
+  } catch (e) {
+    log.debug("Leaving verifyQueryString(). Signature not base64.");
+    return { valid: false, signatureMethod: sigAlg, label: spec.label,
+            error: 'The Signature parameter is not valid base64: ' +
+                   e.message };
+  }
+  // encodeUtf8 rather than the raw string, so these are byte-for-byte the
+  // octets signQueryString()'s `md.update(queryString, 'utf8')` hashes. The two
+  // agree on every ASCII query string, which is all of them — this is here so
+  // that stays true rather than by luck.
+  var octets = forge.util.encodeUtf8(queryString);
+  var valid;
+  try {
+    valid = opts.verifier
+      ? !!opts.verifier(octets, signature, spec, publicKey)
+      : defaultVerify(octets, signature, spec, publicKey);
+  } catch (e) {
+    log.debug("Leaving verifyQueryString(). Verification threw.");
+    return { valid: false, signatureMethod: sigAlg, label: spec.label,
+            signerSubject: cert ? certSubjectCN(cert) : '',
+            error: e.message };
+  }
+  log.debug("Leaving verifyQueryString().");
+  return {
+    valid: !!valid,
+    signatureMethod: sigAlg,
+    label: spec.label,
+    signerSubject: cert ? certSubjectCN(cert) : ''
+  };
+}
+
 module.exports = {
   forge: forge,
   DS_NS: DS_NS,
@@ -2116,6 +2218,7 @@ module.exports = {
   signXml: signXml,
   verifyXml: verifyXml,
   signQueryString: signQueryString,
+  verifyQueryString: verifyQueryString,
   signWsSecurity: signWsSecurity,
   verifyXmlSignature: verifyXmlSignature,
   generateKeyPair: generateKeyPair,
