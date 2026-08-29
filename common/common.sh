@@ -1944,16 +1944,31 @@ configureKeycloak()
       | cut -d '/' -f 1 \
       | rev \
       | tr -d ' \n\r')
-    if [ -z "${CLIENT_ID}" ] || \
-       [ -z "${CLIENT_CLIENTID}" ] || \
-       [ -z "${CLIENT_SECRET}" ] || \
-       [ -z "${SCOPE_ID}" ] || \
-       [ -z "${SCOPE_NAME}" ] || \
-       [ -z "${USER_ID}" ];
+    # Name the variable that is blank rather than only the fact that one is.
+    # Each of these is read out of a curl response, so a blank one is a failed
+    # call — and the failure that actually happens is a 409 on the user POST
+    # (no Location header, so USER_ID is empty) when a debugger-testing realm
+    # survived from a previous run. The old message named nothing and the
+    # caller had to re-run the curl by hand to find out which.
+    BLANK_VARIABLES=""
+    for REQUIRED_VARIABLE in CLIENT_ID CLIENT_CLIENTID CLIENT_SECRET \
+                             SCOPE_ID SCOPE_NAME USER_ID
+    do
+      if [ -z "${!REQUIRED_VARIABLE}" ];
+      then
+        BLANK_VARIABLES="${BLANK_VARIABLES} ${REQUIRED_VARIABLE}"
+      fi
+    done
+    if [ -n "${BLANK_VARIABLES}" ];
     then
-      echo "Required variable is blank."
+      echo "Required variable is blank, provisioning ${FLOW_NAME}:" \
+           "${BLANK_VARIABLES# }" >&2
+      echo "A blank USER_ID here is a 409 from Keycloak — the" \
+           "debugger-testing realm already holds this user, so the realm" \
+           "was not reset before configureKeycloak. See" \
+           "resetKeycloakRealm()." >&2
       exit 1
-    fi 
+    fi
     curl \
       -X PUT \
       "${KEYCLOAK_LOCALHOST_BASE_URL}/admin/realms/debugger-testing/users/${USER_ID}/reset-password" \
