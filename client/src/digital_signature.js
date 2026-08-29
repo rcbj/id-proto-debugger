@@ -3,13 +3,25 @@
 // Notes:
 //
 // Standalone Digital Signature tool. Asymmetric panes:
-//   #1 SLH-DSA (FIPS 205, post-quantum)      — @noble/post-quantum
+//   #1 SLH-DSA (FIPS 205, post-quantum)      — ./pqc
 //   #2 RSA (PKCS#1 v1.5 / PSS) + any hash     — node-forge (keygen) +
 //   pure-JS padding
 //   #3 ECC (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA) + any hash —
 //   @noble/curves
-//   #4 ML-DSA (FIPS 204, post-quantum)        — @noble/post-quantum
-//   #5 BBS over BLS12-381, both ciphersuites  — ./bbs, shared with bbs-2023
+//   #4 ML-DSA (FIPS 204, post-quantum)        — ./pqc
+//   #5 Composite ML-DSA (PQ/T hybrid, draft)  — ./pqc
+//   #6 BBS over BLS12-381, both ciphersuites  — ./bbs, shared with bbs-2023
+//
+// THREE OF THOSE ARE POST-QUANTUM AND THEY DO NOT ALL REST ON THE SAME KIND OF
+// DOCUMENT, which is the thing this page has to keep straight: ML-DSA's JOSE
+// binding is a published RFC (9964), SLH-DSA's is an Internet-Draft, and the
+// composite algorithms are a second draft. Every one of them goes through
+// ./pqc, whose SPECS table is the single place that says which — so a pane
+// cannot forget to warn and two panes cannot disagree.
+//
+// FN-DSA (Falcon) IS DELIBERATELY ABSENT and pqc.js's MISSING table says why:
+// the specification exists, the implementation this bundle could load does
+// not.
 // followed by the symmetric MAC panes, which are labelled separately because a
 // MAC is not a digital signature.
 //
@@ -21,8 +33,6 @@
 //
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
-var slh = require("@noble/post-quantum/slh-dsa.js");
-var mldsa = require("@noble/post-quantum/ml-dsa.js");
 var forge = require("node-forge");
 var p256 = require("@noble/curves/p256").p256;
 var p384 = require("@noble/curves/p384").p384;
@@ -43,11 +53,22 @@ var nobleBlake3 = require("@noble/hashes/blake3").blake3;
 var nobleHmac = require("@noble/hashes/hmac").hmac;
 var nobleKmac128 = require("@noble/hashes/sha3-addons").kmac128;
 var nobleKmac256 = require("@noble/hashes/sha3-addons").kmac256;
-// Pane #5's BBS is NOT a fifth implementation: it is the module the SD-JWT VC
+// Pane #6's BBS is NOT a sixth implementation: it is the module the SD-JWT VC
 // workflow already signs bbs-2023 credentials with. Anything this pane needs
 // that it did not have — the second ciphersuite, KeyGen — belongs there rather
 // than here, so both callers get it and tests/bbs_crypto.js checks it.
+// The post-quantum registry: every PQ algorithm on this page, which standard
+// each one is, and the AKP key encoding RFC 9964 defines for all of them.
+// Panes #1, #4, #8 and #9 all go through it, so "which draft is this" is
+// answered in one place rather than four.
+var pqc = require("./pqc");
 var bbs = require("./bbs");
+// The two STATEFUL hash-based schemes SP 800-208 approves. It is a separate
+// module from pqc.js, which holds the stateless post-quantum algorithms,
+// because statefulness is the whole difference: everything in there is a
+// function of its inputs, and everything in here spends a one-time key and
+// hands back a private key that has changed.
+var hbs = require("./hbs");
 // Panes #6 and #7. Both are engines with NO DOM, for the reason the header of
 // each one gives: a JWS and an XML Signature are wire formats somebody else's
 // library has to read, so the bytes are asserted in node against OpenSSL and
@@ -62,28 +83,27 @@ log.info("Log initialized. logLevel=" + log.level());
 // ---------------------------------------------------------------------------
 // SLH-DSA parameter sets (FIPS 205). Keyed by the label shown in the dropdown.
 // ---------------------------------------------------------------------------
-var PARAM_SETS = {
-  'SLH-DSA-SHA2-128s': slh.slh_dsa_sha2_128s,
-  'SLH-DSA-SHA2-128f': slh.slh_dsa_sha2_128f,
-  'SLH-DSA-SHA2-192s': slh.slh_dsa_sha2_192s,
-  'SLH-DSA-SHA2-192f': slh.slh_dsa_sha2_192f,
-  'SLH-DSA-SHA2-256s': slh.slh_dsa_sha2_256s,
-  'SLH-DSA-SHA2-256f': slh.slh_dsa_sha2_256f,
-  'SLH-DSA-SHAKE-128s': slh.slh_dsa_shake_128s,
-  'SLH-DSA-SHAKE-128f': slh.slh_dsa_shake_128f,
-  'SLH-DSA-SHAKE-192s': slh.slh_dsa_shake_192s,
-  'SLH-DSA-SHAKE-192f': slh.slh_dsa_shake_192f,
-  'SLH-DSA-SHAKE-256s': slh.slh_dsa_shake_256s,
-  'SLH-DSA-SHAKE-256f': slh.slh_dsa_shake_256f
-};
+// All twelve FIPS 205 parameter sets, taken from the shared registry. Only
+// two of them have a JOSE `alg` name (see pqc.js); the raw pane offers all
+// twelve because the PRIMITIVE is standardised even where the envelope
+// binding is not.
+var PARAM_SETS = {};
+(function () {
+  var names = Object.keys(pqc.SIGNATURE_ALGS);
+  for (var i = 0; i < names.length; i++) {
+    if (pqc.SIGNATURE_ALGS[names[i]].family === 'SLH-DSA') {
+      PARAM_SETS[names[i]] = pqc.SIGNATURE_ALGS[names[i]];
+    }
+  }
+})();
 
 // ---------------------------------------------------------------------------
 // ML-DSA parameter sets (FIPS 204, formerly CRYSTALS-Dilithium).
 // ---------------------------------------------------------------------------
 var ML_PARAM_SETS = {
-  'ML-DSA-44': mldsa.ml_dsa44,
-  'ML-DSA-65': mldsa.ml_dsa65,
-  'ML-DSA-87': mldsa.ml_dsa87
+  'ML-DSA-44': pqc.SIGNATURE_ALGS['ML-DSA-44'],
+  'ML-DSA-65': pqc.SIGNATURE_ALGS['ML-DSA-65'],
+  'ML-DSA-87': pqc.SIGNATURE_ALGS['ML-DSA-87']
 };
 
 // ---------------------------------------------------------------------------
@@ -201,6 +221,55 @@ var CURVES = {
 // ===========================================================================
 // Pane #1 — SLH-DSA (post-quantum)
 // ===========================================================================
+
+// ---------------------------------------------------------------------------
+// The two controls FIPS 204 §5.4 / FIPS 205 §10.2.2 and §5.2 added to both
+// post-quantum panes, read in one place because both panes offer them and a
+// disagreement between the two readings would be invisible.
+//
+// `ctx` is the CONTEXT STRING: up to 255 bytes mixed into the formatted
+// message, so a signature made for one application cannot be replayed into
+// another. It defaults to empty, which is the pure algorithm — and which
+// RFC 9964 REQUIRES for the JOSE algorithms, so a non-empty context here is
+// deliberately a raw-primitive-only feature.
+//
+// `prehash` selects HashML-DSA / HashSLH-DSA instead of the pure variant.
+// These are DIFFERENT ALGORITHMS with different OIDs, not an optimisation:
+// a pure verifier will not accept a pre-hashed signature.
+function pqOptions(ctxFieldId, prehashFieldId) {
+  log.debug("Entering pqOptions().");
+  var opts = {};
+  var ctx = val(ctxFieldId);
+  if (ctx) {
+    var ctxBytes = strBytes(ctx);
+    if (ctxBytes.length > 255) {
+      log.debug("Leaving pqOptions(). Context too long.");
+      throw new Error('The context string is limited to 255 bytes by ' +
+          'FIPS 204 section 5.2; this one is ' + ctxBytes.length + '.');
+    }
+    opts.context = ctxBytes;
+  }
+  var ph = val(prehashFieldId);
+  if (ph && ph !== 'pure') {
+    opts.prehash = pqc.prehash(ph);
+  }
+  log.debug("Leaving pqOptions().");
+  return opts;
+}
+
+// What the status line says about which variant just ran, so the difference
+// between a pure and a pre-hashed signature is visible rather than implied.
+function pqVariantLabel(opts) {
+  log.debug("Entering pqVariantLabel().");
+  var parts = [];
+  parts.push(opts.prehash ? 'pre-hash' : 'pure');
+  if (opts.context) {
+    parts.push('ctx ' + opts.context.length + ' B');
+  }
+  log.debug("Leaving pqVariantLabel().");
+  return parts.join(', ');
+}
+
 function currentAlg() {
   log.debug("Entering currentAlg().");
   var name = val('ds_param');
@@ -273,10 +342,20 @@ async function downloadKeys() {
                       'application/x-pem-file');
       setVal('ds_status', 'Downloaded key pair (slh-dsa-keys.pem).');
     } else if (fmt === 'jwk') {
+      // RFC 9964 §3: AKP carries `pub` and `priv`, NOT the OKP names `x`
+      // and `d` this pane used to borrow. An AKP JWK with `x`/`d` is
+      // readable by this page and by no conforming implementation, which is
+      // the whole reason the export goes through pqc.js now.
+      //
+      // Note the ten parameter sets with no JOSE `alg` name still get a JWK
+      // here: the KEY encoding is well defined for all twelve, and it is only
+      // the `alg` identifier that draft-ietf-cose-sphincs-plus limits to two.
+      // The status line says so rather than the file quietly implying
+      // otherwise.
       var alg = val('ds_param');
-      var pubJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)), use: 'sig' };
-      var privJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)),
-          d: b64u(pemToRaw(priv)), use: 'sig' };
+      var pubJwk = pqc.akpPublicJwk(alg, pemToRaw(pub), { use: 'sig' });
+      var privJwk = pqc.akpPrivateJwk(alg, pemToRaw(pub), pemToRaw(priv),
+                                      { use: 'sig' });
       await downloadJwkSet([pubJwk, privJwk], pw, 'slh-dsa-keys', 'ds_status');
     } else {
       setVal('ds_status', fmt.toUpperCase() +
@@ -296,12 +375,14 @@ function sign() {
   setVal('ds_status', 'Signing with ' + name + '…');
   defer(function () {
     try {
-      var alg = currentAlg();
+      var opts = pqOptions('ds_ctx', 'ds_prehash');
       var sk = pemToRaw(val('ds_private_key'));
-      var sig = alg.sign(sk, strBytes(val('ds_value')));
+      // Argument order is (message, key) — @noble/post-quantum reversed it
+      // in 0.5.0 and this call site is one of the ones that had to move.
+      var sig = currentAlg().sign(strBytes(val('ds_value')), sk, opts);
       setVal('ds_signature', bytesToB64(sig));
-      setVal('ds_status', 'Signed (' + name + ') — signature is ' + sig.length +
-             ' bytes.');
+      setVal('ds_status', 'Signed (' + name + ', ' + pqVariantLabel(opts) +
+             ') — signature is ' + sig.length + ' bytes.');
     } catch (e) {
       log.error('sign: ' + e.message);
       setVal('ds_status', 'Sign error: ' + e.message +
@@ -318,9 +399,9 @@ function validate() {
   setVal('ds_status', 'Validating signature with ' + name + '…');
   defer(function () {
     try {
-      var alg = currentAlg();
-      var ok = alg.verify(pemToRaw(val('ds_public_key')),
-          strBytes(val('ds_value')), b64ToBytes(val('ds_signature')));
+      var opts = pqOptions('ds_ctx', 'ds_prehash');
+      var ok = currentAlg().verify(b64ToBytes(val('ds_signature')),
+          strBytes(val('ds_value')), pemToRaw(val('ds_public_key')), opts);
       setVal('ds_status', ok
         ? 'Signature VALID ✓ — the signature matches the value and public key.'
         : 'Signature INVALID ✗ — the signature does not verify.');
@@ -352,11 +433,18 @@ function mldsaGenerateKeys() {
   setVal('ds_ml_status', 'Generating ' + name + ' key pair…');
   defer(function () {
     try {
-      var kp = currentMldsaAlg().keygen();
-      setVal('ds_ml_private_key', rawToPem(kp.secretKey, 'ML-DSA PRIVATE KEY'));
-      setVal('ds_ml_public_key', rawToPem(kp.publicKey, 'ML-DSA PUBLIC KEY'));
+      // THE PRIVATE KEY FIELD HOLDS THE 32-BYTE SEED, not the expanded
+      // 2560/4032/4896-byte key. RFC 9964 §3.2 makes the seed the only
+      // permitted `priv` value for an ML-DSA AKP JWK, and carrying two
+      // representations on one page is how the two get swapped. The signing
+      // primitive's expanded key is re-derived on each use, which costs
+      // well under a millisecond.
+      var kp = pqc.generateAkpKeyPair(val('ds_ml_param'));
+      setVal('ds_ml_private_key', rawToPem(kp.priv, 'ML-DSA PRIVATE KEY SEED'));
+      setVal('ds_ml_public_key', rawToPem(kp.pub, 'ML-DSA PUBLIC KEY'));
       setVal('ds_ml_status', 'Generated ' + name + ' key pair (public ' +
-        kp.publicKey.length + ' B, secret ' + kp.secretKey.length + ' B).');
+        kp.pub.length + ' B, private key seed ' + kp.priv.length + ' B — ' +
+        'RFC 9964 section 3.2 carries the seed, not the expanded key).');
     } catch (e) {
       log.error('mldsaGenerateKeys: ' + e.message);
       setVal('ds_ml_status', 'Key generation error: ' + e.message);
@@ -372,11 +460,15 @@ function mldsaSign() {
   setVal('ds_ml_status', 'Signing with ' + name + '…');
   defer(function () {
     try {
-      var sig = currentMldsaAlg().sign(pemToRaw(val('ds_ml_private_key')),
-          strBytes(val('ds_ml_value')));
+      var opts = pqOptions('ds_ml_ctx', 'ds_ml_prehash');
+      // The private key field holds the 32-byte SEED (RFC 9964 §3.2), not the
+      // expanded key, so signWithPriv() re-derives before signing.
+      var sig = pqc.signWithPriv(val('ds_ml_param'),
+          strBytes(val('ds_ml_value')),
+          pemToRaw(val('ds_ml_private_key')), opts);
       setVal('ds_ml_signature', bytesToB64(sig));
-      setVal('ds_ml_status', 'Signed (' + name + ') — signature is ' +
-             sig.length + ' bytes.');
+      setVal('ds_ml_status', 'Signed (' + name + ', ' + pqVariantLabel(opts) +
+             ') — signature is ' + sig.length + ' bytes.');
     } catch (e) {
       log.error('mldsaSign: ' + e.message);
       setVal('ds_ml_status', 'Sign error: ' + e.message +
@@ -393,8 +485,10 @@ function mldsaValidate() {
   setVal('ds_ml_status', 'Validating signature with ' + name + '…');
   defer(function () {
     try {
-      var ok = currentMldsaAlg().verify(pemToRaw(val('ds_ml_public_key')),
-          strBytes(val('ds_ml_value')), b64ToBytes(val('ds_ml_signature')));
+      var opts = pqOptions('ds_ml_ctx', 'ds_ml_prehash');
+      var ok = currentMldsaAlg().verify(b64ToBytes(val('ds_ml_signature')),
+          strBytes(val('ds_ml_value')),
+          pemToRaw(val('ds_ml_public_key')), opts);
       setVal('ds_ml_status', ok
         ? 'Signature VALID ✓ — the signature matches the value and public key.'
         : 'Signature INVALID ✗ — the signature does not verify.');
@@ -431,10 +525,12 @@ async function mldsaDownloadKeys() {
                       'application/x-pem-file');
       setVal('ds_ml_status', 'Downloaded key pair (ml-dsa-keys.pem).');
     } else if (fmt === 'jwk') {
+      // As above: `pub`/`priv` per RFC 9964 §3, and `priv` is the seed the
+      // key field already holds.
       var alg = val('ds_ml_param');
-      var pubJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)), use: 'sig' };
-      var privJwk = { kty: 'AKP', alg: alg, x: b64u(pemToRaw(pub)),
-          d: b64u(pemToRaw(priv)), use: 'sig' };
+      var pubJwk = pqc.akpPublicJwk(alg, pemToRaw(pub), { use: 'sig' });
+      var privJwk = pqc.akpPrivateJwk(alg, pemToRaw(pub), pemToRaw(priv),
+                                      { use: 'sig' });
       await downloadJwkSet([pubJwk, privJwk], pw, 'ml-dsa-keys',
                            'ds_ml_status');
     } else {
@@ -872,7 +968,186 @@ function eccValidate() {
 }
 
 // ===========================================================================
-// Pane #5 — BBS over BLS12-381 (draft-irtf-cfrg-bbs-signatures)
+// Pane #5 — Composite ML-DSA. draft-ietf-jose-pq-composite-sigs-03.
+// ===========================================================================
+function compositeGenerateKeys() {
+  log.debug("Entering compositeGenerateKeys().");
+  var name = val('ds_comp_param');
+  setVal('ds_comp_status', 'Generating ' + name + ' key pair…');
+  defer(function () {
+    try {
+      var kp = pqc.generateAkpKeyPair(name);
+      var entry = pqc.signatureAlg(name);
+      var cfg = pqc.COMPOSITE_ALGS[name];
+      setVal('ds_comp_private_key',
+             rawToPem(kp.priv, 'COMPOSITE ML-DSA PRIVATE KEY'));
+      setVal('ds_comp_public_key',
+             rawToPem(kp.pub, 'COMPOSITE ML-DSA PUBLIC KEY'));
+      setVal('ds_comp_status', 'Generated ' + name + ' key pair — public ' +
+        kp.pub.length + ' B (' + cfg.mldsa + ' followed by ' + cfg.trad +
+        '), private ' + kp.priv.length + ' B (32-byte ML-DSA seed followed ' +
+        'by the ' + cfg.trad + ' key). Signature will be ' +
+        entry.lengths.signature + ' B. ' + draftWarning(name));
+    } catch (e) {
+      log.error('compositeGenerateKeys: ' + e.message);
+      setVal('ds_comp_status', 'Key generation error: ' + e.message);
+    }
+  });
+  log.debug("Leaving compositeGenerateKeys().");
+  return false;
+}
+
+function compositeSign() {
+  log.debug("Entering compositeSign().");
+  var name = val('ds_comp_param');
+  setVal('ds_comp_status', 'Signing with ' + name + '…');
+  defer(function () {
+    try {
+      var cfg = pqc.COMPOSITE_ALGS[name];
+      var sig = pqc.signWithPriv(name, strBytes(val('ds_comp_value')),
+                                 pemToRaw(val('ds_comp_private_key')));
+      setVal('ds_comp_signature', bytesToB64(sig));
+      setVal('ds_comp_status', 'Signed (' + name + ') — ' + sig.length +
+             ' bytes: the ' + cfg.mldsa + ' signature followed by the ' +
+             cfg.trad + ' one, both over M′ = Prefix ‖ "' + cfg.label +
+             '" ‖ 0x00 ‖ PH(M).');
+    } catch (e) {
+      log.error('compositeSign: ' + e.message);
+      setVal('ds_comp_status', 'Sign error: ' + e.message);
+    }
+  });
+  log.debug("Leaving compositeSign().");
+  return false;
+}
+
+// The one place this pane earns its keep. A composite signature can fail in
+// three distinguishable ways and "invalid" would hide the difference:
+// malformed (wrong length), one half bad (a stripped or substituted
+// component), or both bad (wrong key, wrong message). The first is a parsing
+// problem and the second is an attack shape.
+function compositeValidate() {
+  log.debug("Entering compositeValidate().");
+  var name = val('ds_comp_param');
+  setVal('ds_comp_status', 'Validating signature with ' + name + '…');
+  defer(function () {
+    try {
+      var entry = pqc.signatureAlg(name);
+      var cfg = pqc.COMPOSITE_ALGS[name];
+      var sig = b64ToBytes(val('ds_comp_signature'));
+      var msg = strBytes(val('ds_comp_value'));
+      var pub = pemToRaw(val('ds_comp_public_key'));
+      var parts = entry.components(sig, msg, pub);
+      if (!parts.wellFormed) {
+        setVal('ds_comp_status', 'Signature MALFORMED ✗ — a ' + name +
+          ' signature is exactly ' + entry.lengths.signature + ' bytes (' +
+          cfg.mldsa + ' then ' + cfg.trad + ') and this one is ' +
+          sig.length + '. Nothing was verified.');
+        return;
+      }
+      if (parts.mldsa && parts.trad) {
+        setVal('ds_comp_status', 'Signature VALID ✓ — BOTH halves verify: ' +
+          'the ' + cfg.mldsa + ' component and the ' + cfg.trad +
+          ' component.');
+        return;
+      }
+      setVal('ds_comp_status', 'Signature INVALID ✗ — the ' + cfg.mldsa +
+        ' half ' + (parts.mldsa ? 'VERIFIES' : 'does NOT verify') +
+        ' and the ' + cfg.trad + ' half ' +
+        (parts.trad ? 'VERIFIES' : 'does NOT verify') +
+        '. A composite requires both, so this signature is rejected' +
+        (parts.mldsa !== parts.trad
+          ? ' — exactly one half failing is what a substituted or stripped ' +
+            'component looks like.'
+          : '.'));
+    } catch (e) {
+      log.error('compositeValidate: ' + e.message);
+      setVal('ds_comp_status', 'Validation error: ' + e.message);
+    }
+  });
+  log.debug("Leaving compositeValidate().");
+  return false;
+}
+
+async function compositeDownloadKeys() {
+  log.debug("Entering compositeDownloadKeys().");
+  await downloadAkpKeys({
+    format: val('ds_comp_ks_format') || 'pem',
+    password: val('ds_comp_ks_password'),
+    alg: val('ds_comp_param'),
+    priv: val('ds_comp_private_key'),
+    pub: val('ds_comp_public_key'),
+    basename: 'composite-ml-dsa-keys',
+    statusId: 'ds_comp_status',
+    family: 'Composite ML-DSA'
+  });
+  log.debug("Leaving compositeDownloadKeys().");
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// The download both new panes share. The two older post-quantum panes each
+// have their own copy for a reason that has expired — they were written before
+// there was a second one — and they are left alone rather than folded in here,
+// because their Selenium job asserts on their exact status sentences.
+// ---------------------------------------------------------------------------
+async function downloadAkpKeys(opts) {
+  log.debug("Entering downloadAkpKeys().");
+  if (!opts.priv && !opts.pub) {
+    setVal(opts.statusId, 'Nothing to download — generate a key pair first.');
+    log.debug("Leaving downloadAkpKeys(). Nothing to download.");
+    return false;
+  }
+  try {
+    if (opts.format === 'pem') {
+      if (opts.password) {
+        setVal(opts.statusId, 'Password protection for ' + opts.family +
+               ' is only available in JWK format. Choose JWK.');
+        log.debug("Leaving downloadAkpKeys(). Password with PEM.");
+        return false;
+      }
+      triggerDownload(opts.basename + '.pem', opts.pub + '\n' + opts.priv,
+                      'application/x-pem-file');
+      setVal(opts.statusId, 'Downloaded key pair (' + opts.basename + '.pem).');
+    } else if (opts.format === 'jwk') {
+      // kty AKP with `pub` and `priv`, per RFC 9964 section 3 — the key type
+      // every post-quantum algorithm on this page shares.
+      var pubJwk = pqc.akpPublicJwk(opts.alg, pemToRaw(opts.pub),
+                                    { use: 'sig' });
+      var privJwk = pqc.akpPrivateJwk(opts.alg, pemToRaw(opts.pub),
+                                      pemToRaw(opts.priv), { use: 'sig' });
+      await downloadJwkSet([pubJwk, privJwk], opts.password, opts.basename,
+                           opts.statusId);
+    } else {
+      setVal(opts.statusId, opts.format.toUpperCase() + ' export is not ' +
+             'supported for ' + opts.family + ' keys. Use PEM or JWK.');
+    }
+  } catch (e) {
+    log.error('downloadAkpKeys: ' + e.message);
+    setVal(opts.statusId, 'Download error: ' + e.message);
+  }
+  log.debug("Leaving downloadAkpKeys().");
+  return false;
+}
+
+// The sentence a pane appends when the algorithm it just used rests on an
+// Internet-Draft rather than a published standard. It comes from pqc.js's
+// SPECS table so that the page and the engine cannot disagree about what is
+// settled — and so that a draft revision is named, since "implements the
+// draft" without one is the claim that ages worst.
+function draftWarning(algName) {
+  log.debug("Entering draftWarning(). alg=" + algName);
+  var entry = pqc.SIGNATURE_ALGS[algName];
+  if (!entry) {
+    log.debug("Leaving draftWarning(). Unknown algorithm.");
+    return '';
+  }
+  var note = pqc.specNote(entry.spec);
+  log.debug("Leaving draftWarning().");
+  return note;
+}
+
+// ===========================================================================
+// Pane #6 — BBS over BLS12-381 (draft-irtf-cfrg-bbs-signatures)
 //
 // The one pane whose signature is not over a single value: BBS signs an
 // ORDERED LIST of messages, and its point is what comes next — the holder
@@ -1304,7 +1579,7 @@ function macVerify(prefix) {
 }
 
 // ===========================================================================
-// Pane #6 — JWS (JSON Web Signature, RFC 7515)
+// Pane #7 — JWS (JSON Web Signature, RFC 7515)
 //
 // The pane that is about a SERIALIZATION rather than about a primitive. Every
 // algorithm here is one the panes above already have — HMAC, RSA in both
@@ -1624,7 +1899,7 @@ async function jwsDownloadKeys() {
 }
 
 // ===========================================================================
-// Pane #7 — XML Digital Signature (W3C XMLDSIG, RFC 3275)
+// Pane #8 — XML Digital Signature (W3C XMLDSIG, RFC 3275)
 //
 // The other pane about an envelope rather than a primitive, and the one with
 // the most ways to produce a signature that is cryptographically perfect and
@@ -2042,6 +2317,13 @@ window.onload = function () {
   setVal('ds_rsa_value', 'Sign me with RSA!');
   setVal('ds_ecc_value', 'Sign me with ECC!');
   setVal('ds_ml_value', 'Sign me with ML-DSA!');
+  // The stateful pane. Two values, because the pane's second half signs BOTH
+  // of them from one one-time key to show what that costs, and a pair that
+  // differs in the way a forgery would is more use than lorem ipsum.
+  setVal('ds_hbs_value', 'firmware image 2.1.0 — sha256:6b86b273ff34fce1');
+  setVal('ds_hbs_value_b', 'firmware image 2.1.0 — sha256:d4735e3a265e16ee');
+  hbsShowGroups();
+  hbsRefreshState();
   // BBS signs a LIST, so its pane is seeded with one — plus the two octet
   // strings the draft binds in (header, presentation header) and a disclosure
   // selection, so "Derive Proof" does something meaningful on first use.
@@ -2085,6 +2367,252 @@ window.onload = function () {
   log.debug("Leaving onload().");
 };
 
+// ===========================================================================
+// Stateful hash-based signatures — LMS/HSS (RFC 8554, RFC 9858) and
+// XMSS/XMSS^MT (RFC 8391, SP 800-208).
+//
+// The pane's own rule, and the reason it looks different from every other one
+// here: SIGNING REWRITES THE PRIVATE KEY BOX. RFC 8554 section 5.4.1 requires
+// the incremented index to be stored before the signature is released, so
+// the order below is deliberate — the new private key is written first and
+// the signature second. A reader who copies the signature and not the key has
+// done exactly what the specification forbids, and the state line says so.
+// ===========================================================================
+function hbsScheme() {
+  log.debug("Entering hbsScheme().");
+  log.debug("Leaving hbsScheme().");
+  return val('ds_hbs_scheme') === 'xmss' ? 'xmss' : 'hss';
+}
+
+function hbsShowGroups() {
+  log.debug("Entering hbsShowGroups().");
+  var xmss = hbsScheme() === 'xmss';
+  var lmsGroup = document.getElementById('ds_hbs_lms_group');
+  var xmssGroup = document.getElementById('ds_hbs_xmss_group');
+  if (lmsGroup) {
+    lmsGroup.style.display = xmss ? 'none' : '';
+  }
+  if (xmssGroup) {
+    xmssGroup.style.display = xmss ? '' : 'none';
+  }
+  log.debug("Leaving hbsShowGroups().");
+}
+
+// The parameter set the pane is currently pointed at, as the engine wants it.
+function hbsSpec() {
+  log.debug("Entering hbsSpec().");
+  if (hbsScheme() === 'xmss') {
+    log.debug("Leaving hbsSpec(). XMSS.");
+    return { xmss: val('ds_hbs_xmss') };
+  }
+  var levels = [];
+  var count = parseInt(val('ds_hbs_levels'), 10) || 1;
+  for (var i = 0; i < count; i++) {
+    levels.push({ lms: val('ds_hbs_lms'), lmots: val('ds_hbs_lmots') });
+  }
+  log.debug("Leaving hbsSpec(). HSS.");
+  return { levels: levels };
+}
+
+// The one line on this page that no other signature pane has: how many more
+// times this key may be used.
+function hbsRefreshState() {
+  log.debug("Entering hbsRefreshState().");
+  var priv = val('ds_hbs_private_key');
+  if (!priv) {
+    setVal('ds_hbs_state', 'No private key — generate one, or paste one back.');
+    log.debug("Leaving hbsRefreshState(). No key.");
+    return;
+  }
+  try {
+    var left = hbs.remaining(b64ToBytes(priv));
+    setVal('ds_hbs_state', left.name + ' — index ' + left.used +
+        ' is next; ' + left.left + ' of ' +
+        (left.bottomOnly ? left.total + ' (this tree: ' +
+            (left.left + left.used) + ')' : left.total) +
+        ' one-time key(s) remain. Signing spends one.');
+  } catch (e) {
+    log.error('hbsRefreshState: ' + e.message);
+    setVal('ds_hbs_state', 'Cannot read that private key: ' + e.message);
+  }
+  log.debug("Leaving hbsRefreshState().");
+}
+
+function hbsSchemeChanged() {
+  log.debug("Entering hbsSchemeChanged().");
+  hbsShowGroups();
+  setVal('ds_hbs_status', 'Scheme set to ' +
+      (hbsScheme() === 'xmss' ? 'XMSS / XMSS^MT' : 'LMS / HSS') +
+      '. Generate a key pair for it — the two are not interchangeable, and ' +
+      'neither are their key encodings.');
+  log.debug("Leaving hbsSchemeChanged().");
+  return false;
+}
+
+function hbsGenerateKeys() {
+  log.debug("Entering hbsGenerateKeys().");
+  var xmss = hbsScheme() === 'xmss';
+  var name = xmss ? val('ds_hbs_xmss') :
+      (val('ds_hbs_lms') + ' / ' + val('ds_hbs_lmots') + ', L = ' +
+       val('ds_hbs_levels'));
+  setVal('ds_hbs_status', 'Building the tree for ' + name +
+      '… every leaf is a one-time key pair, so this can take several ' +
+      'seconds.');
+  defer(function () {
+    try {
+      var spec = hbsSpec();
+      var pair = xmss ? hbs.xmssKeygen(spec.xmss) : hbs.hssKeygen(spec);
+      setVal('ds_hbs_private_key', bytesToB64(pair.privateKey));
+      setVal('ds_hbs_public_key', bytesToB64(pair.publicKey));
+      setVal('ds_hbs_signature', '');
+      hbsRefreshState();
+      setVal('ds_hbs_status', 'Generated ' + name + ' (public key ' +
+          pair.publicKey.length + ' B). The private key box holds a seed ' +
+          'and an index in this tool\'s own format — neither ' +
+          'specification defines one.');
+    } catch (e) {
+      log.error('hbsGenerateKeys: ' + e.message);
+      setVal('ds_hbs_status', 'Key generation error: ' + e.message);
+    }
+  });
+  log.debug("Leaving hbsGenerateKeys().");
+  return false;
+}
+
+function hbsSign() {
+  log.debug("Entering hbsSign().");
+  var xmss = hbsScheme() === 'xmss';
+  setVal('ds_hbs_status', 'Signing…');
+  defer(function () {
+    try {
+      var priv = b64ToBytes(val('ds_hbs_private_key'));
+      var message = strBytes(val('ds_hbs_value'));
+      var out = xmss ? hbs.xmssSign(priv, message) :
+          hbs.hssSign(priv, message);
+      // The updated key FIRST, then the signature — RFC 8554 section 5.4.1.
+      setVal('ds_hbs_private_key', bytesToB64(out.privateKey));
+      hbsRefreshState();
+      setVal('ds_hbs_signature', bytesToB64(out.signature));
+      setVal('ds_hbs_status', 'Signed with one-time key ' +
+          (xmss ? out.idx : out.q) + ', which is now spent (' +
+          out.signature.length + ' B signature). The private key above has ' +
+          'changed; keep it, or the next signature reuses this key.');
+    } catch (e) {
+      log.error('hbsSign: ' + e.message);
+      setVal('ds_hbs_status', 'Signing error: ' + e.message);
+    }
+  });
+  log.debug("Leaving hbsSign().");
+  return false;
+}
+
+function hbsValidate() {
+  log.debug("Entering hbsValidate().");
+  var xmss = hbsScheme() === 'xmss';
+  setVal('ds_hbs_status', 'Validating…');
+  defer(function () {
+    try {
+      var pub = b64ToBytes(val('ds_hbs_public_key'));
+      var sig = b64ToBytes(val('ds_hbs_signature'));
+      var message = strBytes(val('ds_hbs_value'));
+      var result;
+      if (xmss) {
+        var params = hbs.resolveXmss(val('ds_hbs_xmss'));
+        result = hbs.xmssVerify(pub, message, sig, params.multiTree);
+      } else {
+        result = hbs.hssVerify(pub, message, sig);
+      }
+      setVal('ds_hbs_status', result.valid ?
+          'VALID — the root computed from this signature is the root in ' +
+              'the public key.' :
+          'INVALID — ' + result.reason);
+    } catch (e) {
+      log.error('hbsValidate: ' + e.message);
+      setVal('ds_hbs_status', 'INVALID — ' + e.message);
+    }
+  });
+  log.debug("Leaving hbsValidate().");
+  return false;
+}
+
+// Parsing is not verifying, and keeping them apart is the point: a signature
+// that will not verify still has fields, and the fields are where the answer
+// is.
+function hbsDescribe() {
+  log.debug("Entering hbsDescribe().");
+  try {
+    var pub = b64ToBytes(val('ds_hbs_public_key'));
+    var sigText = val('ds_hbs_signature');
+    var sig = sigText ? b64ToBytes(sigText) : null;
+    var text;
+    if (hbsScheme() === 'xmss') {
+      var params = hbs.resolveXmss(val('ds_hbs_xmss'));
+      text = hbs.describeXmss(pub, sig, params.multiTree);
+    } else {
+      text = hbs.describeHss(pub, sig);
+    }
+    setVal('ds_hbs_describe', text);
+    setVal('ds_hbs_status', 'Described the public key' +
+        (sig ? ' and the signature' : '') +
+        '. Nothing was verified — that is the button beside this one.');
+  } catch (e) {
+    log.error('hbsDescribe: ' + e.message);
+    setVal('ds_hbs_describe', '');
+    setVal('ds_hbs_status', 'Cannot parse that: ' + e.message);
+  }
+  log.debug("Leaving hbsDescribe().");
+  return false;
+}
+
+// The demonstration. Both signatures verify, the index does NOT advance, and
+// the status line says what an attacker now holds.
+function hbsDemonstrateReuse() {
+  log.debug("Entering hbsDemonstrateReuse().");
+  var xmss = hbsScheme() === 'xmss';
+  setVal('ds_hbs_status', 'Signing both values from one one-time key…');
+  defer(function () {
+    try {
+      var priv = b64ToBytes(val('ds_hbs_private_key'));
+      var pub = b64ToBytes(val('ds_hbs_public_key'));
+      var a = strBytes(val('ds_hbs_value'));
+      var b = strBytes(val('ds_hbs_value_b'));
+      var both = hbs.signTwiceFromOneIndex(xmss ? 'xmss' : 'hss', priv, a, b);
+      var params = xmss ? hbs.resolveXmss(val('ds_hbs_xmss')) : null;
+      var firstOk = xmss ?
+          hbs.xmssVerify(pub, a, both.first, params.multiTree).valid :
+          hbs.hssVerify(pub, a, both.first).valid;
+      var secondOk = xmss ?
+          hbs.xmssVerify(pub, b, both.second, params.multiTree).valid :
+          hbs.hssVerify(pub, b, both.second).valid;
+      setVal('ds_hbs_signature', bytesToB64(both.first));
+      setVal('ds_hbs_describe',
+          'Both messages were signed with one-time key ' + both.index +
+          '.\n\n  first  (' + val('ds_hbs_value') + '): ' +
+          (firstOk ? 'VALID' : 'invalid') +
+          '\n  second (' + val('ds_hbs_value_b') + '): ' +
+          (secondOk ? 'VALID' : 'invalid') +
+          '\n\nNeither signature is detectably wrong, and no verifier ' +
+          'anywhere can tell that the key was used twice — which is why SP ' +
+          '800-208 puts the whole obligation on the signer. What an ' +
+          'attacker now holds is the same Winternitz chains revealed at two ' +
+          'different heights; from those, a signature on a third message ' +
+          'whose digits are all reachable from what was released can be ' +
+          'FORGED without the private key.\n\nThe index was NOT advanced ' +
+          'by this button, so ' +
+          'the key above is exactly as it was.');
+      setVal('ds_hbs_status', 'Both signatures verify (' +
+          (firstOk && secondOk ? 'as they must, and that is the danger' :
+           'unexpectedly not — see the Fields box') +
+          '). Index ' + both.index + ' has now been used twice.');
+    } catch (e) {
+      log.error('hbsDemonstrateReuse: ' + e.message);
+      setVal('ds_hbs_status', 'Demonstration error: ' + e.message);
+    }
+  });
+  log.debug("Leaving hbsDemonstrateReuse().");
+  return false;
+}
+
 module.exports = {
   generateKeys,
   downloadKeys,
@@ -2098,6 +2626,10 @@ module.exports = {
   eccDownloadKeys,
   eccSign,
   eccValidate,
+  compositeGenerateKeys,
+  compositeSign,
+  compositeValidate,
+  compositeDownloadKeys,
   mldsaGenerateKeys,
   mldsaDownloadKeys,
   mldsaSign,
@@ -2122,6 +2654,12 @@ module.exports = {
   xmlSign,
   xmlValidate,
   xmlDownloadKeys,
+  hbsSchemeChanged,
+  hbsGenerateKeys,
+  hbsSign,
+  hbsValidate,
+  hbsDescribe,
+  hbsDemonstrateReuse,
   viewRsaCert,
   expandAll,
   collapseAll,

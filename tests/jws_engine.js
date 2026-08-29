@@ -211,9 +211,25 @@ function checkAgainstOpenssl() {
   log.debug("Entering checkAgainstOpenssl().");
   const rsa = jws.generateKey("RS256", { bits: 2048 });
   let count = 0;
+  const skippedPq = [];
   jws.algIds().forEach(function (algId) {
     const spec = jws.algSpec(algId);
     if (spec.family === "none") return;
+    // THE POST-QUANTUM ALGORITHMS HAVE NO SECOND IMPLEMENTATION HERE, and
+    // that is the whole reason they are skipped rather than a convenience.
+    // This function's value is that OpenSSL is an INDEPENDENT reading of the
+    // same bytes; node's crypto has no ML-DSA, no SLH-DSA and no composite,
+    // and it refuses their JWKs outright — `kty` "AKP" is not one of the
+    // three it accepts. Running them through here would either fail or, if
+    // somebody "fixed" it by comparing our output to our own, assert nothing.
+    // The independent check for these lives in tests/pqc_engines.js, which
+    // compares against PUBLISHED TEST VECTORS and against the drafts' own
+    // domain-separation hex — the same idea, with the only second opinion
+    // that exists for them today.
+    if (spec.family === "pq") {
+      skippedPq.push(algId);
+      return;
+    }
     const key = spec.family === "rsa" ? rsa : jws.generateKey(algId);
 
     const signed = jws.signJws({ algId: algId, payload: PAYLOAD,
@@ -296,6 +312,17 @@ function checkAgainstOpenssl() {
   });
   log.info("[openssl] OK — " + count + " algorithms cross-checked against " +
            "node's own crypto, in both directions.");
+  // The skip must stay a SKIP and not become a silent shrink. If the
+  // post-quantum family ever disappears from the registry, or a future node
+  // learns ML-DSA and these could be checked for real, this assertion is what
+  // brings somebody back to this comment.
+  assert.ok(skippedPq.length >= 11,
+    "the post-quantum algorithms should still be present and skipped here " +
+    "(node has no second implementation of them); found " +
+    skippedPq.length + ". Their independent check is tests/pqc_engines.js.");
+  log.info("[openssl] cross-checked " + count + " algorithms; skipped " +
+           skippedPq.length + " post-quantum ones for which node has no " +
+           "implementation — see tests/pqc_engines.js.");
   log.debug("Leaving checkAgainstOpenssl().");
 }
 

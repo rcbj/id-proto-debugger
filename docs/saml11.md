@@ -227,9 +227,21 @@ there is **no** `AuthnRequestsSigned`.
 
 ## READING THE RESPONSE
 
-`client/src/saml_response.js` reads both versions. Every field it shows is spelled
-differently in 1.1, and each of these produced a **blank cell rather than an
-error** when the page knew only 2.0:
+**Two pages read one, and since 2026-08-28 there is one reader behind both.**
+`client/src/saml_response.js` is the last screen of the SSO round trip and is
+handed its message by the Assertion Consumer Service;
+`client/src/saml_response_decoder.js` (`saml_response_decoder.html`) reads a
+response somebody else produced, pasted off a clipboard, with no workflow
+around it and no api behind it — a POST form body, a redirect URL, a bare
+`SAMLResponse`, an artifact, a bare `<saml:Assertion>` or the XML. The table
+below is `client/src/saml_message.js`'s `assertionSummary()` / `statusOf()` /
+`attributesOf()`, which both pages render and neither implements: a second
+reader would have been a second chance to know only SAML 2.0, and the way that
+shows is a blank cell rather than an error — which is how every row below was
+found in the first place, one at a time, each on a sign-in that worked.
+
+Every field is spelled differently in 1.1, and each of these produced a **blank
+cell rather than an error** when the page knew only 2.0:
 
 | What | SAML 2.0 | SAML 1.1 |
 |---|---|---|
@@ -241,6 +253,8 @@ error** when the page knew only 2.0:
 | the subject | `<saml:NameID>` | `<saml:NameIdentifier>` |
 | the audience | `<saml:AudienceRestriction>` | `<saml:AudienceRestrictionCondition>` |
 | an attribute's name | one `Name` URI | `AttributeName` + `AttributeNamespace` |
+| the confirmation method | a `Method` **attribute** on `<saml:SubjectConfirmation>` | a `<saml:ConfirmationMethod>` **child element** of it, and there may be several |
+| the status code | a URI ending `:status:Success` | a **QName**, `samlp:Success` — see below |
 
 ### The status code is a QName, and this is the one that matters most
 
@@ -252,7 +266,14 @@ The old check was `indexOf(':status:Success') >= 0`, which is false for every SA
 1.1 success. A sign-in that worked would render a red status **and close its
 Operations History row as a FAILURE**, which is the worst possible way to be wrong
 about a working flow. `isSuccessStatus()` matches the local part after the last
-colon, which covers both spellings and still refuses a lookalike.
+colon, which covers both spellings and still refuses a lookalike. It is in
+`saml_message.js` now rather than in the page, and it is the four lines here
+most worth having exactly once: it is the difference between a working 1.1
+sign-in rendering green and rendering red, and a second copy would be the one
+that drifted. The decoder additionally RESOLVES the QName against the
+document's own declarations and shows the result — `samlp:Success` means
+nothing without the namespace its prefix is bound to, and a prefix declared
+nowhere is a malformed document that every lenient reader in the world accepts.
 
 ### The confirmation method IS the profile
 
@@ -283,7 +304,7 @@ armed on a version where it is disabled.
 
 ---
 
-## THE FOUR TESTS, AND WHY THERE ARE FOUR
+## THE FIVE TESTS, AND WHY THERE ARE FIVE
 
 | Test | What it drives | Needs |
 |---|---|---|
@@ -291,6 +312,7 @@ armed on a version where it is disabled.
 | `tests/saml11_options.js` | which settings apply and which are off, the request shape per binding, the 1.1 SP metadata | a browser and nothing else |
 | `tests/sts_saml11.js` | the mock STS's identity provider, over HTTP, with a relying party it writes itself | the mock STS, no browser |
 | `tests/saml_operation_history.js` | the shared log — its reference-only refusal case is SAML **1.0** now | a browser |
+| `tests/saml_response_decoder_page.js` | the SAML Response Decoder, whose 1.1 case asserts the VERDICT off a `samlp:Success` rather than that a table rendered | a browser and nothing else — it builds its own fixtures |
 
 **There is no Keycloak half of any of them and there will not be one.** Every
 other browser-SSO job in this suite runs once per identity provider, because a

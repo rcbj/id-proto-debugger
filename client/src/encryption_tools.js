@@ -547,10 +547,45 @@ function eccDecrypt() {
 // ===========================================================================
 // Pane #6 — ML-KEM (post-quantum)
 // ===========================================================================
+// The Mode selector now names four kinds of thing, so three predicates read
+// it rather than one. `hybrid` is this page's OWN concatenation (kept for the
+// ciphertexts it has already produced, and labelled as non-standard on the
+// page); `pq` is plain ML-KEM; anything else is the NAME of a standardised
+// hybrid in pqc.js's registry — X-Wing or one of the six Composite ML-KEM
+// pairings — and those fix their own ML-KEM parameter set, so the Parameter
+// Set selector does not apply to them.
 function kemIsHybrid() {
   log.debug("Entering kemIsHybrid().");
   log.debug("Leaving kemIsHybrid().");
   return val('enc_kem_mode') === 'hybrid';
+}
+
+// The standardised-KEM name, or null when the pane is in one of the two modes
+// that predate them.
+function kemStandardAlg() {
+  log.debug("Entering kemStandardAlg().");
+  var mode = val('enc_kem_mode');
+  if (mode === 'hybrid' || mode === 'pq' || !mode) {
+    log.debug("Leaving kemStandardAlg(). Not a standardised hybrid.");
+    return null;
+  }
+  log.debug("Leaving kemStandardAlg(). " + mode);
+  return mode;
+}
+
+// What the status line calls whatever is selected. Worth its own function
+// because three handlers say it and they must not drift: naming the wrong
+// algorithm in a status line is exactly the kind of wrong that survives a
+// review.
+function kemAlgLabel() {
+  log.debug("Entering kemAlgLabel().");
+  var standard = kemStandardAlg();
+  if (standard) {
+    log.debug("Leaving kemAlgLabel(). Standardised.");
+    return standard;
+  }
+  log.debug("Leaving kemAlgLabel(). Parameter set.");
+  return val('enc_kem_set') + (kemIsHybrid() ? ' + X25519 (ad-hoc)' : '');
 }
 
 function kemGenerateKeys() {
@@ -559,15 +594,28 @@ function kemGenerateKeys() {
   status('kem', 'Generating an ' + set + ' key pair…');
   defer(function () {
     try {
-      var pair = pk.mlkemGenerateKeyPair(set, kemIsHybrid());
+      var standard = kemStandardAlg();
+      var pair = standard ? pk.pqKemGenerateKeyPair(standard)
+                          : pk.mlkemGenerateKeyPair(set, kemIsHybrid());
       setField('kem', 'private_key', pair.privateKeyHex);
       setField('kem', 'public_key', pair.publicKeyHex);
-      status('kem', 'Generated ' + set +
-             (kemIsHybrid() ? ' + X25519 (two keys, colon-separated)' : '') +
+      // A standardised hybrid's key is ONE byte string — the two components
+      // concatenated by the specification — where the ad-hoc mode writes two
+      // keys separated by a colon. Saying which is what stops somebody
+      // pasting one into the other and getting a length error from inside a
+      // lattice.
+      status('kem', 'Generated ' + kemAlgLabel() +
+             (standard ? ' (one key: the two components concatenated as the ' +
+                         'specification defines)'
+                       : (kemIsHybrid()
+                          ? ' (two keys, colon-separated)' : '')) +
              ' — public ' + Math.floor(pair.publicKeyHex
                .replace(':', '').length / 2) + ' B, private ' +
              Math.floor(pair.privateKeyHex.replace(':', '').length / 2) +
-             ' B. Post-quantum keys are large; that is the trade.');
+             ' B. Post-quantum keys are large; that is the trade.' +
+             (standard ? ' ' + pk.pqKemModes().filter(function (m) {
+               return m.name === standard;
+             }).map(function (m) { return m.note; }).join('') : ''));
     } catch (e) {
       fail('kem', 'kemGenerateKeys', e);
     }
@@ -579,22 +627,36 @@ function kemGenerateKeys() {
 function kemEncrypt() {
   log.debug("Entering kemEncrypt().");
   try {
-    var out = pk.mlkemEncrypt({
-      paramSet: val('enc_kem_set'),
-      hybrid: kemIsHybrid(),
+    var standard = kemStandardAlg();
+    var request = {
       publicKeyHex: field('kem', 'public_key'),
       info: field('kem', 'info'),
       aad: bytes.strBytes(field('kem', 'aad')),
       cipherId: val('enc_kem_cipher'),
       plaintext: plaintextIn('kem')
-    });
+    };
+    var out;
+    if (standard) {
+      request.algName = standard;
+      out = pk.pqKemEncrypt(request);
+    } else {
+      request.paramSet = val('enc_kem_set');
+      request.hybrid = kemIsHybrid();
+      out = pk.mlkemEncrypt(request);
+    }
     setField('kem', 'encapsulation', out.encapsulationHex);
     setField('kem', 'iv', bytes.bytesToHex(out.iv));
     setField('kem', 'ciphertext', bytes.bytesToB64(out.ciphertext));
     setField('kem', 'tag', bytes.bytesToB64(out.tag));
     status('kem', 'Encapsulated a fresh shared secret to the recipient’s ' +
-           val('enc_kem_set') + ' public key' +
-           (kemIsHybrid() ? ', concatenated an X25519 one with it,' : '') +
+           kemAlgLabel() + ' public key' +
+           (standard
+             ? ', combined the post-quantum and classical secrets with that ' +
+               'algorithm’s own combiner (SHA3-256 over both secrets, the ' +
+               'classical ciphertext, the classical public key and the ' +
+               'algorithm’s domain-separation label),'
+             : (kemIsHybrid()
+                ? ', concatenated an X25519 one with it,' : '')) +
            ' derived a ' + out.cipherId + ' key from it with HKDF-SHA256, ' +
            'and encrypted the message under that.');
   } catch (e) {
@@ -608,9 +670,8 @@ function kemEncrypt() {
 function kemDecrypt() {
   log.debug("Entering kemDecrypt().");
   try {
-    var plain = pk.mlkemDecrypt({
-      paramSet: val('enc_kem_set'),
-      hybrid: kemIsHybrid(),
+    var standard = kemStandardAlg();
+    var request = {
       privateKeyHex: field('kem', 'private_key'),
       info: field('kem', 'info'),
       aad: bytes.strBytes(field('kem', 'aad')),
@@ -619,7 +680,16 @@ function kemDecrypt() {
       iv: hexField('kem', 'iv', 'IV'),
       ciphertext: b64Field('kem', 'ciphertext', 'Ciphertext'),
       tag: b64Field('kem', 'tag', 'Tag')
-    });
+    };
+    var plain;
+    if (standard) {
+      request.algName = standard;
+      plain = pk.pqKemDecrypt(request);
+    } else {
+      request.paramSet = val('enc_kem_set');
+      request.hybrid = kemIsHybrid();
+      plain = pk.mlkemDecrypt(request);
+    }
     var note = plaintextOut('kem', plain);
     status('kem', 'Decapsulated and decrypted ' + plain.length +
            ' bytes; the tag verified.' + note);

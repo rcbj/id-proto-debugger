@@ -596,6 +596,12 @@ async function signJWT() {
     // so the member order the user sees in the box is the member order that
     // gets signed — jws.js is told not to rebuild it.
     var header = parseJson('jwt_tools_header', 'JWT Header');
+    // `alg` is already the REGISTERED value: this page's dropdown holds JOSE
+    // `alg` values and jwsAlgId() bridges to the engine's identifier, which
+    // keys Ed25519 and Ed448 separately. So the header takes it unchanged —
+    // and must, since a header naming `EdDSA-Ed25519` would name an algorithm
+    // no registry has. (This was briefly `jwsLib.algSpec(alg).alg` while the
+    // menu held engine identifiers, and `algSpec('EdDSA')` does not exist.)
     header.alg = alg;
     setVal('jwt_tools_header', JSON.stringify(header, null, 2));
     var payload = parseJson('jwt_tools_payload', 'JWT Payload');
@@ -744,30 +750,26 @@ async function encryptJWT() {
     if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content ' +
         'encryption: ' + enc);
 
-    var protectedHeader = { alg: alg, enc: enc };
     // A nested JWT (a JWS as the plaintext) is signalled with cty:"JWT" (RFC
     // 7519 §5.2).
-    if (plaintext.split('.').length === 3) protectedHeader.cty = 'JWT';
+    var extraHeader = {};
+    if (plaintext.split('.').length === 3) extraHeader.cty = 'JWT';
 
-    var derived = await jose.deriveCek(alg, enc, protectedHeader,
-        val('jwe_public_key'));
-    var protectedB64 = strToB64u(JSON.stringify(protectedHeader));
-    var aad = new TextEncoder()
-        .encode(protectedB64); // ASCII(BASE64URL(protected header))
-
-    var iv = new Uint8Array(12);
-    crypto.getRandomValues(iv);
-    var full = new Uint8Array(await crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv: iv, additionalData: aad, tagLength: 128 },
-      derived.cek, new TextEncoder().encode(plaintext)));
-
-    // Web Crypto appends the 16-byte auth tag; JWE keeps ciphertext and tag
-    // separate.
-    var ciphertext = full.slice(0, full.length - 16);
-    var tag = full.slice(full.length - 16);
-
-    var jwe = [protectedB64, derived.encryptedKey, bytesToB64u(iv),
-        bytesToB64u(ciphertext), bytesToB64u(tag)].join('.');
+    // THE SHARED SERIALIZER, not a second copy of it. This function used to
+    // assemble the five segments itself — derive the CEK, take a 12-byte IV,
+    // AES-GCM, split off the tag — which was fine while AES-GCM was the only
+    // content encryption this application spoke. It is not any more: the
+    // AES-CBC-HMAC family has a CEK of twice the size, a SIXTEEN-byte IV and a
+    // MAC that is not the cipher's, so a private assembly here would have to
+    // learn all three or silently produce a JWE that no other implementation
+    // can open. encryptCompact() already knows, and is checked against RFC
+    // 7518's Appendix B vector and OpenSSL by tests/jose_jwe_encryption.js.
+    var produced = await jose.encryptCompact({
+      alg: alg, enc: enc, plaintext: plaintext,
+      key: val('jwe_public_key'), header: extraHeader
+    });
+    var jwe = produced.jwe;
+    var protectedHeader = produced.header;
     setVal('jwt_tools_jwe', jwe);
     setVal('jwe_decrypt_input', jwe);
     setVal('jwt_tools_encoded', jwe);
@@ -818,16 +820,12 @@ async function decryptJWT() {
     if (!ENC_KEY_BYTES[enc]) throw new Error('Unsupported content ' +
         'encryption: ' + enc);
 
-    var cekKey = await jose.unwrapCek(alg, enc, protectedHeader, parts[1],
-        val('jwe_private_key'));
-    var aad = new TextEncoder().encode(parts[0]);
-    var iv = b64uToBytes(parts[2]);
-    var ctPlusTag = concatBytes(b64uToBytes(parts[3]), b64uToBytes(parts[4]));
-
-    var plaintext = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: iv, additionalData: aad, tagLength: 128 }, cekKey,
-       ctPlusTag);
-    setVal('jwe_decrypt_output', new TextDecoder().decode(plaintext));
+    // The shared reader, for the reason encryptJWT() above uses the shared
+    // writer: an AES-CBC-HMAC JWE is not opened the way an AES-GCM one is, and
+    // a private copy here would refuse half of what the far end may send.
+    var opened = await jose.decryptCompact({ jwe: jwe,
+        key: val('jwe_private_key') });
+    setVal('jwe_decrypt_output', opened.plaintext);
     setVal('jwe_status', 'Decrypted with ' + alg + ' / ' + enc + '.');
   } catch (e) {
     log.error('decryptJWT: ' + e.message);

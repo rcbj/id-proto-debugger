@@ -52,6 +52,7 @@ var log = bunyan.createLogger({
 
 var metadataClient = require("./metadata_client");
 var jws = require("./jws");
+var bytes = require("./crypto_bytes");
 
 // RFC 9449 section 4.2: the proof is explicitly typed, as RFC 8725 section 3.11
 // recommends. A receiver that does not check `typ` will accept some other JWT
@@ -75,21 +76,47 @@ var PROOF_TYP = "dpop+jwt";
 // left here is what is genuinely this module's — how to GENERATE a key, and
 // which JWK members a thumbprint is taken over (RFC 7638, where the member
 // set and its order are part of the definition).
-var ALGS = {
-  ES256: {
-    generate: { name: "ECDSA", namedCurve: "P-256" },
-    publicMembers: ["kty", "crv", "x", "y"]
-  },
-  RS256: {
-    generate: {
-      name: "RSASSA-PKCS1-v1_5",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256"
-    },
-    publicMembers: ["kty", "n", "e"]
+// ---------------------------------------------------------------------------
+// THE ALGORITHMS COME FROM `jws.js` AND ARE NOT LISTED AGAIN HERE.
+//
+// This file used to carry a two-row table of its own — ES256 and RS256, with
+// their Web Crypto generation parameters and the JWK members to keep — and it
+// signed through `jws.js` even then. So the engine could already produce
+// twenty-three asymmetric algorithms and this wallet offered two of them, for
+// no reason anybody had chosen: the table was written when ES256 and RS256
+// were all the issuers here advertised, and it never moved.
+//
+// RFC 9449 section 4.2 requires an ASYMMETRIC algorithm — never a MAC, whose
+// key both ends would need, and never `none` — which is what this filter is.
+// The mock STS's own dpop.js had exactly this defect and was fixed the same
+// way on 2026-08-28: one table, in the crypto module, read by everything.
+//
+// EVERYTHING THE ENGINE CAN DO IS OFFERED, including the post-quantum and
+// hybrid signatures, and that is deliberate even though no server yet accepts
+// one: the page shows the server's own advertised list beside this choice
+// (`vc_dpop_server_algs`), so picking something it will refuse is a thing a
+// person can do ON PURPOSE and watch fail, which is what a debugger is for.
+var ASYMMETRIC_ALGS = jws.algIds().filter(function (alg) {
+  if (alg === "none" || alg.indexOf("HS") === 0) {
+    return false;
   }
-};
+  // AND NOT THE POST-QUANTUM ONES, and this is the one exclusion here that is
+  // a SPECIFICATION limit rather than an implementation gap — so it is stated
+  // rather than left as an absence.
+  //
+  // A DPoP key is bound to the token through `cnf.jkt`, which is the RFC 7638
+  // JWK Thumbprint. RFC 7638 defines the required members for `RSA`, `EC`,
+  // `OKP` and `oct` and for nothing else, and an ML-DSA or SLH-DSA key is
+  // `kty: "AKP"` (RFC 9964). There is no registered thumbprint for one, so
+  // there is no value to put in `cnf.jkt` and nothing for a server to compare
+  // — the proof would sign perfectly and bind to nothing.
+  //
+  // The engine signs all of them and the Digital Signature and JWT Tools pages
+  // offer all of them, because there the signature is the whole artifact.
+  // Here it is not: DPoP is a binding, and a binding needs a name for the key.
+  return jws.algSpec(alg).family !== "pq";
+});
+
 var DEFAULT_ALG = "ES256";
 
 // Callers that return a promise turn this into a REJECTION rather than letting
@@ -100,16 +127,16 @@ var DEFAULT_ALG = "ES256";
 // first run.
 function algOrThrow(alg) {
   log.debug("Entering algOrThrow().");
-  var spec = ALGS[alg || DEFAULT_ALG];
-  if (!spec) {
-    throw new Error("DPoP: " + alg +
+  var name = alg || DEFAULT_ALG;
+  if (ASYMMETRIC_ALGS.indexOf(name) === -1) {
+    throw new Error("DPoP: " + name +
                     " is not an algorithm this wallet can sign with. " +
                     "RFC 9449 requires an asymmetric JWS algorithm; this " +
                         "page offers " +
-                    Object.keys(ALGS).join(" and ") + ".");
+                    ASYMMETRIC_ALGS.join(", ") + ".");
   }
   log.debug("Leaving algOrThrow().");
-  return spec;
+  return name;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,48 +148,81 @@ function algOrThrow(alg) {
 // point is not to keep the key secret but to make the token useless without the
 // PRIVATE half.
 // ---------------------------------------------------------------------------
+// The private half as a JWK, and a DPoP key has to become one: it is PERSISTED
+// between page loads, so it must survive JSON.
+//
+// `jws.generateKey()` hands back what each algorithm's engine uses, and that is
+// two different things — a **PEM string** for the RSA algorithms, which is what
+// node-forge and Web Crypto both read, and **raw bytes** for the curve and
+// post-quantum ones. `jws.privateJwk()` writes the second kind and refuses the
+// first BY NAME ("No raw private JWK for alg=RS256"), which is correct of it:
+// an RSA private key is eight big integers and there is nothing raw to encode.
+//
+// So the RSA case goes through Web Crypto, which does know how to write one.
+// Returning the generated key unconverted is what broke tests/dpop_vectors.js
+// with `importKey: 2nd argument can not be converted to a dictionary` — a
+// message four frames from the cause and naming none of this.
+function privateJwkOf(alg, pair) {
+  log.debug("Entering privateJwkOf(). alg=" + alg);
+  if (typeof pair.privateKey !== "string") {
+    log.debug("Leaving privateJwkOf(). Raw key material.");
+    return Promise.resolve(jws.privateJwk(alg, pair.privateKey,
+                                          pair.publicKey));
+  }
+  // A PEM: import it as an EXTRACTABLE key and let Web Crypto write the JWK.
+  // `bytes.pemToDer()` and not `jws.pkcs8PrivateBits()` — the latter extracts
+  // the key's own bits for the raw algorithms and returns 257 bytes for an RSA
+  // key, which importKey refuses with `Invalid keyData`, a message that names
+  // neither the function nor the format.
+  var spec = jws.algSpec(alg);
+  return crypto.subtle.importKey("pkcs8", bytes.pemToDer(pair.privateKey),
+      jws.webCryptoImportParams(spec), true, ["sign"])
+    .then(function (key) {
+      log.debug("Leaving privateJwkOf(). Web Crypto export.");
+      return crypto.subtle.exportKey("jwk", key);
+    });
+}
+
 function generateKeyPair(alg) {
   log.debug("Entering generateKeyPair(). alg=" + (alg || DEFAULT_ALG));
   var name = alg || DEFAULT_ALG;
-  var spec;
   try {
-    spec = algOrThrow(name);
+    algOrThrow(name);
   } catch (e) {
     // Rejected rather than thrown, for the reason given at algOrThrow().
     log.debug("Leaving generateKeyPair(). Refused: " + e.message);
     return Promise.reject(e);
   }
+  // Generated by the ENGINE, which knows how to make a key for every algorithm
+  // it can sign with — including the ones Web Crypto cannot generate at all.
+  // This used to call crypto.subtle.generateKey() with parameters from the
+  // local table, which is why the local table existed and why it could only
+  // ever hold what Web Crypto happened to support.
   log.debug("Leaving generateKeyPair().");
-  return crypto.subtle.generateKey(spec.generate, true, ["sign", "verify"])
+  return Promise.resolve(jws.generateKey(name))
     .then(function (pair) {
+      // BOTH HALVES AS JWKs, and the private one matters more than it looks:
+      // a DPoP key is PERSISTED between page loads, so it has to survive
+      // JSON — `generateKey()` hands back whatever the algorithm's engine
+      // uses (a CryptoKey for the Web Crypto ones, bytes for others) and
+      // none of those serialize. Returning the raw key here broke
+      // tests/dpop_vectors.js with `importKey: 2nd argument can not be
+      // converted to a dictionary`, which names the symptom four frames from
+      // the cause.
       return Promise.all([
-        crypto.subtle.exportKey("jwk", pair.publicKey),
-        crypto.subtle.exportKey("jwk", pair.privateKey)
-      ]);
-    })
-    .then(function (jwks) {
-      log.debug("Leaving generateKeyPair().");
-      return {
-        alg: name,
-        // Only the members that identify the key. A stray `key_ops`/`ext` would
-        // travel in every proof header and change the JWK Thumbprint's input if
-        // anybody computed it over the whole object, so they are dropped here
-        // rather than filtered at each use.
-        publicJwk: publicOnly(jwks[0], spec),
-        privateJwk: jwks[1]
-      };
+        jws.publicJwk(name, pair.publicKey),
+        privateJwkOf(name, pair)
+      ]).then(function (jwks) {
+        return { alg: name,
+                 // No `kid`: a DPoP proof identifies its key BY VALUE in the
+                 // header, and a name for it would be a member the receiver
+                 // has no way to resolve.
+                 publicJwk: jwks[0],
+                 privateJwk: jwks[1] };
+      });
     });
 }
 
-function publicOnly(jwk, spec) {
-  log.debug("Entering publicOnly().");
-  var out = {};
-  spec.publicMembers.forEach(function (m) {
-    if (jwk[m] !== undefined) out[m] = jwk[m];
-  });
-  log.debug("Leaving publicOnly().");
-  return out;
-}
 
 // A key pair read back from storage carries no algorithm of its own, so it is
 // inferred from the key type. This is also the guard that stops an `oct` key
@@ -174,12 +234,31 @@ function algOfJwk(jwk) {
     log.debug("Leaving algOfJwk().");
     return "";
   }
-  if (jwk.kty === "EC" && jwk.crv === "P-256") {
-    log.debug("Leaving algOfJwk().");
-    return "ES256";
+  // The curve decides the algorithm, and each curve has exactly one: signing a
+  // P-384 key with ES256 would hash with SHA-256 and produce a signature no
+  // verifier accepts. This knew P-256 alone, so a stored P-384 or Ed25519 key
+  // mapped to "" and the wallet reported it as a key it could not sign with —
+  // which stopped being true when the engine started offering those curves.
+  if (jwk.kty === "EC") {
+    var byCurve = { "P-256": "ES256", "P-384": "ES384", "P-521": "ES512",
+                    "secp256k1": "ES256K" };
+    log.debug("Leaving algOfJwk(). EC " + jwk.crv + ".");
+    return byCurve[jwk.crv] || "";
+  }
+  if (jwk.kty === "OKP") {
+    // RFC 8037: one registered `alg` and the curve in the key, which is why
+    // this returns the ENGINE's identifier — the caller signs with it, and
+    // proof() turns it into the registered `EdDSA` for the header.
+    var byOkp = { Ed25519: "EdDSA-Ed25519", Ed448: "EdDSA-Ed448" };
+    log.debug("Leaving algOfJwk(). OKP " + jwk.crv + ".");
+    return byOkp[jwk.crv] || "";
   }
   if (jwk.kty === "RSA") {
-    log.debug("Leaving algOfJwk().");
+    // RS256 rather than PS256 or a longer hash: an RSA JWK says nothing about
+    // which of the six RSA algorithms made it, and RS256 is what this wallet
+    // generates by default. A key that was made for another one carries its
+    // own `alg`, which proof() reads first.
+    log.debug("Leaving algOfJwk(). RSA.");
     return "RS256";
   }
   log.debug("Leaving algOfJwk().");
@@ -341,7 +420,16 @@ function proof(opts) {
     log.debug("Leaving proof(). Refused: " + e.message);
     return Promise.reject(e);
   }
-  var header = { typ: PROOF_TYP, alg: alg, jwk: key.publicJwk };
+  // THE HEADER CARRIES THE REGISTERED `alg`, WHICH IS NOT ALWAYS THE ENGINE'S
+  // NAME FOR IT. `jws.js` distinguishes the two Edwards curves internally as
+  // `EdDSA-Ed25519` and `EdDSA-Ed448` because it has to choose a curve to sign
+  // on — but RFC 8037 registers ONE algorithm value, `EdDSA`, and puts the
+  // curve in the key's `crv` instead. A proof whose header said
+  // `alg: "EdDSA-Ed25519"` would name an algorithm no registry has and no
+  // server would accept, and `jws.js` refuses to sign it: "The supplied header
+  // says alg=EdDSA-Ed25519 but EdDSA was selected."
+  var header = { typ: PROOF_TYP, alg: jws.algSpec(alg).alg,
+                 jwk: key.publicJwk };
   var payload = {
     jti: opts.jti || newJti(),
     htm: String(opts.htm || "POST").toUpperCase(),
@@ -368,7 +456,14 @@ function proof(opts) {
         protectedHeader: header,
         payload: payload,
         privateKey: { jwk: key.privateJwk },
-        backend: "webcrypto"
+        // THE BACKEND IS ASKED FOR ONLY WHERE IT EXISTS. This said
+        // `backend: "webcrypto"` unconditionally, which was harmless while the
+        // wallet offered ES256 and RS256 and became a refusal the moment it
+        // offered the post-quantum ones: `crypto.subtle` has no name for
+        // ML-DSA or SLH-DSA, so every proof signed with one failed with
+        // "alg=ML-DSA-44 has no Web Crypto equivalent" — an algorithm this
+        // tool implements, refused because of the engine it was asked to use.
+        backend: jws.webCryptoKnowsAlg(jws.algSpec(alg)) ? "webcrypto" : "js"
       }).then(function (signed) {
         log.debug("Leaving proof().");
         return { proof: signed.serialized, header: header, payload: payload };
@@ -424,7 +519,7 @@ function nonceFromResponse(response) {
 
 module.exports = {
   PROOF_TYP: PROOF_TYP,
-  ALGS: Object.keys(ALGS),
+  ALGS: ASYMMETRIC_ALGS,
   DEFAULT_ALG: DEFAULT_ALG,
   generateKeyPair: generateKeyPair,
   algOfJwk: algOfJwk,

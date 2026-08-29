@@ -16,7 +16,13 @@
 //   * pull apart a SAML artifact, which is not a message at all but 44 bytes
 //     of binary;
 //   * summarise a request message's important values in both protocol
-//     versions.
+//     versions;
+//   * and, since 2026-08-28, the same for a RESPONSE — its status (a URI in
+//     SAML 2.0 and a QName in SAML 1.1), the assertions inside it, and what
+//     each of those assertions says. That half is at the bottom of the file,
+//     under its own header, and it is bigger than this one for a reason a
+//     request does not have: a response carries a status, may carry more than
+//     one assertion, and is signed in TWO places that mean different things.
 //
 // IT IS SHARED, AND THE DUPLICATION IT ENDS WAS REAL. formatXml() existed four
 // times (saml_response.js, wsfed_response.js, wstrust_tools.js,
@@ -24,13 +30,23 @@
 // only in whether the regex was held in a variable), and the base64 / inflate /
 // decodeSamlParam set existed in saml_response.js, which is where this copy
 // came from. A fifth copy for the AuthnRequest decoder is what this module
-// exists to avoid.
+// exists to avoid — and the response half exists for the same reason a day
+// later: saml_response.js knew how to read an assertion in both versions and
+// the SAML Response Decoder needed exactly that, so the READER moved here and
+// both pages render it. The two pages draw different tables from the same
+// data, which is the point: a second reader would disagree with the first
+// about SAML 1.1 within a month, and the way it would show is a blank cell.
 //
 // NO DOM IDS AND NO PAGE STATE. Everything here takes a string and returns a
-// value, which is what lets tests/saml_message.js drive the whole of it in node
-// with @xmldom standing in for the browser's parser — the only kind of check
-// that catches a Redirect signature rebuilt in the wrong parameter order, since
-// in a browser that failure is indistinguishable from a wrong key.
+// value, which is what lets tests/saml_authnrequest_page.js and
+// tests/saml_response_decoder_page.js BUILD their fixtures with it in node,
+// under @xmldom standing in for the browser's parser — a real deflated, signed
+// redirect URL and a real signed, encrypted response, rather than recorded
+// strings that rot. (Neither test is called saml_message.js, and cannot be:
+// tests/Dockerfile stages this module FLAT beside the test scripts, so a test
+// of that name would silently replace it.) That is the only kind of check that
+// catches a Redirect signature rebuilt in the wrong parameter order, since in
+// a browser that failure is indistinguishable from a wrong key.
 var bunyan = require("bunyan");
 // The log level comes from the same configuration the pages use. A consumer
 // outside the browser bundles (the node-based tests load this module directly)
@@ -211,7 +227,21 @@ function formatXml(xml) {
 
 function parseXml(xml) {
   log.debug("Entering parseXml().");
-  var doc = new DOMParser().parseFromString(xml, 'application/xml');
+  var doc;
+  try {
+    doc = new DOMParser().parseFromString(xml, 'application/xml');
+  } catch (e) {
+    // A BROWSER never throws here — it returns a document containing a
+    // <parsererror> — but @xmldom, which the node tests parse with, THROWS on
+    // a namespace error (`prefix is non-null and namespace is null`). That is
+    // exactly what a <saml:Assertion> sliced out of a response and pasted on
+    // its own produces, which is one of the commonest things anybody does with
+    // one, so the two parsers have to be made to answer the same way here or
+    // a decoder that says "not well-formed XML" in a browser is a stack trace
+    // in a test.
+    log.debug("Leaving parseXml(). The parser refused: " + e.message);
+    return null;
+  }
   if (doc.getElementsByTagName('parsererror').length) {
     log.debug("Leaving parseXml(). Malformed.");
     return null;
@@ -868,6 +898,811 @@ function summarize(xml) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// THE RESPONSE SIDE.
+//
+// A response is not a request under another name, and four of the differences
+// are the whole reason this half exists.
+//
+//   * THE STATUS. A request has none; a response IS one, and the failure a
+//     debugger is opened for is almost always written there. SAML 2.0 spells
+//     the code as a URI and SAML 1.1 spells it as a **QName** resolved against
+//     the document's own namespace declarations — `Value` ends in
+//     `:status:Success` in one and in `:Success` in the other, so a check
+//     written for either reads the other as a failure. That exact bug turned a
+//     working SAML 1.1 sign-in red on the SAML Response page, and it is why
+//     isSuccessStatus() below matches the LOCAL PART rather than a suffix.
+//   * THE SIGNATURE IS IN TWO PLACES AT ONCE AND THEY MEAN DIFFERENT THINGS.
+//     An identity provider may sign the <samlp:Response>, or each
+//     <saml:Assertion>, or both. Only the assertion signature survives the
+//     assertion being lifted out of the response; only the response signature
+//     covers the STATUS and the InResponseTo. "The response is signed" and
+//     "the assertion is signed" are therefore different claims, and a reader
+//     that collapses them into one tells somebody their unsigned assertion is
+//     safe. Everything below reports them separately, and says which is
+//     absent rather than leaving a blank.
+//   * THERE MAY BE MORE THAN ONE ASSERTION, and any of them may be encrypted,
+//     and an <saml:Advice> may carry assertions that are NOT the subject of
+//     the response at all.
+//   * THE MESSAGE MAY CONTAIN ANOTHER MESSAGE. A <samlp:ArtifactResponse> is
+//     an envelope whose payload is the message the artifact referenced —
+//     which is the actual answer, and is where the status that matters lives.
+//
+// Nothing here verifies or decrypts anything; that is common/xmldsig.js.
+// ---------------------------------------------------------------------------
+
+// What a second-level status code MEANS, keyed by local part. SAML 2.0 core
+// section 3.2.2.2 defines these; a debugger that prints the URI and stops has
+// printed the one thing the user could already see. `NoPassive` in particular
+// is the answer to a question the user asked without knowing it.
+var STATUS_NOTES = {
+  Success: 'the request succeeded',
+  Requester: 'the REQUEST was at fault (the service provider)',
+  Responder: 'the RESPONDER was at fault (the identity provider)',
+  VersionMismatch: 'the responder cannot process the SAML version sent',
+  AuthnFailed: 'the subject could not be authenticated',
+  InvalidAttrNameOrValue: 'an attribute name or value was unrecognised',
+  InvalidNameIDPolicy: 'the requested NameIDPolicy cannot be satisfied',
+  NoAuthnContext: 'no requested authentication context could be met',
+  NoAvailableIDP: 'none of the identity providers in Scoping is available',
+  NoPassive: 'IsPassive was asked for and the responder cannot authenticate ' +
+      'without interacting with the user',
+  NoSupportedIDP: 'none of the identity providers in Scoping is supported',
+  PartialLogout: 'not every session participant could be logged out',
+  ProxyCountExceeded: 'proxying was needed and the ProxyCount was exhausted',
+  RequestDenied: 'the responder refused the request',
+  RequestUnsupported: 'the responder does not support the request',
+  RequestVersionDeprecated: 'the SAML version of the request is deprecated',
+  RequestVersionTooHigh: 'the request version is newer than the responder ' +
+      'supports',
+  RequestVersionTooLow: 'the request version is older than the responder ' +
+      'supports',
+  ResourceNotRecognized: 'the resource named in the request is unknown',
+  TooManyResponses: 'the response would carry more elements than the ' +
+      'responder can return',
+  UnknownAttrProfile: 'the attribute profile is not supported',
+  UnknownPrincipal: 'the responder does not recognise the subject',
+  UnsupportedBinding: 'the responder cannot deliver over the binding asked for'
+};
+
+// The readable part of a status code, in either version's spelling: the last
+// segment of a SAML 2.0 URI (…:status:Success -> "Success") and the local part
+// of a SAML 1.1 QName (samlp:Success -> "Success"). One rule covers both,
+// because a colon is the separator in each — which is also why callers print
+// the full value beside it: `Requester` names different things in the two
+// versions and the short form alone does not say which was read.
+function shortStatus(value) {
+  log.debug("Entering shortStatus().");
+  if (!value) {
+    log.debug("Leaving shortStatus(). None.");
+    return '';
+  }
+  var i = String(value).lastIndexOf(':');
+  log.debug("Leaving shortStatus().");
+  return i >= 0 ? String(value).substring(i + 1) : String(value);
+}
+
+// WHETHER A STATUS SAYS SUCCESS, in either version's spelling. Matching the
+// local part after the last colon accepts `Success`, `samlp:Success` and
+// `urn:oasis:names:tc:SAML:2.0:status:Success`, and refuses a lookalike —
+// `RequesterSuccess`, or a StatusMessage with the word in it.
+function isSuccessStatus(value) {
+  log.debug("Entering isSuccessStatus().");
+  log.debug("Leaving isSuccessStatus().");
+  return shortStatus(value) === 'Success';
+}
+
+// Resolve a SAML 1.1 status QName against the declarations in scope, which is
+// what a strict reader does with it. Worth showing rather than hiding: a
+// `samlp:Success` whose prefix is declared nowhere is a malformed document
+// that every lenient reader in the world accepts, and this is the only place
+// it will ever be mentioned.
+function resolveQName(elem, value) {
+  log.debug("Entering resolveQName().");
+  var text = String(value || '');
+  var parts = text.split(':');
+  // A QName has exactly ONE colon with an NCName either side of it. SAML 2.0's
+  // status codes are URIs and have several; a bare local part has none.
+  // Neither resolves to anything, and neither is an error.
+  if (parts.length !== 2 || !parts[1] ||
+      !/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(parts[0])) {
+    log.debug("Leaving resolveQName(). Not a QName.");
+    return '';
+  }
+  var prefix = parts[0];
+  var local = parts[1];
+  if (!elem || !elem.lookupNamespaceURI) {
+    log.debug("Leaving resolveQName(). No resolver.");
+    return '';
+  }
+  var ns;
+  try {
+    ns = elem.lookupNamespaceURI(prefix);
+  } catch (e) {
+    // @xmldom has raised on this in the past. A decoder that cannot resolve a
+    // prefix says nothing about it rather than failing the whole render.
+    log.debug("resolveQName(): lookup refused: " + e.message);
+    ns = null;
+  }
+  log.debug("Leaving resolveQName().");
+  return ns ? '{' + ns + '}' + local : '(the prefix "' + prefix +
+      '" is declared nowhere in this document)';
+}
+
+// The <samlp:Status> of a response, in either version. The nested codes are
+// walked as a CHAIN of direct children rather than collected flat: SAML 2.0
+// core section 3.2.2.1 nests them to qualify the one above, so `Responder`
+// then `NoPassive` is one answer with two parts and a flat list of the same
+// two values loses which qualified which.
+//
+// Returns { present, top, topResolved, short, success, chain, message,
+//           detail, note }.
+function statusOf(msg) {
+  log.debug("Entering statusOf().");
+  var out = { present: false, top: '', topResolved: '', short: '',
+              success: false, chain: [], message: '', detail: '', note: '' };
+  var statusEl = msg ? tags(msg, 'Status')[0] : null;
+  if (!statusEl) {
+    log.debug("Leaving statusOf(). No Status.");
+    return out;
+  }
+  out.present = true;
+  var code = directChild(statusEl, 'StatusCode');
+  while (code) {
+    var value = attr(code, 'Value');
+    out.chain.push(value);
+    code = directChild(code, 'StatusCode');
+  }
+  out.top = out.chain.length ? out.chain[0] : '';
+  out.topResolved = resolveQName(statusEl, out.top);
+  out.short = shortStatus(out.top);
+  out.success = isSuccessStatus(out.top);
+  out.message = directChildText(statusEl, 'StatusMessage');
+  var detailEl = directChild(statusEl, 'StatusDetail');
+  out.detail = detailEl ? serialize(detailEl) : '';
+  // The note describes the MOST SPECIFIC code, which is the last of the chain:
+  // a top-level `Responder` says only that it was not the request's fault.
+  for (var i = out.chain.length - 1; i >= 0; i--) {
+    var note = STATUS_NOTES[shortStatus(out.chain[i])];
+    if (note) {
+      out.note = note;
+      break;
+    }
+  }
+  log.debug("Leaving statusOf(). " + out.short);
+  return out;
+}
+
+// Every <saml:Attribute> under an element, in both versions' spelling. SAML
+// 1.1 splits what 2.0 writes as one `Name` URI into `AttributeName` and
+// `AttributeNamespace`, so the displayed name joins the two halves back into
+// the claim URI they came from and the namespace half is also reported on its
+// own — a reader that knows only `Name` shows a column of blanks on a document
+// that is perfectly well formed.
+function attributesOf(root) {
+  log.debug("Entering attributesOf().");
+  var out = [];
+  var attrs = root ? tags(root, 'Attribute') : [];
+  for (var i = 0; i < attrs.length; i++) {
+    var a = attrs[i];
+    var vals = tags(a, 'AttributeValue');
+    var values = [];
+    for (var j = 0; j < vals.length; j++) {
+      values.push((vals[j].textContent || '').trim());
+    }
+    var ns = attr(a, 'AttributeNamespace');
+    var name = attr(a, 'Name') || attr(a, 'AttributeName');
+    var shown = (ns && !attr(a, 'Name'))
+      ? (ns.replace(/\/$/, '') + '/' + name)
+      : name;
+    out.push({
+      name: shown,
+      rawName: name,
+      namespace: ns,
+      values: values,
+      format: attr(a, 'NameFormat') || ns,
+      friendlyName: attr(a, 'FriendlyName')
+    });
+  }
+  log.debug("Leaving attributesOf(). " + out.length + " attributes.");
+  return out;
+}
+
+// HOW THE ASSERTION CLAIMS TO HAVE REACHED THE RELYING PARTY. The two
+// versions put this in different places and in the SAML 1.1 browser profiles
+// it IS the profile: saml-profile-1.1 section 4.1.1.4 requires cm:artifact for
+// Browser/Artifact and 4.2.1.4 requires cm:bearer for Browser/POST, and a
+// relying party that never looks works perfectly with either. SAML 2.0 puts
+// the method on <saml:SubjectConfirmation> and the interesting part —
+// Recipient, NotOnOrAfter, InResponseTo, Address — in the
+// <saml:SubjectConfirmationData> beneath it, which is the bearer check every
+// service provider is supposed to perform and many do not.
+function subjectConfirmations(subject) {
+  log.debug("Entering subjectConfirmations().");
+  var out = [];
+  if (!subject) {
+    log.debug("Leaving subjectConfirmations(). No Subject.");
+    return out;
+  }
+  var kids = subject.childNodes;
+  for (var i = 0; i < kids.length; i++) {
+    if (kids[i].nodeType !== 1) continue;
+    if (kids[i].localName !== 'SubjectConfirmation') continue;
+    var sc = kids[i];
+    var data = directChild(sc, 'SubjectConfirmationData');
+    var row = {
+      method: attr(sc, 'Method'),
+      recipient: attr(data, 'Recipient'),
+      notBefore: attr(data, 'NotBefore'),
+      notOnOrAfter: attr(data, 'NotOnOrAfter'),
+      inResponseTo: attr(data, 'InResponseTo'),
+      address: attr(data, 'Address')
+    };
+    // SAML 1.1 does not put the method in an attribute at all: it is one or
+    // more <saml:ConfirmationMethod> CHILD elements of the
+    // <saml:SubjectConfirmation>. A reader that looks only for @Method finds
+    // an empty string on every 1.1 assertion and reports the profile as
+    // unstated — which, in the 1.1 browser profiles, is the whole of what
+    // distinguishes Browser/POST from Browser/Artifact.
+    var methods = [];
+    var sub = sc.childNodes;
+    for (var m = 0; m < sub.length; m++) {
+      if (sub[m].nodeType === 1 && sub[m].localName === 'ConfirmationMethod') {
+        methods.push((sub[m].textContent || '').trim());
+      }
+    }
+    if (!row.method && methods.length) {
+      methods.forEach(function (name) {
+        var copy = { method: name, recipient: row.recipient,
+                     notBefore: row.notBefore, notOnOrAfter: row.notOnOrAfter,
+                     inResponseTo: row.inResponseTo, address: row.address };
+        out.push(copy);
+      });
+      continue;
+    }
+    out.push(row);
+  }
+  log.debug("Leaving subjectConfirmations(). " + out.length + " found.");
+  return out;
+}
+
+// The <saml:Conditions> of an assertion: the validity window, plus EVERY
+// condition element under it rather than only the audience. A condition this
+// code does not recognise is still reported, by its own element name — an
+// unrecognised condition is one a relying party MUST reject (saml-core-2.0-os
+// section 2.5.1), so silently dropping it is the one thing a reader must not
+// do here.
+function conditionsOf(assertion) {
+  log.debug("Entering conditionsOf().");
+  var cond = assertion ? tags(assertion, 'Conditions')[0] : null;
+  if (!cond) {
+    log.debug("Leaving conditionsOf(). None.");
+    return null;
+  }
+  var out = { notBefore: attr(cond, 'NotBefore'),
+              notOnOrAfter: attr(cond, 'NotOnOrAfter'), entries: [] };
+  var kids = cond.childNodes;
+  for (var i = 0; i < kids.length; i++) {
+    if (kids[i].nodeType !== 1) continue;
+    var entry = { localName: kids[i].localName, values: [], text: '' };
+    // AudienceRestriction (2.0) and AudienceRestrictionCondition (1.1) are the
+    // same condition under two names, and WHICH ONE ARRIVED is exactly what
+    // somebody reads this for — so the element's own name is kept rather than
+    // normalised to either.
+    var auds = tags(kids[i], 'Audience');
+    for (var a = 0; a < auds.length; a++) {
+      entry.values.push((auds[a].textContent || '').trim());
+    }
+    if (!entry.values.length) {
+      entry.text = (kids[i].textContent || '').trim();
+    }
+    out.entries.push(entry);
+  }
+  log.debug("Leaving conditionsOf(). " + out.entries.length + " conditions.");
+  return out;
+}
+
+// The authentication statement, in either version. SAML 1.1 puts the method
+// and the instant on <saml:AuthenticationStatement> as attributes; SAML 2.0
+// spells the method as a child <saml:AuthnContextClassRef> and the instant as
+// an AuthnInstant attribute on <saml:AuthnStatement>, and adds the two session
+// fields that Single Logout is built on.
+function authnStatementOf(assertion) {
+  log.debug("Entering authnStatementOf().");
+  var st = assertion ? (tags(assertion, 'AuthnStatement')[0] ||
+      tags(assertion, 'AuthenticationStatement')[0]) : null;
+  if (!st) {
+    log.debug("Leaving authnStatementOf(). None.");
+    return null;
+  }
+  var out = {
+    element: st.localName,
+    instant: attr(st, 'AuthnInstant') || attr(st, 'AuthenticationInstant'),
+    method: attr(st, 'AuthenticationMethod'),
+    sessionIndex: attr(st, 'SessionIndex'),
+    sessionNotOnOrAfter: attr(st, 'SessionNotOnOrAfter'),
+    contextRefs: [],
+    locality: ''
+  };
+  var refs = tags(st, 'AuthnContextClassRef');
+  for (var i = 0; i < refs.length; i++) {
+    out.contextRefs.push((refs[i].textContent || '').trim());
+  }
+  var decl = tags(st, 'AuthnContextDeclRef');
+  for (var d = 0; d < decl.length; d++) {
+    out.contextRefs.push((decl[d].textContent || '').trim());
+  }
+  var loc = tags(st, 'SubjectLocality')[0];
+  if (loc) {
+    out.locality = (attr(loc, 'IPAddress') || attr(loc, 'Address')) +
+        (attr(loc, 'DNSAddress') || attr(loc, 'DNSName')
+          ? ' / ' + (attr(loc, 'DNSAddress') || attr(loc, 'DNSName')) : '');
+  }
+  log.debug("Leaving authnStatementOf().");
+  return out;
+}
+
+// Everything worth reading out of one <saml:Assertion>, in either version, as
+// data rather than markup — the SAML Response page and the SAML Response
+// Decoder both render this and neither reads an assertion for itself.
+//
+// Returns { id, version, saml1, issuer, issueInstant, subject, confirmations,
+//           conditions, authn, authzDecisions, attributes, signature,
+//           advice, statements, rows }.
+function assertionSummary(assertion) {
+  log.debug("Entering assertionSummary().");
+  if (!assertion) {
+    log.debug("Leaving assertionSummary(). No assertion.");
+    return null;
+  }
+  var version = samlVersionOf(assertion);
+  var subject = tags(assertion, 'Subject')[0] || null;
+  var out = {
+    id: attr(assertion, 'ID') || attr(assertion, 'AssertionID'),
+    version: version,
+    saml1: String(version || '').charAt(0) === '1',
+    // The issuer is a CHILD ELEMENT in 2.0 and an ATTRIBUTE in 1.1.
+    issuer: directChildText(assertion, 'Issuer') || attr(assertion, 'Issuer'),
+    issueInstant: attr(assertion, 'IssueInstant'),
+    subject: subjectNameId(subject),
+    encryptedSubject: !!(subject && directChild(subject, 'EncryptedID')),
+    confirmations: subjectConfirmations(subject),
+    conditions: conditionsOf(assertion),
+    authn: authnStatementOf(assertion),
+    authzDecisions: [],
+    attributes: attributesOf(assertion),
+    signature: messageSignature(assertion),
+    advice: !!directChild(assertion, 'Advice'),
+    statements: [],
+    rows: []
+  };
+
+  // Which statements the assertion carries at all. An assertion with no
+  // statement in it is legal in 2.0 and says nothing about anybody, which is
+  // worth showing rather than rendering as an empty table.
+  var kids = assertion.childNodes;
+  for (var i = 0; i < kids.length; i++) {
+    if (kids[i].nodeType !== 1) continue;
+    if (/Statement$/.test(kids[i].localName || '')) {
+      out.statements.push(kids[i].localName);
+    }
+  }
+
+  var decisions = tags(assertion, 'AuthzDecisionStatement');
+  if (!decisions.length) {
+    decisions = tags(assertion, 'AuthorizationDecisionStatement');
+  }
+  for (var d = 0; d < decisions.length; d++) {
+    var actions = tags(decisions[d], 'Action');
+    var list = [];
+    for (var a = 0; a < actions.length; a++) {
+      list.push((actions[a].textContent || '').trim());
+    }
+    out.authzDecisions.push({
+      resource: attr(decisions[d], 'Resource'),
+      decision: attr(decisions[d], 'Decision'),
+      actions: list
+    });
+  }
+
+  // The ordered rows a details table renders. Same order in both versions,
+  // spelled from whichever one arrived.
+  var rows = out.rows;
+  push(rows, 'Assertion ID', out.id);
+  push(rows, 'Assertion Version', out.version);
+  push(rows, 'Assertion Issuer', out.issuer);
+  push(rows, 'IssueInstant', out.issueInstant);
+  if (out.conditions) {
+    push(rows, 'Conditions NotBefore', out.conditions.notBefore);
+    push(rows, 'Conditions NotOnOrAfter', out.conditions.notOnOrAfter);
+    out.conditions.entries.forEach(function (entry) {
+      push(rows, 'Condition: ' + entry.localName,
+           entry.values.length ? entry.values.join('\n')
+                               : (entry.text || '(present)'));
+    });
+  }
+  if (out.subject) {
+    push(rows, 'NameID', out.subject.value);
+    push(rows, 'NameID Format', out.subject.format);
+    push(rows, 'NameQualifier', out.subject.nameQualifier);
+    push(rows, 'SPNameQualifier', out.subject.spNameQualifier);
+  } else if (out.encryptedSubject) {
+    push(rows, 'Subject', 'an <saml:EncryptedID> — supply the recipient ' +
+         'private key in the Decryption pane to read it.');
+  }
+  out.confirmations.forEach(function (c) {
+    push(rows, 'ConfirmationMethod', c.method);
+    push(rows, 'Confirmation Recipient', c.recipient);
+    push(rows, 'Confirmation NotOnOrAfter', c.notOnOrAfter);
+    push(rows, 'Confirmation InResponseTo', c.inResponseTo);
+    push(rows, 'Confirmation Address', c.address);
+  });
+  if (out.authn) {
+    push(rows, 'Authn Statement', out.authn.element);
+    push(rows, 'AuthenticationInstant', out.authn.instant);
+    push(rows, 'AuthenticationMethod', out.authn.method);
+    push(rows, 'AuthnContext Class/Decl Refs',
+         out.authn.contextRefs.join('\n'));
+    push(rows, 'SessionIndex', out.authn.sessionIndex);
+    push(rows, 'SessionNotOnOrAfter', out.authn.sessionNotOnOrAfter);
+    push(rows, 'SubjectLocality', out.authn.locality);
+  }
+  out.authzDecisions.forEach(function (d2) {
+    push(rows, 'AuthzDecision Resource', d2.resource);
+    push(rows, 'AuthzDecision', d2.decision);
+    push(rows, 'AuthzDecision Actions', d2.actions.join('\n'));
+  });
+  push(rows, 'Statements', out.statements.join(', '));
+  push(rows, 'Attributes', String(out.attributes.length));
+  if (out.advice) {
+    push(rows, 'Advice', 'present — assertions in an <saml:Advice> are ' +
+         'SUPPORTING material, not the subject of this response, and a ' +
+         'relying party may ignore them entirely.');
+  }
+  if (out.signature) {
+    push(rows, 'Assertion Signature', 'present (enveloped)');
+    push(rows, 'Signature Method', out.signature.signatureMethod);
+    push(rows, 'Canonicalization', out.signature.canonicalization);
+    push(rows, 'Digest Method', out.signature.digestMethod);
+    push(rows, 'Signed Reference URI', out.signature.reference ||
+         '(empty — the whole document)');
+    push(rows, 'KeyInfo certificate', out.signature.certB64 ?
+         'present' : 'absent (a key has to be supplied to verify)');
+  } else {
+    push(rows, 'Assertion Signature', 'this assertion carries no enveloped ' +
+         '<ds:Signature> of its own');
+  }
+  log.debug("Leaving assertionSummary(). rows=" + rows.length);
+  return out;
+}
+
+// Serialize a subtree so that it still verifies OUT of its document.
+//
+// A <saml:Assertion> is signed in place and then read on its own — the
+// signature pane is handed the assertion, not the response around it. A
+// serializer performs namespace fixup as it goes, so a prefix the subtree
+// actually USES is declared for you and the fragment parses. What it does NOT
+// carry down is a declaration that is merely IN SCOPE, and there are two of
+// those that matter:
+//
+//   * a prefix used only inside an ATTRIBUTE VALUE. SAML 1.1's status code is
+//     a QName (`samlp:Success`) and `xsi:type` on an <saml:AttributeValue> is
+//     another; no serializer can see those, so the fragment comes out naming
+//     a prefix bound to nothing.
+//   * under INCLUSIVE C14N, the apex of a subtree carries every namespace in
+//     scope — so a declaration dropped on the way out changes the digest, and
+//     the signature reports INVALID on a message that is perfectly good.
+//     (Exclusive C14N emits only what is visibly used, so the same additions
+//     are invisible to it, which is why this is safe for both.)
+//
+// So the inherited declarations are copied down, EXCEPT the ones the
+// serializer is going to emit anyway — adding one of those produces a
+// duplicate `xmlns:` attribute, which is not well-formed XML at all. "Going to
+// emit" is decided from the DOM rather than from the output: a prefix used by
+// an element or an attribute NAME in the subtree is the serializer's job, and
+// everything else is this function's.
+function usedPrefixes(elem) {
+  log.debug("Entering usedPrefixes().");
+  var used = {};
+  var stack = [elem];
+  while (stack.length) {
+    var node = stack.pop();
+    if (!node || node.nodeType !== 1) continue;
+    used[node.prefix || ''] = true;
+    for (var i = 0; i < node.attributes.length; i++) {
+      var a = node.attributes[i];
+      var name = a.name || '';
+      if (name === 'xmlns' || name.indexOf('xmlns:') === 0) continue;
+      if (a.prefix) used[a.prefix] = true;
+    }
+    var kids = node.childNodes;
+    for (var k = 0; k < kids.length; k++) {
+      stack.push(kids[k]);
+    }
+  }
+  log.debug("Leaving usedPrefixes().");
+  return used;
+}
+
+function serializeSubtree(elem) {
+  log.debug("Entering serializeSubtree().");
+  if (!elem) {
+    log.debug("Leaving serializeSubtree(). Nothing.");
+    return '';
+  }
+  var declared = {};
+  var i;
+  for (i = 0; i < elem.attributes.length; i++) {
+    var own = elem.attributes[i];
+    var ownName = own.name || '';
+    if (ownName === 'xmlns' || ownName.indexOf('xmlns:') === 0) {
+      declared[ownName] = true;
+    }
+  }
+  var used = usedPrefixes(elem);
+  var missing = [];
+  var node = elem.parentNode;
+  while (node && node.nodeType === 1) {
+    for (i = 0; i < node.attributes.length; i++) {
+      var a = node.attributes[i];
+      var name = a.name || '';
+      if (name !== 'xmlns' && name.indexOf('xmlns:') !== 0) continue;
+      if (declared[name]) continue;
+      declared[name] = true;
+      // The serializer declares this one itself; adding it again would emit
+      // the attribute twice and the fragment would not parse.
+      if (used[name === 'xmlns' ? '' : name.substring(6)]) continue;
+      missing.push([name, a.value]);
+    }
+    node = node.parentNode;
+  }
+  if (!missing.length) {
+    log.debug("Leaving serializeSubtree(). Nothing to carry down.");
+    return serialize(elem);
+  }
+  // The copy is made on a CLONE: the live node is what a later signature check
+  // or a re-render reads, and adding attributes to it would change what the
+  // rest of the page is looking at.
+  var clone = elem.cloneNode(true);
+  missing.forEach(function (pair) {
+    try {
+      clone.setAttribute(pair[0], pair[1]);
+    } catch (e) {
+      // A DOM that refuses an xmlns attribute set this way. The fragment is
+      // still returned; it is the one the serializer would have produced.
+      log.debug("serializeSubtree(): " + pair[0] + " refused: " + e.message);
+    }
+  });
+  log.debug("Leaving serializeSubtree(). " + missing.length + " carried down.");
+  return serialize(clone);
+}
+
+// Every assertion the message carries, plaintext and encrypted, in document
+// order, each labelled with WHERE it sits. The place matters: an assertion
+// inside an <saml:Advice> is supporting material rather than the subject of
+// the response, and one inside an <saml:EncryptedAssertion> cannot be read at
+// all until a key is applied.
+//
+// Returns [{ kind, xml, element, encrypted, advice, summary }].
+function assertionsOf(msg) {
+  log.debug("Entering assertionsOf().");
+  var out = [];
+  if (!msg) {
+    log.debug("Leaving assertionsOf(). No message.");
+    return out;
+  }
+  // An assertion pasted on its own IS the message, which is much the commonest
+  // thing on a clipboard after a full response.
+  if (msg.localName === 'Assertion') {
+    out.push({ kind: 'assertion', xml: serializeSubtree(msg), element: msg,
+               encrypted: false, advice: false,
+               summary: assertionSummary(msg) });
+    log.debug("Leaving assertionsOf(). The message is an assertion.");
+    return out;
+  }
+  var all = tags(msg, 'Assertion');
+  for (var i = 0; i < all.length; i++) {
+    var a = all[i];
+    var advice = false;
+    var node = a.parentNode;
+    while (node && node.nodeType === 1 && node !== msg) {
+      if (node.localName === 'Advice') advice = true;
+      node = node.parentNode;
+    }
+    out.push({ kind: advice ? 'advice' : 'assertion',
+               xml: serializeSubtree(a), element: a, encrypted: false,
+               advice: advice, summary: assertionSummary(a) });
+  }
+  var enc = tags(msg, 'EncryptedAssertion');
+  for (var e = 0; e < enc.length; e++) {
+    var ed = tags(enc[e], 'EncryptedData')[0];
+    out.push({
+      kind: 'encrypted',
+      xml: serializeSubtree(enc[e]),
+      element: enc[e],
+      encrypted: true,
+      advice: false,
+      summary: null,
+      dataAlg: attr(directChild(ed, 'EncryptionMethod'), 'Algorithm'),
+      keyAlg: (function () {
+        var ek = tags(enc[e], 'EncryptedKey')[0];
+        return ek ? attr(directChild(ek, 'EncryptionMethod'), 'Algorithm') : '';
+      })()
+    });
+  }
+  log.debug("Leaving assertionsOf(). " + out.length + " assertions.");
+  return out;
+}
+
+// The important values of a RESPONSE message, as ordered { key, value, note }
+// rows plus the structured halves a page needs to render separately.
+//
+// Returns { rows, messageType, version, saml1, status, signature, assertions,
+//           encrypted, nested, doc, message, error }.
+//
+// `nested` is the message INSIDE a <samlp:ArtifactResponse>, summarized one
+// level deep. An ArtifactResponse is an envelope: its own status says only
+// whether the artifact resolved, and the answer the user is looking for is the
+// status of the message inside it. Reporting the envelope's Success as the
+// result is how a debugger reports a failed sign-in as a successful one.
+function summarizeResponse(xml, depth) {
+  log.debug("Entering summarizeResponse().");
+  var doc = parseXml(xml);
+  if (!doc || !doc.documentElement) {
+    log.debug("Leaving summarizeResponse(). Not XML.");
+    return { rows: [], messageType: '', version: '', assertions: [],
+             status: null, error: 'The decoded value is not well-formed XML.' };
+  }
+  var msg = doc.documentElement;
+  var version = samlVersionOf(msg);
+  var rows = [];
+  var out = { rows: rows, messageType: msg.localName || '', version: version,
+              saml1: String(version || '').charAt(0) === '1', status: null,
+              signature: null, assertions: [], encrypted: findEncrypted(doc),
+              nested: null, doc: doc, message: msg };
+
+  // An encrypted root has nothing readable in it, and a table of empty cells
+  // over ciphertext is worse than one row saying so.
+  if (msg.localName === 'EncryptedData' || msg.localName === 'EncryptedID' ||
+      msg.localName === 'EncryptedAssertion') {
+    push(rows, 'Message Type', msg.localName);
+    push(rows, 'Encryption (data)', out.encrypted ? out.encrypted.dataAlg : '');
+    push(rows, 'Encryption (key transport)',
+         out.encrypted ? out.encrypted.keyAlg : '');
+    push(rows, 'Status', 'Encrypted. Supply the recipient private key in the ' +
+         'Decryption pane to read it.');
+    log.debug("Leaving summarizeResponse(). Encrypted root.");
+    return out;
+  }
+
+  push(rows, 'Message Type', msg.localName);
+  push(rows, 'SAML Version', version || '(not stated)');
+  // SAML 1.1 spells the message id ResponseID; an assertion pasted on its own
+  // spells it AssertionID.
+  push(rows, 'ID', attr(msg, 'ID') || attr(msg, 'ResponseID') ||
+       attr(msg, 'AssertionID'));
+  push(rows, 'Issue Instant', attr(msg, 'IssueInstant'));
+  push(rows, 'In Response To', attr(msg, 'InResponseTo'),
+       'the request this answers. A response carrying none is UNSOLICITED — ' +
+       'IdP-initiated, which is the only kind SAML 1.1 has.');
+  // Destination is 2.0's; Recipient is 1.1's, and it names the same thing.
+  push(rows, 'Destination', attr(msg, 'Destination'));
+  push(rows, 'Recipient', attr(msg, 'Recipient'));
+  push(rows, 'Consent', attr(msg, 'Consent'));
+
+  out.assertions = assertionsOf(msg);
+
+  // The issuer is a child element in 2.0 and an attribute in 1.1 — and on a
+  // SAML 1.1 Browser/POST Response there is frequently none at all, because
+  // the assertion inside carries it. An empty Issuer row above a signed
+  // assertion reads as an unidentified identity provider, so the assertion's
+  // stands in and says that it did.
+  var issuer = directChildText(msg, 'Issuer') || attr(msg, 'Issuer');
+  var issuerNote = '';
+  if (!issuer) {
+    for (var i = 0; i < out.assertions.length; i++) {
+      if (out.assertions[i].summary && out.assertions[i].summary.issuer) {
+        issuer = out.assertions[i].summary.issuer;
+        issuerNote = 'read off the assertion — the message itself names no ' +
+            'issuer, which is ordinary in SAML 1.1.';
+        break;
+      }
+    }
+  }
+  push(rows, 'Issuer', issuer, issuerNote);
+
+  out.status = statusOf(msg);
+  if (out.status.present) {
+    push(rows, 'Status', out.status.short + (out.status.success ? '' :
+         ' — NOT a success'), out.status.note);
+    push(rows, 'Status Code', out.status.top);
+    if (out.status.topResolved) {
+      push(rows, 'Status Code (resolved)', out.status.topResolved,
+           'SAML 1.1 writes the code as a QName rather than a URI, so it ' +
+           'means nothing without the namespace its prefix is bound to.');
+    }
+    for (var c = 1; c < out.status.chain.length; c++) {
+      push(rows, 'Sub-status ' + c, out.status.chain[c],
+           STATUS_NOTES[shortStatus(out.status.chain[c])] || '');
+    }
+    push(rows, 'Status Message', out.status.message);
+    push(rows, 'Status Detail', out.status.detail ? 'present' : '');
+  } else if (msg.localName !== 'Assertion') {
+    push(rows, 'Status', 'no <samlp:Status> element', 'every SAML protocol ' +
+         'response carries one; a message without it is not a response.');
+  }
+
+  push(rows, 'Assertions', String(out.assertions.length));
+  var encryptedCount = out.assertions.filter(function (a) {
+    return a.encrypted;
+  }).length;
+  push(rows, 'Encrypted assertions', encryptedCount ? String(encryptedCount)
+       : '');
+
+  // THE MESSAGE-LEVEL SIGNATURE, which is not the assertion's. Both are
+  // reported, and the absence of either is stated rather than left blank —
+  // "the response is signed" and "the assertion is signed" are different
+  // security claims and only the second survives the assertion being lifted
+  // out of the response.
+  //
+  // UNLESS THE MESSAGE IS THE ASSERTION, which is what a bare <saml:Assertion>
+  // pasted on its own is. Then there is one signature and it is the
+  // assertion's: reporting it a second time as the message's would make a
+  // caller check the identical bytes twice and count two, which reads as a
+  // response signed at both levels — the opposite of what is in front of it.
+  out.signature = msg.localName === 'Assertion' ? null : messageSignature(msg);
+  if (out.signature) {
+    push(rows, 'Message Signature', 'present (enveloped, on <' +
+         msg.localName + '>)');
+    push(rows, 'Signature Method', out.signature.signatureMethod);
+    push(rows, 'Canonicalization', out.signature.canonicalization);
+    push(rows, 'Digest Method', out.signature.digestMethod);
+    push(rows, 'Signed Reference URI', out.signature.reference ||
+         '(empty — the whole document)');
+    push(rows, 'KeyInfo certificate', out.signature.certB64 ?
+         'present' : 'absent (a key has to be supplied to verify)');
+  } else if (msg.localName !== 'Assertion') {
+    push(rows, 'Message Signature', 'no enveloped <ds:Signature> on the ' +
+         'message itself', 'an assertion inside it may still be signed, ' +
+         'which is a different claim: an assertion signature does not cover ' +
+         'the status or the InResponseTo.');
+  }
+  if (out.encrypted) {
+    push(rows, 'Encrypted content', out.encrypted.wrapper ?
+         ('<' + out.encrypted.wrapper + '>') : '<xenc:EncryptedData>');
+    push(rows, 'Encryption (data)', out.encrypted.dataAlg);
+    push(rows, 'Encryption (key transport)', out.encrypted.keyAlg);
+  }
+
+  // The payload of an ArtifactResponse, one level down. Guarded on depth
+  // rather than trusted: an envelope containing itself is a document somebody
+  // built to see what would happen.
+  if (msg.localName === 'ArtifactResponse' && !(depth > 0)) {
+    var inner = null;
+    var kids = msg.childNodes;
+    for (var k = 0; k < kids.length; k++) {
+      if (kids[k].nodeType !== 1) continue;
+      if (kids[k].localName === 'Signature' ||
+          kids[k].localName === 'Issuer' ||
+          kids[k].localName === 'Extensions' ||
+          kids[k].localName === 'Status') continue;
+      inner = kids[k];
+      break;
+    }
+    if (inner) {
+      out.nested = summarizeResponse(serializeSubtree(inner), 1);
+      out.nestedXml = serializeSubtree(inner);
+      push(rows, 'Carried message', inner.localName, 'an ArtifactResponse is ' +
+           'an ENVELOPE. Its own Status says only whether the artifact ' +
+           'resolved; the answer being looked for is the status of the ' +
+           'message inside it.');
+    }
+  }
+
+  log.debug("Leaving summarizeResponse(). type=" + out.messageType);
+  return out;
+}
+
 module.exports = {
   NS_SAML1P: NS_SAML1P,
   NS_SAML2P: NS_SAML2P,
@@ -894,5 +1729,19 @@ module.exports = {
   subjectNameId: subjectNameId,
   findEncrypted: findEncrypted,
   messageSignature: messageSignature,
-  summarize: summarize
+  summarize: summarize,
+  STATUS_NOTES: STATUS_NOTES,
+  shortStatus: shortStatus,
+  isSuccessStatus: isSuccessStatus,
+  resolveQName: resolveQName,
+  statusOf: statusOf,
+  attributesOf: attributesOf,
+  subjectConfirmations: subjectConfirmations,
+  conditionsOf: conditionsOf,
+  authnStatementOf: authnStatementOf,
+  assertionSummary: assertionSummary,
+  usedPrefixes: usedPrefixes,
+  serializeSubtree: serializeSubtree,
+  assertionsOf: assertionsOf,
+  summarizeResponse: summarizeResponse
 };

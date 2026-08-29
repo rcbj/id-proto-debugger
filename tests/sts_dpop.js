@@ -86,19 +86,65 @@ function claimsOf(token) {
 // ---------------------------------------------------------------------------
 function newKey(type) {
   log.debug("Entering newKey(). type=" + type);
-  var pair = type === "rsa"
-    ? crypto.generateKeyPairSync("rsa", { modulusLength: 2048 })
-    : crypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  // `type` is "rsa", "ec", or ANY ALGORITHM THE SERVER ADVERTISES. The first
+  // two are what the negatives below ask for by name and are kept; the third
+  // is what lets everyAdvertisedProofAlgorithmIsAccepted() drive the whole
+  // list. It offered two of eleven until 2026-08-28, which is how a server
+  // could have advertised nine it did not implement without anything noticing.
+  var alg = type === "rsa" ? "RS256" : (type === "ec" ? "ES256" : type);
+  var spec = DPOP_ALGS[alg];
+  assert.ok(spec, "newKey(): " + alg + " is not an algorithm this test can " +
+    "sign with. Add it to DPOP_ALGS — a server advertising an algorithm this " +
+    "file cannot produce is one the file cannot vouch for.");
+  var pair = spec.gen[1]
+    ? crypto.generateKeyPairSync(spec.gen[0], spec.gen[1])
+    : crypto.generateKeyPairSync(spec.gen[0]);
   var jwk = pair.publicKey.export({ format: "jwk" });
-  log.debug("Leaving newKey().");
+  log.debug("Leaving newKey(). " + alg);
   return {
-    alg: type === "rsa" ? "RS256" : "ES256",
+    alg: alg,
+    spec: spec,
     privateKey: pair.privateKey,
-    publicJwk: type === "rsa"
+    // ONLY the members RFC 7638 names for the key type. A stray `key_ops` or
+    // `ext` would travel in the proof header and change the thumbprint input.
+    publicJwk: jwk.kty === "RSA"
       ? { kty: jwk.kty, n: jwk.n, e: jwk.e }
-      : { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y }
+      : (jwk.kty === "OKP"
+          ? { kty: jwk.kty, crv: jwk.crv, x: jwk.x }
+          : { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y })
   };
 }
+
+// The node parameters for each algorithm the server may advertise for DPoP,
+// written from the RFCs rather than taken from anything under test.
+var DPOP_ALGS = {
+  RS256: { gen: ["rsa", { modulusLength: 2048 }], hash: "sha256", options: {},
+           sigBytes: 256 },
+  RS384: { gen: ["rsa", { modulusLength: 2048 }], hash: "sha384", options: {},
+           sigBytes: 256 },
+  RS512: { gen: ["rsa", { modulusLength: 2048 }], hash: "sha512", options: {},
+           sigBytes: 256 },
+  PS256: { gen: ["rsa", { modulusLength: 2048 }], hash: "sha256",
+           options: { padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+                      saltLength: 32 }, sigBytes: 256 },
+  PS384: { gen: ["rsa", { modulusLength: 2048 }], hash: "sha384",
+           options: { padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+                      saltLength: 48 }, sigBytes: 256 },
+  PS512: { gen: ["rsa", { modulusLength: 2048 }], hash: "sha512",
+           options: { padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+                      saltLength: 64 }, sigBytes: 256 },
+  ES256: { gen: ["ec", { namedCurve: "P-256" }], hash: "sha256",
+           options: { dsaEncoding: "ieee-p1363" }, sigBytes: 64 },
+  ES384: { gen: ["ec", { namedCurve: "secp384r1" }], hash: "sha384",
+           options: { dsaEncoding: "ieee-p1363" }, sigBytes: 96 },
+  ES512: { gen: ["ec", { namedCurve: "secp521r1" }], hash: "sha512",
+           options: { dsaEncoding: "ieee-p1363" }, sigBytes: 132 },
+  // RFC 8812. Web Crypto has no secp256k1; node's OpenSSL does.
+  ES256K: { gen: ["ec", { namedCurve: "secp256k1" }], hash: "sha256",
+            options: { dsaEncoding: "ieee-p1363" }, sigBytes: 64 },
+  // RFC 8037: Ed25519 hashes internally, so there is no digest to name.
+  EdDSA: { gen: ["ed25519", null], hash: null, options: {}, sigBytes: 64 }
+};
 
 function jkt(key) {
   log.debug("Entering jkt().");
@@ -142,13 +188,14 @@ function makeProof(key, opts) {
       b64u(JSON.stringify(payload));
   var signature;
   if (over.badSignature) {
-    signature = crypto.randomBytes(key.alg === "RS256" ? 256 : 64);
-  } else if (key.alg === "RS256") {
-    signature = crypto.sign("sha256", Buffer.from(signingInput, "ascii"),
-        key.privateKey);
+    signature = crypto.randomBytes(key.spec.sigBytes);
   } else {
-    signature = crypto.sign("sha256", Buffer.from(signingInput, "ascii"),
-                            { key: key.privateKey, dsaEncoding: "ieee-p1363" });
+    // The digest and the padding come from the ALGORITHM. This hardcoded
+    // "sha256" and branched on RS256 alone, which was right while two
+    // algorithms were offered and would have verified an RS384 proof against
+    // the wrong digest the moment a third was.
+    signature = crypto.sign(key.spec.hash, Buffer.from(signingInput, "ascii"),
+      Object.assign({ key: key.privateKey }, key.spec.options));
   }
   log.debug("Leaving makeProof().");
   return signingInput + "." + b64u(signature);
@@ -237,6 +284,64 @@ async function serverAdvertisesDpop() {
         "could mint proofs.");
   log.info("[metadata] OK — " + algs.length + " algorithms, all asymmetric.");
   log.debug("Leaving serverAdvertisesDpop().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY ALGORITHM THE SERVER ADVERTISES ACTUALLY MAKES A PROOF IT ACCEPTS.
+//
+// This file drove ES256 and RS256 for a long time, which was the whole of what
+// the server offered. It offers eleven now, and a list is a promise: a server
+// that advertised an algorithm it could not verify would send a client away
+// with a perfectly good proof and an error naming the algorithm — the same
+// failure the OID4VCI issuer actually had, advertising eleven and accepting
+// two.
+//
+// The list is READ FROM THE METADATA rather than written here, so an algorithm
+// added to the server is driven the next time this runs, and one advertised
+// without support fails here rather than in somebody's client.
+// ---------------------------------------------------------------------------
+async function everyAdvertisedProofAlgorithmIsAccepted() {
+  log.debug("Entering everyAdvertisedProofAlgorithmIsAccepted().");
+  log.info("=== Every advertised DPoP algorithm ===");
+  var response = await fetch(stsBase +
+      "/.well-known/oauth-authorization-server");
+  assert.strictEqual(response.status, 200, "the metadata did not load.");
+  var algs = (await response.json()).dpop_signing_alg_values_supported || [];
+  assert.ok(algs.length, "the server advertises no DPoP algorithms.");
+
+  for (var i = 0; i < algs.length; i++) {
+    var alg = algs[i];
+    assert.ok(DPOP_ALGS[alg],
+      alg + " is advertised for DPoP and this test cannot sign one, so it is " +
+      "advertised and unchecked. Add it to DPOP_ALGS.");
+    var key = newKey(alg);
+    // post() answers { status, body, text } — the token is in `body`.
+    var bound = await boundToken(key);
+    assert.strictEqual(bound.status, 200,
+      alg + ": a proof signed with an ADVERTISED algorithm must be accepted " +
+      "at the token endpoint. The server said " + bound.status + ": " +
+      String(bound.text).slice(0, 220));
+    var claims = claimsOf(bound.body.access_token);
+    assert.strictEqual((claims.cnf || {}).jkt, jkt(key),
+      alg + ": the token must be bound to the key that signed the proof — " +
+      "its cnf.jkt should be that key's RFC 7638 thumbprint.");
+    // And a token bound to THIS key must not be redeemable with a proof from
+    // another one — the binding is the whole point, and it is checked per
+    // algorithm because the check happens after the signature does.
+    var other = newKey(alg);
+    var wrongProof = makeProof(other, { htm: "POST",
+                                        htu: CREDENTIAL_ENDPOINT });
+    var refused = await post(CREDENTIAL_ENDPOINT, {
+      json: {}, headers: { Authorization: "DPoP " + bound.body.access_token,
+                           DPoP: wrongProof } });
+    assert.notStrictEqual(refused.status, 200,
+      alg + ": a token bound to one key must not be accepted with a proof " +
+      "signed by another.");
+  }
+  log.info("[algorithms] OK — all " + algs.length + " advertised algorithm(s) " +
+           "produce a proof the server accepts, each token bound to its own " +
+           "key: " + algs.join(", ") + ".");
+  log.debug("Leaving everyAdvertisedProofAlgorithmIsAccepted().");
 }
 
 async function bearerStillWorks() {
@@ -924,6 +1029,7 @@ async function test() {
 
   await serverAdvertisesDpop();
   await bearerStillWorks();
+  await everyAdvertisedProofAlgorithmIsAccepted();
   var bound = await tokenIsBoundToTheProofKey();
   await tokenEndpointRefusesBadProofs();
   await proofsAreSingleUse();

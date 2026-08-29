@@ -434,7 +434,19 @@ async function theMethodsShownActuallyAnswer(doc) {
       path = path.replace(token, substitutions[token]);
     });
     for (const method of e.methods) {
-      const r = await common.httpJson(issuerBase + path, { method: method });
+      // REDIRECTS ARE NOT FOLLOWED, and that is a correctness point rather
+      // than a tidying one. This check asks whether THIS service's router has
+      // a handler at the path its own index advertises, and a 3xx IS that
+      // handler answering; following it asks the same question of whoever the
+      // Location names, which is a different service. `/issuer/offer` is the
+      // case that showed it — it 302s to the wallet at `oid4vp.walletUrl` — so
+      // with fetch's default redirect handling this probe left the mock
+      // altogether and the verdict came to rest on the debugger's client being
+      // up on port 3000. Against the mock repository's own stack, which is one
+      // container and nothing else, that is ECONNREFUSED; and a run where it
+      // passed was really a run against two services.
+      const r = await common.httpJson(issuerBase + path,
+                                      { method: method, redirect: "manual" });
       // A 404 is ambiguous and the difference is the whole point of this check:
       // several of these endpoints answer 404 CORRECTLY for a resource that
       // does not exist (an unknown offer id, an unknown presentation state),
@@ -547,7 +559,13 @@ async function pathsAreFollowableLinks(doc, page, session) {
     // pages now — this one included — and without it they answer a 302 to the
     // sign-in screen, which is not Express's "Cannot GET" and so would pass
     // this check while proving nothing about the page behind it.
-    const r = await common.httpJson(e.url, withSession(session));
+    // Redirects are not followed here either, for the reason
+    // theMethodsShownActuallyAnswer() gives above: a link that 302s off this
+    // service is still this service answering, and chasing it makes the check
+    // depend on a host this job knows nothing about.
+    const r = await common.httpJson(e.url,
+                                    withSession(session,
+                                                { redirect: "manual" }));
     const expressMiss = r.status === 404 && /^Cannot GET/.test(String(r.raw ||
         ""));
     assert.ok(!expressMiss,

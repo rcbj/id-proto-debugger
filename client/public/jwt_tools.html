@@ -94,19 +94,19 @@
       <div class="jt-grow">
         <label title="Algorithm written to the header &quot;alg&quot; when signing.">Signing Algorithm</label>
         <select id="sign_alg" name="sign_alg">
-          <option value="RS256" selected="selected">RS256 (RSASSA-PKCS1-v1_5)</option>
+          <option value="HS256">HS256</option>
+          <option value="HS384">HS384</option>
+          <option value="HS512">HS512</option>
+          <option value="RS256" selected="selected">RS256</option>
           <option value="RS384">RS384</option>
           <option value="RS512">RS512</option>
-          <option value="PS256">PS256 (RSA-PSS)</option>
+          <option value="PS256">PS256</option>
           <option value="PS384">PS384</option>
           <option value="PS512">PS512</option>
-          <option value="ES256">ES256 (ECDSA P-256)</option>
-          <option value="ES384">ES384 (ECDSA P-384)</option>
-          <option value="ES512">ES512 (ECDSA P-521)</option>
-          <option value="EdDSA">EdDSA (Ed25519)</option>
-          <option value="HS256">HS256 (HMAC)</option>
-          <option value="HS384">HS384 (HMAC)</option>
-          <option value="HS512">HS512 (HMAC)</option>
+          <option value="ES256">ES256</option>
+          <option value="ES384">ES384</option>
+          <option value="ES512">ES512</option>
+          <option value="EdDSA">EdDSA</option>
         </select>
       </div>
       <div class="jt-grow">
@@ -212,6 +212,9 @@
           <option value="A256GCM" selected="selected">A256GCM</option>
           <option value="A192GCM">A192GCM</option>
           <option value="A128GCM">A128GCM</option>
+          <option value="A128CBC-HS256">A128CBC-HS256</option>
+          <option value="A192CBC-HS384">A192CBC-HS384</option>
+          <option value="A256CBC-HS512">A256CBC-HS512</option>
         </select>
       </div>
     </div>

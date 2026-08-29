@@ -15,6 +15,10 @@ log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
+// Building a tree is not filling in a field: even the smallest parameter sets
+// this pane offers are 32 one-time key pairs, and the pool runs four browsers
+// at once. `waitTime` is 2000ms and would be a coin toss here.
+var hbsWait = Math.max(waitTime * 15, 30000);
 var cryptoWait = Math.max(waitTime, 20000);
 // node-forge RSA 2048-bit key generation is pure JS and can take several
 // seconds.
@@ -204,6 +208,41 @@ var ML = { name: 'ML-DSA', valueId: 'ds_ml_value',
       wait: cryptoWait,
   download: 'mldsaDownloadKeys', ksFormatId: 'ds_ml_ks_format',
       ksPwId: 'ds_ml_ks_password' };
+
+var COMPOSITE = { name: 'Composite ML-DSA', valueId: 'ds_comp_value',
+    signatureId: 'ds_comp_signature',
+  privId: 'ds_comp_private_key', pubId: 'ds_comp_public_key',
+      statusId: 'ds_comp_status',
+  gen: 'compositeGenerateKeys', sign: 'compositeSign',
+      validate: 'compositeValidate', wait: cryptoWait,
+  download: 'compositeDownloadKeys', ksFormatId: 'ds_comp_ks_format',
+      ksPwId: 'ds_comp_ks_password' };
+
+var COMPOSITE_ALGS = ['ML-DSA-44-ES256', 'ML-DSA-65-ES256',
+                      'ML-DSA-87-ES384', 'ML-DSA-44-Ed25519',
+                      'ML-DSA-65-Ed25519', 'ML-DSA-87-Ed448'];
+
+// The eleven post-quantum `alg` values the JWS pane offers. Kept apart from
+// JWS_ALGS because they are driven once each in the compact serialization
+// rather than across all three: SLH-DSA signing is seconds of pure JS, and
+// what these need to prove is that the pane can carry them at all — the
+// serializations are already exercised by the sixteen classical algorithms.
+var JWS_PQ_ALGS = ['ML-DSA-44', 'ML-DSA-65', 'ML-DSA-87',
+                   'SLH-DSA-SHA2-128s', 'SLH-DSA-SHAKE-128s',
+                   'ML-DSA-44-ES256', 'ML-DSA-65-ES256', 'ML-DSA-87-ES384',
+                   'ML-DSA-44-Ed25519', 'ML-DSA-65-Ed25519',
+                   'ML-DSA-87-Ed448'];
+
+// Every fieldset the page carries, in order. THIS LIST IS THE POINT OF THE
+// STRUCTURE CHECK BELOW: this job had no such assertion, and a whole new
+// signing pane was added to the page without anybody noticing that nothing
+// drove it. A pane list the page can outgrow silently is not a check.
+var ALL_PANES = ['pane_signature', 'pane_hbs_signature',
+                 'pane_rsa_signature', 'pane_ecc_signature',
+                 'pane_mldsa_signature', 'pane_composite_signature',
+                 'pane_bbs_signature', 'pane_jws_signature',
+                 'pane_xml_signature', 'pane_khmac', 'pane_bcmac',
+                 'pane_uhmac'];
 
 var BBS = { name: 'BBS', valueId: 'ds_bbs_messages',
     signatureId: 'ds_bbs_signature',
@@ -695,6 +734,196 @@ async function testBbsSuiteSeparation(driver) {
   log.debug("Leaving testBbsSuiteSeparation().");
 }
 
+// ===========================================================================
+// The page carries exactly the panes this job knows about.
+// ===========================================================================
+// Added after a post-quantum pane reached the page with no test behind it.
+// The cost of not having this was not hypothetical: `pane_composite_signature`
+// shipped, worked, and was driven by nothing here.
+async function testPageStructure(driver) {
+  log.debug("Entering testPageStructure().");
+  log.info("=== Page structure ===");
+  const panes = await driver.executeScript(
+    "var out = [];" +
+    "var f = document.querySelectorAll('.ds-grid > fieldset');" +
+    "for (var i = 0; i < f.length; i++) { out.push(f[i].id); }" +
+    "return out;");
+  assert.deepStrictEqual(panes, ALL_PANES,
+    "the page carries " + panes.join(", ") + " but this test knows about " +
+    ALL_PANES.join(", ") + ". A pane added without a case here is a pane " +
+    "nothing drives.");
+
+  // The JWS pane's algorithm list, likewise. The eleven post-quantum values
+  // are the ones this most needs to hold: they were added to the dropdown
+  // and, until this assertion existed, driven by nothing.
+  const jwsAlgs = await driver.executeScript(
+    "return Array.from(document.getElementById('ds_jws_alg').options)" +
+    ".map(function (o) { return o.value; });");
+  const known = JWS_ALGS.concat(JWS_PQ_ALGS).sort();
+  assert.deepStrictEqual(jwsAlgs.slice().sort(), known,
+    "the JWS pane offers " + jwsAlgs.join(", ") + " but this test drives " +
+    known.join(", ") + ". Either an algorithm was added without a case " +
+    "here, or one was removed.");
+  log.info("[structure] OK — " + panes.length + " panes and " +
+           jwsAlgs.length + " JWS algorithms, all known to this test.");
+  log.debug("Leaving testPageStructure().");
+}
+
+// ===========================================================================
+// Pane #5 — Composite ML-DSA (draft-ietf-jose-pq-composite-sigs-03)
+// ===========================================================================
+// The round trip is the easy half. What this pane exists to demonstrate is
+// that a composite needs BOTH components, so the negative below matters more
+// than the six positives: a composite that verified on its ML-DSA half alone
+// would be strictly worse than plain ML-DSA, because it would carry a
+// traditional signature nothing checks.
+async function testComposite(driver) {
+  log.debug("Entering testComposite().");
+  log.info("=== Pane #5 Composite ML-DSA — " + COMPOSITE_ALGS.length +
+           " algorithms ===");
+  for (var i = 0; i < COMPOSITE_ALGS.length; i++) {
+    await selectValue(driver, 'ds_comp_param', COMPOSITE_ALGS[i]);
+    await generateKeys(driver, COMPOSITE);
+    await signAndValidate(driver, COMPOSITE, 'Composite ' + COMPOSITE_ALGS[i]);
+  }
+
+  // The status line must name WHICH half failed. Corrupting the last bytes
+  // of the signature hits the traditional component, which sits after the
+  // fixed-length ML-DSA one — so the ML-DSA half must still report as valid.
+  // A pane that said only "INVALID" would hide the difference between a
+  // stripped component and a corrupt message, which is the one distinction
+  // somebody debugging a composite actually needs.
+  const corrupted = await driver.executeScript(
+    "var t = document.getElementById('ds_comp_signature');" +
+    "var s = atob(t.value); var b = s.split('');" +
+    "b[s.length - 3] = String.fromCharCode(b[s.length - 3].charCodeAt(0) ^ 255);" +
+    "t.value = btoa(b.join('')); return t.value.length;");
+  assert.ok(corrupted > 0, "[Composite] could not corrupt the signature.");
+  await click(driver, onclickBtn('compositeValidate'));
+  var half = await waitForValue(driver, By.id('ds_comp_status'),
+    function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
+    "[Composite] validation of the corrupted signature did not complete.",
+    cryptoWait);
+  assert.ok(half.indexOf("INVALID ✗") !== -1,
+    "[Composite] a signature with a corrupted traditional half must be " +
+    "rejected. Status: " + half);
+  assert.ok(/ML-DSA-87 half VERIFIES/.test(half),
+    "[Composite] the untouched ML-DSA half should be reported as verifying, " +
+    "so that a stripped component is distinguishable from a corrupt " +
+    "message. Status: " + half);
+  assert.ok(/Ed448 half does NOT verify/.test(half),
+    "[Composite] the corrupted traditional half should be named. Status: " +
+    half);
+  log.info("[Composite half-failure] OK — " + half);
+
+  // A truncated signature is MALFORMED, not "invalid": nothing was verified,
+  // and saying "invalid" would imply something was.
+  await driver.executeScript(
+    "var t = document.getElementById('ds_comp_signature');" +
+    "t.value = t.value.slice(0, t.value.length - 8);");
+  await click(driver, onclickBtn('compositeValidate'));
+  var malformed = await waitForValue(driver, By.id('ds_comp_status'),
+    function (v) { return v.indexOf("✗") !== -1; },
+    "[Composite] validation of the truncated signature did not complete.",
+    cryptoWait);
+  assert.ok(/MALFORMED/.test(malformed),
+    "[Composite] a truncated signature must be reported as malformed rather " +
+    "than merely invalid. Status: " + malformed);
+  log.info("[Composite malformed] OK — " + malformed);
+  log.debug("Leaving testComposite().");
+}
+
+// ===========================================================================
+// The context string and the pre-hash are ALGORITHM CHANGES.
+// ===========================================================================
+// Both post-quantum panes gained two controls that a reader could easily take
+// for options. They are not: a signature made under one context does not
+// verify under another, and HashML-DSA is a different algorithm from ML-DSA.
+// The page claims that in prose; this is what checks the wiring behind it.
+async function testPqVariants(driver) {
+  log.debug("Entering testPqVariants().");
+  log.info("=== Post-quantum variants — context string and pre-hash ===");
+  await selectValue(driver, 'ds_ml_param', 'ML-DSA-44');
+  await generateKeys(driver, ML);
+
+  // A context string separates contexts.
+  await setInput(driver, By.id('ds_ml_ctx'), 'application-A');
+  await setInput(driver, By.id(ML.valueId), 'context separation test');
+  await driver.findElement(By.id(ML.signatureId)).clear();
+  await click(driver, onclickBtn('mldsaSign'));
+  await waitForValue(driver, By.id(ML.signatureId),
+    function (v) { return v.trim().length > 0; },
+    "[ML-DSA ctx] signature was not produced.", cryptoWait);
+  await click(driver, onclickBtn('mldsaValidate'));
+  var same = await waitForValue(driver, By.id(ML.statusId),
+    function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
+    "[ML-DSA ctx] validation did not complete.", cryptoWait);
+  assert.ok(same.indexOf("VALID ✓") !== -1,
+    "[ML-DSA ctx] the same context must verify. Status: " + same);
+
+  await setInput(driver, By.id('ds_ml_ctx'), 'application-B');
+  await click(driver, onclickBtn('mldsaValidate'));
+  var other = await waitForValue(driver, By.id(ML.statusId),
+    function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
+    "[ML-DSA ctx] validation under the other context did not complete.",
+    cryptoWait);
+  assert.ok(other.indexOf("INVALID ✗") !== -1,
+    "[ML-DSA ctx] a signature made for one context MUST NOT verify under " +
+    "another — that separation is the whole reason the control exists. " +
+    "Status: " + other);
+
+  await setInput(driver, By.id('ds_ml_ctx'), '');
+  await click(driver, onclickBtn('mldsaValidate'));
+  var none = await waitForValue(driver, By.id(ML.statusId),
+    function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
+    "[ML-DSA ctx] validation with no context did not complete.", cryptoWait);
+  assert.ok(none.indexOf("INVALID ✗") !== -1,
+    "[ML-DSA ctx] nor as a pure signature with no context. Status: " + none);
+  log.info("[ML-DSA ctx] OK — one context verifies, another does not, and " +
+           "neither does none.");
+
+  // The pre-hash selects HashML-DSA, which is a different algorithm.
+  await selectValue(driver, 'ds_ml_prehash', 'SHA-256');
+  await driver.findElement(By.id(ML.signatureId)).clear();
+  await click(driver, onclickBtn('mldsaSign'));
+  var hashedStatus = await waitForValue(driver, By.id(ML.statusId),
+    function (v) { return v.indexOf("Signed") !== -1; },
+    "[ML-DSA prehash] signing did not complete.", cryptoWait);
+  assert.ok(/pre-hash/.test(hashedStatus),
+    "[ML-DSA prehash] the status must say which variant ran, since a pure " +
+    "and a pre-hashed signature are different algorithms. Status: " +
+    hashedStatus);
+  await click(driver, onclickBtn('mldsaValidate'));
+  var hashedOk = await waitForValue(driver, By.id(ML.statusId),
+    function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
+    "[ML-DSA prehash] validation did not complete.", cryptoWait);
+  assert.ok(hashedOk.indexOf("VALID ✓") !== -1,
+    "[ML-DSA prehash] the same pre-hash must verify. Status: " + hashedOk);
+
+  await selectValue(driver, 'ds_ml_prehash', 'SHA-512');
+  await click(driver, onclickBtn('mldsaValidate'));
+  var wrongHash = await waitForValue(driver, By.id(ML.statusId),
+    function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
+    "[ML-DSA prehash] validation under another hash did not complete.",
+    cryptoWait);
+  assert.ok(wrongHash.indexOf("INVALID ✗") !== -1,
+    "[ML-DSA prehash] HashML-DSA with SHA-512 must not accept a SHA-256 " +
+    "signature — the hash OID is inside the signed message. Status: " +
+    wrongHash);
+
+  await selectValue(driver, 'ds_ml_prehash', 'pure');
+  await click(driver, onclickBtn('mldsaValidate'));
+  var pure = await waitForValue(driver, By.id(ML.statusId),
+    function (v) { return v.indexOf("✓") !== -1 || v.indexOf("✗") !== -1; },
+    "[ML-DSA prehash] pure validation did not complete.", cryptoWait);
+  assert.ok(pure.indexOf("INVALID ✗") !== -1,
+    "[ML-DSA prehash] pure ML-DSA must not accept a pre-hashed signature. " +
+    "Status: " + pure);
+  log.info("[ML-DSA prehash] OK — HashML-DSA is a different algorithm in " +
+           "both directions.");
+  log.debug("Leaving testPqVariants().");
+}
+
 async function testBbs(driver) {
   log.debug("Entering testBbs().");
   for (var i = 0; i < BBS_SUITES.length; i++) {
@@ -996,6 +1225,35 @@ async function testJws(driver) {
     await selectValue(driver, 'ds_jws_serialization', 'compact');
     log.info("[JWS " + alg + "] OK — signed and validated in all three " +
              "serializations.");
+  }
+
+  // The eleven post-quantum algorithms, compact only — see JWS_PQ_ALGS for
+  // why. Each gets its own key pair: unlike the RSA family there is nothing
+  // to reuse, because every one of these has a different key length.
+  //
+  // The header assertion is the one that matters. RFC 9964 and the two drafts
+  // register these `alg` values verbatim, so what a peer sees in the
+  // protected header has to be the registered string and not a label this
+  // page invented for its dropdown.
+  for (var q = 0; q < JWS_PQ_ALGS.length; q++) {
+    var pqAlg = JWS_PQ_ALGS[q];
+    await jwsGenerate(driver, pqAlg, pqAlg);
+    var pqSigned = await jwsClickAndWait(driver, 'jwsSign',
+        "[JWS " + pqAlg + "] signing did not finish.");
+    assert.ok(/^Signed/.test(pqSigned),
+      "[JWS " + pqAlg + "] sign reported: " + pqSigned);
+
+    var decoded = await getValue(driver, By.id('ds_jws_decoded'));
+    assert.ok(decoded.indexOf('"alg": "' + pqAlg + '"') !== -1,
+      "[JWS " + pqAlg + "] the protected header must carry the registered " +
+      "algorithm identifier verbatim. Decoded header was: " +
+      decoded.slice(0, 200));
+
+    var pqVerified = await jwsClickAndWait(driver, 'jwsValidate',
+        "[JWS " + pqAlg + "] validation did not finish.");
+    assert.ok(/VALID \u2713/.test(pqVerified),
+      "[JWS " + pqAlg + "] validate reported: " + pqVerified);
+    log.info("[JWS " + pqAlg + "] OK — signed and validated.");
   }
 
   // The rule this pane exists for: the payload must be JSON, and Sign says so
@@ -1495,6 +1753,137 @@ var XMLSIG = { name: 'XML Signature', statusId: 'ds_xml_status',
   ksFormatId: 'ds_xml_ks_format', ksPwId: 'ds_xml_ks_password',
   download: 'xmlDownloadKeys', wait: rsaWait };
 
+// ===========================================================================
+// Stateful hash-based signatures — LMS/HSS and XMSS/XMSS^MT (SP 800-208).
+//
+// tests/hbs_signatures.js proves the BYTES against RFC 8554's, RFC 9858's and
+// the XMSS reference implementation's own vectors. What this proves is the
+// PANE — and one thing about this pane that no other one here has, and that
+// no node test can see: signing REWRITES THE PRIVATE KEY BOX. RFC 8554
+// section 5.4.1 requires the new index to be stored before the signature is
+// released, and a pane that produced a signature while leaving the key on
+// screen unchanged would be teaching the exact opposite.
+//
+// The parameter sets are deliberately the cheapest ones: an H5 LMS tree is 32
+// leaves and an XMSSMT 20/4 tree is 32, where XMSS-SHA2_10_256 would be 1,024
+// and five seconds. The expensive end is refused by the engine and asserted
+// there.
+// ===========================================================================
+async function testHbs(driver) {
+  log.debug("Entering testHbs().");
+  log.info("[HBS] LMS/HSS: generate an L=1 H5/W8 key pair.");
+  await selectValue(driver, "ds_hbs_scheme", "hss");
+  await selectValue(driver, "ds_hbs_lms", "LMS_SHA256_M32_H5");
+  await selectValue(driver, "ds_hbs_lmots", "LMOTS_SHA256_N32_W8");
+  await selectValue(driver, "ds_hbs_levels", "1");
+  await click(driver, onclickBtn("hbsGenerateKeys"));
+  await waitForValue(driver, By.id("ds_hbs_public_key"),
+                     function (v) { return v.trim().length > 0; },
+    "[HBS] no HSS public key was generated.", hbsWait);
+  var privateBefore = await getValue(driver, By.id("ds_hbs_private_key"));
+  assert.ok(privateBefore.length > 0, "[HBS] no HSS private key.");
+
+  // The state line is the pane's whole subject, so it is asserted before and
+  // after rather than merely being present.
+  var stateBefore = await waitForValue(driver, By.id("ds_hbs_state"),
+      function (v) { return /32 of 32/.test(v); },
+    "[HBS] the state line does not report 32 unused one-time keys for an " +
+        "H5 tree.", hbsWait);
+  assert.ok(/index 0 is next/.test(stateBefore),
+      "[HBS] a fresh key does not report index 0 as next: " + stateBefore);
+
+  log.info("[HBS] Sign, and check that the PRIVATE KEY changed with it.");
+  await setTextarea(driver, "ds_hbs_value", "firmware 9.9.9 for the suite");
+  await click(driver, onclickBtn("hbsSign"));
+  var signature = await waitForValue(driver, By.id("ds_hbs_signature"),
+                                     function (v) { return v.length > 100; },
+    "[HBS] signing produced no signature.", hbsWait);
+  var privateAfter = await getValue(driver, By.id("ds_hbs_private_key"));
+  assert.notStrictEqual(privateAfter, privateBefore,
+      "[HBS] the private key box is unchanged after signing. RFC 8554 " +
+      "section 5.4.1 requires the incremented index to be stored BEFORE the " +
+      "signature is released; a pane that leaves the old key on screen is " +
+      "showing the reader the thing the specification forbids.");
+  var stateAfter = await waitForValue(driver, By.id("ds_hbs_state"),
+      function (v) { return /31 of 32/.test(v); },
+    "[HBS] the state line does not report one one-time key spent.", hbsWait);
+  assert.ok(/index 1 is next/.test(stateAfter),
+      "[HBS] after one signature the next index is not 1: " + stateAfter);
+
+  log.info("[HBS] Validate, then validate against a value it did not sign.");
+  await click(driver, onclickBtn("hbsValidate"));
+  await waitForValue(driver, By.id("ds_hbs_status"),
+                     function (v) { return /^VALID/.test(v); },
+    "[HBS] a signature this pane just made does not validate.", hbsWait);
+  await setTextarea(driver, "ds_hbs_value", "firmware 9.9.9 for the suite!");
+  await click(driver, onclickBtn("hbsValidate"));
+  await waitForValue(driver, By.id("ds_hbs_status"),
+                     function (v) { return /^INVALID/.test(v); },
+    "[HBS] a signature validated against a value it did not sign.", hbsWait);
+  await setTextarea(driver, "ds_hbs_value", "firmware 9.9.9 for the suite");
+
+  log.info("[HBS] Describe parses the key and the signature without " +
+           "verifying.");
+  await click(driver, onclickBtn("hbsDescribe"));
+  var described = await waitForValue(driver, By.id("ds_hbs_describe"),
+      function (v) { return v.indexOf("LMOTS_SHA256_N32_W8") > 0; },
+    "[HBS] Describe did not name the LM-OTS parameter set.", hbsWait);
+  assert.ok(described.indexOf("LMS_SHA256_M32_H5") > 0,
+      "[HBS] Describe did not name the LMS parameter set.");
+  assert.ok(/leaf q = 0/.test(described),
+      "[HBS] Describe did not report which leaf signed the message.");
+  assert.ok(/Auth path:\s+5 node/.test(described),
+      "[HBS] Describe did not report an authentication path of 5 nodes for " +
+      "a height-5 tree: " + described);
+
+  log.info("[HBS] The reuse demonstration: both signatures must VERIFY.");
+  await setTextarea(driver, "ds_hbs_value_b", "firmware 9.9.9, but tampered");
+  await click(driver, onclickBtn("hbsDemonstrateReuse"));
+  var reuse = await waitForValue(driver, By.id("ds_hbs_status"),
+      function (v) { return /used twice/.test(v); },
+    "[HBS] the reuse demonstration did not report a reused index.", hbsWait);
+  assert.ok(/Both signatures verify/.test(reuse),
+      "[HBS] the reuse demonstration did not report both signatures as " +
+      "verifying, which is the entire point of it: " + reuse);
+  var reuseFields = await getValue(driver, By.id("ds_hbs_describe"));
+  assert.ok(/VALID/.test(reuseFields) && /forg/i.test(reuseFields),
+      "[HBS] the reuse readout does not say what an attacker gains.");
+  // ...and it must NOT have spent an index: the state line is unchanged.
+  var stateAfterReuse = await getValue(driver, By.id("ds_hbs_state"));
+  assert.strictEqual(stateAfterReuse, stateAfter,
+      "[HBS] the reuse demonstration advanced the index; it exists to show " +
+      "what happens when the index does NOT advance.");
+
+  log.info("[HBS] XMSS^MT: a 2^20 hypertree out of 32-leaf trees.");
+  await selectValue(driver, "ds_hbs_scheme", "xmss");
+  await selectValue(driver, "ds_hbs_xmss", "XMSSMT-SHA2_20/4_256");
+  await click(driver, onclickBtn("hbsGenerateKeys"));
+  await waitForValue(driver, By.id("ds_hbs_public_key"),
+                     function (v) { return v.trim().length > 0; },
+    "[HBS] no XMSS^MT public key was generated.", hbsWait);
+  await click(driver, onclickBtn("hbsSign"));
+  await waitForValue(driver, By.id("ds_hbs_status"),
+                     function (v) { return /which is now spent/.test(v); },
+    "[HBS] XMSS^MT signing did not report a spent one-time key.", hbsWait);
+  await click(driver, onclickBtn("hbsValidate"));
+  await waitForValue(driver, By.id("ds_hbs_status"),
+                     function (v) { return /^VALID/.test(v); },
+    "[HBS] an XMSS^MT signature this pane just made does not validate.",
+    hbsWait);
+  await click(driver, onclickBtn("hbsDescribe"));
+  var xmssFields = await waitForValue(driver, By.id("ds_hbs_describe"),
+      function (v) { return v.indexOf("XMSSMT-SHA2_20/4_256") > 0; },
+    "[HBS] Describe did not name the XMSS^MT parameter set.", hbsWait);
+  assert.ok(/4 layer\(s\) of height 5/.test(xmssFields),
+      "[HBS] Describe did not report the hypertree's shape: " + xmssFields);
+  assert.ok(/2\^20 signatures/.test(xmssFields),
+      "[HBS] Describe did not report the key's capacity.");
+  assert.ok(/Layer 3:/.test(xmssFields),
+      "[HBS] Describe did not walk all four layers of the signature.");
+  log.info("[HBS] pane verified in both schemes.");
+  log.debug("Leaving testHbs().");
+}
+
 async function digitalSignatureActivities(driver) {
   log.debug("Entering digitalSignatureActivities().");
   log.info("Load the Digital Signature page.");
@@ -1509,10 +1898,14 @@ async function digitalSignatureActivities(driver) {
   // onchange calls digital_signature.expandAll().
   await click(driver, By.id("ds_toggle_all_switch"));
 
+  await testPageStructure(driver);
   await testSlhDsa(driver);
   await testRsa(driver);
   await testEcc(driver);
   await testMldsa(driver);
+  await testHbs(driver);
+  await testComposite(driver);
+  await testPqVariants(driver);
   await testBbs(driver);
   await testJws(driver);
   await testXmlSignature(driver);
