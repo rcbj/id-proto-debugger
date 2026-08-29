@@ -179,9 +179,10 @@
 // the drawing this job exists to produce — and deleting them after the SVGs
 // were taken would leave the register pointing at applications the console can
 // no longer show. Nothing else in the suite reads them: no other job uses these
-// four identifiers, and the one job that counts what this service holds
-// (`admin_api.js`) is EXCLUSIVE, so it cannot be running while these are
-// created. That is why this script is not in JOB_LOCKS despite writing to a
+// four identifiers, and no job in this suite counts what this service holds
+// any more — the one that did, the mock's own `admin_api.js`, was EXCLUSIVE
+// and left here on 2026-08-28. That is why this script is not in JOB_LOCKS
+// despite writing to a
 // shared store — and it is the sentence to revisit if a second job ever starts
 // asserting on the registry as a whole.
 //
@@ -196,7 +197,8 @@
 // (the run's own report directory, when run-report.js spawns this): the whole
 // map, this user's acts alone, and one document per chain. The console is gated
 // (`admin.authRequired`), so this signs in the way a browser does — three steps
-// through /authn/login, exactly as `tests/admin_api.js` does it, and for the
+// through /authn/login, exactly as the mock's own console tests do it, and for
+// the
 // same reason: `?format=svg` is refused rather than redirected to a sign-in
 // screen a program cannot read. If the roster has been narrowed by some other
 // job the drawings are SKIPPED with a message naming the gate; the assertions
@@ -524,8 +526,9 @@ async function provisionApplications() {
 
 // ---------------------------------------------------------------------------
 // A browser sign-on session for the CONSOLE, which only the drawings need. The
-// three-step dance is the one a browser does and is copied from
-// tests/admin_api.js, which explains it at length.
+// three-step dance is the one a browser does and is copied from the mock's own
+// `admin_api.js`, which explains it at length (readable here as
+// sts/tests/vendored/admin_api.js).
 //
 // Returns the cookie, or null when the gate is off (a legitimate state — the
 // setting is switchable — reported rather than treated as a pass) or when the

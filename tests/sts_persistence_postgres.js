@@ -214,17 +214,35 @@ async function startPostgres() {
     "cached copy fails here.");
   started.container = true;
 
-  // Ready means "accepting connections", which is not the same as "the
-  // container is running": postgres starts, initialises the cluster, stops and
-  // starts again, and a connection made in between is refused.
+  // Ready means "accepting connections OVER TCP", which is not the same as "the
+  // container is running" and — the part that cost a run on 2026-08-29 — not
+  // the same as what a bare `pg_isready` reports either.
+  //
+  // The official image's entrypoint runs initdb, then starts a TEMPORARY
+  // server to apply the initialisation scripts, stops it, and only then execs
+  // the real one. That temporary server is started with `listen_addresses=''`,
+  // so it answers on the container's UNIX SOCKET and on no TCP port at all —
+  // and a plain `docker exec pg_isready` connects over that socket, so it says
+  // READY about half a second before anything can dial 5432. This job's mock
+  // connects from the HOST over the published port, so it arrived in that
+  // window and died at startup with `Connection terminated unexpectedly` —
+  // which reads as a broken database rather than as an early one, and named
+  // neither this loop nor postgres.
+  //
+  // So the probe is a real query over TCP: `-h 127.0.0.1` forces the network
+  // path (PGPASSWORD because a host connection is authenticated where a local
+  // socket one is trusted), and `select 1` proves the server that answered can
+  // also serve. `pg_isready` alone is kept for nothing; it cannot tell these
+  // two servers apart.
   const until = Date.now() + 60000;
   while (Date.now() < until) {
-    const ready = spawnSync("docker", ["exec", CONTAINER,
-      "pg_isready", "-U", "sts", "-d", "sts"], { encoding: "utf8" });
-    if (ready.status === 0) {
+    const ready = spawnSync("docker", ["exec", "-e", "PGPASSWORD=sts",
+      CONTAINER, "psql", "-h", "127.0.0.1", "-U", "sts", "-d", "sts",
+      "-tAc", "select 1"], { encoding: "utf8" });
+    if (ready.status === 0 && String(ready.stdout || "").trim() === "1") {
       const url = "postgres://sts:sts@127.0.0.1:" + port + "/sts";
-      log.info("[postgres] " + IMAGE + " is up on 127.0.0.1:" + port +
-               " as container " + CONTAINER + ".");
+      log.info("[postgres] " + IMAGE + " is up and answering over TCP on " +
+               "127.0.0.1:" + port + " as container " + CONTAINER + ".");
       log.debug("Leaving startPostgres().");
       return url;
     }

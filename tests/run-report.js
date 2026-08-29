@@ -196,23 +196,20 @@ function jobTypeOf(script) {
 //     longer against anything driving the permissive server. `sts-tls` is the
 //     mock's client TRUSTSTORE, which pki_mutual_tls.js fills and empties on a
 //     live process.
-//   * EXCLUSIVE means the job runs alone. There are THREE, and all three drive
-//     the mock's admin surface: admin_api.js changes claim sets globally and
-//     compares the count of every artifact the mock is holding against the same
-//     count read through the console, so any other job minting a token between
-//     those two reads flips it. sts_admin_api_operations.js and
-//     sts_admin_console.js do almost all of their work inside a TRUST REALM
-//     they create and remove — which is what keeps them off this list for
-//     everything else — but each has one thing a realm cannot contain: the
-//     first ROTATES the SPIFFE signing authority, which is one authority for
-//     the process, and the second closes the console's ROSTER against
-//     everybody in order to prove that a role is enforced, which is the two
-//     admin groups in the DEFAULT realm by design. A SPIFFE job holding a
-//     stream open across the first, or any job reading a console page during
-//     the second, fails naming something that has nothing to do with either.
-//     All three cost a second or two and restore everything they change —
-//     which is what lets them run FIRST, before the pool starts, instead of
-//     draining the pool later.
+//   * EXCLUSIVE means the job runs alone, before the pool starts, instead of
+//     draining it later. There are NONE at present, and the mechanism is kept
+//     rather than deleted because the shape of job that needs it is a standing
+//     one: a job that reads a TOTAL off the mock — a count of every artifact
+//     the process is holding — or that changes something the process has only
+//     one of, which a trust realm therefore cannot contain (the SPIFFE signing
+//     authority; the console's roster in the default realm). Any other job
+//     minting a token between such a job's two reads flips its answer, and the
+//     failure names the other job. The four that used to be here —
+//     admin_api.js, sts_admin_api_operations.js, sts_admin_console.js and
+//     sts_metadata.js — drove the mock's own /admin and /admin-api surface
+//     and were removed from this suite on 2026-08-28; they live in the mock
+//     STS's own suite now (see the note in docs/mock-sts.md), which is the
+//     tree that changes them.
 //
 // A script that is not in the table runs unlocked, which is the right default:
 // nearly every test here mints an identity of its own (random_username.js, and
@@ -223,9 +220,6 @@ function jobTypeOf(script) {
 // ---------------------------------------------------------------------------
 const EXCLUSIVE = "*";
 const JOB_LOCKS = {
-  "admin_api.js": EXCLUSIVE,
-  "sts_admin_api_operations.js": EXCLUSIVE,
-  "sts_admin_console.js": EXCLUSIVE,
   // The mock's credential + verifier configuration.
   "sd_jwt_vc_issuance.js": "sts-vc",
   "sd_jwt_vc_presentation.js": "sts-vc",
@@ -3210,63 +3204,15 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
-    jobs.push({
-      name: "STS metadata page (/admin/sts-metadata lists exactly what the " +
-          "router registers)",
-      script: "sts_metadata.js",
-      env: {
-        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
-        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
-      },
-    });
-    // The management API beside the metadata page, and for the same reason:
-    // both are checks that a description of this service still matches the
-    // service. This one also asserts the parity the API is written under —
-    // every /admin control has an /admin-api operation — which nothing inside
-    // the mock can check for itself, because nothing there can see a form
-    // appear on a page. It RESTORES everything it changes (claim sets, the
-    // credential claim set, the verifier request, and every token its bulk
-    // revocations touched), which matters more here than usual: the mock's
-    // admin state survives between jobs, so a job that left a custom claim
-    // behind would change what every later job's tokens contain.
-    jobs.push({
-      name: "STS management API (/admin-api mirrors every /admin control, " +
-          "its OpenAPI document describes what it sends, and a " +
-          "configuration change is seen on the wire and undone)",
-      script: "admin_api.js",
-      env: {
-        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
-        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
-      },
-    });
-    // The other half of that API, and the console beside it. admin_api.js
-    // above asserts that the management API is SHAPED right — the document,
-    // the parity, the schemas — and exercises a handful of the operations.
-    // These two drive the rest for real: every documented example replayed,
-    // every write read back through a different door, every console page
-    // drawn, every control pressed the way the page draws it, and a setting
-    // change followed as far as the persistence store's own counters. Both
-    // work inside a trust realm they create and remove, and both are EXCLUSIVE
-    // for the one thing a realm cannot contain — see the JOB_LOCKS table.
-    jobs.push({
-      name: "STS management API — every operation driven for real (each " +
-          "documented example replayed, each write read back, and a " +
-          "configuration change followed to the store)",
-      script: "sts_admin_api_operations.js",
-      env: {
-        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
-        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
-      },
-    });
-    jobs.push({
-      name: "STS admin console — the gate, every page, every link, every GET " +
-          "form and every button on it, in a real browser",
-      script: "sts_admin_console.js",
-      env: {
-        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
-        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
-      },
-    });
+    // THE MOCK'S OWN /admin AND /admin-api SURFACE IS NOT TESTED FROM HERE.
+    // Four jobs used to sit at this point — sts_metadata.js (the metadata
+    // page), admin_api.js (the management API's shape, its OpenAPI document
+    // and its parity with the console), sts_admin_api_operations.js (every
+    // documented operation driven for real) and sts_admin_console.js (the
+    // console walked in a browser). All four asserted things about the mock
+    // STS rather than about this debugger, and the mock's own suite drives
+    // them now, in the tree where a change to that console is made. They were
+    // removed here on 2026-08-28; see docs/mock-sts.md.
     jobs.push({
       name: "VC Issuance — issuer named by DID (did:web, domain linkage, " +
           "both formats)",
@@ -3750,8 +3696,8 @@ function buildJobs() {
   //    1.1 and which are switched off. No identity provider at all.
   // 3. `sts_saml11.js` — the mock STS's SAML 1.1 identity provider, driven
   //    directly over HTTP with a relying party it writes itself, and almost
-  //    entirely NEGATIVES. It sits with `sts_metadata.js`, `sts_dpop.js`,
-  //    `admin_api.js` and `vc_did.js`, which is the family it belongs to.
+  //    entirely NEGATIVES. It sits with `sts_dpop.js` and `vc_did.js`, which
+  //    is the family it belongs to.
   //
   // **THERE IS NO KEYCLOAK HALF OF ANY OF THEM, and there will not be one.**
   // Every other browser-SSO job in this section is pushed once per identity
@@ -3833,10 +3779,11 @@ function buildJobs() {
   // through the real AssertionID, an InResponseTo on a profile with no request,
   // and the one-shot artifact.
   //
-  // Gated on the STS alone, like the four tests it sits with. It restores every
+  // Gated on the STS alone, like the tests it sits with. It restores every
   // setting it changes, through /admin-api/config/reset rather than by writing
-  // the old value back, so it leaves no runtime override for admin_api.js to
-  // trip over on the next run against the same container.
+  // the old value back, so it leaves no runtime override behind for the next
+  // run against the same container — the mock's own suite reads that store and
+  // fails on a leftover override.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "SAML 1.1 identity provider on the mock STS (Browser/POST, " +
@@ -3867,10 +3814,11 @@ function buildJobs() {
   // altered ciphertext, an EncryptedID encrypted to somebody else's key, and a
   // decrypted fragment that does not carry its own namespace.
   //
-  // Gated on the STS alone, like the five tests it sits with. It restores every
+  // Gated on the STS alone, like the tests it sits with. It restores every
   // setting it changes through /admin-api/config/reset rather than by writing
-  // the old value back, so it leaves no runtime override for admin_api.js to
-  // trip over on the next run against the same container.
+  // the old value back, so it leaves no runtime override behind for the next
+  // run against the same container — the mock's own suite reads that store and
+  // fails on a leftover override.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "SAML 2.0 encryption on the mock STS (EncryptedAssertion, " +
@@ -4876,9 +4824,11 @@ function runPool(jobs, results, started, total) {
 // Skips first (they cost nothing and hold nothing), then the EXCLUSIVE jobs
 // alone, then everything else in the pool. The exclusive pass is first rather
 // than in its place in the list because draining a pool to make room for a
-// 0.3-second job means waiting out whatever longest job is in flight; the one
-// job in that class restores everything it changes, which is what makes its
-// position free to choose. See JOB_LOCKS.
+// 0.3-second job means waiting out whatever longest job is in flight; a job in
+// that class restores everything it changes, which is what makes its position
+// free to choose. NOTHING CLAIMS EXCLUSIVE at present — the pass then finds no
+// job and costs nothing — and the table says why the mechanism is kept. See
+// JOB_LOCKS.
 async function runAllJobs(jobs, results) {
   log.debug("Entering runAllJobs().");
   const total = jobs.length;

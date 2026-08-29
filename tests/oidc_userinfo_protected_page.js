@@ -341,10 +341,26 @@ async function test() {
   log.info("Starting Test run. url=" + baseUrl + ", sts=" + stsBase);
   var prefs = new logging.Preferences();
   prefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);
-  var options = browserFlags.chromeOptions
-    ? browserFlags.chromeOptions()
-    : new chrome.Options().addArguments("--headless=new", "--no-sandbox",
-                                        "--disable-dev-shm-usage");
+  var options = new chrome.Options();
+  options.addArguments("--headless=new", "--no-sandbox",
+                       "--disable-dev-shm-usage");
+  // THE PAGE FETCHES THE OP'S JWKS ITSELF, so this driver needs the mock's
+  // certificate — and that is the whole reason this call is here rather than
+  // the `browserFlags.chromeOptions()` that used to be attempted above it.
+  // There is no such export: the expression was always `undefined`, the
+  // fallback always ran, and the browser therefore started with no SPKI pin
+  // for a certificate the mock REGENERATES on every start. Step 1 of this test
+  // reads a plain JSON body and needs no key, so it passed; the first signed
+  // response sent the page to https://localhost:8081/oauth2/jwks and Chrome
+  // refused it. What the page reports for that is `could not be read: Failed
+  // to fetch` — a message that names neither TLS nor a certificate, on a test
+  // whose subject is a signature.
+  //
+  // addBrowserAccessFlags() is what every other browser job here calls, and it
+  // carries three more things this page needs for the same reason: loopback
+  // access, the insecure origin the page itself is served from (no
+  // `crypto.subtle` without it), and the api's origin.
+  browserFlags.addBrowserAccessFlags(options, baseUrl, [stsBase]);
   options.setLoggingPrefs(prefs);
   var driver = await new Builder().forBrowser("chrome")
     .setChromeOptions(options).build();

@@ -327,33 +327,44 @@ async function jwtToolsActivities(driver) {
         "algorithms. Got: " +
     JSON.stringify(offered));
 
-  // RFC 7518 defines AES-192; Chrome's Web Crypto does not implement it. An
-  // option that can only fail should say so rather than producing an
-  // OperationError from inside a key import — and it must be the AES-192 ones
-  // and nothing else that are marked.
-  unusable.forEach(function (o) {
-    assert.ok(/A192/.test(o.value),
-      "only the AES-192 algorithms should be unusable in this browser. Got: " +
-          JSON.stringify(o));
-    assert.ok(/unsupported here/.test(o.label),
-      "an unusable option should say why. Got: " + o.label);
-  });
+  // NOTHING IN EITHER MENU MAY BE GREYED OUT, and that is the reverse of what
+  // this test asserted until 2026-08-28. RFC 7518 defines AES-192 and Chrome's
+  // Web Crypto refuses it, so ECDH-ES+A192KW, A192GCM and A192CBC-HS384 were
+  // marked "unsupported here" and could not be selected. jose_jwe.js performs
+  // all three in JavaScript now (symmetric_crypto.js), so the browser's
+  // refusal changes which engine runs and nothing a user can see — and greying
+  // a registered algorithm this project implements would hide it in the one
+  // place somebody looking for it would look.
+  //
+  // The check is kept rather than deleted, inverted: `encUnsupportedReason()`
+  // is still called per option and still has somewhere to put an answer, so an
+  // algorithm that genuinely cannot be performed here would still say so. What
+  // must not come back is a greyed AES-192.
   var encOptions = await driver.executeScript(
     "return Array.prototype.slice.call(document.getElementById('jwe_enc').options)" +
     "  .map(function (o) { return { value: o.value, disabled: o.disabled, " +
         "label: o.textContent }; });");
-  var a192 =
-      encOptions.filter(function (o) { return o.value === "A192GCM"; })[0];
-  assert.ok(a192 && a192.disabled && /unsupported here/.test(a192.label),
-    "A192GCM cannot be performed by this browser either, so it should be " +
-        "marked too. Got: " +
-    JSON.stringify(a192));
-  assert.ok(encOptions.filter(function (o) { return !o.disabled; }).length >= 2,
-    "and the content encryption algorithms that DO work should remain " +
-        "available.");
-  log.info("Unusable in this browser, and marked: " +
-           (unusable.map(function (o) { return o.value; }).concat(["A192GCM"])
-            .join(", ") || "none"));
+  assert.deepStrictEqual(unusable, [],
+    "no key-management algorithm should be greyed out: every one this pane " +
+        "offers has an implementation in jose_jwe.js. Got: " +
+    JSON.stringify(unusable));
+  assert.deepStrictEqual(
+    encOptions.filter(function (o) { return o.disabled; }), [],
+    "and no content encryption algorithm should be greyed out either — " +
+        "AES-192 is the one Web Crypto refuses and the one this project " +
+        "implements itself. Got: " +
+    JSON.stringify(encOptions));
+  ["A192GCM", "A192CBC-HS384"].forEach(function (name) {
+    var found =
+        encOptions.filter(function (o) { return o.value === name; })[0];
+    assert.ok(found && !found.disabled && !/unsupported/.test(found.label),
+      name + " is what Chrome's Web Crypto will not do and what this page " +
+          "must offer anyway. Got: " +
+      JSON.stringify(found));
+  });
+  var encs = encOptions.map(function (o) { return o.value; });
+  log.info("Offered and none greyed: alg " + algs.join(", ") + "; enc " +
+           encs.join(", "));
   log.info("Round-tripping every usable key-management algorithm: " +
            algs.join(", "));
 
@@ -417,6 +428,54 @@ async function jwtToolsActivities(driver) {
              header.epk.crv + ")" : "") + ".");
   }
   log.info("Every key-management algorithm the pane offers round-trips.");
+
+  // ---- and every CONTENT encryption algorithm it offers -------------------
+  // A192GCM and A192CBC-HS384 are why this loop exists. An option that is
+  // offered and cannot be performed is worse than one that is greyed, because
+  // the failure arrives as an OperationError from inside a key import and
+  // names nothing — which is exactly what greying them out used to prevent.
+  // So the menu's own list is driven rather than a list typed here, and the
+  // protected header is read back: `enc` is chosen by the sender and a page
+  // that quietly encrypted with the default would pass every other assertion
+  // in this file.
+  //
+  // ONE key pair for the lot, deliberately. `alg` is what needs fresh key
+  // material and it was varied above; here it is held at RSA-OAEP-256 so that
+  // what changes between passes is the content encryption and nothing else.
+  await driver.executeScript(
+    "document.getElementById('jwe_alg').value = 'RSA-OAEP-256';");
+  await click(driver, onclickBtn("generateEncryptionKeys"));
+  await waitForValue(driver, By.id("jwe_status"),
+    function (v) { return v.indexOf("Generated") !== -1 ||
+              v.indexOf("Error") !== -1; },
+    "Key generation for the content encryption pass produced no status.");
+  for (var e = 0; e < encs.length; e++) {
+    var enc = encs[e];
+    await driver.executeScript(
+      "document.getElementById('jwe_enc').value = arguments[0];" +
+      "document.getElementById('jwe_decrypt_output').value = '';" +
+      "document.getElementById('jwt_tools_jwe').value = '';", enc);
+    await click(driver, onclickBtn("encryptJWT"));
+    var encProduced = await waitForValue(driver, By.id("jwt_tools_jwe"),
+      function (v) { return v.split(".").length === 5; },
+      "No 5-part JWE was produced for enc=" + enc + ".");
+    var encHeader = JSON.parse(Buffer.from(encProduced.split(".")[0],
+        "base64url").toString("utf8"));
+    assert.strictEqual(encHeader.enc, enc,
+      "the protected header should name the content encryption algorithm " +
+          "used. Got: " +
+      JSON.stringify(encHeader));
+    await click(driver, onclickBtn("decryptJWT"));
+    var encBack = await waitForValue(driver, By.id("jwe_decrypt_output"),
+      function (v) { return v.trim().length > 0; },
+      "No decryption output for enc=" + enc + ".");
+    assert.strictEqual(encBack.trim(), plaintext,
+      enc + " did not round-trip: the decrypted text differs from what was " +
+          "encrypted.");
+    log.info("  " + enc + ": round-tripped.");
+  }
+  log.info("Every content encryption algorithm the pane offers round-trips, " +
+           "the two AES-192 ones included.");
   log.debug("Leaving jwtToolsActivities().");
 }
 
