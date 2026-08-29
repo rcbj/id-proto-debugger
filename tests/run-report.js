@@ -196,12 +196,39 @@ function jobTypeOf(script) {
 //     longer against anything driving the permissive server. `sts-tls` is the
 //     mock's client TRUSTSTORE, which pki_mutual_tls.js fills and empties on a
 //     live process.
-//   * EXCLUSIVE means the job runs alone, and admin_api.js is the only one: it
-//     changes claim sets globally and compares the count of every artifact the
-//     mock is holding against the same count read through the console, so any
-//     other job minting a token between those two reads flips it. It costs 0.3
-//     seconds and it restores everything it changes — which is what lets it run
-//     FIRST, before the pool starts, instead of draining the pool later.
+//   * EXCLUSIVE means the job runs alone, before the pool starts, instead of
+//     draining it later. There are NONE at present, and the mechanism is kept
+//     rather than deleted because the shape of job that needs it is a standing
+//     one: a job that reads a TOTAL off the mock — a count of every artifact
+//     the process is holding — or that changes something the process has only
+//     one of, which a trust realm therefore cannot contain (the SPIFFE signing
+//     authority; the console's roster in the default realm). Any other job
+//     minting a token between such a job's two reads flips its answer, and the
+//     failure names the other job. The four that used to be here —
+//     admin_api.js, sts_admin_api_operations.js, sts_admin_console.js and
+//     sts_metadata.js — drove the mock's own /admin and /admin-api surface
+//     and were removed from this suite on 2026-08-28; they live in the mock
+//     STS's own suite now (see the note in docs/mock-sts.md), which is the
+//     tree that changes them.
+//
+//     A SECOND SHAPE NEEDS IT, and two jobs are it: one that makes the mock
+//     BLOCK. `sts_userinfo_protected.js` and `sts_jws_verification.js` walk
+//     every algorithm the mock advertises, SLH-DSA among them — and the mock is
+//     one process whose signing is synchronous, so for the duration of one of
+//     those signatures it answers NOBODY: not another HTTP caller, not the KDC
+//     on port 88. Stalls of 14.6, 15.4, 17.8 and 23.3 SECONDS were measured in
+//     the containerized run of 2026-08-29, and each failed some unrelated job
+//     in a way that named anything but the cause — a Kerberos reply that never
+//     came, a Populate button never drawn, a login screen that never arrived, a
+//     refresh whose socket the mock closed on its way back. This is the shape a
+//     named lock cannot express: the set they collide with is the suite, so
+//     listing it would be listing the suite. They run alone instead, which
+//     costs the parallelism of two jobs out of 281 and is deterministic where
+//     retrying is not.
+//
+//     THAT PAIR IS INTERIM. The cause is the mock blocking and the fix is over
+//     there — a front process owning the sockets and the state, with the
+//     signing moved to workers. When that lands, take these two out again.
 //
 // A script that is not in the table runs unlocked, which is the right default:
 // nearly every test here mints an identity of its own (random_username.js, and
@@ -212,7 +239,6 @@ function jobTypeOf(script) {
 // ---------------------------------------------------------------------------
 const EXCLUSIVE = "*";
 const JOB_LOCKS = {
-  "admin_api.js": EXCLUSIVE,
   // The mock's credential + verifier configuration.
   "sd_jwt_vc_issuance.js": "sts-vc",
   "sd_jwt_vc_presentation.js": "sts-vc",
@@ -275,6 +301,14 @@ const JOB_LOCKS = {
   // `saml11_options.js` is deliberately absent — it needs no identity provider
   // at all, so nothing it does can collide with this.
   "sts_saml11.js": "sts-saml11",
+  // SAML 2.0 ENCRYPTION SHARES THE SAML 2.0 LOCK, and it has to: it turns
+  // `saml2.encryptAssertion` and the two algorithm rows on for service
+  // providers of its own, and it flips `saml2EncryptLogoutNameId` — but it
+  // also drives /saml2/slo, which ENDS WHATEVER SESSION the cookie jar it
+  // shares with a concurrent binding job is holding. A saml_sso.js round trip
+  // running inside that window loses its session mid-flow and fails naming the
+  // sign-in screen, with nothing to say which other job did it.
+  "sts_saml_encryption.js": "saml2",
   "saml11_sso.js": "sts-saml11",
   // The mock's SPNEGO SIGN-IN, which is `krb5.spnegoAuthentication` — a
   // process-wide setting on a shared service. `kerberos_spnego_signin.js` turns
@@ -295,6 +329,10 @@ const JOB_LOCKS = {
   "kerberos_spnego_signin.js": "sts-spnego-signin",
   "kerberos_spnego_page.js": "sts-spnego-signin",
   "kerberos_tgs_ap_page.js": "sts-spnego-signin",
+  // The two that make the mock BLOCK rather than the two that share state with
+  // anything: every advertised algorithm, SLH-DSA among them. See EXCLUSIVE.
+  "sts_userinfo_protected.js": EXCLUSIVE,
+  "sts_jws_verification.js": EXCLUSIVE,
   // And the MIT-client job, for both of the same reasons: it turns
   // `krb5.spnegoAuthentication` off to assert the closed door, and it asserts
   // that a REPLAYED AP-REQ is refused — which a concurrent job spending its
@@ -1137,11 +1175,43 @@ function buildJobs() {
   // opens it from the debugger Tools pane, confirms the on-load defaults, then
   // exercises every button — Base64 Encode/Decode (verifying the decoded value
   // round-trips to the original), URI Encode/Decode, the one-way CRC-32
-  // Checksum, and SHA hashing across all four digest sizes — validating each
-  // output against an independently computed reference value.
+  // Checksum, SHA-1/SHA-2 hashing across all seven digest sizes, the FIPS 202
+  // pane (four SHA-3 sizes, both SHAKEs at two output lengths each, and the
+  // legacy Keccak option that is NOT its SHA-3 namesake) and the SP 800-185
+  // pane, driven with six of that document's own published sample values.
+  // Everything but SP 800-185 is validated against node's OpenSSL; those four
+  // functions exist in no browser and in no node API, so a published vector is
+  // the only reference here that is not the code under test.
+  //
+  // It runs with NO secure-origin override, deliberately: this page hashed
+  // with crypto.subtle until FIPS 202 arrived (Web Crypto has no SHA-3), and
+  // running without the flag is what keeps it off Web Crypto on the
+  // containerized origin, which is not a secure context. See the note in the
+  // script.
   jobs.push({
-    name: "Encoding / Hashing Tools (Base64, URI, CRC-32, SHA)",
+    name: "Encoding / Hashing Tools (Base64, URI, CRC-32, SHA-2, SHA-3 / " +
+        "SHAKE, SP 800-185)",
     script: "encoding_tools.js",
+    env: {},
+  });
+
+  // The same page's hashing, in node with no browser, against things that are
+  // NOT this code: node's own OpenSSL for all eleven fixed-output functions
+  // and both SHAKEs at five lengths, `openssl mac`'s KMAC128/KMAC256 as a
+  // second implementation of the keyed half, fifteen sample values
+  // transcribed from SP 800-185, and TupleHash and ParallelHash re-derived
+  // here from that document's own left_encode / right_encode / encode_string
+  // definitions. Separate from the browser job above for the reason
+  // crypto_engines.js is separate from encryption_tools.js: a digest is
+  // exactly where being wrong looks like being right, so only a reference
+  // outside this tree can say the bytes are correct. It also asserts the
+  // division that lets it exist (hash_tools.js reaches no DOM and no Web
+  // Crypto) and that the page and the registry still offer the same
+  // functions. No browser and no services, so it never skips.
+  jobs.push({
+    name: "Hashing engine (FIPS 180-4 / 202 vs OpenSSL, SP 800-185 vectors " +
+        "and KMAC vs OpenSSL, in node)",
+    script: "hash_engine.js",
     env: {},
   });
 
@@ -1212,6 +1282,39 @@ function buildJobs() {
     env: {},
   });
 
+  // The Digital Signature page's STATEFUL hash-based signature pane, in node
+  // with no browser, and the job with the most to prove of any in this
+  // directory: LMS/HSS and XMSS/XMSS^MT are the only signature schemes in
+  // this application implemented FROM THE SPECIFICATIONS rather than taken
+  // from a library, because no LMS or XMSS exists in @noble, in Web Crypto or
+  // in node. Every interesting mistake in a hash-based signature produces a
+  // scheme that signs and verifies against itself perfectly and interoperates
+  // with nothing, so every vector here comes from outside this tree: RFC 8554
+  // Appendix F's two HSS cases and RFC 9858 Appendix A's three, LM-OTS key
+  // generation vectors that give I, q and SEED, ONE VERIFICATION VECTOR FOR
+  // EACH OF THE 21 XMSS PARAMETER SETS in the IANA registry, and key
+  // generation and XMSS^MT vectors generated deterministically from the XMSS
+  // reference implementation — nothing publishes an XMSS^MT vector, and these
+  // are the only thing that can pin SP 800-208 section 6.2's PRF_keygen and
+  // the four-byte padding of the 192-bit sets, both invisible to a verifier.
+  // Plus eight signatures that must NOT verify. Then the state: that an index
+  // advances, that an exhausted key refuses, and that two messages signed from
+  // one index both verify, which is the failure SP 800-208 exists to prevent.
+  // And then MUTATION TESTING: seven deliberate breakages, each of which the
+  // vector aimed at it must notice — because every other check here is of the
+  // form "this vector reproduces" and none of them says that any particular
+  // line is load bearing. `HBS_ALL_KEYGEN=1` adds five single-tree key
+  // generation vectors and about 160 seconds; they gate no rule, since the
+  // cheap XMSS^MT vectors cover every hash function and padding length on
+  // every run and the job asserts that. No browser and no services, so it
+  // never skips; about 40 seconds.
+  jobs.push({
+    name: "Hash-based signatures (RFC 8554 / 9858 / 8391 and SP 800-208 " +
+        "vectors, in node)",
+    script: "hbs_signatures.js",
+    env: {},
+  });
+
   // The Digital Signature page's JWS pane, in node, for the same reason the
   // job above exists: a round trip through the page agrees with itself
   // whatever the implementation does, and the defects that matter in a JWS are
@@ -1227,6 +1330,29 @@ function buildJobs() {
     name: "JWS engine (RFC 7515/7518/7797/8037/8812 — every registered " +
         "algorithm cross-checked against OpenSSL and jsonwebtoken, in node)",
     script: "jws_engine.js",
+    env: {},
+  });
+
+  // The post-quantum engines, in node, and the third job of this shape. Its
+  // reason for existing is sharper than the two above: almost nothing else in
+  // the world can read these bytes yet, so a pane that signs and verifies its
+  // own ML-DSA is exactly as convincing when the domain separation is wrong.
+  // So it asserts against things that are not this code —
+  // draft-connolly-cfrg-xwing-kem's own three test vectors for X-Wing
+  // (keygen, derandomized encapsulation and decapsulation), the
+  // domain-separation labels of both composite drafts against the HEX those
+  // drafts print, draft-ietf-cose-falcon Table 1's sizes (which is what holds
+  // the padded-versus-variable-length Falcon trap closed), and node's own
+  // SHA3 for the KEM combiner's input order. Then the properties no vector
+  // expresses: that a composite signature needs BOTH halves, that a context
+  // string genuinely separates contexts, that a pre-hashed signature does not
+  // verify as a pure one, and that RFC 9964's AKP rules are obeyed — `pub`
+  // and `priv` rather than `x` and `d`, and an ML-DSA `priv` that is the
+  // 32-byte seed.
+  jobs.push({
+    name: "Post-quantum engines (X-Wing draft vectors, FIPS 203/204/205 and " +
+        "draft composite labels, RFC 9964 AKP keys, in node)",
+    script: "pqc_engines.js",
     env: {},
   });
 
@@ -1275,6 +1401,35 @@ function buildJobs() {
   jobs.push({
     name: "JOSE JWE module (RFC 7516/7518: RSA-OAEP, ECDH-ES, Concat KDF)",
     script: "jose_jwe_encryption.js",
+    env: {},
+  });
+
+  // Every algorithm menu on every page offers exactly what the engine behind it
+  // can do — read out of the HTML and compared with jws.js / jose_jwe.js /
+  // dpop.js. No browser, so it costs milliseconds. It exists because the
+  // engines here grow and the hand-written <option> lists did not: on
+  // 2026-08-28 the JWT Tools signing menu offered 13 of 27 algorithms, the
+  // Encryption page's JWE pane 3 of 6 content encryptions, and the DPoP pane 2
+  // of 23 — none of which was visible from either side, because every menu was
+  // correct on the day it was typed.
+  jobs.push({
+    name: "Algorithm menus match their engines (jws.js, jose_jwe.js, dpop.js)",
+    script: "algorithm_menus.js",
+    env: {},
+  });
+
+  // And every option in those menus actually WORKS, in a browser. The menu
+  // check proves an option exists; this proves choosing it does something. The
+  // two are not the same claim, and the gap between them is exactly what a
+  // widened menu creates: on 2026-08-28 the JWT Tools signing menu was
+  // widened to the engine's twenty-seven algorithms and fourteen of them
+  // answered "No key was supplied", because the page's key panes are PEM-based
+  // and the post-quantum keys have no PEM form. This job found that; the menu
+  // is back to what the page can perform.
+  jobs.push({
+    name: "Algorithm panes work in the browser (JWT Tools signing, " +
+        "Encryption JWE round trips)",
+    script: "algorithm_panes.js",
     env: {},
   });
 
@@ -3072,35 +3227,15 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
-    jobs.push({
-      name: "STS metadata page (/admin/sts-metadata lists exactly what the " +
-          "router registers)",
-      script: "sts_metadata.js",
-      env: {
-        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
-        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
-      },
-    });
-    // The management API beside the metadata page, and for the same reason:
-    // both are checks that a description of this service still matches the
-    // service. This one also asserts the parity the API is written under —
-    // every /admin control has an /admin-api operation — which nothing inside
-    // the mock can check for itself, because nothing there can see a form
-    // appear on a page. It RESTORES everything it changes (claim sets, the
-    // credential claim set, the verifier request, and every token its bulk
-    // revocations touched), which matters more here than usual: the mock's
-    // admin state survives between jobs, so a job that left a custom claim
-    // behind would change what every later job's tokens contain.
-    jobs.push({
-      name: "STS management API (/admin-api mirrors every /admin control, " +
-          "its OpenAPI document describes what it sends, and a " +
-          "configuration change is seen on the wire and undone)",
-      script: "admin_api.js",
-      env: {
-        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
-        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
-      },
-    });
+    // THE MOCK'S OWN /admin AND /admin-api SURFACE IS NOT TESTED FROM HERE.
+    // Four jobs used to sit at this point — sts_metadata.js (the metadata
+    // page), admin_api.js (the management API's shape, its OpenAPI document
+    // and its parity with the console), sts_admin_api_operations.js (every
+    // documented operation driven for real) and sts_admin_console.js (the
+    // console walked in a browser). All four asserted things about the mock
+    // STS rather than about this debugger, and the mock's own suite drives
+    // them now, in the tree where a change to that console is made. They were
+    // removed here on 2026-08-28; see docs/mock-sts.md.
     jobs.push({
       name: "VC Issuance — issuer named by DID (did:web, domain linkage, " +
           "both formats)",
@@ -3108,6 +3243,42 @@ function buildJobs() {
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // POSTGRES PERSISTENCE, AND THE ONLY JOB HERE THAT OWNS THE SERVICE IT
+  // DRIVES.
+  //
+  // Registered OUTSIDE the WSTRUST_STS_URL guard above, deliberately: it does
+  // not use the shared mock and would be wrong to. Persistence is a claim
+  // about what happens across a RESTART, so this job starts its own Postgres
+  // and its own mock, restarts it, and reads what came back — and the shared
+  // instance must stay in memory mode, which mock-sts's own
+  // docker-compose.yml argues at length ("a test that persisted would be a
+  // test whose second run started from the first run's leavings").
+  //
+  // It holds NO JOB_LOCK for the same reason: its database, its ports and its
+  // processes are all its own, and it removes them in a `finally`.
+  //
+  // It SKIPS, with a named reason, when there is no docker and no
+  // STS_TEST_POSTGRES_URL, or when there is no COMPLETE mock STS tree to run —
+  // which is what the containerized suite looks like, since the tests image
+  // carries about thirty sts modules and no node_modules. On a host stack it
+  // runs in about twenty seconds.
+  // ---------------------------------------------------------------------
+  {
+    jobs.push({
+      name: "STS persistence (postgres) — what survives a restart, what must " +
+          "not, that two processes do not see each other, and that a missing " +
+          "database is not fatal",
+      script: "sts_persistence_postgres.js",
+      env: {
+        // Passed through so a caller with a database of their own is used
+        // instead of a throwaway container. Empty means "start one".
+        STS_TEST_POSTGRES_URL: env.STS_TEST_POSTGRES_URL || "",
+        MOCK_STS_DIR: env.MOCK_STS_DIR || "",
       },
     });
   }
@@ -3178,6 +3349,57 @@ function buildJobs() {
       name: "DPoP server checks (RFC 9449: the twelve proof checks, binding, " +
           "replay, nonces)",
       script: "sts_dpop.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // The SIGNED and ENCRYPTED UserInfo response (OIDC Core section 5.3.2),
+    // over HTTP with no browser. It is a CROSS-IMPLEMENTATION check and that is
+    // why it earns a job of its own: the mock produces every shape with node's
+    // OpenSSL and each one is opened with the DEBUGGER's engines
+    // (client/src/jws.js and client/src/jose_jwe.js, which are Web Crypto), so
+    // the failures it can see are the self-consistent ones a round trip through
+    // either side alone cannot — a CBC-HMAC key split the wrong way round, a
+    // Concat KDF that stops after one round, a tag taken as the whole HMAC.
+    // It drives every algorithm the metadata ADVERTISES rather than a list of
+    // its own, so an algorithm advertised and not implemented fails here.
+    // Needs only the STS.
+    // The UserInfo PAGE reading a protected response, in a browser — the half
+    // sts_userinfo_protected.js cannot reach. A response the engines can open
+    // and the page cannot render is an empty box, and nothing in node sees it.
+    // Four shapes, one algorithm per family, and the distinctions the report
+    // has to draw: "decrypted" is never "verified", a nested JWS whose outer
+    // header omits cty is a finding, and iss/aud/sub are checked by name.
+    jobs.push({
+      name: "UserInfo page reads signed, encrypted and nested responses " +
+          "(OIDC Core 5.3.2, in the browser)",
+      script: "oidc_userinfo_protected_page.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    jobs.push({
+      name: "Client-supplied JWS verification (every advertised algorithm " +
+          "for client assertions and OID4VCI proofs)",
+      script: "sts_jws_verification.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // Every algorithm the mock ADVERTISES for a JWS the client signs is
+    // actually accepted — client assertions and OID4VCI proofs of possession.
+    // An advertised list is a promise, and nothing checked either of them
+    // until this job existed: on its first run it found the eleven
+    // post-quantum algorithms advertised for client authentication and
+    // unverifiable, because client_auth.js handed an AKP JWK to node's
+    // createPublicKey() and dropped it as unreadable.
+    jobs.push({
+      name: "UserInfo signed and encrypted responses (OIDC Core 5.3.2, " +
+          "every advertised alg/enc, opened with the debugger's engines)",
+      script: "sts_userinfo_protected.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
@@ -3326,6 +3548,54 @@ function buildJobs() {
     script: "saml_tools.js",
     env: {},
   });
+
+  // The SAML Request Decoder (saml_authnrequest.html): read an AuthnRequest
+  // off the wire on all three bindings, check the signature in both of the
+  // two completely different places it can live, and decrypt. No identity
+  // provider — every fixture is built in the test by the same modules the
+  // page uses — so this one is never skipped.
+  //
+  // The assertion worth knowing about is the REDIRECT TAMPER case. A
+  // redirect-binding signature covers the query string as SENT, so a decoder
+  // that rebuilds those octets in its own order reports INVALID on a good
+  // signature, and in a browser that is indistinguishable from a wrong
+  // certificate. Checking only that a good signature verifies would pass with
+  // the octets rebuilt any which way.
+  jobs.push({
+    name: "SAML Request Decoder (three bindings, query-string + enveloped " +
+        "signature, XML-Enc decrypt)",
+    script: "saml_authnrequest_page.js",
+    env: {},
+  });
+
+  // The SAML Response Decoder (saml_response_decoder.html): the same page on
+  // the other half of the exchange, and a bigger job than its mirror because a
+  // response carries three things a request does not — a status, one or more
+  // assertions, and a signature in TWO places that mean different things. No
+  // identity provider: every fixture is built in the test by the same modules
+  // the page uses, so this one is never skipped either.
+  //
+  // Two assertions are worth knowing about. THE SAML 1.1 STATUS: 2.0 writes
+  // the code as a URI ending `:status:Success` and 1.1 writes it as a QName
+  // (`samlp:Success`), so a reader written for either reports the other's
+  // SUCCESS AS A FAILURE — which is exactly what the SAML Response page did to
+  // every 1.1 sign-in until 2026-08-25, and the case here asserts the verdict
+  // rather than that a table rendered. And THE TWO SIGNATURES: a response
+  // signed at one level only must report the other as absent BY NAME, because
+  // a decoder that collapsed them into one "signed: VALID" would pass every
+  // other check in that file while telling somebody their unsigned assertion
+  // is safe.
+  //
+  // It also drives the Expand / Collapse All switch on all four pages that
+  // carry one. That control is inline script rather than a bundle export, so
+  // that it works before browserify's global exists — which is also why
+  // nothing else in this suite would notice it silently doing nothing.
+  jobs.push({
+    name: "SAML Response Decoder (SAML 1.1 + 2.0, three bindings, message " +
+        "and assertion signatures, EncryptedAssertion decrypt)",
+    script: "saml_response_decoder_page.js",
+    env: {},
+  });
   
  // SAML 2.0 SP-initiated SSO across all three bindings: load IdP metadata, sign
   // the AuthnRequest (redirect = query-string sig; post = enveloped XML-DSIG;
@@ -3449,8 +3719,8 @@ function buildJobs() {
   //    1.1 and which are switched off. No identity provider at all.
   // 3. `sts_saml11.js` — the mock STS's SAML 1.1 identity provider, driven
   //    directly over HTTP with a relying party it writes itself, and almost
-  //    entirely NEGATIVES. It sits with `sts_metadata.js`, `sts_dpop.js`,
-  //    `admin_api.js` and `vc_did.js`, which is the family it belongs to.
+  //    entirely NEGATIVES. It sits with `sts_dpop.js` and `vc_did.js`, which
+  //    is the family it belongs to.
   //
   // **THERE IS NO KEYCLOAK HALF OF ANY OF THEM, and there will not be one.**
   // Every other browser-SSO job in this section is pushed once per identity
@@ -3532,15 +3802,51 @@ function buildJobs() {
   // through the real AssertionID, an InResponseTo on a profile with no request,
   // and the one-shot artifact.
   //
-  // Gated on the STS alone, like the four tests it sits with. It restores every
+  // Gated on the STS alone, like the tests it sits with. It restores every
   // setting it changes, through /admin-api/config/reset rather than by writing
-  // the old value back, so it leaves no runtime override for admin_api.js to
-  // trip over on the next run against the same container.
+  // the old value back, so it leaves no runtime override behind for the next
+  // run against the same container — the mock's own suite reads that store and
+  // fails on a leftover override.
   if (env.WSTRUST_STS_URL) {
     jobs.push({
       name: "SAML 1.1 identity provider on the mock STS (Browser/POST, " +
           "Browser/Artifact, the SOAP responder, per-RP metadata)",
       script: "sts_saml11.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+  }
+
+  // SAML 2.0 ENCRYPTION on the mock STS, driven over HTTP with a service
+  // provider the test writes itself — its own RSA key pair, its own XML
+  // Encryption decryptor built on node's `crypto`, and a PKCS#1 v1.5 unwrap done
+  // with BigInt because node refuses `RSA_PKCS1_PADDING` for private decryption.
+  //
+  // NOTHING IS BORROWED FROM THE MOCK, which is `sts_dpop.js`'s rule and matters
+  // more here than anywhere else in this suite: if both ends of the encryption
+  // came from one implementation, a shared misunderstanding about where the IV
+  // lives or whether the GCM tag is appended would pass and interoperate with
+  // nobody.
+  //
+  // It is the counterpart of `saml_encrypted_sso.js` and does not replace it.
+  // That job proves the DEBUGGER can consume an encrypted assertion from
+  // Keycloak, in a browser, with the SP key in the page. This one proves the
+  // MOCK can produce one — and, mostly, that it REFUSES what it should: an
+  // altered ciphertext, an EncryptedID encrypted to somebody else's key, and a
+  // decrypted fragment that does not carry its own namespace.
+  //
+  // Gated on the STS alone, like the tests it sits with. It restores every
+  // setting it changes through /admin-api/config/reset rather than by writing
+  // the old value back, so it leaves no runtime override behind for the next
+  // run against the same container — the mock's own suite reads that store and
+  // fails on a leftover override.
+  if (env.WSTRUST_STS_URL) {
+    jobs.push({
+      name: "SAML 2.0 encryption on the mock STS (EncryptedAssertion, " +
+          "EncryptedID both ways, four ciphers x two key transports)",
+      script: "sts_saml_encryption.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
@@ -4541,9 +4847,11 @@ function runPool(jobs, results, started, total) {
 // Skips first (they cost nothing and hold nothing), then the EXCLUSIVE jobs
 // alone, then everything else in the pool. The exclusive pass is first rather
 // than in its place in the list because draining a pool to make room for a
-// 0.3-second job means waiting out whatever longest job is in flight; the one
-// job in that class restores everything it changes, which is what makes its
-// position free to choose. See JOB_LOCKS.
+// 0.3-second job means waiting out whatever longest job is in flight; a job in
+// that class restores everything it changes, which is what makes its position
+// free to choose. NOTHING CLAIMS EXCLUSIVE at present — the pass then finds no
+// job and costs nothing — and the table says why the mechanism is kept. See
+// JOB_LOCKS.
 async function runAllJobs(jobs, results) {
   log.debug("Entering runAllJobs().");
   const total = jobs.length;

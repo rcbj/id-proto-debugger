@@ -44,6 +44,11 @@ log.info("Log initialized. logLevel=" + log.level());
 // flat next to the test scripts (see tests/Dockerfile).
 var dpop = paths.requireSharedModule(
   [__dirname + "/../client/src/dpop.js", __dirname + "/dpop.js"], "dpop.js");
+// The engine behind it, for the one thing this file needs from it: the
+// REGISTERED `alg` for an engine identifier — see the header check below.
+var jws = paths.requireSharedModule(
+  [__dirname + "/../client/src/jws.js", __dirname + "/jws.js"],
+   "jws.js");
 
 // The module signs through Web Crypto, as it does in the browser. Assert it
 // rather than discover a TypeError six functions deep.
@@ -87,6 +92,40 @@ const RFC7638_JWK = {
 const RFC7638_JKT = "NzbLsXh8uDCcd-6MNwXF4W_7noWXFZAfHkxZsRGC9Xs";
 
 // --- the thumbprint, against the specifications' own numbers ----------------
+// The node verification parameters for one JWS algorithm, or null when node
+// cannot verify it at all. Derived from the algorithm NAME rather than kept as
+// a table, so an algorithm added to jws.js needs nothing here — and the
+// post-quantum ones return null rather than being silently mis-verified.
+function nodeVerifyParamsFor(alg) {
+  log.debug("Entering nodeVerifyParamsFor(). alg=" + alg);
+  var hashes = { "256": "sha256", "384": "sha384", "512": "sha512" };
+  var size = alg.slice(-3);
+  if (/^RS(256|384|512)$/.test(alg)) {
+    log.debug("Leaving nodeVerifyParamsFor(). RSASSA-PKCS1.");
+    return { hash: hashes[size], options: {} };
+  }
+  if (/^PS(256|384|512)$/.test(alg)) {
+    log.debug("Leaving nodeVerifyParamsFor(). RSASSA-PSS.");
+    return { hash: hashes[size],
+             options: { padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+                        saltLength: Number(size) / 8 } };
+  }
+  if (/^ES(256|384|512)$/.test(alg) || alg === "ES256K") {
+    // JWS carries ECDSA as raw r||s; node's verifier wants to be told that.
+    var bytes = { ES256: 64, ES256K: 64, ES384: 96, ES512: 132 }[alg];
+    log.debug("Leaving nodeVerifyParamsFor(). ECDSA.");
+    return { hash: alg === "ES256K" ? "sha256" : hashes[size],
+             options: { dsaEncoding: "ieee-p1363" }, sigBytes: bytes };
+  }
+  if (alg.indexOf("EdDSA") === 0) {
+    // Ed25519 and Ed448 hash internally, so there is no digest to name.
+    log.debug("Leaving nodeVerifyParamsFor(). EdDSA.");
+    return { hash: null, options: {} };
+  }
+  log.debug("Leaving nodeVerifyParamsFor(). Node cannot verify " + alg + ".");
+  return null;
+}
+
 async function thumbprintMatchesPublishedVectors() {
   log.debug("Entering thumbprintMatchesPublishedVectors().");
   log.info("=== The JWK Thumbprint (RFC 7638), against published vectors ===");
@@ -293,8 +332,15 @@ async function proofIsWellFormedAndVerifies() {
           "Without it a " +
       "receiver may accept some other JWT the client signed with the " +
           "same key.");
-    assert.strictEqual(header.alg, alg,
-                       "the header must name the signing algorithm.");
+    // THE REGISTERED VALUE, WHICH IS NOT ALWAYS THE ENGINE'S NAME FOR IT.
+    // jws.js distinguishes `EdDSA-Ed25519` from `EdDSA-Ed448` because it must
+    // pick a curve to sign on; RFC 8037 registers ONE `alg` — `EdDSA` — and
+    // puts the curve in the key's `crv`. A header naming the engine's internal
+    // id would name an algorithm no registry has, so the two are deliberately
+    // different here and this asserts the WIRE value.
+    assert.strictEqual(header.alg, jws.algSpec(alg).alg,
+      "the header must name the REGISTERED algorithm for " + alg + " (" +
+      jws.algSpec(alg).alg + "), not the engine's internal identifier.");
     assert.notStrictEqual(header.alg, "none", "alg must not be none.");
     assert.ok(header.jwk && header.jwk.kty,
               "the header must carry the public key as a JWK.");
@@ -325,26 +371,42 @@ async function proofIsWellFormedAndVerifies() {
       "iat must be now, not a stale or absent timestamp.");
 
     // The signature, checked by node — a different implementation entirely.
-    var publicKey = crypto.createPublicKey({ key: header.jwk, format: "jwk" });
+    //
+    // THE PARAMETERS COME FROM THE ALGORITHM AND NOT FROM A CONSTANT. This
+    // block hardcoded "sha256" and special-cased ES256 alone, which was right
+    // while dpop.js offered ES256 and RS256 and became wrong the moment it
+    // offered twenty-three: every RS384 proof was verified against a SHA-256
+    // digest and reported as a signature that does not verify — the test
+    // failing, and the code correct. That is the same defect this whole change
+    // set removed from four places in the mock, and it had a fifth copy here.
     var signingInput = Buffer.from(parts[0] + "." + parts[1], "ascii");
     var signature = b64uDecode(parts[2]);
-    var ok;
-    if (alg === "ES256") {
-      // JWS carries ECDSA as raw r||s; node's verifier wants to be told that.
-      ok = crypto.verify("sha256", signingInput, { key: publicKey,
-          dsaEncoding: "ieee-p1363" },
-                         signature);
-      assert.strictEqual(signature.length, 64,
-        "an ES256 JWS signature is the 64-byte r||s pair, not DER. Got " +
-            signature.length +
-        " bytes, which is what a DER signature would be.");
+    var nodeParams = nodeVerifyParamsFor(alg);
+    if (!nodeParams) {
+      // A post-quantum or hybrid algorithm. Node's OpenSSL cannot verify one,
+      // so there is no independent implementation to check it against and the
+      // honest thing is to say so rather than to skip in silence or to
+      // "verify" it with the module that produced it, which proves nothing.
+      log.info("[proof] " + alg + ": signed and structurally checked; node " +
+               "cannot verify this algorithm, so the cross-check is the " +
+               "engine's own vectors in jws_engine.js.");
     } else {
-      ok = crypto.verify("sha256", signingInput, publicKey, signature);
+      var publicKey = crypto.createPublicKey({ key: header.jwk,
+                                               format: "jwk" });
+      var ok = crypto.verify(nodeParams.hash, signingInput,
+        Object.assign({ key: publicKey }, nodeParams.options), signature);
+      assert.ok(ok, alg +
+          ": the proof's signature does not verify against the key in its " +
+                    "own header, checked with node rather than with the " +
+                        "module that made it.");
+      if (nodeParams.sigBytes) {
+        assert.strictEqual(signature.length, nodeParams.sigBytes,
+          "an " + alg + " JWS signature is the " + nodeParams.sigBytes +
+          "-byte r||s pair of RFC 7518 section 3.4, not DER. Got " +
+          signature.length + " bytes, which is about what a DER signature " +
+          "would be.");
+      }
     }
-    assert.ok(ok, alg +
-        ": the proof's signature does not verify against the key in its own " +
-                  "header, checked with node rather than with the module " +
-                      "that made it.");
 
     // And the key in the header is the key the token would be bound to.
     var jkt = await dpop.thumbprint(header.jwk);
@@ -360,17 +422,25 @@ async function proofIsWellFormedAndVerifies() {
         .toString("base64url") + "." + parts[2];
     var tparts = tampered.split(".");
     var tinput = Buffer.from(tparts[0] + "." + tparts[1], "ascii");
-    var stillOk = alg === "ES256"
-      ? crypto.verify("sha256", tinput, { key: publicKey,
-          dsaEncoding: "ieee-p1363" },
-                      b64uDecode(tparts[2]))
-      : crypto.verify("sha256", tinput, publicKey, b64uDecode(tparts[2]));
-    assert.strictEqual(stillOk, false,
-      alg + ": changing htm from POST to GET must invalidate the signature.");
+    // The SAME parameters the honest verification used — this was a second
+    // copy of the "sha256, unless it is ES256" guess and had to be fixed with
+    // it. A tampering check that cannot verify the algorithm at all would
+    // "pass" for the wrong reason: `false` because the digest was wrong rather
+    // than because the payload was edited.
+    if (nodeParams) {
+      var stillOk = crypto.verify(nodeParams.hash, tinput,
+        Object.assign({ key: crypto.createPublicKey({ key: header.jwk,
+                                                      format: "jwk" }) },
+                      nodeParams.options),
+        b64uDecode(tparts[2]));
+      assert.strictEqual(stillOk, false,
+        alg + ": changing htm from POST to GET must invalidate the signature.");
+    }
 
     log.info("[proof] OK — " + alg +
-             ": typed, all required claims, verifies under node, and " +
-             "does not survive tampering.");
+             ": typed, all required claims, " +
+             (nodeParams ? "verifies under node, and does not survive tampering."
+                         : "structurally sound (node cannot verify this one)."));
   }
 
   // No access token means no ath. Sending one anyway would be a claim about a
@@ -484,7 +554,15 @@ async function symmetricKeysAreRefused() {
   log.info("=== No MACs (RFC 9449 section 4.2) ===");
   assert.strictEqual(dpop.algOfJwk({ kty: "oct", k: "c2VjcmV0" }), "",
     "an oct key must map to no DPoP algorithm.");
+  // P-384 maps to ES384 now that the wallet can sign with it. What this
+  // assertion is really about is unchanged and is asserted below with a curve
+  // that is still unsupported: a curve must never map to an algorithm whose
+  // HASH is wrong for it, because the signature would verify nowhere.
   assert.strictEqual(dpop.algOfJwk({ kty: "EC", crv: "P-384", x: "a", y: "b" }),
+                     "ES384",
+    "P-384 must map to ES384 — mapping it to ES256 would sign with SHA-256 " +
+    "and produce a signature no verifier accepts.");
+  assert.strictEqual(dpop.algOfJwk({ kty: "EC", crv: "P-192", x: "a", y: "b" }),
                      "",
     "a curve this wallet cannot sign with must map to no algorithm rather " +
         "than to ES256, " +

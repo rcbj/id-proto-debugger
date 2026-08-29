@@ -24,7 +24,7 @@
 
 <p class="encoding-tools-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a></p>
 
-<p class="encoding-tools-intro">Encode, decode, checksum, and hash arbitrary values &mdash; all in your browser. <strong>Nothing is stored or sent to a server:</strong> every value stays on this page.</p>
+<p class="encoding-tools-intro">Encode, decode, checksum, and hash arbitrary values &mdash; all in your browser. <strong>Nothing is stored or sent to a server:</strong> every value stays on this page. The hashing covers both halves of NIST's catalogue: <strong>FIPS 180-4</strong> (SHA-1, SHA-2), <strong>FIPS 202</strong> (SHA-3 and the SHAKE extendable-output functions) and <strong>SP 800-185</strong> (cSHAKE, KMAC, TupleHash, ParallelHash) &mdash; the last two being what ML-KEM, ML-DSA and SLH-DSA are actually built from, so the notes under each digest say which function of which post-quantum standard you just computed.</p>
 
 <div class="encoding-tools-grid">
 
@@ -84,28 +84,179 @@
     <input class="et-status" type="text" id="checksum_status" name="checksum_status" title="Status / result of the last checksum operation." readonly />
   </fieldset>
 
-  <!-- ===================== 4. SHA Hashing ===================== -->
+  <!-- ============ 4. SHA-1 / SHA-2 hashing (FIPS 180-4) ============ -->
   <fieldset id="pane_sha">
-    <legend>SHA Hashing</legend>
+    <legend>SHA-1 / SHA-2 Hashing (FIPS 180-4)</legend>
 
     <div class="et-field">
       <label class="et-has-copy" title="The value to hash with the selected SHA algorithm.">Unencoded value <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha_unencoded');" title="Copy to clipboard">Copy</button></label>
       <textarea rows="2" id="sha_unencoded" name="sha_unencoded" title="Input to hash. Edit this, pick a size, and click Encode."></textarea>
     </div>
     <div class="et-field">
-      <label class="et-has-copy" title="The SHA digest (hex). A hash is one-way &mdash; it cannot be decoded.">Encoded <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha_encoded');" title="Copy to clipboard">Copy</button></label>
-      <textarea rows="2" id="sha_encoded" name="sha_encoded" title="SHA digest in hex. One-way — cannot be decoded." readonly></textarea>
+      <label class="et-has-copy" title="The SHA digest. A hash is one-way &mdash; it cannot be decoded.">Encoded <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha_encoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="sha_encoded" name="sha_encoded" title="SHA digest. One-way — cannot be decoded." readonly></textarea>
     </div>
     <div class="et-row">
       <select class="et-grow" id="sha_size" name="sha_size" title="SHA algorithm / digest size.">
         <option value="SHA-256" selected="selected">SHA-256</option>
-        <option value="SHA-1">SHA-1</option>
+        <option value="SHA-1">SHA-1 (broken — legacy artifacts only)</option>
+        <option value="SHA-224">SHA-224</option>
         <option value="SHA-384">SHA-384</option>
         <option value="SHA-512">SHA-512</option>
+        <option value="SHA-512/224">SHA-512/224</option>
+        <option value="SHA-512/256">SHA-512/256</option>
+        
       </select>
       <input type="submit" value="Encode" onclick="return encoding_tools.shaHash();" title="Compute the selected SHA digest of the Unencoded value." />
     </div>
+    <div class="et-row">
+      <select class="et-grow" id="sha_input_encoding" name="sha_input_encoding" title="How to read the Unencoded value: as text, or as bytes written in hex / Base64. Specifications write their test vectors in hex.">
+        <option value="text" selected="selected">Input: Text (UTF-8)</option>
+        <option value="hex">Input: Hex</option>
+        <option value="base64">Input: Base64</option>
+        <option value="base64url">Input: Base64url</option>
+      </select>
+      <select class="et-grow" id="sha_output_format" name="sha_output_format" title="How to write the digest out.">
+        <option value="hex" selected="selected">Output: hex</option>
+        <option value="HEX">Output: HEX</option>
+        <option value="base64">Output: Base64</option>
+        <option value="base64url">Output: Base64url</option>
+      </select>
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="What this function is, what it resists classically and under a quantum attacker, and where the post-quantum standards use it.">Notes <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha_notes');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="9" class="et-notes" id="sha_notes" name="sha_notes" title="Spec, security strengths and post-quantum role of the selected algorithm." readonly></textarea>
+    </div>
     <input class="et-status" type="text" id="sha_status" name="sha_status" title="Status / result of the last hash operation." readonly />
+  </fieldset>
+
+  <!-- ============ 5. SHA-3 / SHAKE (FIPS 202) ============ -->
+  <fieldset id="pane_sha3">
+    <legend>SHA-3 / SHAKE (FIPS 202)</legend>
+
+    <div class="et-field">
+      <label class="et-has-copy" title="The value to hash. Seeded with &quot;abc&quot;, the input FIPS 202's own examples use.">Unencoded value <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha3_unencoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="sha3_unencoded" name="sha3_unencoded" title="Input to hash. Edit this, pick a function, and click Encode."></textarea>
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="The digest. One-way &mdash; it cannot be decoded.">Encoded <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha3_encoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="sha3_encoded" name="sha3_encoded" title="Digest. One-way — cannot be decoded." readonly></textarea>
+    </div>
+    <div class="et-row">
+      <select class="et-grow" id="sha3_alg" name="sha3_alg" onchange="return encoding_tools.sha3AlgChanged();" title="FIPS 202 function. The two SHAKEs are extendable-output functions, so they take an output length; the rest have theirs in their name.">
+        <optgroup label="SHA-3 (FIPS 202)">
+          <option value="SHA3-256" selected="selected">SHA3-256</option>
+          <option value="SHA3-224">SHA3-224</option>
+          <option value="SHA3-384">SHA3-384</option>
+          <option value="SHA3-512">SHA3-512</option>
+        </optgroup>
+        <optgroup label="SHAKE — extendable output (FIPS 202)">
+          <option value="SHAKE128">SHAKE128</option>
+          <option value="SHAKE256">SHAKE256</option>
+        </optgroup>
+        <optgroup label="Legacy Keccak — NOT FIPS 202">
+          <option value="Keccak-256">Keccak-256 (pre-FIPS padding)</option>
+          <option value="Keccak-512">Keccak-512 (pre-FIPS padding)</option>
+        </optgroup>
+      </select>
+      <input type="submit" value="Encode" onclick="return encoding_tools.sha3Hash();" title="Compute the selected FIPS 202 digest of the Unencoded value." />
+    </div>
+    <div class="et-row">
+      <select class="et-grow" id="sha3_input_encoding" name="sha3_input_encoding" title="How to read the Unencoded value: as text, or as bytes written in hex / Base64.">
+        <option value="text" selected="selected">Input: Text (UTF-8)</option>
+        <option value="hex">Input: Hex</option>
+        <option value="base64">Input: Base64</option>
+        <option value="base64url">Input: Base64url</option>
+      </select>
+      <select class="et-grow" id="sha3_output_format" name="sha3_output_format" title="How to write the digest out.">
+        <option value="hex" selected="selected">Output: hex</option>
+        <option value="HEX">Output: HEX</option>
+        <option value="base64">Output: Base64</option>
+        <option value="base64url">Output: Base64url</option>
+      </select>
+      <input class="et-grow" type="text" id="sha3_output_bits" name="sha3_output_bits" value="256" title="Output length in bits, for SHAKE only. A multiple of 8; an extendable-output function will produce any amount asked of it, and its security is still capped by its capacity." />
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="What this function is, what it resists classically and under a quantum attacker, and where the post-quantum standards use it.">Notes <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sha3_notes');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="10" class="et-notes" id="sha3_notes" name="sha3_notes" title="Spec, security strengths and post-quantum role of the selected function." readonly></textarea>
+    </div>
+    <input class="et-status" type="text" id="sha3_status" name="sha3_status" title="Status / result of the last hash operation." readonly />
+  </fieldset>
+
+  <!-- ====== 6. SP 800-185 — cSHAKE / KMAC / TupleHash / ParallelHash ====== -->
+  <fieldset id="pane_sp185" class="et-wide">
+    <legend>cSHAKE / KMAC / TupleHash / ParallelHash (SP 800-185)</legend>
+
+    <div class="et-field">
+      <label class="et-has-copy" title="The message. For TupleHash this is the tuple: ONE ELEMENT PER LINE. Seeded with SP 800-185's own KMAC Sample #1 input.">Message <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sp185_message');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="sp185_message" name="sp185_message" title="Message to hash. For TupleHash, one tuple element per line."></textarea>
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="The key K. KMAC only &mdash; the other three functions are unkeyed.">Key (KMAC only) <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sp185_key');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="sp185_key" name="sp185_key" title="KMAC key. Ignored by cSHAKE, TupleHash and ParallelHash."></textarea>
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="The result.">Result <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sp185_encoded');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="2" id="sp185_encoded" name="sp185_encoded" title="Result. One-way — cannot be decoded." readonly></textarea>
+    </div>
+    <div class="et-row">
+      <select class="et-grow" id="sp185_fn" name="sp185_fn" onchange="return encoding_tools.sp185FnChanged();" title="SP 800-185 function. The XOF variants encode the length as right_encode(0) rather than right_encode(L), which changes every byte of the output and not only how much of it there is.">
+        <optgroup label="KMAC — keyed">
+          <option value="KMAC128" selected="selected">KMAC128</option>
+          <option value="KMAC256">KMAC256</option>
+          <option value="KMAC128XOF">KMAC128XOF</option>
+          <option value="KMAC256XOF">KMAC256XOF</option>
+        </optgroup>
+        <optgroup label="cSHAKE — customizable SHAKE">
+          <option value="cSHAKE128">cSHAKE128</option>
+          <option value="cSHAKE256">cSHAKE256</option>
+        </optgroup>
+        <optgroup label="TupleHash — hashes a LIST unambiguously">
+          <option value="TupleHash128">TupleHash128</option>
+          <option value="TupleHash256">TupleHash256</option>
+          <option value="TupleHash128XOF">TupleHash128XOF</option>
+          <option value="TupleHash256XOF">TupleHash256XOF</option>
+        </optgroup>
+        <optgroup label="ParallelHash — B-byte blocks">
+          <option value="ParallelHash128">ParallelHash128</option>
+          <option value="ParallelHash256">ParallelHash256</option>
+          <option value="ParallelHash128XOF">ParallelHash128XOF</option>
+          <option value="ParallelHash256XOF">ParallelHash256XOF</option>
+        </optgroup>
+      </select>
+      <input type="submit" value="Compute" onclick="return encoding_tools.sp185Compute();" title="Run the selected SP 800-185 function over the Message." />
+    </div>
+    <div class="et-row">
+      <select class="et-grow" id="sp185_message_encoding" name="sp185_message_encoding" title="How to read the Message (each line, for TupleHash).">
+        <option value="hex" selected="selected">Message: Hex</option>
+        <option value="text">Message: Text (UTF-8)</option>
+        <option value="base64">Message: Base64</option>
+        <option value="base64url">Message: Base64url</option>
+      </select>
+      <select class="et-grow" id="sp185_key_encoding" name="sp185_key_encoding" title="How to read the Key.">
+        <option value="hex" selected="selected">Key: Hex</option>
+        <option value="text">Key: Text (UTF-8)</option>
+        <option value="base64">Key: Base64</option>
+        <option value="base64url">Key: Base64url</option>
+      </select>
+      <select class="et-grow" id="sp185_output_format" name="sp185_output_format" title="How to write the result out.">
+        <option value="hex" selected="selected">Output: hex</option>
+        <option value="HEX">Output: HEX</option>
+        <option value="base64">Output: Base64</option>
+        <option value="base64url">Output: Base64url</option>
+      </select>
+    </div>
+    <div class="et-row">
+      <input class="et-grow" type="text" id="sp185_customization" name="sp185_customization" placeholder="Customization string S (optional)" title="The customization string S. The same key over the same message under a different S is a different function — that is what S is for." />
+      <input class="et-grow" type="text" id="sp185_function_name" name="sp185_function_name" placeholder="Function name N (cSHAKE only)" title="The function name N. SP 800-185 reserves N for functions NIST itself defines; KMAC, TupleHash and ParallelHash each fix their own, so it is only an argument for cSHAKE. With N and S both empty, cSHAKE IS SHAKE." />
+      <input class="et-grow" type="text" id="sp185_block_bytes" name="sp185_block_bytes" value="8" title="ParallelHash block size B, in bytes. It is part of the definition: two readers who pick different block sizes get different digests of the same input." />
+      <input class="et-grow" type="text" id="sp185_output_bits" name="sp185_output_bits" value="256" title="Output length L in bits. A multiple of 8. For the non-XOF functions L is bound INTO the computation, so changing it changes every byte." />
+    </div>
+    <div class="et-field">
+      <label class="et-has-copy" title="What this function is and what its arguments do.">Notes <button type="button" class="et-copy" onclick="return encoding_tools.copyField('sp185_notes');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="7" class="et-notes" id="sp185_notes" name="sp185_notes" title="What the selected SP 800-185 function is and what its arguments do." readonly></textarea>
+    </div>
+    <input class="et-status" type="text" id="sp185_status" name="sp185_status" title="Status / result of the last SP 800-185 operation." readonly />
   </fieldset>
 
 </div>

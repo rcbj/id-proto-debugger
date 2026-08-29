@@ -894,8 +894,8 @@ async function theClosedDoorSignsNobodyIn() {
         "and the protected page is untouched");
   } finally {
     // RESTORED THROUGH `reset` RATHER THAN BY WRITING THE OLD VALUE BACK. A
-    // `set` leaves `source: override` behind on that setting for admin_api.js
-    // to trip over on the next run; `reset` puts it back to whatever the
+    // `set` leaves `source: override` behind on that setting for the mock's
+    // own suite to trip over on the next run; `reset` puts it back to what the
     // service's own configuration says. This is in a `finally` because a
     // failed assertion above must not leave the door shut for every other
     // Kerberos job.

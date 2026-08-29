@@ -466,7 +466,7 @@ function ellipticStaysOutOfTheBundles() {
   // moved to common/ when api/server.js started signing with it, and a scan
   // that only reads client/src would have gone on reporting a pass over a
   // module it no longer looks at — while that module is still browserified
-  // into eight bundles.
+  // into nine bundles.
   const extraDirs = [path.join(__dirname, "..", "common", "krb5"),
                      path.join(__dirname, "..", "common", "spiffe")]
     .filter(function (d) { return fs.existsSync(d); });
@@ -528,7 +528,7 @@ function ellipticStaysOutOfTheBundles() {
   extraFiles.forEach(function (file) {
     const rel = path.relative(path.join(__dirname, ".."), file);
     assert.ok(files.some(function (f) { return f.label === rel; }),
-      "found no " + rel + ", which is staged into eight bundles and must " +
+      "found no " + rel + ", which is staged into nine bundles and must " +
       "be scanned");
   });
   files.forEach(function (file) {

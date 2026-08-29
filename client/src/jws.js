@@ -77,6 +77,7 @@ var nobleSha512 = require("@noble/hashes/sha512");
 var nobleHmac = require("@noble/hashes/hmac").hmac;
 var bytesLib = require("./crypto_bytes");
 var pkEncryption = require("./pk_encryption");
+var pqc = require("./pqc");
 
 var strBytes = bytesLib.strBytes;
 var bytesToStr = bytesLib.bytesToStr;
@@ -186,6 +187,78 @@ var ALGS = {
             hash: 'SHA-256', fieldBytes: 32,
             req: 'Optional', spec: 'RFC 8812 §3.2',
             label: 'ES256K — ECDSA secp256k1 SHA-256' },
+  // -------------------------------------------------------------------
+  // POST-QUANTUM. One family, four specifications, and only ONE of them is
+  // published — which is why every row carries `pqSpec` into pqc.js's SPECS
+  // table and the pane renders a draft warning from it. See pqc.js.
+  //
+  // The `alg` value IS the table key for all of these, unlike EdDSA: each
+  // parameter set has its own registered name, so nothing has to be guessed
+  // from a key length.
+  //
+  // FN-DSA IS ALSO NOT HERE, and for a different reason from the SLH-DSA
+  // parameter sets below: draft-ietf-cose-falcon-04 DOES register
+  // `FN-DSA-512` and `FN-DSA-1024`, so the identifiers exist. What is missing
+  // is an implementation this bundle can load — see the header of pqc.js and
+  // its MISSING table. Adding the rows without a signer would produce an
+  // `alg` the page offers and cannot honour, which is worse than an absence.
+  //
+  // WHAT IS NOT HERE: the other ten SLH-DSA parameter sets. FIPS 205 defines
+  // twelve and this page's raw SLH-DSA pane offers all twelve, but
+  // draft-ietf-cose-sphincs-plus-10 registers exactly two — one NIST
+  // category 1 "small" set per hash family — and says so deliberately, to
+  // keep early implementations interoperable. A JWS `alg` of
+  // "SLH-DSA-SHA2-256f" would be this project's invention, so it does not
+  // exist here.
+  'ML-DSA-44': { alg: 'ML-DSA-44', family: 'pq', pqName: 'ML-DSA-44',
+                 pqSpec: 'RFC.9964', req: 'Optional', spec: 'RFC 9964 §2',
+                 label: 'ML-DSA-44 — FIPS 204 (RFC 9964)' },
+  'ML-DSA-65': { alg: 'ML-DSA-65', family: 'pq', pqName: 'ML-DSA-65',
+                 pqSpec: 'RFC.9964', req: 'Optional', spec: 'RFC 9964 §2',
+                 label: 'ML-DSA-65 — FIPS 204 (RFC 9964)' },
+  'ML-DSA-87': { alg: 'ML-DSA-87', family: 'pq', pqName: 'ML-DSA-87',
+                 pqSpec: 'RFC.9964', req: 'Optional', spec: 'RFC 9964 §2',
+                 label: 'ML-DSA-87 — FIPS 204 (RFC 9964)' },
+  'SLH-DSA-SHA2-128s': { alg: 'SLH-DSA-SHA2-128s', family: 'pq',
+                 pqName: 'SLH-DSA-SHA2-128s',
+                 pqSpec: 'I-D.cose-sphincs-plus', req: 'Optional',
+                 spec: 'draft-ietf-cose-sphincs-plus-10',
+                 label: 'SLH-DSA-SHA2-128s — FIPS 205 (draft)' },
+  'SLH-DSA-SHAKE-128s': { alg: 'SLH-DSA-SHAKE-128s', family: 'pq',
+                 pqName: 'SLH-DSA-SHAKE-128s',
+                 pqSpec: 'I-D.cose-sphincs-plus', req: 'Optional',
+                 spec: 'draft-ietf-cose-sphincs-plus-10',
+                 label: 'SLH-DSA-SHAKE-128s — FIPS 205 (draft)' },
+  'ML-DSA-44-ES256': { alg: 'ML-DSA-44-ES256', family: 'pq',
+                 pqName: 'ML-DSA-44-ES256',
+                 pqSpec: 'I-D.jose-pq-composite-sigs', req: 'Optional',
+                 spec: 'draft-ietf-jose-pq-composite-sigs-03',
+                 label: 'ML-DSA-44-ES256 — composite PQ/T (draft)' },
+  'ML-DSA-65-ES256': { alg: 'ML-DSA-65-ES256', family: 'pq',
+                 pqName: 'ML-DSA-65-ES256',
+                 pqSpec: 'I-D.jose-pq-composite-sigs', req: 'Optional',
+                 spec: 'draft-ietf-jose-pq-composite-sigs-03',
+                 label: 'ML-DSA-65-ES256 — composite PQ/T (draft)' },
+  'ML-DSA-87-ES384': { alg: 'ML-DSA-87-ES384', family: 'pq',
+                 pqName: 'ML-DSA-87-ES384',
+                 pqSpec: 'I-D.jose-pq-composite-sigs', req: 'Optional',
+                 spec: 'draft-ietf-jose-pq-composite-sigs-03',
+                 label: 'ML-DSA-87-ES384 — composite PQ/T (draft)' },
+  'ML-DSA-44-Ed25519': { alg: 'ML-DSA-44-Ed25519', family: 'pq',
+                 pqName: 'ML-DSA-44-Ed25519',
+                 pqSpec: 'I-D.jose-pq-composite-sigs', req: 'Optional',
+                 spec: 'draft-ietf-jose-pq-composite-sigs-03',
+                 label: 'ML-DSA-44-Ed25519 — composite PQ/T (draft)' },
+  'ML-DSA-65-Ed25519': { alg: 'ML-DSA-65-Ed25519', family: 'pq',
+                 pqName: 'ML-DSA-65-Ed25519',
+                 pqSpec: 'I-D.jose-pq-composite-sigs', req: 'Optional',
+                 spec: 'draft-ietf-jose-pq-composite-sigs-03',
+                 label: 'ML-DSA-65-Ed25519 — composite PQ/T (draft)' },
+  'ML-DSA-87-Ed448': { alg: 'ML-DSA-87-Ed448', family: 'pq',
+                 pqName: 'ML-DSA-87-Ed448',
+                 pqSpec: 'I-D.jose-pq-composite-sigs', req: 'Optional',
+                 spec: 'draft-ietf-jose-pq-composite-sigs-03',
+                 label: 'ML-DSA-87-Ed448 — composite PQ/T (draft)' },
   // RFC 7515 §6 / RFC 7518 §3.6. It is in the registry, it is Optional, and
   // it authenticates nothing — which is the reason to be able to produce one:
   // a relying party that accepts it has a critical defect, and this is how you
@@ -286,6 +359,13 @@ function signOctets(spec, key, octets) {
     log.debug("Leaving signOctets(). EdDSA.");
     return spec.curve.sign(octets, key);
   }
+  if (spec.family === 'pq') {
+    // `key` here is the AKP `priv` value, not necessarily the signing key —
+    // pqc.signWithPriv() is what knows the difference, and it is the reason
+    // this branch is one line rather than a per-family switch.
+    log.debug("Leaving signOctets(). Post-quantum.");
+    return pqc.signWithPriv(spec.pqName, octets, key);
+  }
   throw new Error('Unsupported algorithm family: ' + spec.family);
 }
 
@@ -327,6 +407,21 @@ function verifyOctets(spec, key, octets, signature) {
   if (spec.family === 'okp') {
     log.debug("Leaving verifyOctets(). EdDSA.");
     return spec.curve.verify(signature, octets, key);
+  }
+  if (spec.family === 'pq') {
+    // A wrong-length signature or key is a FAILED verification here rather
+    // than an exception, matching every other branch above: @noble throws on
+    // a malformed input, and a JWS verifier that throws where it should
+    // return false makes a forged token look like a bug in the tool.
+    try {
+      var pqOk = pqc.verifyWithPub(spec.pqName, signature, octets, key);
+      log.debug("Leaving verifyOctets(). Post-quantum.");
+      return pqOk;
+    } catch (e) {
+      log.debug("Leaving verifyOctets(). Post-quantum, malformed: " +
+                e.message);
+      return false;
+    }
   }
   throw new Error('Unsupported algorithm family: ' + spec.family);
 }
@@ -502,6 +597,25 @@ function jwkToKey(spec, jwk, wantPrivate) {
     return concatBytes(new Uint8Array([4]),
       concatBytes(pad(b64uToBytes(jwk.x || ''), spec.fieldBytes),
                   pad(b64uToBytes(jwk.y || ''), spec.fieldBytes)));
+  }
+  if (spec.family === 'pq') {
+    // RFC 9964 section 3: the key type is AKP, the parameters are `pub` and
+    // `priv`, and `alg` is REQUIRED. pqc.akpImport() enforces all three plus
+    // the seed-length rule, so the errors a person sees name the section
+    // they broke rather than a byte length from inside a lattice.
+    var akp = pqc.akpImport(jwk);
+    if (wantPrivate && !akp.priv) {
+      throw new Error('That AKP JWK is a PUBLIC key — it has no "priv" ' +
+          'member, so nothing can be signed with it (alg=' + spec.alg + ').');
+    }
+    if (akp.alg !== spec.alg) {
+      throw new Error('alg=' + spec.alg + ' needs an AKP JWK whose "alg" is ' +
+          spec.alg + '; this one says ' + akp.alg + '. RFC 9964 makes that ' +
+          'member REQUIRED precisely because "pub" and "priv" are opaque ' +
+          'octets that cannot say which algorithm they belong to.');
+    }
+    log.debug("Leaving jwkToKey(). AKP.");
+    return wantPrivate ? akp.priv : akp.pub;
   }
   throw new Error('No JWK form for alg=' + spec.alg + '.');
 }
@@ -693,6 +807,52 @@ function secretBytes(secret, encoding) {
 var WEBCRYPTO_HASH = { 'SHA-256': 'SHA-256', 'SHA-384': 'SHA-384',
                        'SHA-512': 'SHA-512' };
 
+// ---------------------------------------------------------------------------
+// WHETHER WEB CRYPTO CAN REPRESENT THIS ALGORITHM AT ALL — which is a property
+// of the ALGORITHM and not of the runtime, so it is a fixed rule rather than a
+// probe.
+//
+// `crypto.subtle` has no identifier for secp256k1 and none for Ed448, in any
+// browser and in node: they are not missing from one implementation, they are
+// absent from the specification's registry of names. Asking for either gets
+// "Unrecognized namedCurve" out of an import, several frames from anything that
+// names the algorithm.
+//
+// This module implements both in JavaScript, so a caller that asked for the
+// webcrypto backend gets the JavaScript one for these two and a correct answer
+// either way. A BACKEND IS AN IMPLEMENTATION CHOICE AND MUST NEVER DECIDE
+// WHETHER AN ALGORITHM WORKS — the same rule jose_jwe.js follows for the
+// AES-192 sizes Chrome refuses. Before this existed, verifying an ES256K token
+// against a JWKS failed outright wherever the caller had asked for Web Crypto,
+// which on the UserInfo page is every time.
+// ---------------------------------------------------------------------------
+function webCryptoKnowsAlg(spec) {
+  log.debug("Entering webCryptoKnowsAlg().");
+  if (!spec || spec.family === 'none') {
+    log.debug("Leaving webCryptoKnowsAlg(). Unsecured.");
+    return false;
+  }
+  if (spec.family === 'ec' && spec.crv === 'secp256k1') {
+    log.debug("Leaving webCryptoKnowsAlg(). No secp256k1 in Web Crypto.");
+    return false;
+  }
+  if (spec.family === 'okp' && spec.crv === 'Ed448') {
+    log.debug("Leaving webCryptoKnowsAlg(). No Ed448 in Web Crypto.");
+    return false;
+  }
+  if (spec.family === 'pq') {
+    // The post-quantum and hybrid signatures. Web Crypto has no name for any
+    // of them in any runtime — webCryptoImportParams() throws "has no Web
+    // Crypto equivalent" — and this module implements every one of them, so a
+    // caller that asked for the webcrypto backend gets the JavaScript one and
+    // a correct answer rather than a refusal.
+    log.debug("Leaving webCryptoKnowsAlg(). Post-quantum.");
+    return false;
+  }
+  log.debug("Leaving webCryptoKnowsAlg().");
+  return true;
+}
+
 function webCryptoImportParams(spec) {
   log.debug("Entering webCryptoImportParams().");
   if (spec.family === 'hmac') {
@@ -808,6 +968,15 @@ function generateKey(algId, options) {
     return { kind: 'rsa', privateKey: pair.privatePem,
              publicKey: pair.publicPem };
   }
+  if (spec.family === 'pq') {
+    // privateKey is the AKP `priv` representation throughout — the 32-byte
+    // seed for ML-DSA, the raw private key for SLH-DSA and FN-DSA, and
+    // seed || traditional key for a composite. One representation, so the
+    // pane, the JWK download and signJws() never disagree.
+    var akpPair = pqc.generateAkpKeyPair(spec.pqName);
+    log.debug("Leaving generateKey(). Post-quantum.");
+    return { kind: 'pq', privateKey: akpPair.priv, publicKey: akpPair.pub };
+  }
   var priv = spec.curve.utils.randomPrivateKey();
   var pub = spec.curve.getPublicKey(priv);
   log.debug("Leaving generateKey(). " + spec.family);
@@ -842,6 +1011,8 @@ function publicJwk(algId, publicKey, kid) {
             y: bytesToB64u(bigToBytes(pt.y, spec.fieldBytes)) };
   } else if (spec.family === 'hmac') {
     jwk = { kty: 'oct', k: bytesToB64u(publicKey) };
+  } else if (spec.family === 'pq') {
+    jwk = pqc.akpPublicJwk(spec.alg, publicKey);
   } else {
     throw new Error('No JWK representation for alg=' + algId + '.');
   }
@@ -866,6 +1037,14 @@ function privateJwk(algId, privateKey, publicKey, kid) {
   var jwk = publicJwk(algId, publicKey, kid);
   if (spec.family === 'hmac') {
     log.debug("Leaving privateJwk(). Symmetric.");
+    return jwk;
+  }
+  if (spec.family === 'pq') {
+    // NOT `d`. RFC 9964 names the AKP private parameter `priv`, and an AKP
+    // JWK carrying `d` is what this project used to emit — readable by this
+    // page and by nothing else.
+    jwk.priv = bytesToB64u(privateKey);
+    log.debug("Leaving privateJwk(). AKP.");
     return jwk;
   }
   jwk.d = bytesToB64u(privateKey);
@@ -1183,6 +1362,11 @@ function signJwsAsync(opts) {
   var prep, signing;
   try {
     prep = prepareSign(options);
+    if (backend === 'webcrypto' && !webCryptoKnowsAlg(prep.spec)) {
+      // Asked for Web Crypto, and Web Crypto has no name for this algorithm.
+      // The JavaScript engine does it instead — see webCryptoKnowsAlg().
+      backend = 'js';
+    }
     if (backend === 'webcrypto') {
       signing = webCryptoImport(prep.spec, options.privateKey, 'sign')
         .then(function (key) {
@@ -1331,7 +1515,7 @@ function prepareVerify(options) {
       one.b64 = b64;
       one.alg = header.alg;
       var spec = options.algId ? algSpec(options.algId)
-        : algForHeader(header.alg, keyLengthHint(keyInput));
+        : algForHeader(header.alg, keyLengthHint(keyInput, header));
       if (options.algId && spec.alg !== header.alg) {
         // A verifier that trusts the header's `alg` over its own expectation
         // is the algorithm-confusion bug, so the caller's choice wins and the
@@ -1435,10 +1619,14 @@ function verifyJwsAsync(opts) {
   var backend = backendFor(options.backend, prep.keyInput);
   var checks = prep.entries.map(function (e) {
     if (e.verdict.valid !== undefined) return Promise.resolve();
-    e.verdict.backend = backend;
+    // Reported per ENTRY rather than per call, because a general-serialization
+    // JWS may carry two signatures whose algorithms do not take the same
+    // engine — an ES256K one falls back to JavaScript while an RS256 one
+    // beside it stays on Web Crypto.
+    e.verdict.backend = webCryptoKnowsAlg(e.spec) ? backend : 'js';
     var work;
     try {
-      if (backend === 'webcrypto' && e.spec.family !== 'none') {
+      if (backend === 'webcrypto' && webCryptoKnowsAlg(e.spec)) {
         work = webCryptoImport(e.spec, e.keyInput, 'verify')
           .then(function (key) {
             return crypto.subtle.verify(webCryptoSignParams(e.spec), key,
@@ -1489,7 +1677,22 @@ function withSecretEncoding(key, encoding) {
 // the key is the only thing that can tell Ed25519 from Ed448. This reaches
 // through the forms a key may arrive in to find that length, and returns
 // nothing when it cannot — in which case algForHeader() says so by name.
-function keyLengthHint(input) {
+// The `header` argument is only ever used for one thing, and it is the reason
+// this function takes one at all: **EdDSA against a JWK SET**.
+//
+// RFC 8037 puts the curve in the KEY and not in the `alg` header, so `EdDSA`
+// alone does not say whether a signature is Ed25519 or Ed448 — algForHeader()
+// decides from the length of the key in hand. That worked for a bare JWK, for
+// bytes and for a PEM, and could never work for a JWK Set: the set was measured
+// before narrowToOneKey() had picked anything out of it, so the hint was null,
+// the length was 0, and every EdDSA verification against a JWKS failed with
+// "EdDSA key length 0 is neither Ed25519 (32) nor Ed448 (57)" — a message about
+// the key that is really about the lookup, and one no caller could act on.
+//
+// Nothing here had noticed because the only EdDSA verifications in this tree
+// took a pasted key. It surfaced the moment an identity provider published an
+// OKP key in its JWKS and signed a UserInfo response with it.
+function keyLengthHint(input, header) {
   log.debug("Entering keyLengthHint().");
   if (input instanceof Uint8Array) {
     log.debug("Leaving keyLengthHint(). Bytes.");
@@ -1499,6 +1702,22 @@ function keyLengthHint(input) {
   if (jwk && jwk.x) {
     log.debug("Leaving keyLengthHint(). From a JWK.");
     return b64uToBytes(jwk.x);
+  }
+  var set = asJwkSet(input);
+  if (set) {
+    // By `kid` when the header names one, which is what a JWKS-published key
+    // almost always carries. Otherwise the only OKP key in the set, and only if
+    // there is exactly one — guessing between two would pick the wrong curve
+    // silently, which is worse than the error this replaces.
+    var candidates = (set.keys || []).filter(function (k) {
+      return header && header.kid ? k.kid === header.kid : k.kty === 'OKP';
+    });
+    if (candidates.length === 1 && candidates[0].x) {
+      log.debug("Leaving keyLengthHint(). From a JWK Set.");
+      return b64uToBytes(candidates[0].x);
+    }
+    log.debug("Leaving keyLengthHint(). The set names no single usable key.");
+    return null;
   }
   if (typeof input === 'string' && /BEGIN/.test(input)) {
     try {
@@ -1547,6 +1766,7 @@ module.exports = {
   narrowToOneKey: narrowToOneKey,
   resolveKey: resolveKey,
   secretBytes: secretBytes,
+  webCryptoKnowsAlg: webCryptoKnowsAlg,
   webCryptoImportParams: webCryptoImportParams,
   webCryptoSignParams: webCryptoSignParams,
   webCryptoImport: webCryptoImport,

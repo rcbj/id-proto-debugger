@@ -100,6 +100,8 @@ const BUNDLES = [
   ['saml_cert', 'saml_cert'],
   ['saml_tools', 'saml_tools'],
   ['saml_response', 'saml_response'],
+  ['saml_authnrequest', 'saml_authnrequest'],
+  ['saml_response_decoder', 'saml_response_decoder'],
   ['wstrust_tools', 'wstrust_tools'],
   ['wstrust_response', 'wstrust_response'],
   ['vc_issuance_0', 'vcissuance0'],
@@ -217,9 +219,23 @@ if (disabled.count === 0) {
       ' — client/public/index.html must mark the cards whose pages this ' +
       'build drops, or they stay live and link to a 404.');
 }
-fs.writeFileSync(landingPage, disabled.html);
+
+//     The note under the grid is the same rewrite in reverse: it is hidden on
+//     every api-backed deployment (where nothing is greyed, so a note about
+//     greyed cards would describe something that is not there) and revealed
+//     here, because a dead card says why it is dead and nothing about where to
+//     get a build that carries it. Asserted for the same reason as the card
+//     marker — a marker that stopped matching leaves the note invisible on the
+//     one deployment it was written for, and nothing 404s.
+const noted = staticSite.showStaticOnlyNotes(disabled.html);
+if (noted.count === 0) {
+  throw new Error('nothing in client/public/index.html carries ' +
+      staticSite.NOTE_MARKER + ' — the static build has no note telling a ' +
+      'visitor where to get the workflows it just greyed out.');
+}
+fs.writeFileSync(landingPage, noted.html);
 log.info('disabled ' + disabled.count + ' landing card(s) not on this ' +
-    'deployment');
+    'deployment, and revealed ' + noted.count + ' static-only note(s)');
 
 // 2b. Ship the IANA JWT claim registry as a static object at /claimdescription.
 //     On api-backed deployments Express serves GET /claimdescription from
@@ -292,7 +308,7 @@ const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
 // than a list — but it is written the same way so the next module added here
 // does not have to work out which shape to follow.
 // And the same again for common/xmldsig.js, which is ONE file rather than a
-// directory and is required by eight bundles. It lives in common/ because
+// directory and is required by ten bundles. It lives in common/ because
 // api/server.js signs a SAML AuthnRequest with it for the redirect binding —
 // that used to be the `xml-crypto` package, a third implementation of XML
 // Signature in an application that already had two of its own. A
@@ -300,8 +316,8 @@ const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
 // is three chances to disagree with the verifier at the far end.
 const XMLDSIG_FILE = path.join(CLIENT_DIR, '..', 'common', 'xmldsig.js');
 const XMLDSIG_BUNDLES = ['digital_signature', 'saml_request', 'saml_response',
-  'saml_tools', 'wsfed_request', 'wsfed_response', 'wstrust_response',
-  'wstrust_tools'];
+  'saml_tools', 'saml_authnrequest', 'saml_response_decoder', 'wsfed_request',
+  'wsfed_response', 'wstrust_response', 'wstrust_tools'];
 const needsXmldsig = BUILT_BUNDLES.some(function (entry) {
   return XMLDSIG_BUNDLES.indexOf(entry[0]) !== -1;
 });

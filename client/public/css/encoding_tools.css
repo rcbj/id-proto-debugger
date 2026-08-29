@@ -118,3 +118,39 @@
   border: 1px solid #ddd;
   margin-bottom: 0;
 }
+
+/* The SP 800-185 pane carries four argument fields plus a key box, which do
+   not fit in a 360px column beside three selects — so it spans two columns
+   where there are two. On the one-column layout below it spans one, or the
+   grid would be a column wider than the viewport. */
+.encoding-tools-grid .et-wide {
+  grid-column: span 2;
+}
+@media (max-width: 620px) {
+  .encoding-tools-grid .et-wide { grid-column: auto; }
+}
+
+/* The per-algorithm notes: what the function is, what it resists, and which
+   post-quantum standard uses it as what. A readonly textarea rather than a
+   <p> so it wraps, scrolls and copies like every other value on the page. */
+.encoding-tools-grid textarea.et-notes {
+  font-family: inherit;
+  font-size: 0.7em;
+  line-height: 1.35;
+  color: #333;
+  background: #f4f4f4;
+  border: 1px solid #ddd;
+}
+
+/* A control the selected function does not take — KMAC's key under cSHAKE,
+   ParallelHash's B under KMAC. Disabled AND dimmed, because a field that is
+   merely ignored reads as a field whose value did not matter. */
+.encoding-tools-grid .et-inactive {
+  opacity: 0.45;
+}
+
+/* Four argument fields share one row in the wide pane; keep each readable
+   rather than letting flex squeeze one to nothing. */
+.encoding-tools-grid .et-row > input[type="text"] {
+  min-width: 110px;
+}

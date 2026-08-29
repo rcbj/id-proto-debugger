@@ -24,7 +24,9 @@
 
 <p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a> &nbsp;|&nbsp; <a href="/encryption_tools.html?from=digital_signature.html">Encryption / Decryption &rarr;</a></p>
 
-<p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. Pane 1 uses the post-quantum <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+) scheme; pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 4 uses the post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium); pane 5 uses <strong>BBS</strong> over BLS12-381 (both ciphersuites), which signs a <em>list</em> of messages and can derive an unlinkable proof over any subset of them. Panes 6 and 7 are about an <em>envelope</em> rather than a primitive: pane 6 is <strong>JWS</strong> (RFC 7515) over a JSON payload &mdash; every registered algorithm, all three serializations, detached and unencoded payloads; pane 7 is the W3C <strong>XML Digital Signature</strong> &mdash; enveloped, enveloping and detached, four canonicalization methods, and a configurable transform chain. Both refuse to sign input that does not parse. The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those seven panes are <strong>digital signature</strong> panes (the JWS and XML ones can also carry an HMAC, which is not one); the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+<p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. <strong>Three panes are post-quantum</strong>: pane 1 is <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+), pane 4 is <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium), and pane 5 is <strong>Composite ML-DSA</strong>, which pairs ML-DSA with ECDSA or EdDSA so that a break of either leaves the other holding. Panes 1 and 4 also offer the <em>context string</em> and the <em>pre-hash</em> variants (HashML-DSA / HashSLH-DSA), which are different algorithms rather than options. Pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 6 uses <strong>BBS</strong> over BLS12-381 (both ciphersuites), which signs a <em>list</em> of messages and can derive an unlinkable proof over any subset of them. Panes 7 and 8 are about an <em>envelope</em> rather than a primitive: pane 7 is <strong>JWS</strong> (RFC 7515) over a JSON payload &mdash; every registered algorithm including all eleven post-quantum ones, all three serializations, detached and unencoded payloads; pane 8 is the W3C <strong>XML Digital Signature</strong> &mdash; enveloped, enveloping and detached, four canonicalization methods, and a configurable transform chain. Both refuse to sign input that does not parse. The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those eight panes are <strong>digital signature</strong> panes (the JWS and XML ones can also carry an HMAC, which is not one); the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+
+<p class="ds-intro ds-standards-note"><strong>Which of these is actually standardised, and which is a draft.</strong> Post-quantum cryptography is not one thing yet, and this page marks the difference rather than blurring it. <strong>Published:</strong> the primitives ML-DSA (FIPS 204), SLH-DSA (FIPS 205) and their pre-hash variants, and ML-DSA&rsquo;s JOSE binding, <strong>RFC 9964</strong>. <strong>Draft:</strong> SLH-DSA in JOSE (draft-ietf-cose-sphincs-plus-10, which registers only two of the twelve parameter sets) and the composite algorithms (draft-ietf-jose-pq-composite-sigs-03). Every pane resting on a draft carries a red <span class="ds-badge ds-draft">Draft standard</span> badge and names the revision it implements. <strong>Absent, for two different reasons.</strong> <strong>FN-DSA</strong> (Falcon) <em>has</em> a specification &mdash; draft-ietf-cose-falcon-04 registers <code>FN-DSA-512</code> and <code>FN-DSA-1024</code> &mdash; but no implementation this page can load: the library that provides Falcon is ESM-only and this client is bundled as CommonJS, and the alternative on npm is an unmaintained WASM wrapper not worth adding to a security tool for an algorithm whose FIPS 206 is still unpublished. <strong>HQC</strong>, which NIST selected in March 2025 as the backup KEM, has the opposite problem: no draft FIPS, no IETF binding and no implementation at all, so adding it would mean inventing a wire format &mdash; the one thing a debugger must never do. Also absent: any post-quantum <em>XML Signature</em>, because no algorithm URI has been registered for one.</p>
 
 <p class="ds-controls">
   <label class="ds-toggle" title="Expand or collapse every pane.">
@@ -97,12 +99,264 @@
       </div>
     </div>
 
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Variant &mdash; context string and pre-hash</div>
+      <p class="ds-note" title="Both of these change the ALGORITHM, not just the input.">These two controls select a <em>different algorithm</em>, not an option on this one. A <strong>context string</strong> (FIPS 205 &sect;10.2) is mixed into the formatted message, so a signature made for one application cannot be replayed into another &mdash; a verifier using a different context, or none, will refuse it. A <strong>pre-hash</strong> selects <strong>HashSLH-DSA</strong> (FIPS 205 &sect;10.2.2), which signs a digest of the message and puts the hash function&rsquo;s OID into the signed bytes; a pure verifier will not accept a pre-hashed signature or vice versa. <strong>RFC 9964 requires the context to be EMPTY for the JOSE algorithms</strong>, so a non-empty context here is a raw-primitive feature and the JWS pane below does not offer it.</p>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Up to 255 bytes. Empty is the pure algorithm.">Context string (optional, max 255 bytes)</label>
+          <input type="text" id="ds_ctx" name="ds_ctx" placeholder="(empty — the pure algorithm)" title="Mixed into the formatted message. The verifier must use the same value." />
+        </div>
+        <div class="ds-grow">
+          <label title="Pure signs the message; a pre-hash signs a digest of it.">Pre-hash</label>
+          <select id="ds_prehash" name="ds_prehash" title="Pure SLH-DSA, or the HashSLH-DSA variant with this hash function.">
+            <option value="pure" selected="selected">Pure &mdash; no pre-hash</option>
+            <option value="SHA-256">HashSLH-DSA &mdash; SHA-256</option>
+            <option value="SHA-384">HashSLH-DSA &mdash; SHA-384</option>
+            <option value="SHA-512">HashSLH-DSA &mdash; SHA-512</option>
+            <option value="SHA3-256">HashSLH-DSA &mdash; SHA3-256</option>
+            <option value="SHA3-512">HashSLH-DSA &mdash; SHA3-512</option>
+            <option value="SHAKE128">HashSLH-DSA &mdash; SHAKE128 (256-bit output)</option>
+            <option value="SHAKE256">HashSLH-DSA &mdash; SHAKE256 (512-bit output)</option>
+          </select>
+        </div>
+      </div>
+    </div>
     <div class="ds-row">
       <input type="submit" value="Sign" onclick="return digital_signature.sign();" title="Sign the Value with the Private Key; the Base64 signature is placed in the Signature box." />
       <input type="submit" value="Validate Signature" onclick="return digital_signature.validate();" title="Verify the Signature against the Value using the Public Key." />
     </div>
 
     <input class="ds-status" type="text" id="ds_status" name="ds_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+  <!-- ============ Stateful hash-based signatures (SP 800-208) ============ -->
+  <fieldset id="pane_hbs_signature">
+    <legend>Stateful Hash-Based Signatures &mdash; LMS/HSS and XMSS/XMSS^MT <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-asym">Post-quantum</span> <span class="ds-badge ds-sym">Stateful</span></legend>
+
+    <p class="ds-note" title="This is the one signature on this page whose private key changes every time you use it."><strong>The private key below changes every time you sign, and that is the whole subject.</strong> These are the two schemes <strong>NIST SP 800-208</strong> approves &mdash; <strong>LMS/HSS</strong> (RFC 8554, with RFC 9858's SHA-256/192 and SHAKE256 parameter sets) and <strong>XMSS/XMSS^MT</strong> (RFC 8391, with SP 800-208's). Like SLH-DSA above they are Merkle trees over one-time signatures and secure if the hash function is; unlike it they are <em>stateful</em>, so the signer must remember which one-time keys it has spent. Spend one twice on different messages and an attacker gets the material to forge a third &mdash; which is why SP 800-208 &sect;1 restricts these to places where the state can be guaranteed, firmware signing above all, and why RFC 8554 &sect;5.4.1 requires the new index to reach storage <em>before</em> the signature is released. The pane keeps the index in the private key box and rewrites it on every Sign.</p>
+
+    <p class="ds-note" title="Key generation walks every leaf; verification walks one path."><strong>&#9203; Why some parameter sets say &ldquo;verify only here&rdquo;.</strong> Generating a key means building a whole tree, and every leaf of it is a full one-time key pair &mdash; 2<sup>20</sup> of them for <code>LMS_SHA256_M32_H20</code>, which is hours in any language and days in a browser. <strong>Verification is untouched by this</strong>: it hashes one authentication path, so every parameter set in both registries verifies and describes here at once. That gap is also the entire argument for the multi-tree variants, and you can watch it: <code>XMSS-SHA2_20_256</code> cannot be generated at all, while <code>XMSSMT-SHA2_20/4_256</code> reaches the same 2<sup>20</sup> signatures out of trees of 32 leaves and generates in a fraction of a second.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to sign, or the value whose signature you want to validate.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_hbs_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_hbs_value" name="ds_hbs_value" title="The message to sign / validate."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64 signature. Produced by Sign; used as input by Validate Signature and Describe.">Signature (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_hbs_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="4" id="ds_hbs_signature" name="ds_hbs_signature" title="Base64 signature. Populated by Sign; paste one here to Validate or Describe."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Scheme &amp; parameter set</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="The two families SP 800-208 approves. They are the same idea with different names for everything.">Scheme</label>
+          <select id="ds_hbs_scheme" name="ds_hbs_scheme" onchange="return digital_signature.hbsSchemeChanged();" title="LMS/HSS (RFC 8554) or XMSS/XMSS^MT (RFC 8391).">
+            <option value="hss" selected="selected">LMS / HSS &mdash; RFC 8554, RFC 9858</option>
+            <option value="xmss">XMSS / XMSS^MT &mdash; RFC 8391, SP 800-208</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.hbsGenerateKeys();" title="Generate a fresh key pair. This builds a whole tree, so it can take several seconds." />
+      </div>
+
+      <div id="ds_hbs_lms_group">
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="The one-time signature the leaves of the tree hold. w is the space/time trade-off: bigger w is a smaller signature and much slower key generation.">LM-OTS parameter set (RFC 8554 Table 1, RFC 9858 Table 1)</label>
+            <select id="ds_hbs_lmots" name="ds_hbs_lmots" title="LM-OTS parameter set. n is the hash length, w the Winternitz width, p the number of chains.">
+          <option value="LMOTS_SHA256_N32_W1">LMOTS_SHA256_N32_W1 — n=32, w=1, p=265</option>
+          <option value="LMOTS_SHA256_N32_W2">LMOTS_SHA256_N32_W2 — n=32, w=2, p=133</option>
+          <option value="LMOTS_SHA256_N32_W4">LMOTS_SHA256_N32_W4 — n=32, w=4, p=67</option>
+          <option value="LMOTS_SHA256_N32_W8" selected="selected">LMOTS_SHA256_N32_W8 — n=32, w=8, p=34</option>
+          <option value="LMOTS_SHA256_N24_W1">LMOTS_SHA256_N24_W1 — n=24, w=1, p=200</option>
+          <option value="LMOTS_SHA256_N24_W2">LMOTS_SHA256_N24_W2 — n=24, w=2, p=101</option>
+          <option value="LMOTS_SHA256_N24_W4">LMOTS_SHA256_N24_W4 — n=24, w=4, p=51</option>
+          <option value="LMOTS_SHA256_N24_W8">LMOTS_SHA256_N24_W8 — n=24, w=8, p=26</option>
+          <option value="LMOTS_SHAKE_N32_W1">LMOTS_SHAKE_N32_W1 — n=32, w=1, p=265</option>
+          <option value="LMOTS_SHAKE_N32_W2">LMOTS_SHAKE_N32_W2 — n=32, w=2, p=133</option>
+          <option value="LMOTS_SHAKE_N32_W4">LMOTS_SHAKE_N32_W4 — n=32, w=4, p=67</option>
+          <option value="LMOTS_SHAKE_N32_W8">LMOTS_SHAKE_N32_W8 — n=32, w=8, p=34</option>
+          <option value="LMOTS_SHAKE_N24_W1">LMOTS_SHAKE_N24_W1 — n=24, w=1, p=200</option>
+          <option value="LMOTS_SHAKE_N24_W2">LMOTS_SHAKE_N24_W2 — n=24, w=2, p=101</option>
+          <option value="LMOTS_SHAKE_N24_W4">LMOTS_SHAKE_N24_W4 — n=24, w=4, p=51</option>
+          <option value="LMOTS_SHAKE_N24_W8">LMOTS_SHAKE_N24_W8 — n=24, w=8, p=26</option>
+            </select>
+          </div>
+        </div>
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="The tree. h is its height, so 2^h is how many messages this level can sign.">LMS parameter set (RFC 8554 Table 2, RFC 9858 Table 2)</label>
+            <select id="ds_hbs_lms" name="ds_hbs_lms" title="LMS parameter set. m is the hash length and h the tree height.">
+          <option value="LMS_SHA256_M32_H5" selected="selected">LMS_SHA256_M32_H5 — m=32, 2^5 signatures</option>
+          <option value="LMS_SHA256_M32_H10">LMS_SHA256_M32_H10 — m=32, 2^10 signatures</option>
+          <option value="LMS_SHA256_M32_H15">LMS_SHA256_M32_H15 — m=32, 2^15 signatures</option>
+          <option value="LMS_SHA256_M32_H20">LMS_SHA256_M32_H20 — m=32, 2^20 signatures</option>
+          <option value="LMS_SHA256_M32_H25">LMS_SHA256_M32_H25 — m=32, 2^25 signatures</option>
+          <option value="LMS_SHA256_M24_H5">LMS_SHA256_M24_H5 — m=24, 2^5 signatures</option>
+          <option value="LMS_SHA256_M24_H10">LMS_SHA256_M24_H10 — m=24, 2^10 signatures</option>
+          <option value="LMS_SHA256_M24_H15">LMS_SHA256_M24_H15 — m=24, 2^15 signatures</option>
+          <option value="LMS_SHA256_M24_H20">LMS_SHA256_M24_H20 — m=24, 2^20 signatures</option>
+          <option value="LMS_SHA256_M24_H25">LMS_SHA256_M24_H25 — m=24, 2^25 signatures</option>
+          <option value="LMS_SHAKE_M32_H5">LMS_SHAKE_M32_H5 — m=32, 2^5 signatures</option>
+          <option value="LMS_SHAKE_M32_H10">LMS_SHAKE_M32_H10 — m=32, 2^10 signatures</option>
+          <option value="LMS_SHAKE_M32_H15">LMS_SHAKE_M32_H15 — m=32, 2^15 signatures</option>
+          <option value="LMS_SHAKE_M32_H20">LMS_SHAKE_M32_H20 — m=32, 2^20 signatures</option>
+          <option value="LMS_SHAKE_M32_H25">LMS_SHAKE_M32_H25 — m=32, 2^25 signatures</option>
+          <option value="LMS_SHAKE_M24_H5">LMS_SHAKE_M24_H5 — m=24, 2^5 signatures</option>
+          <option value="LMS_SHAKE_M24_H10">LMS_SHAKE_M24_H10 — m=24, 2^10 signatures</option>
+          <option value="LMS_SHAKE_M24_H15">LMS_SHAKE_M24_H15 — m=24, 2^15 signatures</option>
+          <option value="LMS_SHAKE_M24_H20">LMS_SHAKE_M24_H20 — m=24, 2^20 signatures</option>
+          <option value="LMS_SHAKE_M24_H25">LMS_SHAKE_M24_H25 — m=24, 2^25 signatures</option>
+            </select>
+          </div>
+          <div class="ds-grow">
+            <label title="HSS levels. Each level signs the public key of the one below; only the top tree is built up front.">HSS levels (L)</label>
+            <select id="ds_hbs_levels" name="ds_hbs_levels" title="Number of LMS trees stacked. L=1 is plain LMS. Every level multiplies the number of signatures and adds one LMS signature to every signature produced.">
+              <option value="1" selected="selected">L = 1 &mdash; a single LMS tree</option>
+              <option value="2">L = 2</option>
+              <option value="3">L = 3</option>
+              <option value="4">L = 4</option>
+              <option value="5">L = 5</option>
+              <option value="6">L = 6</option>
+              <option value="7">L = 7</option>
+              <option value="8">L = 8 &mdash; the maximum RFC 8554 allows</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div id="ds_hbs_xmss_group">
+        <div class="ds-row">
+          <div class="ds-grow">
+            <label title="All 21 XMSS and all 56 XMSS^MT parameter sets in the IANA registry.">XMSS parameter set (IANA registry; RFC 8391 &sect;5.3&ndash;5.4 and SP 800-208 &sect;5)</label>
+            <select id="ds_hbs_xmss" name="ds_hbs_xmss" title="XMSS or XMSS^MT parameter set. h is the total height, d the number of layers; a signature carries d WOTS+ signatures and d authentication paths.">
+          <optgroup label="XMSS (RFC 8391 and SP 800-208) — one tree">
+          <option value="XMSS-SHA2_10_256">XMSS-SHA2_10_256 — 2^10 signatures, slow to generate</option>
+          <option value="XMSS-SHA2_16_256">XMSS-SHA2_16_256 — 2^16 signatures, verify only here</option>
+          <option value="XMSS-SHA2_20_256">XMSS-SHA2_20_256 — 2^20 signatures, verify only here</option>
+          <option value="XMSS-SHA2_10_512">XMSS-SHA2_10_512 — 2^10 signatures, slow to generate</option>
+          <option value="XMSS-SHA2_16_512">XMSS-SHA2_16_512 — 2^16 signatures, verify only here</option>
+          <option value="XMSS-SHA2_20_512">XMSS-SHA2_20_512 — 2^20 signatures, verify only here</option>
+          <option value="XMSS-SHAKE_10_256">XMSS-SHAKE_10_256 — 2^10 signatures, slow to generate</option>
+          <option value="XMSS-SHAKE_16_256">XMSS-SHAKE_16_256 — 2^16 signatures, verify only here</option>
+          <option value="XMSS-SHAKE_20_256">XMSS-SHAKE_20_256 — 2^20 signatures, verify only here</option>
+          <option value="XMSS-SHAKE_10_512">XMSS-SHAKE_10_512 — 2^10 signatures, slow to generate</option>
+          <option value="XMSS-SHAKE_16_512">XMSS-SHAKE_16_512 — 2^16 signatures, verify only here</option>
+          <option value="XMSS-SHAKE_20_512">XMSS-SHAKE_20_512 — 2^20 signatures, verify only here</option>
+          <option value="XMSS-SHA2_10_192">XMSS-SHA2_10_192 — 2^10 signatures, slow to generate</option>
+          <option value="XMSS-SHA2_16_192">XMSS-SHA2_16_192 — 2^16 signatures, verify only here</option>
+          <option value="XMSS-SHA2_20_192">XMSS-SHA2_20_192 — 2^20 signatures, verify only here</option>
+          <option value="XMSS-SHAKE256_10_256">XMSS-SHAKE256_10_256 — 2^10 signatures, slow to generate</option>
+          <option value="XMSS-SHAKE256_16_256">XMSS-SHAKE256_16_256 — 2^16 signatures, verify only here</option>
+          <option value="XMSS-SHAKE256_20_256">XMSS-SHAKE256_20_256 — 2^20 signatures, verify only here</option>
+          <option value="XMSS-SHAKE256_10_192">XMSS-SHAKE256_10_192 — 2^10 signatures, slow to generate</option>
+          <option value="XMSS-SHAKE256_16_192">XMSS-SHAKE256_16_192 — 2^16 signatures, verify only here</option>
+          <option value="XMSS-SHAKE256_20_192">XMSS-SHAKE256_20_192 — 2^20 signatures, verify only here</option>
+          </optgroup>
+          <optgroup label="XMSS^MT — a hypertree of d layers">
+          <option value="XMSSMT-SHA2_20/2_256">XMSSMT-SHA2_20/2_256 — 2^20 signatures, slow to generate</option>
+          <option value="XMSSMT-SHA2_20/4_256" selected="selected">XMSSMT-SHA2_20/4_256 — 2^20 signatures</option>
+          <option value="XMSSMT-SHA2_40/2_256">XMSSMT-SHA2_40/2_256 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_40/4_256">XMSSMT-SHA2_40/4_256 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_40/8_256">XMSSMT-SHA2_40/8_256 — 2^40 signatures</option>
+          <option value="XMSSMT-SHA2_60/3_256">XMSSMT-SHA2_60/3_256 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_60/6_256">XMSSMT-SHA2_60/6_256 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_60/12_256">XMSSMT-SHA2_60/12_256 — 2^60 signatures, slow to generate</option>
+          <option value="XMSSMT-SHA2_20/2_512">XMSSMT-SHA2_20/2_512 — 2^20 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_20/4_512">XMSSMT-SHA2_20/4_512 — 2^20 signatures</option>
+          <option value="XMSSMT-SHA2_40/2_512">XMSSMT-SHA2_40/2_512 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_40/4_512">XMSSMT-SHA2_40/4_512 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_40/8_512">XMSSMT-SHA2_40/8_512 — 2^40 signatures, slow to generate</option>
+          <option value="XMSSMT-SHA2_60/3_512">XMSSMT-SHA2_60/3_512 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_60/6_512">XMSSMT-SHA2_60/6_512 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_60/12_512">XMSSMT-SHA2_60/12_512 — 2^60 signatures, slow to generate</option>
+          <option value="XMSSMT-SHAKE_20/2_256">XMSSMT-SHAKE_20/2_256 — 2^20 signatures, slow to generate</option>
+          <option value="XMSSMT-SHAKE_20/4_256">XMSSMT-SHAKE_20/4_256 — 2^20 signatures</option>
+          <option value="XMSSMT-SHAKE_40/2_256">XMSSMT-SHAKE_40/2_256 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_40/4_256">XMSSMT-SHAKE_40/4_256 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_40/8_256">XMSSMT-SHAKE_40/8_256 — 2^40 signatures</option>
+          <option value="XMSSMT-SHAKE_60/3_256">XMSSMT-SHAKE_60/3_256 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_60/6_256">XMSSMT-SHAKE_60/6_256 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_60/12_256">XMSSMT-SHAKE_60/12_256 — 2^60 signatures, slow to generate</option>
+          <option value="XMSSMT-SHAKE_20/2_512">XMSSMT-SHAKE_20/2_512 — 2^20 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_20/4_512">XMSSMT-SHAKE_20/4_512 — 2^20 signatures</option>
+          <option value="XMSSMT-SHAKE_40/2_512">XMSSMT-SHAKE_40/2_512 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_40/4_512">XMSSMT-SHAKE_40/4_512 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_40/8_512">XMSSMT-SHAKE_40/8_512 — 2^40 signatures, slow to generate</option>
+          <option value="XMSSMT-SHAKE_60/3_512">XMSSMT-SHAKE_60/3_512 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_60/6_512">XMSSMT-SHAKE_60/6_512 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE_60/12_512">XMSSMT-SHAKE_60/12_512 — 2^60 signatures, slow to generate</option>
+          <option value="XMSSMT-SHA2_20/2_192">XMSSMT-SHA2_20/2_192 — 2^20 signatures, slow to generate</option>
+          <option value="XMSSMT-SHA2_20/4_192">XMSSMT-SHA2_20/4_192 — 2^20 signatures</option>
+          <option value="XMSSMT-SHA2_40/2_192">XMSSMT-SHA2_40/2_192 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_40/4_192">XMSSMT-SHA2_40/4_192 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_40/8_192">XMSSMT-SHA2_40/8_192 — 2^40 signatures</option>
+          <option value="XMSSMT-SHA2_60/3_192">XMSSMT-SHA2_60/3_192 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_60/6_192">XMSSMT-SHA2_60/6_192 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHA2_60/12_192">XMSSMT-SHA2_60/12_192 — 2^60 signatures</option>
+          <option value="XMSSMT-SHAKE256_20/2_256">XMSSMT-SHAKE256_20/2_256 — 2^20 signatures, slow to generate</option>
+          <option value="XMSSMT-SHAKE256_20/4_256">XMSSMT-SHAKE256_20/4_256 — 2^20 signatures</option>
+          <option value="XMSSMT-SHAKE256_40/2_256">XMSSMT-SHAKE256_40/2_256 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE256_40/4_256">XMSSMT-SHAKE256_40/4_256 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE256_40/8_256">XMSSMT-SHAKE256_40/8_256 — 2^40 signatures</option>
+          <option value="XMSSMT-SHAKE256_60/3_256">XMSSMT-SHAKE256_60/3_256 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE256_60/6_256">XMSSMT-SHAKE256_60/6_256 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE256_60/12_256">XMSSMT-SHAKE256_60/12_256 — 2^60 signatures, slow to generate</option>
+          <option value="XMSSMT-SHAKE256_20/2_192">XMSSMT-SHAKE256_20/2_192 — 2^20 signatures, slow to generate</option>
+          <option value="XMSSMT-SHAKE256_20/4_192">XMSSMT-SHAKE256_20/4_192 — 2^20 signatures</option>
+          <option value="XMSSMT-SHAKE256_40/2_192">XMSSMT-SHAKE256_40/2_192 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE256_40/4_192">XMSSMT-SHAKE256_40/4_192 — 2^40 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE256_40/8_192">XMSSMT-SHAKE256_40/8_192 — 2^40 signatures</option>
+          <option value="XMSSMT-SHAKE256_60/3_192">XMSSMT-SHAKE256_60/3_192 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE256_60/6_192">XMSSMT-SHAKE256_60/6_192 — 2^60 signatures, verify only here</option>
+          <option value="XMSSMT-SHAKE256_60/12_192">XMSSMT-SHAKE256_60/12_192 — 2^60 signatures</option>
+          </optgroup>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key pair &mdash; and its remaining state</div>
+      <p class="ds-note" title="Neither RFC defines a private key format.">Both specifications define the public key and the signature to the byte and leave the <em>private</em> key to the implementation (RFC 8554 &sect;5.2, RFC 8391 &sect;4.1.3), because nothing interoperable depends on it. What is below is therefore <strong>this tool's own format</strong> &mdash; a seed and an index, tagged <code>LMSK</code> or <code>XMSK</code> so it can never be mistaken for something another tool reads. The <em>public</em> key and the signature are the standard encodings exactly.</p>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="Seed plus index. Sign rewrites this box, because signing spends an index.">Private Key (Base64 &mdash; this tool's format) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_hbs_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="2" id="ds_hbs_private_key" name="ds_hbs_private_key" title="The private key. Sign REPLACES this value with one whose index has advanced."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The standard encoding: RFC 8554 §5.3 / §6.1, or RFC 8391 §4.1.7.">Public Key (Base64 &mdash; the standard encoding) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_hbs_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="2" id="ds_hbs_public_key" name="ds_hbs_public_key" title="The public key, exactly as the specification encodes it. Used by Validate Signature and Describe."></textarea>
+      </div>
+      <input class="ds-status" type="text" id="ds_hbs_state" name="ds_hbs_state" title="How many one-time keys this private key has left. It goes down by one every time you sign." readonly />
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.hbsSign();" title="Sign the Value. This SPENDS a one-time key and rewrites the Private Key box." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.hbsValidate();" title="Verify the Signature against the Value using the Public Key." />
+      <input type="submit" value="Describe" onclick="return digital_signature.hbsDescribe();" title="Parse the Public Key and the Signature and show every field, without verifying anything." />
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">What happens if one index is used twice</div>
+      <p class="ds-note" title="Both signatures verify. That is the point."><strong>This is the failure SP 800-208 exists to prevent, on demand.</strong> It signs the Value <em>and</em> the second value below from the <strong>same</strong> index and leaves the key's index untouched. Both signatures verify &mdash; nothing about either is detectably wrong to a verifier, which is exactly why the rule has to be enforced at the <em>signer</em>. What an attacker holds afterwards is two Winternitz chains revealed at two different heights, which is the material a forgery on a third message is built from. Use it on this throwaway key; never let it happen to a real one.</p>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The second message, signed from the same index as the Value above.">Second value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_hbs_value_b');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="2" id="ds_hbs_value_b" name="ds_hbs_value_b" title="A different message, signed from the same one-time key as the Value."></textarea>
+      </div>
+      <div class="ds-row">
+        <input type="submit" value="Sign both from one index" onclick="return digital_signature.hbsDemonstrateReuse();" title="Sign both values from the same one-time key and validate both. Demonstration only." />
+      </div>
+    </div>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="Every field of the public key and the signature, from Describe.">Fields <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_hbs_describe');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="12" id="ds_hbs_describe" name="ds_hbs_describe" title="What Describe found in the public key and the signature." readonly></textarea>
+    </div>
+
+    <input class="ds-status" type="text" id="ds_hbs_status" name="ds_hbs_status" title="Status / result of the last operation." readonly />
   </fieldset>
 
   <!-- ===================== RSA Digital Signature ===================== -->
@@ -277,7 +531,8 @@
   <fieldset id="pane_mldsa_signature">
     <legend>ML-DSA Digital Signature <span class="ds-badge ds-asym">Asymmetric</span></legend>
 
-    <p class="ds-note" title="ML-DSA is a lattice scheme — fast, unlike SLH-DSA.">Post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium). The primary NIST post-quantum signature standard; fast lattice-based signing.</p>
+    <p class="ds-note" title="ML-DSA is a lattice scheme — fast, unlike SLH-DSA.">Post-quantum <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium). The primary NIST post-quantum signature standard; fast lattice-based signing. Its JOSE and COSE binding is <strong>RFC 9964</strong> &mdash; a published standard, not a draft.</p>
+    <p class="ds-note" title="This is the single most surprising thing about an ML-DSA JWK.">&#128273; <strong>The private key here is the 32-byte SEED, not the expanded key.</strong> RFC 9964 &sect;3.2 requires an ML-DSA JWK&rsquo;s <code>priv</code> parameter to be the seed, and the expanded 2560/4032/4896-byte signing key is re-derived from it on every use. That is why the Private Key box is short. A JWK carrying the expanded key is readable by almost nothing.</p>
 
     <div class="ds-field">
       <label class="ds-has-copy" title="The value to sign, or the value whose signature you want to validate. Any text is allowed.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ml_value');" title="Copy to clipboard">Copy</button></label>
@@ -303,8 +558,8 @@
       </div>
 
       <div class="ds-field">
-        <label class="ds-has-copy" title="ML-DSA private (secret) key, base64 in PEM framing. Used by Sign. Not stored anywhere.">Private Key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ml_private_key');" title="Copy to clipboard">Copy</button></label>
-        <textarea rows="3" id="ds_ml_private_key" name="ds_ml_private_key" title="ML-DSA secret key (PEM-framed base64). Used to Sign."></textarea>
+        <label class="ds-has-copy" title="The 32-byte SEED, which is what RFC 9964 section 3.2 requires an ML-DSA JWK to carry.">Private Key &mdash; 32-byte seed <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ml_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_ml_private_key" name="ds_ml_private_key" title="The 32-byte ML-DSA private key SEED (PEM-framed base64), not the expanded 2560/4032/4896-byte key. The expanded key is re-derived from it whenever this pane signs."></textarea>
       </div>
       <div class="ds-field">
         <label class="ds-has-copy" title="ML-DSA public key, base64 in PEM framing. Used by Validate Signature.">Public Key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_ml_public_key');" title="Copy to clipboard">Copy</button></label>
@@ -323,12 +578,100 @@
       </div>
     </div>
 
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Variant &mdash; context string and pre-hash</div>
+      <p class="ds-note" title="Both of these change the ALGORITHM, not just the input.">These two controls select a <em>different algorithm</em>, not an option on this one. A <strong>context string</strong> (FIPS 204 &sect;5.2) is mixed into the formatted message, so a signature made for one application cannot be replayed into another &mdash; a verifier using a different context, or none, will refuse it. A <strong>pre-hash</strong> selects <strong>HashML-DSA</strong> (FIPS 204 &sect;5.4), which signs a digest of the message and puts the hash function&rsquo;s OID into the signed bytes; a pure verifier will not accept a pre-hashed signature or vice versa. <strong>RFC 9964 requires the context to be EMPTY for the JOSE algorithms</strong>, so a non-empty context here is a raw-primitive feature and the JWS pane below does not offer it.</p>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Up to 255 bytes. Empty is the pure algorithm.">Context string (optional, max 255 bytes)</label>
+          <input type="text" id="ds_ml_ctx" name="ds_ml_ctx" placeholder="(empty — the pure algorithm)" title="Mixed into the formatted message. The verifier must use the same value." />
+        </div>
+        <div class="ds-grow">
+          <label title="Pure signs the message; a pre-hash signs a digest of it.">Pre-hash</label>
+          <select id="ds_ml_prehash" name="ds_ml_prehash" title="Pure ML-DSA, or the HashML-DSA variant with this hash function.">
+            <option value="pure" selected="selected">Pure &mdash; no pre-hash</option>
+            <option value="SHA-256">HashML-DSA &mdash; SHA-256</option>
+            <option value="SHA-384">HashML-DSA &mdash; SHA-384</option>
+            <option value="SHA-512">HashML-DSA &mdash; SHA-512</option>
+            <option value="SHA3-256">HashML-DSA &mdash; SHA3-256</option>
+            <option value="SHA3-512">HashML-DSA &mdash; SHA3-512</option>
+            <option value="SHAKE128">HashML-DSA &mdash; SHAKE128 (256-bit output)</option>
+            <option value="SHAKE256">HashML-DSA &mdash; SHAKE256 (512-bit output)</option>
+          </select>
+        </div>
+      </div>
+    </div>
     <div class="ds-row">
       <input type="submit" value="Sign" onclick="return digital_signature.mldsaSign();" title="Sign the Value with the Private Key; the Base64 signature is placed in the Signature box." />
       <input type="submit" value="Validate Signature" onclick="return digital_signature.mldsaValidate();" title="Verify the Signature against the Value using the Public Key." />
     </div>
 
     <input class="ds-status" type="text" id="ds_ml_status" name="ds_ml_status" title="Status / result of the last operation." readonly />
+  </fieldset>
+
+
+  <!-- ============= Composite ML-DSA (PQ/T hybrid) Digital Signature ===== -->
+  <fieldset id="pane_composite_signature">
+    <legend>Composite ML-DSA Signature <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-asym">PQ/T hybrid</span> <span class="ds-badge ds-draft">Draft standard</span></legend>
+
+    <p class="ds-note ds-draft-note" title="draft-ietf-jose-pq-composite-sigs-03."><strong>Draft standard &mdash; draft-ietf-jose-pq-composite-sigs-03.</strong> The combiner and the domain-separation labels below are taken verbatim from that revision; the JOSE algorithm names have no IANA assignment yet. The sibling document for X.509 is draft-ietf-lamps-pq-composite-sigs, which differs from this one in how the ECDSA component is encoded.</p>
+
+    <p class="ds-note" title="Why anybody would want two signatures instead of one.">A <strong>composite</strong> signature is one signature made of two: an ML-DSA signature and a traditional ECDSA or EdDSA one, over the same message, verified together. It exists because nobody yet wants to bet a long-lived signature on lattices <em>alone</em> &mdash; the composite stays valid if either component survives, so a break of ML-DSA leaves ECDSA holding and a quantum computer leaves ML-DSA holding. <strong>Both halves must verify.</strong> If only one did, the construction would be strictly worse than the stronger component on its own.</p>
+
+    <p class="ds-note" title="The construction, in full — it is short enough to state.">The signed message is <code>M&rsquo; = Prefix || Label || 0x00 || PH(M)</code>, where <code>Prefix</code> is the ASCII &ldquo;CompositeAlgorithmSignatures2025&rdquo;, <code>Label</code> identifies the exact combination, <code>0x00</code> encodes an empty application context <em>as a length</em> (it is not a string terminator), and <code>PH</code> is the per-algorithm pre-hash. The label is then used a <em>second</em> time as the ML-DSA context, which is what stops a component signature being lifted out of a composite and replayed as a standalone ML-DSA signature. The signature is the ML-DSA signature followed by the traditional one, both fixed length.</p>
+
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The value to sign, or the value whose signature you want to validate.">Value <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_comp_value');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="3" id="ds_comp_value" name="ds_comp_value" title="The message to sign / validate. Edit freely."></textarea>
+    </div>
+    <div class="ds-field">
+      <label class="ds-has-copy" title="The Base64 composite signature: the ML-DSA signature followed by the traditional one.">Signature (Base64) <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_comp_signature');" title="Copy to clipboard">Copy</button></label>
+      <textarea rows="5" id="ds_comp_signature" name="ds_comp_signature" title="Base64 composite signature. Populated by Sign; paste one here to Validate."></textarea>
+    </div>
+
+    <div class="ds-sub">
+      <div class="ds-sub-title">Key Pair</div>
+      <div class="ds-row">
+        <div class="ds-grow">
+          <label title="Each combination pairs an ML-DSA parameter set with a traditional algorithm of matching strength.">Composite Algorithm</label>
+          <select id="ds_comp_param" name="ds_comp_param" title="The composite algorithm. The traditional half is chosen to match the ML-DSA half's security level.">
+            <option value="ML-DSA-44-ES256" selected="selected">ML-DSA-44-ES256 &mdash; ML-DSA-44 + ECDSA P-256, pre-hash SHA-256</option>
+            <option value="ML-DSA-65-ES256">ML-DSA-65-ES256 &mdash; ML-DSA-65 + ECDSA P-256, pre-hash SHA-512</option>
+            <option value="ML-DSA-87-ES384">ML-DSA-87-ES384 &mdash; ML-DSA-87 + ECDSA P-384, pre-hash SHA-512</option>
+            <option value="ML-DSA-44-Ed25519">ML-DSA-44-Ed25519 &mdash; ML-DSA-44 + Ed25519, pre-hash SHA-512</option>
+            <option value="ML-DSA-65-Ed25519">ML-DSA-65-Ed25519 &mdash; ML-DSA-65 + Ed25519, pre-hash SHA-512</option>
+            <option value="ML-DSA-87-Ed448">ML-DSA-87-Ed448 &mdash; ML-DSA-87 + Ed448, pre-hash SHAKE256</option>
+          </select>
+        </div>
+        <input type="submit" value="Generate Keys" onclick="return digital_signature.compositeGenerateKeys();" title="Generate a fresh composite key pair: an ML-DSA seed and a traditional key." />
+      </div>
+
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The 32-byte ML-DSA seed followed by the traditional private key.">Private Key &mdash; ML-DSA seed &#8214; traditional key <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_comp_private_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="3" id="ds_comp_private_key" name="ds_comp_private_key" title="The composite private key: a 32-byte ML-DSA seed concatenated with the traditional private key. The draft requires the seed form."></textarea>
+      </div>
+      <div class="ds-field">
+        <label class="ds-has-copy" title="The ML-DSA public key followed by the traditional one.">Public Key &mdash; ML-DSA &#8214; traditional <button type="button" class="ds-copy" onclick="return digital_signature.copyField('ds_comp_public_key');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="4" id="ds_comp_public_key" name="ds_comp_public_key" title="The composite public key: the ML-DSA public key concatenated with the traditional one."></textarea>
+      </div>
+
+      <div class="ds-row">
+        <select class="ds-grow" id="ds_comp_ks_format" name="ds_comp_ks_format" title="Keystore format. Composite keys use PEM or a JWK of kty AKP.">
+          <option value="pem" selected="selected">PEM</option>
+          <option value="jwk">JWK</option>
+        </select>
+        <input class="ds-grow" type="password" id="ds_comp_ks_password" name="ds_comp_ks_password" placeholder="password (optional)" title="Optional password. Protects the JWK export (PBES2 JWE)." />
+        <input type="submit" value="Download Keys" onclick="return digital_signature.compositeDownloadKeys();" title="Download the key pair in the selected keystore format." />
+      </div>
+    </div>
+
+    <div class="ds-row">
+      <input type="submit" value="Sign" onclick="return digital_signature.compositeSign();" title="Sign the Value, producing both component signatures." />
+      <input type="submit" value="Validate Signature" onclick="return digital_signature.compositeValidate();" title="Verify BOTH halves. The status line says which half failed." />
+    </div>
+
+    <input class="ds-status" type="text" id="ds_comp_status" name="ds_comp_status" title="Status / result. On failure this says WHICH half did not verify — a stripped signature and a corrupt one look different here." readonly />
   </fieldset>
 
   <!-- ===================== BBS Digital Signature ===================== -->
@@ -478,6 +821,23 @@
             <option value="EdDSA-Ed25519">EdDSA &mdash; Ed25519 (RFC 8037)</option>
             <option value="EdDSA-Ed448">EdDSA &mdash; Ed448 (RFC 8037)</option>
             <option value="ES256K">ES256K &mdash; ECDSA secp256k1 SHA-256 (RFC 8812)</option>
+            <optgroup label="Post-quantum &mdash; RFC 9964 (published)">
+              <option value="ML-DSA-44">ML-DSA-44 &mdash; FIPS 204 (RFC 9964)</option>
+              <option value="ML-DSA-65">ML-DSA-65 &mdash; FIPS 204 (RFC 9964)</option>
+              <option value="ML-DSA-87">ML-DSA-87 &mdash; FIPS 204 (RFC 9964)</option>
+            </optgroup>
+            <optgroup label="Post-quantum &mdash; draft-ietf-cose-sphincs-plus-10 (DRAFT)">
+              <option value="SLH-DSA-SHA2-128s">SLH-DSA-SHA2-128s &mdash; FIPS 205 (draft)</option>
+              <option value="SLH-DSA-SHAKE-128s">SLH-DSA-SHAKE-128s &mdash; FIPS 205 (draft)</option>
+            </optgroup>
+            <optgroup label="PQ/T composite &mdash; draft-ietf-jose-pq-composite-sigs-03 (DRAFT)">
+              <option value="ML-DSA-44-ES256">ML-DSA-44-ES256 &mdash; composite (draft)</option>
+              <option value="ML-DSA-65-ES256">ML-DSA-65-ES256 &mdash; composite (draft)</option>
+              <option value="ML-DSA-87-ES384">ML-DSA-87-ES384 &mdash; composite (draft)</option>
+              <option value="ML-DSA-44-Ed25519">ML-DSA-44-Ed25519 &mdash; composite (draft)</option>
+              <option value="ML-DSA-65-Ed25519">ML-DSA-65-Ed25519 &mdash; composite (draft)</option>
+              <option value="ML-DSA-87-Ed448">ML-DSA-87-Ed448 &mdash; composite (draft)</option>
+            </optgroup>
             <option value="none">none &mdash; Unsecured JWS (NO signature)</option>
           </select>
         </div>
@@ -583,6 +943,8 @@
   <!-- ===================== XML Digital Signature ===================== -->
   <fieldset id="pane_xml_signature">
     <legend>XML Digital Signature <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-sym">or MAC</span></legend>
+
+    <p class="ds-note" title="This absence is a fact about XMLDSIG, not an omission here.">&#9432; <strong>No post-quantum algorithms are offered here, and that is not a gap in this page.</strong> The panes above sign with ML-DSA, SLH-DSA, FN-DSA and the PQ/T composites, and the JWS pane offers all thirteen as <code>alg</code> values &mdash; but <strong>no post-quantum algorithm URI has been registered for XML Signature</strong> by W3C or IANA, and none is proposed in any draft. There is therefore nothing to put in a <code>&lt;SignatureMethod Algorithm="&hellip;"&gt;</code>, and inventing one would produce a document that no other implementation could ever read. When such a URI is registered it belongs here; until then this pane stops at RSASSA-PSS.</p>
 
     <p class="ds-note" title="Almost everything below is written into the document a verifier reads back.">W3C <strong>XMLDSIG</strong> (RFC 3275) over an XML document, using the same in-browser engine the SAML, WS-Trust and WS-Federation workflows sign with. All three signature types are here &mdash; <strong>enveloped</strong> (the Signature goes inside the document), <strong>enveloping</strong> (the document goes inside a <code>ds:Object</code> in the Signature), <strong>detached</strong> (the Signature stands alone and names what it covers). <strong>Sign refuses XML that is not well-formed</strong>, and nothing here rewrites your input: a signature covers the exact octets that get canonicalized, so any "cleaning" would invalidate what it is about to produce. The transforms are an <em>ordered chain</em> and are applied in the order shown below the fields &mdash; a canonicalization ends the chain. <code>HMAC-*</code> is a MAC with a shared secret, not a digital signature. C14N 1.1 is not offered: its whole difference from 1.0 is <code>xml:base</code> inheritance, which this engine does not implement, and naming a method it does not perform would be worse than leaving it out.</p>
 

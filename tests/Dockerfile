@@ -61,7 +61,7 @@ COPY tests/run-tests-in-container.sh .
 COPY common/common.sh .
 
 # Bundle app source
-COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml11_sso.js tests/saml11_options.js tests/sts_saml11.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/federation_sso.js tests/federation_chain_sso.js tests/wstrust.js tests/wstrust_delegation_chain.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js tests/jws_engine.js ./
+COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml11_sso.js tests/saml11_options.js tests/sts_saml11.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/federation_sso.js tests/federation_chain_sso.js tests/wstrust.js tests/wstrust_delegation_chain.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js tests/jws_engine.js tests/pqc_engines.js tests/xwing_vectors.json tests/saml_authnrequest_page.js tests/saml_response_decoder_page.js tests/sts_saml_encryption.js tests/sts_userinfo_protected.js tests/algorithm_menus.js tests/sts_jws_verification.js tests/oidc_userinfo_protected_page.js tests/algorithm_panes.js ./
 # The per-run username minter, required by tests across four protocols (OAuth2,
 # RFC 9700, Kerberos, LDAP) and by both mock-KDC page jobs. A SHARED MODULE
 # rather than a test, so nothing schedules it and the run-report cross-check in
@@ -153,6 +153,16 @@ COPY keycloak-tests.yml ./
 # (wstrust_msg.js) and validates them against the derived XSD in ./schemas.
 COPY common/xmldsig.js ./
 COPY client/src/wstrust_msg.js client/src/jose_jwe.js client/src/edge_landing.js ./
+# The SAML wire-format reader, loaded directly by
+# tests/saml_authnrequest_page.js and tests/saml_response_decoder_page.js to
+# BUILD the fixtures they then paste into the page — a real deflated, signed
+# redirect URL and a real signed, encrypted response rather than recorded
+# strings that rot. Those tests are called *_page.js and not
+# saml_message.js for the reason two paragraphs below give: this COPY lands the
+# module FLAT beside the test scripts, so a test of that name would silently
+# replace it. The module keeps its own name because saml_response.js and
+# saml_authnrequest.js both require ./saml_message.
+COPY client/src/saml_message.js ./
 # The JWK -> SPKI PEM encoder, tested the same way (tests/jwk_pem_encoding.js
 # requires it directly). Note that in this image there is no client/src tree, so
 # that test's scan for requires which would pull `elliptic` back into a bundle
@@ -237,6 +247,12 @@ COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
 # COPY ran last wins, silently. Same trap as jwk_pem.js above.
 COPY client/src/crypto_bytes.js client/src/symmetric_crypto.js ./
 COPY client/src/pk_encryption.js ./
+# The post-quantum registry, loaded directly by tests/pqc_engines.js and
+# required by client/src/jws.js for the thirteen PQ `alg` values. Note the
+# name trap called out above applies here too: the TEST is pqc_engines.js and
+# the MODULE is pqc.js, deliberately different, because these land flat beside
+# each other and whichever COPY ran last would win silently.
+COPY client/src/pqc.js ./
 # DPoP (RFC 9449), loaded directly by tests/dpop_vectors.js so the thumbprint, htu, ath and
 # proof can be checked against the RFCs' own published vectors without a browser.
 # Omit this COPY and that test vanishes from the image rather than failing, which is
@@ -494,6 +510,27 @@ COPY sts/oauth-oidc/client_auth.js sts/oauth-oidc/mtls.js sts/oauth-oidc/oauth2_
 # and ./admin_stats, and federation.js takes crypto plus the three common/
 # modules named above. The closure walk in tests/jwk_pem_encoding.js is what
 # says so, and it is what caught this — run it after every submodule bump.
+# THE SIXTH recomputation, and like every one before it, it arrived because the
+# sts/ gitlink moved rather than because a line here changed. On 2026-08-27 that
+# service folded twenty-odd signing, verifying, encrypting and decrypting sites
+# into one `common/crypto.js`, so `helpers.js`, `client_auth.js` and `mtls.js` —
+# all three already copied above — now require it. Missing, the failure is
+# "Cannot find module './crypto'" from inside the submodule at require time,
+# before a single test has run and naming a file this image HAS.
+#
+# It drags ONE further file with it and no more: `./vendored/xmldsig.js`, the
+# parent project's own XML Signature module vendored into the mock, which takes
+# nothing but bunyan and node-forge. `./config` is already here. The vendored
+# copy lands under ./sts/common/vendored/ beside bbs2023.js — the destination
+# has to mirror the mock's own folders or the relative require resolves outside
+# the image's sts/ tree.
+COPY sts/common/crypto.js ./sts/common/
+# crypto.js requires it for the post-quantum and composite signatures, so
+# it has to travel with it — the in-process mock-KDC jobs load crypto.js and
+# would otherwise die at require time with MODULE_NOT_FOUND naming a file
+# nobody edited. jwk_pem_encoding.js checks this pairing on every run.
+COPY sts/common/pq_jose.js ./sts/common/
+COPY sts/common/vendored/xmldsig.js ./sts/common/vendored/
 COPY sts/common/realms.js sts/common/delegation.js ./sts/common/
 COPY sts/federation/federation.js ./sts/federation/
 COPY sts/kerberos/krb5_primitives.js sts/kerberos/krb5_asn1.js sts/kerberos/krb5_crypto.js sts/kerberos/krb5_messages.js sts/kerberos/krb5_gss.js ./sts/kerberos/
@@ -639,15 +676,13 @@ COPY tests/schemas ./schemas
 # schedules for it fails in the image with MODULE_NOT_FOUND in 0.0s while
 # passing on every host run, which is the failure jwk_pem_encoding.js watches
 # for and is how it was caught.
-# The mock STS's management API at /admin-api. It needs nothing of the mock's
-# own in this image — it drives the running service over HTTP, exactly as
-# tests/sts_metadata.js does — but it is COPYd on a line of its own so that the
-# reason is somewhere: its basename is also a MODULE name in the mock
-# (sts/mgmt-api/admin_api.js), and the sts/ files above land in ./sts/<dir>/
-# rather than flat
-# precisely so that a pair like that cannot overwrite each other. Adding it to
-# the flat list without noticing would be the collision testsImageHasNoColliding
-# Filenames() exists to catch.
+# NOTE, for whoever adds the next test that drives the mock over HTTP: the
+# sts/ files above land in ./sts/<dir>/ rather than flat precisely so that a
+# test and a mock MODULE of the same basename cannot overwrite each other.
+# tests/admin_api.js used to sit here on a line of its own for exactly that
+# reason — its basename is also sts/mgmt-api/admin_api.js — and adding such a
+# file to the flat list without noticing is the collision
+# testsImageHasNoCollidingFilenames() exists to catch.
 # RFC 9700 (OAuth 2.0 Security BCP). Two scripts, and they need each other's
 # company here for opposite reasons. rfc9700_flows.js is Selenium and is gated
 # on RFC9700_STS_URL, so it does nothing without the second, compliant STS
@@ -681,7 +716,30 @@ COPY client/src /usr/src/client/src
 COPY client/public/*.html /usr/src/client/public/
 COPY client/public/partials /usr/src/client/public/partials
 COPY client/server.js /usr/src/client/server.js
-COPY tests/admin_api.js ./
+# The Hashing / Encoding Tools page's hashing, in node against OpenSSL, NIST's
+# own sample values and `openssl mac`'s KMAC. It needs NO flat copy of its
+# subject and that is why it sits here rather than in the list of client
+# modules above: it loads client/src/hash_tools.js and reads
+# client/public/encoding_tools.html out of the TREE the three COPY lines above
+# have just staged, exactly as rfc9700_client.js does. Adding a flat copy would
+# be worse than useless — hash_tools.js would then exist twice in this image,
+# and which one the test loaded would depend on the resolution order rather
+# than on the change under test.
+COPY tests/hash_engine.js ./
+# The stateful hash-based signature job and its vendored vectors. Like
+# hash_engine.js it needs no flat copy of its subject — it loads
+# client/src/hbs.js out of the tree the three COPY lines above stage — but the
+# VECTORS are data beside the test and have to be here, and their absence
+# would not fail the build: the job would fail at load with ENOENT naming a
+# JSON file, in a tenth of a second, on every containerized run while passing
+# on every host one.
+COPY tests/hbs_signatures.js tests/hbs_vectors.json ./
+# The postgres persistence job. It SKIPS in this image — it runs `node
+# server.js` out of a complete mock STS tree, and what is copied here is
+# about thirty modules with no node_modules — but it is copied so that
+# run-report.js can schedule it and report the skip with its reason,
+# rather than failing to find the script.
+COPY tests/sts_persistence_postgres.js ./
 # The HTTP tab on the OAuth2/OIDC token exchange and Token Endpoint Results
 # panes. It is NOT covered by the `tests/oauth2_*` glob above — the name starts
 # with the thing being shown rather than with the workflow showing it — and a

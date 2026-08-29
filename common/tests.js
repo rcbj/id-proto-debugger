@@ -137,9 +137,27 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
                              .sendKeys(discovery_endpoint);
     await driver.findElement(btn_oidc_discovery_endpoint).click();
 
-    // Populate metadata
+    // Populate metadata.
+    //
+    // THIS WAIT GATES ON A NETWORK ROUND TRIP, not on a render, which is why
+    // its budget is a multiple rather than the bare `waitTime` the two waits
+    // above it use. Retrieve fetches the discovery document from the identity
+    // provider and the Populate button is drawn only when it arrives (the
+    // paragraph below says the same thing from the other side), so a flat
+    // 2000ms here is 2000ms for a fetch of somebody else's service. When that
+    // service is busy — the mock STS is one process, and a single
+    // SLH-DSA-SHAKE-128s signature blocks its event loop for upwards of
+    // fourteen seconds — the document is simply late, and what this reports is
+    //
+    //   TimeoutError: Waiting for element to be located
+    //       By(css selector, .btn_oidc_populate_meta_data)
+    //
+    // naming a button, on a page that is fine, in a job about federation. It
+    // failed the containerized run of 2026-08-29 that way and passed the one
+    // before it. `waitTime * 6` is what federation_matrix_sso.js already
+    // spends on its own fetch-gated waits.
     await driver.wait(until.elementLocated(btn_oidc_populate_meta_data),
-                      waitTime);
+                      waitTime * 6);
     await driver.wait(until.elementIsVisible(driver.findElement(
                       btn_oidc_populate_meta_data)), waitTime);
     await driver.executeScript("arguments[0].scrollIntoView({ behavior: " +
