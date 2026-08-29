@@ -71,7 +71,23 @@ log.info("Log initialized. logLevel=" + log.level());
 var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
-var fetchWait = Math.max(waitTime, 20000);
+// THE BUDGET FOR A WAIT THAT GATES ON THE MOCK ANSWERING, as against one that
+// gates on a render — those keep the bare `waitTime`. The floor is 30000 and
+// was 20000 until 2026-08-29, when this job failed the host suite on
+//
+//   TimeoutError: the workflow should reach the authorization server's login
+//       screen. Wait timed out after 20089ms
+//
+// which names a login screen and is nothing of the kind. The mock STS is ONE
+// process and its PQC signing is synchronous, so a signature another job asked
+// for blocks every listener it owns; the gap between consecutive `{"name":
+// "sts"...}` lines around that failure is 22.8 SECONDS. The login screen was
+// not late, the server was not answering anybody.
+//
+// 30000 is chosen against that measurement and is INTERIM. The fix is to stop
+// the mock blocking — a front process owning the sockets and the state, with
+// the signing moved to workers — after which this can go back to 20000.
+var fetchWait = Math.max(waitTime, 30000);
 // The budget every waitFor* in ./wait_for.js uses. Set once: one test file
 // runs per process.
 require("./wait_for").configure({ timeout: fetchWait });
