@@ -61,7 +61,7 @@ COPY tests/run-tests-in-container.sh .
 COPY common/common.sh .
 
 # Bundle app source
-COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml11_sso.js tests/saml11_options.js tests/sts_saml11.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/federation_sso.js tests/federation_chain_sso.js tests/wstrust.js tests/wstrust_delegation_chain.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/sts_metadata.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js tests/jws_engine.js tests/pqc_engines.js tests/xwing_vectors.json tests/saml_authnrequest_page.js tests/saml_response_decoder_page.js tests/sts_saml_encryption.js tests/sts_userinfo_protected.js tests/algorithm_menus.js tests/sts_jws_verification.js tests/oidc_userinfo_protected_page.js tests/algorithm_panes.js ./
+COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml11_sso.js tests/saml11_options.js tests/sts_saml11.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/federation_sso.js tests/federation_chain_sso.js tests/wstrust.js tests/wstrust_delegation_chain.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/did_tools.js tests/dpop_vectors.js tests/sts_dpop.js tests/dpop_workflow.js tests/jws_engine.js tests/pqc_engines.js tests/xwing_vectors.json tests/saml_authnrequest_page.js tests/saml_response_decoder_page.js tests/sts_saml_encryption.js tests/sts_userinfo_protected.js tests/algorithm_menus.js tests/sts_jws_verification.js tests/oidc_userinfo_protected_page.js tests/algorithm_panes.js ./
 # The per-run username minter, required by tests across four protocols (OAuth2,
 # RFC 9700, Kerberos, LDAP) and by both mock-KDC page jobs. A SHARED MODULE
 # rather than a test, so nothing schedules it and the run-report cross-check in
@@ -676,15 +676,13 @@ COPY tests/schemas ./schemas
 # schedules for it fails in the image with MODULE_NOT_FOUND in 0.0s while
 # passing on every host run, which is the failure jwk_pem_encoding.js watches
 # for and is how it was caught.
-# The mock STS's management API at /admin-api. It needs nothing of the mock's
-# own in this image — it drives the running service over HTTP, exactly as
-# tests/sts_metadata.js does — but it is COPYd on a line of its own so that the
-# reason is somewhere: its basename is also a MODULE name in the mock
-# (sts/mgmt-api/admin_api.js), and the sts/ files above land in ./sts/<dir>/
-# rather than flat
-# precisely so that a pair like that cannot overwrite each other. Adding it to
-# the flat list without noticing would be the collision testsImageHasNoColliding
-# Filenames() exists to catch.
+# NOTE, for whoever adds the next test that drives the mock over HTTP: the
+# sts/ files above land in ./sts/<dir>/ rather than flat precisely so that a
+# test and a mock MODULE of the same basename cannot overwrite each other.
+# tests/admin_api.js used to sit here on a line of its own for exactly that
+# reason — its basename is also sts/mgmt-api/admin_api.js — and adding such a
+# file to the flat list without noticing is the collision
+# testsImageHasNoCollidingFilenames() exists to catch.
 # RFC 9700 (OAuth 2.0 Security BCP). Two scripts, and they need each other's
 # company here for opposite reasons. rfc9700_flows.js is Selenium and is gated
 # on RFC9700_STS_URL, so it does nothing without the second, compliant STS
@@ -736,11 +734,6 @@ COPY tests/hash_engine.js ./
 # JSON file, in a tenth of a second, on every containerized run while passing
 # on every host one.
 COPY tests/hbs_signatures.js tests/hbs_vectors.json ./
-COPY tests/admin_api.js ./
-# The other half of that API and the console beside it. Both need only
-# random_username.js and jwt_vc_json_common.js, which are already copied
-# above, and neither needs a browser.
-COPY tests/sts_admin_api_operations.js tests/sts_admin_console.js ./
 # The postgres persistence job. It SKIPS in this image — it runs `node
 # server.js` out of a complete mock STS tree, and what is copied here is
 # about thirty modules with no node_modules — but it is copied so that

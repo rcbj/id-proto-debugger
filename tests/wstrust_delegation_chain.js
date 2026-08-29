@@ -187,7 +187,8 @@
 // one document per chain, everything the bus is part of, and the LINEAGE of the
 // final assertion. The console is gated (`admin.authRequired`), so this signs
 // in the way a browser does — three steps through /authn/login, exactly as
-// tests/admin_api.js and the OAuth chain do it. If the roster has been narrowed
+// the mock's own console tests and the OAuth chain do it. If the roster has
+// been narrowed
 // by some other job the drawings are SKIPPED with a message naming the gate;
 // the assertions above do not depend on them, because they read
 // /admin-api/delegation, which is not behind it.
@@ -1188,7 +1189,8 @@ function assertGraphIsAChain(graph) {
 // ---------------------------------------------------------------------------
 // A browser sign-on session for the CONSOLE, which only the drawings and the
 // lineage need. The three-step dance is the one a browser does and is copied
-// from tests/admin_api.js, which explains it at length.
+// from the mock's own `admin_api.js`, which explains it at length (readable
+// here as sts/tests/vendored/admin_api.js).
 //
 // Returns the cookie, or null when the gate is off (a legitimate state — the
 // setting is switchable — reported rather than treated as a pass) or when the

@@ -99,9 +99,8 @@
 // override map rather than process-wide — a mock relaxed process-wide would
 // stop checking certificates for every other job in the pool — and it is put
 // back with `/admin-api/config/reset` rather than by writing the old value
-// back: a `set` leaves `source: override` on the row for ever, which
-// `tests/admin_api.js` then trips over on the next run against the same
-// container.
+// back: a `set` leaves `source: override` on the row for ever, and the mock's
+// own suite trips over that on the next run against the same container.
 //
 // The SAML 2.0 half needs no back channel and passes either way, which is
 // worth knowing when one half fails and the other does not.

@@ -228,8 +228,8 @@ function writeSetting(key, value) {
 // process started with, `override` for one changed at runtime — and a `set`
 // always makes the second, even when the value is identical. So a test that
 // read 3600 and wrote 3600 back leaves the row reading `source: override`
-// forever, and tests/admin_api.js's "no runtime override should be in force
-// before this check runs" then fails on the NEXT run against the same
+// forever, and the mock's own "no runtime override should be in force before
+// this check runs" assertion then fails on the NEXT run against the same
 // container, naming four SPIFFE settings and no test. That is what it found on
 // 2026-08-24.
 //

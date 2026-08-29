@@ -5,8 +5,8 @@
 // ===========================================================================
 // THE MOCK STS'S SAML 2.0 ENCRYPTION, END TO END, OVER HTTP, WITH NO BROWSER.
 //
-// It sits beside `sts_saml11.js`, `sts_dpop.js`, `sts_metadata.js`,
-// `admin_api.js` and `vc_did.js` — the tests that drive that service DIRECTLY —
+// It sits beside `sts_saml11.js`, `sts_dpop.js` and `vc_did.js` — the tests
+// that drive that service DIRECTLY —
 // and it is named `sts_*` for their reason: the mock is the thing under test
 // and nothing in the debugger is exercised here at all.
 //
@@ -61,7 +61,8 @@
 // ---------------------------------------------------------------------------
 // IT RESTORES EVERYTHING IT CHANGES, through `/admin-api/config/reset` rather
 // than by writing the old value back — a `set` leaves `source: override` behind
-// for `admin_api.js` to trip over on the next run against the same container.
+// for the mock's own suite to trip over on the next run against the same
+// container.
 // The per-application attributes it writes go on entries named after this
 // process, so two runs cannot read each other's.
 //

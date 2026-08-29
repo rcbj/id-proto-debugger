@@ -151,9 +151,72 @@ function makeJws(alg, spec, key, header, payload) {
   return input + "." + signature.toString("base64url");
 }
 
+// ---------------------------------------------------------------------------
+// EVERY REQUEST HERE GOES THROUGH THIS, AND THE REASON IS THE SERVICE RATHER
+// THAN THE NETWORK.
+//
+// The mock STS is one node process with one event loop, and some of what this
+// suite asks it to do BLOCKS that loop for tens of seconds: SLH-DSA-SHAKE-128s
+// is about twelve seconds for a single signature, and
+// `sts_userinfo_protected.js` asks for one per advertised algorithm, twice —
+// a UserInfo response and an ID Token. While that runs, the process accepts a TCP connection (the kernel's
+// backlog does that for it) and then answers nothing, so a TLS handshake to it
+// simply does not finish.
+//
+// undici — node's `fetch` — gives a connection ten seconds and then throws
+// `TypeError: fetch failed`, whose whole stack is internals. That is what took
+// this job out on 2026-08-29: it opened its FIRST connection at 04:53:30, in
+// the middle of the other job's twenty-second ID Token pass, and failed ten
+// seconds later naming nothing — no URL, no service, no algorithm, and nothing
+// to distinguish it from a mock that had died. The two jobs share the mock
+// because both are about what that one service advertises, and serialising
+// them in JOB_LOCKS would cost the pool a minute to fix a client-side timeout.
+//
+// So a CONNECTION failure is retried rather than reported: the service is
+// working, it is just not listening yet. A failure that survives the whole
+// window is reported with the URL and the wait in it, which is the message the
+// bare TypeError could not give. Anything the service actually ANSWERS —
+// including a 500 — is returned untouched, because that is an answer and this
+// wrapper has no opinion about it.
+// ---------------------------------------------------------------------------
+const BUSY_WINDOW_MS = 90000;
+
+async function stsFetch(url, options) {
+  log.debug("Entering stsFetch(). url=" + url);
+  const until = Date.now() + BUSY_WINDOW_MS;
+  let attempts = 0;
+  let last = null;
+  while (Date.now() < until) {
+    attempts++;
+    try {
+      const response = await fetch(url, options);
+      if (attempts > 1) {
+        log.info("[busy] " + url + " answered on attempt " + attempts +
+                 "; the mock was blocked on a signature until then.");
+      }
+      log.debug("Leaving stsFetch(). status=" + response.status);
+      return response;
+    } catch (e) {
+      // A connection-level failure only: undici reports every one of them as
+      // this same TypeError, and there is nothing else `fetch` throws here.
+      last = e;
+      log.debug("stsFetch(): " + url + " did not connect (" + e.message +
+                "); retrying.");
+      await new Promise(function (r) { setTimeout(r, 1000); });
+    }
+  }
+  log.debug("Leaving stsFetch(). Gave up.");
+  throw new Error("could not reach " + url + " in " +
+    (BUSY_WINDOW_MS / 1000) + "s of trying (" +
+    (last && last.message) + ", " + attempts + " attempt(s)). The mock STS " +
+    "blocks its event loop for tens of seconds while it signs an SLH-DSA " +
+    "message, so a short outage here is ordinary; this long a one means it " +
+    "is not running.");
+}
+
 async function metadata() {
   log.debug("Entering metadata().");
-  var doc = await (await fetch(stsBase +
+  var doc = await (await stsFetch(stsBase +
       "/.well-known/openid-configuration")).json();
   log.debug("Leaving metadata().");
   return doc;
@@ -161,7 +224,7 @@ async function metadata() {
 
 async function registerClient(body, base) {
   log.debug("Entering registerClient().");
-  var response = await fetch((base || stsBase) + "/oauth2/register", {
+  var response = await stsFetch((base || stsBase) + "/oauth2/register", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(Object.assign(
       { redirect_uris: ["http://localhost:9999/callback"] }, body))
@@ -307,7 +370,7 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
 // ---------------------------------------------------------------------------
 async function everyAdvertisedProofAlgorithmWorks() {
   log.debug("Entering everyAdvertisedProofAlgorithmWorks().");
-  var issuerMeta = await (await fetch(stsBase +
+  var issuerMeta = await (await stsFetch(stsBase +
       "/.well-known/openid-credential-issuer")).json();
   var configs = issuerMeta.credential_configurations_supported || {};
   var configId = Object.keys(configs)[0];
@@ -317,7 +380,7 @@ async function everyAdvertisedProofAlgorithmWorks() {
   assert.ok(algs.length, "no proof signing algorithms are advertised.");
 
   var client = await registerClient({});
-  var tokenResponse = await (await fetch(stsBase + "/oauth2/token", {
+  var tokenResponse = await (await stsFetch(stsBase + "/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ grant_type: "password", username: "alice",
@@ -349,7 +412,7 @@ async function everyAdvertisedProofAlgorithmWorks() {
       tooSlow.push(alg);
       continue;
     }
-    var nonce = await (await fetch(stsBase + "/oid4vci/nonce",
+    var nonce = await (await stsFetch(stsBase + "/oid4vci/nonce",
       { method: "POST" })).json();
     var pair = keyPairFor(spec, alg);
     var proof = makeJws(alg, spec,
@@ -359,7 +422,7 @@ async function everyAdvertisedProofAlgorithmWorks() {
       { aud: issuerMeta.credential_issuer,
         iat: Math.floor(Date.now() / 1000), nonce: nonce.c_nonce });
 
-    var response = await fetch(stsBase + "/oid4vci/credential", {
+    var response = await stsFetch(stsBase + "/oid4vci/credential", {
       method: "POST",
       headers: { "Content-Type": "application/json",
                  Authorization: "Bearer " + tokenResponse.access_token },
@@ -380,14 +443,14 @@ async function everyAdvertisedProofAlgorithmWorks() {
   var ecSpec = signerFor("ES256");
   var honest = keyPairFor(ecSpec);
   var impostor = keyPairFor(ecSpec);
-  var freshNonce = await (await fetch(stsBase + "/oid4vci/nonce",
+  var freshNonce = await (await stsFetch(stsBase + "/oid4vci/nonce",
     { method: "POST" })).json();
   var mismatched = makeJws("ES256", ecSpec, impostor.privateKey,
     { typ: "openid4vci-proof+jwt",
       jwk: honest.publicKey.export({ format: "jwk" }) },
     { aud: issuerMeta.credential_issuer,
       iat: Math.floor(Date.now() / 1000), nonce: freshNonce.c_nonce });
-  var refused = await fetch(stsBase + "/oid4vci/credential", {
+  var refused = await stsFetch(stsBase + "/oid4vci/credential", {
     method: "POST",
     headers: { "Content-Type": "application/json",
                Authorization: "Bearer " + tokenResponse.access_token },
