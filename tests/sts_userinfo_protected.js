@@ -93,9 +93,71 @@ function rpKeys() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// EVERY REQUEST THIS FILE MAKES GOES THROUGH HERE, AND THE RETRY IS THE POINT.
+//
+// This job asks the mock STS for a signed UserInfo response for EVERY
+// algorithm its metadata advertises, and two of those are SLH-DSA: about two
+// seconds for the SHA-2 parameter set and TWELVE for the SHAKE one, of
+// straight-line CPU, per signature. That is the algorithm and not the
+// implementation — the mock's worker pool moved the cost off its event loop,
+// which is what stopped it failing unrelated jobs, but it did not make it
+// smaller.
+//
+// A request that arrives while the service is busy does not fail like a busy
+// service. The kernel accepts the connection, nothing answers, undici gives up
+// and throws `TypeError: fetch failed` — a message whose entire stack is
+// internals and which names no URL, no service and no algorithm. That is
+// exactly what took this job out in CI once the watchdog was raised far enough
+// for it to finish: it stopped being killed and started failing on a fetch,
+// which reads like the mock is down.
+//
+// `tests/CLAUDE.md` states the rule this implements — a test that talks to the
+// mock over HTTPS retries a CONNECTION failure rather than reporting it — and
+// names `stsFetch()` in sts_jws_verification.js as the pattern. This is that,
+// and the two are deliberately alike.
+//
+// ONLY A CONNECTION FAILURE IS RETRIED. A response is returned whatever its
+// status, so a 400 or a 500 still fails the assertion that was looking at it;
+// this cannot turn a broken endpoint into a passing test. And when the window
+// runs out it says how long it waited, so a mock that really is down still
+// reads as one.
+// ---------------------------------------------------------------------------
+const BUSY_WINDOW_MS = 90000;
+
+async function stsFetch(url, options) {
+  log.debug("Entering stsFetch(). url=" + url);
+  const until = Date.now() + BUSY_WINDOW_MS;
+  let attempts = 0;
+  let last = null;
+  while (Date.now() < until) {
+    attempts++;
+    try {
+      const response = await fetch(url, options);
+      if (attempts > 1) {
+        log.info("[busy] " + url + " answered on attempt " + attempts +
+                 "; the mock was blocked on a signature until then.");
+      }
+      log.debug("Leaving stsFetch(). status=" + response.status);
+      return response;
+    } catch (e) {
+      last = e;
+      log.debug("stsFetch(): " + url + " did not connect (" + e.message +
+                "); retrying.");
+      await new Promise(function (r) { setTimeout(r, 1000); });
+    }
+  }
+  log.debug("Leaving stsFetch(). Gave up.");
+  throw new Error("could not reach " + url + " in " +
+    (BUSY_WINDOW_MS / 1000) + "s of trying (" +
+    (last && last.message) + ", " + attempts + " attempt(s)). An SLH-DSA " +
+    "signature is seconds of CPU, so this job expects the mock to be busy — " +
+    "but not for this long, which usually means it is not running.");
+}
+
 async function registerClient(metadata) {
   log.debug("Entering registerClient().");
-  var response = await fetch(stsBase + "/oauth2/register", {
+  var response = await stsFetch(stsBase + "/oauth2/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(Object.assign({ redirect_uris: [REDIRECT_URI] },
@@ -111,7 +173,7 @@ async function registerClient(metadata) {
 
 async function accessTokenFor(client) {
   log.debug("Entering accessTokenFor().");
-  var response = await fetch(stsBase + "/oauth2/token", {
+  var response = await stsFetch(stsBase + "/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -130,7 +192,7 @@ async function accessTokenFor(client) {
 
 async function callUserinfo(accessToken) {
   log.debug("Entering callUserinfo().");
-  var response = await fetch(stsBase + "/oauth2/userinfo",
+  var response = await stsFetch(stsBase + "/oauth2/userinfo",
     { headers: { Authorization: "Bearer " + accessToken } });
   var body = await response.text();
   log.debug("Leaving callUserinfo(). " + response.status);
@@ -141,7 +203,7 @@ async function callUserinfo(accessToken) {
 async function fetchOpJwks() {
   log.debug("Entering fetchOpJwks().");
   if (!opJwks) {
-    var response = await fetch(stsBase + "/oauth2/jwks");
+    var response = await stsFetch(stsBase + "/oauth2/jwks");
     assert.strictEqual(response.status, 200, "the JWKS should resolve.");
     opJwks = await response.json();
   }
@@ -206,7 +268,7 @@ async function unregisteredClientGetsPlainJson() {
 // ---------------------------------------------------------------------------
 async function everyAdvertisedSigningAlgorithmWorks() {
   log.debug("Entering everyAdvertisedSigningAlgorithmWorks().");
-  var metadata = await (await fetch(stsBase +
+  var metadata = await (await stsFetch(stsBase +
       "/.well-known/openid-configuration")).json();
   var algs = (metadata.userinfo_signing_alg_values_supported || [])
     .filter(function (alg) { return alg !== "none"; });
@@ -278,7 +340,7 @@ async function everyAdvertisedSigningAlgorithmWorks() {
 // ---------------------------------------------------------------------------
 async function everyAdvertisedEncryptionPairWorks() {
   log.debug("Entering everyAdvertisedEncryptionPairWorks().");
-  var metadata = await (await fetch(stsBase +
+  var metadata = await (await stsFetch(stsBase +
       "/.well-known/openid-configuration")).json();
   var algs = metadata.userinfo_encryption_alg_values_supported || [];
   var encs = metadata.userinfo_encryption_enc_values_supported || [];
@@ -469,7 +531,7 @@ async function unsupportedRegistrationsAreRefusedNotDowngraded() {
 // ---------------------------------------------------------------------------
 async function metadataAdvertisesWhatItDoes() {
   log.debug("Entering metadataAdvertisesWhatItDoes().");
-  var metadata = await (await fetch(stsBase +
+  var metadata = await (await stsFetch(stsBase +
       "/.well-known/openid-configuration")).json();
   ["userinfo_signing_alg_values_supported",
    "userinfo_encryption_alg_values_supported",
@@ -510,7 +572,7 @@ async function metadataAdvertisesWhatItDoes() {
 // ---------------------------------------------------------------------------
 async function everyAdvertisedIdTokenAlgorithmWorks() {
   log.debug("Entering everyAdvertisedIdTokenAlgorithmWorks().");
-  var metadata = await (await fetch(stsBase +
+  var metadata = await (await stsFetch(stsBase +
       "/.well-known/openid-configuration")).json();
   var algs = (metadata.id_token_signing_alg_values_supported || [])
     .filter(function (alg) { return alg !== "none"; });
@@ -562,7 +624,7 @@ async function everyAdvertisedIdTokenAlgorithmWorks() {
 // ---------------------------------------------------------------------------
 async function theAlgorithmListsAgreeWithEachOther() {
   log.debug("Entering theAlgorithmListsAgreeWithEachOther().");
-  var metadata = await (await fetch(stsBase +
+  var metadata = await (await stsFetch(stsBase +
       "/.well-known/openid-configuration")).json();
   var jwks = await fetchOpJwks();
 

@@ -505,21 +505,126 @@ function encPlaintext(xml, c14nMode, type) {
 // Encrypt an XML string, returning an <xenc:EncryptedData> element string.
 // opts: { certPem, dataAlg, keyAlg, type, c14nMode, digest, mgf } — the same
 // knobs the SAML encryption panel exposes.
+// ---------------------------------------------------------------------------
+// ENCRYPTION TO A KEM RECIPIENT. See the KEM section header for why this is a
+// separate path rather than another branch inside the wrap: the content
+// encryption key is not chosen here and not carried — it is DERIVED, on both
+// sides, from a secret the encapsulation produces.
+//
+// `opts.kem` is the primitive: `encapsulate(publicKeyBytes)` returning
+// `{ ciphertext, sharedSecret }`. `opts.kemPublicKey` is the recipient's
+// encapsulation key, raw. Both are the caller's because the lattice does not
+// belong in this file — the same rule the signature side follows.
+//
+// `Info` binds the derivation to THIS document's two algorithms, so a shared
+// secret cannot be reused across a different pairing, and it is written into
+// the document so a recipient reproduces it by reading rather than by
+// agreeing.
+// ---------------------------------------------------------------------------
+function encapsulateXml(xml, opts, ctx) {
+  log.debug("Entering encapsulateXml(). alg=" + ctx.kem.alg);
+  if (!opts.kem || typeof opts.kem.encapsulate !== 'function') {
+    log.debug("Leaving encapsulateXml(). No KEM.");
+    throw new Error(ctx.kem.label + ' needs an encapsulation function — this ' +
+        'file holds the identifiers and the key derivation, not the lattice ' +
+        '(the same split it makes for post-quantum signatures). Pass ' +
+        'opts.kem, which client/src/xmldsig_pqc.js builds from ' +
+        'client/src/pk_encryption.js.');
+  }
+  var recipient = opts.kemPublicKey;
+  if (!recipient || !recipient.length) {
+    log.debug("Leaving encapsulateXml(). No recipient key.");
+    throw new Error(ctx.kem.label + ' needs the recipient\'s encapsulation ' +
+        'key (opts.kemPublicKey, ' + ctx.kem.pubBytes + ' bytes). There is ' +
+        'no certificate for one: no X.509 profile for an ML-KEM key is ' +
+        'defined by the draft, so it travels as a dsig11:DEREncodedKeyValue.');
+  }
+  var encapsulated = opts.kem.encapsulate(recipient);
+  var kemCiphertext = toBinaryString(encapsulated.ciphertext);
+  var sharedSecret = toBinaryString(encapsulated.sharedSecret);
+  var hkdfParams = {
+    prf: opts.prf || HMAC_SHA256_URI,
+    salt: opts.kdfSalt || '',
+    info: opts.kdfInfo === undefined
+      ? forge.util.encodeUtf8(ctx.keyAlg + '|' + ctx.dataAlg)
+      : opts.kdfInfo,
+    length: ctx.spec.keyBytes
+  };
+  var sessionKey = hkdf(hkdfParams.prf, sharedSecret, hkdfParams.salt,
+      hkdfParams.info, hkdfParams.length);
+
+  var plaintext = encPlaintext(xml, ctx.c14nMode, ctx.type);
+  var ptBytes = forge.util.encodeUtf8(plaintext);
+  var iv = forge.random.getBytesSync(ctx.spec.ivBytes);
+  var cipher = forge.cipher.createCipher(ctx.spec.cipher, sessionKey);
+  cipher.start(ctx.spec.gcm ? { iv: iv, tagLength: 128 } : { iv: iv });
+  cipher.update(forge.util.createBuffer(ptBytes));
+  if (!cipher.finish()) {
+    log.debug("Leaving encapsulateXml(). Data encryption failed.");
+    throw new Error('Data encryption failed.');
+  }
+  var cipherValue = iv + cipher.output.getBytes() +
+      (ctx.spec.gcm ? cipher.mode.tag.getBytes() : '');
+
+  log.debug("Leaving encapsulateXml(). " + ctx.kem.alg + ".");
+  return '<xenc:EncryptedData xmlns:xenc="' + XENC_NS + '" Type="' + ctx.type +
+      '">' +
+      '<xenc:EncryptionMethod Algorithm="' + ctx.dataAlg + '"/>' +
+      '<ds:KeyInfo xmlns:ds="' + DS_NS + '">' +
+        '<xenc:EncryptedKey>' +
+          '<xenc:EncryptionMethod Algorithm="' + ctx.keyAlg + '">' +
+              hkdfParamsXml(hkdfParams) + '</xenc:EncryptionMethod>' +
+          '<ds:KeyInfo>' + derEncodedKeyValueXml(recipient) + '</ds:KeyInfo>' +
+          '<xenc:CipherData><xenc:CipherValue>' +
+              forge.util.encode64(kemCiphertext) +
+              '</xenc:CipherValue></xenc:CipherData>' +
+        '</xenc:EncryptedKey>' +
+      '</ds:KeyInfo>' +
+      '<xenc:CipherData><xenc:CipherValue>' +
+          forge.util.encode64(cipherValue) +
+          '</xenc:CipherValue></xenc:CipherData>' +
+    '</xenc:EncryptedData>';
+}
+
+// Bytes to the forge binary string the rest of this file speaks. One character
+// per byte — see client/src/xmldsig_pqc.js on why this is not a TextEncoder.
+function toBinaryString(value) {
+  log.debug("Entering toBinaryString().");
+  if (typeof value === 'string') {
+    log.debug("Leaving toBinaryString(). Already one.");
+    return value;
+  }
+  log.debug("Leaving toBinaryString().");
+  return forge.util.binary.raw.encode(new Uint8Array(value));
+}
+
 function encryptXml(xml, opts) {
   log.debug("Entering encryptXml().");
   opts = opts || {};
+  var dataAlg = opts.dataAlg || (XENC11_NS + 'aes256-gcm');
+  var keyAlg = opts.keyAlg || (XENC11_NS + 'rsa-oaep');
+  var type = opts.type || (XENC_NS + 'Element');
+  var c14nMode = opts.c14nMode || 'none';
+  var spec = dataAlgSpec(dataAlg);
+
+  // A KEM RECIPIENT HAS NO CERTIFICATE, so the check below cannot come first
+  // any more. There is no standard X.509 profile for an ML-KEM encapsulation
+  // key that anything here could parse, and the draft defines none — the key
+  // travels as raw bytes in a dsig11:DEREncodedKeyValue. See the KEM section
+  // header for what else is different about this path.
+  var kem = kemMethod(keyAlg);
+  if (kem) {
+    log.debug("Leaving encryptXml(). Encapsulating.");
+    return encapsulateXml(xml, opts, { kem: kem, keyAlg: keyAlg,
+        dataAlg: dataAlg, type: type, c14nMode: c14nMode, spec: spec });
+  }
+
   var certField = opts.certPem || '';
   if (!String(certField).trim()) throw new Error('No encryption certificate ' +
       '— paste a recipient certificate.');
   var certB64 = certPemToB64(certField);
   var cert = forge.pki.certificateFromPem(pemWrapCert(certField));
   var pub = cert.publicKey;
-
-  var dataAlg = opts.dataAlg || (XENC11_NS + 'aes256-gcm');
-  var keyAlg = opts.keyAlg || (XENC11_NS + 'rsa-oaep');
-  var type = opts.type || (XENC_NS + 'Element');
-  var c14nMode = opts.c14nMode || 'none';
-  var spec = dataAlgSpec(dataAlg);
 
   var plaintext = encPlaintext(xml, c14nMode, type);
   var ptBytes = forge.util.encodeUtf8(plaintext);
@@ -590,10 +695,27 @@ function firstByLocal(root, name) {
 function signWsSecurity(soapXml, opts) {
   log.debug("Entering signWsSecurity().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('signWsSecurity: privateKeyPem is ' +
-      'required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
-  var spec = sigAlgSpec(sigAlg);
+  // Post-quantum, additively — the same shape signEnveloped() takes, and for
+  // the same three reasons: only a URI in the registry takes this path, the
+  // RSA family is byte-for-byte what it was, and `sigAlgSpec()` must not be
+  // asked about an identifier it does not know because it answers SHA-256.
+  var pqSpec = (SIG_METHODS[sigAlg] && SIG_METHODS[sigAlg].postQuantum)
+    ? SIG_METHODS[sigAlg] : null;
+  if (pqSpec && typeof opts.signer !== 'function') {
+    log.debug("Leaving signWsSecurity(). Post-quantum with no signer.");
+    throw new Error('signWsSecurity: ' + pqSpec.label + ' needs opts.signer. ' +
+        'This module holds the identifiers and not the lattice; ' +
+        'client/src/xmldsig_pqc.js builds the signer.');
+  }
+  if (!pqSpec && !opts.privateKeyPem) {
+    log.debug("Leaving signWsSecurity(). No private key.");
+    throw new Error('signWsSecurity: privateKeyPem is required.');
+  }
+  var spec = pqSpec
+    ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
+        digestUri: pqSpec.digestUri }
+    : sigAlgSpec(sigAlg);
 
   var doc = parseXmlStrict(soapXml, 'the SOAP envelope to sign');
   var security = firstByLocal(doc, 'Security');
@@ -624,15 +746,31 @@ function signWsSecurity(soapXml, opts) {
         '</ds:SignedInfo>';
   var siCanon = canonicalize(new DOMParser().parseFromString(signedInfo,
       'application/xml').documentElement);
-  var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
-  var md = spec.md(); md.update(siCanon, 'utf8');
-  var sigVal = forge.util.encode64(pk.sign(md));
-  var certB64 = certPemToB64(opts.certPem);
+  var sigVal;
+  if (pqSpec) {
+    var rawSig = opts.signer(forge.util.encodeUtf8(siCanon), pqSpec, sigAlg);
+    sigVal = typeof rawSig === 'string' ? forge.util.encode64(rawSig)
+      : forge.util.encode64(forge.util.binary.raw.encode(rawSig));
+  } else {
+    var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
+    var md = spec.md(); md.update(siCanon, 'utf8');
+    sigVal = forge.util.encode64(pk.sign(md));
+  }
+  // A post-quantum signer has no certificate — the draft defines no X.509
+  // profile — so its KeyInfo is the caller's DEREncodedKeyValue. WS-Security's
+  // BinarySecurityToken reference is the shape a real STS expects for a
+  // certificate and there is no equivalent registered for one of these, which
+  // is worth knowing before pointing this at Apache CXF: what goes out is a
+  // valid XMLDSIG KeyInfo and not a WS-Security token reference.
+  var keyInfoXml = pqSpec
+    ? '<ds:KeyInfo>' + (opts.keyInfoXml || '') + '</ds:KeyInfo>'
+    : '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
+      certPemToB64(opts.certPem) +
+      '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>';
 
   var signature = '<ds:Signature xmlns:ds="' + DS_NS + '">' + signedInfo +
     '<ds:SignatureValue>' + sigVal + '</ds:SignatureValue>' +
-    '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 +
-        '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
+    keyInfoXml +
     '</ds:Signature>';
   var sigNode = doc.importNode(new DOMParser().parseFromString(signature,
       'application/xml').documentElement, true);
@@ -660,10 +798,41 @@ function signWsSecurity(soapXml, opts) {
 function signEnveloped(xml, opts) {
   log.debug("Entering signEnveloped().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('signEnveloped: privateKeyPem is ' +
-      'required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
-  var spec = sigAlgSpec(sigAlg);
+  // ---------------------------------------------------------------------
+  // POST-QUANTUM, AND EVERY PRE-EXISTING CALLER IS UNTOUCHED BY IT.
+  //
+  // This function signs ONE SHAPE of document with almost every XMLDSIG
+  // choice fixed, and it stayed that way on purpose when the general engine
+  // was added beside it — a SAML assertion that quietly stops verifying is a
+  // defect nobody sees until an identity provider refuses it. So the branch
+  // below is ADDITIVE: `sigAlgSpec()` still decides for the four RSA URIs,
+  // byte for byte, and only a URI that is in the post-quantum registry takes
+  // the other path.
+  //
+  // Note what `sigAlgSpec()` does with a URI it does not know: it returns
+  // SHA-256. That is right for the RSA family it was written for and would be
+  // silently wrong here — an ML-DSA identifier would have produced a
+  // SHA-256-digested Reference and then died on the PEM parse, naming a key.
+  // Looking the registry up FIRST is what stops that.
+  // ---------------------------------------------------------------------
+  var pqSpec = (SIG_METHODS[sigAlg] && SIG_METHODS[sigAlg].postQuantum)
+    ? SIG_METHODS[sigAlg] : null;
+  if (pqSpec && typeof opts.signer !== 'function') {
+    log.debug("Leaving signEnveloped(). Post-quantum with no signer.");
+    throw new Error('signEnveloped: ' + pqSpec.label + ' needs opts.signer. ' +
+        'This module holds the identifiers and not the lattice (see the ' +
+        'section header); client/src/xmldsig_pqc.js builds the signer from ' +
+        'pqc.js and hbs.js.');
+  }
+  if (!pqSpec && !opts.privateKeyPem) {
+    log.debug("Leaving signEnveloped(). No private key.");
+    throw new Error('signEnveloped: privateKeyPem is required.');
+  }
+  var spec = pqSpec
+    ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
+        digestUri: pqSpec.digestUri }
+    : sigAlgSpec(sigAlg);
   var digestUri = opts.digestUri || spec.digestUri;
   var c14nAlg = opts.c14nAlg || C14N_EXCLUSIVE;
   var c14nFn = c14nForAlg(c14nAlg);
@@ -697,7 +866,13 @@ function signEnveloped(xml, opts) {
     '</ds:Reference></ds:SignedInfo>';
 
   var keyInfo = '';
-  if (opts.includeKeyInfo !== false && opts.certPem) {
+  if (opts.includeKeyInfo !== false && opts.keyInfoXml) {
+    // A caller-supplied KeyInfo, which is how a post-quantum public key gets
+    // into the document: there is no X.509 certificate for one — the draft
+    // defines no profile — so it travels as a dsig11:DEREncodedKeyValue,
+    // which derEncodedKeyValueXml() builds.
+    keyInfo = '<ds:KeyInfo>' + opts.keyInfoXml + '</ds:KeyInfo>';
+  } else if (opts.includeKeyInfo !== false && opts.certPem) {
     keyInfo = '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
       certPemToB64(opts.certPem) +
                    '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>';
@@ -729,11 +904,25 @@ function signEnveloped(xml, opts) {
   }
 
   var siNode = directChildByLocal(sigNode, 'SignedInfo');
-  var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
-  var md = spec.md();
-  md.update(c14nFn(siNode), 'utf8');
+  var sigB64;
+  if (pqSpec) {
+    // THE SAME OCTETS THE RSA BRANCH HASHES. `c14nFn` returns a JS string and
+    // forge's `md.update(s, 'utf8')` encodes it — so the signer is handed
+    // `encodeUtf8()` of it, which is the binary string signXml()'s signers
+    // already take. Handing over the JS string instead would sign a different
+    // message on any document with a non-ASCII character in its SignedInfo.
+    var rawSig = opts.signer(forge.util.encodeUtf8(c14nFn(siNode)), pqSpec,
+                             sigAlg);
+    sigB64 = typeof rawSig === 'string' ? forge.util.encode64(rawSig)
+      : forge.util.encode64(forge.util.binary.raw.encode(rawSig));
+  } else {
+    var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
+    var md = spec.md();
+    md.update(c14nFn(siNode), 'utf8');
+    sigB64 = forge.util.encode64(pk.sign(md));
+  }
   directChildByLocal(sigNode, 'SignatureValue')
-    .appendChild(doc.createTextNode(forge.util.encode64(pk.sign(md))));
+    .appendChild(doc.createTextNode(sigB64));
 
   log.debug("Leaving signEnveloped().");
   return new XMLSerializer().serializeToString(doc);
@@ -834,7 +1023,19 @@ function verifyXmlSignature(xml, opts) {
     log.debug("Leaving verifyXmlSignature().");
     return { valid: false, error: 'Signature has no <SignatureValue>.' };
   }
-  var spec = sigAlgSpec(sigAlg);
+  // POST-QUANTUM, ADDITIVELY: only a URI in the registry takes this path, and
+  // everything below is exactly what it was for the RSA family. A
+  // post-quantum signature has NO SIGNING CERTIFICATE — the draft defines no
+  // X.509 profile for one — so the certificate demand below cannot come first
+  // any more, and there is nothing for `sigAlgSpec()` to be asked either: it
+  // answers SHA-256 for a URI it does not know, which is right for the family
+  // it was written for and would be silently wrong here.
+  var pqSpec = (SIG_METHODS[sigAlg] && SIG_METHODS[sigAlg].postQuantum)
+    ? SIG_METHODS[sigAlg] : null;
+  var spec = pqSpec
+    ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
+        digestUri: pqSpec.digestUri }
+    : sigAlgSpec(sigAlg);
 
   // Signing certificate: prefer a supplied cert, else the one in KeyInfo.
   var certB64 = '';
@@ -842,15 +1043,27 @@ function verifyXmlSignature(xml, opts) {
   if (x509) certB64 = (x509.textContent || '').replace(/\s+/g, '');
   var certPem = opts.certPem ? pemWrapCert(opts.certPem) : (certB64 ?
       pemWrapCert(certB64) : '');
-  if (!certPem) {
+  if (pqSpec && typeof opts.verifier !== 'function') {
+    log.debug("Leaving verifyXmlSignature(). Post-quantum with no verifier.");
+    return { valid: false,
+            error: 'This document is signed with ' + pqSpec.label + ', which ' +
+                   'needs opts.verifier — this module holds the ' +
+                   'identifiers and not the lattice. ' +
+                   'client/src/xmldsig_pqc.js builds one from pqc.js and ' +
+                   'hbs.js, and the public key is in the ' +
+                   'dsig11:DEREncodedKeyValue rather than in a certificate.' };
+  }
+  if (!pqSpec && !certPem) {
     log.debug("Leaving verifyXmlSignature().");
     return { valid: false,
             error: 'No signing certificate in KeyInfo and none supplied.' };
   }
-  var cert, pub;
+  var cert = null, pub = null;
   try {
-    cert = forge.pki.certificateFromPem(certPem);
-    pub = cert.publicKey;
+    if (certPem) {
+      cert = forge.pki.certificateFromPem(certPem);
+      pub = cert.publicKey;
+    }
   } catch (e) {
     log.debug("Leaving verifyXmlSignature().");
     return { valid: false, error: 'Could not parse signing certificate: ' +
@@ -864,10 +1077,23 @@ function verifyXmlSignature(xml, opts) {
       '').replace(/\s+/g, ''));
   var signatureValid = false;
   try {
-    var md1 = spec.md();
-    md1.update(siCanon, 'utf8');
-    signatureValid = pub.verify(md1.digest().bytes(), signatureBytes);
+    if (pqSpec) {
+      // The same octets the RSA branch hashes — see signEnveloped() on why
+      // this is encodeUtf8() of the canonicalized string rather than the
+      // string.
+      signatureValid = !!opts.verifier(forge.util.encodeUtf8(siCanon),
+                                       signatureBytes, pqSpec, sigAlg);
+    } else {
+      var md1 = spec.md();
+      md1.update(siCanon, 'utf8');
+      signatureValid = pub.verify(md1.digest().bytes(), signatureBytes);
+    }
   } catch (e) {
+    // A verifier that THREW said something a caller can act on — a wrong
+    // signature length names the parameter set — so it is kept rather than
+    // flattened into `false`. A signature that merely does not hold up
+    // returns false and never reaches here.
+    log.debug("verifyXmlSignature(): the verifier threw: " + e.message);
     signatureValid = false;
   }
 
@@ -909,7 +1135,7 @@ function verifyXmlSignature(xml, opts) {
     references: references,
     signatureMethod: sigAlg,
     canonicalization: c14nAlg,
-    signerSubject: certSubjectCN(cert),
+    signerSubject: cert ? certSubjectCN(cert) : '',
     signerCertB64: certB64
   };
 }
@@ -948,8 +1174,6 @@ function cipherValueOf(container) {
 function decryptXml(xml, opts) {
   log.debug("Entering decryptXml().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('decryptXml: privateKeyPem is ' +
-      'required.');
   var doc = new DOMParser().parseFromString(xml, 'application/xml');
   if (doc.getElementsByTagName('parsererror')
       .length) throw new Error('malformed XML');
@@ -973,6 +1197,21 @@ function decryptXml(xml, opts) {
   var wrappedB64 = cipherValueOf(ek);
   if (!wrappedB64) throw new Error('EncryptedKey has no CipherValue.');
 
+  // A KEM DECAPSULATES RATHER THAN UNWRAPPING, and the derivation it needs is
+  // read out of the document rather than assumed — see the KEM section header.
+  // This is checked before privateKeyPem, because a KEM recipient has no PEM
+  // private key either: it holds raw decapsulation-key bytes.
+  var kem = kemMethod(keyAlg);
+  if (kem) {
+    log.debug("Leaving decryptXml(). Decapsulating.");
+    return decapsulateXml(doc, ed, ek, kmEl, wrappedB64, opts,
+                          { kem: kem, keyAlg: keyAlg, spec: spec });
+  }
+
+  if (!opts.privateKeyPem) {
+    log.debug("Leaving decryptXml(). No private key.");
+    throw new Error('decryptXml: privateKeyPem is required.');
+  }
   var priv = forge.pki.privateKeyFromPem(opts.privateKeyPem);
   var wrapped = forge.util.decode64(wrappedB64);
   var sessionKey;
@@ -1018,6 +1257,90 @@ function decryptXml(xml, opts) {
   if (!decipher.finish()) throw new Error('data decryption failed (wrong key ' +
       'or corrupted ciphertext).');
   log.debug("Leaving decryptXml().");
+  return forge.util.decodeUtf8(decipher.output.getBytes());
+}
+
+// ---------------------------------------------------------------------------
+// DECRYPTION FROM A KEM RECIPIENT. The mirror of encapsulateXml(): decapsulate
+// to the shared secret, then derive the content encryption key with EXACTLY
+// the parameters the document states — PRF, salt, info and length, all of them
+// read rather than defaulted, which is what makes this reproduce a sender that
+// is not this file.
+//
+// `opts.kemPrivateKey` is the raw decapsulation key and `opts.kem` supplies
+// `decapsulate(ciphertext, privateKeyBytes)`.
+//
+// A WRONG DECAPSULATION KEY DOES NOT FAIL HERE, and that is FIPS 203 rather
+// than a gap: ML-KEM is implicitly rejecting, so decapsulating with the wrong
+// key returns a well-formed shared secret that is simply a different one. The
+// failure therefore surfaces at the AEAD tag, which is the right place for it —
+// and the message says so, because "data decryption failed" over a KEM
+// otherwise reads as a corrupted document rather than as the wrong key.
+// ---------------------------------------------------------------------------
+function decapsulateXml(doc, ed, ek, kmEl, ciphertextB64, opts, ctx) {
+  log.debug("Entering decapsulateXml(). alg=" + ctx.kem.alg);
+  if (!opts.kem || typeof opts.kem.decapsulate !== 'function') {
+    log.debug("Leaving decapsulateXml(). No KEM.");
+    throw new Error(ctx.kem.label + ' needs a decapsulation function — this ' +
+        'file holds the identifiers and the key derivation, not the lattice. ' +
+        'Pass opts.kem.');
+  }
+  if (!opts.kemPrivateKey || !opts.kemPrivateKey.length) {
+    log.debug("Leaving decapsulateXml(). No decapsulation key.");
+    throw new Error(ctx.kem.label + ' needs the recipient\'s decapsulation ' +
+        'key (opts.kemPrivateKey), which is raw bytes and not a PEM — there ' +
+        'is no PKCS#8 profile for one that this file could read.');
+  }
+  var ciphertext = forge.util.decode64(ciphertextB64);
+  if (ciphertext.length !== ctx.kem.ctBytes) {
+    log.debug("Leaving decapsulateXml(). Wrong ciphertext length.");
+    throw new Error('An ' + ctx.kem.alg + ' encapsulation is ' +
+        ctx.kem.ctBytes + ' bytes and this CipherValue holds ' +
+        ciphertext.length + '. Either the base64 is truncated, or the ' +
+        'document was made for a different parameter set than its ' +
+        'EncryptionMethod names.');
+  }
+  var params = readHkdfParams(kmEl);
+  if (params.length !== ctx.spec.keyBytes) {
+    log.debug("Leaving decapsulateXml(). KeyLength disagrees with the cipher.");
+    throw new Error('The KeyDerivationMethod asks for a ' + params.length +
+        '-byte key and the EncryptionMethod names a cipher that takes ' +
+        ctx.spec.keyBytes + '. One of the two is wrong about this document.');
+  }
+  var shared = toBinaryString(opts.kem.decapsulate(
+      forge.util.binary.raw.decode(ciphertext),
+      opts.kemPrivateKey));
+  var sessionKey = hkdf(params.prf, shared, params.salt, params.info,
+                        params.length);
+
+  var dataB64 = cipherValueOf(ed);
+  if (!dataB64) {
+    log.debug("Leaving decapsulateXml(). No data.");
+    throw new Error('EncryptedData has no CipherValue.');
+  }
+  var cipherRaw = forge.util.decode64(dataB64);
+  var iv = cipherRaw.substring(0, ctx.spec.ivBytes);
+  var decipher = forge.cipher.createDecipher(ctx.spec.cipher, sessionKey);
+  if (ctx.spec.gcm) {
+    var tag = cipherRaw.substring(cipherRaw.length - 16);
+    var body = cipherRaw.substring(ctx.spec.ivBytes, cipherRaw.length - 16);
+    decipher.start({ iv: iv, tag: forge.util.createBuffer(tag),
+                     tagLength: 128 });
+    decipher.update(forge.util.createBuffer(body));
+  } else {
+    decipher.start({ iv: iv });
+    decipher.update(forge.util.createBuffer(
+        cipherRaw.substring(ctx.spec.ivBytes)));
+  }
+  if (!decipher.finish()) {
+    log.debug("Leaving decapsulateXml(). The tag did not check out.");
+    throw new Error('The content did not decrypt. With a KEM this is USUALLY ' +
+        'THE WRONG DECAPSULATION KEY rather than a corrupted document: ' +
+        'ML-KEM is implicitly rejecting (FIPS 203), so the wrong key ' +
+        'produces a perfectly well-formed shared secret that is simply a ' +
+        'different one, and the first thing that notices is this AEAD tag.');
+  }
+  log.debug("Leaving decapsulateXml(). Decrypted.");
   return forge.util.decodeUtf8(decipher.output.getBytes());
 }
 
@@ -1249,6 +1572,369 @@ SIG_METHODS['http://www.w3.org/2001/04/xmldsig-more#hmac-sha512'] =
   { family: 'hmac', hash: 'sha512', keyKind: 'secret',
     digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512',
     label: 'HMAC-SHA512 (a MAC, not a signature)' };
+
+// ===========================================================================
+// THE POST-QUANTUM SIGNATURE METHODS — draft-eastlake-rfc9231bis-xmlsec-uris.
+//
+// XMLDSIG is crypto-agile BY DESIGN: `SignatureMethod/@Algorithm` is a URI and
+// nothing in the specification enumerates the legal ones, so a new signature
+// scheme needs an identifier and an implementation and NOT a new version of
+// XML Signature. That property is why this table can grow at all, and it is
+// the whole of what the draft below does.
+//
+// **THESE URIs ARE FROM AN INDIVIDUAL INTERNET-DRAFT AND ARE NOT A
+// RECOMMENDATION.** `draft-eastlake-rfc9231bis-xmlsec-uris-09`, 21 August
+// 2026, which is intended to obsolete RFC 9231 and carries no IETF or W3C
+// endorsement — its own boilerplate says so, and section 3.3.16 is still
+// marked "not yet listed in the indexes in Section 5". W3C has nothing: its
+// strategy issue #484 asks for a WORKSHOP on the subject. So every label here
+// says "draft", and it says so because a person reading a menu has no other
+// way to tell a draft identifier from a REC one — they are both just URIs.
+//
+// The namespace is the draft's own, `http://www.w3.org/2026/08/xmldsig-more#`,
+// used VERBATIM. Apache Santuario's in-flight PR for the same draft hedges
+// further and ships `http://www.w3.org/tbd#ml-dsa-44`; matching that would make
+// this tool interoperate with one unreleased build and with nothing else,
+// where matching the draft makes it interoperate with anything that implements
+// the draft. If the draft's namespace changes, it changes in one line here.
+//
+// WHAT IS NOT HERE, AND WHY. The draft's HashML-DSA pre-hashed variants have no
+// identifiers in it — section 3.3.15 says the PURE variant is what these URIs
+// name — so there is nothing to add. The composite ML-DSA + traditional
+// algorithms of draft-ietf-jose-pq-composite-sigs have no XML identifiers
+// anywhere, so they are absent rather than invented: an identifier this project
+// made up would be a signature nothing else on earth can verify, which is the
+// opposite of what a debugger is for.
+//
+// THE CRYPTOGRAPHY IS INJECTED, exactly as it is for ECDSA and HMAC — see the
+// section header above. `opts.signer` / `opts.verifier` do the work;
+// @noble/post-quantum in this file would put ML-DSA and SLH-DSA into the SAML,
+// WS-Trust and WS-Federation bundles, none of which had a reason to grow by a
+// megabyte. What lives here is the REGISTRY: the URI, the family, the sizes and
+// the label, in one place, so that five menus and two services cannot disagree
+// about what this project supports.
+//
+// `digestUri` IS ONLY A DEFAULT PAIRING and is not implied by the algorithm.
+// DigestMethod hashes the REFERENCED CONTENT and SignatureMethod signs the
+// SignedInfo; XMLDSIG makes them independent and this engine's pane lets them
+// be. The default pairs each parameter set with a digest of comparable
+// strength — a 128-bit-security signature over a SHA-512 digest is not wrong,
+// it is merely a pair nobody chose on purpose.
+// ===========================================================================
+var XMLDSIG_MORE_2026 = 'http://www.w3.org/2026/08/xmldsig-more#';
+
+var SHA256_URI = 'http://www.w3.org/2001/04/xmlenc#sha256';
+var SHA384_URI = 'http://www.w3.org/2001/04/xmldsig-more#sha384';
+var SHA512_URI = 'http://www.w3.org/2001/04/xmlenc#sha512';
+
+// [ URI suffix, family, the name the engines know it by, digest pairing,
+//   public key bytes, signature bytes, label ]. Written as a table because
+//   sixteen hand-written object literals is sixteen chances to transpose a
+//   number, and every one of these sizes is checkable against FIPS 204/205.
+var PQ_SIGS = [
+  // --- ML-DSA, FIPS 204, draft section 3.3.15 -----------------------------
+  ['ml-dsa-44', 'mldsa', 'ML-DSA-44', SHA256_URI, 1312, 2420,
+   'ML-DSA-44 (FIPS 204, category 2 — draft)'],
+  ['ml-dsa-65', 'mldsa', 'ML-DSA-65', SHA384_URI, 1952, 3309,
+   'ML-DSA-65 (FIPS 204, category 3 — draft)'],
+  ['ml-dsa-87', 'mldsa', 'ML-DSA-87', SHA512_URI, 2592, 4627,
+   'ML-DSA-87 (FIPS 204, category 5 — draft)'],
+
+  // --- SLH-DSA, FIPS 205, draft section 3.3.16 ----------------------------
+  // Twelve parameter sets: three security levels, two hash families, and the
+  // "s"/"f" trade — small signatures with slow signing, or fast signing with
+  // signatures two to three times the size. The `f` signatures are the largest
+  // objects this engine will ever base64 into a document (49,856 bytes for
+  // 256f), which is worth knowing before choosing one in a redirect binding.
+  ['slh-dsa-sha2-128s', 'slhdsa', 'SLH-DSA-SHA2-128s', SHA256_URI, 32, 7856,
+   'SLH-DSA-SHA2-128s (FIPS 205, small — draft)'],
+  ['slh-dsa-sha2-128f', 'slhdsa', 'SLH-DSA-SHA2-128f', SHA256_URI, 32, 17088,
+   'SLH-DSA-SHA2-128f (FIPS 205, fast — draft)'],
+  ['slh-dsa-sha2-192s', 'slhdsa', 'SLH-DSA-SHA2-192s', SHA384_URI, 48, 16224,
+   'SLH-DSA-SHA2-192s (FIPS 205, small — draft)'],
+  ['slh-dsa-sha2-192f', 'slhdsa', 'SLH-DSA-SHA2-192f', SHA384_URI, 48, 35664,
+   'SLH-DSA-SHA2-192f (FIPS 205, fast — draft)'],
+  ['slh-dsa-sha2-256s', 'slhdsa', 'SLH-DSA-SHA2-256s', SHA512_URI, 64, 29792,
+   'SLH-DSA-SHA2-256s (FIPS 205, small — draft)'],
+  ['slh-dsa-sha2-256f', 'slhdsa', 'SLH-DSA-SHA2-256f', SHA512_URI, 64, 49856,
+   'SLH-DSA-SHA2-256f (FIPS 205, fast — draft)'],
+  ['slh-dsa-shake-128s', 'slhdsa', 'SLH-DSA-SHAKE-128s', SHA256_URI, 32, 7856,
+   'SLH-DSA-SHAKE-128s (FIPS 205, small — draft)'],
+  ['slh-dsa-shake-128f', 'slhdsa', 'SLH-DSA-SHAKE-128f', SHA256_URI, 32, 17088,
+   'SLH-DSA-SHAKE-128f (FIPS 205, fast — draft)'],
+  ['slh-dsa-shake-192s', 'slhdsa', 'SLH-DSA-SHAKE-192s', SHA384_URI, 48, 16224,
+   'SLH-DSA-SHAKE-192s (FIPS 205, small — draft)'],
+  ['slh-dsa-shake-192f', 'slhdsa', 'SLH-DSA-SHAKE-192f', SHA384_URI, 48, 35664,
+   'SLH-DSA-SHAKE-192f (FIPS 205, fast — draft)'],
+  ['slh-dsa-shake-256s', 'slhdsa', 'SLH-DSA-SHAKE-256s', SHA512_URI, 64, 29792,
+   'SLH-DSA-SHAKE-256s (FIPS 205, small — draft)'],
+  ['slh-dsa-shake-256f', 'slhdsa', 'SLH-DSA-SHAKE-256f', SHA512_URI, 64, 49856,
+   'SLH-DSA-SHAKE-256f (FIPS 205, fast — draft)']
+
+  // --- HSS/LMS, RFC 8554, draft section 3.3.14 ----------------------------
+  // Added below rather than in this table: its sizes are a FUNCTION of the
+  // parameter set chosen at key generation rather than of the URI, because the
+  // one identifier covers every LMS tree height and Winternitz width there is.
+];
+
+// THE ONE STATEFUL SCHEME, AND IT IS THE ONE TO READ TWICE. HSS/LMS is a
+// hash-based signature whose PRIVATE KEY CHANGES EVERY TIME IT IS USED: each
+// one-time key signs once, and spending one twice hands an attacker the
+// material to forge a third message. Nothing else in this table is like that,
+// and nothing in XML Signature expresses it — the URI says HSS/LMS and says
+// nothing about which leaf was spent, so a document signed with a reused index
+// verifies perfectly and is worthless. `client/src/hbs.js` is the
+// implementation and its pane keeps the index in the key; this registry exists
+// so that a SignatureMethod can name it, not so that this file can manage that
+// state.
+//
+// One URI for the whole scheme, per the draft: there is no per-parameter-set
+// identifier, so the sizes below are unknown until a key is chosen.
+var HSS_LMS_URI = XMLDSIG_MORE_2026 + 'hss-lms';
+
+PQ_SIGS.forEach(function (row) {
+  SIG_METHODS[XMLDSIG_MORE_2026 + row[0]] = {
+    family: row[1], alg: row[2], hash: null, keyKind: 'akp',
+    digestUri: row[3], pubBytes: row[4], sigBytes: row[5],
+    postQuantum: true, draft: true, label: row[6]
+  };
+});
+
+SIG_METHODS[HSS_LMS_URI] =
+  { family: 'hsslms', alg: 'HSS-LMS', hash: null, keyKind: 'hsslms',
+    digestUri: SHA256_URI, postQuantum: true, draft: true, stateful: true,
+    label: 'HSS/LMS (RFC 8554, STATEFUL — draft)' };
+
+// Every post-quantum SignatureMethod this engine knows, in the order they were
+// added above. Exported so that a menu is BUILT from this table rather than
+// written out beside it: five pages carry an algorithm menu, and five
+// hand-written copies of sixteen URIs is five copies that will disagree.
+var PQ_SIG_URIS = Object.keys(SIG_METHODS).filter(function (uri) {
+  return SIG_METHODS[uri].postQuantum;
+});
+
+// ===========================================================================
+// THE POST-QUANTUM KEY ENCAPSULATION METHODS, AND THE ONE THING THAT MAKES
+// THEM DIFFERENT FROM EVERY OTHER `EncryptedKey` IN THIS FILE.
+//
+// **A KEM IS NOT KEY TRANSPORT.** RSA key transport takes the content
+// encryption key this file has just generated and WRAPS it, so the recipient
+// decrypts the CipherValue and has the key. ML-KEM takes only the recipient's
+// public key and produces a ciphertext AND A FRESH SHARED SECRET — there is
+// nothing to put a key into. So the CipherValue is an ENCAPSULATION, the
+// content encryption key is DERIVED from the shared secret rather than
+// carried, and the sender does not choose it at all.
+//
+// draft-eastlake-rfc9231bis-xmlsec-uris section 3.6.9 gives the three
+// identifiers and says the shared secret is "typically used as input to a key
+// derivation function, such as HKDF (see Section 3.8.1)". **"TYPICALLY" IS NOT
+// A BINDING**, and that gap is the one thing here that could make two correct
+// implementations disagree — so this file writes every parameter of the
+// derivation INTO THE DOCUMENT and reads them back out, rather than agreeing
+// with itself about defaults. The `HKDFParams` element is the draft's own
+// (section 3.8.1's schema, verbatim: PRF, Salt, Info, KeyLength); where it
+// SITS is not specified for a KEM, and it goes inside the EncryptedKey's
+// `EncryptionMethod` because that is exactly where this file already carries
+// RSA-OAEP's DigestMethod and MGF — an algorithm's own parameters, beside the
+// algorithm.
+//
+// A document produced here therefore says, in full, how its content encryption
+// key was derived: the PRF, the salt, the info string and the length. A
+// recipient that reads those needs to agree with nothing.
+//
+// THE LATTICE IS INJECTED and the KDF IS NOT, which is the same split the
+// signature side makes for the same reason: `@noble/post-quantum` in this file
+// would land in every bundle, so `opts.kem` supplies encapsulate/decapsulate —
+// but HKDF is where two implementations silently diverge, so it is written out
+// here, once, on the HMAC forge already provides.
+// ===========================================================================
+var DSIG_MORE_2021 = 'http://www.w3.org/2021/04/xmldsig-more#';
+var HKDF_URI = DSIG_MORE_2021 + 'hkdf';
+var HMAC_SHA256_URI = 'http://www.w3.org/2001/04/xmldsig-more#hmac-sha256';
+
+var KEM_METHODS = {};
+[['ml-kem-512', 'ML-KEM-512', 800, 768, 1],
+ ['ml-kem-768', 'ML-KEM-768', 1184, 1088, 3],
+ ['ml-kem-1024', 'ML-KEM-1024', 1568, 1568, 5]].forEach(function (row) {
+  KEM_METHODS[XMLDSIG_MORE_2026 + row[0]] = {
+    family: 'mlkem', alg: row[1], pubBytes: row[2], ctBytes: row[3],
+    secretBytes: 32, postQuantum: true, draft: true,
+    label: row[1] + ' (FIPS 203, category ' + row[4] + ' — draft)'
+  };
+});
+
+// ---------------------------------------------------------------------------
+// FrodoKEM AND eFrodoKEM — draft section 3.6.10, and the only algorithm in
+// this project with no library behind it. `client/src/frodokem.js` is written
+// from the specification and held to the reference implementation's own Known
+// Answer Tests for all twelve, which caught a real defect on its first run.
+//
+// **eFrodoKEM IS NOT "FrodoKEM WITHOUT THE SALT".** It is the original,
+// pre-2023 scheme: the salt was added to the standard variant along with a
+// widening of the seed, so every length derived from `CRYPTO_BYTES` differs
+// too, and the ciphertext is shorter by more than the salt. Six of these
+// twelve are one scheme and six are another, and treating them as one produces
+// six that round-trip and match no published vector.
+//
+// Why offer it at all: the salt gives multi-ciphertext security when one key
+// pair answers many encapsulations, and an EPHEMERAL key pair answers one —
+// which is what [EUCC-ACM] recommends it for and what the `e` means.
+//
+// The AES and SHAKE halves of each pair differ only in how the matrix A is
+// generated and produce different keys from the same seed; they are not
+// interchangeable.
+// ---------------------------------------------------------------------------
+[[640, 9616, 9752, 9720, 1], [976, 15632, 15792, 15744, 3],
+ [1344, 21520, 21696, 21632, 5]].forEach(function (row) {
+  ['aes', 'shake'].forEach(function (gen) {
+    var upper = gen.toUpperCase();
+    KEM_METHODS[XMLDSIG_MORE_2026 + 'frodokem-' + row[0] + '-' + gen] = {
+      family: 'frodokem', alg: 'FrodoKEM-' + row[0] + '-' + upper,
+      pubBytes: row[1], ctBytes: row[2], secretBytes: row[0] === 640 ? 16
+        : (row[0] === 976 ? 24 : 32),
+      postQuantum: true, draft: true,
+      label: 'FrodoKEM-' + row[0] + '-' + upper + ' (ISO 18033-2, category ' +
+             row[4] + ' — draft)'
+    };
+    KEM_METHODS[XMLDSIG_MORE_2026 + 'e-frodokem-' + row[0] + '-' + gen] = {
+      family: 'frodokem', alg: 'eFrodoKEM-' + row[0] + '-' + upper,
+      pubBytes: row[1], ctBytes: row[3], secretBytes: row[0] === 640 ? 16
+        : (row[0] === 976 ? 24 : 32),
+      postQuantum: true, draft: true, ephemeral: true,
+      label: 'eFrodoKEM-' + row[0] + '-' + upper + ' (EPHEMERAL, category ' +
+             row[4] + ' — draft)'
+    };
+  });
+});
+
+var KEM_URIS = Object.keys(KEM_METHODS);
+
+function kemMethod(uri) {
+  log.debug("Entering kemMethod().");
+  var m = KEM_METHODS[uri];
+  if (!m) {
+    log.debug("Leaving kemMethod(). Not a KEM.");
+    return null;
+  }
+  log.debug("Leaving kemMethod().");
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// HKDF, RFC 5869, on forge's HMAC. Extract then expand, written out because
+// this is the step a recipient has to reproduce EXACTLY and because a KDF that
+// two implementations read differently produces a key that decrypts nothing
+// and names no reason.
+//
+// Everything is forge binary strings, which is what the rest of this file
+// speaks. `salt` empty means RFC 5869 section 2.2's default: HashLen zero
+// octets.
+// ---------------------------------------------------------------------------
+function hkdf(prfUri, ikm, salt, info, lengthBytes) {
+  log.debug("Entering hkdf(). length=" + lengthBytes);
+  var md = FORGE_MD[hmacHashOf(prfUri)];
+  if (!md) {
+    log.debug("Leaving hkdf(). Unknown PRF.");
+    throw new Error('HKDF: "' + prfUri + '" is not a PRF this file knows. ' +
+        'RFC 9231 names the HMAC family; hmac-sha256 is what section 3.8.1 ' +
+        'RECOMMENDS.');
+  }
+  var hashLen = md.create().digestLength;
+  var actualSalt = salt && salt.length ? salt
+    : new Array(hashLen + 1).join('\x00');
+  var extract = forge.hmac.create();
+  extract.start(md.create(), actualSalt);
+  extract.update(ikm);
+  var prk = extract.digest().getBytes();
+  // Expand. T(0) is empty; T(n) = HMAC(PRK, T(n-1) || info || n).
+  var out = '';
+  var previous = '';
+  var counter = 1;
+  while (out.length < lengthBytes) {
+    if (counter > 255) {
+      log.debug("Leaving hkdf(). Too much output asked for.");
+      throw new Error('HKDF: RFC 5869 section 2.3 allows at most 255 ' +
+          'blocks of output.');
+    }
+    var expand = forge.hmac.create();
+    expand.start(md.create(), prk);
+    expand.update(previous + (info || '') + String.fromCharCode(counter));
+    previous = expand.digest().getBytes();
+    out += previous;
+    counter++;
+  }
+  log.debug("Leaving hkdf(). " + lengthBytes + " bytes.");
+  return out.substring(0, lengthBytes);
+}
+
+// The hash a `hmac-sha*` PRF identifier names. Written as a lookup rather than
+// a regex so an identifier this file does not implement is refused by name
+// instead of quietly falling back to SHA-1.
+var HMAC_PRF_HASHES = {};
+HMAC_PRF_HASHES['http://www.w3.org/2000/09/xmldsig#hmac-sha1'] = 'sha1';
+HMAC_PRF_HASHES[HMAC_SHA256_URI] = 'sha256';
+HMAC_PRF_HASHES['http://www.w3.org/2001/04/xmldsig-more#hmac-sha384'] =
+  'sha384';
+HMAC_PRF_HASHES['http://www.w3.org/2001/04/xmldsig-more#hmac-sha512'] =
+  'sha512';
+
+function hmacHashOf(uri) {
+  return HMAC_PRF_HASHES[uri];
+}
+
+// The draft's section 3.8.1 element, written with the values that were
+// actually used. Salt is omitted when empty, which RFC 5869 defines as the
+// zero string — writing an empty element would be a different statement.
+function hkdfParamsXml(params) {
+  log.debug("Entering hkdfParamsXml().");
+  var out = '<xenc11:KeyDerivationMethod xmlns:xenc11="' + XENC11_NS +
+      '" Algorithm="' + HKDF_URI + '">' +
+      '<dsig-more:HKDFParams xmlns:dsig-more="' + DSIG_MORE_2021 + '">' +
+      '<dsig-more:PRF Algorithm="' + xmlEscape(params.prf) + '"/>';
+  if (params.salt) {
+    out += '<dsig-more:Salt>' + forge.util.encode64(params.salt) +
+        '</dsig-more:Salt>';
+  }
+  out += '<dsig-more:Info>' + forge.util.encode64(params.info || '') +
+      '</dsig-more:Info>' +
+      '<dsig-more:KeyLength>' + params.length + '</dsig-more:KeyLength>' +
+      '</dsig-more:HKDFParams></xenc11:KeyDerivationMethod>';
+  log.debug("Leaving hkdfParamsXml().");
+  return out;
+}
+
+// Read them back. Every value comes from the document — see the section header
+// on why nothing here is defaulted from a shared assumption.
+function readHkdfParams(kmEl) {
+  log.debug("Entering readHkdfParams().");
+  var kdm = kmEl ? firstByLocal(kmEl, 'KeyDerivationMethod') : null;
+  if (!kdm) {
+    log.debug("Leaving readHkdfParams(). None.");
+    throw new Error('This EncryptedKey names a key-encapsulation algorithm ' +
+        'and carries no KeyDerivationMethod, so there is no way to know how ' +
+        'its shared secret became a content encryption key. A KEM produces a ' +
+        'SECRET and not a wrapped key — the derivation is not optional, and ' +
+        'it is not guessable.');
+  }
+  var kdfAlg = kdm.getAttribute('Algorithm');
+  if (kdfAlg !== HKDF_URI) {
+    log.debug("Leaving readHkdfParams(). Unsupported KDF.");
+    throw new Error('This file derives with HKDF (' + HKDF_URI + '); this ' +
+        'document asks for "' + kdfAlg + '".');
+  }
+  var prfEl = firstByLocal(kdm, 'PRF');
+  var saltEl = firstByLocal(kdm, 'Salt');
+  var infoEl = firstByLocal(kdm, 'Info');
+  var lenEl = firstByLocal(kdm, 'KeyLength');
+  var params = {
+    prf: prfEl ? prfEl.getAttribute('Algorithm') : HMAC_SHA256_URI,
+    salt: saltEl ? forge.util.decode64(saltEl.textContent || '') : '',
+    info: infoEl ? forge.util.decode64(infoEl.textContent || '') : '',
+    length: lenEl ? parseInt(lenEl.textContent || '0', 10) : 0
+  };
+  log.debug("Leaving readHkdfParams(). length=" + params.length);
+  return params;
+}
 
 function sigMethod(uri) {
   log.debug("Entering sigMethod().");
@@ -1550,6 +2236,34 @@ function ecKeyValueXml(namedCurveUri, publicPoint) {
     '</dsig11:PublicKey></dsig11:ECKeyValue></ds:KeyValue>';
 }
 
+// ---------------------------------------------------------------------------
+// A POST-QUANTUM PUBLIC KEY IN KeyInfo, AND WHY IT IS THIS ELEMENT.
+//
+// There is no `MLDSAKeyValue`, and there is not going to be one soon:
+// draft-eastlake-rfc9231bis-xmlsec-uris defines the SIGNATURE identifiers and
+// its section 4 adds only a PKCS #7 bag and some RetrievalMethod types —
+// nothing for a lattice or a hash-based key. Inventing an element here would
+// produce a KeyInfo no verifier on earth parses.
+//
+// `dsig11:DEREncodedKeyValue` is the element that already answers this: XML
+// Signature 1.1 defines it as the base64 of a DER SubjectPublicKeyInfo, for
+// exactly the case of a key type XMLDSIG has no structure for. It is what
+// Apache Santuario's in-flight post-quantum PR uses, and a SubjectPublicKeyInfo
+// is what every one of these algorithms already has an OID and an encoding for.
+//
+// The caller passes the SPKI it already holds — `key_material.js` and `x509.js`
+// both produce one — because building a SubjectPublicKeyInfo needs the
+// algorithm OIDs, and this file is not where the post-quantum encodings live.
+// ---------------------------------------------------------------------------
+function derEncodedKeyValueXml(spkiDer) {
+  log.debug("Entering derEncodedKeyValueXml().");
+  var raw = typeof spkiDer === 'string' ? spkiDer
+    : forge.util.binary.raw.encode(spkiDer);
+  log.debug("Leaving derEncodedKeyValueXml().");
+  return '<dsig11:DEREncodedKeyValue xmlns:dsig11="' + DSIG11_NS + '">' +
+    forge.util.encode64(raw) + '</dsig11:DEREncodedKeyValue>';
+}
+
 function buildKeyInfo(opts) {
   log.debug("Entering buildKeyInfo().");
   if (opts.keyInfoXml) {
@@ -1608,9 +2322,13 @@ function pssFor(hash) {
 function defaultSign(octets, spec, opts) {
   log.debug("Entering defaultSign().");
   if (spec.family !== 'rsa') {
-    throw new Error('A ' + spec.family.toUpperCase() + ' SignatureMethod ' +
-        'needs a signer — this module implements RSA only, on purpose (see ' +
-        'the section header). Pass opts.signer.');
+    throw new Error('A ' + (spec.label || spec.family.toUpperCase()) +
+        ' SignatureMethod needs a signer — this module implements RSA only, ' +
+        'on purpose (see the section header). Pass opts.signer.' +
+        (spec.postQuantum ? ' The post-quantum engines are ' +
+          'client/src/pqc.js (ML-DSA and SLH-DSA) and client/src/hbs.js ' +
+          '(HSS/LMS); this file holds the identifiers and not the lattice.'
+        : ''));
   }
   if (!opts.privateKeyPem) {
     throw new Error('signXml: privateKeyPem is required.');
@@ -1625,9 +2343,13 @@ function defaultSign(octets, spec, opts) {
 function defaultVerify(octets, signature, spec, publicKey) {
   log.debug("Entering defaultVerify().");
   if (spec.family !== 'rsa') {
-    throw new Error('A ' + spec.family.toUpperCase() + ' SignatureMethod ' +
-        'needs a verifier — this module implements RSA only, on purpose. ' +
-        'Pass opts.verifier.');
+    throw new Error('A ' + (spec.label || spec.family.toUpperCase()) +
+        ' SignatureMethod needs a verifier — this module implements RSA ' +
+        'only, on purpose. Pass opts.verifier.' +
+        (spec.postQuantum ? ' The post-quantum engines are ' +
+          'client/src/pqc.js (ML-DSA and SLH-DSA) and client/src/hbs.js ' +
+          '(HSS/LMS); this file holds the identifiers and not the lattice.'
+        : ''));
   }
   if (!publicKey) throw new Error('No RSA public key to verify with.');
   var md = FORGE_MD[spec.hash].create();
@@ -2215,6 +2937,23 @@ module.exports = {
   transformOctets: transformOctets,
   rsaKeyValueXml: rsaKeyValueXml,
   ecKeyValueXml: ecKeyValueXml,
+  derEncodedKeyValueXml: derEncodedKeyValueXml,
+  // The post-quantum half of the table, so that a menu is BUILT from it.
+  XMLDSIG_MORE_2026: XMLDSIG_MORE_2026,
+  HSS_LMS_URI: HSS_LMS_URI,
+  PQ_SIG_URIS: PQ_SIG_URIS,
+  // The key-encapsulation half, and the derivation that turns a KEM's shared
+  // secret into a content encryption key. `hkdf` is exported because it is
+  // held to RFC 5869's own vectors in tests/xmldsig_pqc.js — a KDF is where
+  // two implementations diverge silently.
+  KEM_METHODS: KEM_METHODS,
+  KEM_URIS: KEM_URIS,
+  kemMethod: kemMethod,
+  HKDF_URI: HKDF_URI,
+  HMAC_SHA256_URI: HMAC_SHA256_URI,
+  hkdf: hkdf,
+  hkdfParamsXml: hkdfParamsXml,
+  readHkdfParams: readHkdfParams,
   signXml: signXml,
   verifyXml: verifyXml,
   signQueryString: signQueryString,

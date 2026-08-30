@@ -24,6 +24,11 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
+// The post-quantum SignatureMethods and the bridge to their engines.
+// See docs/xmldsig-pqc.md.
+var xdPqc = require("./xmldsig_pqc");
+var pqc = require("./pqc");
+var hbs = require("./hbs");
 // The scheme allowlist applied before navigating anywhere. See url_safety.js
 // for why this is not DOMPurify.
 var urlSafety = require("./url_safety");
@@ -372,8 +377,84 @@ function parseWsFedMetadata(xmlText) {
 // register at the IdP so it can encrypt the issued token to the RP; the private
 // key is used on the response page to decrypt an EncryptedAssertion.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// THE POST-QUANTUM HALF, AND THE BINDING THAT CANNOT HAVE IT.
+//
+// The key pair lives in `wsfed_rp_private_key` / `wsfed_rp_cert` as HEX, the
+// convention the other signing panes use, and there is no certificate — the
+// draft defines no X.509 profile for one of these keys, so the Signature
+// carries a dsig11:DEREncodedKeyValue.
+//
+// **ONLY THE ENVELOPED BINDING.** This page can sign two ways: an enveloped
+// XMLDSIG over the inline `wreq`, and a signed QUERY STRING. The second puts
+// the signature in the URL, and the smallest post-quantum signature here is
+// ML-DSA-44's 2,420 bytes — about 3,230 characters of base64 before
+// percent-encoding, with SLH-DSA running to 66,000. Browsers, servers and
+// everything between refuse a URL that long, and the failure arrives as a
+// truncated request or a bare 414 rather than as anything about a signature.
+// So the query-string binding refuses, before the URL is built, and says the
+// number.
+// ---------------------------------------------------------------------------
+function pqMethod() {
+  log.debug("Entering pqMethod().");
+  var spec = xd.SIG_METHODS[signingAlg()];
+  log.debug("Leaving pqMethod().");
+  return (spec && spec.postQuantum) ? spec : null;
+}
+
+function pqHexToBytes(hex) {
+  log.debug("Entering pqHexToBytes().");
+  var clean = String(hex || '').replace(/[^0-9a-fA-F]/g, '');
+  var out = new Uint8Array(clean.length / 2);
+  for (var i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  }
+  log.debug("Leaving pqHexToBytes(). " + out.length + " bytes.");
+  return out;
+}
+
+function pqBytesToHex(bytes) {
+  log.debug("Entering pqBytesToHex().");
+  var view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  var out = '';
+  for (var i = 0; i < view.length; i++) {
+    out += (view[i] < 16 ? '0' : '') + view[i].toString(16);
+  }
+  log.debug("Leaving pqBytesToHex().");
+  return out;
+}
+
 function generateKeys() {
   log.debug("Entering generateKeys().");
+  var pqSpec = pqMethod();
+  if (pqSpec) {
+    setStatus('wsfed_call_status', 'Generating a ' + pqSpec.label + ' key ' +
+              'pair…');
+    setTimeout(function () {
+      try {
+        var pair = pqSpec.family === 'hsslms'
+          ? hbs.hssKeygen({ levels: [{ lms: 'LMS_SHA256_M32_H5',
+                                       lmots: 'LMOTS_SHA256_N32_W8' }] })
+          : pqc.generateAkpKeyPair(pqSpec.alg);
+        setVal('wsfed_rp_private_key',
+               pqBytesToHex(pair.priv || pair.privateKey));
+        setVal('wsfed_rp_cert', pqBytesToHex(pair.pub || pair.publicKey));
+        saveState();
+        buildRequestUi();
+        setStatus('wsfed_call_status', 'Generated a ' + pqSpec.label + ' key ' +
+                  'pair (hex, not PEM). ENVELOPED BINDING ONLY: this ' +
+                  'signature is ' + pqSpec.sigBytes + ' bytes, and the ' +
+                  'query-string binding would put it in the URL. NOTE this ' +
+                  'key cannot decrypt an encrypted token on the response ' +
+                  'page — that needs the RSA pair.');
+      } catch (e) {
+        log.error('generateKeys: ' + e.message);
+        setStatus('wsfed_call_status', 'Key generation error: ' + e.message);
+      }
+    }, 20);
+    log.debug("Leaving generateKeys(). Post-quantum.");
+    return false;
+  }
   var bits = parseInt(val('wsfed_key_bits'), 10) || 2048;
   setStatus('wsfed_call_status', 'Generating ' + bits + '-bit RSA key pair…');
   setTimeout(function () {
@@ -533,11 +614,19 @@ function buildSignInUrl() {
           'is no inline wreq to ' +
                         'sign — tick "Include wreq" and put the RequestSecurityToken in it.';
     } else {
-      opts.request = xd.signEnveloped(opts.request, {
-        privateKeyPem: key,
-        certPem: val('wsfed_rp_cert').trim() || undefined,
-        sigAlg: signingAlg(),
-      });
+      var pqEnv = pqMethod();
+      opts.request = xd.signEnveloped(opts.request, Object.assign({
+        sigAlg: signingAlg()
+      }, pqEnv
+        ? { signer: xdPqc.signerFor(pqHexToBytes(key), {
+              onKeyAdvanced: function (next) {
+                setVal('wsfed_rp_private_key', pqBytesToHex(next));
+              }
+            }),
+            keyInfoXml: xd.derEncodedKeyValueXml(
+                pqHexToBytes(val('wsfed_rp_cert'))) }
+        : { privateKeyPem: key,
+            certPem: val('wsfed_rp_cert').trim() || undefined }));
       lastSigningNote = 'enveloped signature on the inline wreq (' +
           shortAlg(signingAlg()) + ').';
     }
@@ -556,6 +645,18 @@ function buildSignInUrl() {
     var query = qIndex >= 0 ? url.slice(qIndex + 1) : '';
     var base = qIndex >= 0 ? url.slice(0, qIndex) : url;
     var alg = signingAlg();
+    var pqQuery = pqMethod();
+    if (pqQuery) {
+      // See the section header on generateKeys(): arithmetic, not caution.
+      throw new Error('The signed query-string binding puts the signature in ' +
+          'the URL, and a ' + pqQuery.label + ' signature is ' +
+          pqQuery.sigBytes + ' bytes — roughly ' +
+          (Math.ceil(pqQuery.sigBytes / 3) * 4) + ' characters of base64 ' +
+          'before percent-encoding. Browsers, servers and everything between ' +
+          'refuse a URL that long, and you would see a truncated request or ' +
+          'a bare 414 rather than anything about a signature. Use the ' +
+          'ENVELOPED binding over an inline wreq, which has no such limit.');
+    }
     var toSign = query + '&SigAlg=' + encodeURIComponent(alg);
     var signature = xd.signQueryString(toSign, { privateKeyPem: key,
         sigAlg: alg });
@@ -833,6 +934,10 @@ function setReturnLink() {
 }
 
 window.onload = function () {
+  // The sixteen post-quantum SignatureMethods, from the registry. See
+  // client/src/xmldsig_pqc.js and docs/xmldsig-pqc.md.
+  xdPqc.appendSignatureOptions(document.getElementById('wsfed_sig_alg'),
+      xd.SIG_METHODS, xd.PQ_SIG_URIS);
   log.debug('Entering onload().');
   restoreState();
   setReturnLink();

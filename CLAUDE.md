@@ -23,6 +23,7 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | **PKI** — the certificate authority page, `x509.js`, `key_material.js`, the keystore formats, and the api's TLS / mutual-TLS test | `docs/pki.md` |
 | **encryption** — the Encryption / Decryption page, its nine panes, and the DOM-free engines behind them (`symmetric_crypto.js`, `pk_encryption.js`, `crypto_bytes.js`) | `docs/encryption.md` |
 | **hashing** — the Hashing / Encoding Tools page's three hash panes and the DOM-free engine behind them (`hash_tools.js`): FIPS 180-4, **FIPS 202** (SHA-3 and the SHAKEs) and **SP 800-185** (cSHAKE, KMAC, TupleHash, ParallelHash) — the functions ML-KEM, ML-DSA and SLH-DSA are built from | `docs/hashing.md` |
+| **post-quantum XML Signature** — the sixteen ML-DSA / SLH-DSA / HSS-LMS `SignatureMethod` identifiers `common/xmldsig.js` took from `draft-eastlake-rfc9231bis-xmlsec-uris-09`, why every label says *draft*, why the cryptography is injected rather than bundled, and why the ENCRYPTION half (ML-KEM, FrodoKEM) is a separate piece of work | `docs/xmldsig-pqc.md` |
 | **stateful hash-based signatures** — the LMS/HSS and XMSS/XMSS^MT pane on the Digital Signature page, `hbs.js`, and the state that makes them different from every other signature here | `docs/hbs.md` |
 | the mock STS — **a submodule**, so its notes cannot live under `sts/` | `docs/mock-sts.md` |
 

@@ -92,6 +92,11 @@ var urlSafety = require("./url_safety");
 // EncryptedData it builds around the shared encryption pieces.
 // ---------------------------------------------------------------------------
 var xmldsig = require("./xmldsig");
+// The post-quantum SignatureMethods and the bridge to the engines that
+// perform them. See docs/xmldsig-pqc.md.
+var xdPqc = require("./xmldsig_pqc");
+var pqc = require("./pqc");
+var hbs = require("./hbs");
 var certPemToB64 = xmldsig.certPemToB64;
 var pemWrapCert = xmldsig.pemWrapCert;
 var digestBase64 = xmldsig.digestBase64;
@@ -1001,6 +1006,36 @@ function onWsaChange() {
 // ---------------------------------------------------------------------------
 function generateKeys() {
   log.debug("Entering generateKeys().");
+  var pqSpec = pqMethod();
+  if (pqSpec) {
+    setStatus('saml_call_status', 'Generating a ' + pqSpec.label + ' key ' +
+              'pair…');
+    setTimeout(function () {
+      try {
+        var pair = pqSpec.family === 'hsslms'
+          ? hbs.hssKeygen({ levels: [{ lms: 'LMS_SHA256_M32_H5',
+                                       lmots: 'LMOTS_SHA256_N32_W8' }] })
+          : pqc.generateAkpKeyPair(pqSpec.alg);
+        setVal('saml_sp_private_key',
+               pqBytesToHex(pair.priv || pair.privateKey));
+        setVal('saml_sp_public_key',
+               pqBytesToHex(pair.pub || pair.publicKey));
+        setStatus('saml_call_status', 'Generated a ' + pqSpec.label + ' key ' +
+                  'pair (hex, not PEM). There is NO CERTIFICATE — the draft ' +
+                  'defines no X.509 profile for one — so the Signature will ' +
+                  'carry a dsig11:DEREncodedKeyValue. HTTP-POST only: the ' +
+                  'Redirect binding puts the signature in the URL, and this ' +
+                  'one is ' + pqSpec.sigBytes + ' bytes.');
+        saveState();
+        autoBuildRequest();
+      } catch (e) {
+        log.error('generateKeys: ' + e.message);
+        setStatus('saml_call_status', 'Key generation error: ' + e.message);
+      }
+    }, 20);
+    log.debug("Leaving generateKeys(). Post-quantum.");
+    return false;
+  }
   var bits = parseInt(val('saml_key_bits'), 10) || 2048;
   setStatus('saml_call_status', 'Generating ' + bits + '-bit RSA key pair…');
   // Defer so the status paints before the (synchronous, slow) keygen runs.
@@ -1414,6 +1449,92 @@ function selectedSigAlg() {
   return val('saml_sig_alg') || SIG_ALG_RSA_SHA256;
 }
 
+// ---------------------------------------------------------------------------
+// THE POST-QUANTUM HALF, AND THE ONE BINDING THAT CANNOT HAVE IT.
+//
+// The key pair lives in `saml_sp_private_key` / `saml_sp_public_key` holding
+// HEX rather than PEM, which is the convention the Digital Signature page's
+// XML pane and the SAML Assertion generator both use. There is no certificate:
+// the draft defines no X.509 profile for one of these keys, so the public half
+// goes into the Signature as a dsig11:DEREncodedKeyValue.
+//
+// **THE HTTP-REDIRECT BINDING IS REFUSED, and that is arithmetic rather than
+// caution.** saml-bindings-2.0-os section 3.4.4.1 puts the signature in the
+// QUERY STRING, base64'd and then percent-encoded. The smallest post-quantum
+// signature here is ML-DSA-44's 2,420 bytes — about 3,230 base64 characters
+// before escaping — and SLH-DSA runs from 7,856 bytes to 49,856, which is
+// roughly 10,500 to 66,500. A URL of that length is refused by browsers
+// (Chrome stops at about 32,000 characters in the address bar), by servers
+// (nginx's default `large_client_header_buffers` is 8k) and by anything in
+// between, and the failure would arrive as a truncated request or a bare 414
+// rather than as anything about a signature.
+//
+// So the refusal is HERE, before the URL is built, and it says the number. A
+// tool that produced a 66,000-character redirect and let somebody find out
+// from an nginx error page would be worse than one that says why it will not.
+// HTTP-POST has no such limit and takes every one of the sixteen.
+// ---------------------------------------------------------------------------
+function pqMethod() {
+  log.debug("Entering pqMethod().");
+  var spec = xmldsig.SIG_METHODS[selectedSigAlg()];
+  log.debug("Leaving pqMethod().");
+  return (spec && spec.postQuantum) ? spec : null;
+}
+
+function pqHexToBytes(hex) {
+  log.debug("Entering pqHexToBytes().");
+  var clean = String(hex || '').replace(/[^0-9a-fA-F]/g, '');
+  var out = new Uint8Array(clean.length / 2);
+  for (var i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  }
+  log.debug("Leaving pqHexToBytes(). " + out.length + " bytes.");
+  return out;
+}
+
+function pqBytesToHex(bytes) {
+  log.debug("Entering pqBytesToHex().");
+  var view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  var out = '';
+  for (var i = 0; i < view.length; i++) {
+    out += (view[i] < 16 ? '0' : '') + view[i].toString(16);
+  }
+  log.debug("Leaving pqBytesToHex().");
+  return out;
+}
+
+// The signing options for whichever method is selected, so the POST binding
+// and the metadata signer cannot disagree about which key made a signature.
+function pqSigningOptions(spec) {
+  log.debug("Entering pqSigningOptions().");
+  if (!spec) {
+    log.debug("Leaving pqSigningOptions(). RSA.");
+    return { privateKeyPem: val('saml_sp_private_key'),
+             certPem: val('saml_sp_public_key') };
+  }
+  log.debug("Leaving pqSigningOptions(). " + spec.alg + ".");
+  return {
+    signer: xdPqc.signerFor(pqHexToBytes(val('saml_sp_private_key')), {
+      onKeyAdvanced: function (next) {
+        setVal('saml_sp_private_key', pqBytesToHex(next));
+      }
+    }),
+    keyInfoXml: xmldsig.derEncodedKeyValueXml(
+        pqHexToBytes(val('saml_sp_public_key')))
+  };
+}
+
+// How long the Signature parameter would be, so the refusal can say it.
+function redirectSignatureCharacters(spec) {
+  log.debug("Entering redirectSignatureCharacters().");
+  var bytes = spec.sigBytes || 0;
+  // base64 is 4 characters per 3 bytes; percent-encoding then roughly
+  // doubles the '+' and '/' that survive, so this is a FLOOR and says so.
+  var chars = Math.ceil(bytes / 3) * 4;
+  log.debug("Leaving redirectSignatureCharacters(). " + chars + ".");
+  return chars;
+}
+
 // HTTP-Redirect binding: build the query string, optionally with a detached
 // signature (doSign, default true). Returns { location, queryString }. `xml` is
 // whatever payload is being sent — the plain AuthnRequest, or the encrypted
@@ -1428,6 +1549,20 @@ function signRedirect(xml, dest, relayState, doSign) {
     if (relayState) qs += '&RelayState=' + encodeURIComponent(relayState);
     if (doSign) {
       var alg = selectedSigAlg();
+      var pq = pqMethod();
+      if (pq) {
+        // See the section header: this is arithmetic, not caution.
+        throw new Error('The HTTP-Redirect binding puts the signature in the ' +
+            'QUERY STRING (saml-bindings-2.0-os section 3.4.4.1), and a ' +
+            pq.label + ' signature is ' + pq.sigBytes + ' bytes — about ' +
+            redirectSignatureCharacters(pq) + ' characters of base64 before ' +
+            'percent-encoding. A URL that long is refused by browsers ' +
+            '(Chrome stops around 32,000 characters), by servers (nginx ' +
+            'defaults to an 8k header buffer) and by everything in between, ' +
+            'and you would see a truncated request or a bare 414 rather than ' +
+            'anything about a signature. Use HTTP-POST, which has no such ' +
+            'limit and takes every one of these algorithms.');
+      }
       qs += '&SigAlg=' + encodeURIComponent(alg);
       // saml-bindings-2.0-os section 3.4.4.1: the signature is over the
       // query string as it will be SENT, SigAlg included — which is why it is
@@ -1455,12 +1590,10 @@ function signRedirect(xml, dest, relayState, doSign) {
 // two byte streams are identical, which is the whole reason SAML uses it.
 function signPostEnveloped(xml) {
   log.debug("Entering signPostEnveloped().");
-  var signed = xmldsig.signEnveloped(xml, {
-    privateKeyPem: val('saml_sp_private_key'),
-    certPem: val('saml_sp_public_key'),
+  var signed = xmldsig.signEnveloped(xml, Object.assign({
     sigAlg: selectedSigAlg(),
     placement: 'after-issuer'
-  });
+  }, pqSigningOptions(pqMethod())));
   log.debug("Leaving signPostEnveloped().");
   return signed;
 }
@@ -2369,6 +2502,11 @@ function validateConfigUrls() {
 }
 
 window.onload = function () {
+  // The sixteen post-quantum SignatureMethods, appended to this page's menu
+  // FROM THE REGISTRY, before any stored selection is restored. See
+  // client/src/xmldsig_pqc.js and docs/xmldsig-pqc.md.
+  xdPqc.appendSignatureOptions(document.getElementById('saml_sig_alg'),
+      xmldsig.SIG_METHODS, xmldsig.PQ_SIG_URIS);
   log.debug('Entering onload().');
   restoreState();
   setReturnLink();

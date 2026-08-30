@@ -76,6 +76,12 @@ var hbs = require("./hbs");
 // would agree with itself whatever the implementation did.
 var jws = require("./jws");
 var xmldsig = require("./xmldsig");
+// The one bridge from a post-quantum SignatureMethod to the engine that
+// performs it. `xmldsig.js` holds the sixteen identifiers and no
+// cryptography — see its own header on why — and this page already has
+// pqc.js and hbs.js loaded, which is why the XML pane can offer them at no
+// cost at all. See docs/xmldsig-pqc.md.
+var xmldsigPqc = require("./xmldsig_pqc");
 var log = bunyan.createLogger({ name: 'digital_signature',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -1949,6 +1955,22 @@ function xmlSigner() {
   log.debug("Leaving xmlSigner().");
   return function (octets, spec) {
     var bytes = forge.util.binary.raw.decode(octets);
+    // POST-QUANTUM FIRST, because these do not hash the message themselves
+    // the way the two branches below do: ML-DSA, SLH-DSA and HSS/LMS sign the
+    // octets whole, so there is no `spec.hash` to look up and looking one up
+    // would be the bug.
+    if (spec.postQuantum) {
+      return xmldsigPqc.signerFor(hexToBytes(val('ds_xml_private_key')), {
+        // HSS/LMS SPENDS A ONE-TIME KEY. The advanced key replaces what is in
+        // the box, immediately, because the private key that just signed is
+        // the one thing that must never be used again — signing twice from
+        // one index hands an attacker the material to forge a third message.
+        // The pane says so on its status line after the signature lands.
+        onKeyAdvanced: function (next) {
+          setVal('ds_xml_private_key', bytesToHex(next));
+        }
+      })(octets, spec);
+    }
     if (spec.family === 'hmac') {
       var key = hexToBytes(val('ds_xml_private_key'));
       return forge.util.binary.raw.encode(
@@ -1967,6 +1989,10 @@ function xmlVerifier() {
   return function (octets, signature, spec) {
     var bytes = forge.util.binary.raw.decode(octets);
     var sig = forge.util.binary.raw.decode(signature);
+    if (spec.postQuantum) {
+      return xmldsigPqc.verifierFor(
+          hexToBytes(val('ds_xml_public_key')))(octets, signature, spec);
+    }
     if (spec.family === 'hmac') {
       var key = hexToBytes(val('ds_xml_public_key') ||
                            val('ds_xml_private_key'));
@@ -2003,6 +2029,54 @@ function xmlGenerateKeys() {
            'SignatureMethod is a MAC: it proves integrity, it gives no ' +
            'non-repudiation, and both parties hold this one key.');
     log.debug("Leaving xmlGenerateKeys(). HMAC.");
+    return false;
+  }
+  if (spec.postQuantum) {
+    // HSS/LMS walks a Merkle tree at key generation and the rest do not, so
+    // the two are told apart here rather than made to share a message: one is
+    // instant and one is worth warning about.
+    if (spec.family === 'hsslms') {
+      setVal('ds_xml_status', 'Generating an HSS/LMS key pair — this walks ' +
+             'the whole Merkle tree, so it takes a moment…');
+      defer(function () {
+        try {
+          var hssPair = hbs.hssKeygen({ levels: [{ lms: 'LMS_SHA256_M32_H5',
+              lmots: 'LMOTS_SHA256_N32_W8' }] });
+          setVal('ds_xml_private_key', bytesToHex(hssPair.privateKey));
+          setVal('ds_xml_public_key', bytesToHex(hssPair.publicKey));
+          setVal('ds_xml_cert', '');
+          setVal('ds_xml_status', 'Generated an HSS/LMS key pair (one level, ' +
+                 'H=5 — 32 signatures). IT IS STATEFUL: every signature ' +
+                 'spends a one-time key and REWRITES the private key box ' +
+                 'above. Signing twice from one index hands an attacker the ' +
+                 'material to forge a third message, so do not put an old ' +
+                 'copy back.');
+        } catch (e) {
+          log.error('xmlGenerateKeys: ' + e.message);
+          setVal('ds_xml_status', 'Key generation error: ' + e.message);
+        }
+      });
+      log.debug("Leaving xmlGenerateKeys(). HSS/LMS.");
+      return false;
+    }
+    setVal('ds_xml_status', 'Generating a ' + spec.label + ' key pair…');
+    defer(function () {
+      try {
+        var akp = pqc.generateAkpKeyPair(spec.alg);
+        setVal('ds_xml_private_key', bytesToHex(akp.priv));
+        setVal('ds_xml_public_key', bytesToHex(akp.pub));
+        setVal('ds_xml_cert', '');
+        setVal('ds_xml_status', 'Generated a ' + spec.label + ' key pair. ' +
+               'KeyInfo for it is a dsig11:DEREncodedKeyValue — there is no ' +
+               'X.509 profile for one in the draft, so no certificate is ' +
+               'minted. An ML-DSA private key is the 32-byte SEED (RFC 9964 ' +
+               'section 3.2), not the expanded secret key.');
+      } catch (e) {
+        log.error('xmlGenerateKeys: ' + e.message);
+        setVal('ds_xml_status', 'Key generation error: ' + e.message);
+      }
+    });
+    log.debug("Leaving xmlGenerateKeys(). Post-quantum.");
     return false;
   }
   if (spec.family === 'ecdsa') {
@@ -2147,7 +2221,9 @@ function xmlSign() {
     if (spec.family !== 'rsa' && val('ds_xml_keyinfo') === 'x509') {
       setVal('ds_xml_status', 'A ' + spec.label + ' signature has no X.509 ' +
              'certificate here. Choose KeyValue (ECDSA) or KeyName / none ' +
-             '(HMAC) for KeyInfo.');
+             '(HMAC' + (spec.postQuantum ? ', and post-quantum — the draft ' +
+             'defines no X.509 profile for one, so its public key belongs in ' +
+             'a dsig11:DEREncodedKeyValue' : '') + ') for KeyInfo.');
       log.debug("Leaving xmlSign(). KeyInfo does not fit the key.");
       return false;
     }
@@ -2313,6 +2389,14 @@ window.onload = function () {
   log.debug("Entering onload().");
   log.debug('Entering onload function.');
   setReturnLink();
+  // THE SIXTEEN POST-QUANTUM SignatureMethods, appended to the XML pane's menu
+  // FROM THE REGISTRY rather than written into digital_signature.html beside
+  // the classical ones. Five pages carry this menu and sixteen hand-written
+  // options in five files is five copies that will disagree the first time the
+  // draft renames anything. See client/src/xmldsig_pqc.js and
+  // docs/xmldsig-pqc.md.
+  xmldsigPqc.appendSignatureOptions(document.getElementById('ds_xml_sigalg'),
+      xmldsig.SIG_METHODS, xmldsig.PQ_SIG_URIS);
   setVal('ds_value', 'Sign me with SLH-DSA!');
   setVal('ds_rsa_value', 'Sign me with RSA!');
   setVal('ds_ecc_value', 'Sign me with ECC!');

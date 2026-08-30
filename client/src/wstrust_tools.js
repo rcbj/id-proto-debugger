@@ -18,6 +18,11 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
+// The post-quantum SignatureMethods and the bridge to their engines.
+// See docs/xmldsig-pqc.md.
+var xdPqc = require("./xmldsig_pqc");
+var pqc = require("./pqc");
+var hbs = require("./hbs");
 var wm = require("./wstrust_msg");
 var history = require("./wstrust_history");
 var log = bunyan.createLogger({ name: 'wstrust_tools',
@@ -346,8 +351,79 @@ function onOperationChange() {
 // ---------------------------------------------------------------------------
 // Signing key-pair generation (RSA via node-forge) + self-signed certificate.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// THE POST-QUANTUM HALF. The key pair lives in `wst_sp_private_key` /
+// `wst_sp_cert` holding HEX, the convention every other signing pane here now
+// uses, and there is no certificate — the draft defines no X.509 profile for
+// one of these keys.
+//
+// **WHAT GOES OUT IS NOT A WS-SECURITY TOKEN REFERENCE**, and that is worth
+// knowing before pointing this at Apache CXF. WS-Security carries a signer's
+// certificate as a BinarySecurityToken with a SecurityTokenReference to it,
+// and nothing equivalent is registered for a post-quantum key. So the
+// Signature carries an ordinary XMLDSIG KeyInfo holding a
+// dsig11:DEREncodedKeyValue: valid XML Signature, and a shape a strict STS may
+// well refuse. Being able to send it and see what happens is the point.
+// ---------------------------------------------------------------------------
+function pqMethod() {
+  log.debug("Entering pqMethod().");
+  var spec = xd.SIG_METHODS[val('wst_sig_alg') || xd.SIG_ALG_RSA_SHA256];
+  log.debug("Leaving pqMethod().");
+  return (spec && spec.postQuantum) ? spec : null;
+}
+
+function pqHexToBytes(hex) {
+  log.debug("Entering pqHexToBytes().");
+  var clean = String(hex || '').replace(/[^0-9a-fA-F]/g, '');
+  var out = new Uint8Array(clean.length / 2);
+  for (var i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  }
+  log.debug("Leaving pqHexToBytes(). " + out.length + " bytes.");
+  return out;
+}
+
+function pqBytesToHex(bytes) {
+  log.debug("Entering pqBytesToHex().");
+  var view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  var out = '';
+  for (var i = 0; i < view.length; i++) {
+    out += (view[i] < 16 ? '0' : '') + view[i].toString(16);
+  }
+  log.debug("Leaving pqBytesToHex().");
+  return out;
+}
+
 function generateKeys() {
   log.debug("Entering generateKeys().");
+  var pqSpec = pqMethod();
+  if (pqSpec) {
+    setStatus('wst_call_status', 'Generating a ' + pqSpec.label + ' key ' +
+              'pair…');
+    setTimeout(function () {
+      try {
+        var pair = pqSpec.family === 'hsslms'
+          ? hbs.hssKeygen({ levels: [{ lms: 'LMS_SHA256_M32_H5',
+                                       lmots: 'LMOTS_SHA256_N32_W8' }] })
+          : pqc.generateAkpKeyPair(pqSpec.alg);
+        setVal('wst_sp_private_key',
+               pqBytesToHex(pair.priv || pair.privateKey));
+        setVal('wst_sp_cert', pqBytesToHex(pair.pub || pair.publicKey));
+        setStatus('wst_call_status', 'Generated a ' + pqSpec.label + ' key ' +
+                  'pair (hex, not PEM). The Security header will carry a ' +
+                  'dsig11:DEREncodedKeyValue rather than a ' +
+                  'BinarySecurityToken — nothing equivalent is registered ' +
+                  'for a post-quantum key, so a strict STS may refuse it.');
+        saveState();
+        autoBuildRequest();
+      } catch (e) {
+        log.error('generateKeys: ' + e.message);
+        setStatus('wst_call_status', 'Key generation error: ' + e.message);
+      }
+    }, 20);
+    log.debug("Leaving generateKeys(). Post-quantum.");
+    return false;
+  }
   var bits = parseInt(val('wst_key_bits'), 10) || 2048;
   setStatus('wst_call_status', 'Generating ' + bits + '-bit RSA key pair…');
   setTimeout(function () {
@@ -580,13 +656,21 @@ function signWsSecurity(soapXml) {
   var priv = val('wst_sp_private_key');
   if (!priv) throw new Error('Signing is enabled but there is no client ' +
       'private key — generate a key pair.');
+  var pqSpec = pqMethod();
+  var keyOpts = pqSpec
+    ? { signer: xdPqc.signerFor(pqHexToBytes(priv), {
+          onKeyAdvanced: function (next) {
+            setVal('wst_sp_private_key', pqBytesToHex(next));
+          }
+        }),
+        keyInfoXml: xd.derEncodedKeyValueXml(
+            pqHexToBytes(val('wst_sp_cert'))) }
+    : { privateKeyPem: priv, certPem: val('wst_sp_cert') };
   log.debug("Leaving signWsSecurity().");
-  return xd.signWsSecurity(soapXml, {
-    privateKeyPem: priv,
-    certPem: val('wst_sp_cert'),
+  return xd.signWsSecurity(soapXml, Object.assign({
     sigAlg: val('wst_sig_alg') || xd.SIG_ALG_RSA_SHA256,
     signTimestamp: checked('wst_sign_timestamp')
-  });
+  }, keyOpts));
 }
 
 // Encrypt the SOAP Body content with XML-Encryption (educational — most STSes
@@ -971,6 +1055,10 @@ function setReturnLink() {
 }
 
 window.onload = function () {
+  // The sixteen post-quantum SignatureMethods, from the registry. See
+  // client/src/xmldsig_pqc.js and docs/xmldsig-pqc.md.
+  xdPqc.appendSignatureOptions(document.getElementById('wst_sig_alg'),
+      xd.SIG_METHODS, xd.PQ_SIG_URIS);
   log.debug('Entering onload().');
   restoreState();
   setReturnLink();

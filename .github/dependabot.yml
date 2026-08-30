@@ -1,0 +1,103 @@
+# Dependabot, and the one thing it has to be told about this repository.
+#
+# ---------------------------------------------------------------------------
+# WHY THIS FILE EXISTS: FOUR ADVISORIES AGAINST A TEST RUNNER THAT IS NEVER
+# INSTALLED AND NEVER SHIPPED.
+#
+# `api/package.json` takes `"ldapjs": "file:node-ldapjs"` — the git submodule,
+# pinned at its final upstream commit because ldapjs was DECOMMISSIONED by its
+# maintainer on 2024-05-14 and there is nobody to publish a fix. npm installs
+# the devDependencies of a local-path dependency along with its runtime ones,
+# so ldapjs's own test tooling lands in `api/package-lock.json`: `tap`, and
+# under it `nyc`, `istanbul-lib-processinfo` and `uuid`. That is roughly two
+# hundred packages this service does not load, does not run and does not ship.
+#
+# `api/.npmrc` carries `omit=dev` and `api/Dockerfile` passes `--omit=dev`, so
+# none of it is ever installed. Dependabot reads the LOCKFILE, which records
+# the whole resolved tree regardless, so it sees them and opens a security
+# update for each.
+#
+# **AND IT CANNOT COMPLETE ONE.** npm's own answer for every one of the four is
+# `tap@21.7.5`, a semver-major bump of a package this repository does not
+# depend on — it is ldapjs's devDependency, inside a submodule pinned to a dead
+# upstream. So Dependabot tries, fails, and the "Dependabot Updates" workflow
+# has been red since 2026-08-20: three consecutive runs, all
+# "npm_and_yarn in /api for uuid", each ending "The updater encountered one or
+# more errors."
+#
+# WHAT WAS TRIED AND REJECTED. An `overrides` entry forcing `uuid` to a patched
+# 11.x — the pattern this manifest already uses for `validator`, `js-yaml` and
+# `brace-expansion`. It is the wrong tool here twice over: npm did not apply it
+# to the `file:` dependency's tree, and had it worked it would have put an
+# ESM-only uuid under a CommonJS `istanbul-lib-processinfo`, breaking the test
+# runner in order to silence a scanner about a package that is never installed.
+# A lockfile edited to make a scanner quiet is a lockfile that no longer
+# describes what is installed.
+#
+# So the four are IGNORED, by name, with the reason beside them. That is the
+# honest statement: not "these are fixed" but "these are not in the product".
+#
+# ---------------------------------------------------------------------------
+# WHAT IS NOT IGNORED, WHICH IS THE PART THAT MATTERS. Every runtime dependency
+# of every manifest here is still watched. If `express`, `axios`, `node-forge`,
+# `@grpc/grpc-js` or anything else this service actually loads gets an
+# advisory, Dependabot opens it and this file does nothing to stop it. The
+# ignore list is four package NAMES, scoped to `/api`, and each one is
+# reachable only through ldapjs's test tooling.
+#
+# **REVISIT THIS WHEN `api/node-ldapjs` MOVES.** The submodule is pinned to a
+# decommissioned upstream today; if it is ever repointed at a maintained fork
+# whose devDependencies are current, these four entries stop being true and
+# should go rather than sit here protecting nothing.
+#
+# ---------------------------------------------------------------------------
+# `open-pull-requests-limit: 0` ON EVERY BLOCK, AND IT IS THE POINT OF THEM.
+#
+# This repository has never had Dependabot VERSION updates. What it has is
+# Dependabot SECURITY updates, which are a repository setting rather than a
+# file, and which is what the red "Dependabot Updates" runs are. Adding a
+# dependabot.yml without this line would switch version updates ON for three
+# npm trees and the actions — a weekly pull request per outdated package,
+# across `api`, `client` and `tests`, which between them carry several hundred
+# — and that is a large change to how this repository is maintained, arriving
+# as a side effect of quieting one advisory.
+#
+# Zero disables version updates while leaving security updates working, so the
+# behaviour is exactly what it was plus the four ignores. Raise it deliberately
+# if version updates are ever wanted; that is a separate decision.
+# ---------------------------------------------------------------------------
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/api"
+    open-pull-requests-limit: 0
+    schedule:
+      interval: "weekly"
+    ignore:
+      # All four are ldapjs's test tooling, reached only through
+      # `file:node-ldapjs` -> tap. See the header.
+      - dependency-name: "tap"
+      - dependency-name: "nyc"
+      - dependency-name: "istanbul-lib-processinfo"
+      - dependency-name: "uuid"
+
+  # The other three manifests carry no ignores and no version updates: they are
+  # here so that the file describes the whole surface rather than the one
+  # directory that had a problem, and so a future ignore has an obvious home.
+  - package-ecosystem: "npm"
+    directory: "/client"
+    open-pull-requests-limit: 0
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "npm"
+    directory: "/tests"
+    open-pull-requests-limit: 0
+    schedule:
+      interval: "weekly"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    open-pull-requests-limit: 0
+    schedule:
+      interval: "weekly"

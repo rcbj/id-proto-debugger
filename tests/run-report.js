@@ -211,24 +211,29 @@ function jobTypeOf(script) {
 //     STS's own suite now (see the note in docs/mock-sts.md), which is the
 //     tree that changes them.
 //
-//     A SECOND SHAPE NEEDS IT, and two jobs are it: one that makes the mock
-//     BLOCK. `sts_userinfo_protected.js` and `sts_jws_verification.js` walk
-//     every algorithm the mock advertises, SLH-DSA among them — and the mock is
-//     one process whose signing is synchronous, so for the duration of one of
-//     those signatures it answers NOBODY: not another HTTP caller, not the KDC
-//     on port 88. Stalls of 14.6, 15.4, 17.8 and 23.3 SECONDS were measured in
-//     the containerized run of 2026-08-29, and each failed some unrelated job
-//     in a way that named anything but the cause — a Kerberos reply that never
-//     came, a Populate button never drawn, a login screen that never arrived, a
-//     refresh whose socket the mock closed on its way back. This is the shape a
-//     named lock cannot express: the set they collide with is the suite, so
-//     listing it would be listing the suite. They run alone instead, which
-//     costs the parallelism of two jobs out of 281 and is deterministic where
-//     retrying is not.
+//     A SECOND SHAPE NEEDED IT FOR ONE DAY, and the record is worth keeping
+//     because the shape will recur. `sts_userinfo_protected.js` and
+//     `sts_jws_verification.js` walk every algorithm the mock advertises,
+//     SLH-DSA among them — and the mock was one process whose signing was
+//     synchronous, so for the duration of one of those signatures it answered
+//     NOBODY: not another HTTP caller, not the KDC on port 88. Stalls of 14.6,
+//     15.4, 17.8 and 23.3 SECONDS were measured in the containerized run of
+//     2026-08-29, and each failed some unrelated job in a way that named
+//     anything but the cause — a Kerberos reply that never came, a Populate
+//     button never drawn, a login screen that never arrived, a refresh whose
+//     socket the mock closed on its way back. A named lock could not express
+//     that: the set they collided with was the suite, so listing it would have
+//     been listing the suite.
 //
-//     THAT PAIR IS INTERIM. The cause is the mock blocking and the fix is over
-//     there — a front process owning the sockets and the state, with the
-//     signing moved to workers. When that lands, take these two out again.
+//     They were marked EXCLUSIVE as an interim measure and are NOT any more.
+//     The cause was the mock blocking and the fix landed over there on
+//     2026-08-30 (rcbj/mock-sts#6): a front process owning the sockets and the
+//     state, with the signing handed to a pool of stateless children. Its
+//     `workers.count` defaults to 2 and nothing here has to set it. **A JOB
+//     THAT MAKES A SHARED SERVICE BLOCK IS STILL THIS TABLE'S PROBLEM** — that
+//     is why this paragraph stays — but it is no longer these two jobs'
+//     problem, and marking them alone now would cost the parallelism of two
+//     jobs out of 281 for nothing.
 //
 // A script that is not in the table runs unlocked, which is the right default:
 // nearly every test here mints an identity of its own (random_username.js, and
@@ -329,10 +334,6 @@ const JOB_LOCKS = {
   "kerberos_spnego_signin.js": "sts-spnego-signin",
   "kerberos_spnego_page.js": "sts-spnego-signin",
   "kerberos_tgs_ap_page.js": "sts-spnego-signin",
-  // The two that make the mock BLOCK rather than the two that share state with
-  // anything: every advertised algorithm, SLH-DSA among them. See EXCLUSIVE.
-  "sts_userinfo_protected.js": EXCLUSIVE,
-  "sts_jws_verification.js": EXCLUSIVE,
   // And the MIT-client job, for both of the same reasons: it turns
   // `krb5.spnegoAuthentication` off to assert the closed door, and it asserts
   // that a REPLAYED AP-REQ is refused — which a concurrent job spending its
@@ -4237,6 +4238,41 @@ function buildJobs() {
   jobs.push({
     name: "XML Signature & Encryption interop (xml-crypto / xml-encryption)",
     script: "xmlsec_interop.js",
+    env: {},
+  });
+
+  // POST-QUANTUM XML SIGNATURE. A pure-Node test (no browser, no IdP) of the
+  // sixteen SignatureMethod identifiers common/xmldsig.js took from
+  // draft-eastlake-rfc9231bis-xmlsec-uris-09 — ML-DSA at three parameter sets,
+  // SLH-DSA at twelve, and HSS/LMS — driven through the real engine with
+  // client/src/xmldsig_pqc.js as the signer, which is the one bridge from a
+  // URI to the module that performs it. The lattice itself is somebody else's
+  // test (pqc_engines.js, hbs_signatures.js); what this asserts is the XML
+  // layer: that the bytes signed are the canonicalized SignedInfo, that each
+  // URI produces the signature length FIPS 204/205 specifies for the set it
+  // names, that a tampered document is caught by the REFERENCE digest rather
+  // than by the signature, and that HSS/LMS reports the one-time key it spent.
+  jobs.push({
+    name: "Post-quantum XML Signature (ML-DSA, SLH-DSA, HSS/LMS — the draft " +
+          "identifiers, the signed octets, and the stateful one)",
+    script: "xmldsig_pqc.js",
+    env: {},
+  });
+
+  // FRODOKEM AND eFRODOKEM AGAINST THE PUBLISHED VECTORS. A pure-Node test of
+  // client/src/frodokem.js, which is the only cryptographic primitive in this
+  // project with NO LIBRARY BEHIND IT — @noble has no FrodoKEM, npm has none,
+  // and the one credible open implementation is C. It was written from the
+  // specification, so it is held to microsoft/PQCrypto-LWEKE's own KAT files
+  // for all twelve parameter sets: seed NIST's AES-256-CTR-DRBG with the
+  // published seed and require the published public key, secret key,
+  // ciphertext and shared secret back. That is not a formality — it caught a
+  // real defect on its first run, in four of the twelve, that a round-trip
+  // test cannot see.
+  jobs.push({
+    name: "FrodoKEM and eFrodoKEM against the reference implementation's " +
+          "Known Answer Tests (all twelve parameter sets)",
+    script: "frodokem_vectors.js",
     env: {},
   });
 

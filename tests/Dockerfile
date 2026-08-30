@@ -525,11 +525,23 @@ COPY sts/oauth-oidc/client_auth.js sts/oauth-oidc/mtls.js sts/oauth-oidc/oauth2_
 # has to mirror the mock's own folders or the relative require resolves outside
 # the image's sts/ tree.
 COPY sts/common/crypto.js ./sts/common/
-# crypto.js requires it for the post-quantum and composite signatures, so
-# it has to travel with it — the in-process mock-KDC jobs load crypto.js and
+# crypto.js requires them for the post-quantum and composite signatures, so
+# they have to travel with it — the in-process mock-KDC jobs load crypto.js and
 # would otherwise die at require time with MODULE_NOT_FOUND naming a file
 # nobody edited. jwk_pem_encoding.js checks this pairing on every run.
-COPY sts/common/pq_jose.js ./sts/common/
+#
+# `worker.js` and `worker_pool.js` joined it at the 2026-08-30 sts/ bump, and
+# they are the FIFTH time this hand-picked set went stale without this file or
+# that one changing — the mock gave a module it already had a new `require`.
+# crypto.js requires the pool for its EFFECT (loading it is what hands
+# pq_jose.js the pool to compute in), the pool requires worker.js, and worker.js
+# requires pq_jose.js, which is already here. Five jobs died at require time
+# with `Cannot find module './worker_pool'` before a single assertion ran.
+#
+# THEY ARE ON THIS LINE RATHER THAN ON TWO NEW ONES because a COPY is a layer
+# and everyDockerfileStaysUnderTheLayerLimit() in tests/jwk_pem_encoding.js
+# counts them. Nothing else about the grouping means anything.
+COPY sts/common/pq_jose.js sts/common/worker.js sts/common/worker_pool.js ./sts/common/
 COPY sts/common/vendored/xmldsig.js ./sts/common/vendored/
 COPY sts/common/realms.js sts/common/delegation.js ./sts/common/
 COPY sts/federation/federation.js ./sts/federation/
@@ -734,6 +746,27 @@ COPY tests/hash_engine.js ./
 # JSON file, in a tenth of a second, on every containerized run while passing
 # on every host one.
 COPY tests/hbs_signatures.js tests/hbs_vectors.json ./
+# POST-QUANTUM XML SIGNATURE. Like the two above it needs no flat copy of its
+# subjects: `common/xmldsig.js` is already flat as `xmldsig.js`,
+# `client/src/pqc.js` is already flat as `pqc.js`, and `client/src/hbs.js` and
+# `client/src/xmldsig_pqc.js` are both in the tree `COPY client/src` stages.
+#
+# THE TEST AND THE BRIDGE SHARE A BASENAME AND THAT IS HANDLED RATHER THAN
+# RISKED. This directory is flat and the last COPY wins, so a flat copy of
+# `client/src/xmldsig_pqc.js` would land on this test and the job would run the
+# module instead — silently, since a module with no main block exits 0. The
+# test therefore looks for the bridge under a DIFFERENT flat name
+# (`xmldsig_pqc_bridge.js`, which nothing writes) before falling back to
+# ../client/src, so the mirror is the only copy and there is nothing to
+# collide with.
+COPY tests/xmldsig_pqc.js ./
+# FrodoKEM against the reference implementation's own Known Answer Tests. The
+# SUBJECT needs no flat copy — client/src/frodokem.js is in the tree `COPY
+# client/src` stages — but the VECTORS are data beside the test and their
+# absence would not fail the build: the job would die at load with ENOENT
+# naming a JSON file, in a tenth of a second, on every containerized run while
+# passing on every host one. Same trap hbs_vectors.json carries.
+COPY tests/frodokem_vectors.js tests/frodokem_vectors.json ./
 # The postgres persistence job. It SKIPS in this image — it runs `node
 # server.js` out of a complete mock STS tree, and what is copied here is
 # about thirty modules with no node_modules — but it is copied so that
