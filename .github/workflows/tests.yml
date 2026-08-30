@@ -49,9 +49,11 @@ jobs:
       # sudo itself, so it runs unprivileged here.
       - name: Run Selenium test suite
         # See the coverage job below for why this is not the mock's default
-        # of `debug`.
+        # of `debug`, and why the api and the client are turned down with it.
         env:
           STS_LOG_LEVEL: info
+          API_LOG_LEVEL: info
+          CLIENT_LOG_LEVEL: info
         run: ./docker-run-tests.sh
       # The tests container writes tests/report as root via a bind mount; hand it
       # back to the runner user before the upload step reads it.
@@ -103,11 +105,23 @@ jobs:
         # driving it. The variable outranks whatever env/docker-tests.js says,
         # so nothing on this machine or anybody else's changes with it.
         #
-        # The api and the client are still at debug and cannot be turned down
-        # the same way: their level comes from the config file alone, and the
-        # client's is compiled into the browser bundle. See issue #269.
+        # The api and the client are turned down too, and they could not be
+        # done the same way: neither has a variable of its own that outranks
+        # the appconfig, so env/docker-tests.js on each side now READS one and
+        # falls through to `debug` when it is unset. API_LOG_LEVEL is runtime.
+        # CLIENT_LOG_LEVEL is BUILD time — browserify's envify inlines it into
+        # all 44 bundles when the image is built, and no variable on a running
+        # container can move it.
+        #
+        # This is for the LOG VOLUME, not for speed, and run-coverage.sh
+        # records the measurement: jws_engine runs 70.9s at debug writing
+        # 34093 lines and 77.3s at info writing 19, so the slow jobs are
+        # CPU-bound in the cryptography and the watchdog default is what
+        # addresses those. See issue #269.
         env:
           STS_LOG_LEVEL: info
+          API_LOG_LEVEL: info
+          CLIENT_LOG_LEVEL: info
         run: ./run-coverage.sh
       # coverage/ and tests/report are written as root inside the containers.
       - name: Normalize coverage permissions

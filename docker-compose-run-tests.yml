@@ -63,6 +63,14 @@ services:
     image: rcbj/api
     environment:
       - CONFIG_FILE=./env/docker-tests.js
+      # The level this service logs at, overriding env/docker-tests.js without
+      # editing it — the same arrangement as STS_LOG_LEVEL below, and read at
+      # RUNTIME, so a restart is enough. Bare, so unset here is unset in the
+      # container and the config file's own `debug` applies exactly as before.
+      # An EMPTY value is safe (unlike STS_LOG_LEVEL, which makes bunyan throw
+      # while the mock is loading): the config file falls through to `debug`.
+      # See issue #269 and run-coverage.sh.
+      - API_LOG_LEVEL=${API_LOG_LEVEL:-}
       # ---------------------------------------------------------------------
       # THE MOCK STS'S CERTIFICATE, IN THIS SERVICE'S TRUSTSTORE.
       #
@@ -116,6 +124,12 @@ services:
       dockerfile: client/Dockerfile 
       args:
         CONFIG_FILE: ${CONFIG_FILE}
+        # A BUILD argument rather than an environment variable, because
+        # browserify's envify transform inlines the level into each bundle at
+        # build time — see the ARG/ENV pair at the top of client/Dockerfile.
+        # Changing it needs a rebuild, not a restart, and the image's ENV then
+        # gives client/server.js the same level as the bundles it serves.
+        CLIENT_LOG_LEVEL: ${CLIENT_LOG_LEVEL:-debug}
     healthcheck:
       test: curl -X GET http://localhost:3000
       interval: 10s
@@ -400,6 +414,24 @@ services:
     environment:
       KEYCLOAK_WSFED_BASE_URL: http://keycloak-wsfed:8080
       KEYCLOAK_WSFED_LOCALHOST_BASE_URL: http://keycloak-wsfed:8080
+      # THE api's AND THE client's LOG LEVELS, and they belong on THIS service
+      # for a reason that is easy to miss: about thirty jobs here never open a
+      # browser. They load the real client/src and api modules IN PROCESS
+      # (module_paths.requireSharedModule), and each of those modules resolves
+      # `require(process.env.CONFIG_FILE)` relative to ITSELF — so
+      # client/src/jws.js reads client/src/env/docker-tests.js and takes that
+      # file's level, not this directory's. Without these two names here, those
+      # jobs go on logging at `debug` however the api and client services are
+      # configured, and they are the noisiest thing in a run.
+      #
+      # It is the log VOLUME this is for, not speed: jws_engine writes 34093
+      # lines at debug and 19 at info and takes the same time either way,
+      # because it is CPU-bound in the cryptography. See run-coverage.sh.
+      #
+      # Empty is safe for both — each config file falls through to `debug` —
+      # so unlike STS_LOG_LEVEL these can take the assigned form.
+      API_LOG_LEVEL: ${API_LOG_LEVEL:-}
+      CLIENT_LOG_LEVEL: ${CLIENT_LOG_LEVEL:-}
       # How many jobs run at once. Passed THROUGH from the host so
       # `TEST_CONCURRENCY=6 ./docker-run-tests.sh` reaches run-report.js, which
       # otherwise sizes the pool from this container's view of the cores. Empty

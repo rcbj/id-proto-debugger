@@ -3,7 +3,25 @@ var config = {
   uiUrl: "http://client:3000",
   hostname: "0.0.0.0",
   port: "3000",
-  logLevel: "debug",
+  // The level this bundle and the client server log at. `debug` is the
+  // default and stays the default. `CLIENT_LOG_LEVEL` overrides it without
+  // this file being edited, which is what the CI workflow sets to `info`.
+  //
+  // THIS ONE IS READ TWICE, AND ONLY ONE OF THEM IS AT RUNTIME. client/
+  // server.js is node and reads the container's environment. The browser
+  // bundles are not: browserify's envify transform INLINES process.env at
+  // BUILD time, so what reaches a page is whatever `client/Dockerfile` had in
+  // its environment when it ran browserify — hence the ARG/ENV pair there,
+  // and hence a rebuild rather than a restart to change it. envify in `purge`
+  // mode reads the real environment, so no per-bundle flag is needed and all
+  // 44 browserify lines are untouched; unset, it inlines `undefined` and this
+  // `||` yields `debug`, exactly as before this existed.
+  //
+  // Browser logging is the expensive one on this page set: a bunyan record is
+  // a JSON serialization plus a console write, ~15us in headless Chrome, and
+  // CLAUDE.md records a sweep that took one test from 1.9s to 34s on that
+  // alone. Issue #269.
+  logLevel: process.env.CLIENT_LOG_LEVEL || "debug",
   // api backend is available, so both frontend and backend initiation are
   // offered.
   backendAvailable: true,

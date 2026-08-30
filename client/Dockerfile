@@ -3,6 +3,23 @@ FROM ubuntu:latest
         
 ARG CONFIG_FILE
 
+# The level the BROWSER BUNDLES log at, and it has to be a build argument
+# rather than an environment variable on the container: browserify's envify
+# transform inlines `process.env` at BUILD time, so a bundle's level is fixed
+# when this file runs and a restart cannot change it.
+#
+# `ENV` rather than only `ARG`, and that is the whole trick: envify in `purge`
+# mode reads the real process environment, so putting the value there reaches
+# all 44 browserify lines below without a per-bundle flag on any of them. Unset
+# it inlines `undefined`, and env/docker-tests.js's `|| "debug"` takes over —
+# so the default here is exactly the behaviour that existed before this ARG.
+#
+# The ENV also survives into the running image, so client/server.js — which is
+# node and reads the variable at runtime — ends up at the same level as the
+# bundles it serves rather than a different one. Issue #269.
+ARG CLIENT_LOG_LEVEL=debug
+ENV CLIENT_LOG_LEVEL=${CLIENT_LOG_LEVEL}
+
 # replace shell with bash so we can source files
 RUN rm /bin/sh && ln -s /bin/bash /bin/sh
 

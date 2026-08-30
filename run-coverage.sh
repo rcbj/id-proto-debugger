@@ -98,6 +98,69 @@ if [ -n "${STS_LOG_LEVEL:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# THE API'S AND THE CLIENT'S LOG LEVELS — the other two thirds of issue #269,
+# and they do NOT work the way STS_LOG_LEVEL above does.
+#
+# The mock reads its level from an environment variable that outranks its
+# appconfig. These two have no such variable of their own: their level comes
+# from `CONFIG_FILE` and nothing else. So `env/docker-tests.js` on each side
+# now reads one — `API_LOG_LEVEL`, `CLIENT_LOG_LEVEL` — and falls through to
+# `debug` when it is unset OR EMPTY, which is why these can be exported
+# unconditionally where STS_LOG_LEVEL cannot.
+#
+# AND THEY REACH THEIR SERVICE BY DIFFERENT ROUTES, which is the part worth
+# reading before changing either:
+#
+#   API_LOG_LEVEL     is read at RUNTIME by node, so the compose file passes
+#                     it as an ordinary environment variable and a restart is
+#                     enough to change it.
+#   CLIENT_LOG_LEVEL  is a BUILD argument. browserify's envify transform
+#                     inlines `process.env` into each of the 44 bundles when
+#                     the image is built, so a page's level is fixed at build
+#                     time and no environment variable on the running
+#                     container can move it. Changing it REBUILDS the client
+#                     image. The image's ENV then carries the same value to
+#                     client/server.js, so the server and the bundles it
+#                     serves cannot end up at different levels.
+#
+# WHAT THIS BUYS, AND WHAT IT DOES NOT. It was measured before it was
+# written down, because the obvious guess is wrong.
+#
+# IT DOES NOT SPEED UP THE SLOW JOBS, and it is worth saying plainly so that
+# nobody re-derives the hope. `jws_engine` — the longest job in the suite, and
+# one of the three the watchdog was killing — loads client/src/jws.js in
+# process, so it inherits this level. Timed on a twenty-core machine: 70.9s
+# with the level at `debug` writing 34093 log lines, 77.3s at `info` writing
+# 19. The difference is machine noise in the WRONG direction. That job is
+# CPU-bound in the cryptography and always was; roughly 486 log records a
+# second is a fraction of a percent of it. The watchdog default above is the
+# fix for those timeouts, and this is not a second one.
+#
+# WHAT IT DOES BUY is the log volume itself — three orders of magnitude on
+# that one job — which is disk, artifact size and the ability to find anything
+# in a run that DID fail. The in-page cost is the one CLAUDE.md records as
+# having actually mattered: a bunyan record is a JSON serialization plus a
+# console write, ~15us in headless Chrome, and adding entry/exit logging to
+# eight one-line accessors once took a single test from 1.9s to 34s and past
+# the WebDriver script timeout on a GitHub runner. That is a DOM-driven
+# rebuild path rather than a crypto loop, and it is not measured here.
+#
+# DEBUG IS STILL THE DEFAULT HERE, for the same reason it is for the mock: a
+# run somebody is watching wants the record, and turning it down is a choice a
+# run makes rather than one made for it. `.github/workflows/tests.yml` sets
+# both to `info` because nobody reads a passing CI run's log.
+#
+#   API_LOG_LEVEL=info CLIENT_LOG_LEVEL=info ./run-coverage.sh
+#
+# NOTE THE REBUILD. This script already passes --build, so CLIENT_LOG_LEVEL
+# takes effect on the next run without anything further — but it does mean
+# changing it invalidates the browserify layers, and those are most of the
+# client image's build time.
+# ---------------------------------------------------------------------------
+export API_LOG_LEVEL="${API_LOG_LEVEL:-}"
+export CLIENT_LOG_LEVEL="${CLIENT_LOG_LEVEL:-}"
+
+# ---------------------------------------------------------------------------
 # HOW MANY JOBS RUN AT ONCE, and how long one may take before it is killed.
 #
 # The suite is ~200 independent jobs and run-report.js runs them in a POOL. Both
@@ -118,9 +181,11 @@ fi
 #                      all on the same machine, so raising it past the cores
 #                      trades the suite's wall clock for those services'
 #                      response times and buys nothing.
-#   TEST_JOB_TIMEOUT_MS  per-job watchdog in ms (default 900000 — 15 minutes;
-#                      0 disables it). Raise it if a heavily loaded pool starts
-#                      reporting timeouts on jobs that pass alone.
+#   TEST_JOB_TIMEOUT_MS  per-job watchdog in ms. THIS SCRIPT DEFAULTS IT TO
+#                      2700000 (45 minutes) rather than leaving the pool's own
+#                      900000, because instrumentation is the difference — see
+#                      the assignment near the top of this file. 0 disables it,
+#                      and a value from the caller wins.
 #
 #   TEST_CONCURRENCY=6 ./run-coverage.sh
 #   TEST_CONCURRENCY=1 ./run-coverage.sh   # sequential, live output
@@ -144,14 +209,22 @@ fi
 # and it survives between jobs, so a test that reconfigures a shared service
 # and does not hold a lock fails in somebody ELSE's assertion.
 #
-# NEITHER IS ASSIGNED OR EXPORTED HERE, and unlike STS_LOG_LEVEL above that is
-# not an oversight to be corrected. `VAR=x ./this-script` already puts the name
-# in this shell, docker_compose()'s forwarding loop reads it with an `eval` on
-# the shell variable rather than out of the exported environment, and it skips
-# a name whose value is empty. So an assignment with an empty default would add
-# nothing and a default with a VALUE would silently override what the caller
-# asked for — the pool's own sizing (which can see the container's cores, as
-# this shell cannot) is the better fallback. Leave this a comment.
+# TEST_CONCURRENCY IS NOT ASSIGNED OR EXPORTED HERE, and that is not an
+# oversight to be corrected. `VAR=x ./this-script` already puts the name in
+# this shell, docker_compose()'s forwarding loop reads it with an `eval` on the
+# shell variable rather than out of the exported environment, and it skips a
+# name whose value is empty. So an assignment with an empty default would add
+# nothing, and a default with a VALUE would silently override what the caller
+# asked for — the pool's own sizing, which can see the container's cores as
+# this shell cannot, is the better fallback. Leave this a comment.
+#
+# TEST_JOB_TIMEOUT_MS USED TO BE COVERED BY THAT PARAGRAPH AND NO LONGER IS.
+# The same reasoning does not reach it, because there is no equivalent of "the
+# pool can size itself": run-report.js's 900000 is a fixed number reasoned out
+# from measurements of the PLAIN suite, and this script does not run the plain
+# suite. Its default is therefore set at the top of this file, in the
+# `${VAR:-default}` form, so a caller's value still wins and the only thing
+# overridden is a default that was calibrated for a different run.
 # ---------------------------------------------------------------------------
 # The base file plus the coverage override, which touches only api and client.
 COMPOSE="docker_compose -f docker-compose-run-tests.yml -f docker-compose-coverage.yml"

@@ -3,7 +3,17 @@ var config = {
   uiUrl: "http://client:3000",
   hostname: "0.0.0.0",
   port: "4000",
-  logLevel: "debug",
+  // The level this service logs at. `debug` is the default and stays the
+  // default: it is the record of every outbound call this service made on a
+  // run somebody is watching. `API_LOG_LEVEL` overrides it without this file
+  // being edited, which is what the CI workflow sets to `info` — nobody reads
+  // a passing run's log, and the writing is not free. Read at RUNTIME by node,
+  // so the container's environment is enough; nothing is baked into an image.
+  // An unset OR EMPTY value falls through to `debug`, which is why this is
+  // safe to pass in the bare `${API_LOG_LEVEL}` form the compose file uses.
+  // The mock STS's equivalent is STS_LOG_LEVEL; see run-coverage.sh. Issue
+  // #269.
+  logLevel: process.env.API_LOG_LEVEL || "debug",
   // Timeout, in milliseconds, on every outbound axios call this service makes
   // (token, introspection, revocation, device-authorization and userinfo
   // endpoints, the SAML metadata and ArtifactResolve back-channels, the
