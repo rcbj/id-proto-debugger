@@ -48,6 +48,10 @@ jobs:
       # The script's docker_compose() (common/common.sh) invokes compose with
       # sudo itself, so it runs unprivileged here.
       - name: Run Selenium test suite
+        # See the coverage job below for why this is not the mock's default
+        # of `debug`.
+        env:
+          STS_LOG_LEVEL: info
         run: ./docker-run-tests.sh
       # The tests container writes tests/report as root via a bind mount; hand it
       # back to the runner user before the upload step reads it.
@@ -90,6 +94,20 @@ jobs:
         with:
           version: '5.2.0'
       - name: Run test suite with coverage
+        # `info`, not the mock's own default of `debug`. That log is the record
+        # of everything the mock issued and is why debug is the default for a
+        # run somebody is watching — but nobody reads a passing CI run's log,
+        # and run-coverage.sh's own header measures what it costs: about half
+        # of that service's CPU, 156MB written in sixteen seconds, and `info`
+        # roughly doubles what one instance can answer with several jobs
+        # driving it. The variable outranks whatever env/docker-tests.js says,
+        # so nothing on this machine or anybody else's changes with it.
+        #
+        # The api and the client are still at debug and cannot be turned down
+        # the same way: their level comes from the config file alone, and the
+        # client's is compiled into the browser bundle. See issue #269.
+        env:
+          STS_LOG_LEVEL: info
         run: ./run-coverage.sh
       # coverage/ and tests/report are written as root inside the containers.
       - name: Normalize coverage permissions
