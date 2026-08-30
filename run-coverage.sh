@@ -30,6 +30,37 @@ common_setup
 export CONFIG_FILE="${CONFIG_FILE:-./env/docker-tests.js}"
 
 # ---------------------------------------------------------------------------
+# A LONGER PER-JOB WATCHDOG, BECAUSE INSTRUMENTATION IS WHY THIS RUN IS SLOW.
+#
+# run-report.js defaults to 900000ms and that is the right number for the PLAIN
+# suite: its own comment reasons it out from real measurements (the longest job
+# in the 2026-08-26 run was 389 seconds), and it is far enough above them to
+# bound a hang without turning a slow machine into a failure.
+#
+# THIS RUN IS NOT THAT RUN. It is the same jobs under NODE_V8_COVERAGE, and on
+# a GitHub runner that means two cores shared by a pool of them. Three jobs are
+# CPU-bound cryptography and are nowhere near the others:
+#
+#     hbs_signatures   36s        LMS/HSS and XMSS, from the RFCs' vectors
+#     pqc_engines      58s        FIPS 203/204/205 and the X-Wing draft
+#     jws_engine       67s        every registered JWS alg, both backends
+#
+# — uninstrumented, on a twenty-core machine. Instrumented on two, they went
+# past 900000ms and were killed, which is what took `develop` red on
+# 2026-08-30 and `feature/269` with it. A job that is killed asserts nothing,
+# and the report then blames three of the most valuable tests in the suite for
+# a property of the runner.
+#
+# 2700000ms is 45 minutes per job, against a whole-run wall clock of about 50
+# and a GitHub job limit of 360, so it still bounds a hang — it is simply
+# calibrated for the instrumented run rather than the plain one.
+#
+# The caller's own value wins, so a run that wants the short watchdog back can
+# ask for it, and 0 still disables the watchdog entirely.
+# ---------------------------------------------------------------------------
+export TEST_JOB_TIMEOUT_MS="${TEST_JOB_TIMEOUT_MS:-2700000}"
+
+# ---------------------------------------------------------------------------
 # THE MOCK STS'S LOG LEVEL, exposed here so a run can turn it down.
 #
 # `STS_LOG_LEVEL` is a setting of the mock (see sts/common/config.js), and an
