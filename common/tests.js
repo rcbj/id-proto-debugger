@@ -145,9 +145,7 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     // provider and the Populate button is drawn only when it arrives (the
     // paragraph below says the same thing from the other side), so a flat
     // 2000ms here is 2000ms for a fetch of somebody else's service. When that
-    // service is busy — the mock STS is one process, and a single
-    // SLH-DSA-SHAKE-128s signature blocks its event loop for upwards of
-    // fourteen seconds — the document is simply late, and what this reports is
+    // service is busy the document is simply late, and what this reports is
     //
     //   TimeoutError: Waiting for element to be located
     //       By(css selector, .btn_oidc_populate_meta_data)
@@ -156,6 +154,18 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     // failed the containerized run of 2026-08-29 that way and passed the one
     // before it. `waitTime * 6` is what federation_matrix_sso.js already
     // spends on its own fetch-gated waits.
+    //
+    // **THE TRIGGER FOR RAISING IT IS GONE AND THIS STAYS**, which is the
+    // opposite of what was done to sd_jwt_vc_issuance.js's `fetchWait` on the
+    // same day — so the difference is worth stating. What was measured on
+    // 2026-08-29 was the mock STS blocking for fourteen seconds inside one
+    // SLH-DSA-SHAKE-128s signature, and that is fixed (rcbj/mock-sts#6). But
+    // the argument above never depended on it: this wait gates on a FETCH OF
+    // ANOTHER SERVICE, and 2000ms was too short for one whatever that service
+    // happens to be doing. `fetchWait` went back down because 30000 sat ABOVE
+    // the stall it was raised for and would have hidden its return; this one
+    // is not a ceiling over anything, it is the right budget for a network
+    // round trip.
     await driver.wait(until.elementLocated(btn_oidc_populate_meta_data),
                       waitTime * 6);
     await driver.wait(until.elementIsVisible(driver.findElement(

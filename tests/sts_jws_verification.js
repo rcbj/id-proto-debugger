@@ -297,7 +297,20 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
       { iss: clientId, sub: clientId, aud: audience[0],
         exp: now + 300, iat: now, jti: "assertion-" + alg + "-" + now });
 
-    var verdict = clientAuth.verify({
+    // AWAITED SINCE THE MOCK'S 2026-08-30 BUMP. `clientAuth.verify()` became
+    // an `async function` when the post-quantum verification moved to that
+    // service's worker pool (rcbj/mock-sts#6) — a composite ML-DSA assertion
+    // took 17.8 and 23.3 seconds on the one thread that also answers its KDC.
+    //
+    // WITHOUT THE `await` THIS TEST FAILS IN A WAY THAT NAMES THE WRONG THING,
+    // which is why the note is here rather than in a commit message: a promise
+    // is an object and every object is truthy, so `verdict.ok` is `undefined`,
+    // the positive assertion below reports "an assertion signed with an
+    // ADVERTISED algorithm must verify. The verifier said: (no reason)", and
+    // the two NEGATIVE assertions further down compare `undefined` with
+    // `false` and fail as well. Three failures naming client authentication,
+    // from one missing keyword.
+    var verdict = await clientAuth.verify({
       method: symmetric ? "client_secret_jwt" : "private_key_jwt",
       clientId: clientId,
       clientSecret: secret,
@@ -327,7 +340,7 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
     { typ: "JWT", kid: "assert-1" },
     { iss: "confused-client", sub: "confused-client", aud: audience[0],
       exp: nowSec + 300, iat: nowSec, jti: "forged-" + nowSec });
-  var forgedVerdict = clientAuth.verify({
+  var forgedVerdict = await clientAuth.verify({
     method: "private_key_jwt", clientId: "confused-client",
     assertionType: clientAuth.ASSERTION_TYPE, assertion: forged,
     audiences: audience,
@@ -344,7 +357,7 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
     { typ: "JWT", kid: "assert-1" },
     { iss: "wrong-key-client", sub: "wrong-key-client", aud: audience[0],
       exp: nowSec + 300, iat: nowSec, jti: "wrong-" + nowSec });
-  var wrongVerdict = clientAuth.verify({
+  var wrongVerdict = await clientAuth.verify({
     method: "private_key_jwt", clientId: "wrong-key-client",
     assertionType: clientAuth.ASSERTION_TYPE, assertion: wrongKey,
     audiences: audience,

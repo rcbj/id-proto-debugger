@@ -525,11 +525,23 @@ COPY sts/oauth-oidc/client_auth.js sts/oauth-oidc/mtls.js sts/oauth-oidc/oauth2_
 # has to mirror the mock's own folders or the relative require resolves outside
 # the image's sts/ tree.
 COPY sts/common/crypto.js ./sts/common/
-# crypto.js requires it for the post-quantum and composite signatures, so
-# it has to travel with it — the in-process mock-KDC jobs load crypto.js and
+# crypto.js requires them for the post-quantum and composite signatures, so
+# they have to travel with it — the in-process mock-KDC jobs load crypto.js and
 # would otherwise die at require time with MODULE_NOT_FOUND naming a file
 # nobody edited. jwk_pem_encoding.js checks this pairing on every run.
-COPY sts/common/pq_jose.js ./sts/common/
+#
+# `worker.js` and `worker_pool.js` joined it at the 2026-08-30 sts/ bump, and
+# they are the FIFTH time this hand-picked set went stale without this file or
+# that one changing — the mock gave a module it already had a new `require`.
+# crypto.js requires the pool for its EFFECT (loading it is what hands
+# pq_jose.js the pool to compute in), the pool requires worker.js, and worker.js
+# requires pq_jose.js, which is already here. Five jobs died at require time
+# with `Cannot find module './worker_pool'` before a single assertion ran.
+#
+# THEY ARE ON THIS LINE RATHER THAN ON TWO NEW ONES because a COPY is a layer
+# and everyDockerfileStaysUnderTheLayerLimit() in tests/jwk_pem_encoding.js
+# counts them. Nothing else about the grouping means anything.
+COPY sts/common/pq_jose.js sts/common/worker.js sts/common/worker_pool.js ./sts/common/
 COPY sts/common/vendored/xmldsig.js ./sts/common/vendored/
 COPY sts/common/realms.js sts/common/delegation.js ./sts/common/
 COPY sts/federation/federation.js ./sts/federation/

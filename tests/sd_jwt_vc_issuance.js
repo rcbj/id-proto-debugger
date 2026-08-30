@@ -72,22 +72,28 @@ var baseUrl = "http://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 // THE BUDGET FOR A WAIT THAT GATES ON THE MOCK ANSWERING, as against one that
-// gates on a render — those keep the bare `waitTime`. The floor is 30000 and
-// was 20000 until 2026-08-29, when this job failed the host suite on
+// gates on a render — those keep the bare `waitTime`. The floor is 20000, and
+// it was 30000 for one day. That day is worth writing down.
+//
+// On 2026-08-29 this job failed the host suite on
 //
 //   TimeoutError: the workflow should reach the authorization server's login
 //       screen. Wait timed out after 20089ms
 //
-// which names a login screen and is nothing of the kind. The mock STS is ONE
-// process and its PQC signing is synchronous, so a signature another job asked
-// for blocks every listener it owns; the gap between consecutive `{"name":
+// which names a login screen and is nothing of the kind. The mock STS was ONE
+// process and its PQC signing was synchronous, so a signature another job asked
+// for blocked every listener it owned; the gap between consecutive `{"name":
 // "sts"...}` lines around that failure is 22.8 SECONDS. The login screen was
-// not late, the server was not answering anybody.
+// not late, the server was not answering anybody. The floor was raised to
+// 30000 against that measurement and said so as INTERIM.
 //
-// 30000 is chosen against that measurement and is INTERIM. The fix is to stop
-// the mock blocking — a front process owning the sockets and the state, with
-// the signing moved to workers — after which this can go back to 20000.
-var fetchWait = Math.max(waitTime, 30000);
+// THE CAUSE IS FIXED (rcbj/mock-sts#6, 2026-08-30: the signing runs in a pool
+// of stateless child processes and the front process's event loop stays free),
+// so it is back at 20000 — and going back is the point rather than tidiness. A
+// floor of 30000 would sit ABOVE the stall it was raised for, which means the
+// day that blocking came back this job would pass and something else would
+// fail, exactly as it did the first time. 20000 catches it here.
+var fetchWait = Math.max(waitTime, 20000);
 // The budget every waitFor* in ./wait_for.js uses. Set once: one test file
 // runs per process.
 require("./wait_for").configure({ timeout: fetchWait });
