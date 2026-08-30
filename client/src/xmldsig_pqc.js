@@ -251,7 +251,71 @@ function kemFor(spec) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// THE MENU, BUILT FROM THE REGISTRY RATHER THAN WRITTEN OUT BESIDE IT.
+//
+// Five pages carry a SignatureMethod menu — the SAML Assertion generator, the
+// SAML Request tool, WS-Trust, WS-Federation and the Digital Signature page —
+// and sixteen options hand-written into five HTML files is five copies that
+// will disagree the first time the draft renames anything. So the classical
+// options stay in the markup, where they have always been, and the
+// post-quantum ones are APPENDED from `SIG_METHODS` at load.
+//
+// **THE REGISTRY IS PASSED IN RATHER THAN REQUIRED**, and that is not
+// ceremony: `common/xmldsig.js` is staged into `client/src/` at BUILD time, so
+// a `require("./xmldsig")` here would resolve in a bundle and resolve to
+// nothing in a checkout — which is where `tests/xmldsig_pqc.js` loads this
+// file. A module that cannot be required in node is a module the node test
+// cannot reach.
+//
+// They go in an `<optgroup>` whose label names the draft, because what
+// separates these sixteen from the ones above them is not the algorithm, it is
+// how settled the identifier is — and a flat list gives a reader nowhere to be
+// told that.
+//
+// It is idempotent: a page that initialises twice must not offer thirty-two.
+// ---------------------------------------------------------------------------
+function appendSignatureOptions(select, sigMethods, uris) {
+  log.debug("Entering appendSignatureOptions().");
+  if (!select || !select.ownerDocument) {
+    log.debug("Leaving appendSignatureOptions(). No select element.");
+    return 0;
+  }
+  var doc = select.ownerDocument;
+  var existing = select.getElementsByTagName("optgroup");
+  for (var e = 0; e < existing.length; e++) {
+    if (existing[e].getAttribute("data-pq-options")) {
+      log.debug("Leaving appendSignatureOptions(). Already there.");
+      return 0;
+    }
+  }
+  var group = doc.createElement("optgroup");
+  group.setAttribute("data-pq-options", "1");
+  group.setAttribute("label",
+      "Post-quantum — draft-eastlake-rfc9231bis-xmlsec-uris");
+  var added = 0;
+  for (var i = 0; i < uris.length; i++) {
+    var spec = sigMethods[uris[i]];
+    if (!spec) {
+      continue;
+    }
+    var option = doc.createElement("option");
+    option.setAttribute("value", uris[i]);
+    option.appendChild(doc.createTextNode(spec.label));
+    // The URI in the tooltip, because the label names the algorithm and what
+    // actually goes into SignedInfo is the identifier — which is the half a
+    // reader needs when an identity provider refuses it.
+    option.setAttribute("title", uris[i]);
+    group.appendChild(option);
+    added++;
+  }
+  select.appendChild(group);
+  log.debug("Leaving appendSignatureOptions(). " + added + " added.");
+  return added;
+}
+
 module.exports = {
+  appendSignatureOptions: appendSignatureOptions,
   signerFor: signerFor,
   verifierFor: verifierFor,
   engineFor: engineFor,

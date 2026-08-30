@@ -530,6 +530,55 @@ function mlKemEncryptsAndDecrypts() {
         "derivation is not guessable", /not guessable/.test(noKdf), noKdf);
 }
 
+// ---------------------------------------------------------------------------
+function theMenuIsBuiltFromTheRegistry() {
+  log.info("I. the menu the five signing pages draw");
+  // A <select> the way a page has one, through @xmldom — the builder takes a
+  // DOM element and the registry, so it is the same code the browser runs.
+  const doc = new xmldom.DOMParser().parseFromString(
+      "<select id='sig'><option value='a'>classical</option></select>",
+      "text/html");
+  const select = doc.documentElement;
+  const added = bridge.appendSignatureOptions(select, xd.SIG_METHODS,
+                                              xd.PQ_SIG_URIS);
+  check("all sixteen post-quantum methods reach the menu", added === 16,
+        String(added));
+  const groups = select.getElementsByTagName("optgroup");
+  check("they go in one optgroup, not loose among the classical ones",
+        groups.length === 1);
+  check("whose label names the draft, because what separates them from the " +
+        "options above is how settled the identifier is",
+        groups.length === 1 &&
+        /rfc9231bis/.test(groups[0].getAttribute("label") || ""),
+        groups.length === 1 ? groups[0].getAttribute("label") : "");
+  const options = select.getElementsByTagName("option");
+  check("the classical option that was already there is untouched",
+        options.length === 17 && options[0].getAttribute("value") === "a",
+        options.length + " options");
+  // Every generated option carries the URI in its title: the label names the
+  // algorithm, and the thing that goes into SignedInfo is the identifier.
+  let titled = 0;
+  for (let i = 0; i < options.length; i++) {
+    const value = options[i].getAttribute("value");
+    if (xd.SIG_METHODS[value] && xd.SIG_METHODS[value].postQuantum &&
+        options[i].getAttribute("title") === value) {
+      titled++;
+    }
+  }
+  check("each one carries its URI as the tooltip", titled === 16,
+        String(titled));
+  // IDEMPOTENT. A page that initialises twice must not offer thirty-two.
+  const again = bridge.appendSignatureOptions(select, xd.SIG_METHODS,
+                                              xd.PQ_SIG_URIS);
+  check("calling it twice adds nothing the second time", again === 0);
+  check("and the menu still holds seventeen",
+        select.getElementsByTagName("option").length === 17);
+  // No element, no crash: a page that does not have the menu is not an error.
+  check("a page with no such menu is not an error",
+        bridge.appendSignatureOptions(null, xd.SIG_METHODS,
+                                      xd.PQ_SIG_URIS) === 0);
+}
+
 function main() {
   log.info("Starting Test run. Post-quantum XML Signature and Encryption " +
            "(draft-eastlake-rfc9231bis-xmlsec-uris-09).");
@@ -540,6 +589,7 @@ function main() {
   theEngineRefusesWhatItCannotDo();
   hkdfMatchesTheRfcsOwnVectors();
   mlKemEncryptsAndDecrypts();
+  theMenuIsBuiltFromTheRegistry();
   log.info("---------------------------------------------------------------");
   log.info(pass + " passed, " + fail + " failed.");
   process.exit(fail ? 1 : 0);
