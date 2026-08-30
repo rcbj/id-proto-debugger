@@ -4241,6 +4241,24 @@ function buildJobs() {
     env: {},
   });
 
+  // POST-QUANTUM XML SIGNATURE. A pure-Node test (no browser, no IdP) of the
+  // sixteen SignatureMethod identifiers common/xmldsig.js took from
+  // draft-eastlake-rfc9231bis-xmlsec-uris-09 — ML-DSA at three parameter sets,
+  // SLH-DSA at twelve, and HSS/LMS — driven through the real engine with
+  // client/src/xmldsig_pqc.js as the signer, which is the one bridge from a
+  // URI to the module that performs it. The lattice itself is somebody else's
+  // test (pqc_engines.js, hbs_signatures.js); what this asserts is the XML
+  // layer: that the bytes signed are the canonicalized SignedInfo, that each
+  // URI produces the signature length FIPS 204/205 specifies for the set it
+  // names, that a tampered document is caught by the REFERENCE digest rather
+  // than by the signature, and that HSS/LMS reports the one-time key it spent.
+  jobs.push({
+    name: "Post-quantum XML Signature (ML-DSA, SLH-DSA, HSS/LMS — the draft " +
+          "identifiers, the signed octets, and the stateful one)",
+    script: "xmldsig_pqc.js",
+    env: {},
+  });
+
   // WS-Trust message schema validation. A pure-Node test that builds the RST
   // for every scenario (each version × operation) with the real generator and
   // validates it against a schema derived from the official OASIS WS-Trust 1.3

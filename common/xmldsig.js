@@ -1250,6 +1250,146 @@ SIG_METHODS['http://www.w3.org/2001/04/xmldsig-more#hmac-sha512'] =
     digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512',
     label: 'HMAC-SHA512 (a MAC, not a signature)' };
 
+// ===========================================================================
+// THE POST-QUANTUM SIGNATURE METHODS — draft-eastlake-rfc9231bis-xmlsec-uris.
+//
+// XMLDSIG is crypto-agile BY DESIGN: `SignatureMethod/@Algorithm` is a URI and
+// nothing in the specification enumerates the legal ones, so a new signature
+// scheme needs an identifier and an implementation and NOT a new version of
+// XML Signature. That property is why this table can grow at all, and it is
+// the whole of what the draft below does.
+//
+// **THESE URIs ARE FROM AN INDIVIDUAL INTERNET-DRAFT AND ARE NOT A
+// RECOMMENDATION.** `draft-eastlake-rfc9231bis-xmlsec-uris-09`, 21 August
+// 2026, which is intended to obsolete RFC 9231 and carries no IETF or W3C
+// endorsement — its own boilerplate says so, and section 3.3.16 is still
+// marked "not yet listed in the indexes in Section 5". W3C has nothing: its
+// strategy issue #484 asks for a WORKSHOP on the subject. So every label here
+// says "draft", and it says so because a person reading a menu has no other
+// way to tell a draft identifier from a REC one — they are both just URIs.
+//
+// The namespace is the draft's own, `http://www.w3.org/2026/08/xmldsig-more#`,
+// used VERBATIM. Apache Santuario's in-flight PR for the same draft hedges
+// further and ships `http://www.w3.org/tbd#ml-dsa-44`; matching that would make
+// this tool interoperate with one unreleased build and with nothing else,
+// where matching the draft makes it interoperate with anything that implements
+// the draft. If the draft's namespace changes, it changes in one line here.
+//
+// WHAT IS NOT HERE, AND WHY. The draft's HashML-DSA pre-hashed variants have no
+// identifiers in it — section 3.3.15 says the PURE variant is what these URIs
+// name — so there is nothing to add. The composite ML-DSA + traditional
+// algorithms of draft-ietf-jose-pq-composite-sigs have no XML identifiers
+// anywhere, so they are absent rather than invented: an identifier this project
+// made up would be a signature nothing else on earth can verify, which is the
+// opposite of what a debugger is for.
+//
+// THE CRYPTOGRAPHY IS INJECTED, exactly as it is for ECDSA and HMAC — see the
+// section header above. `opts.signer` / `opts.verifier` do the work;
+// @noble/post-quantum in this file would put ML-DSA and SLH-DSA into the SAML,
+// WS-Trust and WS-Federation bundles, none of which had a reason to grow by a
+// megabyte. What lives here is the REGISTRY: the URI, the family, the sizes and
+// the label, in one place, so that five menus and two services cannot disagree
+// about what this project supports.
+//
+// `digestUri` IS ONLY A DEFAULT PAIRING and is not implied by the algorithm.
+// DigestMethod hashes the REFERENCED CONTENT and SignatureMethod signs the
+// SignedInfo; XMLDSIG makes them independent and this engine's pane lets them
+// be. The default pairs each parameter set with a digest of comparable
+// strength — a 128-bit-security signature over a SHA-512 digest is not wrong,
+// it is merely a pair nobody chose on purpose.
+// ===========================================================================
+var XMLDSIG_MORE_2026 = 'http://www.w3.org/2026/08/xmldsig-more#';
+
+var SHA256_URI = 'http://www.w3.org/2001/04/xmlenc#sha256';
+var SHA384_URI = 'http://www.w3.org/2001/04/xmldsig-more#sha384';
+var SHA512_URI = 'http://www.w3.org/2001/04/xmlenc#sha512';
+
+// [ URI suffix, family, the name the engines know it by, digest pairing,
+//   public key bytes, signature bytes, label ]. Written as a table because
+//   sixteen hand-written object literals is sixteen chances to transpose a
+//   number, and every one of these sizes is checkable against FIPS 204/205.
+var PQ_SIGS = [
+  // --- ML-DSA, FIPS 204, draft section 3.3.15 -----------------------------
+  ['ml-dsa-44', 'mldsa', 'ML-DSA-44', SHA256_URI, 1312, 2420,
+   'ML-DSA-44 (FIPS 204, category 2 — draft)'],
+  ['ml-dsa-65', 'mldsa', 'ML-DSA-65', SHA384_URI, 1952, 3309,
+   'ML-DSA-65 (FIPS 204, category 3 — draft)'],
+  ['ml-dsa-87', 'mldsa', 'ML-DSA-87', SHA512_URI, 2592, 4627,
+   'ML-DSA-87 (FIPS 204, category 5 — draft)'],
+
+  // --- SLH-DSA, FIPS 205, draft section 3.3.16 ----------------------------
+  // Twelve parameter sets: three security levels, two hash families, and the
+  // "s"/"f" trade — small signatures with slow signing, or fast signing with
+  // signatures two to three times the size. The `f` signatures are the largest
+  // objects this engine will ever base64 into a document (49,856 bytes for
+  // 256f), which is worth knowing before choosing one in a redirect binding.
+  ['slh-dsa-sha2-128s', 'slhdsa', 'SLH-DSA-SHA2-128s', SHA256_URI, 32, 7856,
+   'SLH-DSA-SHA2-128s (FIPS 205, small — draft)'],
+  ['slh-dsa-sha2-128f', 'slhdsa', 'SLH-DSA-SHA2-128f', SHA256_URI, 32, 17088,
+   'SLH-DSA-SHA2-128f (FIPS 205, fast — draft)'],
+  ['slh-dsa-sha2-192s', 'slhdsa', 'SLH-DSA-SHA2-192s', SHA384_URI, 48, 16224,
+   'SLH-DSA-SHA2-192s (FIPS 205, small — draft)'],
+  ['slh-dsa-sha2-192f', 'slhdsa', 'SLH-DSA-SHA2-192f', SHA384_URI, 48, 35664,
+   'SLH-DSA-SHA2-192f (FIPS 205, fast — draft)'],
+  ['slh-dsa-sha2-256s', 'slhdsa', 'SLH-DSA-SHA2-256s', SHA512_URI, 64, 29792,
+   'SLH-DSA-SHA2-256s (FIPS 205, small — draft)'],
+  ['slh-dsa-sha2-256f', 'slhdsa', 'SLH-DSA-SHA2-256f', SHA512_URI, 64, 49856,
+   'SLH-DSA-SHA2-256f (FIPS 205, fast — draft)'],
+  ['slh-dsa-shake-128s', 'slhdsa', 'SLH-DSA-SHAKE-128s', SHA256_URI, 32, 7856,
+   'SLH-DSA-SHAKE-128s (FIPS 205, small — draft)'],
+  ['slh-dsa-shake-128f', 'slhdsa', 'SLH-DSA-SHAKE-128f', SHA256_URI, 32, 17088,
+   'SLH-DSA-SHAKE-128f (FIPS 205, fast — draft)'],
+  ['slh-dsa-shake-192s', 'slhdsa', 'SLH-DSA-SHAKE-192s', SHA384_URI, 48, 16224,
+   'SLH-DSA-SHAKE-192s (FIPS 205, small — draft)'],
+  ['slh-dsa-shake-192f', 'slhdsa', 'SLH-DSA-SHAKE-192f', SHA384_URI, 48, 35664,
+   'SLH-DSA-SHAKE-192f (FIPS 205, fast — draft)'],
+  ['slh-dsa-shake-256s', 'slhdsa', 'SLH-DSA-SHAKE-256s', SHA512_URI, 64, 29792,
+   'SLH-DSA-SHAKE-256s (FIPS 205, small — draft)'],
+  ['slh-dsa-shake-256f', 'slhdsa', 'SLH-DSA-SHAKE-256f', SHA512_URI, 64, 49856,
+   'SLH-DSA-SHAKE-256f (FIPS 205, fast — draft)']
+
+  // --- HSS/LMS, RFC 8554, draft section 3.3.14 ----------------------------
+  // Added below rather than in this table: its sizes are a FUNCTION of the
+  // parameter set chosen at key generation rather than of the URI, because the
+  // one identifier covers every LMS tree height and Winternitz width there is.
+];
+
+// THE ONE STATEFUL SCHEME, AND IT IS THE ONE TO READ TWICE. HSS/LMS is a
+// hash-based signature whose PRIVATE KEY CHANGES EVERY TIME IT IS USED: each
+// one-time key signs once, and spending one twice hands an attacker the
+// material to forge a third message. Nothing else in this table is like that,
+// and nothing in XML Signature expresses it — the URI says HSS/LMS and says
+// nothing about which leaf was spent, so a document signed with a reused index
+// verifies perfectly and is worthless. `client/src/hbs.js` is the
+// implementation and its pane keeps the index in the key; this registry exists
+// so that a SignatureMethod can name it, not so that this file can manage that
+// state.
+//
+// One URI for the whole scheme, per the draft: there is no per-parameter-set
+// identifier, so the sizes below are unknown until a key is chosen.
+var HSS_LMS_URI = XMLDSIG_MORE_2026 + 'hss-lms';
+
+PQ_SIGS.forEach(function (row) {
+  SIG_METHODS[XMLDSIG_MORE_2026 + row[0]] = {
+    family: row[1], alg: row[2], hash: null, keyKind: 'akp',
+    digestUri: row[3], pubBytes: row[4], sigBytes: row[5],
+    postQuantum: true, draft: true, label: row[6]
+  };
+});
+
+SIG_METHODS[HSS_LMS_URI] =
+  { family: 'hsslms', alg: 'HSS-LMS', hash: null, keyKind: 'hsslms',
+    digestUri: SHA256_URI, postQuantum: true, draft: true, stateful: true,
+    label: 'HSS/LMS (RFC 8554, STATEFUL — draft)' };
+
+// Every post-quantum SignatureMethod this engine knows, in the order they were
+// added above. Exported so that a menu is BUILT from this table rather than
+// written out beside it: five pages carry an algorithm menu, and five
+// hand-written copies of sixteen URIs is five copies that will disagree.
+var PQ_SIG_URIS = Object.keys(SIG_METHODS).filter(function (uri) {
+  return SIG_METHODS[uri].postQuantum;
+});
+
 function sigMethod(uri) {
   log.debug("Entering sigMethod().");
   var m = SIG_METHODS[uri];
@@ -1550,6 +1690,34 @@ function ecKeyValueXml(namedCurveUri, publicPoint) {
     '</dsig11:PublicKey></dsig11:ECKeyValue></ds:KeyValue>';
 }
 
+// ---------------------------------------------------------------------------
+// A POST-QUANTUM PUBLIC KEY IN KeyInfo, AND WHY IT IS THIS ELEMENT.
+//
+// There is no `MLDSAKeyValue`, and there is not going to be one soon:
+// draft-eastlake-rfc9231bis-xmlsec-uris defines the SIGNATURE identifiers and
+// its section 4 adds only a PKCS #7 bag and some RetrievalMethod types —
+// nothing for a lattice or a hash-based key. Inventing an element here would
+// produce a KeyInfo no verifier on earth parses.
+//
+// `dsig11:DEREncodedKeyValue` is the element that already answers this: XML
+// Signature 1.1 defines it as the base64 of a DER SubjectPublicKeyInfo, for
+// exactly the case of a key type XMLDSIG has no structure for. It is what
+// Apache Santuario's in-flight post-quantum PR uses, and a SubjectPublicKeyInfo
+// is what every one of these algorithms already has an OID and an encoding for.
+//
+// The caller passes the SPKI it already holds — `key_material.js` and `x509.js`
+// both produce one — because building a SubjectPublicKeyInfo needs the
+// algorithm OIDs, and this file is not where the post-quantum encodings live.
+// ---------------------------------------------------------------------------
+function derEncodedKeyValueXml(spkiDer) {
+  log.debug("Entering derEncodedKeyValueXml().");
+  var raw = typeof spkiDer === 'string' ? spkiDer
+    : forge.util.binary.raw.encode(spkiDer);
+  log.debug("Leaving derEncodedKeyValueXml().");
+  return '<dsig11:DEREncodedKeyValue xmlns:dsig11="' + DSIG11_NS + '">' +
+    forge.util.encode64(raw) + '</dsig11:DEREncodedKeyValue>';
+}
+
 function buildKeyInfo(opts) {
   log.debug("Entering buildKeyInfo().");
   if (opts.keyInfoXml) {
@@ -1608,9 +1776,13 @@ function pssFor(hash) {
 function defaultSign(octets, spec, opts) {
   log.debug("Entering defaultSign().");
   if (spec.family !== 'rsa') {
-    throw new Error('A ' + spec.family.toUpperCase() + ' SignatureMethod ' +
-        'needs a signer — this module implements RSA only, on purpose (see ' +
-        'the section header). Pass opts.signer.');
+    throw new Error('A ' + (spec.label || spec.family.toUpperCase()) +
+        ' SignatureMethod needs a signer — this module implements RSA only, ' +
+        'on purpose (see the section header). Pass opts.signer.' +
+        (spec.postQuantum ? ' The post-quantum engines are ' +
+          'client/src/pqc.js (ML-DSA and SLH-DSA) and client/src/hbs.js ' +
+          '(HSS/LMS); this file holds the identifiers and not the lattice.'
+        : ''));
   }
   if (!opts.privateKeyPem) {
     throw new Error('signXml: privateKeyPem is required.');
@@ -1625,9 +1797,13 @@ function defaultSign(octets, spec, opts) {
 function defaultVerify(octets, signature, spec, publicKey) {
   log.debug("Entering defaultVerify().");
   if (spec.family !== 'rsa') {
-    throw new Error('A ' + spec.family.toUpperCase() + ' SignatureMethod ' +
-        'needs a verifier — this module implements RSA only, on purpose. ' +
-        'Pass opts.verifier.');
+    throw new Error('A ' + (spec.label || spec.family.toUpperCase()) +
+        ' SignatureMethod needs a verifier — this module implements RSA ' +
+        'only, on purpose. Pass opts.verifier.' +
+        (spec.postQuantum ? ' The post-quantum engines are ' +
+          'client/src/pqc.js (ML-DSA and SLH-DSA) and client/src/hbs.js ' +
+          '(HSS/LMS); this file holds the identifiers and not the lattice.'
+        : ''));
   }
   if (!publicKey) throw new Error('No RSA public key to verify with.');
   var md = FORGE_MD[spec.hash].create();
@@ -2215,6 +2391,11 @@ module.exports = {
   transformOctets: transformOctets,
   rsaKeyValueXml: rsaKeyValueXml,
   ecKeyValueXml: ecKeyValueXml,
+  derEncodedKeyValueXml: derEncodedKeyValueXml,
+  // The post-quantum half of the table, so that a menu is BUILT from it.
+  XMLDSIG_MORE_2026: XMLDSIG_MORE_2026,
+  HSS_LMS_URI: HSS_LMS_URI,
+  PQ_SIG_URIS: PQ_SIG_URIS,
   signXml: signXml,
   verifyXml: verifyXml,
   signQueryString: signQueryString,

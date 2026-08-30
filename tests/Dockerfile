@@ -746,6 +746,20 @@ COPY tests/hash_engine.js ./
 # JSON file, in a tenth of a second, on every containerized run while passing
 # on every host one.
 COPY tests/hbs_signatures.js tests/hbs_vectors.json ./
+# POST-QUANTUM XML SIGNATURE. Like the two above it needs no flat copy of its
+# subjects: `common/xmldsig.js` is already flat as `xmldsig.js`,
+# `client/src/pqc.js` is already flat as `pqc.js`, and `client/src/hbs.js` and
+# `client/src/xmldsig_pqc.js` are both in the tree `COPY client/src` stages.
+#
+# THE TEST AND THE BRIDGE SHARE A BASENAME AND THAT IS HANDLED RATHER THAN
+# RISKED. This directory is flat and the last COPY wins, so a flat copy of
+# `client/src/xmldsig_pqc.js` would land on this test and the job would run the
+# module instead — silently, since a module with no main block exits 0. The
+# test therefore looks for the bridge under a DIFFERENT flat name
+# (`xmldsig_pqc_bridge.js`, which nothing writes) before falling back to
+# ../client/src, so the mirror is the only copy and there is nothing to
+# collide with.
+COPY tests/xmldsig_pqc.js ./
 # The postgres persistence job. It SKIPS in this image — it runs `node
 # server.js` out of a complete mock STS tree, and what is copied here is
 # about thirty modules with no node_modules — but it is copied so that
