@@ -1763,6 +1763,50 @@ var KEM_METHODS = {};
   };
 });
 
+// ---------------------------------------------------------------------------
+// FrodoKEM AND eFrodoKEM — draft section 3.6.10, and the only algorithm in
+// this project with no library behind it. `client/src/frodokem.js` is written
+// from the specification and held to the reference implementation's own Known
+// Answer Tests for all twelve, which caught a real defect on its first run.
+//
+// **eFrodoKEM IS NOT "FrodoKEM WITHOUT THE SALT".** It is the original,
+// pre-2023 scheme: the salt was added to the standard variant along with a
+// widening of the seed, so every length derived from `CRYPTO_BYTES` differs
+// too, and the ciphertext is shorter by more than the salt. Six of these
+// twelve are one scheme and six are another, and treating them as one produces
+// six that round-trip and match no published vector.
+//
+// Why offer it at all: the salt gives multi-ciphertext security when one key
+// pair answers many encapsulations, and an EPHEMERAL key pair answers one —
+// which is what [EUCC-ACM] recommends it for and what the `e` means.
+//
+// The AES and SHAKE halves of each pair differ only in how the matrix A is
+// generated and produce different keys from the same seed; they are not
+// interchangeable.
+// ---------------------------------------------------------------------------
+[[640, 9616, 9752, 9720, 1], [976, 15632, 15792, 15744, 3],
+ [1344, 21520, 21696, 21632, 5]].forEach(function (row) {
+  ['aes', 'shake'].forEach(function (gen) {
+    var upper = gen.toUpperCase();
+    KEM_METHODS[XMLDSIG_MORE_2026 + 'frodokem-' + row[0] + '-' + gen] = {
+      family: 'frodokem', alg: 'FrodoKEM-' + row[0] + '-' + upper,
+      pubBytes: row[1], ctBytes: row[2], secretBytes: row[0] === 640 ? 16
+        : (row[0] === 976 ? 24 : 32),
+      postQuantum: true, draft: true,
+      label: 'FrodoKEM-' + row[0] + '-' + upper + ' (ISO 18033-2, category ' +
+             row[4] + ' — draft)'
+    };
+    KEM_METHODS[XMLDSIG_MORE_2026 + 'e-frodokem-' + row[0] + '-' + gen] = {
+      family: 'frodokem', alg: 'eFrodoKEM-' + row[0] + '-' + upper,
+      pubBytes: row[1], ctBytes: row[3], secretBytes: row[0] === 640 ? 16
+        : (row[0] === 976 ? 24 : 32),
+      postQuantum: true, draft: true, ephemeral: true,
+      label: 'eFrodoKEM-' + row[0] + '-' + upper + ' (EPHEMERAL, category ' +
+             row[4] + ' — draft)'
+    };
+  });
+});
+
 var KEM_URIS = Object.keys(KEM_METHODS);
 
 function kemMethod(uri) {

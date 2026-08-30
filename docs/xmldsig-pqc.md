@@ -1,7 +1,7 @@
 # Post-quantum XML Signature and XML Encryption
 
-**Status: the signature half is implemented, and so is ML-KEM key
-encapsulation. FrodoKEM is not.**
+**Status: complete. All sixteen signature methods, all fifteen
+key-encapsulation methods, and all five signing pages.**
 This document says what exists, what the identifiers are, where they come from,
 and what is deliberately absent — because every URI here is from a DRAFT and a
 reader has no way to tell a draft identifier from a Recommendation one by
@@ -162,13 +162,61 @@ notices is the AEAD tag on the content — so the refusal says that, because
 "data decryption failed" over a KEM otherwise reads as a corrupted document
 rather than as the wrong key.
 
-## FrodoKEM (section 3.6.10) — not implemented
+## FrodoKEM and eFrodoKEM (section 3.6.10)
 
-The remaining twelve identifiers. **There is no FrodoKEM in any JavaScript
-library**: `@noble` has none, and the credible open implementation
-(`itzmeanjan/frodokem`) is C++ headers. They need the scheme written from its
-specification and held to its published KAT files, which is the largest single
-piece of this work and the last of it.
+**Implemented, all twelve.** `client/src/frodokem.js` — and it is **the only
+cryptographic primitive in this project with no library behind it**. `@noble`
+has ML-KEM and no FrodoKEM; npm has no FrodoKEM at all; the one credible open
+implementation (`microsoft/PQCrypto-LWEKE`) is C plus a Python reference. So it
+is written from the specification.
+
+**A lattice KEM written from a specification must not be trusted on a round
+trip.** A subtly wrong one encapsulates and decapsulates against itself
+perfectly, agrees with itself about every byte, and interoperates with nothing.
+So `tests/frodokem_vectors.js` seeds NIST's AES-256-CTR-DRBG with each
+published KAT seed and requires the published public key, secret key,
+ciphertext and shared secret back, byte for byte, for every one of the twelve.
+
+**That caught a real defect on its first run.** Eight of the twelve matched and
+four did not — the SHAKE generator at 976 and 1344 — because specification
+algorithm 8 is named *"Frodo.Gen using SHAKE128"* and means it: those parameter
+sets hash with SHAKE256 everywhere else in the scheme and with **SHAKE128** for
+the matrix A. Both halves round-tripped. Both halves agreed. Four of the twelve
+were wrong. Nothing but the vectors could have said so.
+
+### eFrodoKEM is not "FrodoKEM without the salt"
+
+The trap worth stating twice. eFrodoKEM is the **original, pre-2023 scheme**:
+the salt was added to the standard variant *along with a widening of the seed*,
+so every length derived from `CRYPTO_BYTES` — `s`, `seedSE`, `k`, `pkh` and the
+shared secret — is half what the salted variant uses, and `mu` is computed
+rather than tabled. Stripping the salt and changing nothing else gives six more
+parameter sets that round-trip beautifully and match no published vector.
+
+The salt buys multi-ciphertext security when one key pair answers many
+encapsulations; an ephemeral key pair answers one, which is what the `e` means
+and why the variant is still worth offering.
+
+### What it costs, measured
+
+FrodoKEM is deliberately **unstructured** — plain Learning With Errors over
+generic lattices, which is why [EUCC-ACM] names it beside ML-KEM as the
+conservative choice. The price is arithmetic: the public matrix A is n×n with n
+up to 1344, so one operation generates 1.8 million 16-bit entries and
+multiplies them.
+
+| | keygen | encapsulate | decapsulate |
+|---|---|---|---|
+| FrodoKEM-640-AES | 45 ms | 33 ms | 33 ms |
+| FrodoKEM-1344-AES | 92 ms | 91 ms | 91 ms |
+| FrodoKEM-1344-SHAKE | 175 ms | 171 ms | 170 ms |
+
+That is far better than the C reference's shape would suggest, for one reason:
+**A is never materialised in full.** The reference builds the whole n×n matrix
+and then multiplies — at n=1344 that is 3.6 MB before anything else — while
+this generates and consumes one *row* at a time in a 5 KB buffer. Same
+arithmetic, and it is the single place this implementation deliberately does
+not mirror the reference's structure.
 
 ## Tests
 

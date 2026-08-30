@@ -760,6 +760,13 @@ COPY tests/hbs_signatures.js tests/hbs_vectors.json ./
 # ../client/src, so the mirror is the only copy and there is nothing to
 # collide with.
 COPY tests/xmldsig_pqc.js ./
+# FrodoKEM against the reference implementation's own Known Answer Tests. The
+# SUBJECT needs no flat copy — client/src/frodokem.js is in the tree `COPY
+# client/src` stages — but the VECTORS are data beside the test and their
+# absence would not fail the build: the job would die at load with ENOENT
+# naming a JSON file, in a tenth of a second, on every containerized run while
+# passing on every host one. Same trap hbs_vectors.json carries.
+COPY tests/frodokem_vectors.js tests/frodokem_vectors.json ./
 # The postgres persistence job. It SKIPS in this image — it runs `node
 # server.js` out of a complete mock STS tree, and what is copied here is
 # about thirty modules with no node_modules — but it is copied so that

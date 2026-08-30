@@ -117,6 +117,10 @@ const pk = requireSharedModule([
   path.join(__dirname, "pk_encryption.js"),
   path.join(__dirname, "..", "client", "src", "pk_encryption.js"),
 ], "client/src/pk_encryption.js");
+const frodo = requireSharedModule([
+  path.join(__dirname, "frodokem.js"),
+  path.join(__dirname, "..", "client", "src", "frodokem.js"),
+], "client/src/frodokem.js");
 const hbs = requireSharedModule([
   path.join(__dirname, "hbs.js"),
   path.join(__dirname, "..", "client", "src", "hbs.js"),
@@ -460,11 +464,17 @@ function hkdfMatchesTheRfcsOwnVectors() {
 // ---------------------------------------------------------------------------
 function mlKemEncryptsAndDecrypts() {
   log.info("H. ML-KEM key encapsulation in XML Encryption (section 3.6.9)");
-  check("the registry holds three ML-KEM methods", xd.KEM_URIS.length === 3,
+  const mlKemUris = xd.KEM_URIS.filter(function (uri) {
+    return xd.KEM_METHODS[uri].family === "mlkem";
+  });
+  check("the registry holds three ML-KEM methods", mlKemUris.length === 3,
+        String(mlKemUris.length));
+  check("and fifteen key-encapsulation methods in all — three from section " +
+        "3.6.9 and twelve from 3.6.10", xd.KEM_URIS.length === 15,
         String(xd.KEM_URIS.length));
   const sizes = { "ML-KEM-512": [800, 768], "ML-KEM-768": [1184, 1088],
                   "ML-KEM-1024": [1568, 1568] };
-  xd.KEM_URIS.forEach(function (uri) {
+  mlKemUris.forEach(function (uri) {
     const spec = xd.KEM_METHODS[uri];
     check(spec.alg + ": the registry has FIPS 203's sizes",
           spec.pubBytes === sizes[spec.alg][0] &&
@@ -511,6 +521,47 @@ function mlKemEncryptsAndDecrypts() {
           "message explains that a KEM fails at the tag",
           /implicitly rejecting/.test(wrongKey), wrongKey.slice(0, 70));
   });
+  // FrodoKEM's twelve, section 3.6.10. The MECHANISM is held to the reference
+  // implementation's own Known Answer Tests in tests/frodokem_vectors.js —
+  // this is the XML layer over it, and the encapsulation LENGTH is what says
+  // the right parameter set was used: the ephemeral variants' ciphertexts are
+  // shorter than their salted twins by exactly the salt.
+  const frodoUris = xd.KEM_URIS.filter(function (uri) {
+    return xd.KEM_METHODS[uri].family === "frodokem";
+  });
+  check("the registry holds twelve FrodoKEM methods", frodoUris.length === 12,
+        String(frodoUris.length));
+  frodoUris.forEach(function (uri) {
+    const spec = xd.KEM_METHODS[uri];
+    const kem = bridge.kemFor(spec);
+    const kp = frodo.keygen(spec.alg, function (n) {
+      return new Uint8Array(require("crypto").randomBytes(n));
+    });
+    const doc = xd.encryptXml(XML,
+        { keyAlg: uri, kem: kem, kemPublicKey: kp.publicKey });
+    const ct = doc.match(
+        /<xenc:EncryptedKey>[\s\S]*?<xenc:CipherValue>([^<]+)/)[1];
+    check(spec.alg + ": the encapsulation is the published length",
+          Buffer.from(ct, "base64").length === spec.ctBytes,
+          Buffer.from(ct, "base64").length + " bytes");
+    const back = xd.decryptXml(doc,
+        { kem: kem, kemPrivateKey: kp.secretKey });
+    check(spec.alg + ": it round-trips through XML Encryption",
+          back.indexOf("alice") > 0);
+  });
+  // The ephemeral ciphertext is SHORTER, which is the one difference visible
+  // from outside — and a reminder that it is not the only one. See
+  // client/src/frodokem.js.
+  const salted = xd.KEM_METHODS[
+      xd.XMLDSIG_MORE_2026 + "frodokem-640-aes"];
+  const ephemeral = xd.KEM_METHODS[
+      xd.XMLDSIG_MORE_2026 + "e-frodokem-640-aes"];
+  check("the ephemeral variant's ciphertext is shorter by exactly the salt",
+        salted.ctBytes - ephemeral.ctBytes === 32,
+        salted.ctBytes + " against " + ephemeral.ctBytes);
+  check("and its label says EPHEMERAL, because that is what a reader has to " +
+        "weigh", /EPHEMERAL/.test(ephemeral.label || ""), ephemeral.label);
+
   // A KEM with no derivation stated is refused rather than defaulted.
   const spec = xd.KEM_METHODS[xd.KEM_URIS[0]];
   const kem = bridge.kemFor(spec);

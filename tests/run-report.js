@@ -4259,6 +4259,23 @@ function buildJobs() {
     env: {},
   });
 
+  // FRODOKEM AND eFRODOKEM AGAINST THE PUBLISHED VECTORS. A pure-Node test of
+  // client/src/frodokem.js, which is the only cryptographic primitive in this
+  // project with NO LIBRARY BEHIND IT — @noble has no FrodoKEM, npm has none,
+  // and the one credible open implementation is C. It was written from the
+  // specification, so it is held to microsoft/PQCrypto-LWEKE's own KAT files
+  // for all twelve parameter sets: seed NIST's AES-256-CTR-DRBG with the
+  // published seed and require the published public key, secret key,
+  // ciphertext and shared secret back. That is not a formality — it caught a
+  // real defect on its first run, in four of the twelve, that a round-trip
+  // test cannot see.
+  jobs.push({
+    name: "FrodoKEM and eFrodoKEM against the reference implementation's " +
+          "Known Answer Tests (all twelve parameter sets)",
+    script: "frodokem_vectors.js",
+    env: {},
+  });
+
   // WS-Trust message schema validation. A pure-Node test that builds the RST
   // for every scenario (each version × operation) with the real generator and
   // validates it against a schema derived from the official OASIS WS-Trust 1.3

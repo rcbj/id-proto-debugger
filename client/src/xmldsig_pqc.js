@@ -55,9 +55,35 @@ var log = bunyan.createLogger({
 var pqc = require("./pqc");
 var hbs = require("./hbs");
 var pkEncryption = require("./pk_encryption");
+// FrodoKEM has no library anywhere — see the header of this file and of
+// client/src/frodokem.js, which is written from the specification and held
+// to the reference implementation's Known Answer Tests.
+var frodokem = require("./frodokem");
 
 // A forge binary string to the bytes it stands for. One character per byte;
 // see the header for what a TextEncoder would do here instead.
+// Randomness for FrodoKEM's key generation and encapsulation. `crypto` in a
+// browser, node's webcrypto under a test — the same shim every module here
+// uses, written out because this file must load in both.
+function randomBytes(n) {
+  log.debug("Entering randomBytes(). " + n + " bytes.");
+  var out = new Uint8Array(n);
+  var source = (typeof window !== 'undefined' && window.crypto) ||
+      (typeof globalThis !== 'undefined' && globalThis.crypto) || null;
+  if (source && typeof source.getRandomValues === 'function') {
+    // getRandomValues refuses more than 65536 bytes at a time; nothing here
+    // asks for that much, but the loop costs nothing and the refusal would be
+    // a key generation that fails only on the largest parameter set.
+    for (var at = 0; at < n; at += 65536) {
+      source.getRandomValues(out.subarray(at, Math.min(at + 65536, n)));
+    }
+    log.debug("Leaving randomBytes(). Web Crypto.");
+    return out;
+  }
+  log.debug("Leaving randomBytes(). node.");
+  return new Uint8Array(require('crypto').randomBytes(n));
+}
+
 function binaryStringToBytes(text) {
   log.debug("Entering binaryStringToBytes().");
   var out = new Uint8Array(text.length);
@@ -221,13 +247,36 @@ function verifierFor(key) {
 // ---------------------------------------------------------------------------
 function kemFor(spec) {
   log.debug("Entering kemFor(). alg=" + (spec ? spec.alg : '(none)'));
+  if (spec && spec.family === 'frodokem') {
+    // FrodoKEM's own module, because there is no library for it anywhere —
+    // see the header of client/src/frodokem.js. Its API is already
+    // encapsulate/decapsulate, so this is a rename and a byte conversion.
+    log.debug("Leaving kemFor(). FrodoKEM.");
+    return {
+      encapsulate: function (publicKey) {
+        log.debug("Entering encapsulate(). alg=" + spec.alg);
+        const out = frodokem.encapsulate(spec.alg, asBytes(publicKey),
+            function (n) { return randomBytes(n); });
+        log.debug("Leaving encapsulate().");
+        return { ciphertext: out.ciphertext, sharedSecret: out.sharedSecret };
+      },
+      decapsulate: function (ciphertext, privateKey) {
+        log.debug("Entering decapsulate(). alg=" + spec.alg);
+        const secret = frodokem.decapsulate(spec.alg, asBytes(privateKey),
+                                            asBytes(ciphertext));
+        log.debug("Leaving decapsulate().");
+        return secret;
+      }
+    };
+  }
   if (!spec || spec.family !== 'mlkem') {
-    log.debug("Leaving kemFor(). Not an ML-KEM method.");
+    log.debug("Leaving kemFor(). Not a key-encapsulation method.");
     throw new Error('xmldsig_pqc: "' +
         (spec && spec.label ? spec.label : 'that EncryptionMethod') + '" is ' +
         'not a key-encapsulation method this module performs. It handles the ' +
-        'three ML-KEM identifiers of section 3.6.9; RSA key transport is ' +
-        'built into common/xmldsig.js.');
+        'three ML-KEM identifiers of section 3.6.9 and the twelve FrodoKEM ' +
+        'ones of section 3.6.10; RSA key transport is built into ' +
+        'common/xmldsig.js.');
   }
   const primitive = pkEncryption.mlkemSet(spec.alg).kem;
   log.debug("Leaving kemFor().");
