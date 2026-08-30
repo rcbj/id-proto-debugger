@@ -54,6 +54,7 @@ var log = bunyan.createLogger({
 
 var pqc = require("./pqc");
 var hbs = require("./hbs");
+var pkEncryption = require("./pk_encryption");
 
 // A forge binary string to the bytes it stands for. One character per byte;
 // see the header for what a TextEncoder would do here instead.
@@ -202,10 +203,59 @@ function verifierFor(key) {
   return verifier;
 }
 
+// ---------------------------------------------------------------------------
+// THE KEM, for XML Encryption. `common/xmldsig.js` holds the three ML-KEM
+// identifiers and the HKDF that turns a shared secret into a content
+// encryption key; what it does not hold is the lattice, for the reason the
+// signer above does not hold ML-DSA.
+//
+// It is `{ encapsulate, decapsulate }` because that is what a KEM IS, and the
+// shape is worth stating: `encapsulate` takes only the RECIPIENT'S PUBLIC KEY
+// and returns a ciphertext AND a fresh shared secret. There is no message
+// argument and no key to pass in — the sender does not choose the secret,
+// which is the whole difference from RSA key transport and the reason
+// `encryptXml()` needed a second path rather than another branch.
+//
+// `spec.alg` is the parameter set name `pk_encryption.js` knows, so a URI
+// never reaches this function.
+// ---------------------------------------------------------------------------
+function kemFor(spec) {
+  log.debug("Entering kemFor(). alg=" + (spec ? spec.alg : '(none)'));
+  if (!spec || spec.family !== 'mlkem') {
+    log.debug("Leaving kemFor(). Not an ML-KEM method.");
+    throw new Error('xmldsig_pqc: "' +
+        (spec && spec.label ? spec.label : 'that EncryptionMethod') + '" is ' +
+        'not a key-encapsulation method this module performs. It handles the ' +
+        'three ML-KEM identifiers of section 3.6.9; RSA key transport is ' +
+        'built into common/xmldsig.js.');
+  }
+  const primitive = pkEncryption.mlkemSet(spec.alg).kem;
+  log.debug("Leaving kemFor().");
+  return {
+    encapsulate: function (publicKey) {
+      log.debug("Entering encapsulate(). alg=" + spec.alg);
+      const out = primitive.encapsulate(asBytes(publicKey));
+      log.debug("Leaving encapsulate().");
+      // @noble names it `cipherText`; the rest of this project says
+      // `ciphertext`, and one spelling crossing a module boundary is where a
+      // silent `undefined` gets base64'd into a document.
+      return { ciphertext: out.cipherText, sharedSecret: out.sharedSecret };
+    },
+    decapsulate: function (ciphertext, privateKey) {
+      log.debug("Entering decapsulate(). alg=" + spec.alg);
+      const secret = primitive.decapsulate(asBytes(ciphertext),
+                                           asBytes(privateKey));
+      log.debug("Leaving decapsulate().");
+      return secret;
+    }
+  };
+}
+
 module.exports = {
   signerFor: signerFor,
   verifierFor: verifierFor,
   engineFor: engineFor,
+  kemFor: kemFor,
   binaryStringToBytes: binaryStringToBytes,
   asBytes: asBytes
 };

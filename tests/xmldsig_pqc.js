@@ -113,6 +113,10 @@ const pqc = requireSharedModule([
   path.join(__dirname, "pqc.js"),
   path.join(__dirname, "..", "client", "src", "pqc.js"),
 ], "client/src/pqc.js");
+const pk = requireSharedModule([
+  path.join(__dirname, "pk_encryption.js"),
+  path.join(__dirname, "..", "client", "src", "pk_encryption.js"),
+], "client/src/pk_encryption.js");
 const hbs = requireSharedModule([
   path.join(__dirname, "hbs.js"),
   path.join(__dirname, "..", "client", "src", "hbs.js"),
@@ -397,14 +401,145 @@ function theEngineRefusesWhatItCannotDo() {
         /not one of the post-quantum/.test(notPq), notPq);
 }
 
+// ---------------------------------------------------------------------------
+// RFC 5869's OWN TEST VECTORS. HKDF is the step a recipient has to reproduce
+// exactly, and it is the one part of the key-encapsulation path this project
+// implements rather than injects — so it is held to the RFC's published
+// vectors and not to a round trip against itself. Appendix A, cases 1, 2 and 3:
+// with salt and info, with LONG inputs, and with neither (the default-salt
+// path, which is the one a wrong implementation gets wrong).
+// ---------------------------------------------------------------------------
+const RFC5869 = [
+  ["A.1 basic, SHA-256",
+   "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b",
+   "000102030405060708090a0b0c", "f0f1f2f3f4f5f6f7f8f9", 42,
+   "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4c5bf" +
+   "34007208d5b887185865"],
+  ["A.2 longer inputs, SHA-256",
+   "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f" +
+   "202122232425262728292a2b2c2d2e2f303132333435363738393a3b3c3d3e3f" +
+   "404142434445464748494a4b4c4d4e4f",
+   "606162636465666768696a6b6c6d6e6f707172737475767778797a7b7c7d7e7f" +
+   "808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f" +
+   "a0a1a2a3a4a5a6a7a8a9aaabacadaeaf",
+   "b0b1b2b3b4b5b6b7b8b9babbbcbdbebfc0c1c2c3c4c5c6c7c8c9cacbcccdcecf" +
+   "d0d1d2d3d4d5d6d7d8d9dadbdcdddedfe0e1e2e3e4e5e6e7e8e9eaebecedeeef" +
+   "f0f1f2f3f4f5f6f7f8f9fafbfcfdfeff", 82,
+   "b11e398dc80327a1c8e7f78c596a49344f012eda2d4efad8a050cc4c19afa97c" +
+   "59045a99cac7827271cb41c65e590e09da3275600c2f09b8367793a9aca3db71" +
+   "cc30c58179ec3e87c14c01d5c1f3434f1d87"],
+  ["A.3 zero-length salt and info, SHA-256",
+   "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b", "", "", 42,
+   "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d" +
+   "9d201395faa4b61a96c8"]
+];
+
+function hkdfMatchesTheRfcsOwnVectors() {
+  log.info("G. HKDF against RFC 5869 appendix A");
+  const hex = function (h) { return Buffer.from(h, "hex").toString("binary"); };
+  RFC5869.forEach(function (row) {
+    const got = Buffer.from(
+        xd.hkdf(xd.HMAC_SHA256_URI, hex(row[1]), hex(row[2]), hex(row[3]),
+                row[4]),
+        "binary").toString("hex");
+    check("RFC 5869 " + row[0], got === row[5], got);
+  });
+  // And a PRF this file does not implement is refused by name rather than
+  // quietly falling back to SHA-1, which would derive a key that decrypts
+  // nothing and say nothing about why.
+  let refused = "";
+  try {
+    xd.hkdf("urn:not-a-prf", "ikm", "", "", 16);
+  } catch (e) {
+    refused = e.message;
+  }
+  check("an unknown PRF is refused by name", /not a PRF/.test(refused),
+        refused);
+}
+
+// ---------------------------------------------------------------------------
+function mlKemEncryptsAndDecrypts() {
+  log.info("H. ML-KEM key encapsulation in XML Encryption (section 3.6.9)");
+  check("the registry holds three ML-KEM methods", xd.KEM_URIS.length === 3,
+        String(xd.KEM_URIS.length));
+  const sizes = { "ML-KEM-512": [800, 768], "ML-KEM-768": [1184, 1088],
+                  "ML-KEM-1024": [1568, 1568] };
+  xd.KEM_URIS.forEach(function (uri) {
+    const spec = xd.KEM_METHODS[uri];
+    check(spec.alg + ": the registry has FIPS 203's sizes",
+          spec.pubBytes === sizes[spec.alg][0] &&
+          spec.ctBytes === sizes[spec.alg][1],
+          spec.pubBytes + "/" + spec.ctBytes);
+    check(spec.alg + ": its label says draft", /draft/i.test(spec.label || ""),
+          spec.label);
+    const kem = bridge.kemFor(spec);
+    const kp = pk.mlkemSet(spec.alg).kem.keygen();
+    const doc = xd.encryptXml(XML,
+        { keyAlg: uri, kem: kem, kemPublicKey: kp.publicKey });
+    check(spec.alg + ": the EncryptionMethod names the draft URI",
+          doc.indexOf(uri) > 0);
+    // THE DERIVATION IS IN THE DOCUMENT. The draft says the shared secret is
+    // "typically" fed to a KDF and pins nothing, so a document that did not
+    // state its own parameters would be readable only by an implementation
+    // that happened to guess the same ones.
+    check(spec.alg + ": the document states its own key derivation",
+          doc.indexOf("HKDFParams") > 0 && doc.indexOf(xd.HKDF_URI) > 0 &&
+          doc.indexOf("KeyLength") > 0);
+    // And the CipherValue is an ENCAPSULATION, not a wrapped key — which is
+    // the one structural difference from every other EncryptedKey here, and
+    // the length is how you can tell.
+    const ct = doc.match(
+        /<xenc:EncryptedKey>[\s\S]*?<xenc:CipherValue>([^<]+)/)[1];
+    check(spec.alg + ": the CipherValue is the encapsulation, not a wrapped " +
+          "key", Buffer.from(ct, "base64").length === spec.ctBytes,
+          Buffer.from(ct, "base64").length + " bytes");
+    const back = xd.decryptXml(doc,
+        { kem: kem, kemPrivateKey: kp.secretKey });
+    check(spec.alg + ": it round-trips", back.indexOf("alice") > 0);
+    // A wrong decapsulation key. ML-KEM is IMPLICITLY REJECTING (FIPS 203),
+    // so this does not fail at the KEM — it produces a different, perfectly
+    // well-formed secret and fails at the AEAD tag. The message has to say so
+    // or it reads as a corrupted document.
+    const other = pk.mlkemSet(spec.alg).kem.keygen();
+    let wrongKey = "";
+    try {
+      xd.decryptXml(doc, { kem: kem, kemPrivateKey: other.secretKey });
+    } catch (e) {
+      wrongKey = e.message;
+    }
+    check(spec.alg + ": a wrong decapsulation key is refused, and the " +
+          "message explains that a KEM fails at the tag",
+          /implicitly rejecting/.test(wrongKey), wrongKey.slice(0, 70));
+  });
+  // A KEM with no derivation stated is refused rather than defaulted.
+  const spec = xd.KEM_METHODS[xd.KEM_URIS[0]];
+  const kem = bridge.kemFor(spec);
+  const kp = pk.mlkemSet(spec.alg).kem.keygen();
+  const doc = xd.encryptXml(XML,
+      { keyAlg: xd.KEM_URIS[0], kem: kem, kemPublicKey: kp.publicKey });
+  const stripped = doc.replace(
+      /<xenc11:KeyDerivationMethod[\s\S]*?<\/xenc11:KeyDerivationMethod>/,
+      "");
+  let noKdf = "";
+  try {
+    xd.decryptXml(stripped, { kem: kem, kemPrivateKey: kp.secretKey });
+  } catch (e) {
+    noKdf = e.message;
+  }
+  check("an EncryptedKey with no KeyDerivationMethod is refused — a KEM's " +
+        "derivation is not guessable", /not guessable/.test(noKdf), noKdf);
+}
+
 function main() {
-  log.info("Starting Test run. Post-quantum XML Signature " +
+  log.info("Starting Test run. Post-quantum XML Signature and Encryption " +
            "(draft-eastlake-rfc9231bis-xmlsec-uris-09).");
   registryMatchesTheDraft();
   theBytesSignedAreTheCanonicalizedSignedInfo();
   everyDrivenAlgorithmRoundTrips();
   hssLmsSignsAndSaysItSpentAKey();
   theEngineRefusesWhatItCannotDo();
+  hkdfMatchesTheRfcsOwnVectors();
+  mlKemEncryptsAndDecrypts();
   log.info("---------------------------------------------------------------");
   log.info(pass + " passed, " + fail + " failed.");
   process.exit(fail ? 1 : 0);

@@ -1,6 +1,7 @@
 # Post-quantum XML Signature and XML Encryption
 
-**Status: the signature half is implemented; the encryption half is not yet.**
+**Status: the signature half is implemented, and so is ML-KEM key
+encapsulation. FrodoKEM is not.**
 This document says what exists, what the identifiers are, where they come from,
 and what is deliberately absent — because every URI here is from a DRAFT and a
 reader has no way to tell a draft identifier from a Recommendation one by
@@ -107,41 +108,84 @@ asserting `signatureValid === false` there fails against a *correct* engine.
 * **HashML-DSA**, FIPS 204's pre-hashed variant, has no identifiers in the
   draft — section 3.3.15 says the pure variant is what these URIs name.
 
-## The encryption half, and why it is a separate piece of work
+## The encryption half: ML-KEM (section 3.6.9)
 
-The draft also defines key-encapsulation identifiers — section 3.6.9 for
-**ML-KEM** at three parameter sets and section 3.6.10 for **FrodoKEM** at
-twelve. Neither is implemented yet, and the reason is that a KEM is not key
-transport:
+**Implemented.** All three parameter sets — `ml-kem-512`, `-768`, `-1024` —
+through `encryptXml()` and `decryptXml()`.
 
-* XML Encryption's `EncryptedKey` carries a **wrapped session key**. A KEM
-  produces a *ciphertext and a shared secret*, and the draft says the shared
-  secret feeds a key derivation function — HKDF,
-  `http://www.w3.org/2021/04/xmldsig-more#hkdf` — to produce the content
-  encryption key. So the `CipherValue` is the encapsulation and the CEK is
-  **derived rather than transported**, which is a different shape through
-  `encryptXml()` than the RSA path it is written around.
-* The recipient's key is not in an X.509 certificate, which is the only
-  recipient form that path accepts today; it would travel as
-  `dsig11:DEREncodedKeyValue`, the element the signature half already uses for
-  public keys XMLDSIG has no structure for.
-* **ML-KEM is available** — `client/src/pk_encryption.js` has all three
-  parameter sets. **FrodoKEM is not, in any JavaScript library**: `@noble` has
-  none, and the credible open implementation (`itzmeanjan/frodokem`) is C++
-  headers. Those twelve identifiers need the scheme written from its
-  specification and held to its published KAT files, which is the largest single
-  piece of this work and the last of it.
+**A KEM IS NOT KEY TRANSPORT, and that is the whole of why this needed a second
+path rather than another branch.** RSA key transport takes the content
+encryption key the sender has just generated and *wraps* it, so the recipient
+decrypts the `CipherValue` and has the key. ML-KEM takes only the recipient's
+public key and produces a ciphertext **and a fresh shared secret** — there is
+nothing to put a key into. So:
+
+* the `EncryptedKey/CipherData/CipherValue` is an **encapsulation**, not a
+  wrapped key (768, 1088 or 1568 bytes, which is how you can tell);
+* the content encryption key is **derived** from the shared secret, and the
+  sender does not choose it;
+* the recipient's key is not in an X.509 certificate — no profile for an ML-KEM
+  key is defined by the draft — so it travels as `dsig11:DEREncodedKeyValue`,
+  the same element the signature half uses.
+
+### The gap in the draft, and what this project does about it
+
+Section 3.6.9 says the shared secret is *"typically used as input to a key
+derivation function, such as HKDF (see Section 3.8.1)"*. **"Typically" is not a
+binding**, and it is the one place two correct implementations could disagree
+and produce a key that decrypts nothing while naming no reason.
+
+So **every parameter of the derivation is written into the document and read
+back out of it** — the PRF, the salt, the info and the key length, in the
+draft's own `HKDFParams` element (section 3.8.1's schema, verbatim). A document
+produced here says in full how its content encryption key was derived, and a
+recipient reading it needs to agree with nothing. An `EncryptedKey` naming a KEM
+with *no* `KeyDerivationMethod` is **refused** rather than defaulted.
+
+Where that element sits is also unspecified for a KEM. It goes inside the
+`EncryptedKey`'s `EncryptionMethod`, because that is exactly where this engine
+already carries RSA-OAEP's `DigestMethod` and `MGF` — an algorithm's own
+parameters, beside the algorithm.
+
+**The KDF is implemented here and the lattice is injected**, which is the same
+split the signature side makes and for a sharper reason: HKDF is where two
+implementations diverge silently, so it is written out once on the HMAC forge
+already provides, and held to **RFC 5869 appendix A's own vectors** in
+`tests/xmldsig_pqc.js`.
+
+### One thing that surprises people
+
+**A wrong decapsulation key does not fail at the KEM.** ML-KEM is *implicitly
+rejecting* (FIPS 203): decapsulating with the wrong key returns a perfectly
+well-formed shared secret that is simply a different one. The first thing that
+notices is the AEAD tag on the content — so the refusal says that, because
+"data decryption failed" over a KEM otherwise reads as a corrupted document
+rather than as the wrong key.
+
+## FrodoKEM (section 3.6.10) — not implemented
+
+The remaining twelve identifiers. **There is no FrodoKEM in any JavaScript
+library**: `@noble` has none, and the credible open implementation
+(`itzmeanjan/frodokem`) is C++ headers. They need the scheme written from its
+specification and held to its published KAT files, which is the largest single
+piece of this work and the last of it.
 
 ## Tests
 
-`tests/xmldsig_pqc.js` — node only, no browser, no network. It does **not**
-re-test the lattice: `tests/pqc_engines.js` drives FIPS 204 and 205 and
-`tests/hbs_signatures.js` drives RFC 8554's and RFC 9858's own vectors, one
+`tests/xmldsig_pqc.js` — node only, no browser, no network, 169 assertions. It
+does **not** re-test the lattice: `tests/pqc_engines.js` drives FIPS 204 and
+205 and `tests/hbs_signatures.js` drives RFC 8554's and RFC 9858's own
+vectors, one
 verification vector per XMSS parameter set and eight signatures that must not
 verify. What this file adds is the XML layer — the registry against the draft's
 own numbers written out by hand, the signed octets, the FIPS signature length
 per identifier, the round trip, the two negatives, and HSS/LMS reporting the key
-it spent.
+it spent — plus the two things on the encryption side that ARE this project's
+own: **HKDF against RFC 5869 appendix A's published vectors** (cases 1, 2 and
+3, including the zero-length-salt path a wrong implementation gets wrong), and
+the
+ML-KEM round trip with its encapsulation lengths, its self-describing
+derivation, and the two refusals.
 
 ## Keeping the two copies in step
 
