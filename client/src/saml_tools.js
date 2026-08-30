@@ -29,6 +29,13 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var xd = require("./xmldsig");
+// The post-quantum SignatureMethods this page can offer, and the bridge to
+// the engines that perform them. `xmldsig.js` holds the sixteen identifiers
+// and no cryptography — see its own header — so the lattice arrives here.
+// See docs/xmldsig-pqc.md.
+var xdPqc = require("./xmldsig_pqc");
+var pqc = require("./pqc");
+var hbs = require("./hbs");
 var log = bunyan.createLogger({ name: 'saml_tools',
     level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -630,14 +637,13 @@ function refreshPipeline() {
                 'key. Generate one and sign again.');
     } else {
       try {
-        var signed = xd.signEnveloped(baseAssertion, {
-          privateKeyPem: val('sa_private_key'),
-          certPem: val('sa_public_key'),
-          sigAlg: val('sa_sig_alg'),
-          c14nAlg: val('sa_sig_c14n'),
-          refUri: signatureRefUri(),
-          placement: signaturePlacement()
-        });
+        var signed = xd.signEnveloped(baseAssertion,
+            Object.assign({
+              sigAlg: val('sa_sig_alg'),
+              c14nAlg: val('sa_sig_c14n'),
+              refUri: signatureRefUri(),
+              placement: signaturePlacement()
+            }, signingOptionsFor(pqMethod())));
         setVal('sa_signed_assertion', signed);
         // The verification box follows the newest signature unless the user has
         // pasted something else into it.
@@ -1028,8 +1034,149 @@ function checkCompliance() {
 // ---------------------------------------------------------------------------
 // Pane 2 — signing key pair + enveloped XML Signature
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// THE POST-QUANTUM HALF OF THIS PANE.
+//
+// The key pair lives in the SAME TWO FIELDS as the RSA one — `sa_private_key`
+// and `sa_public_key` — holding HEX rather than PEM, which is the convention
+// the Digital Signature page's XML pane already uses. A third pair of fields
+// would be a third thing to keep in step with `saveState()`, the download
+// button and the encryption pane that copies the signing key across.
+//
+// What a reader has to be told, and the status line tells them: there is no
+// certificate. The draft defines no X.509 profile for an ML-DSA or SLH-DSA
+// key, so the public half goes into the Signature as a
+// dsig11:DEREncodedKeyValue instead of an X509Certificate — which is a
+// KeyInfo a strict SAML service provider may well refuse, and that is the
+// point of being able to send one.
+// ---------------------------------------------------------------------------
+// The verifier for a pasted document, or nothing when it is not signed with a
+// post-quantum method. `verifyXmlSignature()` refuses one of those with a
+// sentence naming opts.verifier rather than demanding a certificate that
+// cannot exist, so handing it nothing here still produces a usable message.
+function verificationOptionsFor(xml) {
+  log.debug("Entering verificationOptionsFor().");
+  // Every Algorithm attribute, checked against the REGISTRY rather than
+  // against a namespace written out here — a hardcoded namespace is one more
+  // copy of the draft's URI, and the draft is what may still change.
+  var attrs = /Algorithm="([^"]+)"/g;
+  var spec = null;
+  var match = attrs.exec(String(xml || ''));
+  while (match && !spec) {
+    var candidate = xd.SIG_METHODS[match[1]];
+    if (candidate && candidate.postQuantum) {
+      spec = candidate;
+    }
+    match = attrs.exec(String(xml || ''));
+  }
+  if (!spec) {
+    log.debug("Leaving verificationOptionsFor(). Not post-quantum.");
+    return {};
+  }
+  // The public key out of the document's own KeyInfo. A pasted certificate
+  // cannot carry one of these, so the box is not consulted for it.
+  var der = /<[^>]*DEREncodedKeyValue[^>]*>([^<]+)</.exec(String(xml));
+  if (!der) {
+    log.debug("Leaving verificationOptionsFor(). No key in the document.");
+    return {};
+  }
+  var raw = typeof atob === 'function' ? atob(der[1].replace(/\s+/g, ''))
+    : Buffer.from(der[1], 'base64').toString('binary');
+  var bytes = new Uint8Array(raw.length);
+  for (var i = 0; i < raw.length; i++) {
+    bytes[i] = raw.charCodeAt(i) & 0xff;
+  }
+  log.debug("Leaving verificationOptionsFor(). " + spec.alg + ".");
+  return { verifier: xdPqc.verifierFor(bytes) };
+}
+
+function pqMethod() {
+  log.debug("Entering pqMethod().");
+  var spec = xd.SIG_METHODS[val('sa_sig_alg')];
+  log.debug("Leaving pqMethod().");
+  return (spec && spec.postQuantum) ? spec : null;
+}
+
+function hexToBytes(hex) {
+  log.debug("Entering hexToBytes().");
+  var clean = String(hex || '').replace(/[^0-9a-fA-F]/g, '');
+  var out = new Uint8Array(clean.length / 2);
+  for (var i = 0; i < out.length; i++) {
+    out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  }
+  log.debug("Leaving hexToBytes(). " + out.length + " bytes.");
+  return out;
+}
+
+function bytesToHex(bytes) {
+  log.debug("Entering bytesToHex().");
+  var out = '';
+  var view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  for (var i = 0; i < view.length; i++) {
+    out += (view[i] < 16 ? '0' : '') + view[i].toString(16);
+  }
+  log.debug("Leaving bytesToHex(). " + view.length + " bytes.");
+  return out;
+}
+
+// The options signEnveloped() needs for whichever method is selected. One
+// function, so the two call sites (the pipeline and the download) cannot
+// disagree about which key a signature was made with.
+function signingOptionsFor(spec) {
+  log.debug("Entering signingOptionsFor().");
+  if (!spec) {
+    log.debug("Leaving signingOptionsFor(). RSA.");
+    return { privateKeyPem: val('sa_private_key'),
+             certPem: val('sa_public_key') };
+  }
+  log.debug("Leaving signingOptionsFor(). " + spec.alg + ".");
+  return {
+    signer: xdPqc.signerFor(hexToBytes(val('sa_private_key')), {
+      // HSS/LMS spends a one-time key per signature and this pane RE-SIGNS ON
+      // EVERY EDIT, so the key in the box would be spent many times over in a
+      // single sitting. The advanced key is written straight back, which is
+      // the only thing that keeps the pane honest — signing twice from one
+      // index hands an attacker the material to forge a third message.
+      onKeyAdvanced: function (next) {
+        setVal('sa_private_key', bytesToHex(next));
+        saveState();
+      }
+    }),
+    keyInfoXml: xd.derEncodedKeyValueXml(hexToBytes(val('sa_public_key')))
+  };
+}
+
 function generateKeys() {
   log.debug("Entering generateKeys().");
+  var spec = pqMethod();
+  if (spec) {
+    setStatus('sa_sign_status', 'Generating a ' + spec.label + ' key pair…');
+    setTimeout(function () {
+      try {
+        var pair = spec.family === 'hsslms'
+          ? hbs.hssKeygen({ levels: [{ lms: 'LMS_SHA256_M32_H5',
+                                       lmots: 'LMOTS_SHA256_N32_W8' }] })
+          : pqc.generateAkpKeyPair(spec.alg);
+        setVal('sa_private_key',
+               bytesToHex(pair.priv || pair.privateKey));
+        setVal('sa_public_key', bytesToHex(pair.pub || pair.publicKey));
+        setStatus('sa_sign_status', 'Generated a ' + spec.label + ' key ' +
+                  'pair (hex, not PEM). There is NO CERTIFICATE: the draft ' +
+                  'defines no X.509 profile for one, so the Signature will ' +
+                  'carry a dsig11:DEREncodedKeyValue — which a strict ' +
+                  'service provider may refuse, and sending one is the ' +
+                  'point.' + (spec.family === 'hsslms' ? ' IT IS STATEFUL: ' +
+                  'this pane re-signs on every edit and each signature ' +
+                  'rewrites the private key box.' : ''));
+        saveState();
+      } catch (e) {
+        log.error('generateKeys: ' + e.message);
+        setStatus('sa_sign_status', 'Key generation error: ' + e.message);
+      }
+    }, 20);
+    log.debug("Leaving generateKeys(). Post-quantum.");
+    return false;
+  }
   var bits = num('sa_key_bits', 2048);
   setStatus('sa_sign_status', 'Generating ' + bits + '-bit RSA key pair…');
   // Defer so the status paints before the (synchronous, slow) keygen runs.
@@ -1177,8 +1324,15 @@ function verifySignature() {
     return false;
   }
   try {
-    var r = xd.verifyXmlSignature(xml, { certPem: val('sa_verify_cert') ||
-        undefined });
+    // THE METHOD COMES FROM THE DOCUMENT, not from the pane's own menu: this
+    // box verifies whatever was pasted into it, which may be somebody else's
+    // assertion signed with something this page would not have chosen. So the
+    // verifier is built from what the SignedInfo says, and the public key
+    // comes out of the document's own DEREncodedKeyValue when it has one —
+    // there is no certificate to paste for a post-quantum signature.
+    var r = xd.verifyXmlSignature(xml,
+        Object.assign({ certPem: val('sa_verify_cert') || undefined },
+                      verificationOptionsFor(xml)));
     if (r.error) {
       setVal('sa_verify_output', 'INVALID: ' + r.error);
       log.debug("Leaving verifySignature().");
@@ -1572,6 +1726,11 @@ function onFieldChanged() {
 
 window.onload = function () {
   log.debug('Entering onload().');
+  // The sixteen post-quantum SignatureMethods, appended to this pane's menu
+  // FROM THE REGISTRY. Before restoreState(), so a stored selection of one of
+  // them still finds its option to select. See client/src/xmldsig_pqc.js.
+  xdPqc.appendSignatureOptions(document.getElementById('sa_sig_alg'),
+      xd.SIG_METHODS, xd.PQ_SIG_URIS);
   restoreState();
   setReturnLink();
   seedDefaults();

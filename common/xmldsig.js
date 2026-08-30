@@ -695,10 +695,27 @@ function firstByLocal(root, name) {
 function signWsSecurity(soapXml, opts) {
   log.debug("Entering signWsSecurity().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('signWsSecurity: privateKeyPem is ' +
-      'required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
-  var spec = sigAlgSpec(sigAlg);
+  // Post-quantum, additively — the same shape signEnveloped() takes, and for
+  // the same three reasons: only a URI in the registry takes this path, the
+  // RSA family is byte-for-byte what it was, and `sigAlgSpec()` must not be
+  // asked about an identifier it does not know because it answers SHA-256.
+  var pqSpec = (SIG_METHODS[sigAlg] && SIG_METHODS[sigAlg].postQuantum)
+    ? SIG_METHODS[sigAlg] : null;
+  if (pqSpec && typeof opts.signer !== 'function') {
+    log.debug("Leaving signWsSecurity(). Post-quantum with no signer.");
+    throw new Error('signWsSecurity: ' + pqSpec.label + ' needs opts.signer. ' +
+        'This module holds the identifiers and not the lattice; ' +
+        'client/src/xmldsig_pqc.js builds the signer.');
+  }
+  if (!pqSpec && !opts.privateKeyPem) {
+    log.debug("Leaving signWsSecurity(). No private key.");
+    throw new Error('signWsSecurity: privateKeyPem is required.');
+  }
+  var spec = pqSpec
+    ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
+        digestUri: pqSpec.digestUri }
+    : sigAlgSpec(sigAlg);
 
   var doc = parseXmlStrict(soapXml, 'the SOAP envelope to sign');
   var security = firstByLocal(doc, 'Security');
@@ -729,15 +746,31 @@ function signWsSecurity(soapXml, opts) {
         '</ds:SignedInfo>';
   var siCanon = canonicalize(new DOMParser().parseFromString(signedInfo,
       'application/xml').documentElement);
-  var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
-  var md = spec.md(); md.update(siCanon, 'utf8');
-  var sigVal = forge.util.encode64(pk.sign(md));
-  var certB64 = certPemToB64(opts.certPem);
+  var sigVal;
+  if (pqSpec) {
+    var rawSig = opts.signer(forge.util.encodeUtf8(siCanon), pqSpec, sigAlg);
+    sigVal = typeof rawSig === 'string' ? forge.util.encode64(rawSig)
+      : forge.util.encode64(forge.util.binary.raw.encode(rawSig));
+  } else {
+    var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
+    var md = spec.md(); md.update(siCanon, 'utf8');
+    sigVal = forge.util.encode64(pk.sign(md));
+  }
+  // A post-quantum signer has no certificate — the draft defines no X.509
+  // profile — so its KeyInfo is the caller's DEREncodedKeyValue. WS-Security's
+  // BinarySecurityToken reference is the shape a real STS expects for a
+  // certificate and there is no equivalent registered for one of these, which
+  // is worth knowing before pointing this at Apache CXF: what goes out is a
+  // valid XMLDSIG KeyInfo and not a WS-Security token reference.
+  var keyInfoXml = pqSpec
+    ? '<ds:KeyInfo>' + (opts.keyInfoXml || '') + '</ds:KeyInfo>'
+    : '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
+      certPemToB64(opts.certPem) +
+      '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>';
 
   var signature = '<ds:Signature xmlns:ds="' + DS_NS + '">' + signedInfo +
     '<ds:SignatureValue>' + sigVal + '</ds:SignatureValue>' +
-    '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' + certB64 +
-        '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
+    keyInfoXml +
     '</ds:Signature>';
   var sigNode = doc.importNode(new DOMParser().parseFromString(signature,
       'application/xml').documentElement, true);
@@ -765,10 +798,41 @@ function signWsSecurity(soapXml, opts) {
 function signEnveloped(xml, opts) {
   log.debug("Entering signEnveloped().");
   opts = opts || {};
-  if (!opts.privateKeyPem) throw new Error('signEnveloped: privateKeyPem is ' +
-      'required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
-  var spec = sigAlgSpec(sigAlg);
+  // ---------------------------------------------------------------------
+  // POST-QUANTUM, AND EVERY PRE-EXISTING CALLER IS UNTOUCHED BY IT.
+  //
+  // This function signs ONE SHAPE of document with almost every XMLDSIG
+  // choice fixed, and it stayed that way on purpose when the general engine
+  // was added beside it — a SAML assertion that quietly stops verifying is a
+  // defect nobody sees until an identity provider refuses it. So the branch
+  // below is ADDITIVE: `sigAlgSpec()` still decides for the four RSA URIs,
+  // byte for byte, and only a URI that is in the post-quantum registry takes
+  // the other path.
+  //
+  // Note what `sigAlgSpec()` does with a URI it does not know: it returns
+  // SHA-256. That is right for the RSA family it was written for and would be
+  // silently wrong here — an ML-DSA identifier would have produced a
+  // SHA-256-digested Reference and then died on the PEM parse, naming a key.
+  // Looking the registry up FIRST is what stops that.
+  // ---------------------------------------------------------------------
+  var pqSpec = (SIG_METHODS[sigAlg] && SIG_METHODS[sigAlg].postQuantum)
+    ? SIG_METHODS[sigAlg] : null;
+  if (pqSpec && typeof opts.signer !== 'function') {
+    log.debug("Leaving signEnveloped(). Post-quantum with no signer.");
+    throw new Error('signEnveloped: ' + pqSpec.label + ' needs opts.signer. ' +
+        'This module holds the identifiers and not the lattice (see the ' +
+        'section header); client/src/xmldsig_pqc.js builds the signer from ' +
+        'pqc.js and hbs.js.');
+  }
+  if (!pqSpec && !opts.privateKeyPem) {
+    log.debug("Leaving signEnveloped(). No private key.");
+    throw new Error('signEnveloped: privateKeyPem is required.');
+  }
+  var spec = pqSpec
+    ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
+        digestUri: pqSpec.digestUri }
+    : sigAlgSpec(sigAlg);
   var digestUri = opts.digestUri || spec.digestUri;
   var c14nAlg = opts.c14nAlg || C14N_EXCLUSIVE;
   var c14nFn = c14nForAlg(c14nAlg);
@@ -802,7 +866,13 @@ function signEnveloped(xml, opts) {
     '</ds:Reference></ds:SignedInfo>';
 
   var keyInfo = '';
-  if (opts.includeKeyInfo !== false && opts.certPem) {
+  if (opts.includeKeyInfo !== false && opts.keyInfoXml) {
+    // A caller-supplied KeyInfo, which is how a post-quantum public key gets
+    // into the document: there is no X.509 certificate for one — the draft
+    // defines no profile — so it travels as a dsig11:DEREncodedKeyValue,
+    // which derEncodedKeyValueXml() builds.
+    keyInfo = '<ds:KeyInfo>' + opts.keyInfoXml + '</ds:KeyInfo>';
+  } else if (opts.includeKeyInfo !== false && opts.certPem) {
     keyInfo = '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
       certPemToB64(opts.certPem) +
                    '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>';
@@ -834,11 +904,25 @@ function signEnveloped(xml, opts) {
   }
 
   var siNode = directChildByLocal(sigNode, 'SignedInfo');
-  var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
-  var md = spec.md();
-  md.update(c14nFn(siNode), 'utf8');
+  var sigB64;
+  if (pqSpec) {
+    // THE SAME OCTETS THE RSA BRANCH HASHES. `c14nFn` returns a JS string and
+    // forge's `md.update(s, 'utf8')` encodes it — so the signer is handed
+    // `encodeUtf8()` of it, which is the binary string signXml()'s signers
+    // already take. Handing over the JS string instead would sign a different
+    // message on any document with a non-ASCII character in its SignedInfo.
+    var rawSig = opts.signer(forge.util.encodeUtf8(c14nFn(siNode)), pqSpec,
+                             sigAlg);
+    sigB64 = typeof rawSig === 'string' ? forge.util.encode64(rawSig)
+      : forge.util.encode64(forge.util.binary.raw.encode(rawSig));
+  } else {
+    var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
+    var md = spec.md();
+    md.update(c14nFn(siNode), 'utf8');
+    sigB64 = forge.util.encode64(pk.sign(md));
+  }
   directChildByLocal(sigNode, 'SignatureValue')
-    .appendChild(doc.createTextNode(forge.util.encode64(pk.sign(md))));
+    .appendChild(doc.createTextNode(sigB64));
 
   log.debug("Leaving signEnveloped().");
   return new XMLSerializer().serializeToString(doc);
@@ -939,7 +1023,19 @@ function verifyXmlSignature(xml, opts) {
     log.debug("Leaving verifyXmlSignature().");
     return { valid: false, error: 'Signature has no <SignatureValue>.' };
   }
-  var spec = sigAlgSpec(sigAlg);
+  // POST-QUANTUM, ADDITIVELY: only a URI in the registry takes this path, and
+  // everything below is exactly what it was for the RSA family. A
+  // post-quantum signature has NO SIGNING CERTIFICATE — the draft defines no
+  // X.509 profile for one — so the certificate demand below cannot come first
+  // any more, and there is nothing for `sigAlgSpec()` to be asked either: it
+  // answers SHA-256 for a URI it does not know, which is right for the family
+  // it was written for and would be silently wrong here.
+  var pqSpec = (SIG_METHODS[sigAlg] && SIG_METHODS[sigAlg].postQuantum)
+    ? SIG_METHODS[sigAlg] : null;
+  var spec = pqSpec
+    ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
+        digestUri: pqSpec.digestUri }
+    : sigAlgSpec(sigAlg);
 
   // Signing certificate: prefer a supplied cert, else the one in KeyInfo.
   var certB64 = '';
@@ -947,15 +1043,27 @@ function verifyXmlSignature(xml, opts) {
   if (x509) certB64 = (x509.textContent || '').replace(/\s+/g, '');
   var certPem = opts.certPem ? pemWrapCert(opts.certPem) : (certB64 ?
       pemWrapCert(certB64) : '');
-  if (!certPem) {
+  if (pqSpec && typeof opts.verifier !== 'function') {
+    log.debug("Leaving verifyXmlSignature(). Post-quantum with no verifier.");
+    return { valid: false,
+            error: 'This document is signed with ' + pqSpec.label + ', which ' +
+                   'needs opts.verifier — this module holds the ' +
+                   'identifiers and not the lattice. ' +
+                   'client/src/xmldsig_pqc.js builds one from pqc.js and ' +
+                   'hbs.js, and the public key is in the ' +
+                   'dsig11:DEREncodedKeyValue rather than in a certificate.' };
+  }
+  if (!pqSpec && !certPem) {
     log.debug("Leaving verifyXmlSignature().");
     return { valid: false,
             error: 'No signing certificate in KeyInfo and none supplied.' };
   }
-  var cert, pub;
+  var cert = null, pub = null;
   try {
-    cert = forge.pki.certificateFromPem(certPem);
-    pub = cert.publicKey;
+    if (certPem) {
+      cert = forge.pki.certificateFromPem(certPem);
+      pub = cert.publicKey;
+    }
   } catch (e) {
     log.debug("Leaving verifyXmlSignature().");
     return { valid: false, error: 'Could not parse signing certificate: ' +
@@ -969,10 +1077,23 @@ function verifyXmlSignature(xml, opts) {
       '').replace(/\s+/g, ''));
   var signatureValid = false;
   try {
-    var md1 = spec.md();
-    md1.update(siCanon, 'utf8');
-    signatureValid = pub.verify(md1.digest().bytes(), signatureBytes);
+    if (pqSpec) {
+      // The same octets the RSA branch hashes — see signEnveloped() on why
+      // this is encodeUtf8() of the canonicalized string rather than the
+      // string.
+      signatureValid = !!opts.verifier(forge.util.encodeUtf8(siCanon),
+                                       signatureBytes, pqSpec, sigAlg);
+    } else {
+      var md1 = spec.md();
+      md1.update(siCanon, 'utf8');
+      signatureValid = pub.verify(md1.digest().bytes(), signatureBytes);
+    }
   } catch (e) {
+    // A verifier that THREW said something a caller can act on — a wrong
+    // signature length names the parameter set — so it is kept rather than
+    // flattened into `false`. A signature that merely does not hold up
+    // returns false and never reaches here.
+    log.debug("verifyXmlSignature(): the verifier threw: " + e.message);
     signatureValid = false;
   }
 
@@ -1014,7 +1135,7 @@ function verifyXmlSignature(xml, opts) {
     references: references,
     signatureMethod: sigAlg,
     canonicalization: c14nAlg,
-    signerSubject: certSubjectCN(cert),
+    signerSubject: cert ? certSubjectCN(cert) : '',
     signerCertB64: certB64
   };
 }

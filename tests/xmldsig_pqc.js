@@ -579,6 +579,105 @@ function theMenuIsBuiltFromTheRegistry() {
                                       xd.PQ_SIG_URIS) === 0);
 }
 
+// ---------------------------------------------------------------------------
+// THE THREE FIXED-SHAPE SIGNERS the four protocol pages go through, as
+// distinct from the general engine sections above.
+//
+// `signEnveloped()` and `signWsSecurity()` each sign ONE SHAPE of document
+// with almost every XMLDSIG choice fixed, and client/CLAUDE.md records that
+// they were deliberately left untouched when the general engine was added
+// beside them — a SAML assertion that quietly stops verifying is a defect
+// nobody sees until an identity provider refuses it. So the post-quantum
+// support in them is ADDITIVE and this section asserts both halves of that:
+// the new path works, AND the RSA path is what it was.
+//
+// The trap they carry is worth stating: `sigAlgSpec()`, the older three-entry
+// table those two consult, returns SHA-256 for any URI it does not recognise.
+// That is right for the RSA family it was written for. Handed an ML-DSA
+// identifier it would have produced a SHA-256-digested Reference and then died
+// on the PEM parse, naming a key — so the registry is looked up FIRST.
+// ---------------------------------------------------------------------------
+const SAML = '<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:' +
+  'assertion" ID="_a1" Version="2.0">' +
+  '<saml:Issuer>https://sts.example.com</saml:Issuer>' +
+  '<saml:Subject>alice</saml:Subject></saml:Assertion>';
+
+function theFixedShapeSignersTakePostQuantum() {
+  log.info("J. signEnveloped() and signWsSecurity() — the protocol pages\' " +
+           "path");
+  // THE RSA PATH FIRST, because "additive" is a claim about it.
+  const forge = xd.forge;
+  const rsa = forge.pki.rsa.generateKeyPair({ bits: 1024 });
+  const pem = forge.pki.privateKeyToPem(rsa.privateKey);
+  const rsaSigned = xd.signEnveloped(SAML, { privateKeyPem: pem });
+  check("the RSA path still defaults to rsa-sha256 and needs no signer",
+        rsaSigned.indexOf("xmldsig-more#rsa-sha256") > 0 &&
+        rsaSigned.indexOf("<ds:SignatureValue>") > 0);
+  let noPem = "";
+  try {
+    xd.signEnveloped(SAML, {});
+  } catch (e) {
+    noPem = e.message;
+  }
+  check("and it still refuses a missing privateKeyPem the way it did",
+        /privateKeyPem is required/.test(noPem), noPem);
+
+  ["ML-DSA-44", "ML-DSA-65"].forEach(function (alg) {
+    const uri = uriFor(alg);
+    const spec = xd.SIG_METHODS[uri];
+    const kp = pqc.generateAkpKeyPair(alg);
+    const signed = xd.signEnveloped(SAML, {
+      sigAlg: uri, signer: bridge.signerFor(kp.priv),
+      keyInfoXml: xd.derEncodedKeyValueXml(kp.pub)
+    });
+    check(alg + ": signEnveloped names the draft URI in SignedInfo",
+          signed.indexOf(uri) > 0);
+    // The Reference digest must be the registry's pairing and NOT
+    // sigAlgSpec()'s SHA-256 fallback — this is the trap in the header.
+    check(alg + ": the Reference digest is the registry's pairing, not " +
+          "sigAlgSpec()'s fallback", signed.indexOf(spec.digestUri) > 0,
+          spec.digestUri);
+    check(alg + ": the public key travels as a DEREncodedKeyValue, since " +
+          "there is no X.509 profile for one",
+          signed.indexOf("DEREncodedKeyValue") > 0);
+    const sv = signed.match(/<ds:SignatureValue>([^<]+)/)[1];
+    check(alg + ": the SignatureValue is the FIPS length",
+          Buffer.from(sv, "base64").length === spec.sigBytes,
+          Buffer.from(sv, "base64").length + " bytes");
+    const v = xd.verifyXmlSignature(signed,
+        { verifier: bridge.verifierFor(kp.pub) });
+    check(alg + ": verifyXmlSignature accepts it — signature and references",
+          v.valid === true, JSON.stringify({ valid: v.valid,
+              sig: v.signatureValid, refs: v.referencesValid }));
+    const other = pqc.generateAkpKeyPair(alg);
+    const wrong = xd.verifyXmlSignature(signed,
+        { verifier: bridge.verifierFor(other.pub) });
+    check(alg + ": and refuses a key the document was not signed with",
+          wrong.valid === false);
+  });
+
+  // The two refusals a caller has to be able to act on.
+  let noSigner = "";
+  try {
+    xd.signEnveloped(SAML, { sigAlg: uriFor("ML-DSA-44"),
+                             privateKeyPem: pem });
+  } catch (e) {
+    noSigner = e.message;
+  }
+  check("signEnveloped with a post-quantum alg and no signer names the bridge",
+        /opts\.signer/.test(noSigner) && /xmldsig_pqc/.test(noSigner),
+        noSigner);
+  const noVerifier = xd.verifyXmlSignature(
+      xd.signEnveloped(SAML, {
+        sigAlg: uriFor("ML-DSA-44"),
+        signer: bridge.signerFor(pqc.generateAkpKeyPair("ML-DSA-44").priv)
+      }), {});
+  check("verifying one with no verifier says so instead of demanding a " +
+        "certificate that cannot exist",
+        noVerifier.valid === false &&
+        /opts\.verifier/.test(noVerifier.error || ""), noVerifier.error);
+}
+
 function main() {
   log.info("Starting Test run. Post-quantum XML Signature and Encryption " +
            "(draft-eastlake-rfc9231bis-xmlsec-uris-09).");
@@ -590,6 +689,7 @@ function main() {
   hkdfMatchesTheRfcsOwnVectors();
   mlKemEncryptsAndDecrypts();
   theMenuIsBuiltFromTheRegistry();
+  theFixedShapeSignersTakePostQuantum();
   log.info("---------------------------------------------------------------");
   log.info(pass + " passed, " + fail + " failed.");
   process.exit(fail ? 1 : 0);
