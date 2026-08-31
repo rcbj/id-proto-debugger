@@ -310,6 +310,15 @@ textarea.ssf-field {
   overflow-wrap: anywhere;
 }
 
+/* The events_requested boxes, which client/src/ssf.js CREATES from the
+   transmitter's own events_supported rather than writing into the markup —
+   the class is how it finds them again. It is defined here for the reason
+   every class on this page is: checkStylesheetsLoaded() in
+   tests/navigation.js fails a page using an `ssf-` class no sheet it loads
+   defines, and a dynamically created element is exactly the kind that gets
+   missed, because it is not on the page until something has been fetched. */
+.ssf-event-choice { margin-right: 4px; }
+
 /* An event-type URI, a jti and a token. None has a space in it. */
 .ssf-uri,
 .ssf-jti,

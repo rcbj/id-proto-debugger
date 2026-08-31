@@ -778,8 +778,16 @@ async function test() {
     await thePageCanSignAndPushAnEvent(driver);
     await bothHistoriesRecordWhatTheyShould(driver);
     await theAbsentVocabulariesSayTheyAreAbsent(driver);
-    await theHandoffCarriesTheWholeTokenSet(driver);
+    // THE STYLE CHECK RUNS BEFORE THE HAND-OFF SECTION AND THE ORDER IS
+    // LOAD-BEARING. Several of this page's `ssf-` classes are on elements the
+    // bundle CREATES — the events_requested boxes are built from the
+    // transmitter's own events_supported, the findings and the message rows
+    // from what came back — so they are not on the page until something has
+    // been fetched. The hand-off section RELOADS the page, which wipes all of
+    // them, and a style check after it would pass by examining a page that no
+    // longer has the classes it is meant to be checking.
     await everyStyleClassIsDefined(driver);
+    await theHandoffCarriesTheWholeTokenSet(driver);
     await theConsoleIsClean(driver);
     log.info("Test completed successfully.");
   } finally {
