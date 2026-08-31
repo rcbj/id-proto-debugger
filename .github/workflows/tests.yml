@@ -53,28 +53,35 @@ jobs:
         env:
           STS_LOG_LEVEL: info
           # -------------------------------------------------------------
-          # SIX, AND THE NUMBER IS ARITHMETIC RATHER THAN A GUESS.
+          # FOUR. SIX WAS TRIED, MEASURED, AND BACKED OFF.
           #
-          # run-report.js defaults to `min(4, cores - 1)`, which is 3 on these
-          # runners. Measured on run #624's coverage job: 281 jobs, 8,568s of
-          # total job time, and a LONGEST SINGLE JOB of 1,755s — the
-          # cross-algorithm verification. That job is the FLOOR: no amount of
-          # concurrency divides it.
+          # run-report.js defaults to `min(4, cores - 1)` — 3 on these runners
+          # — and the coverage pass had been 48 minutes since the post-quantum
+          # work landed. Run #624's own timings: 281 jobs, 8,568s of total job
+          # time, and a longest single job of 1,755s (the cross-algorithm
+          # verification), which is the FLOOR no pool divides:
           #
-          #   concurrency 3   47.6 min   (observed: 48.3)
+          #   concurrency 3   47.6 min   (observed 48.3)
           #   concurrency 4   35.7 min
-          #   concurrency 6   29.2 min   <- floor-bound from here
-          #   concurrency 8   29.2 min   no further gain
+          #   concurrency 6   29.2 min   floor-bound from here
           #
-          # Six is where the curve flattens; above it there is only more
-          # contention. These runners have four cores, so six CPU-bound crypto
-          # jobs will not reach the ideal — expect low thirties rather than
-          # 29.2 — which is still most of twenty minutes off this pass.
+          # SIX WENT IN FIRST AND IT WAS THE WRONG CALL. It did buy the time —
+          # the plain suite came in at 1,266s against 1,396s, a real 5.5x — but
+          # it took the run from 0 failures to FOUR, and all four were
+          # contention rather than defects: a `TimeoutError: Waiting for URL to
+          # contain`, a JWE read off a page before it had finished producing
+          # it, and one job killed at exactly 900.0s by the watchdog. These
+          # runners have FOUR cores; six CPU-bound crypto jobs starve the 210
+          # browser-driven ones, whose waitTime is 2s.
           #
-          # TO GO FURTHER, SPLIT THE 1,755s JOB rather than raising this: the
-          # floor is a property of that one script and not of the pool.
+          # So four: one more in flight than the default, roughly a quarter off
+          # the wall clock, and no job competing for a core that is not there.
+          #
+          # TO GO FASTER, SPLIT THE 1,755s JOB or give the runner more cores.
+          # Raising this number again without one of those buys flakiness, and
+          # this comment is the record that it was tried.
           # -------------------------------------------------------------
-          TEST_CONCURRENCY: 6
+          TEST_CONCURRENCY: 4
         run: ./docker-run-tests.sh
       # The tests container writes tests/report as root via a bind mount; hand it
       # back to the runner user before the upload step reads it.
@@ -132,28 +139,35 @@ jobs:
         env:
           STS_LOG_LEVEL: info
           # -------------------------------------------------------------
-          # SIX, AND THE NUMBER IS ARITHMETIC RATHER THAN A GUESS.
+          # FOUR. SIX WAS TRIED, MEASURED, AND BACKED OFF.
           #
-          # run-report.js defaults to `min(4, cores - 1)`, which is 3 on these
-          # runners. Measured on run #624's coverage job: 281 jobs, 8,568s of
-          # total job time, and a LONGEST SINGLE JOB of 1,755s — the
-          # cross-algorithm verification. That job is the FLOOR: no amount of
-          # concurrency divides it.
+          # run-report.js defaults to `min(4, cores - 1)` — 3 on these runners
+          # — and the coverage pass had been 48 minutes since the post-quantum
+          # work landed. Run #624's own timings: 281 jobs, 8,568s of total job
+          # time, and a longest single job of 1,755s (the cross-algorithm
+          # verification), which is the FLOOR no pool divides:
           #
-          #   concurrency 3   47.6 min   (observed: 48.3)
+          #   concurrency 3   47.6 min   (observed 48.3)
           #   concurrency 4   35.7 min
-          #   concurrency 6   29.2 min   <- floor-bound from here
-          #   concurrency 8   29.2 min   no further gain
+          #   concurrency 6   29.2 min   floor-bound from here
           #
-          # Six is where the curve flattens; above it there is only more
-          # contention. These runners have four cores, so six CPU-bound crypto
-          # jobs will not reach the ideal — expect low thirties rather than
-          # 29.2 — which is still most of twenty minutes off this pass.
+          # SIX WENT IN FIRST AND IT WAS THE WRONG CALL. It did buy the time —
+          # the plain suite came in at 1,266s against 1,396s, a real 5.5x — but
+          # it took the run from 0 failures to FOUR, and all four were
+          # contention rather than defects: a `TimeoutError: Waiting for URL to
+          # contain`, a JWE read off a page before it had finished producing
+          # it, and one job killed at exactly 900.0s by the watchdog. These
+          # runners have FOUR cores; six CPU-bound crypto jobs starve the 210
+          # browser-driven ones, whose waitTime is 2s.
           #
-          # TO GO FURTHER, SPLIT THE 1,755s JOB rather than raising this: the
-          # floor is a property of that one script and not of the pool.
+          # So four: one more in flight than the default, roughly a quarter off
+          # the wall clock, and no job competing for a core that is not there.
+          #
+          # TO GO FASTER, SPLIT THE 1,755s JOB or give the runner more cores.
+          # Raising this number again without one of those buys flakiness, and
+          # this comment is the record that it was tried.
           # -------------------------------------------------------------
-          TEST_CONCURRENCY: 6
+          TEST_CONCURRENCY: 4
         run: ./run-coverage.sh
       # coverage/ and tests/report are written as root inside the containers.
       - name: Normalize coverage permissions
