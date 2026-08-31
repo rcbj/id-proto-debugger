@@ -2259,6 +2259,51 @@ function dnObjectToString(dn) {
   return out;
 }
 
+// ONE RETRY, AND THE FIRST FAILURE IS A WARNING RATHER THAN AN ERROR.
+//
+// This runs on every load of the page, and a single dropped fetch used to cost
+// two things out of proportion to it: the ask-the-server option was switched
+// off for the rest of the session (it is disabled when the api "cannot" do
+// it), and an ERROR went to the console — which on a page whose whole
+// diagnostic value is a clean console reads as a defect in the page.
+//
+// Neither is right for a request that is retried successfully a moment later,
+// and this is exactly the shape of failure a busy machine produces: the
+// containerized suite runs several browser jobs at once, and one of them
+// reaching the api while it is saturated gets a `Failed to fetch` that says
+// nothing about either service. So the first attempt failing is a warning and
+// a second attempt; only both failing is an error, and only then does the pane
+// say the api may not be there.
+function delay(ms) {
+  log.debug("Entering delay(). ms=" + ms);
+  log.debug("Leaving delay().");
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchTlsLimits() {
+  log.debug("Entering fetchTlsLimits().");
+  var firstError = null;
+  for (var attempt = 0; attempt < 2; attempt++) {
+    if (attempt) {
+      await delay(400);
+    }
+    try {
+      var response = await fetch(apiBase() + '/tls/limits');
+      var limits = await response.json();
+      log.debug("Leaving fetchTlsLimits(). Attempt " + (attempt + 1) + ".");
+      return limits;
+    } catch (e) {
+      firstError = firstError || e;
+      log.warn('fetchTlsLimits: attempt ' + (attempt + 1) + ' failed: ' +
+          e.message);
+    }
+  }
+  log.debug("Leaving fetchTlsLimits(). Both attempts failed.");
+  throw firstError;
+}
+
 async function loadTlsLimits() {
   log.debug("Entering loadTlsLimits().");
   if (!backendAvailable()) {
@@ -2267,8 +2312,7 @@ async function loadTlsLimits() {
     return;
   }
   try {
-    var response = await fetch(apiBase() + '/tls/limits');
-    var limits = await response.json();
+    var limits = await fetchTlsLimits();
     var ports = limits.allowedPorts === 'any' ? 'any port'
       : (limits.allowedPorts || []).join(', ');
     setText('pki_tls_limits', 'The api will connect to ' + ports +
