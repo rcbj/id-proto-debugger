@@ -81,8 +81,9 @@ function randomBytes(n) {
     return out;
   }
   // NO `require('crypto')` FALLBACK, and its absence is enforced by
-  // tests/jwk_pem_encoding.js: browserify substitutes a bare `require('crypto')`
-  // with the whole crypto-browserify shim, which drags in elliptic
+  // tests/jwk_pem_encoding.js: browserify substitutes a bare
+  // `require('crypto')` with the whole crypto-browserify shim, which drags in
+  // elliptic
   // (GHSA-848j-6mx2-7j84, for which no patched version exists) — and this file
   // IS bundled, so the fallback put it back into ten browser bundles. There is
   // nothing to fall back to anyway: `globalThis.crypto` is present in every
