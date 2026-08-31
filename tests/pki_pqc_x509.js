@@ -782,6 +782,71 @@ function requestParts(der) {
 }
 
 // ---------------------------------------------------------------------------
+// 10b. EVERY PROFILE TAKES A POST-QUANTUM KEY.
+//
+// The page's fourteen profiles are the roles a certificate plays — three CA
+// levels, a TLS server, a TLS client, both at once, digital signature, key
+// encipherment, code signing, S/MIME, OCSP responder, time stamping, smartcard
+// logon and a Kerberos KDC — and "post-quantum works" is only true if it is
+// true for all of them. They differ in their extensions rather than in their
+// cryptography, so the failure this catches is not a signature: it is a
+// profile whose default `keyUsage` or `extendedKeyUsage` makes the encoder or
+// the describer take a path the post-quantum keys never reach.
+//
+// THE KEY-ENCIPHERMENT PROFILE IS THE INTERESTING ONE, and it is the reason
+// ML-KEM is in this loop as a subject key. That is the encryption certificate
+// — the one a KEM key is FOR — and it cannot be self-signed at any point, so
+// it is issued by an ML-DSA CA here exactly as it would be anywhere else.
+// What this test does NOT assert is that the keyUsage bits are the ones RFC
+// 9935 section 4 requires of an ML-KEM certificate (keyEncipherment alone):
+// this is a debugger, every bit is editable on purpose, and issuing the
+// certificate that is wrong in exactly one way is the point of the page.
+// ---------------------------------------------------------------------------
+async function everyProfileTakesAPostQuantumKey() {
+  log.debug("Entering everyProfileTakesAPostQuantumKey().");
+  const caKey = await keyFor("ml-dsa-65");
+  const ca = await issue("ml-dsa-65", "CN=Profile CA,O=idptools");
+  const profiles = x509.profileIds();
+  assert.ok(profiles.length >= 14,
+    "the profile list has shrunk to " + profiles.length + ", so this sweep " +
+    "covers less than the page offers");
+  let issued = 0;
+  for (const profileId of profiles) {
+    const p = x509.profile(profileId);
+    // A CA profile signs with its OWN key, so it gets a signing algorithm; a
+    // leaf profile may hold a KEM key, which signs nothing. Both are covered:
+    // the subject key rotates through the three families.
+    const subjectAlg = p.ca
+      ? "ml-dsa-44"
+      : (profileId === "key-encipherment" ? "ml-kem-768"
+        : (issued % 2 ? "slh-dsa-sha2-128f" : "ml-dsa-87"));
+    const subjectKey = await keyFor(subjectAlg);
+    const cert = await issue("ml-dsa-65", "CN=" + profileId + ".example," +
+        "O=idptools", {
+      profile: profileId, subjectKey: subjectKey, signerKey: caKey,
+      signerAlg: "ml-dsa-65", issuerCertPem: ca.pem, signatureAlg: "ml-dsa-65"
+    });
+    const described = await x509.describeCertificate(cert.pem);
+    assert.strictEqual(described.signatureAlgorithm, "ML-DSA-65",
+      profileId + ": the describer does not name the signature algorithm");
+    const chain = await x509.verifyChain([cert.pem, ca.pem]);
+    assert.strictEqual(chain[0].signatureValid, true,
+      profileId + ": a " + subjectAlg + " certificate under this profile " +
+      "does not verify");
+    if (oracle.available()) {
+      assert.ok(oracle.verifyCertificate(cert.der, pemOf(ca)),
+        profileId + ": OpenSSL 3.5 refused the signature on a " + subjectAlg +
+        " certificate issued under this profile");
+      crossChecks += 1;
+    }
+    issued += 1;
+  }
+  log.info("Issued " + issued + " post-quantum certificates, one per " +
+      "profile.");
+  log.debug("Leaving everyProfileTakesAPostQuantumKey().");
+}
+
+// ---------------------------------------------------------------------------
 // 11. The refusals, and whether they name what is actually wrong.
 // ---------------------------------------------------------------------------
 async function badInputIsRefusedByName() {
@@ -925,6 +990,7 @@ async function test() {
   await thePreTbsIsTheTbsMinusTwoThings();
   await badInputIsRefusedByName();
   await certificationRequestsProvePossession();
+  await everyProfileTakesAPostQuantumKey();
   await hybridCertificatesCarryTwoSignatures();
   await theSlowParameterSetsVerifyWhatOpensslSigns();
   await compositeCertificatesNeedBothHalves();
