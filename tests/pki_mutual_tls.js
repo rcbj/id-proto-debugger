@@ -578,6 +578,112 @@ async function theBrowserConsoleIsClean(driver) {
   log.debug("Leaving theBrowserConsoleIsClean().");
 }
 
+// ---------------------------------------------------------------------------
+// 2. THE SAME ROUND TRIP WITH POST-QUANTUM CRYPTOGRAPHY, which is the case the
+//    PKI page's whole post-quantum half exists to reach.
+//
+// A Root CA and a client certificate, both ML-DSA-65, built in this browser by
+// @noble/post-quantum and pkijs — and then handed to two other implementations
+// that have never seen this code: node's OpenSSL 3.5 in the api, which loads
+// the private key and presents the certificate, and node's OpenSSL 3.5 in the
+// mock STS, which builds the chain and verifies it. Nothing in the assertion
+// path below is this project's own reading of RFC 9881.
+//
+// THE ONE THING THAT WOULD MAKE THIS TEST MEANINGLESS is a fallback: if the
+// handshake quietly used something classical, every assertion here would still
+// pass. So the server is asked what it saw, and what it saw has to name
+// ML-DSA.
+//
+// It is a SECOND scenario rather than a parameter on the first because the two
+// prove different things. The first is about the CHAIN — a leaf sent without
+// its intermediates, and the two mutual-auth verdicts an operator confuses.
+// This one is about the ALGORITHM, and it is deliberately two levels rather
+// than three: one more certificate would cost an ML-DSA key pair and a
+// signature in a browser for nothing this file has not already established.
+// ---------------------------------------------------------------------------
+async function aPostQuantumClientCertificateIsAccepted(driver, ports,
+    tlsHost) {
+  log.debug("Entering aPostQuantumClientCertificateIsAccepted().");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_key_alg"));
+  await driver.executeScript("window.localStorage.clear();");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_key_alg"));
+
+  // The Cryptographic Approach selector filters the key algorithm menu, so it
+  // is set first — selecting ml-dsa-65 while the menu is showing the classical
+  // algorithms would silently leave the old value in place.
+  await selectOption(driver, "pki_pq_mode", "pure");
+  await issueThrough(driver, { profile: "root-ca", keyAlg: "ml-dsa-65",
+    sigAlg: "ml-dsa-65", cn: "Post-Quantum Root CA" });
+  await issueThrough(driver, { profile: "tls-client", keyAlg: "ml-dsa-65",
+    sigAlg: "ml-dsa-65", cn: "Post-Quantum Client",
+    issuerSubject: "Post-Quantum Root CA" });
+
+  const entries = await storeEntries(driver);
+  const root = entries.filter(function (e) {
+    return e.subject.indexOf("Post-Quantum Root CA") >= 0;
+  })[0];
+  const leaf = entries.filter(function (e) {
+    return e.subject.indexOf("Post-Quantum Client") >= 0;
+  })[0];
+  assert.ok(root && root.certificatePem,
+    "the ML-DSA Root CA is not in the store");
+  assert.ok(leaf && leaf.privateKeyPem,
+    "the ML-DSA client certificate has no private key in this browser");
+  assert.strictEqual(leaf.signatureAlg, "ml-dsa-65",
+    "the client certificate was not signed with ML-DSA-65: " +
+    leaf.signatureAlg);
+
+  await trustTheIssuer(root.certificatePem);
+  const trustPem = await serverCertificatePem();
+  const report = await runTlsTest(driver, {
+    host: tlsHost, port: ports.required, servername: tlsHost,
+    trustPem: trustPem, clientSubject: "Post-Quantum Client",
+    mutualAuthProbe: false
+  });
+  const flat = report.table.replace(/\s+/g, " ");
+  assert.ok(/Connected\s*yes/.test(flat),
+    "an ML-DSA client certificate did not complete a handshake against the " +
+    "listener that REQUIRES one — so either OpenSSL refused the key, or the " +
+    "certificate, or the mock does not trust the CA that signed it:\n" +
+    report.table + "\nstatus: " + report.status);
+
+  // The far end's own account, which is the only thing here that can say the
+  // certificate was ACCEPTED rather than merely sent.
+  assert.ok(report.serverView,
+    "the server's own account of the connection is missing entirely");
+  assert.ok(/Post-Quantum Client/.test(report.serverView),
+    "the mock did not name the certificate it was presented:\n" +
+    report.serverView);
+  assert.ok(!/NOT verified/.test(report.serverView),
+    "the mock refused an ML-DSA client certificate whose CA it trusts:\n" +
+    report.serverView);
+
+  // And the algorithm, from the server. Without this the whole case would
+  // pass against a connection that had fallen back to something classical.
+  const serverJson = await stsJson("/tls?format=json");
+  assert.ok(serverJson, "the mock STS stopped describing its own listeners");
+  const body = report.serverBody || report.serverView || "";
+  assert.ok(/ml-dsa/i.test(body),
+    "the server's account of this connection never mentions ML-DSA, so " +
+    "nothing here proves the post-quantum key was what authenticated the " +
+    "client:\n" + body.slice(0, 2000));
+
+  // The page's own post-quantum block, which is what a reader of the pane
+  // sees: the certificate half and the key-exchange half, reported apart.
+  const pq = await driver.executeScript(
+    "var e = document.getElementById('pki_tls_pq_table');" +
+    "return e ? (e.textContent || '') : null;");
+  assert.ok(pq,
+    "the TLS pane rendered no post-quantum section for a connection made " +
+    "with a post-quantum client certificate");
+  assert.ok(/Key exchange/.test(pq) && /Verdict/.test(pq),
+    "the post-quantum section does not keep the key exchange and the " +
+    "certificate apart, which is the one thing it exists to do:\n" + pq);
+  log.debug("Leaving aPostQuantumClientCertificateIsAccepted().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Verifying " + baseUrl + PAGE +
@@ -686,6 +792,7 @@ async function test() {
       return;
     }
     await theServerReportsWhatThisPageIssued(driver, ports, tlsHost);
+    await aPostQuantumClientCertificateIsAccepted(driver, ports, tlsHost);
     await theBrowserConsoleIsClean(driver);
     log.info("Test completed successfully.");
   } catch (error) {

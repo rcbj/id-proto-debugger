@@ -631,8 +631,21 @@ COPY tests/api_ldap.js tests/ldap_page.js ./
 # work; pki_x509.js and pki_key_formats.js assert by asking it what it reads,
 # and say so rather than skipping if it is absent.
 COPY client/src/x509.js client/src/key_material.js client/src/pki_store.js ./
+# The post-quantum X.509 layer, which key_material.js and x509.js both require
+# now. `client/src/pqc.js` is ALREADY copied further up for tests/pqc_engines.js
+# — it lands flat as `pqc.js` and this module requires `./pqc`, so it resolves —
+# and this file adds nothing but the PKIX binding of it. The name trap called
+# out around pqc.js applies here too: the TEST is pki_pqc_x509.js and the MODULE
+# is pqc_x509.js, deliberately different, because both land flat in this
+# directory and a collision would silently make one of them the other.
+COPY client/src/pqc_x509.js ./
 COPY api/tls_probe.js ./
 COPY tests/pki_x509.js tests/pki_key_formats.js tests/api_tls_probe.js ./
+# tests/openssl35.js is the post-quantum ORACLE, and it is a module rather than
+# a copy inside each test because two of them need it: the `openssl` binary in
+# this image is 3.0 and has no ML-DSA, SLH-DSA or ML-KEM, while node 24.16's own
+# OpenSSL is 3.5.6 and has all three. Its header explains the split.
+COPY tests/pki_pqc_x509.js tests/openssl35.js ./
 COPY tests/pki_page.js tests/pki_mutual_tls.js ./
 # The WebAuthn decoder, loaded directly by tests/webauthn_decode.js: the CBOR
 # reader, the COSE_Key decoder (which requires ./jwk_pem, copied above) and the

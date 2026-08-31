@@ -4332,6 +4332,34 @@ function buildJobs() {
     env: {},
   });
 
+  // The POST-QUANTUM half of the same page: ML-DSA, SLH-DSA and ML-KEM keys and
+  // certificates (RFC 9881, 9909, 9935), the sixteen composite ML-DSA
+  // algorithms of draft-ietf-lamps-pq-composite-sigs-19, the X.509 (2019)
+  // hybrid extensions, and 126 links of chains that MIX classical and
+  // post-quantum issuers.
+  //
+  // It is a second file rather than more rows in pki_x509.js because the oracle
+  // is different: the `openssl` BINARY in this image is 3.0 and has no
+  // post-quantum algorithms at all — it reports an ML-DSA certificate as
+  // `X509_PUBKEY_get0:decode error`, which is a statement about OpenSSL 3.0 —
+  // while node 24.16's own OpenSSL is 3.5.6 and has all of them. So the
+  // assertions go through node's crypto module (tests/openssl35.js), and the
+  // HYBRID cases go back to the 3.0 binary deliberately, because their whole
+  // claim is that a validator which has never heard of any of this still
+  // accepts the certificate. Node only, never skipped.
+  //
+  // PQC_SLOW=1 additionally issues certificates with the six slow SLH-DSA
+  // parameter sets, which costs about three minutes: SLH-DSA-SHAKE-256s takes
+  // 18 seconds for one signature in JavaScript against 0.9 in OpenSSL's C.
+  // Without it those six are covered in the direction that is free — OpenSSL
+  // signs, this build verifies.
+  jobs.push({
+    name: "PKI post-quantum certificates (ML-DSA, SLH-DSA, ML-KEM, 16 " +
+        "composites, hybrid extensions, mixed chains — against OpenSSL 3.5)",
+    script: "pki_pqc_x509.js",
+    env: {},
+  });
+
   // The TLS / mutual-TLS probe behind POST /tls/connect. Same accounting as the
   // Kerberos relay — `tls.connect` is a raw socket, so the SSRF guard's axios
   // installation never sees it — plus one assertion that earns its keep more
