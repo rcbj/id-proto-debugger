@@ -125,6 +125,7 @@ async function openThePageFromTheLandingCard(driver) {
   await card.click();
   await driver.wait(until.urlContains("pki.html"), waitTime,
     "the landing page's PKI card did not open " + PAGE);
+  await captureConsoleErrors(driver);
   log.debug("Leaving openThePageFromTheLandingCard().");
 }
 
@@ -1760,8 +1761,40 @@ async function theTlsTestGoesThroughTheApi(driver) {
 // 8. The browser console must be clean. A page that throws on load looks
 //    exactly like a page that is working until something on it is used.
 // ---------------------------------------------------------------------------
+// A console.error hook, installed after every navigation so that a SEVERE
+// entry can be reported as WHAT WAS LOGGED rather than as a line number.
+//
+// Chrome's own log entry for `console.error(someObject)` is the string
+// "URL LINE:COL Object" — the object is never serialised — and this page logs
+// through bunyan, which passes a RECORD object. So the assertion below could
+// say that a handler threw and not what it threw, which on a page with a
+// hundred handlers is a line number in a bundle and a guess.
+async function captureConsoleErrors(driver) {
+  log.debug("Entering captureConsoleErrors().");
+  await driver.executeScript(
+    "if (!window.__pkiErrors) {" +
+    "  window.__pkiErrors = [];" +
+    "  var real = console.error;" +
+    "  console.error = function () {" +
+    "    try {" +
+    "      window.__pkiErrors.push(Array.prototype.map.call(arguments," +
+    "        function (a) {" +
+    "          try {" +
+    "            return typeof a === 'object' && a" +
+    "              ? JSON.stringify(a).slice(0, 500) : String(a);" +
+    "          } catch (e) { return String(a); }" +
+    "        }).join(' '));" +
+    "    } catch (e) { /* never let the hook break the page */ }" +
+    "    return real.apply(console, arguments);" +
+    "  };" +
+    "}");
+  log.debug("Leaving captureConsoleErrors().");
+}
+
 async function theBrowserConsoleIsClean(driver) {
   log.debug("Entering theBrowserConsoleIsClean().");
+  const captured = await driver.executeScript(
+    "return window.__pkiErrors || [];");
   const entries = await driver.manage().logs().get(logging.Type.BROWSER);
   const severe = entries.filter(function (entry) {
     if (entry.level.name !== "SEVERE") return false;
@@ -1775,7 +1808,11 @@ async function theBrowserConsoleIsClean(driver) {
   });
   assert.deepStrictEqual(severe.map(function (e) { return e.message; }), [],
     "the browser console carries severe errors, which on this page means a " +
-    "bundle that did not load or a handler that threw");
+    "bundle that did not load or a handler that threw. What was logged, as " +
+    "far as the page could capture it:\n  " +
+    (captured.length ? captured.join("\n  ") : "(nothing captured — the " +
+      "error came from a page load before the hook, or from outside " +
+      "console.error)"));
   log.debug("Leaving theBrowserConsoleIsClean().");
 }
 

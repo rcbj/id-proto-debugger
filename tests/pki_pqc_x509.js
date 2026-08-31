@@ -15,11 +15,14 @@
 //   * it would multiply the matrix by six and cost minutes per run for cells
 //     that say nothing new — an ML-DSA-87 CA over each of forty subject keys
 //     tests the subject key encodings forty times and ML-DSA-87 once;
-//   * every one of those cells would be checked by an ORACLE THAT CANNOT READ
-//     THEM. The `openssl` binary in these images is 3.0 and has no
-//     post-quantum algorithms at all: it reports an ML-DSA certificate as
-//     `X509_PUBKEY_get0:decode error`, which is a statement about OpenSSL 3.0
-//     and not about the certificate.
+//   * every one of those cells would be checked by an ORACLE WHOSE VERSION
+//     NOBODY CONTROLS. The `openssl` on the PATH is whatever the base image or
+//     the developer's machine ships — ubuntu:latest carries 3.5 today and an
+//     Ubuntu 22.04 host carries 3.0, which has no post-quantum algorithms at
+//     all and reports an ML-DSA certificate as `X509_PUBKEY_get0:decode
+//     error`, a statement about OpenSSL 3.0 rather than about the
+//     certificate. Node's OpenSSL moves with the node version, which every
+//     image here PINS, so it is the same on every machine.
 //
 // So pki_x509.js keeps its matrix over the classical algorithms and this file
 // takes the post-quantum ones, with tests/openssl35.js as the oracle — the

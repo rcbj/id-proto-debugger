@@ -723,16 +723,23 @@ than guessing between them.
 
 ### Why the tests ask a different OpenSSL
 
-`tests/pki_x509.js` asserts by handing certificates to the `openssl` binary,
-which in these images is **3.0** and has no post-quantum algorithms at all: it
-reports an ML-DSA certificate as `X509_PUBKEY_get0:decode error`, which is a
-statement about OpenSSL 3.0 rather than about the certificate. Node 24.16 —
-which every image here pins — is linked against **OpenSSL 3.5.6**, which has all
-of them. So `tests/pki_pqc_x509.js` reaches the same library through
-`crypto.createPublicKey()` and `crypto.verify()` (see `tests/openssl35.js`), and
-the **hybrid** cases go back to the 3.0 binary on purpose, because their whole
-claim is that a validator which has never heard of any of this still accepts the
-certificate.
+`tests/pki_x509.js` asserts by handing certificates to the `openssl` **binary**,
+and nothing pins that: `ubuntu:latest` ships 3.5 today and shipped 3.0 a release
+ago, and an Ubuntu 22.04 development host has 3.0.2. On 3.0 there are no
+post-quantum algorithms at all — an ML-DSA certificate comes back as
+`X509_PUBKEY_get0:decode error`, which is a statement about OpenSSL rather than
+about the certificate — so a test asserting through the binary would pass or
+fail on the base image's release date.
+
+Node's OpenSSL moves with the **node** version, which every image here pins:
+24.16 is linked against **OpenSSL 3.5.6**, the release that added all three
+families. So `tests/pki_pqc_x509.js` reaches the same library through
+`crypto.createPublicKey()` and `crypto.verify()` (see `tests/openssl35.js`) and
+gets the same answer on every machine. The **hybrid** cases go back to the
+binary on purpose, whichever it is, because their whole claim is that a
+validator which does not enforce those extensions accepts the certificate
+anyway — 3.0 has never heard of them, and 3.5 prints them without checking
+them.
 
 ## Ed25519 is signed by hand
 

@@ -147,12 +147,14 @@ async function keyFor(algId) {
 async function everyAlgorithmCombinationIssuesAndVerifies() {
   log.debug("Entering everyAlgorithmCombinationIssuesAndVerifies().");
   // THE CLASSICAL ALGORITHMS ONLY, and the post-quantum ones are not missing:
-  // they are in tests/pki_pqc_x509.js, because the oracle this matrix uses
-  // cannot read them. The `openssl` binary in these images is 3.0, which has
-  // no ML-DSA, SLH-DSA or ML-KEM at all and reports an ML-DSA certificate as
-  // `X509_PUBKEY_get0:decode error` — a statement about OpenSSL 3.0 rather
-  // than about the certificate. That file uses node's own OpenSSL 3.5
-  // instead, and covers the mixed chains this one cannot.
+  // they are in tests/pki_pqc_x509.js, because the oracle this matrix uses is
+  // whatever `openssl` the base image or the developer's machine ships. On
+  // 3.0 — Ubuntu 22.04's, and ubuntu:latest's until recently — there is no
+  // ML-DSA, SLH-DSA or ML-KEM at all, and an ML-DSA certificate comes back as
+  // `X509_PUBKEY_get0:decode error`, a statement about OpenSSL rather than
+  // about the certificate. That file asserts through node's OpenSSL instead,
+  // which is pinned by the node version, and covers the mixed chains this one
+  // cannot.
   const keyAlgs = keys.keyAlgIds().filter(function (id) {
     return keys.keyAlg(id).kind !== "pqc";
   });

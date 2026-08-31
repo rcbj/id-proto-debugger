@@ -11,16 +11,20 @@
 // interoperated with another implementation of them — and it runs straight
 // into a version wall:
 //
-//   * the `openssl` BINARY in these images is Ubuntu's, which is OpenSSL 3.0.
-//     It has no post-quantum algorithms at all: `openssl x509 -text` on an
-//     ML-DSA certificate prints `Unable to load Public Key` and `openssl
-//     verify` fails with `X509_PUBKEY_get0:decode error`, neither of which is
-//     a statement about the certificate.
-//   * node 24.16, which every image here pins, is linked against OpenSSL
-//     3.5.6 — and 3.5 is the release that added ML-KEM, ML-DSA and SLH-DSA.
-//     `crypto.createPublicKey()` reads their SubjectPublicKeyInfo,
-//     `crypto.createPrivateKey()` reads all three arms of their PKCS#8, and
-//     `crypto.verify(null, ...)` verifies their signatures.
+//   * the `openssl` BINARY is whatever is on the PATH, and NOTHING HERE PINS
+//     IT. ubuntu:latest ships 3.5 today and shipped 3.0 a release ago; an
+//     Ubuntu 22.04 development host has 3.0.2. On 3.0 there are no
+//     post-quantum algorithms at all: `openssl x509 -text` on an ML-DSA
+//     certificate prints `Unable to load Public Key` and `openssl verify`
+//     fails with `X509_PUBKEY_get0:decode error`, neither of which is a
+//     statement about the certificate. A test that asserted through the
+//     binary would therefore pass or fail on the base image's release date.
+//   * node's OpenSSL moves with the NODE version, and every image here pins
+//     that: 24.16 is linked against OpenSSL 3.5.6, the release that added
+//     ML-KEM, ML-DSA and SLH-DSA. `crypto.createPublicKey()` reads their
+//     SubjectPublicKeyInfo, `crypto.createPrivateKey()` reads all three arms
+//     of their PKCS#8, and `crypto.verify(null, ...)` verifies their
+//     signatures — identically on every machine that runs this suite.
 //
 // So the oracle for the post-quantum families is the SAME OpenSSL, reached
 // through a different door. It is a genuinely independent implementation of
@@ -30,11 +34,12 @@
 //
 // WHAT IT CANNOT DO, and the tests say so rather than skipping quietly:
 // OpenSSL 3.5 has no composite ML-DSA (the draft is not implemented by any
-// released OpenSSL) and no notion of the alternative-signature extensions. A
-// composite certificate is therefore checked by this project's own verifier
-// and by the arithmetic of its two halves; the hybrid certificates are checked
-// by the `openssl` BINARY, which is the whole point of them — a 3.0 validator
-// that has never heard of any of this must still accept them.
+// released OpenSSL) and does not VERIFY the alternative-signature extensions,
+// though 3.5 does print them. A composite certificate is therefore checked by
+// this project's own verifier and by the arithmetic of its two halves; the
+// hybrid certificates are checked by the `openssl` BINARY, which is the whole
+// point of them — a validator that does not enforce those extensions must
+// still accept the certificate.
 // ---------------------------------------------------------------------------
 const crypto = require("crypto");
 const asn1js = require("asn1js");

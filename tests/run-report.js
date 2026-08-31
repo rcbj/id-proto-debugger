@@ -4339,14 +4339,17 @@ function buildJobs() {
   // post-quantum issuers.
   //
   // It is a second file rather than more rows in pki_x509.js because the oracle
-  // is different: the `openssl` BINARY in this image is 3.0 and has no
-  // post-quantum algorithms at all — it reports an ML-DSA certificate as
-  // `X509_PUBKEY_get0:decode error`, which is a statement about OpenSSL 3.0 —
-  // while node 24.16's own OpenSSL is 3.5.6 and has all of them. So the
-  // assertions go through node's crypto module (tests/openssl35.js), and the
-  // HYBRID cases go back to the 3.0 binary deliberately, because their whole
-  // claim is that a validator which has never heard of any of this still
-  // accepts the certificate. Node only, never skipped.
+  // is different: the `openssl` BINARY is whatever the base image ships — 3.5
+  // today, 3.0 a release ago, 3.0 on an Ubuntu 22.04 development host — and on
+  // 3.0 there are no post-quantum algorithms at all, so an ML-DSA certificate
+  // comes back as `X509_PUBKEY_get0:decode error`, a statement about OpenSSL
+  // rather than about the certificate. Node's OpenSSL moves with the node
+  // version, which every image here PINS at 24.16 (OpenSSL 3.5.6), so the
+  // assertions go through node's crypto module (tests/openssl35.js) and are
+  // the same everywhere. The HYBRID cases go back to the binary deliberately,
+  // whichever it is, because their whole claim is that a validator which does
+  // not enforce those extensions accepts the certificate anyway. Node only,
+  // never skipped.
   //
   // PQC_SLOW=1 additionally issues certificates with the six slow SLH-DSA
   // parameter sets, which costs about three minutes: SLH-DSA-SHAKE-256s takes

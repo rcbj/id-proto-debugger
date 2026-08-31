@@ -1,0 +1,300 @@
+var config = {
+  apiUrl: "http://localhost:4200",
+  uiUrl: "http://localhost:3200",
+  hostname: "0.0.0.0",
+  port: "4200",
+  logLevel: "debug",
+  // Timeout, in milliseconds, on every outbound axios call this service makes
+  // (token, introspection, revocation, device-authorization and userinfo
+  // endpoints, the SAML metadata and ArtifactResolve back-channels, the
+  // WS-Trust STS, the DCR endpoint). A NUMBER, not a string. axios has no
+  // default of its own, so without this a host that accepts the connection and
+  // then never answers holds the request open for minutes. Omit it to use the
+  // code default of 10000; a value that is not a positive number is logged and
+  // ignored.
+  callTimeout: 10000,
+  // Budget for reaching a USABLE connection on those same calls — DNS, TCP
+  // connect, and on https the TLS handshake — enforced on the agent by
+  // api/connect_timeout.js. A NUMBER of milliseconds.
+  //
+  // It stops counting the moment the connection is up, which is what makes it a
+  // different deadline from callTimeout rather than a smaller copy of one: a
+  // dead or firewalled address fails inside connectionTimeout, while a host
+  // that has answered still gets the whole callTimeout to produce a response.
+  // Keep it BELOW callTimeout; omit it for the code default of 5000. A value
+  // that is not a positive number is logged and ignored.
+  connectionTimeout: 5000,
+  // Largest response body, in BYTES, accepted from any of those outbound calls
+  // (axios's maxContentLength). A NUMBER; 1048576 is 1 MiB.
+  //
+  // A timeout does not bound a response: a host that answers promptly and then
+  // streams indefinitely is inside its deadline while this service buffers the
+  // whole body in memory. axios's own default is -1, unlimited, so without this
+  // the only ceiling is the heap. axios enforces it as the bytes arrive and
+  // abandons the download once the cap is passed.
+  //
+  // Raise it if you need to proxy an unusually large document through
+  // /samlmetadata — a federation METADATA AGGREGATE (eduGAIN, InCommon) is tens
+  // of megabytes, though a single IdP's descriptor is far below this. A value
+  // that is not a positive number is logged and ignored (0 would refuse every
+  // response that has a body).
+  maxContentLength: 1048576,
+  // How many redirects an outbound call may follow (axios's maxRedirects). A
+  // NUMBER; a whole number, and 0 is allowed.
+  //
+  // axios's own default is 21. A chain is unbounded work behind one URL — every
+  // hop is a fresh lookup and connection — and a redirect is how a public host
+  // sends this service somewhere private ("302 Location:
+  // http://127.0.0.1:8080/"), which the SSRF guard refuses on the hop itself.
+  //
+  // 0 is legal and means follow none: axios then hands the 3xx back as the
+  // response, and since a non-2xx is a failure to these endpoints, the caller
+  // sees the upstream's status (302) with the endpoint's error body and no
+  // Location. That suits a deployment that expects no redirects at all; it is
+  // not a general "be careful" setting. A negative or fractional value is
+  // logged and ignored, because axios would silently fall back to its own 21
+  // rather than to anything intended here.
+  maxRedirects: 5,
+  // The User-Agent sent on every outbound call. `{{VERSION}}` is replaced with
+  // the build version (M.N.O), the same placeholder the client's footer uses.
+  //
+  // Without this axios announces itself as "axios/<its version>", which tells
+  // the operator of an identity provider nothing about who is calling — and
+  // this service appears in other people's access logs by design. A value with
+  // no placeholder in it is sent verbatim.
+  userAgent: "Identity Protocol Debugger/{{VERSION}}",
+  // Whether outbound connections are pooled and reused (the agents' keepAlive).
+  // A BOOLEAN; only an explicit false turns it off, so a missing or misspelled
+  // key stays on. A quoted "false" is refused and logged, since it is truthy.
+  //
+  // On, a debugger session that calls the token endpoint, then introspection,
+  // then userinfo on the same host stops paying for a TCP connection and a TLS
+  // handshake each time. It is also why the api's outbound agents are shared
+  // rather than built per call: an agent holds the idle-socket pool, so a
+  // per-call agent would pool nothing AND leak the socket it parked.
+  keepAlive: true,
+  // The ports the Kerberos relay (api/krb5_relay.js) may connect to.
+  //
+  // This setting exists because `POST /krb5/kdc` is a broader primitive than
+  // anything else this service does: it carries CALLER-SUPPLIED BYTES to a
+  // CALLER-SUPPLIED host and port over a raw TCP or UDP socket. An HTTP fetcher
+  // aimed at port 22 gets nothing useful; a byte relay aimed at port 22 is a port
+  // scanner whose payload the caller chooses. So the reachable ports are an
+  // allowlist, not a denylist.
+  //
+  // 88 is Kerberos, 464 is kpasswd (password change) and 749 is kadmin. A
+  // malformed entry is dropped with its reason logged; an allowlist that ends up
+  // empty refuses every call, which is the safe direction but is almost certainly
+  // a mistake. Omit the setting entirely to get these three.
+  //
+  // Note what this does NOT relax: the address policy above still applies, and so
+  // does the requirement that the payload actually be an AS-REQ, a TGS-REQ or an
+  // AP-REQ (api/krb5_frame.js). The relay also reuses `connectionTimeout`,
+  // `callTimeout` and `maxContentLength` from this same file — and spends
+  // `connectionTimeout` TWICE, once bounding the name lookup and once bounding
+  // the connection, because until a KDC's name has been resolved neither of
+  // the other budgets has started and an unbounded lookup is an unbounded
+  // request.
+  krb5AllowedPorts: [88, 464, 749],
+  // The ports POST /krb5/service may reach — the AP exchange, i.e. presenting a
+  // ticket to a Kerberos-protected service.
+  //
+  // This is a BROADER capability than the KDC relay and is therefore OFF by default
+  // (an absent or empty setting refuses every call). The reason it cannot be bounded
+  // the same way: a Kerberos service can be on any port — 443 for HTTP, 1433 for SQL
+  // Server, 389 for LDAP — so no small allowlist covers the real cases. What bounds
+  // it instead is the payload check in api/krb5_frame.js, which requires a GSS
+  // InitialContextToken naming the Kerberos v5 mechanism and wrapping a well-formed
+  // AP-REQ (or a bare AP-REQ). An HTTP request, a Redis command and a TLS handshake
+  // all fail that.
+  //
+  // Set it to a list of ports, or to the string "any" if a deployment genuinely needs
+  // arbitrary ones. "any" is a word rather than an empty list or a 0 so that enabling
+  // it is unmistakable rather than a plausible typo.
+  // Here it is the mock STS's protected service (HTTP/web.example.com).
+  krb5ServicePorts: [8888],
+  // The ports the LDAP client (api/ldap_client.js) may connect to.
+  //
+  // The four assigned ones: 389 (LDAP), 636 (LDAPS), 3268 and 3269 (the Active
+  // Directory global catalogue, plain and over TLS). 1389 and 1636 are here as
+  // well because port 389 is privileged, so a directory run outside a container
+  // — which is how somebody debugging their own OpenLDAP usually has it — nearly
+  // always lands on 1389.
+  //
+  // This is a NARROWER capability than the Kerberos relay's krb5AllowedPorts and
+  // the allowlist is correspondingly a convenience rather than the only control:
+  // POST /ldap/* takes an operation described in JSON and encodes the bytes
+  // itself, so a caller cannot choose what is sent the way it can with a byte
+  // relay. What still applies unchanged is the ADDRESS policy below, which this
+  // client enforces itself because the SSRF guard is installed on axios and a
+  // raw socket walks straight past it.
+  //
+  // A malformed entry is dropped with its reason logged; an allowlist that ends
+  // up empty refuses every call. Set it to the string "any" if a deployment
+  // genuinely needs arbitrary ports — a word rather than an empty list, so that
+  // widening it cannot be a plausible typo. Omit the setting entirely to get the
+  // four assigned ports and nothing else.
+  ldapAllowedPorts: [389, 636, 1389, 1636, 3268, 3269],
+  // How many entries this service will accumulate from ONE search before it
+  // stops and says so. A NUMBER.
+  //
+  // It is a second cap beside maxContentLength above, and both are needed: a
+  // million one-attribute entries fits inside a megabyte of values and is still
+  // a million objects to build, while a single entry carrying a jpegPhoto is one
+  // object and is still megabytes. A search with no filter against a real
+  // directory reaches one or the other immediately, which is exactly when a
+  // debugger should say "there was more" rather than run out of heap. The
+  // client's own protocol-level sizeLimit may ask for fewer; it may not ask for
+  // more. Omit it for the code default of 1000.
+  ldapMaxEntries: 1000,
+
+  // How large a request body POST /scim will forward, in BYTES. A NUMBER.
+  //
+  // A SEPARATE number from maxContentLength above, which bounds what comes
+  // BACK — and both are needed because a SCIM bulk is the asymmetric case: a
+  // BulkRequest creating fifty users with every optional attribute is a large
+  // request and a small response, so one limit standing for both would either
+  // refuse that or leave the response unbounded.
+  //
+  // It is not the same thing as the far end's own limit either. A SCIM server
+  // publishes `bulk.maxPayloadSize` in its ServiceProviderConfig and it is
+  // usually SMALLER than this; that one is the server's promise and this one
+  // exists so a caller cannot make this service buffer an unbounded body on
+  // its way to somewhere that would have refused it anyway.
+  //
+  // Omit it for the code default of 1048576 (1 MiB). A value that is not a
+  // positive number is logged and ignored.
+  //
+  // What this does NOT bound, because nothing here needs to: the ADDRESS
+  // policy already covers this endpoint without a line of its own. POST /scim
+  // is an axios call like /token and /wstrust, so the guard installed once on
+  // the shared instance already applies to it — request interceptor, DNS hook,
+  // wrapped createConnection, redirects included. The two settings that DO
+  // name a transport (krb5AllowedPorts, ldapAllowedPorts) exist because those
+  // are raw sockets that axios never sees. There is deliberately no
+  // scimAllowedPorts: SCIM is HTTP, a port allowlist for HTTP would have to
+  // carry 80, 443 and every alternate somebody runs a service on, and an
+  // allowlist that has to be edited per deployment is one that gets set to
+  // "any".
+  scimMaxRequestBytes: 1048576,
+  // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
+  // TLS test the PKI page (client/public/pki.html) runs.
+  //
+  // It is an allowlist for the same reason the Kerberos ports are, and for one
+  // reason more: unlike the Kerberos relay there is no PAYLOAD SHAPE bounding
+  // this endpoint. A ClientHello sent to port 22 is a perfectly well-formed
+  // ClientHello, so "it must look like the protocol" rules nothing out here and
+  // the ports have to do all the work.
+  //
+  // Omit the setting for the code default (api/tls_probe.js: 443, 636, 989,
+  // 990, 993, 995, 1433, 4443, 5061, 5432, 5671, 6697, 8443, 8843, 9443, 10443,
+  // 8883 — https, the alternate https ports, LDAPS, FTPS, the mail ports, AMQPS,
+  // SIP-TLS, PostgreSQL, MSSQL, IRC and MQTT over TLS). Set it to the string
+  // "any" for a deployment that genuinely needs arbitrary ports; as with
+  // krb5ServicePorts that is a word rather than an empty list or a 0, so
+  // switching it on cannot be a plausible typo.
+  //
+  // What this does NOT relax: the address policy below still applies (a raw
+  // socket bypasses the axios guard, so tls_probe.js asks the guard for its
+  // DECISION), and the same connectionTimeout / callTimeout / maxContentLength
+  // bound the lookup, the connect, the handshake and the certificate chain.
+  // "any" here because this is the local debugging stack: the TLS server being
+  // tested is usually one somebody has just started on an ephemeral port, and
+  // an allowlist that has to be edited per run is an allowlist that gets set to
+  // "any" anyway, less visibly.
+  tlsAllowedPorts: "any",
+  // --- SPIFFE ---------------------------------------------------------------
+  //
+  // The ports POST /spiffe/call may open a gRPC connection to. AN ARRAY OF
+  // NUMBERS, or the string "any".
+  //
+  // The same kind of allowlist ldapAllowedPorts is and for the same reason —
+  // gRPC is a raw socket that the axios guard never sees — with the same
+  // narrowing argument: this endpoint takes a method and a request described in
+  // JSON and encodes the protobuf itself, so a caller cannot choose what goes
+  // on the wire the way it can with a byte relay.
+  //
+  // Omit it for the code default of 8081, 8092 and 8181 — a real spire-server's
+  // own default port, and the two the mock STS had to move its SPIFFE surfaces
+  // to because 8081 is already its HTTP port. "any" is a word rather than an
+  // empty list, so that widening it cannot be a plausible typo.
+  spiffeAllowedPorts: [8081, 8092, 8181],
+  // The Unix socket paths POST /spiffe/call may connect to, as PREFIXES. AN
+  // ARRAY OF ABSOLUTE PATHS, or the string "any".
+  //
+  // THIS IS THE ONLY SETTING IN THIS FILE THAT BOUNDS A FILESYSTEM PATH, and it
+  // is here because SPIFFE is the only workflow that needs one:
+  // SPIFFE_ENDPOINT_SOCKET means a `unix://` path to go-spiffe, spiffe-helper
+  // and the SPIRE agent, so a client that could not reach a Unix socket could
+  // not talk to what every real deployment runs.
+  //
+  // The address policy cannot judge a path — there is no address in one — so
+  // this allowlist stands in its place. What it bounds is not exotic: an api
+  // reachable from anywhere, pointed at a path on the machine it runs on, is a
+  // way to make that machine connect to one of its own local services and
+  // report what came back.
+  //
+  // Omit it for the code default, which is SPIRE's own two directories
+  // (/tmp/spire-agent/, /tmp/spire-server/). "any" is spelled as a word for the
+  // reason it is everywhere else here. Two further checks apply whatever this
+  // is set to and neither is configurable: a path longer than 103 bytes is
+  // refused by name (sun_path is 108 on Linux and 104 on macOS, and past it the
+  // operating system fails the connect with a message about the address being
+  // in use — naming something that is not the problem), and a path that exists
+  // and is not a socket is refused rather than dialled.
+  spiffeAllowedSocketPaths: ["/tmp/spire-agent/", "/tmp/spire-server/"],
+  // How many messages POST /spiffe/call will read from a STREAM before it stops
+  // and says so. A NUMBER.
+  //
+  // Six of SPIFFE's forty-nine methods are streams and a real client holds
+  // FetchX509SVID open for the life of its process, so an HTTP endpoint has to
+  // decide when to stop. One message would make a ROTATION invisible — the
+  // second message on that stream is the new SVID — and the answer always
+  // reports which of the two caps stopped it, so a full stream and a quiet one
+  // are never confused. Omit it for the code default of 4.
+  spiffeMaxStreamMessages: 4,
+  // How long POST /spiffe/call will hold a STREAM open, in MILLISECONDS.
+  //
+  // A separate budget from callTimeout above, because the two bound different
+  // questions: callTimeout asks how long a server may take to ANSWER, and a
+  // stream is not an answer but a subscription. The mock STS re-sends on a
+  // Workload API stream at half the SVID lifetime with a FLOOR of thirty
+  // seconds, so a stream bounded by callTimeout could never observe a rotation
+  // however short the SVID lifetime were set — it would always report a timeout
+  // after one message, which is indistinguishable from a server that sent one
+  // and went quiet. Omit it for the code default of 45000.
+  spiffeStreamTimeout: 45000,
+  // SAML Service Provider identity (this debugger acting as an SP).
+  spEntityId: "http://localhost:3200/saml/sp",
+  acsUrl: "http://localhost:4200/samlacs",
+  sloUrl: "http://localhost:4200/samlslo",
+  // SSRF guard (api/ssrf_guard.js). OFF here, and this is the exception that
+  // proves the rule: the whole point of the local stack is that the api talks
+  // to Keycloak on localhost:8080 and the mock STS on localhost:8081. With the
+  // guard on, every token, introspection and WS-Trust call this service makes
+  // would be refused. Deployed configurations leave it ON.
+  blockPrivateNetworkCalls: false,
+  // Outbound destinations this service refuses to call, as RANGES — a CIDR
+  // block ("10.0.0.0/8") or a first-last pair ("10.0.0.0-10.255.255.255"). A
+  // bare single address is refused with a logged reason: a network policy
+  // written one host at a time almost always means the block that host sits in.
+  // Replacing this list replaces the policy wholesale; omit it (or leave it
+  // empty) to use the defaults baked into ssrf_guard.js, which are these.
+  blockedAddressRanges: [
+    "127.0.0.0/8",        // loopback
+    "0.0.0.0/8",          // "this host on this network"
+    "10.0.0.0/8",         // RFC 1918 private
+    "172.16.0.0/12",      // RFC 1918 private
+    "192.168.0.0/16",     // RFC 1918 private
+    "169.254.0.0/16",
+        // link-local, including 169.254.169.254 (cloud metadata)
+    "100.64.0.0/10",      // RFC 6598 carrier-grade NAT
+    "192.0.0.0/24",       // IETF protocol assignments
+    "198.18.0.0/15",      // benchmarking
+    "::1/128",            // IPv6 loopback
+    "fe80::/10",          // IPv6 link-local
+    "fc00::/7"            // IPv6 unique local
+  ]
+};
+
+module.exports = config;
