@@ -80,8 +80,19 @@ function randomBytes(n) {
     log.debug("Leaving randomBytes(). Web Crypto.");
     return out;
   }
-  log.debug("Leaving randomBytes(). node.");
-  return new Uint8Array(require('crypto').randomBytes(n));
+  // NO `require('crypto')` FALLBACK, and its absence is enforced by
+  // tests/jwk_pem_encoding.js: browserify substitutes a bare `require('crypto')`
+  // with the whole crypto-browserify shim, which drags in elliptic
+  // (GHSA-848j-6mx2-7j84, for which no patched version exists) — and this file
+  // IS bundled, so the fallback put it back into ten browser bundles. There is
+  // nothing to fall back to anyway: `globalThis.crypto` is present in every
+  // browser and in node from 18, which is four majors below what this project
+  // pins.
+  log.debug("Leaving randomBytes(). No source of randomness.");
+  throw new Error('No cryptographic randomness is available: neither ' +
+      'window.crypto nor globalThis.crypto has getRandomValues(). In a ' +
+      'browser that means a non-secure context; in node it means a runtime ' +
+      'older than 18.');
 }
 
 function binaryStringToBytes(text) {

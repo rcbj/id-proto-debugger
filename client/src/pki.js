@@ -2092,6 +2092,37 @@ function renderServerView(box, result) {
           (seen.tls.listenerPort ? ', on port ' + seen.tls.listenerPort : '') +
           (seen.tls.listener ? ' (' + seen.tls.listener +
             ' client certificate)' : '')));
+      // The far end's own post-quantum reading, when it has one. This is the
+      // half this end CANNOT work out: which of several server certificates
+      // OpenSSL chose for this client, and what the server made of the
+      // client's own key. A server that offers an RSA and an ML-DSA
+      // certificate on one port gives different clients different answers,
+      // and only it knows which one you got.
+      if (seen.tls.serverCertificate && seen.tls.serverCertificate.algorithm) {
+        var alternatives = seen.tls.serverCertificate.alsoAvailable || [];
+        body.appendChild(detailRow('It presented',
+            'a ' + seen.tls.serverCertificate.algorithm + ' certificate' +
+            (alternatives.length
+              ? ' — it also holds ' + alternatives.map(function (one) {
+                  return one.algorithm;
+                }).join(', ') + ', and OpenSSL chose this one from the ' +
+                'signature algorithms this client offered'
+              : '')));
+      }
+      if (seen.tls.postQuantum) {
+        var far = seen.tls.postQuantum;
+        if (far.clientCertificate && far.clientCertificate.presented) {
+          body.appendChild(detailRow('It read the client key as',
+              (far.clientCertificate.publicKeyType || 'unreadable') +
+              (far.clientCertificate.postQuantum ? ' (post-quantum)' : '') +
+              (far.clientCertificate.note
+                ? ' — ' + far.clientCertificate.note : '')));
+        }
+        if (far.keyExchange && far.keyExchange.note) {
+          body.appendChild(detailRow('Its view of the key exchange',
+              far.keyExchange.note));
+        }
+      }
     }
     if (seen.https) {
       body.appendChild(detailRow('It received',

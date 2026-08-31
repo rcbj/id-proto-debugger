@@ -539,7 +539,7 @@ function ellipticStaysOutOfTheBundles() {
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
       banned.forEach(function (rule) {
         if (rule.pattern.test(line)) {
-          offences.push("client/src/" + file + ":" + (index + 1) +
+          offences.push(file.label + ":" + (index + 1) +
                         " requires " + rule.name +
                         " — " + rule.why);
         }
@@ -920,7 +920,16 @@ function stsModuleClosureIsCopied(dockerfile) {
       missing.push(name + " (copied, but absent from the sts/ checkout)");
       continue;
     }
-    const src = fs.readFileSync(file, "utf8");
+    // COMMENT LINES ARE DROPPED, for the reason the banned-require scan above
+    // gives about the files it reads: the mock's comments discuss requires on
+    // purpose. `common/worker_pool.js` explains how to reproduce a hang with
+    // `node -e "require('./common/crypto')"`, and read as code that is a
+    // dependency on `common/common/crypto.js`, which exists nowhere and which
+    // no COPY could satisfy.
+    const src = fs.readFileSync(file, "utf8").split("\n")
+      .filter(function (line) {
+        return !/^\s*(\/\/|\*|\/\*)/.test(line);
+      }).join("\n");
     // Both `./x` and `../dir/x`, resolved against the requiring file's own
     // directory and normalised back to a path relative to the mock's root —
     // which is the form the COPY sources above are in.

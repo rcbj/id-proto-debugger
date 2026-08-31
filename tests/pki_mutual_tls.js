@@ -660,15 +660,14 @@ async function aPostQuantumClientCertificateIsAccepted(driver, ports,
     "the mock refused an ML-DSA client certificate whose CA it trusts:\n" +
     report.serverView);
 
-  // And the algorithm, from the server. Without this the whole case would
-  // pass against a connection that had fallen back to something classical.
-  const serverJson = await stsJson("/tls?format=json");
-  assert.ok(serverJson, "the mock STS stopped describing its own listeners");
-  const body = report.serverBody || report.serverView || "";
-  assert.ok(/ml-dsa/i.test(body),
+  // And the algorithm, FROM THE SERVER. Without this the whole case would
+  // pass against a connection that had quietly fallen back to something
+  // classical — and this end cannot answer it: only the far end knows what it
+  // made of the key it was presented.
+  assert.ok(/ml-dsa/i.test(report.serverView),
     "the server's account of this connection never mentions ML-DSA, so " +
     "nothing here proves the post-quantum key was what authenticated the " +
-    "client:\n" + body.slice(0, 2000));
+    "client:\n" + report.serverView.slice(0, 2000));
 
   // The page's own post-quantum block, which is what a reader of the pane
   // sees: the certificate half and the key-exchange half, reported apart.
