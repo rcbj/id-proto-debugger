@@ -52,6 +52,29 @@ jobs:
         # of `debug`.
         env:
           STS_LOG_LEVEL: info
+          # -------------------------------------------------------------
+          # SIX, AND THE NUMBER IS ARITHMETIC RATHER THAN A GUESS.
+          #
+          # run-report.js defaults to `min(4, cores - 1)`, which is 3 on these
+          # runners. Measured on run #624's coverage job: 281 jobs, 8,568s of
+          # total job time, and a LONGEST SINGLE JOB of 1,755s — the
+          # cross-algorithm verification. That job is the FLOOR: no amount of
+          # concurrency divides it.
+          #
+          #   concurrency 3   47.6 min   (observed: 48.3)
+          #   concurrency 4   35.7 min
+          #   concurrency 6   29.2 min   <- floor-bound from here
+          #   concurrency 8   29.2 min   no further gain
+          #
+          # Six is where the curve flattens; above it there is only more
+          # contention. These runners have four cores, so six CPU-bound crypto
+          # jobs will not reach the ideal — expect low thirties rather than
+          # 29.2 — which is still most of twenty minutes off this pass.
+          #
+          # TO GO FURTHER, SPLIT THE 1,755s JOB rather than raising this: the
+          # floor is a property of that one script and not of the pool.
+          # -------------------------------------------------------------
+          TEST_CONCURRENCY: 6
         run: ./docker-run-tests.sh
       # The tests container writes tests/report as root via a bind mount; hand it
       # back to the runner user before the upload step reads it.
@@ -108,6 +131,29 @@ jobs:
         # client's is compiled into the browser bundle. See issue #269.
         env:
           STS_LOG_LEVEL: info
+          # -------------------------------------------------------------
+          # SIX, AND THE NUMBER IS ARITHMETIC RATHER THAN A GUESS.
+          #
+          # run-report.js defaults to `min(4, cores - 1)`, which is 3 on these
+          # runners. Measured on run #624's coverage job: 281 jobs, 8,568s of
+          # total job time, and a LONGEST SINGLE JOB of 1,755s — the
+          # cross-algorithm verification. That job is the FLOOR: no amount of
+          # concurrency divides it.
+          #
+          #   concurrency 3   47.6 min   (observed: 48.3)
+          #   concurrency 4   35.7 min
+          #   concurrency 6   29.2 min   <- floor-bound from here
+          #   concurrency 8   29.2 min   no further gain
+          #
+          # Six is where the curve flattens; above it there is only more
+          # contention. These runners have four cores, so six CPU-bound crypto
+          # jobs will not reach the ideal — expect low thirties rather than
+          # 29.2 — which is still most of twenty minutes off this pass.
+          #
+          # TO GO FURTHER, SPLIT THE 1,755s JOB rather than raising this: the
+          # floor is a property of that one script and not of the pool.
+          # -------------------------------------------------------------
+          TEST_CONCURRENCY: 6
         run: ./run-coverage.sh
       # coverage/ and tests/report are written as root inside the containers.
       - name: Normalize coverage permissions
