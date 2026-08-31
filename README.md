@@ -652,10 +652,26 @@ The **signature algorithm** (what the issuer signs with) and the **subject key a
 
 | | |
 |---|---|
-| Signature | RSASSA-PKCS1-v1_5 and RSA-PSS over SHA-256/384/512, ECDSA over SHA-256/384/512, Ed25519 — plus SHA-1 with RSA and ECDSA, marked weak and defaulted to by nothing, because *"does my stack still accept a SHA-1 certificate?"* is a question a debugger should be able to ask |
-| Subject key | RSA 2048 / 3072 / 4096, ECDSA P-256 / P-384 / P-521, Ed25519 |
+| Signature | RSASSA-PKCS1-v1_5 and RSA-PSS over SHA-256/384/512, ECDSA over SHA-256/384/512, Ed25519 — plus SHA-1 with RSA and ECDSA, marked weak and defaulted to by nothing, because *"does my stack still accept a SHA-1 certificate?"* is a question a debugger should be able to ask — and the post-quantum ones below |
+| Subject key | RSA 2048 / 3072 / 4096, ECDSA P-256 / P-384 / P-521, Ed25519 — and the post-quantum ones below |
 
 The signature list is filtered to what the signing key can actually produce, since an RSA key cannot make an ECDSA signature and offering it produces a browser error that names neither.
+
+### Post-quantum, in three ways, and you choose which
+The page issues certificates with post-quantum keys and signatures, and it can carry them in **three different ways**. They are not variations on one idea — they are three answers to *"what do I do about a validator that has never heard of ML-DSA"* — so the **Cryptographic Approach** selector is a control rather than a default:
+
+| Approach | What the certificate holds | Who accepts it |
+|---|---|---|
+| **Pure** | one post-quantum key, one post-quantum signature, one OID — ML-DSA (RFC 9881), SLH-DSA (RFC 9909), and ML-KEM (RFC 9935) as a subject key | OpenSSL 3.5 and later; anything older refuses it outright |
+| **Composite** | one OID naming an ML-DSA key **and** a traditional key, with both signatures concatenated inside the single `signatureValue` (draft-ietf-lamps-pq-composite-sigs-19, sixteen of its eighteen algorithms) | nothing released yet — a verifier either checks both halves or understands neither |
+| **Hybrid** | an ordinary classical certificate **plus** a second key and signature in three non-critical extensions (ITU-T X.509 (2019) clause 9.8) | everything, because a validator that does not know the extensions ignores them — which is the whole point |
+
+Thirty-four algorithms in all: ML-DSA-44/65/87, all twelve SLH-DSA parameter sets, ML-KEM-512/768/1024, and sixteen composites. A chain may **mix** them — an RSA root over an ML-DSA intermediate over an ECDSA leaf is issued and verified here, because that is the shape an organisation actually has during a migration.
+
+Two things about it are worth knowing before you look for them:
+
+* **ML-KEM cannot sign.** It is a key-encapsulation mechanism, so it is a legitimate subject key — an encryption certificate is exactly a certificate over one — and it can never be self-signed or make the proof of possession a PKCS#10 request *is*. The page says so rather than offering a menu that cannot work.
+* **SLH-DSA does not work in TLS**, and the refusal is immediate: OpenSSL rejects the certificate before a byte is sent, because there are no TLS signature-algorithm codepoints for it. It is a certificate algorithm, not a handshake one. ML-DSA certificates negotiate perfectly.
 
 ### Full X.509v3 extension control
 `basicConstraints`, `keyUsage` (all nine bits), `extendedKeyUsage` (sixteen named purposes plus any OID), `subjectAltName` and `issuerAltName` (DNS, IP v4/v6, email, URI, directory name, registered ID, Microsoft **UPN** and RFC 4556 **Kerberos principal** otherNames, and raw otherNames by OID), `subjectKeyIdentifier`, `authorityKeyIdentifier`, `cRLDistributionPoints`, `freshestCRL`, `authorityInfoAccess`, `subjectInfoAccess`, `certificatePolicies` (with CPS and user-notice qualifiers), `policyMappings`, `policyConstraints`, `nameConstraints` (permitted and excluded subtrees, with the address-plus-mask encoding an IP constraint actually requires), `inhibitAnyPolicy`, `privateKeyUsagePeriod`, RFC 7633 TLS Feature (must-staple), `id-pkix-ocsp-nocheck`, the Netscape certificate type and comment — and **any extension at all** as an OID, a critical flag and base64 DER.
@@ -670,7 +686,7 @@ Key pairs come from the same pane, and the same code, as the [JWT Tools](#jwt-to
 **Private keys are saved by default and there is a checkbox to stop it**, as on every other key-generating page here. It is the private half only: clearing it strips the private keys already written and keeps the certificates and public keys, which are public documents — so the trust anchors and the chains stay usable while nothing can sign any more.
 
 ### The TLS / mutual-TLS test
-The last pane opens a real TLS connection with what you issued and reports the whole handshake: negotiated version and cipher, ALPN protocol, the server's certificate chain, whether it verified against the truststore **you** chose, and the TLS alert when it did not. You choose the client certificate to present (or none), the trust anchors (yours, the platform's, both, or nothing at all), the minimum and maximum TLS version, the cipher list, the ALPN protocols and the SNI name — separately from the address dialled, so a certificate for `www.example.com` can be tested against a staging host.
+The last pane opens a real TLS connection with what you issued and reports the whole handshake: negotiated version and cipher, ALPN protocol, the server's certificate chain, whether it verified against the truststore **you** chose, and the TLS alert when it did not. It also reports the **post-quantum posture in two halves**, because *"is this connection post-quantum"* is two questions: the key exchange decides whether a recording made today survives a quantum computer, and the certificate decides whether the server can be impersonated by one. A connection with an ML-KEM key exchange and an RSA certificate — the normal state of the world today — is protected against the first and not the second. You can name the key-exchange groups (`X25519MLKEM768`, which OpenSSL 3.5 offers by default, so naming it *proves* it was used) and the signature algorithms (`mldsa65`, to find out whether the far end can authenticate post-quantum at all). You choose the client certificate to present (or none), the trust anchors (yours, the platform's, both, or nothing at all), the minimum and maximum TLS version, the cipher list, the ALPN protocols and the SNI name — separately from the address dialled, so a certificate for `www.example.com` can be tested against a staging host.
 
 Ask it to and it will connect **twice**, with the client certificate and without, and tell you whether the server *requires* client authentication, does not, or refused the certificate you offered. That has to be measured rather than read: nothing exposes the server's CertificateRequest, and under TLS 1.3 the handshake completes before the server has said anything about your certificate — its refusal arrives afterwards, as an alert or as a bare hang-up.
 

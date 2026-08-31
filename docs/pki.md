@@ -586,6 +586,154 @@ produces a constraint that constrains nothing while looking correct in every
 dump. `ipConstraintBytes()` does it; `nameConstraintsAreEnforcedByOpenssl()`
 proves it by having OpenSSL **refuse** a name outside the permitted subtree.
 
+## Post-quantum: three ways, and the page makes you choose
+
+The page issues certificates with ML-DSA, SLH-DSA and ML-KEM keys, and it can
+carry post-quantum cryptography in **three different ways** that are not
+variations on one idea. Which is right depends entirely on who has to read the
+certificate, so the *Cryptographic Approach* selector is a control rather than a
+default:
+
+| Approach | What the certificate holds | Who accepts it |
+|---|---|---|
+| **Pure** | one post-quantum key, one post-quantum signature, one OID (RFC 9881, RFC 9909, RFC 9935) | OpenSSL 3.5 and later; everything older refuses it outright |
+| **Composite** | one OID naming an ML-DSA key **and** a traditional key, two signatures concatenated inside the single `signatureValue` (draft-ietf-lamps-pq-composite-sigs-19) | nothing released yet — a verifier either checks both halves or understands neither |
+| **Hybrid** | an ordinary classical certificate **plus** a second key and signature in three non-critical extensions (ITU-T X.509 (2019) clause 9.8) | everything, because a validator that does not know the extensions ignores them |
+
+The selector filters the Key Algorithm menu — which is grouped by family, since
+forty-one flat options is a scroll bar with no landmarks — and *Hybrid* reveals
+a second key pair.
+
+### The algorithms, and where each identifier comes from
+
+`client/src/pqc_x509.js` is the PKIX binding of the algorithms `pqc.js` already
+had, and it is a separate module because **the same algorithm is a different set
+of bytes in the two worlds**: a JOSE ML-DSA key is an AKP JWK whose `pub` is
+base64url, and an X.509 one is a `SubjectPublicKeyInfo` whose BIT STRING is the
+same octets with no wrapping at all.
+
+* **ML-DSA-44/65/87** — RFC 9881, OIDs `2.16.840.1.101.3.4.3.17`–`.19`.
+* **SLH-DSA**, all twelve parameter sets — RFC 9909, OIDs `…3.4.3.20`–`.31`.
+* **ML-KEM-512/768/1024** — RFC 9935, OIDs `…3.4.4.1`–`.3`. A KEM signs nothing,
+  so these appear only as a **subject** key: an encryption certificate is
+  exactly a certificate over one, it can never be self-signed, and the page says
+  so rather than offering a signature menu that cannot work.
+* **Composite ML-DSA**, sixteen of the draft's eighteen — OIDs
+  `1.3.6.1.5.5.7.6.37`–`.54`. The two that are missing are the brainpool ones,
+  and they are missing because brainpoolP256r1 and brainpoolP384r1 are in no
+  library in this dependency tree and in no browser. `COMPOSITE_MISSING` records
+  that where a reader will find it.
+
+### The private key is a CHOICE, and which arm you write is interoperability
+
+RFC 9881 section 6 gives an ML-DSA private key three encodings inside the
+PKCS#8 `privateKey` OCTET STRING — `seed [0]`, `expandedKey`, and `both` — and
+ML-KEM has the identical CHOICE with a 64-byte seed. The **RFC recommends
+`seed`** and **OpenSSL 3.5 writes `both`**, so this build writes `seed` and reads
+all three, which is the only combination that is both conformant and able to
+open what the most widely deployed producer emits. `encodePkcs8()` takes the arm
+as an option, because seeing the difference is the sort of thing a debugger is
+for.
+
+A key written in the `expandedKey` arm carries no seed and cannot be turned back
+into one — the derivation is one-way — so signing from it is refused with a
+sentence that says exactly that rather than a length error from the primitive.
+
+### The composite is the same construction as JOSE and three different encodings
+
+The message representative is identical to the one `pqc.js` already builds —
+`M' = Prefix || Label || len(ctx) || ctx || PH(M)`, with the label passed down
+as the ML-DSA context — and the labels are the same strings. What differs is how
+the **traditional** component is written down, and each difference is a one-line
+change that produces a signature nothing else will verify:
+
+1. the ECDSA public key keeps its `0x04` uncompressed prefix here and loses it
+   in JOSE;
+2. the ECDSA signature is a DER `Ecdsa-Sig-Value` here and fixed-width `r || s`
+   in JOSE;
+3. the RSA components exist here and not in JOSE at all.
+
+Two details in the draft's own table are worth knowing because reading them off
+the algorithm name gives the wrong answer for four of the sixteen:
+`id-MLDSA65-RSA3072-PSS-SHA512` pre-hashes with SHA-512 and instantiates
+RSASSA-PSS with **SHA-256** (the PSS parameters are fixed per RSA *size*, the
+pre-hash per *algorithm*), and `id-MLDSA65-ECDSA-P256-SHA512` signs its ECDSA
+half with **SHA-256**.
+
+### The hybrid certificate, and the two removals that make it work
+
+Hybrid mode writes the three extensions of ITU-T X.509 (2019) clause 9.8:
+
+    subjectAltPublicKeyInfo (2.5.29.72)  mirrors subjectPublicKeyInfo
+    altSignatureAlgorithm   (2.5.29.73)  mirrors the signature field
+    altSignatureValue       (2.5.29.74)  mirrors signatureValue
+
+The alternative signature does **not** cover the TBSCertificate. It covers the
+**preTBSCertificate**, which differs in two ways and both are easy to get wrong
+in a way that only shows up as *the other implementation says my signature is
+invalid*:
+
+1. the `signature` field — the third element of the SEQUENCE, holding the
+   AlgorithmIdentifier of the *conventional* algorithm — is **removed**;
+2. the `altSignatureValue` extension is **absent**, necessarily, since it is
+   what is being computed.
+
+Everything else is covered, so the alternative signature binds the alternative
+public key to the subject.
+
+What this build will **not** pretend to know is what a *failed* alternative
+signature means to a chain: the IETF profile that would have said
+(`draft-truskovsky-lamps-pq-hybrid-x509`) expired without progressing. So the
+Chain pane reports the alternative verdict in a **column of its own** beside the
+conventional one and refuses to fold the two into a single boolean.
+
+### Post-quantum TLS: what negotiates and what does not
+
+The TLS pane gains two fields, and they are two because *"is this connection
+post-quantum"* is two questions with two answers on two timescales:
+
+* **Key-exchange groups** decide whether a recording made today can be decrypted
+  by a quantum computer later. OpenSSL 3.5 offers `X25519MLKEM768` first and
+  both ends usually take it without anybody asking; naming it in the field is
+  how you *prove* that rather than assume it.
+* **Signature algorithms** decide whether the peer can be impersonated by one.
+  Restricting the list to `mldsa44:mldsa65:mldsa87` answers "can this server
+  authenticate itself post-quantum at all" — if the handshake fails, it cannot.
+
+A connection with an ML-KEM key exchange and an RSA certificate is the normal
+state of the world in 2026: protected against recording, not against a future
+forger. The report keeps the two apart and says so.
+
+Three results are worth writing down because they are properties of OpenSSL
+rather than of this code, and `tests/api_tls_probe.js` asserts each:
+
+* **ML-DSA certificates negotiate.** A server certificate, a client
+  certificate, and the whole chain — TLS 1.3, OpenSSL 3.5, verified.
+* **SLH-DSA certificates do not, and the refusal is immediate**:
+  `tls.createServer()` throws *"unknown certificate type"* before a byte is
+  sent. There are no TLS signature-algorithm codepoints for SLH-DSA; it is a
+  certificate algorithm, not a handshake one.
+* **Composite certificates do not either**, for the plainer reason that no
+  released OpenSSL implements the draft.
+
+**Node cannot name a hybrid group.** `getEphemeralKeyInfo()` describes ECDH and
+DH and returns an empty object for anything else, which under OpenSSL 3.5 means
+an ML-KEM hybrid — *or* a resumed session. The report says both readings rather
+than guessing between them.
+
+### Why the tests ask a different OpenSSL
+
+`tests/pki_x509.js` asserts by handing certificates to the `openssl` binary,
+which in these images is **3.0** and has no post-quantum algorithms at all: it
+reports an ML-DSA certificate as `X509_PUBKEY_get0:decode error`, which is a
+statement about OpenSSL 3.0 rather than about the certificate. Node 24.16 —
+which every image here pins — is linked against **OpenSSL 3.5.6**, which has all
+of them. So `tests/pki_pqc_x509.js` reaches the same library through
+`crypto.createPublicKey()` and `crypto.verify()` (see `tests/openssl35.js`), and
+the **hybrid** cases go back to the 3.0 binary on purpose, because their whole
+claim is that a validator which has never heard of any of this still accepts the
+certificate.
+
 ## Ed25519 is signed by hand
 
 `pkijs` cannot import an Ed25519 public key (`subjectPublicKeyInfo.importKey()`
@@ -1001,10 +1149,11 @@ above in place of the section it cannot run there.
 | Test | Covers | Skips? |
 |---|---|---|
 | `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles; a four-deep chain; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers; and the minimal DER encoding of an ECDSA signature's `r` and `s`, fed in as vectors because the matrix only meets that case about one run in eight | never |
-| `tests/pki_key_formats.js` | 7 algorithms × 4 formats × password on/off, read back by OpenSSL; a PKCS#12 carrying a whole chain; the refusals by name; PEM↔JWK round trips | never |
+| `tests/pki_key_formats.js` | every one of the 41 key algorithms generated and read back (classical by the `openssl` binary, post-quantum by node's OpenSSL 3.5); 11 of them × 4 formats × password on/off; a PKCS#12 carrying a whole chain; the refusals by name, including a composite key as a JWK; PEM↔JWK round trips, AKP for the post-quantum families | never |
+| `tests/pki_pqc_x509.js` | the post-quantum half: 34 algorithm identifiers checked against a second transcription of the standards; every key's SPKI and PKCS#8 read by OpenSSL 3.5, all three arms of the private-key CHOICE; pure certificates verified by OpenSSL; the 16 composites with **both halves** tampered in turn; 126 links of chains that mix classical and post-quantum issuers; the hybrid extensions, verified here and accepted by the OpenSSL 3.0 binary that knows none of it; the preTBSCertificate's two removals; post-quantum CSRs; and the refusals (a self-signed ML-KEM certificate, an algorithm mismatch, signing from a seedless key) | never — except the OpenSSL cross-checks, which need node ≥ 24 and say so |
 | `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, and the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success | node-only, so it never skips for want of a service — but `PKI_TLS_AVAILABLE=false` (a deployed static target) skips it, because it would pass there and mean nothing |
 | `tests/pki_page.js` | the hierarchy built through the form, the *View certificate details* hand-off read back on `saml_cert.html` for every key algorithm, the store surviving a reload, the private-key opt-out in both states, the serial number (shown, persisted, signed, rotated, and typed over), the subject-DN defaults and the profile subjectAltName, a tooltip on every one of the 131 controls, the validity pickers and the ISO-8601 values an older build stored, the list-field syntax, the TLS test end to end, no browser-side TLS option, the pane **switched off** when the build has no api — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, no control drawn outside its column, and every folded note still holding its prose and no control | needs the client; without an api the TLS section is replaced by the switched-off assertion rather than skipped |
-| `tests/pki_mutual_tls.js` | the same page against a server that **answers back**: a client certificate issued through the form, presented with its chain to the mock STS's two listeners, and the **server's own account** of the connection — the chain it built, the anchor it verified against, and `required` told apart from `required-and-rejected` by trusting the CA between two otherwise identical runs | needs the client, the api and `STS_TLS_URL`; also gated on `PKI_TLS_AVAILABLE` |
+| `tests/pki_mutual_tls.js` | the same page against a server that **answers back**: a client certificate issued through the form, presented with its chain to the mock STS's two listeners, and the **server's own account** of the connection — the chain it built, the anchor it verified against, and `required` told apart from `required-and-rejected` by trusting the CA between two otherwise identical runs. Then the same round trip with an **ML-DSA-65** CA and client certificate, where the last assertion is that the server's account names ML-DSA — without it, a silent fallback to something classical would satisfy every other check | needs the client, the api and `STS_TLS_URL`; also gated on `PKI_TLS_AVAILABLE` |
 
 The first three are node-only and need **`openssl` on the PATH** (the tests image
 installs it); they say so rather than skipping if it is absent, because a test
@@ -1018,6 +1167,12 @@ that quietly stops asserting is worse than one that fails.
   match so a new algorithm cannot arrive untested.
 * A new **signature algorithm** is one entry in `SIG_ALGS` plus its `kind`, which
   is what filters it to the keys that can produce it.
+* A new **post-quantum** algorithm is one entry in `pqc_x509.js`'s registry —
+  the OID, the family and the standard — and both menus pick it up, because the
+  post-quantum rows of `KEY_ALGS` and `SIG_ALGS` are GENERATED from it rather
+  than written out again. Add its OID to the transcription in
+  `theRegistryMatchesTheStandards()`, which asserts the two lists match so a new
+  algorithm cannot arrive untested.
 * A new **profile** is one entry in `PROFILES` and `PROFILE_ORDER`.
   `everyProfileIssuesWhatItPromises()` will issue it and check what it claims.
 * A new **extension** needs a builder, a branch in `buildExtensions()`, a branch

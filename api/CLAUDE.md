@@ -371,6 +371,28 @@ this is a third enforcement of the same policy, and it reuses the guard's
 is judged by what it RESOLVES to; a literal is checked directly, because node
 never calls a resolver for one.
 
+**Two post-quantum knobs, and they are two because the question is two
+questions.** `groups` (OpenSSL's supported-groups list, which node calls
+`ecdhCurve`) decides the KEY EXCHANGE, and therefore whether a RECORDING of this
+connection survives a quantum computer; `sigalgs` decides what the peer may
+authenticate with, and therefore whether it can be IMPERSONATED by one. OpenSSL
+3.5 — which is what node 24.16 is linked against — offers `X25519MLKEM768`
+first and both ends usually take it with nobody asking, so naming it is how a
+caller PROVES it rather than assuming it. Neither is checked against a list of
+known names: OpenSSL's spelling changes between releases and a hard-coded
+allowlist here would refuse a group the linked OpenSSL supports perfectly, so
+what is enforced is the shape (colon-separated tokens of a conservative
+alphabet, bounded length) and an unknown name fails at the handshake, where
+OpenSSL says which one it did not know.
+
+The report keeps the two apart under `postQuantum`, and reads each peer
+certificate's signature OID out of the DER — node's own certificate object
+carries neither the signature algorithm nor the key algorithm, and
+`crypto.X509Certificate` supplies the second. **Node cannot name a hybrid
+group**: `getEphemeralKeyInfo()` describes ECDH and DH and returns an empty
+object for anything else, which under OpenSSL 3.5 means an ML-KEM hybrid *or* a
+resumed session — both readings are reported rather than one being guessed.
+
 **A ninth setting, `tlsAllowedPorts`.** This endpoint is broader than the
 Kerberos relay in one specific way, and it is the way that matters: **there is
 no payload shape to bound it with**. `/krb5/kdc` can insist the bytes are an
