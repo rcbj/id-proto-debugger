@@ -36,6 +36,8 @@ var bunyan = require("bunyan");
 // than copied for the reason jose_jwe.js's own header gives.
 var jose = require("./jose_jwe");
 var pkijs = require("pkijs");
+var pqx = require("./pqc_x509");
+var pqc = require("./pqc");
 var asn1js = require("asn1js");
 
 // A node consumer (the tests load this module directly) may have no
@@ -98,8 +100,51 @@ var KEY_ALGS = {
 // The order the dropdowns show them in — an object's key order is not a
 // contract, and two panes listing the same algorithms differently is the kind
 // of difference that is only visible in a screenshot.
+// ---------------------------------------------------------------------------
+// The post-quantum entries, taken from pqc_x509.js's registry rather than
+// written out again.
+//
+// THEY ARE GENERATED AND THE CLASSICAL ONES ABOVE ARE NOT, and that asymmetry
+// is deliberate: the classical table is seven rows that have not changed in
+// years and each carries a Web Crypto parameter set of its own, while this one
+// is thirty-one rows whose only per-row facts — the OID, the sizes, the
+// standard — already exist in ONE place, next to the encoder that has to agree
+// with them. Writing them out here a second time would be transcribing an OID
+// table by hand, which is precisely the error class this module's tests exist
+// to catch.
+//
+// `kind: 'pqc'` is what every caller branches on. It means: Web Crypto has
+// never heard of this key, `importPrivateKey()` cannot produce a CryptoKey for
+// it, and whatever wants to sign with it goes through pqc_x509.js. The `pqc`
+// member is the algorithm id in that registry.
+//
+// ML-KEM IS IN HERE AND CANNOT SIGN ANYTHING. It is a key-establishment
+// algorithm, so it is a legitimate SUBJECT key — an encryption certificate is
+// exactly a certificate over one — and it can never be an ISSUER key.
+// x509.js's signatureAlgorithmsFor() returns an empty list for it, and the
+// page says why rather than offering a menu that cannot work.
+var POST_QUANTUM_KEY_ALG_ORDER = [];
+
+(function addPostQuantumKeyAlgs() {
+  ['ML-DSA', 'SLH-DSA', 'Composite ML-DSA', 'ML-KEM'].forEach(function (fam) {
+    pqx.algIds().forEach(function (id) {
+      var entry = pqx.alg(id);
+      if (entry.family !== fam) return;
+      KEY_ALGS[id.toLowerCase()] = {
+        kind: 'pqc',
+        pqc: id,
+        family: entry.family,
+        use: entry.use,
+        oid: entry.oid,
+        label: pqx.labelFor(id)
+      };
+      POST_QUANTUM_KEY_ALG_ORDER.push(id.toLowerCase());
+    });
+  });
+})();
+
 var KEY_ALG_ORDER = ['rsa-2048', 'rsa-3072', 'rsa-4096', 'ec-p256', 'ec-p384',
-                     'ec-p521', 'ed25519'];
+                     'ec-p521', 'ed25519'].concat(POST_QUANTUM_KEY_ALG_ORDER);
 
 function keyAlgIds() {
   log.debug("Entering keyAlgIds().");
@@ -171,6 +216,18 @@ async function generateKeyPair(spec) {
     throw new Error('HMAC is symmetric — it has no key pair. Use ' +
                     'generateSecret().');
   }
+  if (desc.kind === 'pqc') {
+    // Web Crypto has no generateKey for any of these, so the pair comes from
+    // pqc_x509.js and is written out in the SAME two PEM labels every other
+    // algorithm here uses. That is the whole point of putting the encoders in
+    // that module: a caller holding the result cannot tell which family it
+    // came from until it tries to sign with it.
+    var pqPair = await pqx.generateKeyPair(desc.pqc);
+    log.debug("Leaving generateKeyPair(). Post-quantum.");
+    return { privatePem: pqx.privatePem(desc.pqc, pqPair.priv),
+             publicPem: pqx.publicPem(desc.pqc, pqPair.pub),
+             alg: desc.id || desc.pqc.toLowerCase(), kind: 'pqc' };
+  }
   var params;
   if (desc.kind === 'rsa') {
     params = { name: 'RSASSA-PKCS1-v1_5',
@@ -231,8 +288,97 @@ function convParams(desc) {
   return { name: 'ECDSA', namedCurve: desc.curve || 'P-256' };
 }
 
+// ---------------------------------------------------------------------------
+// A post-quantum key pair as JWK, and the one family that is refused.
+//
+// RFC 9964 gives these keys the "AKP" key type with exactly two parameters,
+// `pub` and `priv`, and pqc.js already produces it — so these three functions
+// are a conversion between the PEM this module deals in and the JWK that
+// module deals in, and nothing more.
+//
+// THE COMPOSITE ALGORITHMS ARE REFUSED HERE ON PURPOSE. A composite key has
+// two serializations that are the same length and different bytes: the one in
+// this file, from the LAMPS draft, whose ECDSA half keeps its 0x04 point
+// prefix and whose RSA half is a DER RSAPrivateKey, and the one in the JOSE
+// composite draft, which drops the prefix and has no RSA at all. Exporting
+// these bytes under a JOSE `alg` would produce a JWK that reads as valid
+// everywhere and verifies nowhere. The Digital Signature page's composite pane
+// is where a JOSE composite key comes from.
+function pqcAlgIdFromPem(pem, which) {
+  log.debug("Entering pqcAlgIdFromPem(). which=" + which);
+  var der = new Uint8Array(pemToDer(pem));
+  var read = which === 'private' ? pqx.decodePkcs8(der) : pqx.decodeSpki(der);
+  if (!read) {
+    log.debug("Leaving pqcAlgIdFromPem(). Not post-quantum.");
+    throw new Error('This PEM does not carry a post-quantum key of an ' +
+                    'algorithm this build knows.');
+  }
+  if (read.entry.family === 'Composite ML-DSA') {
+    log.debug("Leaving pqcAlgIdFromPem(). Composite refused.");
+    throw new Error('A composite ML-DSA key has no JWK form here: the X.509 ' +
+                    'serialization in this file and the JOSE one are ' +
+                    'different bytes for the same key, and writing these ' +
+                    'under a JOSE "alg" would produce a JWK that verifies ' +
+                    'nowhere. Export it as PEM or DER, or use the Digital ' +
+                    'Signature page for the JOSE composite.');
+  }
+  log.debug("Leaving pqcAlgIdFromPem().");
+  return read;
+}
+
+function pqcPublicJwk(pem, use) {
+  log.debug("Entering pqcPublicJwk().");
+  var read = pqcAlgIdFromPem(pem, 'public');
+  var jwk = pqc.akpPublicJwk(read.alg, read.pub);
+  if (use) jwk.use = use;
+  log.debug("Leaving pqcPublicJwk().");
+  return jwk;
+}
+
+function pqcPrivateJwk(pem, use) {
+  log.debug("Entering pqcPrivateJwk().");
+  var read = pqcAlgIdFromPem(pem, 'private');
+  if (!read.priv) {
+    log.debug("Leaving pqcPrivateJwk(). Expanded key only.");
+    throw new Error('This private key was written in the expandedKey arm of ' +
+                    'RFC 9881 section 6, which carries no seed — and an AKP ' +
+                    '"priv" for ML-DSA IS the seed (RFC 9964 section 3.2). ' +
+                    'There is nothing to convert: the derivation is one-way.');
+  }
+  var pub = pqx.publicFromPrivate(read.alg, read.priv);
+  var jwk = pqc.akpPrivateJwk(read.alg, pub, read.priv);
+  if (use) jwk.use = use;
+  log.debug("Leaving pqcPrivateJwk().");
+  return jwk;
+}
+
+function pqcPemFromJwk(jwk, which) {
+  log.debug("Entering pqcPemFromJwk(). which=" + which);
+  var read = pqc.akpImport(jwk);
+  if (!pqx.alg(read.alg)) {
+    log.debug("Leaving pqcPemFromJwk(). Unknown algorithm.");
+    throw new Error('This build has no X.509 encoding for the AKP algorithm ' +
+                    read.alg + '.');
+  }
+  if (which === 'private') {
+    if (!read.priv) {
+      log.debug("Leaving pqcPemFromJwk(). No private half.");
+      throw new Error('This AKP JWK carries no "priv" parameter, so there ' +
+                      'is no private key to write.');
+    }
+    log.debug("Leaving pqcPemFromJwk(). Private.");
+    return pqx.privatePem(read.alg, read.priv);
+  }
+  log.debug("Leaving pqcPemFromJwk(). Public.");
+  return pqx.publicPem(read.alg, read.pub);
+}
+
 async function privToJwk(pem, desc, jwtAlg, use) {
   log.debug("Entering privToJwk().");
+  if (desc && desc.kind === 'pqc') {
+    log.debug("Leaving privToJwk(). AKP.");
+    return pqcPrivateJwk(pem, use);
+  }
   var key = await crypto.subtle.importKey('pkcs8', pemToDer(pem),
       convParams(desc), true, ['sign']);
   var jwk = await crypto.subtle.exportKey('jwk', key);
@@ -246,6 +392,10 @@ async function privToJwk(pem, desc, jwtAlg, use) {
 
 async function pubToJwk(pem, desc, jwtAlg, use) {
   log.debug("Entering pubToJwk().");
+  if (desc && desc.kind === 'pqc') {
+    log.debug("Leaving pubToJwk(). AKP.");
+    return pqcPublicJwk(pem, use);
+  }
   var key = await crypto.subtle.importKey('spki', pemToDer(pem),
       convParams(desc), true, ['verify']);
   var jwk = await crypto.subtle.exportKey('jwk', key);
@@ -260,6 +410,10 @@ async function pubToJwk(pem, desc, jwtAlg, use) {
 async function privToPem(jwkText, desc) {
   log.debug("Entering privToPem().");
   var jwk = typeof jwkText === 'string' ? JSON.parse(jwkText) : jwkText;
+  if (jwk && jwk.kty === 'AKP') {
+    log.debug("Leaving privToPem(). AKP.");
+    return pqcPemFromJwk(jwk, 'private');
+  }
   var key = await crypto.subtle.importKey('jwk', stripJwkForImport(jwk),
       convParams(desc), true, ['sign']);
   log.debug("Leaving privToPem().");
@@ -269,6 +423,10 @@ async function privToPem(jwkText, desc) {
 async function pubToPem(jwkText, desc) {
   log.debug("Entering pubToPem().");
   var jwk = typeof jwkText === 'string' ? JSON.parse(jwkText) : jwkText;
+  if (jwk && jwk.kty === 'AKP') {
+    log.debug("Leaving pubToPem(). AKP.");
+    return pqcPemFromJwk(jwk, 'public');
+  }
   var key = await crypto.subtle.importKey('jwk', stripJwkForImport(jwk),
       convParams(desc), true, ['verify']);
   log.debug("Leaving pubToPem().");
@@ -317,6 +475,18 @@ async function asPublicPem(text, desc) {
 // ---------------------------------------------------------------------------
 function signingParams(desc) {
   log.debug("Entering signingParams().");
+  if (desc.kind === 'pqc') {
+    // There is no Web Crypto parameter set to return, in any browser or in
+    // node: crypto.subtle has never heard of ML-DSA, SLH-DSA or ML-KEM.
+    // Throwing here rather than returning something plausible is deliberate —
+    // a descriptor that Web Crypto rejects surfaces as "Unsupported key
+    // algorithm" from importKey, three frames away from the decision that
+    // caused it.
+    log.debug("Leaving signingParams(). Post-quantum.");
+    throw new Error('Web Crypto cannot import a ' + (desc.pqc || 'post-' +
+        'quantum') + ' key: no browser implements one. Sign and verify ' +
+        'through pqc_x509.js, which is what x509.js does.');
+  }
   if (desc.kind === 'rsa') {
     log.debug("Leaving signingParams().");
     return { name: desc.pss ? 'RSA-PSS' : 'RSASSA-PKCS1-v1_5',
@@ -350,6 +520,17 @@ function importPublicKey(pubPem, desc) {
 // fails with "Unsupported key", which names neither key nor algorithm.
 async function describePublicPem(pubPem) {
   log.debug("Entering describePublicPem().");
+  // The post-quantum families first, and by OID rather than by trial: their
+  // SPKI names the algorithm exactly, and every Web Crypto import below would
+  // fail on one anyway — slowly, five times, with five messages naming the
+  // wrong thing.
+  var pqcRead = pqx.decodeSpki(new Uint8Array(pemToDer(pubPem)));
+  if (pqcRead) {
+    log.debug("Leaving describePublicPem(). kind=pqc alg=" + pqcRead.alg);
+    return { kind: 'pqc', pqc: pqcRead.alg, id: pqcRead.alg.toLowerCase(),
+             family: pqcRead.entry.family, use: pqcRead.entry.use,
+             oid: pqcRead.entry.oid };
+  }
   var candidates = [
     { kind: 'rsa', hash: 'SHA-256' },
     { kind: 'ec', curve: 'P-256' },
@@ -375,6 +556,32 @@ async function describePublicPem(pubPem) {
   }
   log.debug("Leaving describePublicPem(). Unrecognised.");
   return null;
+}
+
+// The same question asked of a PRIVATE key, which the classical families never
+// needed: an RSA or EC PKCS#8 is identified by importing it, and the caller
+// always knew which family it had. A post-quantum signer does not — the PKI
+// page hands x509.js an issuer key out of storage, and which of the thirty-one
+// algorithms it is decides both how to sign and what OID goes in the
+// certificate. Returns null for anything that is not one of ours, so a caller
+// can fall through to describePublicPem() on the matching public half.
+function describePrivatePem(privPem) {
+  log.debug("Entering describePrivatePem().");
+  var read = null;
+  try {
+    read = pqx.decodePkcs8(new Uint8Array(pemToDer(privPem)));
+  } catch (e) {
+    log.debug("describePrivatePem(): not a post-quantum key: " + e.message);
+    read = null;
+  }
+  if (!read) {
+    log.debug("Leaving describePrivatePem(). Not post-quantum.");
+    return null;
+  }
+  log.debug("Leaving describePrivatePem(). alg=" + read.alg);
+  return { kind: 'pqc', pqc: read.alg, id: read.alg.toLowerCase(),
+           family: read.entry.family, use: read.entry.use,
+           oid: read.entry.oid, form: read.form };
 }
 
 // ---------------------------------------------------------------------------
@@ -691,6 +898,8 @@ function downloadFiles(result) {
 }
 
 module.exports = {
+  describePrivatePem: describePrivatePem,
+  POST_QUANTUM_KEY_ALG_ORDER: POST_QUANTUM_KEY_ALG_ORDER,
   // algorithms
   KEY_ALGS: KEY_ALGS,
   keyAlgIds: keyAlgIds,

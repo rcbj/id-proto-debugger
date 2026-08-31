@@ -138,6 +138,21 @@ var SPECS = {
     status: 'rfc',
     ref: 'https://www.rfc-editor.org/rfc/rfc8391.html'
   },
+  'RFC.9881': {
+    title: 'RFC 9881 — Algorithm Identifiers for ML-DSA in X.509',
+    status: 'rfc',
+    ref: 'https://www.rfc-editor.org/rfc/rfc9881.html'
+  },
+  'RFC.9909': {
+    title: 'RFC 9909 — Algorithm Identifiers for SLH-DSA in X.509',
+    status: 'rfc',
+    ref: 'https://www.rfc-editor.org/rfc/rfc9909.html'
+  },
+  'RFC.9935': {
+    title: 'RFC 9935 — Algorithm Identifiers for ML-KEM in X.509',
+    status: 'rfc',
+    ref: 'https://www.rfc-editor.org/rfc/rfc9935.html'
+  },
   'SP.800-208': {
     title: 'NIST SP 800-208 — Recommendation for Stateful Hash-Based ' +
            'Signature Schemes',
@@ -202,6 +217,31 @@ var SPECS = {
     note: 'DRAFT STANDARD — draft-connolly-cfrg-xwing-kem (CFRG). The ' +
           'combiner is frozen and has test vectors, but the document is not ' +
           'yet an RFC.'
+  },
+  'I-D.lamps-composite-sigs': {
+    title: 'draft-ietf-lamps-pq-composite-sigs-19 — Composite ML-DSA for ' +
+           'use in X.509 Public Key Infrastructure and CMS',
+    status: 'draft',
+    ref: 'https://datatracker.ietf.org/doc/draft-ietf-lamps-pq-composite-sigs/',
+    note: 'DRAFT STANDARD — draft-ietf-lamps-pq-composite-sigs-19, in the ' +
+          'RFC Editor queue. Unlike its JOSE sibling this revision has real ' +
+          'IANA OIDs (1.3.6.1.5.5.7.6.37 to .54) rather than prototyping ' +
+          'ones, and the construction is frozen; what is not yet frozen is ' +
+          'the document, so a certificate issued with these identifiers is ' +
+          'a test artifact rather than something to deploy.'
+  },
+  'X.509-2019': {
+    title: 'ITU-T X.509 (2019) clause 9.8 — alternative public key and ' +
+           'signature extensions',
+    status: 'draft',
+    ref: 'https://www.itu.int/rec/T-REC-X.509',
+    note: 'PUBLISHED BY ITU-T, NOT BY THE IETF, and that is the caveat ' +
+          'rather than a draft number: the three extensions (2.5.29.72, ' +
+          '.73, .74) are in the 2019 edition of X.509, but the IETF profile ' +
+          'that would say how a PKIX validator treats them — ' +
+          'draft-truskovsky-lamps-pq-hybrid-x509 — expired without ' +
+          'progressing. Implementations agree on the encoding and differ on ' +
+          'what a failed alternative signature means.'
   },
   'I-D.cfrg-hybrid-kems': {
     title: 'draft-irtf-cfrg-hybrid-kems — Hybrid PQ/T Key Encapsulation ' +

@@ -146,10 +146,22 @@ async function keyFor(algId) {
 // ---------------------------------------------------------------------------
 async function everyAlgorithmCombinationIssuesAndVerifies() {
   log.debug("Entering everyAlgorithmCombinationIssuesAndVerifies().");
-  const keyAlgs = keys.keyAlgIds();
+  // THE CLASSICAL ALGORITHMS ONLY, and the post-quantum ones are not missing:
+  // they are in tests/pki_pqc_x509.js, because the oracle this matrix uses
+  // cannot read them. The `openssl` binary in these images is 3.0, which has
+  // no ML-DSA, SLH-DSA or ML-KEM at all and reports an ML-DSA certificate as
+  // `X509_PUBKEY_get0:decode error` — a statement about OpenSSL 3.0 rather
+  // than about the certificate. That file uses node's own OpenSSL 3.5
+  // instead, and covers the mixed chains this one cannot.
+  const keyAlgs = keys.keyAlgIds().filter(function (id) {
+    return keys.keyAlg(id).kind !== "pqc";
+  });
   assert.ok(keyAlgs.length >= 7,
     "the key algorithm list has shrunk — this matrix is only meaningful if " +
     "it covers what the page offers");
+  assert.ok(keys.keyAlgIds().length > keyAlgs.length,
+    "no post-quantum algorithms are registered at all, so the filter above " +
+    "is hiding nothing and tests/pki_pqc_x509.js has nothing to test");
   let issued = 0;
   let combinations = 0;
   for (const issuerAlg of keyAlgs) {
@@ -1227,6 +1239,16 @@ function signatureAlgorithmsAreFilteredByKey() {
     "the SHA-1 algorithms must be marked weak so nothing defaults to them");
   assert.ok(x509.defaultSignatureAlgorithm({ kind: "rsa" }).indexOf("sha1") <
       0, "nothing may default to SHA-1");
+  // And no classical key may be offered a post-quantum algorithm. The two
+  // lists are generated from different registries and joined by
+  // SIG_ALG_ORDER, so this is the join being checked rather than a tautology.
+  ["rsa", "ec", "okp"].forEach(function (kind) {
+    x509.signatureAlgorithmsFor(kind).forEach(function (id) {
+      assert.notStrictEqual(x509.SIG_ALGS[id].kind, "pqc",
+        kind + " keys were offered the post-quantum algorithm " + id +
+        ", which no classical key can produce");
+    });
+  });
   log.debug("Leaving signatureAlgorithmsAreFilteredByKey().");
 }
 

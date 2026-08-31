@@ -47,6 +47,7 @@
 var bunyan = require("bunyan");
 var jose = require("./jose_jwe");
 var keys = require("./key_material");
+var pqx = require("./pqc_x509");
 var pkijs = require("pkijs");
 var asn1js = require("asn1js");
 
@@ -99,10 +100,40 @@ var SIG_ALGS = {
   'ed25519': { kind: 'okp', name: 'Ed25519', label: 'Ed25519 (EdDSA)' }
 };
 
+var POST_QUANTUM_SIG_ALG_ORDER = [];
+
+// ---------------------------------------------------------------------------
+// The post-quantum signature algorithms, generated from pqc_x509.js's registry
+// for the reason key_material.js gives about its own generated block: the OID,
+// the standard and the family already exist next to the encoder, and a second
+// hand-written copy of thirty-one rows is a transcription waiting to be wrong.
+//
+// THEY ARE THE ONE FAMILY WHERE `kind` IS ALSO THE KEY'S KIND. Every classical
+// entry above crosses a key family with a digest — an RSA key can sign with
+// six of them — but ML-DSA-65 is one algorithm, one OID, one digest chosen
+// inside FIPS 204, and a key of that algorithm can produce exactly that
+// signature and nothing else. `pqc` names the registry entry, and it is what
+// signatureAlgorithmsFor() matches on.
+(function addPostQuantumSigAlgs() {
+  pqx.algIds('sig').forEach(function (id) {
+    var entry = pqx.alg(id);
+    SIG_ALGS[id.toLowerCase()] = {
+      kind: 'pqc',
+      pqc: id,
+      family: entry.family,
+      oid: entry.oid,
+      draft: entry.family === 'Composite ML-DSA',
+      label: pqx.labelFor(id)
+    };
+    POST_QUANTUM_SIG_ALG_ORDER.push(id.toLowerCase());
+  });
+})();
+
 var SIG_ALG_ORDER = ['sha256-rsa', 'sha384-rsa', 'sha512-rsa',
                      'sha256-rsapss', 'sha384-rsapss', 'sha512-rsapss',
                      'sha1-rsa', 'sha256-ecdsa', 'sha384-ecdsa',
-                     'sha512-ecdsa', 'sha1-ecdsa', 'ed25519'];
+                     'sha512-ecdsa', 'sha1-ecdsa',
+                     'ed25519'].concat(POST_QUANTUM_SIG_ALG_ORDER);
 
 var ED25519_OID = '1.3.101.112';
 
@@ -118,10 +149,24 @@ function sigAlg(id) {
 // Web Crypto error about key usage, which names neither.
 function signatureAlgorithmsFor(keyKindOrDesc) {
   log.debug("Entering signatureAlgorithmsFor().");
-  var kind = typeof keyKindOrDesc === 'string'
-    ? keyKindOrDesc
-    : (keyKindOrDesc || {}).kind;
-  var out = SIG_ALG_ORDER.filter(function (id) {
+  var desc = typeof keyKindOrDesc === 'string'
+    ? { kind: keyKindOrDesc }
+    : (keyKindOrDesc || {});
+  var kind = desc.kind;
+  var out;
+  if (kind === 'pqc') {
+    // One key, one algorithm — and for ML-KEM, none at all. A KEM key cannot
+    // sign, so a certificate over one is always issued BY SOMEBODY ELSE; the
+    // empty list is what tells the page to say so rather than to offer a menu
+    // whose every entry would fail.
+    out = desc.pqc && pqx.alg(desc.pqc) && pqx.alg(desc.pqc).use === 'sig'
+      ? [desc.pqc.toLowerCase()]
+      : [];
+    log.debug("Leaving signatureAlgorithmsFor(). " + out.length +
+        " post-quantum.");
+    return out;
+  }
+  out = SIG_ALG_ORDER.filter(function (id) {
     return SIG_ALGS[id].kind === kind;
   });
   log.debug("Leaving signatureAlgorithmsFor(). " + out.length + " of them.");
@@ -133,6 +178,10 @@ function signatureAlgorithmsFor(keyKindOrDesc) {
 function defaultSignatureAlgorithm(desc) {
   log.debug("Entering defaultSignatureAlgorithm().");
   var kind = (desc || {}).kind;
+  if (kind === 'pqc') {
+    log.debug("Leaving defaultSignatureAlgorithm(). Post-quantum.");
+    return String((desc || {}).pqc || '').toLowerCase();
+  }
   if (kind === 'okp') {
     log.debug("Leaving defaultSignatureAlgorithm().");
     return 'ed25519';
@@ -152,7 +201,12 @@ function defaultSignatureAlgorithm(desc) {
 function signerDescriptor(sig, keyDesc) {
   log.debug("Entering signerDescriptor().");
   var out;
-  if (sig.kind === 'rsa') {
+  if (sig.kind === 'pqc') {
+    // Nothing is crossed here: the algorithm IS the key type, so the
+    // descriptor is the signature algorithm restated. It exists so that every
+    // caller can go on asking for one.
+    out = { kind: 'pqc', pqc: sig.pqc };
+  } else if (sig.kind === 'rsa') {
     out = { kind: 'rsa', hash: sig.hash, pss: !!sig.pss };
   } else if (sig.kind === 'okp') {
     out = { kind: 'okp', name: sig.name || 'Ed25519' };
@@ -537,7 +591,15 @@ var EXT_OIDS = {
   tlsFeature: '1.3.6.1.5.5.7.1.24',
   ocspNoCheck: '1.3.6.1.5.5.7.48.1.5',
   netscapeCertType: '2.16.840.1.113730.1.1',
-  netscapeComment: '2.16.840.1.113730.1.13'
+  netscapeComment: '2.16.840.1.113730.1.13',
+  // ITU-T X.509 (2019) clause 9.8 — the hybrid-certificate trio. They are
+  // ordinary non-critical extensions to everything that does not know them,
+  // which is the entire point: a validator from 2015 reads the certificate,
+  // checks the classical signature and never notices that a second signature
+  // by a second key is sitting beside it.
+  subjectAltPublicKeyInfo: '2.5.29.72',
+  altSignatureAlgorithm: '2.5.29.73',
+  altSignatureValue: '2.5.29.74'
 };
 
 var EXT_BY_OID = (function buildExtByOid() {
@@ -1358,8 +1420,17 @@ async function issueCertificate(spec) {
   var subjectSpki = pemToDer(spec.subjectPublicKey);
   var sig = sigAlg(spec.signatureAlg);
   if (!sig) {
+    // A KEM asked for as a signature algorithm is the one wrong answer worth
+    // a sentence of its own: it is a real algorithm, in this build, that
+    // simply cannot sign — and "unknown algorithm" would send somebody
+    // looking for a typo.
+    var kem = pqx.alg(spec.signatureAlg);
     log.debug("Leaving issueCertificate(). Unknown signature algorithm.");
-    throw new Error('Unknown signature algorithm: ' + spec.signatureAlg);
+    throw new Error(kem && kem.use === 'kem'
+      ? kem.name + ' is a key-encapsulation mechanism: it cannot sign a ' +
+        'certificate. An ML-KEM key is certified BY an issuer with a ' +
+        'signing key.'
+      : 'Unknown signature algorithm: ' + spec.signatureAlg);
   }
 
   var issuerCert = spec.issuer && spec.issuer.certificatePem
@@ -1376,6 +1447,16 @@ async function issueCertificate(spec) {
   var issuerKeyDesc = spec.issuer && spec.issuer.keyAlg
     ? keys.keyAlg(spec.issuer.keyAlg)
     : await keys.describePublicPem(spec.subjectPublicKey);
+  // A self-signed certificate over a KEM key is the one combination that
+  // cannot exist: ML-KEM establishes keys and signs nothing, so there is no
+  // private key in the world that could sign this certificate — including its
+  // own. Saying so here beats the message the primitive would give.
+  if (sig.kind === 'pqc' && pqx.alg(sig.pqc).use !== 'sig') {
+    log.debug("Leaving issueCertificate(). KEM cannot sign.");
+    throw new Error(sig.pqc + ' is a key-encapsulation mechanism: it cannot ' +
+        'sign a certificate. An ML-KEM key is certified BY an issuer with a ' +
+        'signing key.');
+  }
   var signerDesc = signerDescriptor(sig, issuerKeyDesc || {});
 
   var cert = new pkijs.Certificate();
@@ -1407,8 +1488,18 @@ async function issueCertificate(spec) {
   var extensions = await buildExtensions(spec, subjectSpki, issuerCert);
   if (extensions.length) cert.extensions = extensions;
 
-  var privateKey = await keys.importPrivateKey(issuerPrivatePem, signerDesc);
-  await signCertificate(cert, privateKey, sig);
+  // A post-quantum key never becomes a CryptoKey — Web Crypto has no such
+  // import — so what is handed to signCertificate() is the PEM and the
+  // descriptor, and the classical path imports it exactly as it always did.
+  // Passing the pair for BOTH kinds is what keeps one signing function rather
+  // than two that can drift.
+  var signer = sig.kind === 'pqc'
+    ? { pem: issuerPrivatePem, desc: signerDesc }
+    : await keys.importPrivateKey(issuerPrivatePem, signerDesc);
+  if (spec.altSignature || spec.subjectAltPublicKey) {
+    await addAlternativeSignature(cert, spec, signerDesc);
+  }
+  await signCertificate(cert, signer, sig);
 
   var der = cert.toSchema(true).toBER(false);
   log.debug("Leaving issueCertificate().");
@@ -1485,6 +1576,13 @@ async function certificationRequest(spec) {
   var keyDesc = await keys.describePublicPem(spec.publicKeyPem);
   var sig = sigAlg(spec.signatureAlg ||
                    defaultSignatureAlgorithm(keyDesc || {}));
+  if (keyDesc && keyDesc.kind === 'pqc' && pqx.alg(keyDesc.pqc).use !== 'sig') {
+    log.debug("Leaving certificationRequest(). KEM cannot prove possession.");
+    throw new Error(keyDesc.pqc + ' is a key-encapsulation mechanism and ' +
+        'cannot sign, so it cannot make the proof of possession a PKCS#10 ' +
+        'request IS. RFC 9935 section 7 says the same: a CSR for an ML-KEM ' +
+        'key needs another mechanism entirely.');
+  }
   if (!sig) {
     log.debug("Leaving certificationRequest(). Unknown signature algorithm.");
     throw new Error('Unknown signature algorithm: ' + spec.signatureAlg);
@@ -1538,6 +1636,29 @@ async function certificationRequest(spec) {
     request.attributes = [];
   }
 
+  if (sig.kind === 'pqc') {
+    // Same shape as the Ed25519 path below: pkijs cannot sign it, so both
+    // AlgorithmIdentifiers are set by hand and the proof of possession is made
+    // over the CertificationRequestInfo this module encodes.
+    request.signatureAlgorithm = pqcAlgorithmIdentifier(sig);
+    var pqTbs = request.encodeTBS().toBER(false);
+    var pqValue = await signBytes(sig, spec.privateKeyPem, keyDesc, pqTbs);
+    request.signatureValue = new asn1js.BitString({
+      valueHex: pqValue.buffer.slice(pqValue.byteOffset,
+          pqValue.byteOffset + pqValue.byteLength) });
+    var pqDer = request.toSchema(true).toBER(false);
+    log.debug("Leaving certificationRequest(). " + sig.pqc + ".");
+    return {
+      der: new Uint8Array(pqDer),
+      pem: derToPem(pqDer, 'CERTIFICATE REQUEST'),
+      base64: jose.bytesToBase64
+        ? jose.bytesToBase64(new Uint8Array(pqDer))
+        : derToPem(pqDer, 'CERTIFICATE REQUEST')
+            .replace(/-----[^-]+-----/g, '').replace(/\s+/g, ''),
+      subject: dnToString(request.subject),
+      signatureAlg: sig.id
+    };
+  }
   var privateKey = await keys.importPrivateKey(spec.privateKeyPem, signerDesc);
   if (sig.kind !== 'okp') {
     await request.sign(privateKey, sig.hash);
@@ -1647,12 +1768,553 @@ function minimalEcdsaSignature(der) {
   return new Uint8Array(rebuilt.toBER(false));
 }
 
+// ---------------------------------------------------------------------------
+// SIGNING AND VERIFYING ARBITRARY BYTES, WHICH IS NOT WHAT pkijs OFFERS
+//
+// pkijs signs a certificate and a certification request and nothing else, and
+// three things here need a signature over bytes it has never seen: the
+// post-quantum algorithms (which pkijs cannot sign with at all), the
+// ALTERNATIVE signature of a hybrid certificate (which is computed over a
+// preTBSCertificate that is not any object pkijs models), and the same for a
+// hybrid CSR. So this pair is the one place that knows how to turn a
+// (signature algorithm, private key) into a signature, and every path below
+// calls it rather than repeating the branch.
+//
+// TWO ENCODING TRAPS LIVE IN HERE AND BOTH PRODUCE A VALID-LOOKING SIGNATURE:
+//
+//   * Web Crypto returns an ECDSA signature as FIXED-WIDTH r || s (RFC 7518's
+//     encoding), and X.509 wants a DER Ecdsa-Sig-Value. Writing the raw pair
+//     into a BIT STRING gives a certificate every parser reads and no verifier
+//     accepts, and the error it produces names the signature rather than the
+//     encoding.
+//   * The DER it wants is MINIMALLY encoded, which is the same P-521 hazard
+//     minimalDerInteger() above exists for — so the conversion goes through
+//     that function rather than emitting whatever length falls out.
+// ---------------------------------------------------------------------------
+var EC_FIELD_LEN = { 'P-256': 32, 'P-384': 48, 'P-521': 66 };
+
+function ecdsaRawToDer(raw) {
+  log.debug("Entering ecdsaRawToDer().");
+  var bytes = new Uint8Array(raw);
+  var half = bytes.length / 2;
+  function part(from) {
+    log.debug("Entering part().");
+    var value = minimalDerInteger(bytes.slice(from, from + half));
+    log.debug("Leaving part().");
+    return new asn1js.Integer({
+      valueHex: value.buffer.slice(value.byteOffset,
+                                   value.byteOffset + value.byteLength)
+    });
+  }
+  var der = new asn1js.Sequence({ value: [part(0), part(half)] });
+  log.debug("Leaving ecdsaRawToDer().");
+  return new Uint8Array(der.toBER(false));
+}
+
+function ecdsaDerToRaw(der, fieldLen) {
+  log.debug("Entering ecdsaDerToRaw().");
+  var bytes = new Uint8Array(der);
+  var parsed = asn1js.fromBER(bytes.slice().buffer);
+  var pair = (parsed.offset !== -1 && parsed.result.valueBlock)
+    ? (parsed.result.valueBlock.value || [])
+    : [];
+  if (pair.length !== 2) {
+    log.debug("Leaving ecdsaDerToRaw(). Not an (r, s) pair.");
+    throw new Error('This ECDSA signature is not a DER Ecdsa-Sig-Value.');
+  }
+  var out = new Uint8Array(fieldLen * 2);
+  for (var i = 0; i < 2; i++) {
+    var value = new Uint8Array(pair[i].valueBlock.valueHexView);
+    // A leading zero octet is the sign padding DER requires and the fixed
+    // encoding must not carry; a SHORT value is left-padded for the same
+    // reason, in the other direction.
+    while (value.length > fieldLen && value[0] === 0) {
+      value = value.slice(1);
+    }
+    out.set(value, i * fieldLen + (fieldLen - value.length));
+  }
+  log.debug("Leaving ecdsaDerToRaw().");
+  return out;
+}
+
+// `keyDesc` is the descriptor of the SIGNING key, which matters only for
+// ECDSA — the curve is not derivable from the signature algorithm id, since
+// ecdsa-with-SHA256 is legal over any of the three.
+async function signBytes(sig, privatePem, keyDesc, data) {
+  log.debug("Entering signBytes(). alg=" + sig.id);
+  if (sig.kind === 'pqc') {
+    var priv = pqx.decodePkcs8(new Uint8Array(pemToDer(privatePem)));
+    if (!priv) {
+      log.debug("Leaving signBytes(). Not a post-quantum private key.");
+      throw new Error('This private key is not a post-quantum key, and ' +
+          sig.id + ' can only be produced by one.');
+    }
+    if (priv.alg !== sig.pqc) {
+      log.debug("Leaving signBytes(). Algorithm mismatch.");
+      throw new Error('This is a ' + priv.alg + ' private key and the ' +
+          'signature algorithm asked for is ' + sig.pqc + '. Unlike RSA, a ' +
+          'post-quantum key can produce exactly one algorithm.');
+    }
+    if (!priv.priv) {
+      log.debug("Leaving signBytes(). No seed to sign with.");
+      throw new Error('This ' + priv.alg + ' key was written in the ' +
+          'expandedKey arm of RFC 9881 section 6. Signing from an expanded ' +
+          'key is possible in principle and is not implemented here: this ' +
+          'build signs from the seed, which is the arm the RFC recommends ' +
+          'and the only one an AKP JWK can carry.');
+    }
+    var pqSig = await pqx.sign(sig.pqc, new Uint8Array(data), priv.priv);
+    log.debug("Leaving signBytes(). Post-quantum.");
+    return new Uint8Array(pqSig);
+  }
+  var desc = signerDescriptor(sig, keyDesc || {});
+  var key = await keys.importPrivateKey(privatePem, desc);
+  if (sig.kind === 'okp') {
+    var eddsa = await crypto.subtle.sign({ name: sig.name || 'Ed25519' }, key,
+        data);
+    log.debug("Leaving signBytes(). EdDSA.");
+    return new Uint8Array(eddsa);
+  }
+  if (sig.kind === 'ec') {
+    var raw = await crypto.subtle.sign({ name: 'ECDSA', hash: sig.hash }, key,
+        data);
+    log.debug("Leaving signBytes(). ECDSA.");
+    return ecdsaRawToDer(raw);
+  }
+  var params = sig.pss
+    ? { name: 'RSA-PSS', saltLength: HASH_LENGTHS[sig.hash] }
+    : { name: 'RSASSA-PKCS1-v1_5' };
+  var rsa = await crypto.subtle.sign(params, key, data);
+  log.debug("Leaving signBytes(). RSA.");
+  return new Uint8Array(rsa);
+}
+
+// The salt length for RSASSA-PSS. RFC 4055 section 3.1's recommendation, and
+// what OpenSSL's default `-sigopt rsa_pss_saltlen:digest` produces: a salt as
+// long as the digest. A different value is legal and produces a signature that
+// only a verifier told the same number can check.
+var HASH_LENGTHS = { 'SHA-1': 20, 'SHA-256': 32, 'SHA-384': 48,
+                    'SHA-512': 64 };
+
+async function verifyBytes(sig, publicSpkiPem, signature, data) {
+  log.debug("Entering verifyBytes(). alg=" + sig.id);
+  if (sig.kind === 'pqc') {
+    var read = pqx.decodeSpki(new Uint8Array(pemToDer(publicSpkiPem)));
+    if (!read || read.alg !== sig.pqc) {
+      log.debug("Leaving verifyBytes(). Wrong key for the algorithm.");
+      return false;
+    }
+    var ok = await pqx.verify(sig.pqc, new Uint8Array(signature),
+        new Uint8Array(data), read.pub);
+    log.debug("Leaving verifyBytes(). Post-quantum says " + ok);
+    return !!ok;
+  }
+  var desc = await keys.describePublicPem(publicSpkiPem);
+  if (!desc) {
+    log.debug("Leaving verifyBytes(). Unreadable public key.");
+    return false;
+  }
+  var key = await keys.importPublicKey(publicSpkiPem,
+      signerDescriptor(sig, desc));
+  if (sig.kind === 'okp') {
+    var eddsa = await crypto.subtle.verify({ name: sig.name || 'Ed25519' },
+        key, signature, data);
+    log.debug("Leaving verifyBytes(). EdDSA says " + eddsa);
+    return eddsa;
+  }
+  if (sig.kind === 'ec') {
+    var raw;
+    try {
+      raw = ecdsaDerToRaw(signature, EC_FIELD_LEN[desc.curve] || 32);
+    } catch (e) {
+      log.debug("Leaving verifyBytes(). " + e.message);
+      return false;
+    }
+    var ecOk = await crypto.subtle.verify({ name: 'ECDSA', hash: sig.hash },
+        key, raw, data);
+    log.debug("Leaving verifyBytes(). ECDSA says " + ecOk);
+    return ecOk;
+  }
+  var params = sig.pss
+    ? { name: 'RSA-PSS', saltLength: HASH_LENGTHS[sig.hash] }
+    : { name: 'RSASSA-PKCS1-v1_5' };
+  var rsaOk = await crypto.subtle.verify(params, key, signature, data);
+  log.debug("Leaving verifyBytes(). RSA says " + rsaOk);
+  return rsaOk;
+}
+
 // Sign the TBS. Everything but Ed25519 goes through pkijs; Ed25519 is done by
 // hand because pkijs's engine does not know the algorithm at all — see the
 // header. Both paths set the SAME two AlgorithmIdentifiers, which is what
 // makes the certificate self-consistent.
+// ---------------------------------------------------------------------------
+// THE HYBRID CERTIFICATE: TWO KEYS AND TWO SIGNATURES IN ONE DOCUMENT
+//
+// ITU-T X.509 (2019) clause 9.8 adds three non-critical extensions that mirror
+// three fields of the certificate itself:
+//
+//     subjectAltPublicKeyInfo (2.5.29.72)  mirrors subjectPublicKeyInfo
+//     altSignatureAlgorithm   (2.5.29.73)  mirrors the signature field
+//     altSignatureValue       (2.5.29.74)  mirrors signatureValue
+//
+// A certificate carrying them is signed TWICE by its issuer, with two
+// different keys and usually two different algorithm families — classically in
+// the ordinary fields, post-quantum in the extensions. Every validator that
+// has never heard of the extensions sees an ordinary certificate and accepts
+// it; a validator that has, checks both. That is the whole migration story,
+// and it is why this is the third of the three ways this page can put
+// post-quantum cryptography into a certificate.
+//
+// THE ONE THING THAT IS EASY TO GET WRONG IS WHAT THE ALTERNATIVE SIGNATURE
+// COVERS, and it is not the TBSCertificate. It is the preTBSCertificate, which
+// differs in TWO ways, both of which produce a signature that verifies against
+// nothing if you get them wrong:
+//
+//   1. THE `signature` FIELD IS REMOVED — the third element of the
+//      TBSCertificate SEQUENCE, holding the AlgorithmIdentifier of the
+//      CONVENTIONAL algorithm. The reasoning in the draft is that the CA might
+//      not know it yet when the alternative signature is computed, and that it
+//      belongs to the other signature anyway.
+//   2. THE altSignatureValue EXTENSION IS ABSENT — necessarily, since it is
+//      what is being computed.
+//
+// Nothing else changes: the two other extensions ARE covered, so the
+// alternative signature binds the alternative public key to the subject.
+//
+// WHAT THIS BUILD WILL NOT PRETEND TO KNOW is what a *failed* alternative
+// signature means to a chain. The IETF profile that would have said
+// (draft-truskovsky-lamps-pq-hybrid-x509) expired without progressing, so
+// verifyChain() reports the alternative signature as its own verdict beside
+// the conventional one and refuses to fold the two into a single boolean.
+// ---------------------------------------------------------------------------
+
+// The AlgorithmIdentifier for a CLASSICAL signature algorithm, which pkijs
+// writes for us when it signs and which nothing writes when the algorithm goes
+// into an extension instead. RSASSA-PSS is the one with parameters, and they
+// are not optional decoration: the hash, the mask generation function and the
+// salt length are all in there, and a verifier reads them rather than guessing.
+var SIG_ALG_OIDS = {
+  'sha1-rsa': { oid: '1.2.840.113549.1.1.5', nullParams: true },
+  'sha256-rsa': { oid: '1.2.840.113549.1.1.11', nullParams: true },
+  'sha384-rsa': { oid: '1.2.840.113549.1.1.12', nullParams: true },
+  'sha512-rsa': { oid: '1.2.840.113549.1.1.13', nullParams: true },
+  'sha256-rsapss': { oid: '1.2.840.113549.1.1.10', pss: 'SHA-256' },
+  'sha384-rsapss': { oid: '1.2.840.113549.1.1.10', pss: 'SHA-384' },
+  'sha512-rsapss': { oid: '1.2.840.113549.1.1.10', pss: 'SHA-512' },
+  'sha1-ecdsa': { oid: '1.2.840.10045.4.1' },
+  'sha256-ecdsa': { oid: '1.2.840.10045.4.3.2' },
+  'sha384-ecdsa': { oid: '1.2.840.10045.4.3.3' },
+  'sha512-ecdsa': { oid: '1.2.840.10045.4.3.4' },
+  'ed25519': { oid: ED25519_OID }
+};
+
+var DIGEST_OIDS = {
+  'SHA-1': '1.3.14.3.2.26',
+  'SHA-256': '2.16.840.1.101.3.4.2.1',
+  'SHA-384': '2.16.840.1.101.3.4.2.2',
+  'SHA-512': '2.16.840.1.101.3.4.2.3'
+};
+
+var MGF1_OID = '1.2.840.113549.1.1.8';
+
+function digestAlgorithmIdentifier(hash) {
+  log.debug("Entering digestAlgorithmIdentifier(). hash=" + hash);
+  var out = new asn1js.Sequence({
+    value: [new asn1js.ObjectIdentifier({ value: DIGEST_OIDS[hash] }),
+            new asn1js.Null()]
+  });
+  log.debug("Leaving digestAlgorithmIdentifier().");
+  return out;
+}
+
+// RFC 4055 section 3.1. Every field is written out even though three of them
+// have DEFAULTs, because the defaults are all SHA-1 and a reader that applies
+// them to a SHA-256 signature gets a verification failure that names neither.
+function rsaPssParams(hash) {
+  log.debug("Entering rsaPssParams(). hash=" + hash);
+  var out = new asn1js.Sequence({
+    value: [
+      new asn1js.Constructed({
+        idBlock: { tagClass: 3, tagNumber: 0 },
+        value: [digestAlgorithmIdentifier(hash)]
+      }),
+      new asn1js.Constructed({
+        idBlock: { tagClass: 3, tagNumber: 1 },
+        value: [new asn1js.Sequence({
+          value: [new asn1js.ObjectIdentifier({ value: MGF1_OID }),
+                  digestAlgorithmIdentifier(hash)]
+        })]
+      }),
+      new asn1js.Constructed({
+        idBlock: { tagClass: 3, tagNumber: 2 },
+        value: [new asn1js.Integer({ value: HASH_LENGTHS[hash] })]
+      }),
+      new asn1js.Constructed({
+        idBlock: { tagClass: 3, tagNumber: 3 },
+        value: [new asn1js.Integer({ value: 1 })]
+      })
+    ]
+  });
+  log.debug("Leaving rsaPssParams().");
+  return out;
+}
+
+function signatureAlgorithmIdentifier(sig) {
+  log.debug("Entering signatureAlgorithmIdentifier(). alg=" + sig.id);
+  if (sig.kind === 'pqc') {
+    log.debug("Leaving signatureAlgorithmIdentifier(). Post-quantum.");
+    return new asn1js.Sequence({
+      value: [new asn1js.ObjectIdentifier({ value: sig.oid })]
+    });
+  }
+  var known = SIG_ALG_OIDS[sig.id];
+  if (!known) {
+    log.debug("Leaving signatureAlgorithmIdentifier(). Unknown.");
+    throw new Error('No AlgorithmIdentifier is known here for ' + sig.id +
+        '.');
+  }
+  var value = [new asn1js.ObjectIdentifier({ value: known.oid })];
+  if (known.nullParams) {
+    value.push(new asn1js.Null());
+  }
+  if (known.pss) {
+    value.push(rsaPssParams(known.pss));
+  }
+  log.debug("Leaving signatureAlgorithmIdentifier().");
+  return new asn1js.Sequence({ value: value });
+}
+
+// The preTBSCertificate, from a TBSCertificate's own DER. Both removals in one
+// function so that the signer and the verifier cannot disagree about what was
+// covered — which is the failure mode that makes a hybrid certificate verify
+// on the machine that made it and nowhere else.
+function preTbsFromTbs(tbsDer) {
+  log.debug("Entering preTbsFromTbs().");
+  var input = new Uint8Array(tbsDer);
+  var parsed = asn1js.fromBER(input.slice().buffer);
+  if (parsed.offset === -1) {
+    log.debug("Leaving preTbsFromTbs(). Unparseable.");
+    throw new Error('This certificate\'s TBSCertificate does not parse.');
+  }
+  var items = (parsed.result.valueBlock.value || []).slice();
+  var versionPresent = items.length && items[0].idBlock &&
+      items[0].idBlock.tagClass === 3 && items[0].idBlock.tagNumber === 0;
+  var signatureIndex = versionPresent ? 2 : 1;
+  items.splice(signatureIndex, 1);
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    if (!item.idBlock || item.idBlock.tagClass !== 3 ||
+        item.idBlock.tagNumber !== 3) {
+      continue;
+    }
+    var holder = (item.valueBlock.value || [])[0];
+    if (!holder) continue;
+    var kept = (holder.valueBlock.value || []).filter(function (ext) {
+      var oid = (ext.valueBlock.value || [])[0];
+      return !oid || typeof oid.valueBlock.toString !== 'function' ||
+          oid.valueBlock.toString() !== EXT_OIDS.altSignatureValue;
+    });
+    items[i] = new asn1js.Constructed({
+      idBlock: { tagClass: 3, tagNumber: 3 },
+      value: [new asn1js.Sequence({ value: kept })]
+    });
+  }
+  var out = new Uint8Array(new asn1js.Sequence({ value: items })
+      .toBER(false));
+  log.debug("Leaving preTbsFromTbs(). " + out.length + " bytes.");
+  return out;
+}
+
+// Adds the two extensions the alternative signature covers, computes it over
+// the preTBSCertificate, and adds the third. Called before the conventional
+// signature, because the conventional one covers all three.
+async function addAlternativeSignature(cert, spec, issuerKeyDesc) {
+  log.debug("Entering addAlternativeSignature().");
+  var extensions = cert.extensions || [];
+  if (spec.subjectAltPublicKey) {
+    // SubjectAltPublicKeyInfoExt is a SubjectPublicKeyInfo, so the subject's
+    // alternative public key goes in as the DER it already is rather than
+    // being taken apart and rebuilt.
+    var altSpki = asn1js.fromBER(pemToDer(spec.subjectAltPublicKey));
+    if (altSpki.offset === -1) {
+      log.debug("Leaving addAlternativeSignature(). Bad alt public key.");
+      throw new Error('The alternative public key is not a readable ' +
+          'SubjectPublicKeyInfo.');
+    }
+    extensions.push(extension(EXT_OIDS.subjectAltPublicKeyInfo,
+        !!(spec.altSignature && spec.altSignature.critical), altSpki.result));
+  }
+  if (!spec.altSignature) {
+    cert.extensions = extensions;
+    log.debug("Leaving addAlternativeSignature(). Key only, no signature.");
+    return cert;
+  }
+  var altSig = sigAlg(spec.altSignature.signatureAlg);
+  if (!altSig) {
+    log.debug("Leaving addAlternativeSignature(). Unknown algorithm.");
+    throw new Error('Unknown alternative signature algorithm: ' +
+        spec.altSignature.signatureAlg);
+  }
+  if (!spec.altSignature.privateKeyPem) {
+    log.debug("Leaving addAlternativeSignature(). No alternative key.");
+    throw new Error('An alternative signature is made with the ISSUER\'s ' +
+        'alternative private key — the one matching the alternative public ' +
+        'key in the issuer\'s own certificate. There is none here.');
+  }
+  extensions.push(extension(EXT_OIDS.altSignatureAlgorithm,
+      !!spec.altSignature.critical, signatureAlgorithmIdentifier(altSig)));
+  cert.extensions = extensions;
+  var altKeyDesc = spec.altSignature.keyAlg
+    ? keys.keyAlg(spec.altSignature.keyAlg)
+    : (keys.describePrivatePem(spec.altSignature.privateKeyPem) ||
+       issuerKeyDesc);
+  var preTbs = preTbsFromTbs(cert.encodeTBS().toBER(false));
+  var value = await signBytes(altSig, spec.altSignature.privateKeyPem,
+      altKeyDesc, preTbs);
+  extensions.push(extension(EXT_OIDS.altSignatureValue,
+      !!spec.altSignature.critical, new asn1js.BitString({
+        valueHex: value.buffer.slice(value.byteOffset,
+            value.byteOffset + value.byteLength) })));
+  cert.extensions = extensions;
+  log.debug("Leaving addAlternativeSignature(). Signed with " + altSig.id +
+      ".");
+  return cert;
+}
+
+// The three extensions read back off a parsed certificate, or null for each
+// that is absent. Shared by the verifier and the describer.
+function alternativeParts(cert) {
+  log.debug("Entering alternativeParts().");
+  var out = { altPublicKeyPem: null, altAlgorithmOid: null,
+              altSignature: null };
+  (cert.extensions || []).forEach(function (ext) {
+    if (ext.extnID === EXT_OIDS.subjectAltPublicKeyInfo) {
+      out.altPublicKeyPem = derToPem(ext.extnValue.valueBlock.valueHexView,
+          'PUBLIC KEY');
+    }
+    if (ext.extnID === EXT_OIDS.altSignatureAlgorithm) {
+      var parsed = asn1js.fromBER(
+          new Uint8Array(ext.extnValue.valueBlock.valueHexView).slice()
+              .buffer);
+      var oid = parsed.offset === -1
+        ? null
+        : (parsed.result.valueBlock.value || [])[0];
+      out.altAlgorithmOid = oid && oid.valueBlock &&
+          typeof oid.valueBlock.toString === 'function'
+        ? oid.valueBlock.toString()
+        : null;
+    }
+    if (ext.extnID === EXT_OIDS.altSignatureValue) {
+      var value = asn1js.fromBER(
+          new Uint8Array(ext.extnValue.valueBlock.valueHexView).slice()
+              .buffer);
+      out.altSignature = value.offset === -1
+        ? null
+        : new Uint8Array(value.result.valueBlock.valueHexView);
+    }
+  });
+  log.debug("Leaving alternativeParts().");
+  return out;
+}
+
+// Which SIG_ALGS entry an AlgorithmIdentifier OID names. The post-quantum
+// families are one-to-one; the classical ones are not, and RSASSA-PSS is
+// one OID for three algorithms — so the digest comes out of the parameters,
+// which is exactly why they are written in full above.
+function sigAlgForOid(oid, paramsHashOid) {
+  log.debug("Entering sigAlgForOid(). oid=" + oid);
+  var pq = pqx.algForOid(oid);
+  if (pq) {
+    log.debug("Leaving sigAlgForOid(). Post-quantum.");
+    return sigAlg(pq.id.toLowerCase());
+  }
+  var ids = Object.keys(SIG_ALG_OIDS);
+  for (var i = 0; i < ids.length; i++) {
+    var known = SIG_ALG_OIDS[ids[i]];
+    if (known.oid !== oid) continue;
+    if (!known.pss) {
+      log.debug("Leaving sigAlgForOid(). " + ids[i]);
+      return sigAlg(ids[i]);
+    }
+    if (paramsHashOid && DIGEST_OIDS[known.pss] === paramsHashOid) {
+      log.debug("Leaving sigAlgForOid(). PSS " + ids[i]);
+      return sigAlg(ids[i]);
+    }
+  }
+  log.debug("Leaving sigAlgForOid(). Unknown.");
+  return null;
+}
+
+// Verify the ALTERNATIVE signature on a certificate, given the issuer's
+// certificate (whose own subjectAltPublicKeyInfo holds the verification key).
+// Returns a verdict object rather than a boolean, because "there is no
+// alternative signature here" and "the alternative signature is wrong" are
+// completely different answers and a boolean cannot carry both.
+async function verifyAlternativeSignature(cert, issuerCert) {
+  log.debug("Entering verifyAlternativeSignature().");
+  var parts = alternativeParts(cert);
+  if (!parts.altSignature || !parts.altAlgorithmOid) {
+    log.debug("Leaving verifyAlternativeSignature(). Absent.");
+    return { present: false, valid: null,
+             reason: 'This certificate carries no alternative signature.' };
+  }
+  var issuerParts = alternativeParts(issuerCert);
+  if (!issuerParts.altPublicKeyPem) {
+    log.debug("Leaving verifyAlternativeSignature(). No issuer alt key.");
+    return { present: true, valid: null, algorithmOid: parts.altAlgorithmOid,
+             reason: 'The issuer\'s certificate carries no ' +
+                 'subjectAltPublicKeyInfo, so there is no key to check this ' +
+                 'alternative signature with. A hybrid chain has to be ' +
+                 'hybrid the whole way up.' };
+  }
+  var altSig = sigAlgForOid(parts.altAlgorithmOid);
+  if (!altSig) {
+    log.debug("Leaving verifyAlternativeSignature(). Unknown algorithm.");
+    return { present: true, valid: null, algorithmOid: parts.altAlgorithmOid,
+             reason: 'This build does not know the alternative signature ' +
+                 'algorithm ' + parts.altAlgorithmOid + '.' };
+  }
+  var preTbs = preTbsFromTbs(cert.tbsView);
+  var ok = await verifyBytes(altSig, issuerParts.altPublicKeyPem,
+      parts.altSignature, preTbs);
+  log.debug("Leaving verifyAlternativeSignature(). valid=" + ok);
+  return { present: true, valid: !!ok, algorithm: altSig.id,
+           algorithmOid: parts.altAlgorithmOid };
+}
+
+// A pkijs AlgorithmIdentifier for a post-quantum algorithm: the OID and
+// NOTHING ELSE. pkijs writes `algorithmParams` when it is set and omits the
+// member when it is not, which is exactly what "PARAMS ARE absent" requires;
+// an explicit NULL here — the shape an RSA identifier has, and therefore the
+// shape a copied line produces — makes a certificate OpenSSL 3.5 refuses to
+// load at all.
+function pqcAlgorithmIdentifier(sig) {
+  log.debug("Entering pqcAlgorithmIdentifier(). alg=" + sig.id);
+  var out = new pkijs.AlgorithmIdentifier({ algorithmId: sig.oid });
+  log.debug("Leaving pqcAlgorithmIdentifier().");
+  return out;
+}
+
 async function signCertificate(cert, privateKey, sig) {
   log.debug("Entering signCertificate(). alg=" + sig.id);
+  if (sig.kind === 'pqc') {
+    // The same shape as the Ed25519 path below, and for a stronger version of
+    // the same reason: pkijs cannot import the key, cannot sign with it, and
+    // has no AlgorithmIdentifier for it. Both identifiers are set to the one
+    // OID the algorithm has — RFC 9881 section 3, RFC 9909 section 3 and
+    // section 5.1 of the composite draft all give the signature algorithm and
+    // the key algorithm the SAME identifier, with PARAMETERS ABSENT.
+    cert.signature = pqcAlgorithmIdentifier(sig);
+    cert.signatureAlgorithm = pqcAlgorithmIdentifier(sig);
+    var pqTbs = cert.encodeTBS().toBER(false);
+    var pqSignature = await signBytes(sig, privateKey.pem, privateKey.desc,
+        pqTbs);
+    cert.signatureValue = new asn1js.BitString({
+      valueHex: pqSignature.buffer.slice(pqSignature.byteOffset,
+          pqSignature.byteOffset + pqSignature.byteLength) });
+    log.debug("Leaving signCertificate(). Signed as " + sig.pqc + ".");
+    return cert;
+  }
   if (sig.kind !== 'okp') {
     await cert.sign(privateKey, sig.hash);
     // ECDSA only, and only because pkijs's (r, s) encoding is not always
@@ -1828,11 +2490,26 @@ var SIG_OID_NAMES = {
   '1.3.101.112': 'Ed25519'
 };
 
+
 var PUBKEY_OID_NAMES = {
   '1.2.840.113549.1.1.1': 'rsaEncryption',
   '1.2.840.10045.2.1': 'id-ecPublicKey',
   '1.3.101.112': 'Ed25519'
 };
+
+// The post-quantum names, from the same registry the encoder reads, so a
+// certificate this page issues can never describe itself with a name the
+// issuer did not use.
+(function addPostQuantumOidNames() {
+  pqx.algIds().forEach(function (id) {
+    var entry = pqx.alg(id);
+    if (entry.use === 'sig') {
+      SIG_OID_NAMES[entry.oid] = entry.name;
+    }
+    PUBKEY_OID_NAMES[entry.oid] = entry.name;
+  });
+})();
+
 
 function describeGeneralName(gn) {
   log.debug("Entering describeGeneralName().");
@@ -2126,6 +2803,15 @@ async function verifyChain(pems) {
     } catch (e) {
       link.error = e.message;
     }
+    // The alternative signature is reported BESIDE the conventional one and
+    // never folded into it: no published profile says what a PKIX validator
+    // should do when the two disagree, and inventing a rule here would hide
+    // exactly the case this page exists to show.
+    try {
+      link.alternative = await verifyAlternativeSignature(certs[i], issuer);
+    } catch (e) {
+      link.alternative = { present: true, valid: null, reason: e.message };
+    }
     var now = new Date();
     link.expired = certs[i].notAfter.value < now;
     link.notYetValid = certs[i].notBefore.value > now;
@@ -2140,6 +2826,19 @@ async function verifyChain(pems) {
 // SPKI directly.
 async function verifySignature(cert, issuerCert) {
   log.debug("Entering verifySignature().");
+  var pqcAlg = pqx.algForOid(cert.signatureAlgorithm.algorithmId);
+  if (pqcAlg) {
+    // pkijs's verify() would throw "Unsupported signature algorithm" here,
+    // which reads as a broken certificate rather than as a library that has
+    // never heard of ML-DSA.
+    var issuerSpkiPem = derToPem(issuerCert.subjectPublicKeyInfo.toSchema()
+        .toBER(false), 'PUBLIC KEY');
+    var pqcOk = await verifyBytes(sigAlg(pqcAlg.id.toLowerCase()),
+        issuerSpkiPem, cert.signatureValue.valueBlock.valueHexView,
+        cert.tbsView);
+    log.debug("Leaving verifySignature(). " + pqcAlg.id + " says " + pqcOk);
+    return pqcOk;
+  }
   if (cert.signatureAlgorithm.algorithmId !== ED25519_OID) {
     var ok = await cert.verify(issuerCert);
     log.debug("Leaving verifySignature(). pkijs says " + ok);
@@ -2234,6 +2933,16 @@ module.exports = {
   extensionValueText: extensionValueText,
   verifyChain: verifyChain,
   verifySignature: verifySignature,
+  // the hybrid trio
+  signatureAlgorithmIdentifier: signatureAlgorithmIdentifier,
+  sigAlgForOid: sigAlgForOid,
+  preTbsFromTbs: preTbsFromTbs,
+  alternativeParts: alternativeParts,
+  verifyAlternativeSignature: verifyAlternativeSignature,
+  signBytes: signBytes,
+  verifyBytes: verifyBytes,
+  ecdsaRawToDer: ecdsaRawToDer,
+  ecdsaDerToRaw: ecdsaDerToRaw,
   // Exported for tests/pki_x509.js: the case it guards against appears in
   // roughly one P-521 signature in 256, so a check that waits for a real one
   // is a check that reports green most of the time.
