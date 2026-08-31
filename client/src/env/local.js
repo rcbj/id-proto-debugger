@@ -215,7 +215,7 @@ var config = {
   // It is EMPTY in prod.js / test-idptools-com.js, because a public site has
   // no business defaulting to somebody's localhost — and a test that asserts
   // this default therefore has to read it off the page rather than assume it.
-  ssfTransmitterUrlDefault: "http://localhost:8081",
+  ssfTransmitterUrlDefault: "https://localhost:8081",
 
 
 };

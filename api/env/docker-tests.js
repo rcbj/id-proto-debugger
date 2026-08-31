@@ -3,7 +3,26 @@ var config = {
   uiUrl: "http://client:3000",
   hostname: "0.0.0.0",
   port: "4000",
-  logLevel: "debug",
+  // ---------------------------------------------------------------------
+  // `info`, AND IT WAS `debug` UNTIL 2026-08-31.
+  //
+  // This is the CONTAINERIZED TEST stack's configuration, and debug here is
+  // not a developer reading along — it is CI. One run produced 16,175 debug
+  // lines from this service alone, inside a 37 MB job log that was 96.6%
+  // debug overall.
+  //
+  // THE FILE IS WHAT DECIDES IT, unlike the `sts` service beside it, and the
+  // difference is worth knowing: that one is pointed at its own `env/test.js`
+  // by docker-compose-run-tests.yml, which is `env/local.js` with this one key
+  // changed. The api's `env/test.js` is NOT that — it is the DEPLOYED SITE
+  // configuration (https://api.tools.test.idptools.io), so pointing this
+  // container at it would break the stack rather than quieten it. The level
+  // therefore changes here.
+  //
+  // For a debug run of this stack, set it back for the length of that run —
+  // or use `env/local.js`, which is still `debug` for exactly that reason.
+  // ---------------------------------------------------------------------
+  logLevel: "info",
   // Timeout, in milliseconds, on every outbound axios call this service makes
   // (token, introspection, revocation, device-authorization and userinfo
   // endpoints, the SAML metadata and ArtifactResolve back-channels, the

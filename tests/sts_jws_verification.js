@@ -179,7 +179,22 @@ function makeJws(alg, spec, key, header, payload) {
 // including a 500 — is returned untouched, because that is an answer and this
 // wrapper has no opinion about it.
 // ---------------------------------------------------------------------------
-const BUSY_WINDOW_MS = 90000;
+// FIVE MINUTES, FOR THE REASON ITS SIBLING IN sts_userinfo_protected.js GIVES
+// AT LENGTH (2026-08-30), and raised here at the same time so the two do not
+// drift: the comment above says these two jobs SHARE the mock, and a window
+// that fits an instrumented signature in one of them and not the other would
+// simply move the failure.
+//
+// The short version: NODE_V8_COVERAGE instruments the mock's process and its
+// worker pool, and that costs a measured 6.4x on the post-quantum path —
+// SLH-DSA-SHA2-128s signing 2,291ms to 14,685ms. The SHAKE parameter set is
+// twelve seconds uninstrumented, so seventy-seven instrumented on a fast
+// machine and past ninety on a two-core CI runner. mock-sts's coverage job
+// failed on exactly this window in about half its runs.
+//
+// `STS_BUSY_WINDOW_MS` overrides it, so a stack that knows it is slower can
+// say so without editing this.
+const BUSY_WINDOW_MS = Number(process.env.STS_BUSY_WINDOW_MS || 300000);
 
 async function stsFetch(url, options) {
   log.debug("Entering stsFetch(). url=" + url);
@@ -291,11 +306,39 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
     var secret = "secret-for-" + clientId;
     var pair = symmetric ? null : keyPairFor(spec, alg);
     var now = Math.floor(Date.now() / 1000);
+    // AN HOUR, AND IT WAS FIVE MINUTES UNTIL 2026-08-31.
+    //
+    // `now` is read BEFORE makeJws(), and it has to be: `exp` is inside the
+    // payload, so it is fixed before the signature over that payload exists.
+    // The lifetime therefore has to cover the time it takes to PRODUCE the
+    // assertion, not merely the time to send it.
+    //
+    // For every classical algorithm that is microseconds and five minutes was
+    // never near the edge. SLH-DSA-SHAKE-128s is TWELVE SECONDS of
+    // straight-line CPU per signature uninstrumented -- this file's own
+    // stsFetch() comment records that figure -- and the coverage run
+    // instruments the process doing it, which was measured at 6.4x
+    // (SLH-DSA-SHA2-128s signing 2,291ms to 14,685ms). On a two-core runner,
+    // under contention, that pushed one signature past the window and the job
+    // failed with
+    //
+    //   SLH-DSA-SHAKE-128s: an assertion signed with an ADVERTISED algorithm
+    //   must verify. The verifier said: ... jwt expired
+    //
+    // -- an assertion that expired WHILE IT WAS BEING SIGNED, reported as
+    // though the mock had rejected it.
+    //
+    // An hour is not a licence for a slow signature: every other assertion in
+    // this file still has to verify, the two negatives below are still
+    // refused, and nothing here waits on the clock. It is the honest size for
+    // a credential whose creation is measured in minutes.
+    var ASSERTION_LIFETIME_S = 3600;
     var assertionJws = makeJws(alg, spec,
       symmetric ? secret : (spec.kind === "pq" ? pair : pair.privateKey),
       symmetric ? { typ: "JWT" } : { typ: "JWT", kid: "assert-1" },
       { iss: clientId, sub: clientId, aud: audience[0],
-        exp: now + 300, iat: now, jti: "assertion-" + alg + "-" + now });
+        exp: now + ASSERTION_LIFETIME_S, iat: now,
+        jti: "assertion-" + alg + "-" + now });
 
     // AWAITED SINCE THE MOCK'S 2026-08-30 BUMP. `clientAuth.verify()` became
     // an `async function` when the post-quantum verification moved to that

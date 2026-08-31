@@ -197,8 +197,7 @@ var config = {
   // Shared Signals. The same value local.js carries and for the same reason —
   // see the block there; this file is the post-quantum variant of that stack
   // and the transmitter it points at is the same one.
-  ssfTransmitterUrlDefault: "http://localhost:8081",
-
+  ssfTransmitterUrlDefault: "https://localhost:8081",
 
 };
 
