@@ -129,6 +129,8 @@
           <li><a href="#spnego">SPNEGO</a></li>
           <li><a href="#ldap">LDAP</a></li>
           <li><a href="#scim">SCIM 2.0</a></li>
+          <li><a href="#ssf">Shared Signals &mdash; SSF, SET,
+              subject identifiers</a></li>
           <li><a href="#spiffe">SPIFFE and SPIRE</a></li>
           <li><a href="#pki">PKI, X.509 and TLS</a></li>
           <li><a href="#crypto">Cryptographic algorithms and key
@@ -1152,6 +1154,102 @@
           </tr>
         </table>
 
+        <!-- ===================== Shared Signals ===================== -->
+        <h2 id="ssf">Shared Signals &mdash; SSF, Security Event Tokens,
+        subject identifiers</h2>
+        <p>The <a href="/ssf.html">Shared Signals page</a>, and the one
+        protocol here that runs the other way round: SAML and OpenID Connect
+        authenticate at <strong>one instant</strong>, and the session that
+        follows stays good for hours whatever happens next. Shared Signals
+        inverts it &mdash; the identity provider <em>tells</em> the relying
+        party when something changed.</p>
+        <p><strong>SSF is the pipe and not the vocabulary.</strong> It defines
+        how two parties agree a stream, who the events are about, what they
+        travel in and how they get there &mdash; and exactly two events of its
+        own, both about the pipe. The vocabularies are <strong>CAEP</strong>
+        (what happened to a session) and <strong>RISC</strong> (what happened
+        to an account); both are named in <em>deliberately not implemented</em>
+        below, and the page says so itself rather than leaving a two-item list
+        to be read as a broken page.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-sharedsignals-framework-1_0-final.html"
+                   target="_blank" rel="noopener noreferrer">OpenID Shared
+                   Signals Framework 1.0</a>
+              &mdash; final, 2 September 2025
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>The receiver&rsquo;s half in full: the transmitter
+              configuration metadata, the stream management API (create, read,
+              replace, merge, delete), the status endpoint with all three
+              statuses, add and remove subject, verification, and both of the
+              two event types SSF defines. <strong>Every endpoint is
+              discovered</strong> from the metadata document &mdash; SSF fixes
+              no paths, so this page composes none. Complex subjects and
+              <code>critical_subject_members</code> are implemented, and the
+              page can also act as the <em>transmitter</em>: build any event,
+              sign it, and push it at a receiver.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8417"
+                   target="_blank" rel="noopener noreferrer">RFC 8417</a>
+              &mdash; Security Event Token (SET)
+              <span class="std-where">IETF</span></td>
+            <td>The envelope: a JWT with an <code>events</code> <em>map</em>
+              keyed by event-type URI, <code>iss</code>/<code>jti</code>/
+              <code>iat</code>/<code>aud</code>, the subject in
+              <code>sub_id</code>, and optional <code>txn</code> and
+              <code>toe</code>. <strong>No <code>exp</code></strong> &mdash;
+              section 4.1.4 says a SET must not be considered to expire, and
+              one that carries an <code>exp</code> is reported as a finding.
+              So is a <code>sub</code> claim, which section 2.2 discourages
+              and which a client reading it takes for the subject.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9493"
+                   target="_blank" rel="noopener noreferrer">RFC 9493</a>
+              &mdash; Subject Identifiers for Security Event Tokens
+              <span class="std-where">IETF</span></td>
+            <td>All eight formats &mdash; <code>account</code>,
+              <code>email</code>, <code>issuer_subject_id</code>,
+              <code>opaque</code>, <code>phone_number</code>,
+              <code>decentralized_identifier</code>, <code>uri</code> and
+              <code>aliases</code> &mdash; with each format&rsquo;s
+              <strong>closed member set enforced</strong>: an identifier
+              carrying a member its format does not define is one every
+              conforming receiver must reject, and it looks perfectly fine in
+              a log. The section 3.2.8 ban on nesting an <code>aliases</code>
+              identifier is refused rather than flattened.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8935"
+                   target="_blank" rel="noopener noreferrer">RFC 8935</a>
+              &mdash; Push-Based Delivery of Security Event Tokens
+              <span class="std-where">IETF</span></td>
+            <td>Both directions. This tool pushes a SET it signed, as
+              <code>application/secevent+jwt</code> &mdash; or as
+              <code>application/jwt</code> on purpose, which is the only way
+              to find out whether a receiver dispatching on the media type
+              drops it. <strong>Receiving a push needs this tool&rsquo;s
+              backend</strong>, because a browser cannot be an HTTP server:
+              that is the specification rather than a limitation here, and it
+              is the one thing the hosted site cannot do.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8936"
+                   target="_blank" rel="noopener noreferrer">RFC 8936</a>
+              &mdash; Poll-Based Delivery of Security Event Tokens
+              <span class="std-where">IETF</span></td>
+            <td>The receiver comes to the transmitter, so this one works with
+              no backend at all. <code>ack</code> for what was stored,
+              <code>setErrs</code> for what was refused &mdash; both take an
+              event off the transmitter&rsquo;s queue &mdash; and
+              <code>moreAvailable</code>, which is the member a client most
+              often ignores and which means one poll does not drain the
+              queue.</td>
+          </tr>
+        </table>
+
         <!-- ===================== SPIFFE ===================== -->
         <h2 id="spiffe">SPIFFE and SPIRE</h2>
         <p>Two of SPIFFE&rsquo;s three surfaces are gRPC, which a browser
@@ -1514,6 +1612,33 @@
         as a claim. They are not.</p>
         <table>
           <tr><th>Specification</th><th>Why not</th></tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-caep-1_0-final.html"
+                   target="_blank" rel="noopener noreferrer">OpenID CAEP
+                   1.0</a> &mdash; Continuous Access Evaluation Profile
+              <span class="std-where">OpenID Foundation</span></td>
+            <td><strong>Not yet.</strong> CAEP is the enterprise
+              <em>session</em> vocabulary spoken over SSF &mdash; session
+              revoked, token claims change, credential change, assurance level
+              change, device compliance change &mdash; and it says <em>this
+              session is no longer trustworthy</em>. The Shared Signals page
+              names it and marks it absent rather than leaving a two-item
+              event list to be read as a broken page. The pipe it needs is all
+              there; adding it is rows in one table.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-risc-1_0-final.html"
+                   target="_blank" rel="noopener noreferrer">OpenID RISC
+                   1.0</a> &mdash; Risk Incident Sharing and Coordination
+              <span class="std-where">OpenID Foundation</span></td>
+            <td><strong>Not yet.</strong> RISC is the account-lifecycle
+              vocabulary, aimed <em>across</em> providers rather than within
+              one enterprise &mdash; account disabled, purged, credentials
+              compromised, identifier changed or recycled &mdash; and it says
+              <em>this account is no longer trustworthy</em>, which is a
+              different sentence from CAEP&rsquo;s. Same position as CAEP
+              above.</td>
+          </tr>
           <tr>
             <td>CTAP2 <span class="std-where">FIDO Alliance</span></td>
             <td>JavaScript receives a WebAuthn ceremony&rsquo;s

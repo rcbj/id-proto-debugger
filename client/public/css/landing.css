@@ -188,6 +188,21 @@
    falls back to the text colour. */
 .landing-card:nth-child(14) .landing-icon { color: #1f6b4a; }
 .landing-card:nth-child(15) .landing-icon { color: #4a3d8a; }
+/* The sixteenth card (Shared Signals), and the note above the grid was WRONG
+   about it in a way worth keeping rather than deleting: it predicted the
+   fifteenth would force a third row and that the sixteenth would need nine
+   columns. The fifteenth turned out to be cheap — it widened the container
+   from bootstrap 2's 940px to the 1070px bootstrap-responsive gives at a
+   1200px viewport — and eight columns then hold sixteen cards as a filled
+   8+8, which is the same two rows and the same height as 8+7. Measured, not
+   assumed.
+
+   So the SEVENTEENTH is the next expensive one, and the arithmetic is the same
+   as it has been every time: n columns fit when n*min + (n-1)*gap <= 1070, so
+   nine need min <= 110 at the current 10px gap (9*110 + 8*10 = 1070). Anything
+   larger fails SILENTLY by staying at eight, with the height as the only
+   symptom — which is how every previous step went wrong first. */
+.landing-card:nth-child(16) .landing-icon { color: #7a3f5f; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

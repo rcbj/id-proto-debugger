@@ -758,6 +758,26 @@ app.use(bodyParser.json());
 // RelayState, SAMLart) from the IdP; enable urlencoded parsing for those.
 app.use(bodyParser.urlencoded({
   extended: true, limit: '5mb' }));
+// ---------------------------------------------------------------------------
+// A Security Event Token arrives as `application/secevent+jwt` (RFC 8417
+// section 2.3) — a compact JWS in the body, with no form encoding and no JSON
+// wrapper around it. Neither parser above touches that type, so without this
+// `req.body` on POST /ssf/receiver/:id would be an empty object and every push
+// would be reported as an empty body.
+//
+// It is a TEXT parser and it is deliberately narrow: exactly the two types a
+// SET is ever sent as, so nothing else in this service changes shape. The
+// second one is not a mistake — `application/jwt` is what a transmitter that
+// gets the media type wrong sends, and api/ssf_receiver.js REPORTS that rather
+// than refusing it, because a receiver dispatching on the type drops such a
+// token with no error anybody sees and that is a finding worth surfacing. A
+// parser that refused it would hide the finding behind an empty body.
+//
+// The limit is above `ssfReceiverMaxEventBytes` on purpose: the CAP is that
+// setting, enforced where it can name itself in the answer, and this is only
+// the outer bound that keeps an absurd body out of memory.
+app.use(bodyParser.text({
+  type: ['application/secevent+jwt', 'application/jwt'], limit: '1mb' }));
 var corsOptions = {
   // See resolveAllowedOrigins(): this is uiUrl (the browser origin that calls
   // the api), not apiUrl. The cors package reflects the request's Origin when
@@ -2739,6 +2759,12 @@ const ldapClient = require('./ldap_client.js');
 // The SCIM proxy's decision half. It has no axios and no network — see the top
 // of that file — so requiring it here moves nothing and it cannot join a cycle.
 const scimProxy = require('./scim_proxy.js');
+// Shared Signals: the outbound call's rules, and the push receiver this
+// service hosts on the page's behalf. Both are decision-only — no axios and no
+// express in either — which is what lets tests/api_ssf.js drive every refusal
+// and every cap with no listener and no transmitter.
+const ssfProxy = require('./ssf_proxy.js');
+const ssfReceiver = require('./ssf_receiver.js');
 // The LDAP client reuses the guard's address DECISION for the same reason the
 // Kerberos relay does: the guard's INSTALLATION is hooks on the axios agents,
 // and this transport is a raw socket with no axios in the path. Two
@@ -3180,6 +3206,227 @@ app.get('/scim/limits', function (req, res) {
   log.debug('Entering GET /scim/limits.');
   log.debug('Leaving GET /scim/limits.');
   return res.status(STATUS_200).json(scimProxy.limits(appconfig));
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * SHARED SIGNALS (SSF 1.0). One call to a transmitter, on the caller's behalf.
+ *
+ * The SCIM proxy's shape and not the LDAP relay's: SSF's management API is
+ * ordinary HTTPS with a JSON body, so `client/public/ssf.html` calls a
+ * transmitter DIRECTLY by default and is on the static deployments. This
+ * endpoint exists for the three things a browser cannot do — CORS, a
+ * self-signed certificate, and reporting the whole exchange — and
+ * `api/ssf_proxy.js` argues each.
+ *
+ * THE THREE OUTCOMES: a refusal by this service is a 400, a network failure is
+ * a 502, and **an SSF error from the transmitter is a 200** carrying that
+ * status and its RFC 8935 `{err, description}`. The third matters more here
+ * than anywhere else this pattern is used: a 403 naming the scope, a 400
+ * naming the member of a subject identifier RFC 9493 does not define, an
+ * `invalid_audience` on a stream whose `aud` is wrong — every one of those is
+ * the transmitter explaining exactly what is wrong, and it is the most useful
+ * thing this workflow can put on the screen.
+ * ---------------------------------------------------------------------------
+ * @route POST /ssf/call
+ * @param {object} request.body - url, method, headers, body, sslValidate
+ * @returns {object} 200 - the transmitter's answer, whatever its status
+ * @returns {object} 400 - this service refused to send it
+ * @returns {object} 502 - the transmitter could not be reached
+ */
+app.post('/ssf/call', function (req, res) {
+  log.debug('Entering POST /ssf/call.');
+  var described = ssfProxy.describeRequest(req.body || {}, appconfig);
+  if (!described.ok) {
+    log.debug('Leaving POST /ssf/call. Refused: ' + described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  var wantsTrace = (req.body || {}).http_trace === true ||
+      (req.body || {}).http_trace === 'true';
+  var sink = {};
+  var startedAt = Date.now();
+  var sentHeaders = withUserAgent(described.headers);
+  axios({
+    method: described.method.toLowerCase(),
+    url: described.url,
+    data: described.body === null ? undefined : described.body,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    // A 4xx from a transmitter is an ANSWER, so it must not throw. See the
+    // status rule above.
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      var answer = ssfProxy.readResponse(response.status,
+          traceHeaders(response.headers), sink.raw);
+      var trace = buildHttpTrace({ method: described.method,
+          url: described.url, headers: sentHeaders,
+          body: described.body === null ? '' : described.body },
+          response, sink.raw, startedAt, null);
+      log.debug('Leaving POST /ssf/call. The transmitter answered ' +
+          answer.status + (answer.err ? ' ' + answer.err : '') + '.');
+      return res.status(STATUS_200).json(withHttpTrace(answer, trace,
+          wantsTrace));
+    })
+    .catch(function (error) {
+      // THE NO-RESPONSE BRANCH MUST ANSWER. There is no response here at all —
+      // a refused connection, a timeout, a blocked address, a body past
+      // maxContentLength — so this is a 502 and NOT an SSF status, because
+      // nothing SSF-shaped happened.
+      var message = (error && error.message) ? error.message : String(error);
+      log.warn('POST /ssf/call to ' + described.url + ' failed: ' + message);
+      var trace = buildHttpTrace({ method: described.method,
+          url: described.url, headers: sentHeaders,
+          body: described.body === null ? '' : described.body },
+          null, sink.raw, startedAt, message);
+      log.debug('Leaving POST /ssf/call. 502.');
+      return res.status(502).json(withHttpTrace({
+        error: 'The transmitter could not be reached: ' + message,
+        code: (error && error.code) || '' }, trace, wantsTrace));
+    });
+});
+
+/**
+ * What the SSF proxy will and will not do, and whether this service will host
+ * a push receiver. The page reads it to decide whether to offer the api call
+ * path at all, and whether push delivery is available — a static deployment
+ * gets no answer here, which is a stronger signal than a configuration flag
+ * because it is the api itself saying so.
+ * @route GET /ssf/limits
+ * @returns {object} 200 - the methods, refused headers, caps, status rule and
+ *                         the receiver's own limits
+ */
+app.get('/ssf/limits', function (req, res) {
+  log.debug('Entering GET /ssf/limits.');
+  log.debug('Leaving GET /ssf/limits.');
+  return res.status(STATUS_200).json(
+      ssfProxy.limits(appconfig, ssfReceiver.limits(appconfig)));
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE PUSH RECEIVER. A browser cannot be an HTTP server, so it cannot be the
+ * far end of RFC 8935 push delivery — which is a property of the specification
+ * rather than of this service. These four routes are this api standing in.
+ *
+ * `api/ssf_receiver.js` holds every decision and every bound; these handlers
+ * are wiring. The one thing worth knowing at this layer is that
+ * `POST /ssf/receiver/:id` is UNAUTHENTICATED AND ACCEPTS DATA, because what
+ * pushes to it is somebody else's transmitter — the bounds are structural (an
+ * unguessable id, an expiry, three caps and a configuration switch) rather
+ * than a gate.
+ * ---------------------------------------------------------------------------
+ * @route POST /ssf/receiver
+ * @returns {object} 200 - the inbox and the URL to put in a stream
+ * @returns {object} 400 - refused: disabled, or at the inbox limit
+ */
+app.post('/ssf/receiver', function (req, res) {
+  log.debug('Entering POST /ssf/receiver.');
+  var made = ssfReceiver.create(appconfig, req.body || {});
+  if (!made.ok) {
+    log.debug('Leaving POST /ssf/receiver. Refused: ' + made.error);
+    return res.status(STATUS_400).json({ error: made.error });
+  }
+  // The URL a TRANSMITTER has to be able to reach, which is this service's own
+  // address as the caller reached it — not a configured one. A page on
+  // localhost and a page on a compose network see different hosts for the same
+  // api, and a stream created with the wrong one delivers nothing with no
+  // error anybody sees until the first push.
+  var base = req.protocol + '://' + req.get('host');
+  log.debug('Leaving POST /ssf/receiver. ' + made.id);
+  return res.status(STATUS_200).json({
+    ok: true,
+    inbox: made.inbox,
+    deliveryEndpoint: base + '/ssf/receiver/' + made.id,
+    note: 'Put deliveryEndpoint in the stream\'s delivery.endpoint_url. The ' +
+        'TRANSMITTER has to be able to reach it, which is why it is this ' +
+        'api\'s address as you reached it rather than a configured one.'
+  });
+});
+
+/**
+ * A Security Event Token arrives. The answer here goes back to the
+ * TRANSMITTER, so it is RFC 8935's: 202 with an empty body on success, 400
+ * with `{err, description}` on a refusal.
+ * @route POST /ssf/receiver/:id
+ * @returns 202 - accepted, no body
+ * @returns {object} 400 - refused, with the SET Error Code and why
+ * @returns {object} 404 - no such receiver
+ */
+app.post('/ssf/receiver/:id', function (req, res) {
+  log.debug('Entering POST /ssf/receiver/:id.');
+  var answer = ssfReceiver.deliver(appconfig, req.params.id, {
+    body: req.body,
+    contentType: req.get('content-type') || '',
+    authorization: req.get('authorization') || ''
+  });
+  if (answer.ok) {
+    // 202 with an EMPTY body, which is what RFC 8935 section 2.3 says. A
+    // document here would be something a transmitter could come to depend on
+    // that no receiver has to send.
+    log.debug('Leaving POST /ssf/receiver/:id. Accepted.');
+    return res.status(202).end();
+  }
+  log.debug('Leaving POST /ssf/receiver/:id. ' + answer.status + ' ' +
+      answer.err);
+  return res.status(answer.status).json({ err: answer.err,
+    description: answer.description });
+});
+
+/**
+ * What has arrived. `after` is a CURSOR and not a destructive read: the page
+ * keeps its own history and a drain that emptied the inbox would make a second
+ * tab useless.
+ * @route GET /ssf/receiver/:id/events
+ * @returns {object} 200 - the inbox and everything since `after`
+ * @returns {object} 404 - no such receiver
+ */
+app.get('/ssf/receiver/:id/events', function (req, res) {
+  log.debug('Entering GET /ssf/receiver/:id/events.');
+  var out = ssfReceiver.drain(appconfig, req.params.id, req.query.after);
+  if (!out.ok) {
+    log.debug('Leaving GET /ssf/receiver/:id/events. ' + out.error);
+    return res.status(404).json({ error: out.error });
+  }
+  log.debug('Leaving GET /ssf/receiver/:id/events. ' + out.events.length +
+      ' new.');
+  return res.status(STATUS_200).json(out);
+});
+
+/**
+ * Empty an inbox (POST with `action=clear`) or delete it outright.
+ * @route DELETE /ssf/receiver/:id
+ * @returns {object} 200 - what happened
+ * @returns {object} 404 - no such receiver
+ */
+app.delete('/ssf/receiver/:id', function (req, res) {
+  log.debug('Entering DELETE /ssf/receiver/:id.');
+  var clearOnly = String(req.query.clear || '') === 'true';
+  if (clearOnly) {
+    var cleared = ssfReceiver.clear(appconfig, req.params.id);
+    if (!cleared.ok) {
+      log.debug('Leaving DELETE /ssf/receiver/:id. ' + cleared.error);
+      return res.status(404).json({ error: cleared.error });
+    }
+    log.debug('Leaving DELETE /ssf/receiver/:id. Cleared.');
+    return res.status(STATUS_200).json(cleared);
+  }
+  var gone = ssfReceiver.remove(appconfig, req.params.id);
+  if (!gone) {
+    log.debug('Leaving DELETE /ssf/receiver/:id. No such receiver.');
+    return res.status(404).json({ error: 'There is no receiver with that id ' +
+        'here. Either it was never created, it has been deleted, or it ' +
+        'expired (ssfReceiverTtlMs).' });
+  }
+  log.debug('Leaving DELETE /ssf/receiver/:id. Deleted.');
+  return res.status(STATUS_200).json({ ok: true, deleted: req.params.id });
 });
 
 // ---------------------------------------------------------------------------

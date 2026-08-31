@@ -91,7 +91,7 @@ GET /oauth2/authorize?response_type=code&client_id=…   no session
 
 `GET /admin/sts-metadata` answers "what does this thing speak, what can I call, what may I call it with, and which specification is it pretending to implement" — a page the service needed once it had grown to thirteen protocol families across twenty-six modules. `?format=json` gives the same document machine-readably, and the **Download** button at the top of the page is that URL asked for as a file.
 
-**It was `GET /sts-metadata` until 2026-08-24, and it is a page of the admin console now.** Three things came with the move. It is drawn by `admin.js`'s `page()`, so it has the console's sidebar — it used to be a cul-de-sac with no way back to anything — its breadcrumb and its gate banner, and `sts/sts_metadata.js` now builds only the *body* (a second `<style>` inside `<body>` is markup no validator accepts, so its classes live in `admin.js` beside `.tile`'s). It is **behind `admin.authRequired`**, on by default: a browser with no session is sent to `/authn/login` and a `?format=json` caller is refused `401 login_required` rather than redirected, which is why the mock's own sts-metadata test now signs in the way its `admin_api.js` does — anything of yours that fetched the old path unauthenticated needs the same, or `ADMIN_AUTH_REQUIRED=false`. And **thirteen protocol cards sit at the top**: OAuth2/OIDC, SAML 2.0, SAML 1.1, WS-Federation, WS-Trust, Kerberos, SPNEGO, SPIFFE, SCIM, LDAP, PKI/X.509, WebAuthn/CTAP and Verifiable Credentials. That list is the one part of the page that cannot be derived — SAML 2.0 and SAML 1.1 register no route at all, and four of the others live mostly on raw sockets — so three drift checks keep it honest, the sharpest being **a group of endpoints no card claims**, which is what a fourteenth family added without a card looks like.
+**It was `GET /sts-metadata` until 2026-08-24, and it is a page of the admin console now.** Three things came with the move. It is drawn by `admin.js`'s `page()`, so it has the console's sidebar — it used to be a cul-de-sac with no way back to anything — its breadcrumb and its gate banner, and `sts/sts_metadata.js` now builds only the *body* (a second `<style>` inside `<body>` is markup no validator accepts, so its classes live in `admin.js` beside `.tile`'s). It is **behind `admin.authRequired`**, on by default: a browser with no session is sent to `/authn/login` and a `?format=json` caller is refused `401 login_required` rather than redirected, which is why the mock's own sts-metadata test now signs in the way its `admin_api.js` does — anything of yours that fetched the old path unauthenticated needs the same, or `ADMIN_AUTH_REQUIRED=false`. And **fifteen protocol cards sit at the top**: OAuth2/OIDC, Federation, SAML 2.0, SAML 1.1, WS-Federation, WS-Trust, Kerberos, SPNEGO, SPIFFE, SCIM, Shared Signals, LDAP, PKI/X.509, WebAuthn/CTAP and Verifiable Credentials. That list is the one part of the page that cannot be derived — SAML 2.0 and SAML 1.1 register no route at all, and four of the others live mostly on raw sockets — so three drift checks keep it honest, the sharpest being **a group of endpoints no card claims**, which is what a sixteenth family added without a card looks like.
 
 **The endpoint list is read from the running Express router, not written down.** That is the whole design: a hand-kept list of endpoints in a file beside the endpoints goes stale the first time somebody adds a route, and the failure is silent in the worst direction — the page still looks complete. `app._router.stack` is walked **per request** (not at require time, where the answer would depend on module load order) and the table in `sts_metadata.js` only supplies the *name* and the *description* for a path the router reports. Both kinds of drift are then reported on the page itself and fail the mock's own sts-metadata test:
 
@@ -149,7 +149,7 @@ Two details worth knowing before changing the test. **A 404 is ambiguous and the
 
 **Neither half has a test in either repository yet**, and by the mock's own rule they belong in THIS suite rather than in `sts/tests/`: every assertion above can be made by driving the running service over HTTP, which is the line that decides where a test goes. See `docs/test-suite-map.md`.
 
-## Configuration: one hundred and fifty-four settings, one table, and a page that says where each value came from
+## Configuration: one hundred and ninety-seven settings, one table, and a page that says where each value came from
 
 **Every setting the mock has now lives in `sts/common/config.js` and in the `CONFIG_FILE` appconfig, and `/admin/config` is the page that shows them.** Before this, configuration was forty-odd `process.env.X || 'a default'` expressions across twelve of its modules. Each was readable where it stood and the set of them was not: there was no way to ask the service what it was configured with, no way to change anything without restarting it, and no list anywhere of what could be changed at all. The answer was a grep, and the grep only found the ones spelt the way you guessed.
 
@@ -161,7 +161,7 @@ Two details worth knowing before changing the test. **A 404 is ambiguous and the
 
 **The OAuth 2.0 / OIDC issuer identifier is new, and it is empty by default on purpose.** Empty means each response names the base URL the request arrived on, which is what lets one process answer correctly as `localhost:8081` from a host run, as `sts:8081` from a compose network, and through a published port — a conforming client MUST reject a discovery document whose `issuer` is not the identifier it fetched from, so a pinned value would break one of those callers. Setting `oauth2.issuer` pins it anyway, which is how that refusal is produced deliberately; it is worth being able to reach, because a real client reports it as something else entirely. Only the identifier moves — every endpoint in the document stays on the request's base URL, since an endpoint has to be reachable and a pinned issuer may not be. A pinned value also beats the tenant-path discovery form (`/tenant1/.well-known/openid-configuration`), because two documents out of one process disagreeing about who issued the tokens they describe is worse than losing the tenant answer.
 
-**One hundred and fourteen of the one hundred and fifty-four can be changed while the service runs; forty cannot, and they are shown anyway.** (It was forty-five settings when this table was built on 2026-08-20 and it grows with every workflow — SPIFFE alone is twenty-eight of them and Kerberos nineteen — so **do not trust the number in this sentence over the service's own**: `config.js` logs it at startup (`config: N settings from …, M of them changeable while running`) and `/admin/config` counts what is actually there. The counts here are as of the 2026-08-27 bump.) The ones that cannot were consumed before the service was listening, and they are three distinct kinds: a **bound socket** (the HTTP port, both TLS ports, both LDAP ports, both Kerberos ports); **material derived at startup** (the TLS certificate is issued for `tls.hostnames`/`tls.ips` at boot; the Kerberos principal database and every long-term key in it comes from the realm, the SIDs and the passwords at require time); and **the directory tree**, whose root is `ldap.baseDn`. Each is refused with its reason rather than accepted — an accepted change that does nothing reads as having worked — and each is on the page with its input disabled rather than hidden, because hiding them would answer "what is this configured with?" with three quarters of the answer. Live rebinding was considered and rejected: a failed rebind leaves the service unreachable on the port the caller used to reach it, which includes the API doing the rebinding.
+**One hundred and fifty of the one hundred and ninety-seven can be changed while the service runs; the rest cannot, and they are shown anyway.** (It was forty-five settings when this table was built on 2026-08-20 and it grows with every workflow — SPIFFE alone is twenty-eight of them, Kerberos nineteen and Shared Signals twenty-seven — so **do not trust the number in this sentence over the service's own**: `config.js` logs it at startup (`config: N settings from …, M of them changeable while running`) and `/admin/config` counts what is actually there. The counts here are as of the 2026-08-31 bump.) The ones that cannot were consumed before the service was listening, and they are three distinct kinds: a **bound socket** (the HTTP port, both TLS ports, both LDAP ports, both Kerberos ports); **material derived at startup** (the TLS certificate is issued for `tls.hostnames`/`tls.ips` at boot; the Kerberos principal database and every long-term key in it comes from the realm, the SIDs and the passwords at require time); and **the directory tree**, whose root is `ldap.baseDn`. Each is refused with its reason rather than accepted — an accepted change that does nothing reads as having worked — and each is on the page with its input disabled rather than hidden, because hiding them would answer "what is this configured with?" with three quarters of the answer. Live rebinding was considered and rejected: a failed rebind leaves the service unreachable on the port the caller used to reach it, which includes the API doing the rebinding.
 
 **A runtime setting has to be read where it is used**, which is why a good deal of this change was module-level `const`s becoming functions — `vciBatchSize()`, `clockSkewSeconds()`, `maxEntries()`, `defaultRequested()`. A `const` captured at require time is exactly the thing the console cannot change, and it fails in the direction that looks like the console is broken rather than like the module is.
 
@@ -186,6 +186,37 @@ Two details worth knowing before changing the test. **A 404 is ambiguous and the
 One thing about the log: a certificate refused by the strict listener never reaches a handler, so without help it is invisible from both ends. Both listeners log `tlsClientError` with OpenSSL's reason, and the strict one's message names the truststore, the trust endpoint and the permissive port.
 
 `tests/pki_mutual_tls.js` is the test, and `STS_TLS_URL` (the plain HTTP base) is what gates it.
+
+## The Shared Signals transmitter
+
+`/ssf`, and the mock's own notes are in `sts/ssf/CLAUDE.md`. The two things
+worth knowing before pointing this debugger's SSF workflow at it.
+
+**IT HAS ITS OWN RFC 9493 SUBJECT GRAMMAR AND THAT IS THE POINT.** The debugger
+has one in `client/src/ssf_client.js` and the mock has one in
+`sts/ssf/ssf_subjects.js`, written independently — the argument
+`sts/common/pq_jose.js` makes about the composite construction, applied to a
+grammar. A subject identifier is JSON, and the defect that matters in it is a
+READING: an accepted extra member, a missing required one, a format name spelt
+from memory. If both ends read one implementation, a misunderstanding they
+share is one neither can see, and the round trip passes while interoperating
+with nothing. `tests/ssf_protocol.js` drives one against the other over the
+wire.
+
+**IT CAN BE MADE WRONG ON PURPOSE, IN TWO WAYS.** `ssf.legacySubClaim` adds the
+deprecated `sub` claim beside `sub_id`, which is how a client written against a
+transmitter that gets this wrong is caught; `ssf.breakSetSignature` changes one
+character of the signature after signing, which is how a receiver that does not
+verify is caught. Both are the device `oauth2.breakIdTokenNonce` already is, and
+both are asserted by `tests/ssf_protocol.js`, which turns them off again in a
+`finally` — a setting left on is a later job in the pool failing for a reason
+nothing names, which is why that test holds the `sts-ssf` job lock.
+
+It also RECEIVES, at `POST /ssf/receive`, so that the debugger can be the
+transmitter. That endpoint accepts a SET whose signature does not verify and
+reports why, which is exactly right for a debugger:
+`ssf.receiveRequireSignature` turns the 400 on, and that is what a real receiver
+does.
 
 ## The embedded LDAP directory
 
