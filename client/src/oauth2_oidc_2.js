@@ -1780,7 +1780,10 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     // VC return below, which navigates away when that workflow is the one
     // waiting — the two are never both active, and the order says which wins
     // if a future one ever is.
-    offerTokenToHandoff(data.access_token, 'the token endpoint');
+    offerTokenToHandoff(data.access_token, 'the token endpoint', {
+      idToken: data.id_token, refreshToken: data.refresh_token,
+      tokenType: data.token_type, scope: data.scope,
+      expiresIn: data.expires_in });
     // If the SD-JWT VC workflow sent us here, the tokens are what it came for.
     returnToSdJwtVcFlow();
   log.debug("Leaving successfulInternalTokenAPICall().");
@@ -2133,7 +2136,8 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
   // Store new tokens in local storage
   if (!!currentAccessToken) {
     localStorage.setItem("refresh_access_token", currentAccessToken );
-    offerTokenToHandoff(currentAccessToken, 'a Refresh Token grant');
+    offerTokenToHandoff(currentAccessToken, 'a Refresh Token grant', {
+      idToken: currentIDToken, refreshToken: currentRefreshToken });
   }
   if (!!currentRefreshToken) {
     localStorage.setItem("refresh_refresh_token", currentRefreshToken );
@@ -2954,7 +2958,13 @@ function renderAuthorizationEndpointResults(expected, returned) {
   // An Implicit or Hybrid flow's access token arrives HERE and never at the
   // token endpoint, so a handoff that only watched that endpoint would leave
   // those two flows with a banner that never resolved.
-  offerTokenToHandoff(returned.access_token, 'the authorization response');
+  // An Implicit or Hybrid flow's ID Token arrives here beside the access
+  // token, which is the ONE case where the authorization response carries
+  // more than the code — so the set is passed here too rather than only at
+  // the token endpoint.
+  offerTokenToHandoff(returned.access_token, 'the authorization response',
+      { idToken: returned.id_token, tokenType: returned.token_type,
+        scope: returned.scope, expiresIn: returned.expires_in });
   log.debug("Leaving renderAuthorizationEndpointResults().");
 }
 
@@ -3852,9 +3862,17 @@ function maybeContinueSdJwtVcFlow() {
 // refuses otherwise — so an ordinary visit to this page is untouched by all of
 // this.
 // ---------------------------------------------------------------------------
-function offerTokenToHandoff(token, source) {
+// `set` is the REST of what came back — the ID Token, the refresh token, the
+// type, the scope and the lifetime — and it is optional and third for the
+// reason token_handoff.js's own header gives: the SCIM page wants a bearer
+// token and nothing else, and its answer has to go on meaning what it meant.
+// The Shared Signals workflow needs more, because it keeps a token history and
+// reports WHO the authenticated user is, and neither is answerable from an
+// access token this service issued: they are opaque to a client, and the
+// identity is in the ID Token.
+function offerTokenToHandoff(token, source, set) {
   log.debug("Entering offerTokenToHandoff(). source=" + source);
-  if (!tokenHandoff.deliver(token, source)) {
+  if (!tokenHandoff.deliver(token, source, set)) {
     log.debug("Leaving offerTokenToHandoff(). Not delivered.");
     return false;
   }

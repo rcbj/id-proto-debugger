@@ -156,6 +156,10 @@ RUN browserify src/scim.js -o public/js/scim.js --debug --standalone scim -t [ e
 # static-only, and tests/static_site_exclusions.js fails if the container build
 # loses a page.
 RUN browserify src/spiffe.js -o public/js/spiffe.js --debug --standalone spiffe -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
+# Shared Signals. It requires ssf_client.js, ssf_events.js, ssf_history.js,
+# op_history.js and jws.js, all of which are already under src/ — this
+# workflow stages nothing from common/, unlike Kerberos and SPIFFE.
+RUN browserify src/ssf.js -o public/js/ssf.js --debug --standalone ssf -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ]
 #COPY src/debugger2_js.js public/js
 
 # ---- Code coverage (opt-in) ----
@@ -191,7 +195,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       npm install --no-save babelify babel-plugin-istanbul @babel/core nyc ; \
     fi
 RUN if [ "$COVERAGE" = "true" ]; then \
-      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "encryption_tools:encryption_tools" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "saml_authnrequest:saml_authnrequest" "saml_response_decoder:saml_response_decoder" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "kerberos_decoder:kerberos_decoder" "kerberos:kerberos" "kerberos_tgs:kerberos_tgs" "kerberos_ap:kerberos_ap" "kerberos_delegation:kerberos_delegation" "spnego:spnego" "ldap:ldap" "pki:pki" "scim:scim" "spiffe:spiffe" ; do \
+      for entry in "jwks:jwks" "oauth2_oidc_1:oauth2_oidc_1" "token_detail:token_detail" "oauth2_oidc_2:oauth2_oidc_2" "userinfo:userinfo" "introspection:introspection" "logout:logout" "jwt_tools:jwt_tools" "encoding_tools:encoding_tools" "digital_signature:digital_signature" "encryption_tools:encryption_tools" "saml_request:saml_request" "saml_cert:saml_cert" "saml_tools:saml_tools" "saml_response:saml_response" "saml_authnrequest:saml_authnrequest" "saml_response_decoder:saml_response_decoder" "wstrust_tools:wstrust_tools" "wstrust_response:wstrust_response" "vc_issuance_0:vcissuance0" "vc_issuance_1:vcissuance1" "vc_issuance_2:vcissuance2" "vc_issuance_3:vcissuance3" "vc_issuance_4:vcissuance4" "vc_presentation_0:vcpresentation0" "vc_presentation_1:vcpresentation1" "vc_presentation_2:vcpresentation2" "vc_presentation_3:vcpresentation3" "did_tools:didtools" "wsfed_request:wsfed_request" "wsfed_response:wsfed_response" "webauthn_lab:webauthnlab" "webauthn_analyzer:webauthnanalyzer" "kerberos_decoder:kerberos_decoder" "kerberos:kerberos" "kerberos_tgs:kerberos_tgs" "kerberos_ap:kerberos_ap" "kerberos_delegation:kerberos_delegation" "spnego:spnego" "ldap:ldap" "pki:pki" "scim:scim" "spiffe:spiffe" "ssf:ssf" ; do \
         src_name="${entry%%:*}" ; \
         standalone="${entry##*:}" ; \
         browserify src/${src_name}.js -o public/js/${src_name}.js --debug --standalone ${standalone} -t [ envify purge --CONFIG_FILE ${CONFIG_FILE} ] -t [ babelify --plugins [ istanbul ] ] && \

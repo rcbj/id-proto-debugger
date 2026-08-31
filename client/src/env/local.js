@@ -194,6 +194,29 @@ var config = {
   // that opened the front door. Set it where a deployment does have one.
   scimSignInUrlDefault: "",
 
+  // ---------------------------------------------------------------------------
+  // SHARED SIGNALS (client/public/ssf.html, docs/ssf.md).
+  //
+  // The TRANSMITTER's base URL. The page looks for
+  // /.well-known/ssf-configuration under it in BOTH shapes — RFC 8414 inserts
+  // the well-known segment before the issuer's path and OpenID Connect
+  // Discovery appends it — and every endpoint it then calls comes out of that
+  // document. This page composes no paths of its own, so this one value is the
+  // whole of what has to be typed.
+  //
+  // **IT IS RESOLVED BY THE BROWSER BY DEFAULT**, like `scimBaseUrlDefault`
+  // beside it and unlike `ldapUrlDefault`: SSF's management API is ordinary
+  // HTTPS with a JSON body, so the page calls a transmitter directly and works
+  // with no api at all — which is why it is NOT in client/static_site.js and
+  // its landing card is not greyed. Switching callPath to BackEnd moves the
+  // resolution to the api, and on the containerized stack that is a different
+  // host: confusing the two has cost this suite a run before.
+  //
+  // It is EMPTY in prod.js / test-idptools-com.js, because a public site has
+  // no business defaulting to somebody's localhost — and a test that asserts
+  // this default therefore has to read it off the page rather than assume it.
+  ssfTransmitterUrlDefault: "https://localhost:8081",
+
 
 };
 

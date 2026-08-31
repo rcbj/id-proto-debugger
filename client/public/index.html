@@ -301,6 +301,44 @@
       <span class="landing-card-desc">SPIFFE and SPIRE: fetch an X509-SVID or a JWT-SVID from the Workload API, read the trust bundle, attest an agent, and drive all forty-two SPIRE Server API methods.</span>
       <span class="landing-card-desc landing-card-unavailable">Not on the hosted site: two of SPIFFE&rsquo;s three surfaces are gRPC, which a browser cannot produce. Run the debugger locally for it.</span>
     </a>
+    <!-- THE SIXTEENTH CARD, and the second addition running that costs no
+         layout change at all: at eight columns fifteen cards are 8+7 and
+         sixteen are 8+8 — the same two rows and therefore the same height.
+         The grid note in css/landing.css predicted the SIXTEENTH would be the
+         expensive one, and it was wrong for a reason worth recording: that
+         prediction was made when the container was 940px and seven columns
+         were the most that fitted, and the fifteenth card widened it to
+         1070px. So the next expensive card is the SEVENTEENTH, which needs a
+         ninth column: nine fit when 9*min + 8*10 <= 1070, so min <= 110.
+
+         It still needs its own :nth-child(16) accent rule, or its icon
+         silently falls back to the text colour and landingFitsOnOneScreen()
+         fails naming this card rather than that file.
+
+         NO data-not-on-static MARKER, and that is the deliberate part. SSF's
+         management API, its status, subject, verification and poll endpoints
+         are all ordinary HTTPS with a JSON body, so this page calls a
+         transmitter directly from the browser and works with no api behind
+         it — the same trade SCIM and PKI make. What a static deployment loses
+         is the api call path and, with it, PUSH delivery: a browser cannot be
+         an HTTP server, so it cannot be the far end of RFC 8935, and there is
+         no api there to host an endpoint on its behalf. POLL delivery (RFC
+         8936) has the receiver come to the transmitter and needs none of
+         that. The page says so itself in its callPath row rather than the
+         card being greyed. -->
+    <a class="landing-card" href="/ssf.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="5" cy="12" r="2.2"/>
+          <path d="M9.5 12h9"/>
+          <path d="M15.5 8.5 19 12l-3.5 3.5"/>
+          <path d="M9.2 7.2a6.8 6.8 0 0 1 0 9.6"/>
+          <path d="M12.2 4.6a10.4 10.4 0 0 1 0 14.8"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">Shared Signals</span>
+      <span class="landing-card-desc">SSF 1.0 with CAEP and RISC over it: agree a stream, name who it is about, and send or receive Security Event Tokens by push or poll.</span>
+    </a>
   </div>
   <!-- The counterpart to the greyed cards above, and the only thing on this
        page that appears ONLY on the static deployments: each dead card says

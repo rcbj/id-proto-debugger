@@ -194,6 +194,14 @@ var config = {
   // that opened the front door. Set it where a deployment does have one.
   scimSignInUrlDefault: "",
 
+  // Shared Signals. The same value client/src/env/zz-pqc.js carries and for the
+  // same reason — see the block there; this file is the client SERVER's half of
+  // the post-quantum stack and points at the same transmitter. https, like
+  // every other mock-sts default above: that process binds its main port as
+  // TLS on this stack, so a plain-http default here would fail the first call
+  // with a message about the response rather than about the scheme.
+  ssfTransmitterUrlDefault: "https://localhost:8081",
+
 
 };
 

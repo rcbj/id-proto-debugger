@@ -196,6 +196,50 @@ var config = {
   // allowlist that has to be edited per deployment is one that gets set to
   // "any".
   scimMaxRequestBytes: 1048576,
+  // ---------------------------------------------------------------------------
+  // SHARED SIGNALS (client/public/ssf.html, docs/ssf.md).
+  //
+  // `POST /ssf/call` is the SCIM proxy's shape and not the LDAP relay's: SSF's
+  // management API is ordinary HTTPS with a JSON body, so the page calls a
+  // transmitter directly by default and works with no api at all. This bounds
+  // the REQUEST body, beside `maxContentLength` which bounds the response — the
+  // same split scimMaxRequestBytes makes, and for a reason of its own here: an
+  // Add Subject carrying an `aliases` identifier with fifty members is a large
+  // request and an EMPTY response, since SSF answers 204 with no body.
+  //
+  // There is deliberately no ssfAllowedPorts, for the reason there is no
+  // scimAllowedPorts: SSF is HTTP, and a port allowlist for HTTP would have to
+  // carry 80, 443 and every alternate somebody runs a service on.
+  ssfMaxRequestBytes: 262144,
+  // ---------------------------------------------------------------------------
+  // THE PUSH RECEIVER, WHICH IS THE ONE THING IN THIS WORKFLOW A BROWSER
+  // GENUINELY CANNOT DO — and not for CORS or a certificate. RFC 8935 push
+  // delivery is the transmitter POSTing each event to a URL the receiver gave
+  // it, so the receiver has to be REACHABLE, and a page is not an HTTP server.
+  // RFC 8936 poll delivery is the other way round and needs none of this, which
+  // is why the deployed static sites can still run the whole workflow.
+  //
+  // So this service hosts an inbox on the page's behalf: `POST /ssf/receiver`
+  // makes one, its URL goes in the stream's delivery.endpoint_url, and the page
+  // drains what arrives. It is an UNAUTHENTICATED endpoint that accepts data —
+  // the most dangerous shape anything here has — and api/ssf_receiver.js argues
+  // the five things that bound it. Nothing is executed, rendered or forwarded,
+  // and no signature is checked here: this service holds no key of the
+  // transmitter's, so the page verifies.
+  //
+  // Only an explicit `false` turns it off, so a missing key leaves the push
+  // half working rather than silently disabling it.
+  ssfReceiverEnabled: true,
+  // How long an inbox lives. A page that closed its tab leaves nothing behind
+  // for longer than this.
+  ssfReceiverTtlMs: 3600000,
+  // How many inboxes, how many events in each, and how large one event may be.
+  // A transmitter that pushed in a loop fills one bounded ring and stops; the
+  // oldest event goes rather than the newest, because a receiver that has
+  // stopped draining most wants what has happened lately.
+  ssfReceiverMaxInboxes: 20,
+  ssfReceiverMaxEvents: 200,
+  ssfReceiverMaxEventBytes: 65536,
   // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
   // TLS test the PKI page (client/public/pki.html) runs.
   //

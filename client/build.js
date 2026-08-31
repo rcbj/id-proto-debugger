@@ -128,6 +128,7 @@ const BUNDLES = [
   ['pki', 'pki'],
   ['scim', 'scim'],
   ['spiffe', 'spiffe'],
+  ['ssf', 'ssf'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>

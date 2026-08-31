@@ -56,7 +56,28 @@ var KEYS = {
   // The delivered access token. ONE SHOT: take() removes it.
   TOKEN: "token_handoff_token",
   // How it was obtained: { source, at }. Also read as TEXT.
-  META: "token_handoff_meta"
+  META: "token_handoff_meta",
+  // ---------------------------------------------------------------------
+  // THE REST OF THE TOKEN SET, and it is a SEPARATE SLOT rather than more
+  // members on META for a reason worth stating: the first consumer of this
+  // module — the SCIM page — wants an access token and nothing else, and
+  // `take()`'s answer has to go on meaning exactly what it meant. So this
+  // is additive: a caller that does not ask for it is unaffected, and a
+  // caller that does gets `{ idToken, refreshToken, tokenType, expiresIn,
+  // scope }` beside the token it already had.
+  //
+  // WHY A SECOND CONSUMER NEEDED MORE. The Shared Signals workflow keeps a
+  // TOKEN HISTORY — every set of tokens used in the session, the way the
+  // OAuth2 / OIDC results page does — and it reports WHO THE AUTHENTICATED
+  // USER IS. Neither is answerable from an access token: this service's
+  // are opaque to a client, and the identity is in the ID Token. A
+  // hand-off that carried only the bearer credential would leave that page
+  // showing a signed-in user it could not name.
+  //
+  // It is `sessionStorage` like everything else here and it is dropped by
+  // the same `cancel()`, so nothing about the lifetime changes.
+  // ---------------------------------------------------------------------
+  SET: "token_handoff_set"
 };
 
 // How long a delivered token stays collectable, in milliseconds. The gap this
@@ -154,6 +175,7 @@ function start(options) {
   }
   drop(KEYS.TOKEN);
   drop(KEYS.META);
+  drop(KEYS.SET);
   var ok = put(KEYS.ACTIVE, "1") && put(KEYS.RETURN, returnUrl) &&
       put(KEYS.LABEL, label);
   if (!ok) {
@@ -192,7 +214,7 @@ function label() {
 // reader dismisses the banner, and when the consuming page has collected.
 function cancel() {
   log.debug("Entering cancel().");
-  [KEYS.ACTIVE, KEYS.RETURN, KEYS.LABEL, KEYS.TOKEN, KEYS.META]
+  [KEYS.ACTIVE, KEYS.RETURN, KEYS.LABEL, KEYS.TOKEN, KEYS.META, KEYS.SET]
     .forEach(function (key) {
       drop(key);
     });
@@ -210,7 +232,7 @@ function cancel() {
 // the authorization response — and is shown to the reader, because "which of
 // the three tokens on this page is the one that went back" is exactly the
 // question a handoff invites.
-function deliver(token, source) {
+function deliver(token, source, set) {
   log.debug("Entering deliver(). source=" + source);
   if (!isActive()) {
     log.debug("Leaving deliver(). No handoff is active.");
@@ -229,6 +251,24 @@ function deliver(token, source) {
   }
   put(KEYS.META, JSON.stringify({ source: String(source || ""),
       at: new Date().getTime() }));
+  // The rest of the set, when the caller has one. OPTIONAL and third, so
+  // every existing call site is unchanged and a caller that passes nothing
+  // leaves the slot empty rather than writing an object of empty strings —
+  // which take() would then hand back as a set that looked delivered.
+  if (set && typeof set === "object") {
+    var extra = {
+      idToken: String(set.idToken || ""),
+      refreshToken: String(set.refreshToken || ""),
+      tokenType: String(set.tokenType || ""),
+      scope: String(set.scope || ""),
+      expiresIn: Number(set.expiresIn) || 0
+    };
+    var carries = extra.idToken || extra.refreshToken || extra.tokenType ||
+        extra.scope || extra.expiresIn;
+    if (carries) {
+      put(KEYS.SET, JSON.stringify(extra));
+    }
+  }
   log.debug("Leaving deliver(). " + value.length + " characters.");
   return true;
 }
@@ -264,6 +304,15 @@ function take() {
     // still usable; only the provenance is lost.
     meta = {};
   }
+  var set = null;
+  try {
+    var stored = get(KEYS.SET);
+    set = stored ? JSON.parse(stored) : null;
+  } catch (e) {
+    // Same reasoning: an unreadable extra slot costs the ID Token and the
+    // refresh token, and the access token this handoff exists for is fine.
+    set = null;
+  }
   var at = Number(meta.at || 0);
   var expired = !!token && at > 0 &&
       (new Date().getTime() - at) > TTL_MS;
@@ -271,11 +320,16 @@ function take() {
   if (expired) {
     log.debug("Leaving take(). Expired.");
     return { token: "", source: String(meta.source || ""), at: at,
-        expired: true };
+        expired: true, set: null };
   }
-  log.debug("Leaving take(). " + (token ? "a token" : "nothing"));
+  log.debug("Leaving take(). " + (token ? "a token" : "nothing") +
+      (set ? " and the rest of the set" : ""));
   return { token: token, source: String(meta.source || ""), at: at,
-      expired: false };
+      expired: false,
+      // `null` when the delivering page carried only a bearer token, which is
+      // every caller before the Shared Signals workflow. A consumer that
+      // needs the ID Token says so rather than assuming.
+      set: set };
 }
 
 module.exports = {

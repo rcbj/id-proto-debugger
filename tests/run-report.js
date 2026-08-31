@@ -339,6 +339,23 @@ const JOB_LOCKS = {
   // that a REPLAYED AP-REQ is refused — which a concurrent job spending its
   // own tickets against the same acceptor would disturb.
   "krb5_mit_client.js": "sts-spnego-signin",
+  // The mock's SSF configuration. `ssf_protocol.js` turns
+  // `ssf.pushAllowInsecure` ON (its own RFC 8935 listener is plain http) and
+  // flips both deliberate defects — `ssf.legacySubClaim` and
+  // `ssf.breakSetSignature` — one at a time. Each is restored, and not
+  // instantly: a job polling that transmitter inside that window gets a SET
+  // whose signature does not verify, which `ssf_page.js` would report as its
+  // own failure with nothing to say which other job did it.
+  //
+  // It also DELETES the streams it made, and a stream is named by an id the
+  // other job does not know — so what actually collides is the settings and
+  // the transmitter's queue rather than the streams themselves.
+  "ssf_protocol.js": "sts-ssf",
+  "ssf_page.js": "sts-ssf",
+  // `ssf_engine.js` is deliberately absent: it needs no transmitter at all,
+  // so nothing it does can collide with this. `api_ssf.js` is absent for a
+  // different reason — it drives the api's own receiver and never touches
+  // the mock.
 };
 
 const CONCURRENCY = (function () {
@@ -2037,6 +2054,46 @@ function buildJobs() {
       "LDAP_AVAILABLE=true for a remote target that IS api-backed."
     : null;
 
+  // ------------------------------------------------------------------------
+  // SHARED SIGNALS' GATE IS THE SCIM ONE'S SHAPE AND NOT THE LDAP ONE'S, and
+  // it is worth saying which of the two it is: SSF's management API, its
+  // status, subject, verification and poll endpoints are all ordinary HTTPS
+  // with a JSON body, so `ssf.html` calls a transmitter DIRECTLY from the
+  // browser and is on the static deployments — it carries no
+  // `data-not-on-static` marker and client/static_site.js does not drop it.
+  //
+  // So the gate covers only the api job. Everything else runs against a
+  // static target:
+  //
+  //   * `api_ssf.js` needs the api, so it rides the same fact LDAP's gate
+  //     does — that this target has a backend.
+  //   * `ssf_engine.js` needs nothing at all and is never gated.
+  //   * `ssf_protocol.js` needs a TRANSMITTER rather than an api, and skips
+  //     itself with a reason when there is none.
+  //   * `ssf_page.js` needs neither an api nor a browser-side backend: the
+  //     browser call path is the one a static site has, and its own callPath
+  //     section asserts that the api option is switched OFF there rather than
+  //     merely marked — which is the half no other job can see.
+  //
+  // WHAT A STATIC TARGET REALLY LOSES IS PUSH DELIVERY, and that is RFC 8935
+  // rather than a property of this deployment: a browser cannot be an HTTP
+  // server, so it cannot be the far end of a push, and with no api there is
+  // nothing to host an endpoint on its behalf. POLL delivery needs none of
+  // that, and the page says so itself.
+  // ------------------------------------------------------------------------
+  const ssfApiSkip = ldapOff
+    ? "the api's Shared Signals job drives POST /ssf/call and the push " +
+      "receiver at POST /ssf/receiver, and a static site has no api at all. " +
+      "The SSF ENGINE, PROTOCOL and PAGE jobs still run against such a " +
+      "target — SSF's management API is ordinary HTTPS with a JSON body, so " +
+      "the browser calls the transmitter directly — and what is genuinely " +
+      "lost there is PUSH delivery, because a browser cannot be an HTTP " +
+      "server and there is no api to host an endpoint for it. Run this " +
+      "against the containerized stack (./docker-run-tests.sh) or a local " +
+      "dev server, or set LDAP_AVAILABLE=true for a remote target that IS " +
+      "api-backed."
+    : null;
+
   const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
       "api's port-88 relay, which a static site has not got, so " +
@@ -2870,6 +2927,109 @@ function buildJobs() {
   });
 
   // ------------------------------------------------------------------------
+  // SHARED SIGNALS (SSF 1.0) — four jobs, split by what each one NEEDS rather
+  // than by what it covers, which is the division the SCIM three make and for
+  // the same reason: a failure in the first names a RULE, in the second a
+  // TRANSMITTER, in the third the api's own contract, and in the fourth a
+  // PAGE. Collapsing them would make every SSF defect present as the same
+  // thing.
+  //
+  // SSF_TRANSMITTER_URL is the BROWSER's view of the transmitter, and it is
+  // its own variable for the reason SCIM_BROWSER_URL is: the test's view, the
+  // api's view and the browser's view of the same service are three different
+  // answers on the containerized stack, and confusing them has cost this
+  // suite a run before on the LDAP and SPNEGO workflows.
+  // ------------------------------------------------------------------------
+
+  // THE ENGINES, with no transmitter and no browser. It needs NOTHING — not
+  // the api, not the mock, not Chrome — so it is never gated and never
+  // skipped, and it is the one SSF job that runs on every target including
+  // the static ones.
+  //
+  // It is FIRST of the four deliberately: the defects this protocol actually
+  // produces are never crashes — a subject identifier with an extra member, an
+  // `exp` on a SET, `events_requested` read back as `events_delivered`, a
+  // delivery method spelt `push` rather than `urn:ietf:rfc:8935` — and every
+  // one of them produces a workflow that works perfectly against itself. A
+  // broken one makes the three below fail in ways that look like a broken
+  // transmitter.
+  //
+  // It also signs a SET with one algorithm from every family jws.js offers,
+  // POST-QUANTUM INCLUDED, which is where the ML-DSA and SLH-DSA paths
+  // through this workflow's own envelope are exercised at all.
+  jobs.push({
+    name: "SSF engines (all eight RFC 9493 subject formats and the complex " +
+        "subject, the RFC 8417 envelope signed with every algorithm family " +
+        "including the post-quantum ones, stream configurations, both " +
+        "deliveries, and every refusal the api's proxy and push receiver " +
+        "make)",
+    script: "ssf_engine.js",
+    env: {},
+  });
+
+  // THE PROTOCOL, against a real transmitter, with no browser. Its value is
+  // that the mock has its OWN RFC 9493 grammar — written independently, the
+  // argument common/pq_jose.js makes over there applied to a grammar — so
+  // this job drives ONE reading of that specification against ANOTHER over
+  // the wire. If both ends shared an implementation, a misunderstanding they
+  // shared would be one neither could see.
+  //
+  // It is almost entirely NEGATIVES, which is the rule tests/CLAUDE.md states
+  // for the mock-driving family, and it hosts an RFC 8935 endpoint OF ITS OWN
+  // so that push delivery is exercised end to end — SSF_RECEIVER_HOST is the
+  // name the TRANSMITTER has to reach this test by, which on the
+  // containerized stack is the tests container's compose name.
+  jobs.push({
+    name: "SSF protocol (discovery, the two scopes, the whole stream " +
+        "lifecycle, every subject format across the wire against a " +
+        "separately written grammar, what a pause keeps that a disable " +
+        "drops, poll and push end to end, and both deliberate defects)",
+    script: "ssf_protocol.js",
+    env: {
+      WSTRUST_STS_URL: env.WSTRUST_STS_URL || "https://localhost:8081",
+      SSF_RECEIVER_HOST: env.SSF_RECEIVER_HOST || "localhost",
+    },
+  });
+
+  // THE api's OWN SURFACE. Four things live here and in no other job: the
+  // body parser for `application/secevent+jwt` (without which every push is
+  // reported as an empty body, a failure that reads as a transmitter sending
+  // nothing), the three outcomes as HTTP STATUSES, the address policy still
+  // covering this endpoint, and the push receiver a browser cannot be.
+  const ssfApiJob = {
+    name: "SSF api (the limits document, every refusal as a 400, the address " +
+        "policy, the push receiver a browser cannot be, and the body parser " +
+        "for application/secevent+jwt)",
+    script: "api_ssf.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+    },
+  };
+  if (ssfApiSkip) ssfApiJob.skip = ssfApiSkip;
+  jobs.push(ssfApiJob);
+
+  // THE PAGE. It is NOT gated on the api, for the reason the SCIM page job is
+  // not: the browser call path is the one a static deployment has, and this
+  // job's callPath section is the only place the disabled BackEnd option is
+  // asserted to be SWITCHED OFF rather than merely marked. Three more things
+  // live here alone: that the bundle ran at all, the two histories, and the
+  // extended OAuth2 / OIDC hand-off — which carries the whole token set
+  // rather than only a bearer token, because an access token this service
+  // issues is opaque to a client and the identity is in the ID Token.
+  jobs.push({
+    name: "SSF page (the bundle, discovery, a stream, a subject refused by " +
+        "name, a verification event by poll, signing and pushing one in the " +
+        "JavaScript engine, both histories, and the hand-off carrying the " +
+        "whole token set)",
+    script: "ssf_page.js",
+    env: {
+      API_URL: env.API_URL || "http://localhost:4000",
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL ||
+          env.WSTRUST_STS_URL || "https://localhost:8081",
+    },
+  });
+
+  // ------------------------------------------------------------------------
   // SPIFFE — four jobs, split by what each one NEEDS rather than by what it
   // covers, which is the same division the SCIM three make and for the same
   // reason: a failure in the first names a rule, in the second a server, in
@@ -3272,7 +3432,8 @@ function buildJobs() {
   {
     jobs.push({
       name: "STS persistence (postgres) — what survives a restart, what must " +
-          "not, that two processes do not see each other, and that a missing " +
+          "not, that two processes do not see each other, that the " +
+          "connection is TLS by postgres's own account, and that a missing " +
           "database is not fatal",
       script: "sts_persistence_postgres.js",
       env: {

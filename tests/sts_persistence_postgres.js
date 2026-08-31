@@ -40,6 +40,19 @@
 //     `false` and the reply says so in a sentence; this starts a second
 //     instance against the same database and demonstrates it, because a
 //     `false` in a JSON reply is a claim and this is the evidence for it.
+//   * **THE CONNECTION IS TLS, AND POSTGRES IS THE ONE ASKED.** The throwaway
+//     container is given a generated key pair and `ssl=on`, the mock dials it
+//     with `sslmode=require`, and the assertion is a `pg_stat_ssl` query — the
+//     server's own row per backend — rather than anything this side decided.
+//     That distinction is the whole point: a driver that asked for TLS and
+//     then handed `pg` an option which quietly disabled it would satisfy every
+//     check built out of the connection string, and `persistence_postgres.js`
+//     strips `sslmode` before `pg` sees it precisely because those two answers
+//     disagreed once already. The same database is then dialled again with no
+//     `sslmode` and both the report and postgres have to say plaintext, since
+//     a driver that turned TLS on unconditionally would make `sslmode=disable`
+//     mean its opposite. Until 2026-08-31 the container had no certificate at
+//     all, so only the plaintext half of that file was ever reached.
 //   * **A DATABASE THAT IS NOT THERE STOPS THE SERVICE**, since 2026-08-28,
 //     and this bullet said the opposite when it was written a few hours
 //     earlier. The old rule was that a failure is RECORDED rather than thrown
@@ -64,7 +77,12 @@
 //   * **A POSTGRES.** `STS_TEST_POSTGRES_URL` is used when it is set — for CI,
 //     or for anybody who already has one — and otherwise this starts a
 //     throwaway `postgres:18` container of its own on a free port and removes
-//     it at the end. No database and no docker means SKIP.
+//     it at the end. No database and no docker means SKIP. A database somebody
+//     ELSE supplied keeps the TLS checks that read the report and drops the
+//     two that read `pg_stat_ssl` through `docker exec`, with a warning saying
+//     which and why: there is no container of ours to exec into, and its
+//     `host` rules may be `hostssl`, where dialling in the clear is refused by
+//     the far end rather than being the thing under test.
 //   * **A COMPLETE MOCK STS TREE**, because it runs `node server.js` from it.
 //     `MOCK_STS_DIR` first, then the `sts/` submodule beside this suite, then a
 //     sibling `mock-sts` checkout — the same order and the same reasons as
@@ -111,6 +129,52 @@ log.info("Log initialized. logLevel=" + log.level());
 // machine cannot collide and a leaked one says which run leaked it.
 const CONTAINER = "sts-persistence-test-" + names.runStamp();
 const IMAGE = process.env.STS_TEST_POSTGRES_IMAGE || "postgres:18";
+
+// ---------------------------------------------------------------------------
+// A SERVER KEY PAIR FOR THE THROWAWAY DATABASE, so that the driver's TLS
+// branch is exercised at all.
+//
+// Until 2026-08-31 this container was started with no certificate, so the
+// connection string carried no `sslmode`, and `persistence_postgres.js` took
+// its `wantsTls === false` path on every run. That path is half the file: the
+// other half strips `sslmode` out of the string before `pg` sees it and
+// configures the socket itself — which exists because `pg` parses `sslmode`
+// TOO, and a string saying `require` beside an explicit `ssl` option is two
+// answers to one question that a real deployment already got wrong once. None
+// of it was reachable from here.
+//
+// This mirrors the mock's own postgres/generate-tls.sh rather than inventing a
+// second arrangement, minus the parts a throwaway has no use for: no volume,
+// so nothing is kept between starts and the `already there` branch is gone,
+// and one day of validity rather than 825 because this pair outlives the
+// assertions by seconds. `host` rules are deliberately left ALONE — the compose
+// stack rewrites them to `hostssl` so the server refuses plaintext, and doing
+// that here would cost the plaintext half of what this job now checks. The
+// point is a database that will speak either, so one container can show that
+// the report tells them apart.
+//
+// bash and openssl are both in the Debian image already, which is the reason
+// the mock pins postgres:18 rather than -alpine; the same reason holds here.
+// `exec` so postgres keeps pid 1 and still receives `docker rm -f`'s signal.
+const TLS_DIR = "/var/lib/postgresql/tls";
+const TLS_COMMAND = [
+  "set -e",
+  "mkdir -p " + TLS_DIR,
+  "openssl req -new -x509 -nodes -newkey rsa:2048 -sha256 -days 1" +
+    " -subj '/CN=localhost/O=mock-sts-test'" +
+    " -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1'" +
+    " -keyout " + TLS_DIR + "/server.key" +
+    " -out " + TLS_DIR + "/server.crt 2>/dev/null",
+  // Postgres refuses to start if the key is group- or world-readable, and the
+  // message names the permission rather than the cause.
+  "chmod 600 " + TLS_DIR + "/server.key",
+  "chmod 644 " + TLS_DIR + "/server.crt",
+  "chown postgres:postgres " + TLS_DIR + "/server.key " +
+    TLS_DIR + "/server.crt",
+  "exec docker-entrypoint.sh postgres -c ssl=on" +
+    " -c ssl_cert_file=" + TLS_DIR + "/server.crt" +
+    " -c ssl_key_file=" + TLS_DIR + "/server.key"
+].join(" && ");
 
 // Everything this job started, so that teardown can be one function that runs
 // in a `finally` whether or not the assertions passed.
@@ -207,7 +271,8 @@ async function startPostgres() {
   const run = spawnSync("docker", ["run", "-d", "--name", CONTAINER,
     "-e", "POSTGRES_PASSWORD=sts", "-e", "POSTGRES_USER=sts",
     "-e", "POSTGRES_DB=sts",
-    "-p", "127.0.0.1:" + port + ":5432", IMAGE], { encoding: "utf8" });
+    "-p", "127.0.0.1:" + port + ":5432", IMAGE,
+    "bash", "-c", TLS_COMMAND], { encoding: "utf8" });
   assert.strictEqual(run.status, 0,
     "could not start " + IMAGE + ": " + String(run.stderr || "").slice(0, 400) +
     ". The image is pulled on first use, so a machine with no network and no " +
@@ -240,11 +305,12 @@ async function startPostgres() {
       CONTAINER, "psql", "-h", "127.0.0.1", "-U", "sts", "-d", "sts",
       "-tAc", "select 1"], { encoding: "utf8" });
     if (ready.status === 0 && String(ready.stdout || "").trim() === "1") {
-      const url = "postgres://sts:sts@127.0.0.1:" + port + "/sts";
+      const plain = "postgres://sts:sts@127.0.0.1:" + port + "/sts";
       log.info("[postgres] " + IMAGE + " is up and answering over TCP on " +
-               "127.0.0.1:" + port + " as container " + CONTAINER + ".");
+               "127.0.0.1:" + port + " as container " + CONTAINER +
+               ", with TLS available on it.");
       log.debug("Leaving startPostgres().");
-      return url;
+      return { url: plain + "?sslmode=require", plain: plain, own: true };
     }
     await pause(500);
   }
@@ -366,10 +432,35 @@ function freePort() {
 // SPIFFE's two UNIX SOCKETS are turned OFF rather than moved: a socket has one
 // binder and the default path is shared, so moving them would need a directory
 // as well.
+//
+// AND THE MAIN PORT IS PINNED TO PLAIN HTTP, which is not a port but belongs
+// with them: it is the same act of pinning what this instance does rather
+// than inheriting an ambient default. Every request either caller makes is
+// `http://`, and the mock's default stopped being that. `global.https`
+// derives from `oauth2.rfc9700`, and the mock's own env/local.js — which both
+// callers name as CONFIG_FILE — has set `https: true` since its 2026-08-30
+// "TLS on all supported services" change.
+//
+// It broke the two callers in OPPOSITE directions, which is why it is set
+// here rather than in either of them. startMock() polls until the port
+// answers: the instance came up perfectly, in about a second, serving TLS to
+// a plain-http probe, and the failure was the wait loop's — "did not answer
+// within forty-five seconds", which reads as a service that could not start
+// rather than one that started and was not being spoken to. That cost four
+// red runs of the live-site suite. startMockExpectingFailure() polls to prove
+// the port NEVER answers, so the same change made it pass VACUOUSLY: with
+// TLS on, that probe cannot answer whether the service bound a listener it
+// should not have or not, and the check stopped checking without failing.
+//
+// Switching it off rather than teaching this job https is deliberate. What is
+// under test here is what SURVIVES A RESTART; the transport is incidental,
+// and a certificate regenerated on every start would put
+// `rejectUnauthorized: false` into every request below to prove nothing.
 async function portEnv(httpPort) {
   log.debug("Entering portEnv(). httpPort=" + httpPort);
   const env = {
     STS_PORT: String(httpPort),
+    STS_HTTPS: "false",
     STS_SPIFFE_WORKLOAD_SOCKET_ENABLED: "false",
     STS_SPIFFE_SERVER_SOCKET_ENABLED: "false"
   };
@@ -438,9 +529,137 @@ async function settled(instance) {
 }
 
 // ---------------------------------------------------------------------------
+// WHAT POSTGRES ITSELF SAW OF THE MOCK'S CONNECTIONS.
+//
+// This is the half that cannot be faked by agreeing with ourselves. Every
+// other TLS check available here reads something THIS SIDE decided — the
+// connection string, or the report built out of it — and a driver that set
+// `sslmode=require` and then handed `pg` an option that quietly disabled it
+// would pass all of them. `pg_stat_ssl` is the server's own row per backend,
+// so it answers what actually crossed the socket.
+//
+// `client_addr <> 127.0.0.1` is what separates the MOCK's connections from
+// this job's own. The mock dials the published port from the host and arrives
+// as the bridge gateway; the readiness probe and this very query run through
+// `docker exec` and arrive as loopback. Without that filter this would be
+// asserting about psql as much as about the service under test — and libpq's
+// own default `sslmode` is `prefer`, so those loopback connections are
+// encrypted too and the mistake would not show as a failure.
+//
+// It counts as well as tests, because `bool_and` over no rows is null and a
+// pool with nothing open would otherwise read as agreement. Zero connections
+// is a retry, never a pass.
+// ---------------------------------------------------------------------------
+function connectionsFromTheMock() {
+  log.debug("Entering connectionsFromTheMock().");
+  const sql =
+    "select count(*) filter (where s.ssl)::text || ' ' || count(*)::text " +
+    "from pg_stat_ssl s join pg_stat_activity a on a.pid = s.pid " +
+    "where a.datname = 'sts' and a.client_addr is not null " +
+    "and a.client_addr <> '127.0.0.1'::inet";
+  const asked = spawnSync("docker", ["exec", "-e", "PGPASSWORD=sts",
+    CONTAINER, "psql", "-h", "127.0.0.1", "-U", "sts", "-d", "sts",
+    "-tAc", sql], { encoding: "utf8" });
+  const answer = String(asked.stdout || "").trim().split(/\s+/);
+  const out = { encrypted: Number(answer[0] || 0),
+                total: Number(answer[1] || 0) };
+  log.debug("Leaving connectionsFromTheMock(). " + out.encrypted + " of " +
+            out.total + " encrypted.");
+  return out;
+}
+
+// Wait for the pool to have opened something, then report it. A pool that is
+// idle between writes may hold nothing at the instant of the first query.
+async function settledConnections() {
+  log.debug("Entering settledConnections().");
+  const until = Date.now() + 15000;
+  let seen = connectionsFromTheMock();
+  while (Date.now() < until && seen.total === 0) {
+    await pause(300);
+    seen = connectionsFromTheMock();
+  }
+  log.debug("Leaving settledConnections(). total=" + seen.total);
+  return seen;
+}
+
+// ---------------------------------------------------------------------------
+// THE CONNECTION IS ENCRYPTED, AND THE SERVER AGREES.
+// ---------------------------------------------------------------------------
+async function theDatabaseConnectionIsEncrypted(instance, databaseUrl) {
+  log.debug("Entering theDatabaseConnectionIsEncrypted().");
+  log.info("=== The database connection, as postgres saw it ===");
+  // The messages below say what the connection string asked for, so check
+  // that it asked. A caller that wired the plaintext URL in here would
+  // otherwise get a failure explaining a `require` that was never sent.
+  assert.ok(/[?&]sslmode=require/i.test(databaseUrl),
+    "this section asserts the TLS path and must be given the TLS connection " +
+    "string; it was given one that does not ask for sslmode=require.");
+  const seen = await settledConnections();
+  assert.ok(seen.total > 0,
+    "postgres reports no client backend from this host at all, so there is " +
+    "nothing to judge and this check would otherwise pass by saying nothing. " +
+    "The mock is running and its store is healthy, so a pool connection " +
+    "should be open.");
+  assert.strictEqual(seen.encrypted, seen.total,
+    "every connection the mock made should be TLS — the connection string " +
+    "carries sslmode=require and the driver configures the socket itself — " +
+    "but postgres reports " + seen.encrypted + " of " + seen.total +
+    " encrypted. A `require` that arrives in the clear means the driver's " +
+    "own ssl option won over the string, which is the exact disagreement " +
+    "persistence_postgres.js strips the parameter to prevent.");
+  log.info("[tls] OK — postgres reports all " + seen.total + " of the mock's " +
+           "connection(s) encrypted, which is the server's account of it " +
+           "rather than ours.");
+  log.debug("Leaving theDatabaseConnectionIsEncrypted().");
+}
+
+// ---------------------------------------------------------------------------
+// AND PLAINTEXT IS STILL PLAINTEXT, WHICH IS THE OTHER HALF OF THE BRANCH.
+//
+// A driver that turned TLS on unconditionally would pass every check above and
+// be wrong: `sslmode=disable` would then mean its opposite. So the same
+// database is dialled again with no `sslmode` at all, and both the report and
+// postgres have to say so. This is why the container's `host` rules were left
+// permissive — a `hostssl` server would refuse this connection and the
+// distinction could not be drawn on one container.
+// ---------------------------------------------------------------------------
+async function plaintextIsReportedAndSeenAsPlaintext(root, plainUrl) {
+  log.debug("Entering plaintextIsReportedAndSeenAsPlaintext().");
+  log.info("=== The same database with no sslmode ===");
+  const instance = await startMock(root, plainUrl, "the plaintext instance");
+  try {
+    const seen = await status(instance);
+    assert.strictEqual(seen.mode, "postgres",
+      "it should still reach the database in the clear; it is in " +
+      seen.mode + " and reports " + seen.lastError);
+    assert.strictEqual(seen.database.encrypted, false,
+      "and the report must say the connection is NOT encrypted; it says " +
+      JSON.stringify(seen.database));
+    assert.strictEqual(seen.database.sslmode, "not set",
+      "naming the absent parameter rather than inventing a value; it says " +
+      JSON.stringify(seen.database.sslmode));
+    const onTheWire = await settledConnections();
+    assert.ok(onTheWire.total > 0,
+      "postgres reports no client backend from this host, so there is " +
+      "nothing to judge.");
+    assert.strictEqual(onTheWire.encrypted, 0,
+      "and postgres must have seen none of them encrypted, or the driver " +
+      "turned TLS on for a string that did not ask for it — which would " +
+      "make sslmode=disable mean its opposite. It reports " +
+      onTheWire.encrypted + " of " + onTheWire.total + " encrypted.");
+    log.info("[plaintext] OK — with no sslmode the report says not " +
+             "encrypted and postgres saw " + onTheWire.total +
+             " unencrypted connection(s). The two branches are told apart.");
+  } finally {
+    await stopMock(instance, "the plaintext check is done");
+  }
+  log.debug("Leaving plaintextIsReportedAndSeenAsPlaintext().");
+}
+
+// ---------------------------------------------------------------------------
 // THE STORE OPENED, AND SAYS WHAT IT IS WITHOUT SAYING THE PASSWORD.
 // ---------------------------------------------------------------------------
-async function theStoreOpened(instance) {
+async function theStoreOpened(instance, databaseUrl) {
   log.debug("Entering theStoreOpened().");
   log.info("=== The store opened, in postgres mode ===");
   const seen = await status(instance);
@@ -476,6 +695,37 @@ async function theStoreOpened(instance) {
   assert.ok(!/"password"|:sts@|sts:sts/.test(asText),
     "and no part of the credential either; the reply is " + asText.slice(0, 400));
 
+  // THE TWO PLACES TLS LIVES HAVE TO AGREE. `sslmode` rides in the connection
+  // string and is postgres's own spelling; whether the certificate is BELIEVED
+  // is a setting, because `pg` takes that as a socket option and would ignore
+  // it in a URL. The report is built out of both, so what it must not do is
+  // disagree with the string it was built from — a page that said `encrypted`
+  // about a connection dialled without `sslmode` is the misleading half of a
+  // true sentence, and it is read by whoever is deciding whether a deployment
+  // is safe.
+  //
+  // Asserted against the URL rather than against a constant, because
+  // STS_TEST_POSTGRES_URL lets somebody bring their own database and this
+  // property holds either way.
+  const asked = /[?&]sslmode=(require|verify-ca|verify-full|prefer)/i
+    .exec(databaseUrl);
+  assert.strictEqual(seen.database.encrypted, !!asked,
+    "the report's `encrypted` must agree with the connection string it was " +
+    "built from. The string " + (asked ? "asks for TLS (sslmode=" + asked[1] +
+    ")" : "does not ask for TLS") + " and the report says " +
+    JSON.stringify(seen.database));
+  if (asked) {
+    assert.strictEqual(seen.database.sslmode, asked[1].toLowerCase(),
+      "and it should name the mode that was actually asked for; it says " +
+      JSON.stringify(seen.database.sslmode));
+    assert.strictEqual(seen.database.verifyCertificate, false,
+      "and report the certificate as NOT verified, which is the honest " +
+      "description of the self-signed pair generated per container and the " +
+      "default of persistence.databaseTlsRejectUnauthorized. Encrypted and " +
+      "authenticated are two different answers; it says " +
+      JSON.stringify(seen.database));
+  }
+
   assert.strictEqual(seen.coordinates, false,
     "and it must say that it does NOT coordinate — see the section below, " +
     "which is the evidence for that claim rather than a repetition of it.");
@@ -486,6 +736,7 @@ async function theStoreOpened(instance) {
   log.info("[store] OK — postgres, healthy, all three things persisting, " +
            "talking to " + seen.database.user + "@" + seen.database.host +
            ":" + seen.database.port + "/" + seen.database.database +
+           " over " + seen.database.sslmode +
            ", and the connection string appears nowhere in the reply.");
   log.debug("Leaving theStoreOpened().");
 }
@@ -1015,14 +1266,29 @@ async function test() {
   }
 
   try {
-    const databaseUrl = ready.ownContainer
+    // `plain` is only ours to offer when the container is: a caller who set
+    // STS_TEST_POSTGRES_URL gave one string and may have given a `hostssl`
+    // server, where dialling in the clear is refused by the far end rather
+    // than being the thing under test.
+    const database = ready.ownContainer
       ? await startPostgres()
-      : ready.url;
+      : { url: ready.url, plain: null, own: false };
+    const databaseUrl = database.url;
 
     let instance = await startMock(ready.root, databaseUrl, "the first instance");
-    await theStoreOpened(instance);
+    await theStoreOpened(instance, databaseUrl);
     const made = await writeSomethingOfEachKind(instance);
     const held = await mintSomething(instance, made);
+
+    if (database.own) {
+      await theDatabaseConnectionIsEncrypted(instance, databaseUrl);
+    } else {
+      log.warn("[tls] SKIPPED the pg_stat_ssl checks: they read the " +
+               "database's own account of the connection through `docker " +
+               "exec`, and STS_TEST_POSTGRES_URL names a database this job " +
+               "did not start and has no container for. What the report says " +
+               "about TLS was still checked against the connection string.");
+    }
 
     await twoProcessesDoNotSeeEachOther(instance, ready.root, databaseUrl);
 
@@ -1032,6 +1298,10 @@ async function test() {
     await everythingThatPersistsComesBack(instance, made);
     await nothingThatWasMintedComesBack(instance, held);
     await stopMock(instance, "the restart checks are done");
+
+    if (database.plain) {
+      await plaintextIsReportedAndSeenAsPlaintext(ready.root, database.plain);
+    }
 
     await anUnreachableDatabaseIsFatal(ready.root);
     log.info("Test completed successfully.");

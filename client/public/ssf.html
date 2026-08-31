@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Identity Protocol Debugger &mdash; Shared Signals</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/ssf.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/ssf.js">
+</script>
+
+<p class="ssf-return"><a href="/index.html">&larr; All protocols</a></p>
+<h3 class="ssf-title">Shared Signals (SSF) Debugger</h3>
+
+<p class="ssf-intro">The <strong>Shared Signals Framework</strong> (OpenID SSF
+1.0, final 2 September 2025) is the one protocol on this site that runs the
+other way round. SAML and OpenID Connect authenticate at <strong>one
+instant</strong>; after that the relying party holds a session that stays good
+for hours whatever happens next. Shared Signals inverts it: the identity
+provider <em>tells</em> the relying party when something changed.</p>
+
+<p class="ssf-intro"><strong>SSF is the pipe and not the vocabulary.</strong> It
+defines how two parties agree a <em>stream</em>, who the events are about
+(<strong>RFC 9493</strong> subject identifiers), what they travel in
+(<strong>RFC 8417</strong> Security Event Tokens) and how they get there
+(<strong>RFC 8935</strong> push, <strong>RFC 8936</strong> poll) &mdash; and
+exactly two events of its own, both about the pipe. The vocabularies are
+<strong>CAEP</strong> (what happened to a session) and <strong>RISC</strong>
+(what happened to an account); this page implements the framework, and those
+two are the next parts of this work. The <em>Transmit</em> pane says which
+event types are here and which are not, rather than leaving a short list to be
+read as a broken page.</p>
+
+<!-- ===================== Identity and tokens ===================== -->
+<fieldset class="ssf-pane" id="pane_tokens">
+  <legend>Who you are, and the tokens this session has used</legend>
+  <p class="ssf-note">SSF 1.0 section 8 requires a transmitter&rsquo;s stream
+  management, status, subject, verification and poll endpoints to be protected,
+  and it has the transmitter <strong>publish</strong> what it accepts in
+  <code>authorization_schemes</code> &mdash; so a receiver discovers the scheme
+  rather than guessing. Almost every transmitter names OAuth 2.0, and this
+  workflow gets its token the way the SCIM page does: it sends you to the
+  <strong>OAuth2 / OIDC</strong> workflow, you run any grant there, and the
+  tokens come back here.</p>
+  <p class="ssf-note"><strong>The whole set comes back, not just the bearer
+  token</strong>, and that is why this pane can name you: an access token this
+  service issues is opaque to a client, and the identity is in the ID Token.
+  Every set is kept below for the length of this tab &mdash; the same
+  <em>Token History</em> the OAuth2 / OIDC results page keeps, for the reason a
+  stream outlives the token that created it.</p>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_ssf_get_token"
+           value="Get tokens from the OAuth2 / OIDC workflow"
+           onclick="return ssf.startTokenHandoff();"
+           title="Marks this workflow as waiting and sends the browser to oauth2_oidc_1.html. Any grant will do; the tokens come back here.">
+    <input type="button" class="ssf-btn" id="btn_ssf_clear_tokens"
+           value="Clear token history"
+           onclick="return ssf.clearTokenHistory();"
+           title="Drops every token set this tab has recorded. They are in sessionStorage and go when the tab closes anyway.">
+  </div>
+  <p class="ssf-status" id="ssf_token_handoff_note"></p>
+  <div class="ssf-identity" id="ssf_identity">
+    <p class="ssf-note">No token yet. The panes below will run without one
+    against a transmitter that requires none.</p>
+  </div>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="ssf_access_token">Access token</label>
+      <textarea class="ssf-field ssf-mono" id="ssf_access_token" rows="3"
+                title="Sent as `Authorization: Bearer` on every call below. Paste one here if you already have it; nothing on this page writes it to localStorage."></textarea>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_id_token">ID Token</label>
+      <textarea class="ssf-field ssf-mono" id="ssf_id_token" rows="3"
+                title="Read for the `sub` and the name claims, so this page can say who you are. Never sent anywhere."></textarea>
+    </div>
+  </div>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_read_token"
+           value="Read the ID Token"
+           onclick="return ssf.readPastedTokens();"
+           title="Decode the pasted ID Token, name the authenticated user, and record the set in the history below.">
+  </div>
+  <div id="ssf_token_history">
+    <p class="ssf-note">No tokens recorded yet.</p>
+  </div>
+</fieldset>
+
+<!-- ===================== Configuration ===================== -->
+<fieldset class="ssf-pane" id="pane_config">
+  <legend>Configuration Parameters</legend>
+  <p class="ssf-note">Everything the panes below read, with the
+  <strong>source</strong> of each. The transmitter&rsquo;s own endpoints are
+  <em>not</em> here: SSF fixes no paths, so every one of them is discovered
+  from the metadata document in the next pane and this page composes none.</p>
+  <table class="ssf-table ssf-config" id="ssf_config_table">
+    <tr><th>Setting</th><th>Value</th><th>Source</th></tr>
+    <tr>
+      <td><label class="ssf-label" for="ssf_base_url">baseUrl</label></td>
+      <td><input class="ssf-field" type="text" id="ssf_base_url"
+                 placeholder="https://sts:8081"
+                 title="The transmitter's base URL. The well-known document is looked for under it in BOTH shapes RFC 8414 and OpenID Connect Discovery define."></td>
+      <td class="ssf-source">you</td>
+    </tr>
+    <tr id="ssf_config_callpath_row">
+      <td><label class="ssf-label">callPath</label></td>
+      <td>
+        <label class="ssf-radio"><input type="radio" name="ssf_call_path"
+               id="ssf_cfg_callPath_browser" value="browser" checked
+               onchange="return ssf.setCallPath('browser');"> FrontEnd
+               (this browser)</label>
+        <label class="ssf-radio"><input type="radio" name="ssf_call_path"
+               id="ssf_cfg_callPath_api" value="api"
+               onchange="return ssf.setCallPath('api');"> BackEnd (through the
+               api)</label>
+        <p class="ssf-note ssf-hidden" id="ssf_callpath_note"></p>
+      </td>
+      <td class="ssf-source">you</td>
+    </tr>
+    <tr>
+      <td><label class="ssf-label" for="ssf_ssl_validate">sslValidate</label>
+      </td>
+      <td><label class="ssf-radio"><input type="checkbox"
+                 id="ssf_ssl_validate" checked>
+                 Verify the transmitter&rsquo;s certificate</label>
+          <span class="ssf-note">Only the api call path can ignore this &mdash;
+          a browser refuses a certificate it does not trust before this page
+          sees anything.</span></td>
+      <td class="ssf-source">you</td>
+    </tr>
+    <tr>
+      <td><label class="ssf-label" for="ssf_auth_scheme">authScheme</label></td>
+      <td><select class="ssf-field" id="ssf_auth_scheme"
+                  title="How this receiver authenticates to the transmitter. The metadata pane lists what the transmitter says it accepts.">
+            <option value="bearer">Bearer (the access token above)</option>
+            <option value="basic">HTTP Basic</option>
+            <option value="none">Nothing</option>
+          </select></td>
+      <td class="ssf-source">you</td>
+    </tr>
+    <tr id="ssf_basic_row" class="ssf-hidden">
+      <td><label class="ssf-label" for="ssf_basic_user">Basic credentials</label>
+      </td>
+      <td><input class="ssf-field ssf-narrow" type="text" id="ssf_basic_user"
+                 placeholder="username">
+          <input class="ssf-field ssf-narrow" type="password"
+                 id="ssf_basic_password" placeholder="password"
+                 title="Never written to localStorage."></td>
+      <td class="ssf-source">you</td>
+    </tr>
+  </table>
+  <p class="ssf-limits" id="ssf_limits">Asking the api what it will
+  do&hellip;</p>
+</fieldset>
+
+<!-- ===================== Discovery ===================== -->
+<fieldset class="ssf-pane" id="pane_metadata">
+  <legend>Transmitter configuration metadata</legend>
+  <p class="ssf-note">SSF 1.0 section 6. <strong>Every endpoint this workflow
+  calls comes out of this document</strong> and none is composed here &mdash; a
+  transmitter that publishes its stream management API at
+  <code>/v1/streams/manage</code> is driven with nothing typed. It is looked
+  for at <code>/.well-known/ssf-configuration</code> in both shapes: RFC 8414
+  <em>inserts</em> the well-known segment before the issuer&rsquo;s path and
+  OpenID Connect Discovery <em>appends</em> it, and insertion is tried
+  first.</p>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_ssf_discover"
+           value="Fetch the metadata" onclick="return ssf.discover();"
+           title="Fetch /.well-known/ssf-configuration under the base URL and read every member.">
+    <input class="ssf-status ssf-grow" type="text" id="ssf_discover_status"
+           readonly>
+  </div>
+  <div id="ssf_metadata_table">
+    <p class="ssf-note">Nothing fetched yet.</p>
+  </div>
+</fieldset>
+
+<!-- ===================== Streams ===================== -->
+<fieldset class="ssf-pane" id="pane_stream">
+  <legend>Stream</legend>
+  <p class="ssf-note">The control plane. One path and five methods, which is
+  the specification&rsquo;s own shape: the configuration endpoint <em>is</em>
+  the resource. <strong>Read <code>events_delivered</code> rather than
+  <code>events_requested</code> when the answer comes back</strong> &mdash; the
+  first is what will be sent and the second is what you asked for, and SSF has
+  no refusal for an event type a transmitter will not agree to. Its absence
+  from that list is the only notice you get, so this page says so out loud.</p>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="ssf_stream_aud">aud</label>
+      <input class="ssf-field" type="text" id="ssf_stream_aud"
+             placeholder="https://receiver.example.com"
+             title="Who the SETs on this stream are addressed to. A receiver checks for ITSELF in it, so an event addressed to somebody else is one to refuse.">
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_stream_delivery">delivery.method</label>
+      <select class="ssf-field" id="ssf_stream_delivery"
+              onchange="return ssf.deliveryChanged();"
+              title="The values on the wire are the RFC numbers as URNs. 'push' and 'poll' are not method identifiers, which catches everybody once.">
+        <option value="urn:ietf:rfc:8936">Poll &mdash; urn:ietf:rfc:8936
+        </option>
+        <option value="urn:ietf:rfc:8935">Push &mdash; urn:ietf:rfc:8935
+        </option>
+      </select>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_stream_format">format</label>
+      <select class="ssf-field" id="ssf_stream_format"
+              title="Which RFC 9493 format the transmitter should name a DEFAULT subject in — the subjects it includes because the stream covers everybody.">
+        <option value="">(let the transmitter choose)</option>
+      </select>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_stream_description">description</label>
+      <input class="ssf-field" type="text" id="ssf_stream_description"
+             placeholder="what this stream is for"
+             title="Free text. Nothing reads it.">
+    </div>
+  </div>
+  <div class="ssf-row ssf-hidden" id="ssf_push_row">
+    <label class="ssf-label" for="ssf_stream_endpoint">delivery.endpoint_url
+    </label>
+    <input class="ssf-field ssf-grow" type="text" id="ssf_stream_endpoint"
+           placeholder="an endpoint the TRANSMITTER can reach"
+           title="Where the transmitter POSTs each event. A browser is not an HTTP server, so this workflow asks its api for one.">
+    <input type="button" class="ssf-btn ssf-btn-quiet"
+           id="btn_ssf_make_receiver" value="Ask the api to host one"
+           onclick="return ssf.createReceiver();"
+           title="Creates a push inbox in the api layer and fills the field with its URL.">
+  </div>
+  <div class="ssf-row ssf-hidden" id="ssf_push_auth_row">
+    <label class="ssf-label" for="ssf_stream_auth_header">
+      delivery.authorization_header</label>
+    <input class="ssf-field ssf-grow" type="text" id="ssf_stream_auth_header"
+           placeholder="Bearer something-only-you-and-the-transmitter-know"
+           title="Sent by the transmitter with every push, so the receiver can tell a real delivery from anybody who found the URL. Optional.">
+  </div>
+  <div>
+    <label class="ssf-label">events_requested</label>
+    <div class="ssf-checks" id="ssf_events_requested">
+      <p class="ssf-note">Fetch the metadata first, or leave every box clear
+      to ask for everything the transmitter supports.</p>
+    </div>
+  </div>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_ssf_create"
+           value="Create (POST)" onclick="return ssf.createStream();"
+           title="POST the Stream Configuration to the configuration endpoint. The transmitter mints the stream_id and sets the iss.">
+    <input type="button" class="ssf-btn" id="btn_ssf_read"
+           value="Read (GET)" onclick="return ssf.readStream();"
+           title="Read one stream, or every stream this credential can see when the id below is empty.">
+    <input type="button" class="ssf-btn" id="btn_ssf_replace"
+           value="Replace (PUT)" onclick="return ssf.replaceStream();"
+           title="REPLACES the configuration. A member left empty goes back to its default — which is what makes this different from Merge.">
+    <input type="button" class="ssf-btn" id="btn_ssf_merge"
+           value="Merge (PATCH)" onclick="return ssf.mergeStream();"
+           title="Changes only what is filled in. A member left empty is untouched.">
+    <input type="button" class="ssf-btn ssf-btn-danger" id="btn_ssf_delete"
+           value="Delete" onclick="return ssf.deleteStream();"
+           title="Deletes the stream and everything queued on it.">
+  </div>
+  <div class="ssf-row">
+    <label class="ssf-label" for="ssf_stream_id">stream_id</label>
+    <input class="ssf-field ssf-grow ssf-mono" type="text" id="ssf_stream_id"
+           placeholder="filled in by Create"
+           title="The transmitter mints this. Every other call names the stream with it.">
+    <input class="ssf-status ssf-grow" type="text" id="ssf_stream_status_text"
+           readonly>
+  </div>
+  <div id="ssf_stream_view">
+    <p class="ssf-note">No stream yet.</p>
+  </div>
+  <p class="ssf-note"><strong>Status.</strong> A <em>paused</em> stream keeps
+  queueing and delivers nothing, so what happened while it was paused is still
+  there when it is enabled again; a <em>disabled</em> one drops it. That is the
+  difference between &ldquo;I was not listening&rdquo; and &ldquo;it did not
+  happen&rdquo;, and it is why a receiver taking a maintenance window pauses
+  rather than disables.</p>
+  <div class="ssf-row">
+    <select class="ssf-field ssf-narrow" id="ssf_status_value">
+      <option value="enabled">enabled</option>
+      <option value="paused">paused</option>
+      <option value="disabled">disabled</option>
+    </select>
+    <input class="ssf-field ssf-grow" type="text" id="ssf_status_reason"
+           placeholder="reason (shown to the transmitter, and echoed in the event)">
+    <input type="button" class="ssf-btn" id="btn_ssf_set_status"
+           value="Set status" onclick="return ssf.setStatus();">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_get_status"
+           value="Read status" onclick="return ssf.getStatus();">
+  </div>
+  <p class="ssf-note"><strong>Verification</strong> is the only end-to-end test
+  a stream has. Everything above exercises the management API and proves
+  nothing about whether an event can actually be delivered; this asks the
+  transmitter to send one down the ordinary path. The <code>state</code> comes
+  back inside the event unchanged, and it is the only thing tying the two
+  together.</p>
+  <div class="ssf-row">
+    <input class="ssf-field ssf-grow" type="text" id="ssf_verify_state"
+           placeholder="state — anything; it comes back in the event"
+           title="Echoed back unchanged in the verification event. Without it a receiver watching two streams cannot tell which one just answered.">
+    <input type="button" class="ssf-btn" id="btn_ssf_verify"
+           value="Ask for a verification event"
+           onclick="return ssf.verifyStream();">
+  </div>
+</fieldset>
+
+<!-- ===================== Subjects ===================== -->
+<fieldset class="ssf-pane" id="pane_subjects">
+  <legend>Subjects &mdash; who the stream is about</legend>
+  <p class="ssf-note">RFC 9493 gives eight formats and SSF adds the
+  <em>complex</em> subject, whose members are each themselves an identifier.
+  That is what makes &ldquo;this session was revoked&rdquo; expressible at all:
+  the person is not revoked, one session of theirs is.</p>
+  <p class="ssf-note"><strong>Each format&rsquo;s member set is closed.</strong>
+  A subject carrying an extra member is one a conforming receiver
+  <em>must</em> reject &mdash; it cannot tell whether the member narrows the
+  subject &mdash; and it looks perfectly fine in a log. This page refuses it
+  and names the member, which is what the <em>Check</em> button is for.</p>
+  <p class="ssf-note">What an <strong>empty</strong> subject list means is
+  <code>default_subjects</code> in the metadata: with <code>ALL</code> the
+  stream is about everybody and adding a subject narrows nothing; with
+  <code>NONE</code> it is about nobody until one is added. Guessing wrong gets
+  you every event in the estate or none, and both look like a broken
+  transmitter.</p>
+  <div class="ssf-row">
+    <label class="ssf-label" for="ssf_subject_format">Format</label>
+    <select class="ssf-field" id="ssf_subject_format"
+            onchange="return ssf.subjectFormatChanged();">
+    </select>
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_subject_fill"
+           value="Fill with an example"
+           onclick="return ssf.fillSubjectExample();"
+           title="Puts the specification's own specimen of this format in the box.">
+  </div>
+  <p class="ssf-note" id="ssf_subject_what"></p>
+  <label class="ssf-label" for="ssf_subject_json">subject (JSON)</label>
+  <textarea class="ssf-field ssf-mono" id="ssf_subject_json" rows="7"
+            title="A Subject Identifier, or a complex subject with any of user, device, session, tenant, org_unit and group."></textarea>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_check_subject"
+           value="Check it" onclick="return ssf.checkSubject();"
+           title="Validate against RFC 9493 without sending anything: the closed member set, the required members, the value shapes, and the ban on nesting an aliases identifier.">
+    <input type="button" class="ssf-btn" id="btn_ssf_add_subject"
+           value="Add to the stream" onclick="return ssf.addSubject();">
+    <input type="button" class="ssf-btn" id="btn_ssf_remove_subject"
+           value="Remove from the stream" onclick="return ssf.removeSubject();"
+           title="Idempotent: removing a subject that is not there is a success, so a receiver tidying up after a crash need not know what it had already removed.">
+    <label class="ssf-radio"><input type="checkbox" id="ssf_subject_verified"
+           checked
+           title="`verified: true` says this receiver has already confirmed the subject is one it cares about. A real transmitter may then skip a confirmation step.">
+           verified</label>
+  </div>
+  <p class="ssf-status" id="ssf_subject_status"></p>
+  <div id="ssf_subject_findings"></div>
+</fieldset>
+
+<!-- ===================== Receiving ===================== -->
+<fieldset class="ssf-pane" id="pane_receive">
+  <legend>Receiving events</legend>
+  <p class="ssf-note"><strong>Poll delivery works in this browser and push
+  delivery cannot</strong>, and that is a property of the two specifications
+  rather than of this tool. RFC 8936 has the receiver come to the transmitter,
+  which a page can do; RFC 8935 has the transmitter POST to the receiver, and a
+  page is not an HTTP server. So the api layer hosts an endpoint on this
+  page&rsquo;s behalf &mdash; and on a deployment with no api there is nothing
+  to host, which is exactly what the hosted static sites are.</p>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_ssf_poll" value="Poll once"
+           onclick="return ssf.pollOnce();"
+           title="POST an RFC 8936 poll request. Acknowledges everything it takes, which is what removes it from the transmitter's queue.">
+    <label class="ssf-radio"><input type="checkbox" id="ssf_poll_ack" checked
+           title="Send `ack` for what came back. Unticked, the transmitter keeps redelivering — which is how to see a redelivery on purpose.">
+           acknowledge what arrives</label>
+    <label class="ssf-label" for="ssf_poll_max">maxEvents</label>
+    <input class="ssf-field ssf-tiny" type="number" id="ssf_poll_max"
+           value="10" min="1"
+           title="A transmitter caps this. The answer's `moreAvailable` says whether to come back — a client that ignores it assumes one poll drains the queue.">
+    <input class="ssf-status ssf-grow" type="text" id="ssf_poll_status"
+           readonly>
+  </div>
+  <div class="ssf-row" id="ssf_inbox_row">
+    <label class="ssf-label">Push inbox</label>
+    <input class="ssf-field ssf-grow ssf-mono" type="text" id="ssf_inbox_url"
+           readonly placeholder="none — ask the api for one in the Stream pane">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_drain"
+           value="Collect what arrived" onclick="return ssf.drainReceiver();"
+           title="Reads the api's inbox. It is a cursor rather than a destructive read, so a second tab still sees everything.">
+    <input type="button" class="ssf-btn ssf-btn-danger" id="btn_ssf_drop_inbox"
+           value="Delete the inbox" onclick="return ssf.deleteReceiver();">
+  </div>
+  <p class="ssf-status" id="ssf_inbox_status"></p>
+  <p class="ssf-note">Anything that arrives is decoded and <strong>every check
+  is reported by name</strong>. A single &ldquo;valid&rdquo; over a token whose
+  audience is somebody else is the most dangerous thing this page could
+  say.</p>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="ssf_verify_key">Verification key</label>
+      <textarea class="ssf-field ssf-mono" id="ssf_verify_key" rows="4"
+                title="A public key as a JWK, a JWK Set or a PEM. Left empty, the signature is reported as NOT CHECKED rather than as valid — which is the honest answer and the one a receiver has to act on."></textarea>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_verify_alg">Algorithm</label>
+      <select class="ssf-field" id="ssf_verify_alg"></select>
+      <p class="ssf-note">The <em>verifier</em> chooses the algorithm, never
+      the token (RFC 8725 section 3.1). A mismatch with the header is
+      reported rather than accommodated.</p>
+      <input type="button" class="ssf-btn ssf-btn-quiet"
+             id="btn_ssf_fetch_jwks" value="Fetch the transmitter's JWKS"
+             onclick="return ssf.fetchJwks();"
+             title="Uses the jwks_uri from the metadata document.">
+    </div>
+  </div>
+  <label class="ssf-label" for="ssf_paste_set">Or paste a Security Event Token
+  </label>
+  <textarea class="ssf-field ssf-mono" id="ssf_paste_set" rows="4"
+            title="Decode and check one that arrived somewhere else. Nothing is sent."></textarea>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_decode_set"
+           value="Decode and check" onclick="return ssf.decodePastedSet();">
+  </div>
+</fieldset>
+
+<!-- ===================== Transmitting ===================== -->
+<fieldset class="ssf-pane" id="pane_transmit">
+  <legend>Transmitting events &mdash; this page as the transmitter</legend>
+  <p class="ssf-note">The other half of the protocol, and the one a receiver
+  under test needs: build any event SSF defines, sign it, and push it to
+  somebody&rsquo;s RFC 8935 endpoint. <strong>The media type is the thing that
+  is silently wrong everywhere</strong> &mdash; RFC 8417 section 2.3 gives a SET
+  <code>application/secevent+jwt</code>, and a receiver that dispatches on the
+  type drops one sent as <code>application/jwt</code> with no error anybody
+  sees. This page can send either, on purpose.</p>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="ssf_tx_type">Event type</label>
+      <select class="ssf-field" id="ssf_tx_type"
+              onchange="return ssf.transmitTypeChanged();"></select>
+      <p class="ssf-note" id="ssf_tx_what"></p>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_tx_alg">Signing algorithm</label>
+      <select class="ssf-field" id="ssf_tx_alg"></select>
+      <p class="ssf-note"><strong>A SET is the document here most worth
+      signing post-quantum.</strong> It records that something HAPPENED, RFC
+      8417 section 4.1.4 forbids it to expire, and it is therefore read long
+      after it was written &mdash; which is the case a
+      harvest-now-decrypt-later argument is actually about. ML-DSA, SLH-DSA
+      and the six composite ML-DSA + traditional algorithms are all here.</p>
+    </div>
+  </div>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_tx_key"
+           value="Generate a signing key" onclick="return ssf.generateTxKey();"
+           title="A key pair for the algorithm above. The public half is shown so a receiver can be given it.">
+    <input class="ssf-status ssf-grow" type="text" id="ssf_tx_key_status"
+           readonly>
+  </div>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="ssf_tx_private_key">Private key (JWK)
+      </label>
+      <textarea class="ssf-field ssf-mono" id="ssf_tx_private_key" rows="4"
+                title="Never written to storage. Generated here, or pasted."></textarea>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_tx_public_key">Public key (JWK)</label>
+      <textarea class="ssf-field ssf-mono" id="ssf_tx_public_key" rows="4"
+                title="Hand this to whatever is going to verify what you send."></textarea>
+    </div>
+  </div>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="ssf_tx_iss">iss</label>
+      <input class="ssf-field" type="text" id="ssf_tx_iss"
+             placeholder="https://transmitter.example.com"
+             title="A receiver matches this against the issuer it discovered, so a token whose iss is not that string is not that transmitter's.">
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_tx_aud">aud</label>
+      <input class="ssf-field" type="text" id="ssf_tx_aud"
+             placeholder="https://receiver.example.com"
+             title="A receiver checks for ITSELF in the audience. Getting this wrong is the commonest reason a well-formed event is refused.">
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_tx_txn">txn</label>
+      <input class="ssf-field" type="text" id="ssf_tx_txn"
+             placeholder="optional"
+             title="RFC 8417's transaction identifier, tying several events to one act.">
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_tx_media">Content-Type</label>
+      <select class="ssf-field" id="ssf_tx_media">
+        <option value="application/secevent+jwt">application/secevent+jwt
+        &mdash; correct</option>
+        <option value="application/jwt">application/jwt &mdash; the common
+        mistake</option>
+      </select>
+    </div>
+  </div>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="ssf_tx_payload">Event payload (JSON)
+      </label>
+      <textarea class="ssf-field ssf-mono" id="ssf_tx_payload" rows="5">
+      </textarea>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_tx_subject">sub_id (JSON, optional)
+      </label>
+      <textarea class="ssf-field ssf-mono" id="ssf_tx_subject" rows="5"
+                title="Neither SSF event takes a subject — both are about the STREAM. This is here for the vocabularies that come next, and for a transmitter that sends one anyway."></textarea>
+    </div>
+  </div>
+  <div class="ssf-row">
+    <label class="ssf-label" for="ssf_tx_endpoint">Receiver endpoint</label>
+    <input class="ssf-field ssf-grow" type="text" id="ssf_tx_endpoint"
+           placeholder="https://receiver.example.com/ssf/receive"
+           title="An RFC 8935 push endpoint. The mock STS has one at /ssf/receive.">
+    <input class="ssf-field ssf-grow" type="text" id="ssf_tx_auth"
+           placeholder="Authorization header (optional)">
+  </div>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_build"
+           value="Build and sign" onclick="return ssf.buildEvent();"
+           title="Assembles the claim set, signs it, and shows it — without sending anything.">
+    <input type="button" class="ssf-btn" id="btn_ssf_push" value="Push it"
+           onclick="return ssf.pushEvent();">
+    <input class="ssf-status ssf-grow" type="text" id="ssf_tx_status" readonly>
+  </div>
+  <label class="ssf-label" for="ssf_tx_token">The Security Event Token</label>
+  <textarea class="ssf-field ssf-mono" id="ssf_tx_token" rows="4" readonly>
+  </textarea>
+  <div id="ssf_tx_decoded"></div>
+  <div id="ssf_families"></div>
+</fieldset>
+
+<!-- ===================== Event messages ===================== -->
+<fieldset class="ssf-pane" id="pane_messages">
+  <legend>Event message history</legend>
+  <p class="ssf-note">Every Security Event Token this page sent or received,
+  whole, with what it decoded to and what every check said. The tokens are kept
+  because a SET is <strong>evidence rather than a credential</strong> &mdash;
+  holding one grants nothing and presenting one achieves nothing &mdash; and
+  evidence is what a debugger most needs to survive a navigation. What is
+  stripped is the <code>Authorization</code> header of the exchange that
+  carried it, which <em>is</em> a credential.</p>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn ssf-btn-quiet"
+           id="btn_ssf_clear_messages" value="Clear the message history"
+           onclick="return ssf.clearMessages();">
+  </div>
+  <div id="ssf_messages">
+    <p class="ssf-note">No events yet.</p>
+  </div>
+</fieldset>
+
+<!-- ===================== Exchange ===================== -->
+<fieldset class="ssf-pane" id="pane_exchange">
+  <legend>The last exchange</legend>
+  <p class="ssf-note">What went out and what came back. On the
+  <strong>browser</strong> call path this is what the page can see, which is
+  less than the whole: a browser withholds the headers it adds and CORS
+  withholds most of those that come back. The <strong>api</strong> path is made
+  by the backend and can therefore be reported in full, which is one of the
+  three reasons that path exists.</p>
+  <label class="ssf-label" for="ssf_exchange">Exchange</label>
+  <textarea class="ssf-field ssf-mono" id="ssf_exchange" rows="14" readonly>
+  </textarea>
+</fieldset>
+
+<!-- ===================== Operations history ===================== -->
+<fieldset class="ssf-pane" id="pane_history">
+  <legend>Operations History</legend>
+  <p class="ssf-note">One row per call, newest first. <strong>Sent</strong> is
+  not a success: it means the call left this page and nothing came back to
+  resolve it.</p>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_clear_ops"
+           value="Clear" onclick="return ssf.clearOperations();">
+  </div>
+  <div id="ssf_history"></div>
+</fieldset>
+
+    </div>
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

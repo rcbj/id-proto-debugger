@@ -4,6 +4,8 @@ Scope: everything under `api/`. Cross-cutting matters — versioning, `CONFIG_FI
 
 It proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It also speaks three protocols the browser cannot: it relays Kerberos to a KDC (`POST /krb5/*`), it IS the LDAP client (`POST /ldap/*`), and it makes every SPIFFE gRPC call (`POST /spiffe/call`). All three are raw TCP, so all three enforce the address policy themselves — see the sections below.
 
+**AND SINCE 2026-08-31 IT DOES ONE THING THAT IS NOT A PROTOCOL A BROWSER CANNOT SPEAK.** `POST /ssf/receiver/:id` is an RFC 8935 **push endpoint hosted on a page's behalf**, and the reason is neither CORS nor a certificate: **a browser is not an HTTP server**, so it cannot be the far end of a push at all. That is a property of the specification rather than of this service, and no amount of proxying changes it. It is the only endpoint here that is unauthenticated AND accepts data, and `api/ssf_receiver.js` argues the five structural bounds that stand in for a gate.
+
 ## Outbound calls: the address policy and the sixteen settings
 
 It fetches URLs its **caller** chooses (token, introspection, revocation, device-authorization and userinfo endpoints, the SAML ArtifactResolve back-channel, the WS-Trust STS, the generic proxy), so `api/ssrf_guard.js` refuses outbound calls to loopback and private networks — otherwise anyone who can reach the api can use it to probe `127.0.0.1`, the deployment's private neighbours, or `169.254.169.254` (cloud metadata, which hands out credentials). It is installed **once** on the shared axios instance in `server.js`, so every call site present and future is covered, and it works in two layers: a request interceptor for a readable error, plus the http/https **agents** — which is what catches **redirects** (axios follows them, so a public host answering `302 → http://127.0.0.1` walks past a URL-only check) and closes most of the DNS-rebinding window. The agent needs **two** hooks, not one: a custom DNS `lookup` for hosts given as names, and a wrapped `createConnection` for hosts given as literal addresses — Node never calls `lookup` for a literal, and a redirect `Location` usually is one. That gap was real and is what `tests/api_ssrf_guard.js` caught on its first run. Hostnames are judged by what they RESOLVE to, so `localtest.me` and `127.0.0.1.nip.io` are caught by the same rule, and IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is reduced to its IPv4 form because that is the address the socket reaches.
@@ -208,6 +210,85 @@ server on the other end — so a rule that stopped being enforced fails a test
 naming the rule rather than timing out against a host. `GET /scim/limits`
 publishes the methods, the refused headers, the caps and the status rule, and is
 also how the page discovers whether there is an api at all. See `docs/scim.md`.
+
+## Shared Signals: the SCIM proxy's shape, and one thing that is neither
+
+`POST /ssf/call` (`api/ssf_proxy.js`) performs one Shared Signals request on the
+caller's behalf, and it is `POST /scim`'s shape rather than the LDAP relay's:
+SSF's management API, its status, subject, verification and poll endpoints are
+all ordinary HTTPS with a JSON body, so `client/public/ssf.html` calls a
+transmitter directly by default and is on the static deployments.
+
+So it exists for the same three things a browser cannot do, and **the first
+bites harder here than on the SCIM page**: a transmitter's stream management API
+is a CONTROL PLANE — it decides who gets told that somebody's session was
+revoked — and it sends no `Access-Control-Allow-Origin`. The other two are a
+self-signed certificate and reporting the whole exchange.
+
+**THE THREE OUTCOMES ARE THE SAME THREE, AND THE THIRD MATTERS MORE HERE THAN
+ANYWHERE ELSE THIS PATTERN IS USED.** A refusal by this service is a **400**; a
+network failure is a **502**; and an SSF error from the transmitter is a **200**
+carrying that status and its RFC 8935 `{err, description}`. What an SSF refusal
+SAYS is the reason: `invalid_audience` on a stream whose `aud` is wrong, a 403
+naming the scope, a 400 naming the member of a subject identifier RFC 9493 does
+not define. Every one of those is the transmitter explaining exactly what is
+wrong, in a sentence, and an endpoint that reported them as failures would throw
+away the most useful thing this workflow can show.
+
+**A BODY ON A DELETE IS ALLOWED HERE AND REFUSED BY THE SCIM PROXY**, which is
+the one place the two differ and it is the protocol rather than an
+inconsistency: SSF's stream management API is ONE PATH with five methods, and a
+DELETE names the stream it is deleting in a JSON body. Refusing it would make
+the delete unreachable through this endpoint. A body on a GET is still refused
+rather than dropped, for `scim_proxy.js`'s reason.
+
+**The address policy is not re-implemented here**, for that file's reason: this
+is an axios call, so the guard installed once on the shared instance already
+covers it, redirects included. There is no `ssfAllowedPorts` either — SSF is
+HTTP, and a port allowlist for HTTP has to carry 80, 443 and every alternate.
+
+The setting is **`ssfMaxRequestBytes`** (default 262144), a second cap beside
+`maxContentLength` rather than a copy of it: an Add Subject carrying an
+`aliases` identifier with fifty members is a large REQUEST and an EMPTY
+response, since SSF answers 204 with no body.
+
+### The push receiver is the one thing here a browser genuinely cannot be
+
+`POST /ssf/receiver` makes an inbox, `POST /ssf/receiver/:id` is the RFC 8935
+endpoint a transmitter pushes to, `GET /ssf/receiver/:id/events` is how the page
+collects, and `DELETE /ssf/receiver/:id` drops it. `api/ssf_receiver.js` holds
+every decision; these handlers are wiring.
+
+**IT IS UNAUTHENTICATED AND IT ACCEPTS DATA, WHICH IS THE MOST DANGEROUS SHAPE
+ANYTHING IN THIS SERVICE HAS.** It has to be: what pushes to it is somebody
+else's transmitter, and the only credential in that exchange is the
+`authorization_header` the RECEIVER chose — which this service would have to be
+told and which does not authenticate the transmitter to us anyway. So the bounds
+are structural rather than a gate: an inbox exists only because somebody asked
+and its id is sixteen random bytes; every inbox expires and is swept from every
+entry point rather than on a timer; the counts are capped and the OLDEST event
+goes when the ring fills; each event is size-capped; and `ssfReceiverEnabled`
+turns the whole thing off, which is what the deployed configurations do.
+
+**Nothing is executed, rendered or forwarded**, and no signature is checked: this
+service holds no key of the transmitter's, and a receiver that refused what it
+could not verify would be unable to show anybody WHY — which is the question the
+workflow exists to answer. The page verifies.
+
+**THE BODY PARSER IS PART OF THIS AND IS EASY TO MISS.** A Security Event Token
+arrives as `application/secevent+jwt` (RFC 8417 section 2.3), which neither
+`bodyParser.json()` nor `bodyParser.urlencoded()` touches — so without the text
+parser `server.js` installs for that type, `req.body` is an empty object and
+every push is reported as an empty body, a failure that reads as a transmitter
+sending nothing. It also accepts `application/jwt`, and that is not a mistake:
+that is what a transmitter which gets the media type wrong sends, and the
+receiver REPORTS it rather than refusing, because a receiver dispatching on the
+type drops such a token with no error anybody sees and it is a finding worth
+surfacing. A parser that refused it would hide the finding behind an empty body.
+
+`GET /ssf/limits` publishes all of it, and it is also how the page learns there
+is an api at all. `tests/api_ssf.js` drives the routes; `tests/ssf_engine.js`
+drives both modules with no listener. See `docs/ssf.md`.
 
 ## SPIFFE: gRPC, and the only endpoint here that dials a filesystem path
 

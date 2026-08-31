@@ -1,0 +1,390 @@
+/* ssf.css — the Shared Signals (SSF) Debugger's look.
+ *
+ * Every class here is prefixed `ssf-`, and tests/navigation.js's
+ * checkStylesheetsLoaded() knows that prefix: a page using an `ssf-` class this
+ * sheet does not define fails that test. That guard exists because the
+ * WS-Federation pages once linked the wrong stylesheet after a rename and
+ * rendered completely unstyled — the link resolved, so nothing 404'd and
+ * nothing noticed.
+ *
+ * THIS PAGE DOES NOT LINK css/saml_common.css, for the reason the LDAP and
+ * Kerberos sheets do not: `saml-*` names on a page that has nothing to do with
+ * SAML is the halfway state the guard above is written to catch. So a few
+ * rules here are that sheet's twice over, deliberately.
+ *
+ * TWO LAYOUT CONSTRAINTS, and both are about values this page does not
+ * control the length of. A Security Event Token is one unbroken base64url
+ * string of several hundred characters; a subject identifier's `uri` can be
+ * longer; an event-type URI is 60-odd characters with no spaces in it. Every
+ * one of those, in an auto-layout table sized to min-content, is exactly how a
+ * pane ends up wider than the viewport — so the token, URI and value cells are
+ * capped and break on any character, and every readout is a `textarea` rather
+ * than a `pre` for the reason docs/scim.md records: a fieldset's
+ * `min-inline-size: min-content` sizes the pane to the longest line in it, and
+ * one percent-encoded value took a pane there to 7511px.
+ */
+
+
+.ssf-return {
+  float: right;
+  margin: 4px 0 0;
+  font-size: 0.95em;
+}
+
+.ssf-title { margin-bottom: 6px; margin-top: 2px; line-height: 1.25; }
+
+.ssf-intro {
+  max-width: 900px;
+  margin-bottom: 10px;
+}
+
+.ssf-pane {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 10px 14px 14px;
+  margin-bottom: 14px;
+  background: #fcfcfd;
+}
+
+.ssf-pane > legend {
+  width: auto;
+  border: 0;
+  margin-bottom: 4px;
+  padding: 0 6px;
+  font-size: 15px;
+  font-weight: bold;
+  color: #12107c;
+  line-height: 1.2;
+}
+
+.ssf-sub {
+  border-top: 1px solid #e6e6ea;
+  margin-top: 12px;
+  padding-top: 10px;
+}
+
+.ssf-sub-title {
+  font-weight: bold;
+  margin-bottom: 4px;
+}
+
+/* THE ELEMENT-AND-ATTRIBUTE SELECTOR OUTRANKS A BARE CLASS, so the class has to
+   name the element too. Bootstrap's `input[type="text"], select, textarea
+   { margin-bottom: 10px }` is (0,1,1) and a bare `.ssf-field` is (0,1,0) — the
+   4px asked for here would lose to 10px on every text input on the page, which
+   looks like generous spacing rather than a rule that is not applying. The
+   Kerberos sheet records the same trap; it is not specific to that workflow. */
+.ssf-field {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+}
+
+input.ssf-field,
+select.ssf-field,
+textarea.ssf-field {
+  margin-bottom: 4px;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.ssf-label {
+  display: block;
+  font-weight: bold;
+  margin-top: 6px;
+  margin-bottom: 2px;
+  font-size: 12px;
+}
+
+/* A label with a Copy button sitting on the same line as its text. */
+.ssf-has-copy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ssf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0 14px;
+}
+
+.ssf-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  flex-wrap: wrap;
+}
+
+.ssf-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 8px 0 4px;
+}
+
+.ssf-btn {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: 1px solid #bbb;
+  border-radius: 3px;
+  background: #f4f4f8;
+  cursor: pointer;
+}
+
+.ssf-btn:hover { background: #ececf4; }
+
+.ssf-status {
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.ssf-grow { flex: 1 1 320px; min-width: 220px; }
+
+.ssf-ok { color: #2e7d32; }
+.ssf-bad { color: #b00; }
+.ssf-pending { color: #8a6d00; }
+
+.ssf-note {
+  font-size: 12px;
+  color: #555;
+  margin: 4px 0 6px;
+  max-width: 900px;
+}
+
+.ssf-limits {
+  font-size: 12px;
+  color: #444;
+  background: #f6f6fa;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 6px 0;
+}
+
+.ssf-result {
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+  margin: 6px 0;
+  word-break: break-word;
+}
+
+.ssf-count {
+  font-size: 12px;
+  font-weight: bold;
+  color: #333;
+}
+
+.ssf-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin: 6px 0;
+}
+
+.ssf-table th,
+.ssf-table td {
+  border: 1px solid #e0e0e6;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.ssf-table th { background: #f0f0f5; }
+
+/* A DN has no spaces in it worth breaking at, so it has to be allowed to break
+   anywhere or one entry widens the whole table past the container. */
+.ssf-history-uri {
+  font-family: Menlo, Consolas, monospace;
+  word-break: break-all;
+}
+
+.ssf-raw {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 12px;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* The Operations History pane. op_history.js emits `<prefix>-history-scroll`,
+   `<prefix>-table`, `<prefix>-history`, `<prefix>-history-time` and
+   `<prefix>-history-empty` with the prefix this workflow passes it (`ssf`), so
+   all five have to be defined here or checkStylesheetsLoaded() fails the page —
+   which is exactly the mistake the Kerberos pages made when they first reused
+   that module. */
+.ssf-history-scroll {
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid #e0e0e6;
+}
+
+.ssf-history { margin: 0; }
+
+.ssf-history-time {
+  white-space: nowrap;
+  color: #666;
+  width: 6.5em;
+}
+
+.ssf-history-empty {
+  font-size: 12px;
+  color: #666;
+  margin: 6px 0;
+}
+
+
+/* ---------------------------------------------------------------------------
+   The parts this page has and the LDAP one does not.
+   ------------------------------------------------------------------------ */
+
+/* The Configuration Parameters table. Bootstrap gives every text input a fixed
+   206px (`input, textarea, .uneditable-input`), which takes no notice of the
+   cell it is in — the same trap docs recorded for the OAuth2 pages' config
+   pane. So the fields fill their column and the checkboxes, radios and buttons
+   stay intrinsic, because those are as wide as they look. */
+.ssf-config { table-layout: auto; }
+.ssf-config th:first-child,
+.ssf-config td:first-child { width: 22%; }
+.ssf-config input[type="text"],
+.ssf-config input[type="password"],
+.ssf-config select,
+.ssf-config textarea { width: 100%; box-sizing: border-box; }
+.ssf-config input[type="checkbox"],
+.ssf-config input[type="radio"] { width: auto; }
+.ssf-source { color: #666; font-size: 11px; white-space: nowrap; }
+
+.ssf-radio {
+  display: inline-block;
+  margin-right: 12px;
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.ssf-narrow { max-width: 220px; }
+.ssf-tiny { max-width: 90px; }
+.ssf-mono { font-family: Menlo, Consolas, monospace; font-size: 12px; }
+.ssf-hidden { display: none; }
+
+/* The api call path, greyed where there is no api. It is greyed with COLOURS
+   rather than `opacity`, for the reason css/pki.css records about its TLS
+   pane: opacity makes a stacking context, and the one line in a disabled row
+   that has to be readable — the notice saying why — could then not be brought
+   back to full contrast by any rule of its own. */
+.ssf-path-disabled { color: #888; }
+.ssf-path-disabled input { cursor: not-allowed; }
+
+.ssf-identity {
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  background: #f8f8fc;
+  padding: 8px 10px;
+  margin: 8px 0;
+  font-size: 12px;
+}
+
+.ssf-identity-who {
+  font-weight: bold;
+  color: #12107c;
+  font-size: 13px;
+}
+
+.ssf-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 2px 14px;
+  margin: 4px 0 6px;
+}
+
+.ssf-checks label {
+  font-size: 12px;
+  font-weight: normal;
+  overflow-wrap: anywhere;
+}
+
+/* The events_requested boxes, which client/src/ssf.js CREATES from the
+   transmitter's own events_supported rather than writing into the markup —
+   the class is how it finds them again. It is defined here for the reason
+   every class on this page is: checkStylesheetsLoaded() in
+   tests/navigation.js fails a page using an `ssf-` class no sheet it loads
+   defines, and a dynamically created element is exactly the kind that gets
+   missed, because it is not on the page until something has been fetched. */
+.ssf-event-choice { margin-right: 4px; }
+
+/* An event-type URI, a jti and a token. None has a space in it. */
+.ssf-uri,
+.ssf-jti,
+.ssf-token { font-family: Menlo, Consolas, monospace; word-break: break-all; }
+
+.ssf-token { font-size: 11px; }
+
+/* The findings list. Three severities, and they are COLOURS plus a word
+   rather than a colour alone — a reader who cannot tell the two greens apart
+   still has to be able to tell an error from a note. */
+.ssf-finding {
+  font-size: 12px;
+  margin: 3px 0;
+  padding-left: 1.1em;
+  text-indent: -1.1em;
+}
+.ssf-finding-error { color: #b00; }
+.ssf-finding-warn { color: #8a6d00; }
+.ssf-finding-note { color: #2e7d32; }
+
+.ssf-btn-danger { border-color: #c99; background: #fdf3f3; }
+.ssf-btn-danger:hover { background: #f8e7e7; }
+.ssf-btn-quiet { background: #fafafc; }
+
+.ssf-message {
+  border: 1px solid #e0e0e6;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 6px 0;
+  font-size: 12px;
+  background: #fff;
+}
+
+.ssf-message-sent { border-left: 4px solid #2680eb; }
+.ssf-message-received { border-left: 4px solid #0a7d63; }
+
+.ssf-message-head {
+  font-weight: bold;
+  margin-bottom: 3px;
+  overflow-wrap: anywhere;
+}
+
+.ssf-message-when { color: #666; font-weight: normal; }
+
+.ssf-families { margin: 8px 0; }
+
+.ssf-family {
+  font-size: 12px;
+  margin: 4px 0;
+  padding: 6px 8px;
+  border: 1px solid #e4e4ec;
+  border-radius: 3px;
+  background: #f8f8fc;
+}
+
+.ssf-family-absent { color: #777; background: #f4f4f6; }
+
+.ssf-family-name { font-weight: bold; color: #12107c; }
+.ssf-family-absent .ssf-family-name { color: #666; }
+
+/* The metadata table. `table-layout: fixed` because it renders a document this
+   page does not control: a transmitter that publishes a 300-character endpoint
+   would otherwise size the whole table to it. */
+.ssf-metadata { table-layout: fixed; }
+.ssf-metadata td:first-child { width: 20%; }
+.ssf-metadata td:nth-child(2) { width: 34%; }
+.ssf-metadata-missing { color: #b00; font-weight: bold; }
+.ssf-metadata-absent { color: #8a6d00; }
+.ssf-metadata-extra { color: #555; font-style: italic; }
