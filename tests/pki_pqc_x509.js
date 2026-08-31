@@ -46,9 +46,11 @@
 //      checks only the post-quantum half would pass without.
 //   3. HYBRID — a classical certificate carrying a second key and a second
 //      signature in the X.509 (2019) alternative extensions. Here the oracle
-//      is the OLD `openssl` binary, deliberately: the whole claim of a hybrid
-//      certificate is that a validator which has never heard of any of this
-//      still accepts it, and OpenSSL 3.0 is exactly such a validator.
+//      is the `openssl` BINARY, deliberately: the whole claim of a hybrid
+//      certificate is that a validator which does not ENFORCE those
+//      extensions accepts it anyway, and every openssl is exactly such a
+//      validator — 3.0 has never heard of them, and 3.5 prints them without
+//      checking them. Both spellings of their names are accepted below.
 //
 // ---------------------------------------------------------------------------
 // ONE PERFORMANCE DECISION IS VISIBLE IN THE ASSERTIONS AND IS WRITTEN DOWN
@@ -638,23 +640,38 @@ async function hybridCertificatesCarryTwoSignatures() {
         " does not verify: " + (link.alternative.reason || ""));
     });
 
-    // THE POINT OF THE WHOLE EXERCISE: OpenSSL 3.0 — which has never heard of
-    // ML-DSA, of the composite draft, or of clause 9.8 — must verify this
-    // chain as an ordinary one and ignore the three extensions.
+    // THE POINT OF THE WHOLE EXERCISE: the `openssl` binary — which does not
+    // enforce clause 9.8's extensions whatever its version, and which on 3.0
+    // has never heard of ML-DSA or of the composite draft either — must
+    // verify this chain as an ordinary one.
     const caFile = writePem("hybrid-ca.pem", ca.pem);
     const leafFile = writePem("hybrid-leaf.pem", leaf.pem);
     const verdict = execFileSync("openssl",
         ["verify", "-CAfile", caFile, leafFile], { encoding: "utf8" });
     assert.ok(/OK/.test(verdict),
-      combo.alt + ": OpenSSL 3.0 refused a hybrid certificate, which defeats " +
-      "the entire purpose of putting the second key in an extension: " +
-      verdict);
+      combo.alt + ": the openssl binary refused a hybrid certificate, which " +
+      "defeats the entire purpose of putting the second key in an " +
+      "extension — a validator that does not enforce those extensions must " +
+      "accept it: " + verdict);
+    // THE BINARY NAMES THESE TWO WAYS AND BOTH ARE ACCEPTED, because which
+    // one you get is a fact about the openssl on the PATH rather than about
+    // the certificate: 3.0 has no entry for these OIDs and prints them as
+    // numbers, and 3.5 knows them and prints "X509v3 Subject Alternative
+    // Public Key Info". What is asserted is that all three extensions are
+    // THERE and that this binary — whichever it is — read the certificate
+    // rather than refusing it.
     const text = execFileSync("openssl",
         ["x509", "-in", leafFile, "-noout", "-text"], { encoding: "utf8" });
-    ["2.5.29.72", "2.5.29.73", "2.5.29.74"].forEach(function (oid) {
-      assert.ok(text.indexOf(oid) >= 0,
-        combo.alt + ": OpenSSL does not report extension " + oid + ", so it " +
-        "is not in the certificate");
+    const spellings = [
+      ["2.5.29.72", "Subject Alternative Public Key Info"],
+      ["2.5.29.73", "Alternative Signature Algorithm"],
+      ["2.5.29.74", "Alternative Signature Value"]
+    ];
+    spellings.forEach(function (pair) {
+      assert.ok(text.indexOf(pair[0]) >= 0 || text.indexOf(pair[1]) >= 0,
+        combo.alt + ": OpenSSL reports neither " + pair[0] + " nor \"" +
+        pair[1] + "\", so that extension is not in the certificate this " +
+        "build claims to have written");
     });
 
     // A hybrid certificate whose alternative signature is tampered with must
@@ -1009,7 +1026,8 @@ const program = new Command();
 program
   .name("pki_pqc_x509")
   .description("Verify post-quantum certificate authoring — pure, composite " +
-      "and hybrid — against OpenSSL 3.5 and against OpenSSL 3.0.")
+      "and hybrid — against node's pinned OpenSSL and against whichever " +
+      "openssl binary is on the PATH.")
   .addOption(new Option("-u, --url <url>", "base url (unused: this test " +
       "needs no browser)"))
   .parse(process.argv);
