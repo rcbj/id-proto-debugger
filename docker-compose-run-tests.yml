@@ -465,6 +465,22 @@ services:
       # stack shares the machine with the pool, so a job that is merely starved
       # looks exactly like one that has hung.
       TEST_JOB_TIMEOUT_MS: ${TEST_JOB_TIMEOUT_MS:-}
+      # THE NAME THE TRANSMITTER HAS TO REACH THIS CONTAINER BY, which is
+      # the one thing about RFC 8935 push delivery that cannot be worked out
+      # from inside the test. `ssf_protocol.js` hosts a push endpoint of its
+      # own — that is what makes push testable end to end at all, since the
+      # far end of a push has to be an HTTP server and a browser is not one —
+      # and it has to hand the mock a URL the MOCK can dial. Its own idea of
+      # itself is `localhost`, which on this bridge stack is the sts container
+      # rather than this one, so the push would be delivered to the
+      # transmitter itself and the test would wait for an event that had
+      # already arrived somewhere else.
+      #
+      # `tests` is this service's compose DNS name. The local launcher needs
+      # no such entry and deliberately has none: local-tests.yml puts every
+      # service on HOST networking, where the test's own default of
+      # `localhost` is already the right answer.
+      SSF_RECEIVER_HOST: tests
       # Where the mock's SPIRE Server API private socket is mounted in this
       # container. It is the `local` entity and the only route to a method
       # SPIRE's own table marks local-only.
