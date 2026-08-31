@@ -1158,6 +1158,203 @@ function limitsArePublished() {
   log.debug("Leaving limitsArePublished().");
 }
 
+// ---------------------------------------------------------------------------
+// POST-QUANTUM TLS, AND THE THREE ANSWERS IT HAS.
+//
+// This is the case the PKI page's whole post-quantum half exists to reach: a
+// certificate authority built in a browser, an ML-DSA server certificate, and
+// a real TLS 1.3 handshake against it. It works because every image here pins
+// node 24.16, whose OpenSSL is 3.5.6 — the release that added ML-DSA, SLH-DSA
+// and ML-KEM.
+//
+// THE THREE ANSWERS, and the middle one is the interesting one:
+//
+//   * ML-DSA certificates NEGOTIATE. OpenSSL 3.5 has TLS signature algorithms
+//     for all three parameter sets, so a server can present one and a client
+//     can verify it.
+//   * SLH-DSA certificates DO NOT, and the refusal comes from
+//     tls.createServer() before a byte is sent: "unknown certificate type".
+//     There are no TLS signature-algorithm codepoints for SLH-DSA — it is a
+//     certificate algorithm, not a handshake one — and asserting that here
+//     is how this project avoids claiming a capability it does not have.
+//   * COMPOSITE certificates do not either, for the plainer reason that no
+//     released OpenSSL implements the draft at all.
+//
+// The report has to keep the KEY EXCHANGE and the CERTIFICATE apart, because
+// they answer different questions on different timescales — see the note above
+// postQuantumProfile() in api/tls_probe.js.
+// ---------------------------------------------------------------------------
+async function mlDsaCertificatesNegotiate() {
+  log.debug("Entering mlDsaCertificatesNegotiate().");
+  const built = await buildPqcPki();
+  const listener = await startServer({
+    key: built.server.key.privatePem,
+    cert: built.server.cert.pem,
+    minVersion: "TLSv1.3"
+  });
+  const probe = probeFor();
+  try {
+    const report = (await probe.connect({
+      host: "127.0.0.1", port: listener.port, servername: "probe.example.test",
+      trustCertificates: [built.root.cert.pem]
+    })).result;
+    assert.strictEqual(report.connected, true,
+      "an ML-DSA server certificate did not complete a handshake: " +
+      JSON.stringify(report.error));
+    assert.strictEqual(report.authorized, true,
+      "the ML-DSA chain did not verify against its own root: " +
+      report.authorizationError);
+    assert.strictEqual(report.protocol, "TLSv1.3",
+      "a post-quantum certificate is TLS 1.3 only");
+    const pq = report.postQuantum;
+    assert.ok(pq, "the report carries no post-quantum section");
+    assert.strictEqual(pq.leafCertificate.signatureAlgorithm, "ML-DSA-65",
+      "the leaf's signature algorithm was read as " +
+      pq.leafCertificate.signatureAlgorithm);
+    assert.strictEqual(pq.leafCertificate.signatureIsPostQuantum, true,
+      "an ML-DSA signature was not recognised as post-quantum");
+    assert.strictEqual(pq.leafCertificate.publicKeyType, "ml-dsa-65",
+      "OpenSSL read the leaf's public key as " +
+      pq.leafCertificate.publicKeyType);
+    assert.strictEqual(pq.anyPostQuantumCertificate, true,
+      "the chain was not reported as post-quantum");
+    // And the SIGNATURE ALGORITHM restriction has to bite in both
+    // directions, which is the only way to prove the ML-DSA signature is
+    // what authenticated the server rather than something else.
+    const mldsaOnly = (await probe.connect({
+      host: "127.0.0.1", port: listener.port, servername: "probe.example.test",
+      trustCertificates: [built.root.cert.pem],
+      sigalgs: "mldsa44:mldsa65:mldsa87"
+    })).result;
+    assert.strictEqual(mldsaOnly.connected, true,
+      "a client that accepts only ML-DSA signatures could not talk to an " +
+      "ML-DSA server: " + JSON.stringify(mldsaOnly.error));
+    const classicalOnly = (await probe.connect({
+      host: "127.0.0.1", port: listener.port, servername: "probe.example.test",
+      trustCertificates: [built.root.cert.pem],
+      sigalgs: "ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256"
+    })).result;
+    assert.strictEqual(classicalOnly.connected, false,
+      "a client that refuses post-quantum signatures completed a handshake " +
+      "with a server whose only certificate is ML-DSA — so the sigalgs " +
+      "list is not reaching OpenSSL and neither result above means anything");
+  } finally {
+    listener.close();
+  }
+  log.debug("Leaving mlDsaCertificatesNegotiate().");
+}
+
+async function theKeyExchangeIsReportedSeparately() {
+  log.debug("Entering theKeyExchangeIsReportedSeparately().");
+  const built = await buildPki();
+  const listener = await startServer(await serverOptions({
+    minVersion: "TLSv1.3" }));
+  const probe = probeFor();
+  try {
+    // A CLASSICAL certificate with an explicitly classical group: both halves
+    // must read as classical, and node can name the group.
+    const classical = (await probe.connect({
+      host: "127.0.0.1", port: listener.port, servername: "probe.example.test",
+      trustCertificates: [built.ourRoot.cert.pem], groups: "x25519"
+    })).result;
+    assert.strictEqual(classical.connected, true,
+      "the classical group was refused: " + JSON.stringify(classical.error));
+    assert.ok(classical.postQuantum.ephemeralKey,
+      "node could not name X25519, which it has always been able to name");
+    assert.strictEqual(classical.postQuantum.ephemeralKey.name, "X25519",
+      "the group asked for was not the group used");
+    assert.strictEqual(classical.postQuantum.anyPostQuantumCertificate, false,
+      "an ECDSA chain was reported as post-quantum");
+    assert.ok(/NOT protected/.test(classical.postQuantum.keyExchangeNote),
+      "the note about a classical group does not say what it costs");
+
+    // And the hybrid one. Node cannot NAME it — its API has no case for an
+    // ML-KEM group — so the assertion is exactly that: the handshake
+    // completed, and the report says node could not name what was used
+    // rather than guessing.
+    const hybrid = (await probe.connect({
+      host: "127.0.0.1", port: listener.port, servername: "probe.example.test",
+      trustCertificates: [built.ourRoot.cert.pem], groups: "X25519MLKEM768"
+    })).result;
+    assert.strictEqual(hybrid.connected, true,
+      "X25519MLKEM768 was refused by an OpenSSL that has it: " +
+      JSON.stringify(hybrid.error));
+    assert.strictEqual(hybrid.postQuantum.ephemeralKey, null,
+      "node named the hybrid group — if a release has taught " +
+      "getEphemeralKeyInfo() about ML-KEM, this report should use the name " +
+      "rather than explaining its absence");
+    assert.strictEqual(hybrid.postQuantum.requestedGroups, "X25519MLKEM768",
+      "the group asked for is not echoed back, so a reader cannot tell " +
+      "which connection this report describes");
+    assert.ok(/ML-KEM hybrid/.test(hybrid.postQuantum.keyExchangeNote),
+      "the note does not explain what an unnamed group means");
+  } finally {
+    listener.close();
+  }
+  log.debug("Leaving theKeyExchangeIsReportedSeparately().");
+}
+
+async function slhDsaCertificatesAreRefusedByTls() {
+  log.debug("Entering slhDsaCertificatesAreRefusedByTls().");
+  const key = await keys.generateKeyPair("slh-dsa-sha2-128f");
+  const cert = await x509.issueCertificate({
+    profile: "root-ca", subject: "CN=SLH-DSA Server,O=idptools",
+    subjectPublicKey: key.publicPem, issuerPrivateKey: key.privatePem,
+    signatureAlg: "slh-dsa-sha2-128f",
+    extensions: x509.defaultExtensions("root-ca")
+  });
+  let message = null;
+  try {
+    tls.createServer({ key: key.privatePem, cert: cert.pem });
+  } catch (e) {
+    message = e.message;
+  }
+  assert.ok(message,
+    "OpenSSL accepted an SLH-DSA certificate for TLS. If a release has " +
+    "added TLS signature algorithms for SLH-DSA, this test should start " +
+    "using them rather than asserting they do not exist");
+  assert.ok(/unknown certificate type|unsupported/i.test(message),
+    "SLH-DSA was refused for an unexpected reason: " + message);
+  log.info("SLH-DSA is a certificate algorithm and not a TLS one: " +
+      message.split("\n")[0]);
+  log.debug("Leaving slhDsaCertificatesAreRefusedByTls().");
+}
+
+// A second, post-quantum PKI beside the classical one above: an ML-DSA-65
+// root and an ML-DSA-65 server certificate for the same names.
+var pqcPki = null;
+
+async function buildPqcPki() {
+  log.debug("Entering buildPqcPki().");
+  if (pqcPki) {
+    log.debug("Leaving buildPqcPki(). Cached.");
+    return pqcPki;
+  }
+  const rootKey = await keys.generateKeyPair("ml-dsa-65");
+  const rootCert = await x509.issueCertificate({
+    profile: "root-ca", subject: "CN=Post-Quantum Probe Root,O=idptools",
+    subjectPublicKey: rootKey.publicPem, issuerPrivateKey: rootKey.privatePem,
+    signatureAlg: "ml-dsa-65", extensions: x509.defaultExtensions("root-ca")
+  });
+  const serverKey = await keys.generateKeyPair("ml-dsa-65");
+  const ext = x509.defaultExtensions("tls-server");
+  ext.subjectAltName = { present: true, critical: false,
+      names: [{ kind: "dns", value: "probe.example.test" },
+              { kind: "dns", value: "localhost" },
+              { kind: "ip", value: "127.0.0.1" }] };
+  const serverCert = await x509.issueCertificate({
+    profile: "tls-server", subject: "CN=probe.example.test,O=idptools",
+    subjectPublicKey: serverKey.publicPem,
+    issuer: { certificatePem: rootCert.pem,
+             privateKeyPem: rootKey.privatePem, keyAlg: "ml-dsa-65" },
+    signatureAlg: "ml-dsa-65", extensions: ext
+  });
+  pqcPki = { root: { key: rootKey, cert: rootCert },
+             server: { key: serverKey, cert: serverCert } };
+  log.debug("Leaving buildPqcPki().");
+  return pqcPki;
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Verifying api/tls_probe.js.");
@@ -1175,6 +1372,9 @@ async function test() {
   await theServerIsAskedWhatItSaw();
   await everyDeadlineIsSeparateAndArmed();
   await everyPathSettles();
+  await theKeyExchangeIsReportedSeparately();
+  await slhDsaCertificatesAreRefusedByTls();
+  await mlDsaCertificatesNegotiate();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

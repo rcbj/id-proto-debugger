@@ -165,7 +165,12 @@ function status(message) {
 // is the checkbox `pki_save_keys`. Everything this function writes is
 // configuration — subjects, algorithms, extension text, TLS settings.
 // ---------------------------------------------------------------------------
-var KEYPAIR_FIELDS = ['pki_private_key', 'pki_public_key'];
+// The alternative pair is key material in exactly the same sense as the
+// ordinary one — it is a CA signing key in a hybrid PKI — so it obeys the same
+// opt-out. A checkbox that purged one pair and left the other would be worse
+// than no checkbox, because it would read as protection.
+var KEYPAIR_FIELDS = ['pki_private_key', 'pki_public_key',
+                      'pki_alt_private_key', 'pki_alt_public_key'];
 
 function persistedEls() {
   log.debug("Entering persistedEls().");
@@ -1037,6 +1042,7 @@ function onProfileChange() {
   setVal('pki_validity_years', String(p.years || 1));
   refreshSignatureOptions();
   saveState();
+  renderAltNote();
   log.debug("Leaving onProfileChange().");
   return false;
 }
@@ -1151,6 +1157,7 @@ function refreshSignatureOptions() {
 function onIssuerChange() {
   log.debug("Entering onIssuerChange().");
   refreshSignatureOptions();
+  renderAltNote();
   saveState();
   log.debug("Leaving onIssuerChange().");
   return false;
@@ -1239,7 +1246,7 @@ async function issue() {
 
     var validity = validityDates();
     var serial = trimmed('pki_serial') || x509.randomSerialHex(16);
-    var result = await x509.issueCertificate({
+    var spec = {
       profile: profileId,
       subject: subject,
       subjectPublicKey: publicPem,
@@ -1253,7 +1260,27 @@ async function issue() {
       notBefore: validity.notBefore,
       notAfter: validity.notAfter,
       extensions: collectExtensions()
-    });
+    };
+    // The hybrid half. The subject's alternative PUBLIC key always goes in
+    // when this mode is on; the alternative SIGNATURE only when there is an
+    // alternative private key to make it with — the issuer's for an issued
+    // certificate, this pair's own for a self-signed one. A certificate with
+    // the key and no signature is a legitimate intermediate state (clause
+    // 9.8 says so explicitly) rather than a failure, and renderAltNote()
+    // says which one you are about to get.
+    var alt = null;
+    if (pqMode() === 'hybrid') {
+      alt = await altKeyPairForIssue();
+      spec.subjectAltPublicKey = alt.publicPem;
+      var altSignerPem = issuer ? issuer.altPrivateKeyPem : alt.privatePem;
+      var altSignerAlg = issuer ? issuer.altKeyAlg : alt.algId;
+      if (altSignerPem) {
+        spec.altSignature = { signatureAlg: altSignerAlg,
+                             privateKeyPem: altSignerPem,
+                             keyAlg: altSignerAlg };
+      }
+    }
+    var result = await x509.issueCertificate(spec);
 
     var stored = store.put({
       id: store.newId(p.ca ? 'ca' : 'leaf'),
@@ -1269,6 +1296,9 @@ async function issue() {
       signatureAlg: result.signatureAlg,
       privateKeyPem: privatePem,
       publicKeyPem: publicPem,
+      altKeyAlg: alt ? alt.algId : null,
+      altPrivateKeyPem: alt ? alt.privatePem : null,
+      altPublicKeyPem: alt ? alt.publicPem : null,
       certificatePem: result.pem,
       notBefore: result.notBefore,
       notAfter: result.notAfter,
@@ -1283,9 +1313,19 @@ async function issue() {
     var note = store.canSign(stored) ? ''
       : ' Its private key was not saved (key saving is off), so it cannot ' +
         'sign or be presented as a client certificate.';
+    var hybridNote = '';
+    if (alt && spec.altSignature) {
+      hybridNote = ' It also carries an alternative ' +
+          keys.KEY_ALGS[alt.algId].label + ' key and a second signature by ' +
+          keys.KEY_ALGS[spec.altSignature.keyAlg].label + '.';
+    } else if (alt) {
+      hybridNote = ' It carries an alternative ' +
+          keys.KEY_ALGS[alt.algId].label + ' key and NO alternative ' +
+          'signature, because the issuer has no alternative key.';
+    }
     status('Issued "' + result.subject + '", serial ' +
         result.serialHex.slice(0, 16) + '…, signed with ' +
-        x509.SIG_ALGS[result.signatureAlg].label + '.' + note);
+        x509.SIG_ALGS[result.signatureAlg].label + '.' + note + hybridNote);
     history.update(entryId, history.SUCCESS, result.subject);
   } catch (e) {
     log.error('issue: ' + e.message);
@@ -1478,7 +1518,13 @@ function chainTable(verdicts) {
   table.id = 'pki_chain_table';
   var head = document.createElement('thead');
   var headRow = document.createElement('tr');
-  ['Certificate', 'Signed by', 'Names match', 'Signature', 'Validity']
+  // SIX columns rather than five, and the sixth is separate from the fourth
+  // on purpose: no published profile says what a chain should do when the
+  // conventional signature verifies and the alternative one does not, so
+  // folding them into one verdict would be inventing a rule. '—' means the
+  // certificate carries no alternative signature at all.
+  ['Certificate', 'Signed by', 'Names match', 'Signature',
+   'Alternative signature', 'Validity']
     .forEach(function (label) {
       var th = document.createElement('th');
       th.textContent = label;
@@ -1489,10 +1535,20 @@ function chainTable(verdicts) {
   var body = document.createElement('tbody');
   verdicts.forEach(function (link) {
     var row = document.createElement('tr');
+    var alt = link.alternative || { present: false };
+    var altText = '—';
+    if (alt.present && alt.valid === true) {
+      altText = 'valid (' + (alt.algorithm || alt.algorithmOid) + ')';
+    } else if (alt.present && alt.valid === false) {
+      altText = 'INVALID (' + (alt.algorithm || alt.algorithmOid) + ')';
+    } else if (alt.present) {
+      altText = 'not checked: ' + (alt.reason || 'no reason given');
+    }
     [link.subject,
      link.selfSigned ? link.signedBy + ' (self-signed)' : link.signedBy,
      link.namesMatch ? 'yes' : 'NO',
      link.signatureValid ? 'valid' : (link.error || 'INVALID'),
+     altText,
      link.expired ? 'EXPIRED' : (link.notYetValid ? 'NOT YET VALID' : 'in date')
     ].forEach(function (text, index) {
       var td = document.createElement('td');
@@ -1501,7 +1557,11 @@ function chainTable(verdicts) {
         td.className = link.signatureValid ? 'saml-ok' : 'saml-bad';
       }
       if (index === 2 && !link.namesMatch) td.className = 'saml-bad';
-      if (index === 4 && (link.expired || link.notYetValid)) {
+      if (index === 4 && alt.present) {
+        td.className = alt.valid === true ? 'saml-ok'
+          : (alt.valid === false ? 'saml-bad' : '');
+      }
+      if (index === 5 && (link.expired || link.notYetValid)) {
         td.className = 'saml-bad';
       }
       row.appendChild(td);
@@ -1569,6 +1629,18 @@ function useStoredKey() {
   setVal('pki_public_key', entry.publicKeyPem);
   setVal('pki_key_alg', entry.keyAlg);
   setChecked('pki_key_jwk', false);
+  // And the alternative pair, if this object has one — re-issuing a hybrid
+  // CA for its own keys means BOTH of them, and loading half of a hybrid
+  // identity is the kind of half-done state that reads as a bug in the
+  // signature check three screens later.
+  if (entry.altPrivateKeyPem && entry.altPublicKeyPem) {
+    setVal('pki_alt_private_key', entry.altPrivateKeyPem);
+    setVal('pki_alt_public_key', entry.altPublicKeyPem);
+    if (entry.altKeyAlg) setVal('pki_alt_key_alg', entry.altKeyAlg);
+    setChecked('pki_alt_reuse_key', true);
+    setVal('pki_pq_mode', 'hybrid');
+    onPqModeChange();
+  }
   // Tick the reuse box with it: the one button above generates a fresh pair
   // by default, which would throw this one away between loading it and
   // issuing for it.
@@ -1735,6 +1807,8 @@ async function runTlsTest() {
       minVersion: val('pki_tls_min_version') || undefined,
       maxVersion: val('pki_tls_max_version') || undefined,
       ciphers: trimmed('pki_tls_ciphers') || undefined,
+      groups: trimmed('pki_tls_groups') || undefined,
+      sigalgs: trimmed('pki_tls_sigalgs') || undefined,
       alpnProtocols: lines('pki_tls_alpn'),
       trustCertificates: collectTruststore(),
       includeSystemRoots: checked('pki_tls_system_roots'),
@@ -1872,6 +1946,52 @@ function renderTlsReport(json) {
   body.appendChild(detailRow('Elapsed', (result.elapsedMs || 0) + ' ms'));
   table.appendChild(body);
   box.appendChild(table);
+
+  // The post-quantum reading, as its own block and with its two halves kept
+  // apart: the key exchange decides whether a RECORDING of this connection is
+  // safe from a future quantum computer, and the certificate decides whether
+  // the server can be IMPERSONATED by one. Almost every connection in 2026
+  // answers those two differently, and a single "post-quantum: yes" would be
+  // wrong for most of them.
+  if (result.postQuantum) {
+    var pq = result.postQuantum;
+    var pqTable = document.createElement('table');
+    pqTable.className = 'saml-table';
+    pqTable.id = 'pki_tls_pq_table';
+    var pqBody = document.createElement('tbody');
+    pqBody.appendChild(detailRow('Key exchange', pq.ephemeralKey
+      ? (pq.ephemeralKey.name + ' (' + pq.ephemeralKey.type + ', ' +
+         pq.ephemeralKey.size + ' bits)')
+      : 'not named by node'));
+    pqBody.appendChild(detailRow('What that means', pq.keyExchangeNote || ''));
+    if (pq.requestedGroups) {
+      pqBody.appendChild(detailRow('Groups asked for', pq.requestedGroups));
+    }
+    if (pq.requestedSigalgs) {
+      pqBody.appendChild(detailRow('Signature algorithms asked for',
+          pq.requestedSigalgs));
+    }
+    if (pq.leafCertificate) {
+      pqBody.appendChild(detailRow('Server certificate signed with',
+          (pq.leafCertificate.signatureAlgorithm ||
+           pq.leafCertificate.signatureAlgorithmOid || 'unknown') +
+          (pq.leafCertificate.signatureIsPostQuantum ? ' (post-quantum)'
+            : (pq.leafCertificate.signatureIsComposite ? ' (composite)'
+              : ''))));
+      pqBody.appendChild(detailRow('Its public key',
+          pq.leafCertificate.publicKeyType ||
+          'not readable by this OpenSSL — a composite key looks like this'));
+    }
+    pqBody.appendChild(detailRow('Verdict', pq.summary || ''));
+    pqTable.appendChild(pqBody);
+    var pqTitle = document.createElement('p');
+    pqTitle.className = 'saml-note';
+    pqTitle.textContent = 'Post-quantum posture — the two halves are ' +
+        'independent, and a connection can be protected against a recorded ' +
+        'attack and not against a forged certificate.';
+    box.appendChild(pqTitle);
+    box.appendChild(pqTable);
+  }
 
   if (json.mutualAuth) {
     var verdict = document.createElement('p');
@@ -2180,19 +2300,249 @@ function setAllPanes(collapsed) {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// THE FOUR APPROACHES THE SELECTOR OFFERS, AND WHAT EACH ONE FILTERS TO.
+//
+// `families` is matched against key_material.js's own `family` for the
+// post-quantum entries, and `classical` says whether the seven Web Crypto
+// algorithms are in the list. The note is what the page prints under the
+// selector: this is a debugger, and "which of these three should I use" is a
+// question it should answer rather than leave to the algorithm names.
+// ---------------------------------------------------------------------------
+var PQ_MODES = {
+  any: {
+    label: 'Any',
+    classical: true,
+    families: ['ML-DSA', 'SLH-DSA', 'Composite ML-DSA', 'ML-KEM'],
+    note: 'Every algorithm this build has. The three post-quantum families ' +
+        'and the classical ones are listed together; pick one of the other ' +
+        'approaches to narrow the list and read what it means.'
+  },
+  classical: {
+    label: 'Classical only',
+    classical: true,
+    families: [],
+    note: 'RSA, ECDSA and Ed25519 — what a certificate has carried since ' +
+        'RFC 5280. Nothing here resists a quantum adversary, which is the ' +
+        'whole reason the other three exist.'
+  },
+  pure: {
+    label: 'Pure post-quantum',
+    classical: false,
+    families: ['ML-DSA', 'SLH-DSA', 'ML-KEM'],
+    note: 'One key and one signature, both post-quantum: ML-DSA (RFC 9881), ' +
+        'SLH-DSA (RFC 9909) and, as a subject key only, ML-KEM (RFC 9935). ' +
+        'These are published standards and OpenSSL 3.5 reads them — and ' +
+        'anything older refuses the certificate outright, which is the ' +
+        'trade this approach makes.'
+  },
+  composite: {
+    label: 'Composite',
+    classical: false,
+    families: ['Composite ML-DSA'],
+    note: 'One OID naming an ML-DSA key AND a traditional key, with two ' +
+        'signatures concatenated inside the one signatureValue ' +
+        '(draft-ietf-lamps-pq-composite-sigs-19). A verifier either checks ' +
+        'both halves or understands neither, which is what makes it a ' +
+        'single algorithm rather than a pair. STILL A DRAFT: no released ' +
+        'OpenSSL implements it, so certificates issued here are test ' +
+        'artifacts.'
+  },
+  hybrid: {
+    label: 'Hybrid',
+    classical: true,
+    families: ['ML-DSA', 'SLH-DSA', 'Composite ML-DSA'],
+    note: 'A certificate signed TWICE: the ordinary fields carry whatever ' +
+        'you choose below, and a second key and signature go into the three ' +
+        'non-critical extensions of ITU-T X.509 (2019) clause 9.8. A ' +
+        'validator that has never heard of them sees an ordinary ' +
+        'certificate and accepts it — which is why this is the approach a ' +
+        'migration actually uses. Choose a classical algorithm below and a ' +
+        'post-quantum one in the pane beside it.'
+  }
+};
+
+function pqMode() {
+  log.debug("Entering pqMode().");
+  var mode = PQ_MODES[val('pki_pq_mode')] ? val('pki_pq_mode') : 'any';
+  log.debug("Leaving pqMode(). " + mode);
+  return mode;
+}
+
+// The key algorithms the current approach allows, in the registry's order.
+function allowedKeyAlgIds() {
+  log.debug("Entering allowedKeyAlgIds().");
+  var mode = PQ_MODES[pqMode()];
+  var out = keys.keyAlgIds().filter(function (id) {
+    var desc = keys.KEY_ALGS[id];
+    if (desc.kind !== 'pqc') return mode.classical;
+    return mode.families.indexOf(desc.family) >= 0;
+  });
+  log.debug("Leaving allowedKeyAlgIds(). " + out.length + " of them.");
+  return out;
+}
+
+// The Key Algorithm menu, grouped. Forty-one flat options is a scroll bar
+// with no landmarks in it; the groups are the families, which is also the
+// only grouping the standards themselves have.
+function refreshKeyAlgOptions() {
+  log.debug("Entering refreshKeyAlgOptions().");
+  var select = el('pki_key_alg');
+  if (!select) {
+    log.debug("Leaving refreshKeyAlgOptions(). No dropdown.");
+    return;
+  }
+  var previous = select.value;
+  var allowed = allowedKeyAlgIds();
+  while (select.firstChild) select.removeChild(select.firstChild);
+  var groups = {};
+  allowed.forEach(function (id) {
+    var desc = keys.KEY_ALGS[id];
+    var name = desc.kind === 'pqc' ? desc.family : 'Classical';
+    if (!groups[name]) {
+      groups[name] = document.createElement('optgroup');
+      groups[name].label = name;
+      select.appendChild(groups[name]);
+    }
+    var option = document.createElement('option');
+    option.value = id;
+    option.textContent = desc.label;
+    groups[name].appendChild(option);
+  });
+  if (allowed.indexOf(previous) >= 0) {
+    select.value = previous;
+  } else if (allowed.length) {
+    select.value = allowed[0];
+  }
+  log.debug("Leaving refreshKeyAlgOptions(). " + allowed.length +
+      " option(s).");
+}
+
+// The alternative key's menu: the post-quantum signature algorithms, because
+// a hybrid certificate whose second key is also RSA is a certificate signed
+// twice by the same century.
+function refreshAltKeyAlgOptions() {
+  log.debug("Entering refreshAltKeyAlgOptions().");
+  var select = el('pki_alt_key_alg');
+  if (!select || select.options.length) {
+    log.debug("Leaving refreshAltKeyAlgOptions(). Already filled.");
+    return;
+  }
+  keys.keyAlgIds().forEach(function (id) {
+    var desc = keys.KEY_ALGS[id];
+    if (desc.kind !== 'pqc' || desc.use !== 'sig') return;
+    var option = document.createElement('option');
+    option.value = id;
+    option.textContent = desc.label;
+    select.appendChild(option);
+  });
+  if (!select.value) select.value = 'ml-dsa-44';
+  log.debug("Leaving refreshAltKeyAlgOptions(). " + select.options.length +
+      " option(s).");
+}
+
+function onPqModeChange() {
+  log.debug("Entering onPqModeChange().");
+  var mode = PQ_MODES[pqMode()];
+  setText('pki_pq_note', mode.note);
+  show('pki_alt_pane', pqMode() === 'hybrid');
+  refreshKeyAlgOptions();
+  refreshSignatureOptions();
+  renderAltNote();
+  saveState();
+  log.debug("Leaving onPqModeChange().");
+  return false;
+}
+
+function onAltKeyAlgChange() {
+  log.debug("Entering onAltKeyAlgChange().");
+  renderAltNote();
+  saveState();
+  log.debug("Leaving onAltKeyAlgChange().");
+  return false;
+}
+
+// What the alternative pane says about the key that will actually SIGN. For a
+// self-signed certificate it is the pair in this pane; for an issued one it is
+// the issuer's, and if the issuer has none there is nothing to sign with —
+// which is worth saying before the button is pressed rather than after.
+function renderAltNote() {
+  log.debug("Entering renderAltNote().");
+  if (pqMode() !== 'hybrid') {
+    setText('pki_alt_note', '');
+    log.debug("Leaving renderAltNote(). Not hybrid.");
+    return;
+  }
+  var p = x509.profile(val('pki_profile')) || {};
+  if (p.selfSigned) {
+    setText('pki_alt_note', 'This certificate is self-signed, so the pair ' +
+        'above is both what goes into subjectAltPublicKeyInfo and what ' +
+        'signs the preTBSCertificate.');
+    log.debug("Leaving renderAltNote(). Self-signed.");
+    return;
+  }
+  var issuer = selectedIssuer();
+  if (!issuer) {
+    setText('pki_alt_note', 'Choose an issuer: its alternative private key ' +
+        'is what signs the alternative signature.');
+  } else if (!issuer.altPrivateKeyPem) {
+    setText('pki_alt_note', '"' + issuer.subject + '" has no alternative ' +
+        'key, so this certificate can carry an alternative PUBLIC key and ' +
+        'no alternative signature. A hybrid chain has to be hybrid the ' +
+        'whole way up — issue the CA in this mode first.');
+  } else {
+    setText('pki_alt_note', 'The alternative signature will be made with "' +
+        issuer.subject + '"\u2019s alternative key (' +
+        (keys.KEY_ALGS[issuer.altKeyAlg] || {}).label + ').');
+  }
+  log.debug("Leaving renderAltNote().");
+}
+
+// Generate the alternative pair into its fields.
+async function generateAltKeys() {
+  log.debug("Entering generateAltKeys().");
+  try {
+    var algId = val('pki_alt_key_alg') || 'ml-dsa-44';
+    var pair = await keys.generateKeyPair(algId);
+    setVal('pki_alt_private_key', pair.privatePem);
+    setVal('pki_alt_public_key', pair.publicPem);
+    saveState();
+    status('Generated an alternative ' + keys.KEY_ALGS[algId].label +
+        ' key pair.');
+  } catch (e) {
+    log.error('generateAltKeys: ' + e.message);
+    status('Could not generate the alternative key pair: ' + e.message);
+  }
+  log.debug("Leaving generateAltKeys().");
+  return false;
+}
+
+// The alternative pair to certify, generated if the fields are empty or the
+// reuse box is clear — the same rule the ordinary pair follows.
+async function altKeyPairForIssue() {
+  log.debug("Entering altKeyPairForIssue().");
+  var reuse = checked('pki_alt_reuse_key');
+  var privatePem = trimmed('pki_alt_private_key');
+  var publicPem = trimmed('pki_alt_public_key');
+  if (!reuse || !privatePem || !publicPem) {
+    var algId = val('pki_alt_key_alg') || 'ml-dsa-44';
+    var pair = await keys.generateKeyPair(algId);
+    setVal('pki_alt_private_key', pair.privatePem);
+    setVal('pki_alt_public_key', pair.publicPem);
+    privatePem = pair.privatePem;
+    publicPem = pair.publicPem;
+  }
+  log.debug("Leaving altKeyPairForIssue().");
+  return { privatePem: privatePem, publicPem: publicPem,
+           algId: val('pki_alt_key_alg') || 'ml-dsa-44' };
+}
+
 // Fill the two dropdowns that are driven by the modules rather than by markup,
 // so adding an algorithm or a profile is one table edit rather than two.
 function populateStaticOptions() {
   log.debug("Entering populateStaticOptions().");
-  var keySelect = el('pki_key_alg');
-  if (keySelect && !keySelect.options.length) {
-    keys.keyAlgIds().forEach(function (id) {
-      var option = document.createElement('option');
-      option.value = id;
-      option.textContent = keys.KEY_ALGS[id].label;
-      keySelect.appendChild(option);
-    });
-  }
+  refreshKeyAlgOptions();
+  refreshAltKeyAlgOptions();
   var profileSelect = el('pki_profile');
   if (profileSelect && !profileSelect.options.length) {
     x509.profileIds().forEach(function (id) {
@@ -2228,6 +2578,11 @@ window.onload = function () {
   // the module that enforces it.
   store.setSaveKeys(keyMaterialMayBeStored());
   renderKeyStorageNote();
+  // The approach selector drives the two menus and the alternative pane, and
+  // restoreState() has just put the saved value back — so it is applied here
+  // rather than waiting for the user to change it, or a reload would show
+  // "Hybrid" with the pane hidden.
+  onPqModeChange();
   if (!trimmed('pki_serial')) newSerial();
   // Before onProfileChange(), which fills the CN: these five do not follow the
   // profile and the DN reads as one block whichever order they are written in.
@@ -2252,6 +2607,9 @@ window.onload = function () {
 };
 
 module.exports = {
+  onPqModeChange: onPqModeChange,
+  onAltKeyAlgChange: onAltKeyAlgChange,
+  generateAltKeys: generateAltKeys,
   // the Key Pair block of the configuration pane
   generateAndIssue: generateAndIssue,
   generateKeys: generateKeys,

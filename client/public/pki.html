@@ -153,6 +153,41 @@
              below that the row stays a single flex line and the two checkbox
              LABELS wrap instead, which costs a line of text rather than a
              row of layout. -->
+        <!-- THE THREE WAYS A CERTIFICATE HERE CAN CARRY POST-QUANTUM
+             CRYPTOGRAPHY, AND WHY THE CHOICE IS A CONTROL RATHER THAN A
+             DEFAULT.
+
+             They are not variations on one idea; they are three different
+             answers to "what do I do about a validator that has never heard
+             of ML-DSA", and which one is right depends on who has to read
+             the certificate:
+
+               * PURE is the standards-track answer (RFC 9881, 9909, 9935).
+                 One key, one signature, one OID. Anything that does not
+                 know the algorithm rejects the certificate outright.
+               * COMPOSITE is one OID naming TWO keys and two signatures at
+                 once (draft-ietf-lamps-pq-composite-sigs-19), so a verifier
+                 either checks both or understands neither. Still a draft.
+               * HYBRID puts the second key and signature in non-critical
+                 EXTENSIONS (X.509 2019 clause 9.8), so an old validator
+                 sees an ordinary classical certificate and ignores them.
+
+             The selector filters the Key Algorithm list below and, for
+             hybrid, reveals the second key pair. -->
+        <div class="saml-row">
+          <div class="saml-grow">
+            <label for="pki_pq_mode" title="Which of the three ways this certificate carries post-quantum cryptography. It filters the Key Algorithm list below; Hybrid additionally reveals a second key pair, which goes into the X.509 (2019) alternative-signature extensions.">Cryptographic Approach</label>
+            <select class="stored" id="pki_pq_mode" name="pki_pq_mode" onchange="return pki.onPqModeChange();">
+              <option value="any" selected="selected">Any &mdash; show every algorithm</option>
+              <option value="classical">Classical only (RSA, ECDSA, EdDSA)</option>
+              <option value="pure">Pure post-quantum (ML-DSA, SLH-DSA, ML-KEM)</option>
+              <option value="composite">Composite (one OID, two signatures)</option>
+              <option value="hybrid">Hybrid (alternative-signature extensions)</option>
+            </select>
+          </div>
+        </div>
+        <p class="saml-note" id="pki_pq_note"></p>
+
         <div class="saml-row pki-actions">
           <div class="pki-narrow pki-narrow-alg">
             <label for="pki_key_alg" title="The algorithm and parameters of the key pair. RSA sizes are the modulus; the EC entries are the NIST curves; Ed25519 is Web Crypto's only Edwards curve (Ed448 is defined by RFC 8032 and available in no browser).">Key Algorithm</label>
@@ -170,6 +205,40 @@
         <div class="saml-field">
           <label class="saml-has-copy" for="pki_public_key" title="The public key, SubjectPublicKeyInfo PEM (or JWK). This is what the certificate certifies.">Public Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_public_key');">Copy</button></label>
           <textarea class="stored" rows="4" id="pki_public_key" name="pki_public_key"></textarea>
+        </div>
+
+        <!-- The ALTERNATIVE key pair, which exists only in hybrid mode.
+             It is a second, independent key: the subject's own alternative
+             public key goes into the subjectAltPublicKeyInfo extension
+             (2.5.29.72), and the ISSUER's alternative private key signs the
+             preTBSCertificate into altSignatureValue (2.5.29.74). For a
+             self-signed certificate those are the same pair, which is why
+             this pane is on the subject's side of the page. -->
+        <div id="pki_alt_pane" style="display:none;">
+          <div class="pki-group">Alternative (hybrid) Key Pair</div>
+          <details class="pki-more">
+            <summary>What the second key is for</summary>
+            <p class="saml-note">ITU-T X.509 (2019) clause 9.8 adds three non-critical extensions that mirror three fields of the certificate: <code>subjectAltPublicKeyInfo</code> (2.5.29.72), <code>altSignatureAlgorithm</code> (2.5.29.73) and <code>altSignatureValue</code> (2.5.29.74). A certificate carrying them is signed twice, with two keys, and a validator that has never heard of the extensions sees an ordinary certificate and accepts it &mdash; which is the entire point.</p>
+            <p class="saml-note">The alternative signature does <strong>not</strong> cover the whole TBSCertificate: it covers the <em>preTBSCertificate</em>, which is the TBSCertificate with the <code>signature</code> field removed and without the <code>altSignatureValue</code> extension. Getting either of those wrong produces a signature that verifies nowhere, and the message you get back is about the signature.</p>
+            <p class="saml-note">There is no published IETF profile saying what a chain should do when the two signatures disagree &mdash; the draft that would have said so expired &mdash; so the Chain pane below reports the alternative verdict <em>beside</em> the conventional one rather than folding them together.</p>
+          </details>
+          <div class="saml-row pki-actions">
+            <div class="pki-narrow pki-narrow-alg">
+              <label for="pki_alt_key_alg" title="The algorithm of the alternative key pair. This is where the post-quantum half of a hybrid certificate goes, so the list is the post-quantum algorithms that can sign.">Alternative Algorithm</label>
+              <select class="stored" id="pki_alt_key_alg" name="pki_alt_key_alg" onchange="return pki.onAltKeyAlgChange();"></select>
+            </div>
+            <input type="button" class="saml-btn" id="pki_alt_generate" value="Generate Alternative Pair" onclick="return pki.generateAltKeys();" title="Generate the alternative key pair. Issuing with hybrid selected generates one anyway if these fields are empty." />
+            <label class="pki-flag" title="Certify the alternative pair already in the fields below instead of generating a new one."><input type="checkbox" id="pki_alt_reuse_key" name="pki_alt_reuse_key" /> reuse the pair below</label>
+          </div>
+          <div class="saml-field">
+            <label class="saml-has-copy" for="pki_alt_private_key" title="The alternative private key, PKCS#8 PEM. For a self-signed certificate this is what signs the preTBSCertificate; for an issued one, the issuer's own alternative private key is used instead and this one is only certified.">Alternative Private Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_alt_private_key');">Copy</button></label>
+            <textarea class="stored" rows="4" id="pki_alt_private_key" name="pki_alt_private_key"></textarea>
+          </div>
+          <div class="saml-field">
+            <label class="saml-has-copy" for="pki_alt_public_key" title="The alternative public key, SubjectPublicKeyInfo PEM. This is what goes into the subjectAltPublicKeyInfo extension.">Alternative Public Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_alt_public_key');">Copy</button></label>
+            <textarea class="stored" rows="3" id="pki_alt_public_key" name="pki_alt_public_key"></textarea>
+          </div>
+          <p class="saml-note" id="pki_alt_note"></p>
         </div>
 
         <div class="saml-sub">
@@ -562,6 +631,19 @@
             </select>
           </div>
           <div class="saml-grow"><label for="pki_tls_ciphers" title="An OpenSSL cipher list, e.g. ECDHE-RSA-AES128-GCM-SHA256. Narrowing it is how you find out what a server will and will not negotiate.">Cipher list (optional)</label><input class="stored" type="text" id="pki_tls_ciphers" name="pki_tls_ciphers" /></div>
+        </div>
+
+        <!-- THE POST-QUANTUM KNOBS, and they are two because "is this
+             connection post-quantum" is two questions. Groups decide the KEY
+             EXCHANGE (whether a recording made today survives a quantum
+             computer); signature algorithms decide what the peer may
+             AUTHENTICATE with (whether it can be impersonated by one). The
+             defaults leave both to OpenSSL, which from 3.5 offers
+             X25519MLKEM768 first and will use it without anybody asking —
+             naming it here is how you prove it rather than assume it. -->
+        <div class="saml-row">
+          <div class="saml-grow"><label for="pki_tls_groups" title="An OpenSSL supported-groups list. X25519MLKEM768 is the hybrid ML-KEM group OpenSSL 3.5 offers by default; x25519 forces the classical one, which is how you compare. An unknown name fails at the handshake with OpenSSL naming it.">Key-exchange groups (optional)</label><input class="stored" type="text" id="pki_tls_groups" name="pki_tls_groups" placeholder="X25519MLKEM768:x25519" /></div>
+          <div class="saml-grow"><label for="pki_tls_sigalgs" title="An OpenSSL signature-algorithms list, e.g. mldsa65 or ecdsa_secp384r1_sha384. Restricting it to the post-quantum names answers &quot;can this server authenticate itself post-quantum at all&quot; — if the handshake fails, it cannot.">Signature algorithms (optional)</label><input class="stored" type="text" id="pki_tls_sigalgs" name="pki_tls_sigalgs" placeholder="mldsa44:mldsa65:mldsa87" /></div>
         </div>
 
         <div class="saml-field">

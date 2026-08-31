@@ -108,6 +108,10 @@
 const tls = require('tls');
 const net = require('net');
 const dns = require('dns');
+// For crypto.X509Certificate, which is how the public key algorithm of a peer
+// certificate is read — node's own certificate object does not carry it, and
+// on node 24 (OpenSSL 3.5) it answers 'ml-dsa-65' for a post-quantum key.
+const crypto = require('crypto');
 
 // Ports TLS is commonly spoken on. https, the alternate https ports, LDAPS,
 // FTPS, IMAPS/POP3S/SMTPS, AMQPS, IRC over TLS, MQTT over TLS, PostgreSQL and
@@ -541,6 +545,223 @@ function createProbe(appconfig, guard, log, deps) {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // WHAT MAKES A CONNECTION POST-QUANTUM, AND THE TWO HALVES THAT ARE
+  // COMPLETELY INDEPENDENT.
+  //
+  // "Is this TLS post-quantum" is two questions with two different answers,
+  // and reporting one as if it were both is the single most misleading thing
+  // this endpoint could do:
+  //
+  //   * THE KEY EXCHANGE decides whether a recording made today can be
+  //     decrypted by a quantum computer later — the harvest-now-decrypt-later
+  //     problem. OpenSSL 3.5 offers X25519MLKEM768 by default and both ends
+  //     usually pick it without anybody asking.
+  //   * THE CERTIFICATE decides whether the server can be IMPERSONATED by one,
+  //     which is a live-attack question and therefore a much later problem.
+  //     Almost nothing on the public internet has a post-quantum certificate.
+  //
+  // A connection with an ML-KEM key exchange and an RSA certificate is the
+  // normal state of the world in 2026, and it is protected against recording
+  // and not against a future forger. The report says both, separately.
+  //
+  // NODE CANNOT NAME THE NEGOTIATED GROUP, and that is a fact about node's API
+  // rather than about the connection. `getEphemeralKeyInfo()` predates the
+  // hybrid groups: it describes ECDH and DH and returns an EMPTY OBJECT for a
+  // group it has no case for, which under OpenSSL 3.5 means an ML-KEM hybrid
+  // (or a resumed session, which has no ephemeral key of its own). So this
+  // reports what node said and what that means, and does not claim a name it
+  // cannot see.
+  const PQ_SIGNATURE_OIDS = {
+    '2.16.840.1.101.3.4.3.17': 'ML-DSA-44',
+    '2.16.840.1.101.3.4.3.18': 'ML-DSA-65',
+    '2.16.840.1.101.3.4.3.19': 'ML-DSA-87',
+    '2.16.840.1.101.3.4.3.20': 'SLH-DSA-SHA2-128s',
+    '2.16.840.1.101.3.4.3.21': 'SLH-DSA-SHA2-128f',
+    '2.16.840.1.101.3.4.3.22': 'SLH-DSA-SHA2-192s',
+    '2.16.840.1.101.3.4.3.23': 'SLH-DSA-SHA2-192f',
+    '2.16.840.1.101.3.4.3.24': 'SLH-DSA-SHA2-256s',
+    '2.16.840.1.101.3.4.3.25': 'SLH-DSA-SHA2-256f',
+    '2.16.840.1.101.3.4.3.26': 'SLH-DSA-SHAKE-128s',
+    '2.16.840.1.101.3.4.3.27': 'SLH-DSA-SHAKE-128f',
+    '2.16.840.1.101.3.4.3.28': 'SLH-DSA-SHAKE-192s',
+    '2.16.840.1.101.3.4.3.29': 'SLH-DSA-SHAKE-192f',
+    '2.16.840.1.101.3.4.3.30': 'SLH-DSA-SHAKE-256s',
+    '2.16.840.1.101.3.4.3.31': 'SLH-DSA-SHAKE-256f',
+    '2.16.840.1.101.3.4.4.1': 'ML-KEM-512',
+    '2.16.840.1.101.3.4.4.2': 'ML-KEM-768',
+    '2.16.840.1.101.3.4.4.3': 'ML-KEM-1024'
+  };
+
+  const CLASSICAL_SIGNATURE_OIDS = {
+    '1.2.840.113549.1.1.5': 'sha1WithRSAEncryption',
+    '1.2.840.113549.1.1.10': 'rsassaPss',
+    '1.2.840.113549.1.1.11': 'sha256WithRSAEncryption',
+    '1.2.840.113549.1.1.12': 'sha384WithRSAEncryption',
+    '1.2.840.113549.1.1.13': 'sha512WithRSAEncryption',
+    '1.2.840.10045.4.1': 'ecdsa-with-SHA1',
+    '1.2.840.10045.4.3.2': 'ecdsa-with-SHA256',
+    '1.2.840.10045.4.3.3': 'ecdsa-with-SHA384',
+    '1.2.840.10045.4.3.4': 'ecdsa-with-SHA512',
+    '1.3.101.112': 'Ed25519',
+    '1.3.101.113': 'Ed448'
+  };
+
+  // The composite OIDs from draft-ietf-lamps-pq-composite-sigs-19, section 6.
+  // They are recognised and NAMED here and nowhere implemented: this service
+  // never verifies a signature, so knowing what a certificate claims is the
+  // whole of its interest in them.
+  const COMPOSITE_SIGNATURE_OIDS = {
+    '1.3.6.1.5.5.7.6.37': 'id-MLDSA44-RSA2048-PSS-SHA256',
+    '1.3.6.1.5.5.7.6.38': 'id-MLDSA44-RSA2048-PKCS15-SHA256',
+    '1.3.6.1.5.5.7.6.39': 'id-MLDSA44-Ed25519-SHA512',
+    '1.3.6.1.5.5.7.6.40': 'id-MLDSA44-ECDSA-P256-SHA256',
+    '1.3.6.1.5.5.7.6.41': 'id-MLDSA65-RSA3072-PSS-SHA512',
+    '1.3.6.1.5.5.7.6.42': 'id-MLDSA65-RSA3072-PKCS15-SHA512',
+    '1.3.6.1.5.5.7.6.43': 'id-MLDSA65-RSA4096-PSS-SHA512',
+    '1.3.6.1.5.5.7.6.44': 'id-MLDSA65-RSA4096-PKCS15-SHA512',
+    '1.3.6.1.5.5.7.6.45': 'id-MLDSA65-ECDSA-P256-SHA512',
+    '1.3.6.1.5.5.7.6.46': 'id-MLDSA65-ECDSA-P384-SHA512',
+    '1.3.6.1.5.5.7.6.47': 'id-MLDSA65-ECDSA-brainpoolP256r1-SHA512',
+    '1.3.6.1.5.5.7.6.48': 'id-MLDSA65-Ed25519-SHA512',
+    '1.3.6.1.5.5.7.6.49': 'id-MLDSA87-ECDSA-P384-SHA512',
+    '1.3.6.1.5.5.7.6.50': 'id-MLDSA87-ECDSA-brainpoolP384r1-SHA512',
+    '1.3.6.1.5.5.7.6.51': 'id-MLDSA87-Ed448-SHAKE256',
+    '1.3.6.1.5.5.7.6.52': 'id-MLDSA87-RSA3072-PSS-SHA512',
+    '1.3.6.1.5.5.7.6.53': 'id-MLDSA87-RSA4096-PSS-SHA512',
+    '1.3.6.1.5.5.7.6.54': 'id-MLDSA87-ECDSA-P521-SHA512'
+  };
+
+  // The signatureAlgorithm OID of a DER certificate, by walking the outer
+  // SEQUENCE. This is thirty lines of DER rather than a dependency because it
+  // is all this service ever needs of ASN.1 and because the alternative —
+  // asking OpenSSL through crypto.X509Certificate — has no accessor for the
+  // signature algorithm at all. Returns null for anything it cannot walk; a
+  // certificate whose OID cannot be read is reported as unknown rather than as
+  // classical.
+  function signatureAlgorithmOid(der) {
+    logger.debug("Entering signatureAlgorithmOid().");
+    try {
+      const bytes = new Uint8Array(der);
+      let at = 0;
+      function readHeader() {
+        logger.debug("Entering readHeader().");
+        const tag = bytes[at];
+        at += 1;
+        let length = bytes[at];
+        at += 1;
+        if (length & 0x80) {
+          const count = length & 0x7f;
+          length = 0;
+          for (let i = 0; i < count; i++) {
+            length = (length * 256) + bytes[at];
+            at += 1;
+          }
+        }
+        logger.debug("Leaving readHeader().");
+        return { tag: tag, length: length, start: at };
+      }
+      const certificate = readHeader();       // Certificate SEQUENCE
+      if (certificate.tag !== 0x30) {
+        logger.debug("Leaving signatureAlgorithmOid(). Not a SEQUENCE.");
+        return null;
+      }
+      const tbs = readHeader();               // tbsCertificate
+      at = tbs.start + tbs.length;
+      const algorithm = readHeader();         // signatureAlgorithm SEQUENCE
+      if (algorithm.tag !== 0x30) {
+        logger.debug("Leaving signatureAlgorithmOid(). No AlgorithmId.");
+        return null;
+      }
+      const oid = readHeader();               // its OBJECT IDENTIFIER
+      if (oid.tag !== 0x06) {
+        logger.debug("Leaving signatureAlgorithmOid(). No OID.");
+        return null;
+      }
+      const body = bytes.slice(oid.start, oid.start + oid.length);
+      const parts = [Math.floor(body[0] / 40), body[0] % 40];
+      let value = 0;
+      for (let i = 1; i < body.length; i++) {
+        value = (value * 128) + (body[i] & 0x7f);
+        if (!(body[i] & 0x80)) {
+          parts.push(value);
+          value = 0;
+        }
+      }
+      logger.debug("Leaving signatureAlgorithmOid().");
+      return parts.join('.');
+    } catch (e) {
+      logger.debug("Leaving signatureAlgorithmOid(). " + e.message);
+      return null;
+    }
+  }
+
+  // What a certificate is signed with and what key it certifies, as far as
+  // this service can tell — the OID for the signature, and OpenSSL's own name
+  // for the key, which for a post-quantum key is 'ml-dsa-65' and for a
+  // composite one is nothing at all, because no released OpenSSL knows them.
+  function postQuantumProfile(der) {
+    logger.debug("Entering postQuantumProfile().");
+    const oid = der ? signatureAlgorithmOid(der) : null;
+    const out = {
+      signatureAlgorithmOid: oid,
+      signatureAlgorithm: oid
+        ? (PQ_SIGNATURE_OIDS[oid] || COMPOSITE_SIGNATURE_OIDS[oid] ||
+           CLASSICAL_SIGNATURE_OIDS[oid] || null)
+        : null,
+      signatureIsPostQuantum: !!(oid && PQ_SIGNATURE_OIDS[oid]),
+      signatureIsComposite: !!(oid && COMPOSITE_SIGNATURE_OIDS[oid]),
+      publicKeyType: null,
+      publicKeyIsPostQuantum: false
+    };
+    if (der) {
+      try {
+        const parsed = new crypto.X509Certificate(Buffer.from(der));
+        out.publicKeyType = parsed.publicKey.asymmetricKeyType || null;
+      } catch (e) {
+        // A composite certificate, or one whose key this OpenSSL cannot
+        // parse. Not an error: the chain is still reportable, and saying
+        // "unknown to this OpenSSL" is the accurate answer.
+        logger.debug("postQuantumProfile(): OpenSSL could not read the " +
+                     "public key: " + e.message);
+        out.publicKeyType = null;
+      }
+    }
+    out.publicKeyIsPostQuantum = /^(ml-dsa|slh-dsa|ml-kem)/
+        .test(String(out.publicKeyType || ''));
+    logger.debug("Leaving postQuantumProfile().");
+    return out;
+  }
+
+  // The named groups and signature algorithms a caller may ask for, as
+  // OpenSSL spells them. They are NOT enumerated against a list here, and that
+  // is deliberate: OpenSSL's group and sigalg names change between releases —
+  // X25519MLKEM768 did not exist before 3.5 — and a hard-coded allowlist in
+  // this file would refuse a name the linked OpenSSL supports perfectly. What
+  // is enforced is the SHAPE (colon-separated tokens of a conservative
+  // alphabet, bounded length), which is what keeps this from being an
+  // injection point into the TLS configuration; an unknown name then fails at
+  // the handshake, where OpenSSL says which one it did not know.
+  const TLS_NAME_LIST = /^[A-Za-z0-9_+.:-]{1,256}$/;
+
+  function assertNameList(what, value) {
+    logger.debug("Entering assertNameList(). what=" + what);
+    if (value === undefined || value === null || value === '') {
+      logger.debug("Leaving assertNameList(). Absent.");
+      return null;
+    }
+    const text = String(value).trim();
+    if (!TLS_NAME_LIST.test(text)) {
+      logger.debug("Leaving assertNameList(). Refused.");
+      throw refuse(what + ' must be a colon-separated list of OpenSSL ' +
+        'names — letters, digits, +, ., _ and - — for example ' +
+        '"X25519MLKEM768:x25519" or "mldsa65:ecdsa_secp384r1_sha384". Got ' +
+        JSON.stringify(value) + '.', 'ETLSBADNAMELIST');
+    }
+    logger.debug("Leaving assertNameList().");
+    return text;
+  }
+
   function describeCertificate(cert, depth) {
     logger.debug("Entering describeCertificate().");
     if (!cert || !Object.keys(cert).length) {
@@ -563,6 +784,9 @@ function createProbe(appconfig, guard, log, deps) {
       asn1Curve: cert.asn1Curve || null,
       nistCurve: cert.nistCurve || null,
       pubkeyAlgorithm: cert.pubkey ? 'present' : null,
+      // What this certificate is signed with and what it certifies, read out
+      // of the DER — node's own certificate object carries neither.
+      algorithms: postQuantumProfile(cert.raw || null),
       pem: cert.raw
         ? '-----BEGIN CERTIFICATE-----\n' +
           (cert.raw.toString('base64').match(/.{1,64}/g) || []).join('\n') +
@@ -599,6 +823,55 @@ function createProbe(appconfig, guard, log, deps) {
     }
     logger.debug("Leaving describeChain(). " + out.length + " certificate(s).");
     return { chain: out, truncated: truncated, bytes: total };
+  }
+
+  // The post-quantum reading of one completed handshake.
+  //
+  // `ephemeralKey` is reported verbatim and interpreted only as far as it can
+  // honestly be: node returns {} for a group its API has no case for, which
+  // with OpenSSL 3.5 means a hybrid ML-KEM group — but ALSO means a resumed
+  // session, so the two are not distinguished here and the report says why.
+  function describePostQuantum(socket, options, chain) {
+    logger.debug("Entering describePostQuantum().");
+    const ephemeral = typeof socket.getEphemeralKeyInfo === 'function'
+      ? (socket.getEphemeralKeyInfo() || {})
+      : {};
+    const named = !!(ephemeral && ephemeral.name);
+    const leaf = (chain || [])[0] || null;
+    const anyPostQuantumCertificate = (chain || []).some(function (one) {
+      return one && one.algorithms && (one.algorithms.signatureIsPostQuantum ||
+          one.algorithms.publicKeyIsPostQuantum);
+    });
+    const out = {
+      requestedGroups: options.groups || null,
+      requestedSigalgs: options.sigalgs || null,
+      ephemeralKey: named ? ephemeral : null,
+      // The interpretation, spelled out rather than reduced to a boolean this
+      // service cannot actually justify.
+      keyExchangeNote: named
+        ? 'The negotiated group is ' + ephemeral.name + ', which node can ' +
+          'name — so it is one of the classical ECDH or DH groups and this ' +
+          'connection is NOT protected against a recorded-now, ' +
+          'decrypted-later attack.'
+        : 'Node could not name the negotiated group. Its API describes ECDH ' +
+          'and DH only, so an unnamed group under OpenSSL ' +
+          process.versions.openssl + ' is either an ML-KEM hybrid (the ' +
+          'default first choice from 3.5) or a resumed session with no ' +
+          'ephemeral key of its own. This service will not guess between ' +
+          'the two: to pin it down, ask for a specific group and see whether ' +
+          'the handshake still completes.',
+      leafCertificate: leaf ? leaf.algorithms : null,
+      anyPostQuantumCertificate: anyPostQuantumCertificate,
+      // The sentence that matters, and the reason the two halves are separate
+      // fields: they answer different questions on different timescales.
+      summary: anyPostQuantumCertificate
+        ? 'The certificate chain carries post-quantum signatures.'
+        : 'The certificate chain is entirely classical, so this server can ' +
+          'be impersonated by an adversary with a quantum computer even if ' +
+          'the key exchange is post-quantum. The two are independent.'
+    };
+    logger.debug("Leaving describePostQuantum().");
+    return out;
   }
 
   // One handshake. Resolves with a report whether or not the certificate
@@ -672,6 +945,15 @@ function createProbe(appconfig, guard, log, deps) {
         minVersion: options.minVersion,
         maxVersion: options.maxVersion,
         ciphers: options.ciphers || undefined,
+        // The two post-quantum knobs. `ecdhCurve` is node's name for
+        // OpenSSL's supported-groups list and takes the hybrid ML-KEM groups
+        // as of OpenSSL 3.5 — X25519MLKEM768 is the one both ends usually
+        // pick with nobody asking, and naming it here is how a caller PROVES
+        // that rather than assuming it. `sigalgs` restricts what the peer may
+        // sign the handshake with, which is the only way to ask "would this
+        // server work if I refused everything but ML-DSA".
+        ecdhCurve: options.groups || undefined,
+        sigalgs: options.sigalgs || undefined,
         ALPNProtocols: (options.alpnProtocols || []).length
           ? options.alpnProtocols : undefined,
         // The connect budget belongs to the socket; the handshake budget is
@@ -732,6 +1014,9 @@ function createProbe(appconfig, guard, log, deps) {
                    standardName: cipher.standardName || null,
                    version: cipher.version || null },
           alpnProtocol: socket.alpnProtocol || null,
+          // Both halves of "is this post-quantum", kept apart — see the note
+          // above postQuantumProfile().
+          postQuantum: describePostQuantum(socket, options, described.chain),
           authorized: socket.authorized === true,
           authorizationError: socket.authorizationError
             ? String(socket.authorizationError) : null,
@@ -1020,6 +1305,8 @@ function createProbe(appconfig, guard, log, deps) {
       minVersion: minVersion,
       maxVersion: maxVersion,
       ciphers: opts.ciphers,
+      groups: assertNameList('groups', opts.groups),
+      sigalgs: assertNameList('sigalgs', opts.sigalgs),
       alpnProtocols: opts.alpnProtocols,
       clientCertificatePem: opts.clientCertificatePem,
       clientKeyPem: opts.clientKeyPem,

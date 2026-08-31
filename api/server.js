@@ -2977,6 +2977,12 @@ app.get('/ldap/limits', function (req, res) {
  * @param {string} minVersion.body - TLSv1 | TLSv1.1 | TLSv1.2 | TLSv1.3
  * @param {string} maxVersion.body - TLSv1 | TLSv1.1 | TLSv1.2 | TLSv1.3
  * @param {string} ciphers.body - an OpenSSL cipher list
+ * @param {string} groups.body - an OpenSSL supported-groups list, which is
+ *     where the post-quantum key exchange is chosen: "X25519MLKEM768" is the
+ *     hybrid OpenSSL 3.5 offers by default, and naming it here is how a
+ *     caller proves it was used rather than assuming it
+ * @param {string} sigalgs.body - an OpenSSL signature-algorithms list, e.g.
+ *     "mldsa65" to ask whether the peer can authenticate post-quantum at all
  * @param {array} alpnProtocols.body - ALPN protocols to offer
  * @param {array} trustCertificates.body - the truststore, PEM
  * @param {boolean} includeSystemRoots.body - add the platform roots as well
@@ -3006,6 +3012,8 @@ app.post('/tls/connect', function (req, res) {
     minVersion: b.minVersion,
     maxVersion: b.maxVersion,
     ciphers: b.ciphers,
+    groups: b.groups,
+    sigalgs: b.sigalgs,
     alpnProtocols: Array.isArray(b.alpnProtocols) ? b.alpnProtocols : [],
     trustCertificates: Array.isArray(b.trustCertificates)
       ? b.trustCertificates

@@ -2604,6 +2604,27 @@ function describeExtension(ext) {
     } else if (name === 'subjectAltName' || name === 'issuerAltName') {
       out.value = new pkijs.GeneralNames({ schema: asn1 }).names
         .map(describeGeneralName);
+    } else if (name === 'subjectAltPublicKeyInfo') {
+      // The extension IS a SubjectPublicKeyInfo, so it is described the same
+      // way the certificate's own key is: the algorithm by name where one is
+      // known, and the size of what it holds.
+      var altOid = (asn1.valueBlock.value[0].valueBlock.value[0])
+          .valueBlock.toString();
+      var altBits = asn1.valueBlock.value[1].valueBlock.valueHexView.length;
+      out.value = {
+        algorithm: PUBKEY_OID_NAMES[altOid] || altOid,
+        oid: altOid,
+        bytes: altBits
+      };
+    } else if (name === 'altSignatureAlgorithm') {
+      var sigOid = asn1.valueBlock.value[0].valueBlock.toString();
+      out.value = { algorithm: SIG_OID_NAMES[sigOid] || sigOid, oid: sigOid };
+    } else if (name === 'altSignatureValue') {
+      // The signature itself, which is up to 50 kB for SLH-DSA — so its
+      // LENGTH and the first bytes, rather than a page of hex nobody reads.
+      var altSig = new Uint8Array(asn1.valueBlock.valueHexView);
+      out.value = { bytes: altSig.length,
+                    starts: bytesToHex(altSig.slice(0, 16)) };
     } else if (name === 'subjectKeyIdentifier') {
       out.value = bytesToHex(asn1.valueBlock.valueHexView);
     } else if (name === 'authorityKeyIdentifier') {
