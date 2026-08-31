@@ -66,4 +66,27 @@ COPY api/jwt.xml /usr/src/app/api/jwt.xml
 COPY deploy/entrypoint.sh /usr/src/app/deploy/entrypoint.sh
 RUN chmod +x /usr/src/app/deploy/entrypoint.sh
 
+# ---------------------------------------------------------------------------
+# NON-ROOT FROM HERE ON. See the same block in api/Dockerfile for why the UID
+# is 10001 rather than 1000 (ubuntu:latest already has an account at 1000).
+#
+# This image HOLDS AWS CREDENTIALS for the length of a deploy — deploy-local.sh
+# resolves the developer's SSO session and hands them over with --env-file, and
+# the workflow hands over a role's — so it is the one here where "the process
+# is not uid 0" is worth the most and costs the least: it mounts nothing, it
+# writes only under /usr/src/app (entrypoint.sh runs `npm run build`, which
+# fills client/dist), and it talks to S3 and CloudFront.
+#
+# HOME matters more here than elsewhere: the AWS CLI writes ~/.aws/cli/cache
+# and its SSO/credential caches, and a HOME it cannot write turns a working
+# deploy into an error naming a cache directory.
+# ---------------------------------------------------------------------------
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid 10001 --create-home \
+        --shell /bin/bash appuser \
+    && chown -R appuser:appuser /usr/src/app
+
+ENV HOME=/home/appuser
+USER appuser
+
 ENTRYPOINT ["/usr/src/app/deploy/entrypoint.sh"]

@@ -44,4 +44,25 @@ RUN curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 \
 COPY infra/ /workspace/infra/
 RUN chmod +x /workspace/infra/entrypoint.sh
 
+# ---------------------------------------------------------------------------
+# NON-ROOT FROM HERE ON. See the same block in api/Dockerfile for why the UID
+# is 10001 rather than 1000 (ubuntu:latest already has an account at 1000).
+#
+# /workspace has to be writable by that user and not merely readable, which is
+# what separates this image from the other four: `terraform init` writes
+# .terraform/ and .terraform.lock.hcl INSIDE the configuration directory, and
+# a plan writes its own file there. State is remote (S3), so nothing else
+# persists — terraform-local.sh mounts no volume at all.
+#
+# HOME for the same reason deploy/Dockerfile needs one: the AWS CLI caches
+# credentials under it, and terraform's provider cache lives there too.
+# ---------------------------------------------------------------------------
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid 10001 --create-home \
+        --shell /bin/bash appuser \
+    && chown -R appuser:appuser /workspace
+
+ENV HOME=/home/appuser
+USER appuser
+
 ENTRYPOINT ["/workspace/infra/entrypoint.sh"]

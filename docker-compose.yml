@@ -38,6 +38,11 @@ services:
       - CONFIG_FILE=./env/local.js
     container_name: sts
     image: rcbj/sts
+    # ROOT, and the only container here that is. It binds 88 (TCP and UDP),
+    # 389 and 636 — all privileged — so it needs uid 0 or
+    # CAP_NET_BIND_SERVICE; and sts/ is the mock-sts submodule, somebody
+    # else's checkout. Every image THIS repository builds now runs as an
+    # unprivileged user; see the block at the foot of each Dockerfile.
     build:
       # sts/ is a submodule (https://github.com/rcbj/mock-sts.git, branch main),
       # and its Dockerfile's COPY paths are relative to ITS root — so the context

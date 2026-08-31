@@ -134,5 +134,40 @@ EXPOSE 4000
 # ---------------------------------------------------------------------------
 COPY api/sts_truststore.sh /usr/src/app/sts_truststore.sh
 RUN chmod +x /usr/src/app/sts_truststore.sh
+# ---------------------------------------------------------------------------
+# NON-ROOT FROM HERE ON.
+#
+# Everything above installs packages and writes under /usr/local, which needs
+# root at BUILD time. Nothing this service DOES at run time does: it listens on
+# 4000, it fetches, and it writes exactly one file (below). So the image's
+# default user is `appuser`, and a compromise of the proxy this service is —
+# it fetches URLs its caller chooses — no longer starts as uid 0.
+#
+# UID/GID 10001 rather than the conventional 1000, and that is not arbitrary:
+# ubuntu:latest already ships an `ubuntu` account AT 1000, so taking that
+# number means deleting or renaming a stock account in every image here. No
+# host UID has to be matched either — this image bind-mounts nothing. The two
+# that do write to a bind mount (client under ./coverage, tests under
+# ./tests/report) are covered by the launchers, which now create those
+# directories mode 0777 for exactly this reason.
+#
+# `chown -R /usr/src` rather than /usr/src/app, and BOTH halves are needed:
+# the entrypoint writes the mock STS's certificate to /usr/src/app/sts-ca.pem
+# on every start (see sts_truststore.sh — a read-only app directory would turn
+# that into the DEPTH_ZERO_SELF_SIGNED_CERT failure it exists to prevent), and
+# common/spiffe/ was staged into /usr/src/common.
+# ---------------------------------------------------------------------------
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid 10001 --create-home \
+        --shell /bin/bash appuser \
+    && chown -R appuser:appuser /usr/src
+
+# Docker does NOT derive HOME from USER — it stays whatever the base image
+# left behind, which is / or /root, and appuser can write to neither. npm puts
+# its cache and its error log there the moment anything goes wrong, so without
+# this a failure reports EACCES on a path nobody named instead of itself.
+ENV HOME=/home/appuser
+USER appuser
+
 ENTRYPOINT [ "/usr/src/app/sts_truststore.sh" ]
 CMD [ "npm", "start" ]
