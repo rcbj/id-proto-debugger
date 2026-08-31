@@ -366,10 +366,35 @@ function freePort() {
 // SPIFFE's two UNIX SOCKETS are turned OFF rather than moved: a socket has one
 // binder and the default path is shared, so moving them would need a directory
 // as well.
+//
+// AND THE MAIN PORT IS PINNED TO PLAIN HTTP, which is not a port but belongs
+// with them: it is the same act of pinning what this instance does rather
+// than inheriting an ambient default. Every request either caller makes is
+// `http://`, and the mock's default stopped being that. `global.https`
+// derives from `oauth2.rfc9700`, and the mock's own env/local.js — which both
+// callers name as CONFIG_FILE — has set `https: true` since its 2026-08-30
+// "TLS on all supported services" change.
+//
+// It broke the two callers in OPPOSITE directions, which is why it is set
+// here rather than in either of them. startMock() polls until the port
+// answers: the instance came up perfectly, in about a second, serving TLS to
+// a plain-http probe, and the failure was the wait loop's — "did not answer
+// within forty-five seconds", which reads as a service that could not start
+// rather than one that started and was not being spoken to. That cost four
+// red runs of the live-site suite. startMockExpectingFailure() polls to prove
+// the port NEVER answers, so the same change made it pass VACUOUSLY: with
+// TLS on, that probe cannot answer whether the service bound a listener it
+// should not have or not, and the check stopped checking without failing.
+//
+// Switching it off rather than teaching this job https is deliberate. What is
+// under test here is what SURVIVES A RESTART; the transport is incidental,
+// and a certificate regenerated on every start would put
+// `rejectUnauthorized: false` into every request below to prove nothing.
 async function portEnv(httpPort) {
   log.debug("Entering portEnv(). httpPort=" + httpPort);
   const env = {
     STS_PORT: String(httpPort),
+    STS_HTTPS: "false",
     STS_SPIFFE_WORKLOAD_SOCKET_ENABLED: "false",
     STS_SPIFFE_SERVER_SOCKET_ENABLED: "false"
   };
