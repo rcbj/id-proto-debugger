@@ -165,6 +165,52 @@ CONFIG_FILE=./env/local.js docker-compose build
 
 Access the app at `http://localhost:3000`.
 
+## Containers run as non-root
+
+**Every image this repository builds runs as an unprivileged user**, and each
+Dockerfile ends with the block that makes it one: `api`, `client`, `deploy`,
+`infra` and `tests` as `appuser`, `keycloak-wsfed` as `jboss`, all at **uid/gid
+10001**. Root is used for the BUILD — packages, `/usr/local`, nvm — and dropped
+before the `ENTRYPOINT`/`CMD`. `HOME` is set explicitly beside each `USER`,
+because Docker does not derive one from it and npm, the AWS CLI and Chrome all
+write there.
+
+**10001 rather than the conventional 1000, deliberately**: `ubuntu:latest`
+already ships an `ubuntu` account AT 1000, so taking that number would mean
+deleting or renaming a stock account in five images.
+
+**The mock STS is the exception and cannot stop being one.** It binds 88 (TCP
+and UDP), 389 and 636 — all privileged — so it needs uid 0 or
+CAP_NET_BIND_SERVICE, and `sts/` is a submodule besides. That has ONE
+consequence worth knowing, and it is the kind that reads as a protocol failure:
+it creates the SPIRE Server API's Unix socket that the (now non-root) tests
+container dials, a Unix socket is created `0777 & ~umask`, and `connect(2)`
+needs WRITE — at the default umask the socket is 0755 root:root and
+`spiffe_protocol.js`'s `Debug.GetInfo` check fails with a gRPC error carrying
+an EACCES nobody would look for. `docker-compose-run-tests.yml` therefore gives
+that service `umask 0000` through an `entrypoint:` wrapper, and **because
+compose CLEARS the image's CMD when `entrypoint:` is set, that wrapper spells
+out `node server.js`** — which is `sts/Dockerfile`'s own CMD and has to be kept
+in step with it.
+
+**Two host directories are bind mounts the containers WRITE**, and the
+launchers now create them mode 0777 before compose is called:
+`./tests/report` (`docker-run-tests.sh`) and `./coverage` plus
+`./tests/report` (`run-coverage.sh`). Matching the UID instead was not
+available — a developer here is 1000 and a GitHub Actions runner is 1001, and
+one image cannot be right for both — and Docker creates a MISSING bind-mount
+source itself, as root, which is how this worked while the containers were
+root. Both directories are gitignored build output, rewritten every run. The
+`sudo chown` steps in `.github/workflows/tests.yml` still run and are simply no
+longer load-bearing.
+
+Third-party images: `quay.io/keycloak/keycloak` already declares `USER 1000`;
+`postgres` **must not** be given a `user:` (its entrypoint is root only long
+enough to create and chown PGDATA on a fresh volume, then drops to `postgres`
+with gosu — pin a user and `initdb` fails on a directory it cannot write); the
+two walt.id images and the two `node:24-alpine` CORS proxies get a `user:` in
+the compose files, since Jib and the node image both default to root.
+
 ## Running Tests
 
 Tests use Selenium WebDriver with Chrome. A Keycloak test IdP is spun up automatically.

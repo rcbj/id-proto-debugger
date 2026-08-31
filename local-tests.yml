@@ -6,6 +6,11 @@ version: '2.4'
 services:
   postgres:
     image: postgres:18
+    # No `user:` needed and one would BREAK it: the official image's
+    # entrypoint starts as root only to create and chown PGDATA on a fresh
+    # volume, then drops to the `postgres` account with gosu before the
+    # server starts. Pinning a user here skips the chown and initdb fails on
+    # a directory it cannot write.
     hostname: postgres
     network_mode: "host" 
     volumes:
@@ -27,6 +32,7 @@ services:
       start_period: 45s
   keycloak:
     image: quay.io/keycloak/keycloak:26.6.4
+    # Already non-root: the Keycloak image declares USER 1000 itself.
     # DPoP (RFC 9449) is a PREVIEW feature in Keycloak 26 and is off unless it is
     # named here: without it the server ignores the DPoP header entirely, issues a
     # perfectly ordinary Bearer token, and advertises no
@@ -166,6 +172,11 @@ services:
     container_name: sts
     hostname: sts
     image: rcbj/sts
+    # ROOT, and the only container here that is. It binds 88 (TCP and UDP),
+    # 389 and 636 — all privileged — so it needs uid 0 or
+    # CAP_NET_BIND_SERVICE; and sts/ is the mock-sts submodule, somebody
+    # else's checkout. Every image THIS repository builds now runs as an
+    # unprivileged user; see the block at the foot of each Dockerfile.
     network_mode: "host"
     environment:
       # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
@@ -274,6 +285,12 @@ services:
   # no private key is committed.
   waltid-issuer-api:
     image: waltid/issuer-api2:0.23.0
+    # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
+    # its own. It needs none: its configuration is bind-mounted READ-ONLY,
+    # persistence.conf puts sessions in memory, and its signing key comes
+    # from the environment, so it writes nothing outside /tmp. 1000:1000 has
+    # no passwd entry in that image, which the JVM does not care about.
+    user: "1000:1000"
     # No hostname: under host networking it resolves to nothing, and the
     # service's logger prints an UnknownHostException stack trace over it.
     network_mode: "host"
@@ -291,6 +308,10 @@ services:
   # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
   waltid-issuer:
     image: node:24-alpine
+    # The stock node image runs as root unless told otherwise; it ships a
+    # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
+    # (above 1024), reads one bind-mounted script and writes nothing.
+    user: "node"
     command: ["node", "/waltid/cors-proxy.js"]
     network_mode: "host"
     environment:
@@ -320,6 +341,12 @@ services:
   # common/common.sh) — no private key is committed.
   waltid-verifier-api:
     image: waltid/verifier-api2:0.23.0
+    # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
+    # its own. It needs none: its configuration is bind-mounted READ-ONLY,
+    # persistence.conf puts sessions in memory, and its signing key comes
+    # from the environment, so it writes nothing outside /tmp. 1000:1000 has
+    # no passwd entry in that image, which the JVM does not care about.
+    user: "1000:1000"
     # No hostname: under host networking it resolves to nothing, and the
     # service's logger prints an UnknownHostException stack trace over it.
     network_mode: "host"
@@ -333,6 +360,10 @@ services:
   # IS the address the verifier's urlPrefix names.
   waltid-verifier:
     image: node:24-alpine
+    # The stock node image runs as root unless told otherwise; it ships a
+    # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
+    # (above 1024), reads one bind-mounted script and writes nothing.
+    user: "node"
     command: ["node", "/waltid/cors-proxy.js"]
     network_mode: "host"
     environment:

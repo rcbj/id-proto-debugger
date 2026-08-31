@@ -215,7 +215,32 @@ requireMockStsCheckout "${CURRENT_DIR}"
 requireApiLdapjsCheckout "${CURRENT_DIR}"
 check_return_code $?
 
-mkdir -p coverage/frontend/.nyc_output coverage/api
+# THE BIND MOUNTS, CREATED HERE AND MADE WRITABLE BY ANY UID.
+#
+# Every image this repository builds now runs as an unprivileged user (uid
+# 10001 — see the block at the foot of each Dockerfile), and two of them write
+# through a bind mount: the tests container fills ./tests/report with the run,
+# and under coverage the api and client fill ./coverage. A bind mount carries
+# the HOST directory's ownership, so a container UID that does not match it
+# cannot write there — and the failure is not loud: run-report.js reports a
+# report it could not save, and the client's coverage handler is best-effort
+# and says nothing at all.
+#
+# Matching the UID was not an option worth taking: a developer here is 1000, a
+# GitHub Actions runner is 1001, and an image cannot be right for both. Docker
+# also creates a MISSING bind-mount source itself, as root, which is how this
+# used to work at all. So the directories are made here, before compose is
+# called, mode 0777 — they hold build output, they are gitignored, and they are
+# rewritten every run. The `sudo chown` steps in .github/workflows/tests.yml
+# still run and are simply no longer load-bearing.
+#
+# Best-effort (`|| true`): a directory left behind by a run from BEFORE this
+# change is owned by root, and a developer who is not root cannot chmod it. That
+# is a stale-directory problem with a one-line fix the run should not fail on —
+# `sudo rm -rf tests/report coverage` — and saying so beats aborting the suite.
+mkdir -p coverage/frontend/.nyc_output coverage/api coverage/node \
+    tests/report || true
+chmod -R 0777 coverage tests/report || true
 
 # Tear the stack down on ANY exit, including the early ones the checks below can
 # take. The normal path downs the stack itself after rendering the report and

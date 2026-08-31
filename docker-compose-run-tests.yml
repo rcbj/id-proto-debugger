@@ -2,6 +2,11 @@
 services:
   postgres:
     image: postgres:18
+    # No `user:` needed and one would BREAK it: the official image's
+    # entrypoint starts as root only to create and chown PGDATA on a fresh
+    # volume, then drops to the `postgres` account with gosu before the
+    # server starts. Pinning a user here skips the chown and initdb fails on
+    # a directory it cannot write.
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
@@ -25,6 +30,7 @@ services:
       - keycloak
   keycloak:
     image: quay.io/keycloak/keycloak:26.6.4
+    # Already non-root: the Keycloak image declares USER 1000 itself.
     # DPoP (RFC 9449) is a PREVIEW feature in Keycloak 26 and is off unless it is
     # named here: without it the server ignores the DPoP header entirely, issues a
     # perfectly ordinary Bearer token, and advertises no
@@ -147,6 +153,37 @@ services:
   sts:
     container_name: sts
     image: rcbj/sts
+    # ---------------------------------------------------------------------
+    # THE ONE CONTAINER IN THIS STACK THAT IS STILL ROOT, AND THE UMASK IS
+    # WHAT THAT COSTS.
+    #
+    # Every image this repository builds now runs as an unprivileged user
+    # (see the block at the foot of each Dockerfile). This one is not this
+    # repository's image — sts/ is the mock-sts submodule — and it could not
+    # make the change anyway: it binds 88 (the KDC, TCP and UDP), 389 and 636
+    # (the directory), all three privileged, so it needs uid 0 or
+    # CAP_NET_BIND_SERVICE and neither is somebody else's checkout's business
+    # to decide here.
+    #
+    # What that leaves is the SOCKET below. STS_SPIFFE_SERVER_SOCKET makes
+    # this service bind /spire-sock/server.sock, and the tests container —
+    # which is NOT root any more — dials it. A Unix socket is created with
+    # mode 0777 & ~umask, so at the default 022 it lands 0755 root:root, and
+    # connect(2) on a Unix socket needs WRITE permission on the file: the
+    # tests container would be refused with EACCES, and spiffe_protocol.js
+    # would report its Debug.GetInfo check as a failed gRPC call rather than
+    # as a permission problem. `umask 0000` makes it 0777, which is the
+    # ordinary arrangement for a socket meant to be dialled by anyone —
+    # inside a throwaway container, on a docker volume that exists for the
+    # length of one test run and holds no bytes.
+    #
+    # The command is SPELLED OUT here rather than left to the image, because
+    # setting `entrypoint:` in compose CLEARS the image's CMD (compose does
+    # this; plain docker does not). `node server.js` is sts/Dockerfile's own
+    # CMD and the two have to be kept in step — that image declares no
+    # ENTRYPOINT, so there is nothing else here that can drift.
+    # ---------------------------------------------------------------------
+    entrypoint: ["/bin/sh", "-c", "umask 0000; exec node server.js"]
     # The mock OID4VCI Credential Issuer this service also hosts advertises
     # ITSELF as its authorization server, so an issuer-initiated offer can be
     # walked end to end without a second identity provider. Set
@@ -310,6 +347,12 @@ services:
   waltid-issuer-api:
     container_name: waltid-issuer-api
     image: waltid/issuer-api2:0.23.0
+    # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
+    # its own. It needs none: its configuration is bind-mounted READ-ONLY,
+    # persistence.conf puts sessions in memory, and its signing key comes
+    # from the environment, so it writes nothing outside /tmp. 1000:1000 has
+    # no passwd entry in that image, which the JVM does not care about.
+    user: "1000:1000"
     volumes:
       # Rendered by renderWaltidConfig() (common/common.sh) with this run's
       # values — including its signing key — written in, so nothing here
@@ -330,6 +373,10 @@ services:
   waltid-issuer:
     container_name: waltid-issuer
     image: node:24-alpine
+    # The stock node image runs as root unless told otherwise; it ships a
+    # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
+    # (above 1024), reads one bind-mounted script and writes nothing.
+    user: "node"
     command: ["node", "/waltid/cors-proxy.js"]
     environment:
       - WALTID_UPSTREAM=waltid-issuer-api:7006
@@ -364,6 +411,12 @@ services:
   waltid-verifier-api:
     container_name: waltid-verifier-api
     image: waltid/verifier-api2:0.23.0
+    # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
+    # its own. It needs none: its configuration is bind-mounted READ-ONLY,
+    # persistence.conf puts sessions in memory, and its signing key comes
+    # from the environment, so it writes nothing outside /tmp. 1000:1000 has
+    # no passwd entry in that image, which the JVM does not care about.
+    user: "1000:1000"
     volumes:
       # Rendered by renderWaltidConfig() (common/common.sh) with this run's
       # values written in, so nothing here depends on how walt.id's config loader
@@ -381,6 +434,10 @@ services:
   waltid-verifier:
     container_name: waltid-verifier
     image: node:24-alpine
+    # The stock node image runs as root unless told otherwise; it ships a
+    # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
+    # (above 1024), reads one bind-mounted script and writes nothing.
+    user: "node"
     command: ["node", "/waltid/cors-proxy.js"]
     environment:
       - WALTID_UPSTREAM=waltid-verifier-api:7004

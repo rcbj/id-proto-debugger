@@ -1053,4 +1053,50 @@ RUN . $NVM_DIR/nvm.sh && npm install chromedriver
 # Install modules needed for the test scripts
 RUN . $NVM_DIR/nvm.sh && npm install
 
+# ---------------------------------------------------------------------------
+# NON-ROOT FROM HERE ON. See the same block in api/Dockerfile for why the UID
+# is 10001 rather than 1000 (ubuntu:latest already has an account at 1000).
+#
+# THIS IS THE IMAGE THAT HAD THE MOST TO LOSE BY BEING ROOT and the most to
+# check before it stopped being: it runs a browser over content the suite
+# fetches from four other services, and it is the only one here that reaches
+# BOTH a host bind mount and a socket another container made. Three things had
+# to be true, and each of them is arranged somewhere else:
+#
+#   * `report/` is ./tests/report from the host, and run-report.js writes the
+#     whole run into it. A host directory carries the host's ownership, so
+#     docker-run-tests.sh and run-coverage.sh now CREATE it mode 0777 before
+#     compose is called — which is what makes this work on a developer's
+#     machine (uid 1000) and on a GitHub runner (1001) alike, without this
+#     image having to guess either number. The two `sudo chown` steps in
+#     .github/workflows/tests.yml still run and are simply no longer load-
+#     bearing.
+#
+#   * `/spire-sock/server.sock` is the mock STS's SPIRE Server API socket, and
+#     THE MOCK STILL RUNS AS ROOT — it binds 88, 389 and 636, which are
+#     privileged, so it is the one container in this stack that cannot make
+#     this change. A Unix socket is created 0777 & ~umask, so at the default
+#     022 it lands 0755 root:root, and connect(2) needs WRITE: this container
+#     would have been refused with EACCES and `spiffe_protocol.js` would have
+#     failed its Debug.GetInfo check with a permission error rather than a
+#     protocol one. docker-compose-run-tests.yml gives that service `umask
+#     0000` for exactly this reason, and says so there.
+#
+#   * Chrome is already launched `--no-sandbox` by every job here (the setuid
+#     sandbox is not installed in this image and never was), so the browser
+#     needs nothing from uid 0. It DOES need a writable HOME for its user data
+#     directory and its crash dumps — without one it fails at startup with a
+#     message about the user data directory and no mention of permissions.
+#
+# Everything the suite writes besides those is a mktemp -d under /tmp
+# (generateSpKeyPair, trustStsCertificate), which is world-writable.
+# ---------------------------------------------------------------------------
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid 10001 --create-home \
+        --shell /bin/bash appuser \
+    && chown -R appuser:appuser /usr/src
+
+ENV HOME=/home/appuser
+USER appuser
+
 CMD [ "./run-tests-in-container.sh"]

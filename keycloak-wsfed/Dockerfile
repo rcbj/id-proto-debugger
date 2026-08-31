@@ -80,6 +80,33 @@ RUN chmod +x /tmp/install-wsfed.sh \
     && /tmp/install-wsfed.sh "${JBOSS_HOME}" \
     && rm -rf /tmp/wsfed /tmp/wsfed.tar.gz /tmp/install-wsfed.sh
 
+# ---------------------------------------------------------------------------
+# NON-ROOT FROM HERE ON. The UID is 10001 for consistency with the five
+# node/ubuntu images here (see api/Dockerfile for why not 1000).
+#
+# **THE WHOLE OF $JBOSS_HOME HAS TO BE WRITABLE**, and that is not the usual
+# "the app writes one file" case. WildFly 18 writes back into its own
+# installation on every boot: standalone/data (the H2 database this Keycloak
+# keeps its realms in), standalone/log, standalone/tmp (the deployment scanner
+# and the VFS unpack directory), and standalone/configuration, where it
+# rewrites standalone.xml and CONSUMES the keycloak-add-user.json the build
+# step above left there — the master admin is imported and the file deleted on
+# first boot, so a read-only configuration directory means the admin this
+# image exists to provide is never created and common.sh's
+# configureKeycloakWsfed() fails authenticating rather than naming a
+# permission. So the chown is `-R /opt/jboss` and nothing narrower.
+#
+# The container binds 8080 (plus the port offset the host-network compose
+# files append), which is above 1024 and needs no capability.
+# ---------------------------------------------------------------------------
+RUN groupadd --gid 10001 jboss \
+    && useradd --uid 10001 --gid 10001 --create-home \
+        --shell /bin/bash jboss \
+    && chown -R jboss:jboss /opt/jboss
+
+ENV HOME=/home/jboss
+USER jboss
+
 EXPOSE 8080
 # standalone.sh receives the bind address + any -D overrides (e.g. the
 # -Djboss.socket.binding.port-offset=2 the host-network compose file appends).

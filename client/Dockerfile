@@ -210,5 +210,29 @@ ARG GIT_COMMIT
 RUN BUILD_NUMBER="${BUILD_NUMBER}" GIT_COMMIT="${GIT_COMMIT}" node version.js --stamp public && \
     cat public/version.json
 
+# ---------------------------------------------------------------------------
+# NON-ROOT FROM HERE ON. See the same block in api/Dockerfile for why the UID
+# is 10001 rather than 1000 (ubuntu:latest already has an account at 1000).
+#
+# THIS ONE HAS A BIND MOUNT AND THE OTHER DOES NOT, which is the difference
+# worth knowing before changing the number. Under `./run-coverage.sh` this
+# service is handed ./coverage from the host and server.js CREATES
+# /coverage/frontend/.nyc_output inside it and writes a file there for every
+# page the browser loads. A host directory carries the host's ownership, and a
+# container UID that does not match it cannot write — silently, because
+# server.js's coverage handler is best-effort. So run-coverage.sh now creates
+# ./coverage mode 0777 before compose is called; that is what makes any UID
+# here work, on a developer's machine (uid 1000) and on a CI runner (1001)
+# alike. The default build never touches /coverage and does not care.
+# ---------------------------------------------------------------------------
+RUN groupadd --gid 10001 appuser \
+    && useradd --uid 10001 --gid 10001 --create-home \
+        --shell /bin/bash appuser \
+    && chown -R appuser:appuser /usr/src
+
+# Docker does NOT derive HOME from USER — see api/Dockerfile.
+ENV HOME=/home/appuser
+USER appuser
+
 EXPOSE 3000
 CMD [ "npm", "start" ]
