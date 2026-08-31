@@ -179,7 +179,22 @@ function makeJws(alg, spec, key, header, payload) {
 // including a 500 — is returned untouched, because that is an answer and this
 // wrapper has no opinion about it.
 // ---------------------------------------------------------------------------
-const BUSY_WINDOW_MS = 90000;
+// FIVE MINUTES, FOR THE REASON ITS SIBLING IN sts_userinfo_protected.js GIVES
+// AT LENGTH (2026-08-30), and raised here at the same time so the two do not
+// drift: the comment above says these two jobs SHARE the mock, and a window
+// that fits an instrumented signature in one of them and not the other would
+// simply move the failure.
+//
+// The short version: NODE_V8_COVERAGE instruments the mock's process and its
+// worker pool, and that costs a measured 6.4x on the post-quantum path —
+// SLH-DSA-SHA2-128s signing 2,291ms to 14,685ms. The SHAKE parameter set is
+// twelve seconds uninstrumented, so seventy-seven instrumented on a fast
+// machine and past ninety on a two-core CI runner. mock-sts's coverage job
+// failed on exactly this window in about half its runs.
+//
+// `STS_BUSY_WINDOW_MS` overrides it, so a stack that knows it is slower can
+// say so without editing this.
+const BUSY_WINDOW_MS = Number(process.env.STS_BUSY_WINDOW_MS || 300000);
 
 async function stsFetch(url, options) {
   log.debug("Entering stsFetch(). url=" + url);
