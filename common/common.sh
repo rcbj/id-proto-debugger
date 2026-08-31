@@ -57,6 +57,20 @@ COMPOSE_FORWARDED_VARS="CONFIG_FILE COMPOSE_PROJECT_NAME OID4VCI_WALLET_URL"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} BUILD_NUMBER GIT_COMMIT"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_CONCURRENCY TEST_JOB_TIMEOUT_MS"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_LOG_LEVEL"
+# The two per-service CONFIG_FILE knobs docker-compose-run-tests.yml added on
+# 2026-08-31. They exist because `CONFIG_FILE` above is EXPORTED by
+# docker-run-tests.sh with a default of its own, so a compose-level default for
+# the sts and tests services would never be reached — and those two need the
+# info-level file where the api and client need their own.
+#
+# Registering them here is not optional and tests/compose_env_forwarding.js is
+# what says so: docker_compose() runs under sudo, which keeps no environment,
+# so a variable a compose file reads and this list does not name is seen UNSET.
+# `${STS_CONFIG_FILE:-./env/test.js}` would still work by falling back — but
+# `STS_CONFIG_FILE=./env/docker-tests.js` on the command line would then do
+# NOTHING, silently, which is the whole failure mode that test exists to catch.
+# It caught exactly this on the first run after the variables were added.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_CONFIG_FILE TESTS_CONFIG_FILE"
 
 # Does docker on this machine need sudo? Answered by RUNNING it rather than by
 # looking for a group in `id -nG`, which is neither necessary (a rootless

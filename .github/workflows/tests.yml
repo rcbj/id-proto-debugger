@@ -70,6 +70,25 @@ jobs:
   # Coverage suite: same battery WITH frontend (Istanbul) + API (c8) coverage.
   # Wraps ./run-coverage.sh, which layers docker-compose-coverage.yml on top,
   # runs the suite, renders the coverage reports, and tears the stack down.
+  # TEST_CONCURRENCY IS DELIBERATELY NOT SET HERE. It defaults to 3, and 4
+  # and 6 were both tried on 2026-08-31 and both made the run RED.
+  #
+  #   3   1,396s wall   281 passed, 0 failed
+  #   4   1,306s wall   278 passed, 3 FAILED
+  #   6   1,266s wall   277 passed, 4 FAILED
+  #
+  # The binding constraint is ONE JOB, not the pool. [109] Digital
+  # Signature takes 594s of a 900s TEST_JOB_TIMEOUT_MS watchdog at 3 --
+  # already two thirds of its budget -- and adding a single slot pushes it
+  # PAST 900s, where it is killed outright. These runners have four cores
+  # and that job is CPU-bound crypto in a browser; the rest of the failures
+  # are the same contention seen from the other side, browser jobs whose
+  # waitTime is 2 seconds reporting a race as an assertion about the page.
+  #
+  # So raising this number buys ~7% of wall clock and costs the run. The
+  # levers that would actually work are SPLITTING job 109, or a runner with
+  # more cores. Fix one of those before touching this again.
+
   coverage:
     runs-on: ubuntu-latest
     steps:

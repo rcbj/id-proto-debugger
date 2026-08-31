@@ -123,7 +123,32 @@ function rpKeys() {
 // runs out it says how long it waited, so a mock that really is down still
 // reads as one.
 // ---------------------------------------------------------------------------
-const BUSY_WINDOW_MS = 90000;
+// FIVE MINUTES, AND IT WAS 90 SECONDS UNTIL 2026-08-30.
+//
+// The paragraph above already names the cost — about two seconds for the
+// SHA-2 parameter set and twelve for the SHAKE one, per signature, of
+// straight-line CPU. What it assumed was an UNINSTRUMENTED mock, and the
+// coverage stack is not one: `NODE_V8_COVERAGE` instruments the mock's process
+// and its worker pool, and that costs a measured **6.4x** on this path —
+// SLH-DSA-SHA2-128s signing went from 2,291ms to 14,685ms on a developer
+// machine, keygen from 297ms to 1,936ms.
+//
+// Twelve seconds at 6.4x is seventy-seven, on a fast machine. On the two-core
+// runner the mock-sts repository's coverage job uses it is comfortably past
+// ninety, and that job failed on exactly this line in about half of its runs —
+// `could not reach .../oauth2/userinfo in 90s of trying (fetch failed, 1
+// attempt(s))`, with `attempts` of ONE, which is the tell: a single fetch
+// consumed the entire window, so the retry loop never got a second go and the
+// number in the message was measuring the wrong thing.
+//
+// So the window is five minutes. It is not a licence for a slow mock — the
+// per-job watchdog is still what catches a hung one, and this stays well
+// inside it — it is an acknowledgement that ONE post-quantum signature can
+// legitimately take minutes when the process computing it is instrumented.
+//
+// `STS_BUSY_WINDOW_MS` overrides it, so a stack that knows it is slower (or a
+// developer who knows it is not) can say so without another vendor sync.
+const BUSY_WINDOW_MS = Number(process.env.STS_BUSY_WINDOW_MS || 300000);
 
 async function stsFetch(url, options) {
   log.debug("Entering stsFetch(). url=" + url);

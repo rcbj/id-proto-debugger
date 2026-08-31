@@ -3334,15 +3334,52 @@ async function inspectLinksReturnHere(driver) {
 
   for (const which of ["access", "id"]) {
     var index = which === "access" ? 0 : 1;
-    var links = await driver.findElements(By.linkText("Inspect"));
-    assert.ok(links.length > index,
-              "step 2 should offer an Inspect link for the " + which +
-              " token.");
-    var href = await links[index].getAttribute("href");
+    // THE HANDLE IS NOT HELD ACROSS THE READ, and a CI failure is why.
+    //
+    // Step 2 restores its fields from localStorage AFTER the document is
+    // ready, and re-renders the Inspect links when it does. On the second
+    // pass of this loop the page has just been navigated back to, so a
+    // `findElements()` here can return the links of the PRE-RESTORE render;
+    // the restore then replaces them, and the `getAttribute()` two lines
+    // later throws `StaleElementReferenceError: stale element not found` —
+    // an error naming neither the page nor the link, in a job whose other
+    // 280 assertions passed.
+    //
+    // Re-found on each poll rather than held, which is the idiom `reveal()`
+    // in federation_choice_sso.js already uses and for exactly this reason.
+    // A stale read is treated as "not ready yet" rather than as a failure,
+    // because that is what it is: the element existed, and the page replaced
+    // it while it was being read.
+    var href = await driver.wait(async function () {
+      var found = await driver.findElements(By.linkText("Inspect"));
+      if (found.length <= index) {
+        return false;
+      }
+      try {
+        return (await found[index].getAttribute("href")) || false;
+      } catch (e) {
+        return false;
+      }
+    }, waitTime,
+      "step 2 should offer an Inspect link for the " + which + " token.");
     assert.ok(href.indexOf("from=vc-issuance-2.html") !== -1,
       "the Inspect link should name the page it came from, so the detail " +
           "page can come back. Got: " + href);
-    await driver.executeScript("arguments[0].click();", links[index]);
+    // Re-found for the click as well: everything above is true of the moment
+    // between reading the href and pressing it.
+    await driver.wait(async function () {
+      var found = await driver.findElements(By.linkText("Inspect"));
+      if (found.length <= index) {
+        return false;
+      }
+      try {
+        await driver.executeScript("arguments[0].click();", found[index]);
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }, waitTime,
+      "the Inspect link for the " + which + " token could not be pressed.");
     // #jwt_payload is in the static HTML, so locating it proves nothing. The
     // page fills it only after fetching /claimdescription and walking the whole
     // IANA claim registry, which takes a variable few hundred milliseconds —
@@ -3367,6 +3404,18 @@ async function inspectLinksReturnHere(driver) {
     await driver.wait(until.elementLocated(By.id("vc_approve_button")),
                       waitTime,
       "the return link did not come back to step 2.");
+    // AND WAIT FOR THE RESTORE, not merely for the page. `vc_approve_button`
+    // is in the static HTML, so locating it says the document arrived and
+    // nothing about whether step 2 has read its state back out of
+    // localStorage — which is the moment the Inspect links are re-rendered.
+    // Waiting for the token fields to be filled again is the same signal this
+    // function already uses at the top, and it is what makes the next pass of
+    // this loop look at the links the restore produced rather than the ones
+    // it is about to replace.
+    await waitForFilled(driver, "vc_access_token",
+      "step 2 did not restore the access token after the return link.");
+    await waitForFilled(driver, "vc_id_token",
+      "step 2 did not restore the id token after the return link.");
     log.info("[inspect] OK — the " + which +
              " token is decoded there and the link returns to step 2.");
   }

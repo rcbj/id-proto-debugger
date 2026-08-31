@@ -62,6 +62,12 @@ services:
     container_name: api
     image: rcbj/api
     environment:
+      # api and client KEEP this file. `api/env/test.js` is the deployed-site
+      # configuration (https://api.tools.test.idptools.io), not a compose one, so
+      # pointing this container at it would break the stack rather than quieten
+      # it; the api's level is fixed in api/env/docker-tests.js instead. The
+      # client has no test.js at all, and contributed ZERO debug lines here —
+      # its logging goes to the BROWSER console.
       - CONFIG_FILE=./env/docker-tests.js
       # ---------------------------------------------------------------------
       # THE MOCK STS'S CERTIFICATE, IN THIS SERVICE'S TRUSTSTORE.
@@ -110,6 +116,12 @@ services:
     container_name: client
     image: rcbj/client
     environment:
+      # api and client KEEP this file. `api/env/test.js` is the deployed-site
+      # configuration (https://api.tools.test.idptools.io), not a compose one, so
+      # pointing this container at it would break the stack rather than quieten
+      # it; the api's level is fixed in api/env/docker-tests.js instead. The
+      # client has no test.js at all, and contributed ZERO debug lines here —
+      # its logging goes to the BROWSER console.
       - CONFIG_FILE=./env/docker-tests.js
     build:
       context: .
@@ -141,7 +153,33 @@ services:
     # OID4VCI_AUTHORIZATION_SERVER to point it at a real one instead.
     environment:
       # Log level, chosen the same way as for api and client.
-      - CONFIG_FILE=./env/docker-tests.js
+      # ---------------------------------------------------------------
+      # THE INFO FILE, AND A KNOB OF ITS OWN SO THE LAUNCHER CANNOT CLOBBER IT.
+      #
+      # This was `./env/docker-tests.js` until 2026-08-31 — the DEBUG file — and
+      # `STS_LOG_LEVEL: info` in the workflow did not hold it back. One CI run
+      # of this stack produced a 37 MB job log of which 96.6% was debug:
+      # 239,536 level-20 lines against 8,431 level-30, split sts 224,719 /
+      # tests 167,037 / api 16,175.
+      #
+      # THE REASON THE LEVEL DID NOT REACH IT is the trap the mock's own
+      # launcher documents at length: `STS_LOG_LEVEL` reaches the loggers
+      # `config.js` registers, and NOT the modules that build a bunyan logger
+      # at load from `require(process.env.CONFIG_FILE).logLevel` — the mock's
+      # six vendored ones, and this project's own `common/` crypto modules.
+      # `xmldsig` alone was 208,966 lines, which is every canonicalization of
+      # every signed document.
+      #
+      # `sts/env/test.js` is `env/local.js` with one key changed, so this
+      # swaps the level and nothing else. A debug run is
+      # `STS_CONFIG_FILE=./env/docker-tests.js ...`.
+      #
+      # ITS OWN VARIABLE rather than `${CONFIG_FILE:-…}`, because
+      # `docker-run-tests.sh` EXPORTS CONFIG_FILE with a default of its own —
+      # so a compose-level default here would never be reached. That variable
+      # still selects the api and client build configs, which is what it is
+      # for; this service needs a different answer from theirs and now has one.
+      - CONFIG_FILE=${STS_CONFIG_FILE:-./env/test.js}
       # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
       # rather than given a value here.
       #
@@ -398,6 +436,19 @@ services:
     # Point the WS-Federation provisioning + test at the side-car by its compose
     # DNS name (the entrypoint defaults these empty so live-site runs skip WS-Fed).
     environment:
+      # THE SUITE'S CONFIG, AND IT MATTERS FOR A SECOND REASON.
+      #
+      # `tests/env/test.js` and `tests/env/docker-tests.js` are identical in
+      # content — both `waitTime: 2000` and `LOG_LEVEL: 'info'` — so for this
+      # project's own scripts the choice is a no-op. What it changes is the
+      # jobs that load the MOCK's modules in process: `sts/common/config_file.js`
+      # makes a relative CONFIG_FILE absolute against the MOCK's package root,
+      # so `./env/docker-tests.js` became `<sts>/env/docker-tests.js` and every
+      # logger loaded after that point — including this project's own — read
+      # `debug` out of it. That is the 167,037 debug lines the `tests`
+      # container contributed. `./env/test.js` resolves to `sts/env/test.js`
+      # on that same rule, which is the info twin.
+      CONFIG_FILE: ${TESTS_CONFIG_FILE:-./env/test.js}
       KEYCLOAK_WSFED_BASE_URL: http://keycloak-wsfed:8080
       KEYCLOAK_WSFED_LOCALHOST_BASE_URL: http://keycloak-wsfed:8080
       # How many jobs run at once. Passed THROUGH from the host so
