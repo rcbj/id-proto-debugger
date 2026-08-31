@@ -681,6 +681,17 @@ invalid*:
 Everything else is covered, so the alternative signature binds the alternative
 public key to the subject.
 
+**The hybrid extensions are on certificates and not on PKCS#10 requests.**
+draft-truskovsky-lamps-pq-hybrid-x509 defines the matching three CSR
+*attributes* — the alternative public key, the alternative algorithm and an
+alternative signature over a `PreCertificationRequestInfo` — and this build
+does not write them, because nothing here would read them: the five SPIFFE
+methods that take a CSR ignore even the extensions a request asks for, and a
+certification request is a proof of possession rather than a document anybody
+keeps. A post-quantum CSR (a pure or composite key signing its own request) is
+supported and tested; a *hybrid* one is not, and that is a decision rather than
+an oversight.
+
 What this build will **not** pretend to know is what a *failed* alternative
 signature means to a chain: the IETF profile that would have said
 (`draft-truskovsky-lamps-pq-hybrid-x509`) expired without progressing. So the
