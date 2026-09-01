@@ -1489,6 +1489,34 @@ function buildJobs() {
     env: {},
   });
 
+  // The five panes on oauth2_oidc_2.html that do not exist until something
+  // has been called — the Authorization Endpoint's tokens, the token
+  // endpoint's, the refresh call's, the set chosen out of Token History, and
+  // the history itself. Each is built as a STRING by the bundle and dropped
+  // into an empty container, so before the first call the container held
+  // nothing — and an empty flex child is not a gap, it is a COLUMN with
+  // nothing in it, so those rows showed blanks where panes should be.
+  //
+  // `collapsePane()` was already being called on all five and could not help:
+  // it hides the first fieldset INSIDE the container, and a container with no
+  // pane inside has no fieldset and no legend, so it collapses to nothing.
+  // That is the difference between COLLAPSED and INVISIBLE, and it is why this
+  // was fixed more than once without holding.
+  //
+  // IT WALKS EVERY GRANT THE MENU OFFERS, and that is what earns the job. With
+  // the markup half of the fix alone, three of the eleven were still broken on
+  // arrival — `resource_owner` lost two panes, `client_credential` and
+  // `device_authorization_grant` one each — because `resetUI()` runs from
+  // document.ready on every load and empties them per grant. A check of the
+  // default grant would have passed over all three. Needs the client alone,
+  // so it never skips and runs against a deployed static site unchanged.
+  jobs.push({
+    name: "OAuth2/OIDC result panes (collapsed rather than invisible, for " +
+        "every grant type)",
+    script: "oauth2_result_panes.js",
+    env: {},
+  });
+
   // The "save this key pair in browser localStorage" opt-out on the SAML and
   // WS-Trust request pages, exercised in BOTH states. Worth a browser test
   // because the failure mode is silent and reassuring: if the guard in
@@ -3006,7 +3034,12 @@ function buildJobs() {
         "drops, poll and push end to end, and both deliberate defects)",
     script: "ssf_protocol.js",
     env: {
-      WSTRUST_STS_URL: env.WSTRUST_STS_URL || "https://localhost:8081",
+      // NOT WSTRUST_STS_URL, which is what this passed until 2026-09-01 and
+      // is why this job skipped on every run: that variable is a WS-Trust
+      // ENDPOINT carrying a `/sts` path, and SSF is served at the root. See
+      // the comment on `stsUrl` in the script.
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+          "https://localhost:8081",
       SSF_RECEIVER_HOST: env.SSF_RECEIVER_HOST || "localhost",
     },
   });
@@ -3044,8 +3077,11 @@ function buildJobs() {
     script: "ssf_page.js",
     env: {
       API_URL: env.API_URL || "https://localhost:4000",
-      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL ||
-          env.WSTRUST_STS_URL || "https://localhost:8081",
+      // env.STS_URL and not env.WSTRUST_STS_URL. Same reason as the protocol
+      // job above, and the same three months of green runs that proved
+      // nothing about this page.
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+          "https://localhost:8081",
     },
   });
 
@@ -3279,6 +3315,37 @@ function buildJobs() {
   jobs.push({
     name: "API outbound call policy (timeouts, caps, User-Agent, keep-alive)",
     script: "api_connect_timeout.js",
+    env: {},
+  });
+
+  // THE WALLET'S MEMORY, in node, with no issuer and no browser. It needs
+  // nothing at all, so it never skips, and it is FIRST of this family for the
+  // reason scim_engine.js is first of its own: the decisions it covers are
+  // what the browser jobs below depend on, so a defect here makes those fail
+  // in ways that look like a broken issuer.
+  //
+  // IT IS NOT A DUPLICATE OF THOSE JOBS, and the measurement is the argument
+  // rather than the shape of the sentence. With all eight SD-JWT VC /
+  // jwt_vc_json / ldp_vc browser jobs running, `client/src/sd_jwt_vc.js` was
+  // 72.7% covered with 538 lines untouched (tests/coverage_merge.js); this
+  // file alone reaches 128 of those. A workflow test takes ONE path — key
+  // saving on, the holder key present, a cnf naming it — and every ALTERNATIVE
+  // outcome in that module is a branch it never enters.
+  //
+  // What those branches decide is whether somebody is stranded. ABSENT BY
+  // CHOICE and ABSENT AND LOST are the same empty storage slot: with saving
+  // off there is a field on the next page to paste into and the workflow must
+  // NOT block, and with saving on the key was never generated in this browser,
+  // there is nothing to paste, and it must. It also covers the opt-out's PURGE
+  // — a gate that only declines new writes leaves yesterday's private key in
+  // storage and looks exactly like an opt-out — and which key a credential is
+  // bound to under Holder of Key, where the DPoP key IS the holder key and
+  // both are in storage at once.
+  jobs.push({
+    name: "SD-JWT VC wallet memory (the key-saving opt-out and its purge, " +
+        "the bound key, DPoP and presentation readiness, and the Credential " +
+        "History, in node)",
+    script: "sd_jwt_vc_engine.js",
     env: {},
   });
 
@@ -3778,7 +3845,43 @@ function buildJobs() {
     script: "saml_response_decoder_page.js",
     env: {},
   });
-  
+
+  // THE READER THOSE TWO PAGES DRAW FROM, in node, with no browser and no
+  // fixtures built by anything but itself. It needs nothing at all, so it
+  // never skips, and it is FIRST of the three for the reason scim_engine.js
+  // is first of its family: a broken reader makes both page jobs above fail
+  // in ways that look like a broken page.
+  //
+  // It exists because of a measurement rather than a hunch.
+  // client/src/saml_message.js was the second-largest block of untested code
+  // in this tree — 700 uncovered lines at 59.9% on the merged report of
+  // 2026-08-29 (tests/coverage_merge.js) — and what was uncovered was whole
+  // functions never entered once: summarize() at 198 lines,
+  // summarizeResponse() at 157, assertionSummary() at 126, classify() at 96.
+  // The two page jobs above BUILD their fixtures with this module and neither
+  // READS one, so every reader in it was exercised only through a rendered
+  // table, where a wrong row is a wrong cell and nothing says which of two
+  // dozen readers produced it.
+  //
+  // What it asserts is the class of defect that never raises: a reader
+  // written for SAML 2.0 renders a perfectly good 1.1 message as a page of
+  // blanks, in five separate places (the issuer is an attribute, the id is
+  // ResponseID, the status is a QName, the confirmation method is a child
+  // element, an attribute's name is split across two attributes); a Redirect
+  // signature rebuilt in the wrong parameter order is a clean INVALID on a
+  // good signature; an assertion serialized without its inherited namespace
+  // declarations verifies against nothing; and an ArtifactResponse's own
+  // Success reported as the result is a failed sign-in reported as a
+  // successful one.
+  jobs.push({
+    name: "SAML message reader (binding classification, the artifact, the " +
+        "Redirect signed octets, and the request and response readers in " +
+        "both protocol versions, in node)",
+    script: "saml_message_engine.js",
+    env: {},
+  });
+
+
  // SAML 2.0 SP-initiated SSO across all three bindings: load IdP metadata, sign
   // the AuthnRequest (redirect = query-string sig; post = enveloped XML-DSIG;
   // artifact = redirect send + SOAP ArtifactResolve back-channel), log in at

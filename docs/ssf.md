@@ -213,6 +213,58 @@ Two members decide more than they look like they do:
   `"poll"` are not method identifiers, and that catches everybody once. The page
   offers the friendly word and sends the URN.
 
+### `baseUrl` comes from the OAuth2 / OIDC discovery document
+
+The one thing this page *does* have to be told is where the transmitter is, and
+since 2026-09-01 it is usually told by the workflow next door rather than by
+somebody typing.
+
+This page already sends you to the **OAuth2 / OIDC** workflow for a token — SSF
+1.0 section 8 has every management, status, subject, verification and poll
+endpoint protected, and almost every transmitter names OAuth 2.0 in
+`authorization_schemes`. In every deployment this tool is pointed at, the
+service that issues that token and the service that transmits the events are
+**one service**. So the base URL is very nearly always the issuer that was just
+discovered, and typing it a second time is a second chance to type it
+differently: an SSF workflow pointed one character away from the host the token
+was minted for fails with a **401**, which reads as a bad token and sends
+somebody to look at the token.
+
+What is read is the **`issuer`** and not an endpoint, and the reason is the
+section above. `issuer` is the one member of an OpenID Provider / RFC 8414
+document defined to be the base a well-known path is composed *against* — which
+is exactly what this page then does with it. Any other member is an endpoint
+whose path is that server's business, so deriving from one would be composing a
+path out of somebody else's, which is the thing this workflow does not do.
+
+The fallback is the **document's own URL**, and only when there is no `issuer`
+— a document without one is not conformant, and this is a debugger, so the case
+is handled rather than refused. The well-known segment is removed in **both** of
+the shapes it can appear in, for the same reason it is looked for in both:
+OpenID Connect Discovery *appends* `/.well-known/openid-configuration` to the
+issuer and RFC 8414 *inserts* `/.well-known/oauth-authorization-server` before
+the issuer's path, so stripping only a suffix leaves an RFC 8414 issuer's path
+stranded on the end.
+
+**The precedence is the whole design, and both halves of it fail silently.**
+What is stored wins, because it is what somebody typed — a discovered value that
+overwrote it would move the transmitter under a reader who had pointed this page
+somewhere on purpose, and it would do it on a *page load*, so the field would
+simply be wrong the next time they looked. An empty field is filled, because
+otherwise the feature does nothing for the reader who has just come back from
+the token hand-off, which is the one it exists for. The **Source** column of the
+Configuration Parameters table says which of the three answered — you, the
+OAuth2 / OIDC issuer, or this deployment's default — and typing in the field
+takes the credit back. The button beside it (*Use the OAuth2 / OIDC issuer*) is
+the deliberate act and therefore *does* overwrite; a button that did nothing
+whenever the field was non-empty would do nothing almost always.
+
+`op_metadata.js` owns the storage key the document is read from, and this page
+takes it from there rather than writing `"discovery_info"` out again — a key
+spelled in two places is a page that silently reads nothing the day the other
+one changes. It costs this bundle `op_metadata.js` and `metadata_client.js`,
+about 1,200 lines of plain JavaScript and no new third-party dependency.
+
 ---
 
 ## The stream, and the two members most often confused
@@ -493,6 +545,47 @@ This workflow does not consume an ID Token, so checking its signature would be
 answering a question nothing here asks; the JWT Tools page is where that is done
 properly. A page that implied otherwise would be the worst kind of wrong.
 
+### And it asks for the scopes these endpoints need
+
+The hand-off's original claim was that the waiting page "knows nothing whatever
+about an authorization server", and for the SCIM page that is exactly true. It
+is **not** true of the scope. A workflow knows perfectly well what permission
+its own endpoints require, and it is the only party in the transaction that
+does — so `start()` takes an optional `scope`, this workflow passes
+`openid ssf:read ssf:write`, and both OAuth2 / OIDC pages fill it in.
+
+**There is no way to discover those names.** SSF 1.0 section 8 protects the
+stream management, status, subject, verification and poll endpoints and has the
+transmitter publish `authorization_schemes` — but each entry carries `spec_urn`
+and nothing else. So a receiver can learn *"this transmitter takes an OAuth 2.0
+bearer token"* and cannot learn what that token has to say, and the
+specification defines no scope names to guess at. `ssf:read` and `ssf:write`
+are this stack's mock's (configurable there as `ssf.authScopeRead` /
+`ssf.authScopeWrite`, and advertised in its `scopes_supported`), and they are
+two different permissions rather than a pair: read gets a stream, its status
+and its poll queue; write creates, updates and deletes one, adds and removes
+subjects, and triggers a verification event. `openid` is not the transmitter's
+business at all — it is how the **ID Token** above is asked for.
+
+**Two fields on two pages, and both are needed.** `#scope` on
+`oauth2_oidc_1.html` is the authorization request's, which the code grant and
+the three OIDC flows send; `#token_scope` on `oauth2_oidc_2.html` is the token
+request's, which client credentials and resource owner password send — and
+those two never pass through page 1 at all, since its `onload()` sends them
+straight on. `#refresh_scope` and `#tokenexchange_scope` are deliberately left
+alone: a refresh asks for the original grant's scope or a subset of it (RFC
+6749 section 6) and empty is how "the same as before" is spelled, and a token
+exchange is a request for a different token entirely.
+
+**It is a merge, not a replacement, and it stays editable.** `mergeScope()` in
+`token_handoff.js` keeps what the reader already had and appends what is new,
+without duplicates — so `openid profile` becomes
+`openid profile ssf:read ssf:write`, running the hand-off twice changes
+nothing, and a transmitter that names its permissions differently is a text
+field away rather than a defect. The banner on each page says which scopes were
+added and what the field now reads, because a field that changes under a reader
+has to say why.
+
 ---
 
 ## What this workflow deliberately does not do
@@ -522,7 +615,31 @@ properly. A page that implied otherwise would be the worst kind of wrong.
 | `tests/ssf_engine.js` | nothing | Every rule, against the specifications' own text. All eight subject formats and every refusal, the SET envelope signed with every algorithm family including the post-quantum ones, stream configurations, both deliveries, the vocabulary table, the two histories, and every bound on the api's two modules. Never skips. |
 | `tests/ssf_protocol.js` | a transmitter | One grammar against another over the wire. The whole stream lifecycle, every subject format the mock's own reader accepts, what a pause keeps that a disable drops, poll and push end to end — it hosts an RFC 8935 listener of its own — and both deliberate defects. |
 | `tests/api_ssf.js` | the api | The wiring: the body parser for `application/secevent+jwt` (without which every push reads as an empty body), the three outcomes as HTTP statuses, the address policy still covering this endpoint, and the push receiver. |
-| `tests/ssf_page.js` | a browser | That the bundle ran at all, the `callPath` row, both histories, the extended hand-off, the `ssf-` classes and a clean console. |
+| `tests/ssf_page.js` | a browser | That the bundle ran at all, the `callPath` row, both histories, the extended hand-off, the `ssf-` classes, a clean console — and, since 2026-09-01, the pane collapse, where `baseUrl` came from, and that the hand-off asks for `ssf:read` and `ssf:write` in both pages' scope fields without losing the reader's own. |
+
+**The page's chrome is asserted rather than eyeballed**, and the two sections
+that do it are worth knowing about because every one of their failures is
+silent in a browser. `thePanesCollapseAndTheProseIsFolded()` checks that every
+pane pairs a `.dbg-legend` with the fieldset the convention says it drives (a
+drifted pair is a title that does nothing at all, and `wirePanes()` logs a
+*warning*, which the console check further down does not treat as a failure),
+that all sixteen `<details class="ssf-more">` folds ship CLOSED (a `<details
+open>` is prose back on the page, which is the thing the folds exist to end),
+and that the collapse triangle follows the real state — `css/debugger.css` turns
+it with `.dbg-pane:has(fieldset[style*="display: none"])`, which reads the
+INLINE style, so a pane hidden by a class instead would show an expanded
+triangle over a collapsed pane. It clicks the **label** and never the checkbox:
+`.dbg-toggle input` is visually hidden, so clicking it is `element not
+interactable`, which reads as a broken control rather than a hidden one. It
+restores the expanded state before returning, because every section below it
+drives a control inside one of those fieldsets.
+
+`theBaseUrlComesFromTheOAuth2Discovery()` runs LAST but for the console check,
+because it writes `discovery_info` and `ssf_base_url` and reloads the page
+twice; it puts both back. What it pins is the precedence described above — an
+empty field takes the issuer, a typed one survives a reload, and the button
+overwrites on request — each of which is a silent failure in the other
+direction.
 
 They are four rather than one so that a failure NAMES something: a rule, a
 transmitter, the api's contract, or a page. `ssf_protocol.js` and `ssf_page.js`

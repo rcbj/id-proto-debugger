@@ -68,10 +68,20 @@ const events = paths.requireSharedModule(
 const jws = paths.requireSharedModule(
   [__dirname + "/../client/src/jws.js", __dirname + "/jws.js"], "jws.js");
 
-// The transmitter. `WSTRUST_STS_URL` is what every other mock-driving job in
-// this suite reads, so a run that points one of them at a mock points all of
-// them at the same one.
-var stsUrl = process.env.WSTRUST_STS_URL || process.env.STS_URL ||
+// The transmitter, as a BASE URL. `WSTRUST_STS_URL` looks like the variable
+// to read — it is what every other mock-driving job in this suite takes — and
+// reading it is why this job SKIPPED on every run from the day it was written
+// until 2026-09-01, reporting PASS each time because a skip is a pass here.
+// It is a WS-Trust ENDPOINT and carries a path: the launchers set it to
+// `https://localhost:8081/sts` (`https://sts:8081/sts` containerized), so the
+// discovery document was looked for under `/sts/ssf` and answered 404.
+// local-run-tests.sh's own comment on it says it may be pointed at a real
+// Apache CXF STS, which answers nothing else here at all.
+//
+// `STS_URL` is the mock's base URL and is the right fallback: set only on the
+// containerized stack (`https://sts:8081`), with run-report's localhost
+// default right everywhere else.
+var stsUrl = process.env.SSF_TRANSMITTER_URL || process.env.STS_URL ||
     "https://localhost:8081";
 
 // Where the mock's own admin API is, for the configuration this file changes.
@@ -997,7 +1007,8 @@ async function test() {
     // transmitter, and a run with none is a run that legitimately cannot
     // exercise it. The rule tests/CLAUDE.md states for this family.
     log.warn("SKIPPED — no SSF transmitter answered at " + stsUrl +
-        "/ssf. Set WSTRUST_STS_URL to one that does.");
+        "/ssf. Set SSF_TRANSMITTER_URL to one that does — and note it is a " +
+        "BASE url, not the WS-Trust endpoint WSTRUST_STS_URL holds.");
     log.info("Test completed successfully (skipped).");
     log.debug("Leaving test(). Skipped.");
     return;

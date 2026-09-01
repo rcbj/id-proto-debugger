@@ -450,6 +450,29 @@ function toggleKeyFormat() {
   return applyKeyFormat();
 }
 
+// The CSR field follows its checkbox: an empty textarea for a thing this page
+// never produces unless you ask is a field that reads as broken, and it is
+// three rows tall in the column that is already the tallest of the three.
+//
+// It is CLEARED on the way out rather than left hidden with its contents,
+// which is the part worth stating: a request is for one key pair and one
+// subject, so a CSR kept out of sight across an issue would come back into
+// view describing a certificate other than the one in the store — a field
+// that is wrong in a way nothing on the page could contradict. Ticking the
+// box again shows an empty field, and the next issue fills it. Nothing is
+// lost that the private key above cannot rebuild.
+function onGenCsrChange() {
+  log.debug("Entering onGenCsrChange().");
+  var on = checked('pki_gen_csr');
+  show('pki_csr_field', on);
+  if (!on) {
+    setVal('pki_csr', '');
+  }
+  saveState();
+  log.debug("Leaving onGenCsrChange().");
+  return false;
+}
+
 // Download the key pair in the chosen keystore format. When an object in the
 // store is selected, its certificate chain goes in too — which is what makes a
 // PKCS#12 importable as a client identity rather than as a bare key.
@@ -1201,6 +1224,61 @@ function validityDates() {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// THE CERTIFICATION REQUEST, WHICH THIS PAGE DOES NOT CONSUME.
+//
+// A CSR is what you send to an authority that will not take a certificate you
+// made yourself, and this page IS the authority — it signs with a CA in the
+// store above. So the request is built for reference: the exact PKCS#10 bytes
+// this key pair and this subject would have sent, beside the key that signed
+// them.
+//
+// It is built from the SAME inputs the certificate is, which is the only thing
+// that makes it worth showing. A request assembled from a second reading of
+// the form would differ from the certificate in ways nobody could see, and the
+// one question a reader brings here — "is this the request for that
+// certificate?" — would have no answer.
+//
+// THREE EXTENSIONS TRAVEL AND THE REST DO NOT, deliberately. A CSR carries
+// what the requester ASKS FOR; an authority is free to ignore all of it, and
+// most do. subjectKeyIdentifier and authorityKeyIdentifier in particular are
+// the ISSUER's to compute — a requester asserting them is asking a CA to
+// certify its own arithmetic — so `certificationRequest()` takes key usage,
+// extended key usage, basic constraints and subjectAltName, and nothing else
+// goes in.
+//
+// Failure here never fails the issue. The certificate is the product and the
+// CSR is a note beside it, so a request that cannot be built says so in the
+// field and in the status line and leaves the certificate alone.
+async function buildCsr(subject, privatePem, publicPem, ext) {
+  log.debug("Entering buildCsr().");
+  try {
+    var request = await x509.certificationRequest({
+      subject: subject,
+      publicKeyPem: publicPem,
+      privateKeyPem: privatePem,
+      signatureAlg: val('pki_sig_alg'),
+      keyUsage: ext.keyUsage.present ? ext.keyUsage.usages : [],
+      extKeyUsage: ext.extKeyUsage.present ? ext.extKeyUsage.usages : [],
+      basicConstraints: ext.basicConstraints.present
+        ? ext.basicConstraints : null,
+      subjectAltName: ext.subjectAltName.present
+        ? ext.subjectAltName.names : []
+    });
+    setVal('pki_csr', request.pem);
+    log.debug("Leaving buildCsr(). Built.");
+    return request;
+  } catch (e) {
+    // Named in the field rather than only in the status line, which the
+    // certificate's own message is about to overwrite.
+    log.error('buildCsr: ' + e.message);
+    setVal('pki_csr', '(the certificate was issued; the CSR could not be ' +
+        'built: ' + e.message + ')');
+    log.debug("Leaving buildCsr(). Failed.");
+    return null;
+  }
+}
+
 async function issue() {
   log.debug("Entering issue().");
   var profileId = val('pki_profile');
@@ -1281,6 +1359,17 @@ async function issue() {
       }
     }
     var result = await x509.issueCertificate(spec);
+
+    // After the certificate, and from the same subject, key pair and
+    // extensions that went into it. Unticked, the field is cleared rather
+    // than left holding the request for a key pair that is no longer in the
+    // boxes above — a stale CSR beside a fresh key is the one genuinely
+    // misleading state this field can be in.
+    if (checked('pki_gen_csr')) {
+      await buildCsr(subject, privatePem, publicPem, spec.extensions);
+    } else {
+      setVal('pki_csr', '');
+    }
 
     var stored = store.put({
       id: store.newId(p.ca ? 'ca' : 'leaf'),
@@ -2428,12 +2517,14 @@ var PQ_MODES = {
     classical: true,
     families: ['ML-DSA', 'SLH-DSA', 'Composite ML-DSA'],
     note: 'A certificate signed TWICE: the ordinary fields carry whatever ' +
-        'you choose below, and a second key and signature go into the three ' +
-        'non-critical extensions of ITU-T X.509 (2019) clause 9.8. A ' +
+        'you choose in the Key Pair column, and a second key and ' +
+        'signature go into the three non-critical extensions of ITU-T ' +
+        'X.509 (2019) clause 9.8. A ' +
         'validator that has never heard of them sees an ordinary ' +
         'certificate and accepts it — which is why this is the approach a ' +
-        'migration actually uses. Choose a classical algorithm below and a ' +
-        'post-quantum one in the pane beside it.'
+        'migration actually uses. Choose a classical algorithm in the Key ' +
+        'Pair column and a post-quantum one in the alternative pane under ' +
+        'it.'
   }
 };
 
@@ -2658,6 +2749,10 @@ window.onload = function () {
   // rather than waiting for the user to change it, or a reload would show
   // "Hybrid" with the pane hidden.
   onPqModeChange();
+  // Same reason as the line above: restoreState() has just put the box back,
+  // and the field it governs is display:none in the markup, so something has
+  // to open it or a ticked box would reload with its CSR out of sight.
+  onGenCsrChange();
   if (!trimmed('pki_serial')) newSerial();
   // Before onProfileChange(), which fills the CN: these five do not follow the
   // profile and the DN reads as one block whichever order they are written in.
@@ -2683,6 +2778,7 @@ window.onload = function () {
 
 module.exports = {
   onPqModeChange: onPqModeChange,
+  onGenCsrChange: onGenCsrChange,
   onAltKeyAlgChange: onAltKeyAlgChange,
   generateAltKeys: generateAltKeys,
   // the Key Pair block of the configuration pane

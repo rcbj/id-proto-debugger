@@ -1611,11 +1611,19 @@ async function certificationRequest(spec) {
     extensions.push(buildAltName(EXT_OIDS.subjectAltName,
                                  { names: spec.subjectAltName }));
   }
+  // `usages`, which is what both builders read. They were called with `bits`
+  // and `ekus` until 2026-09-01 — names those functions have never used — so
+  // each returned null, the filter below dropped it, and every CSR this
+  // module has ever produced carried NEITHER extension while reporting no
+  // error anywhere. It is exactly the failure the filter's own comment
+  // describes being careful about, arriving through the argument instead:
+  // nothing throws, the request is valid, and an authority honouring what it
+  // was asked for grants a key usage nobody asked for.
   if (spec.keyUsage && spec.keyUsage.length) {
-    extensions.push(buildKeyUsage({ bits: spec.keyUsage }));
+    extensions.push(buildKeyUsage({ usages: spec.keyUsage }));
   }
   if (spec.extKeyUsage && spec.extKeyUsage.length) {
-    extensions.push(buildExtKeyUsage({ ekus: spec.extKeyUsage }));
+    extensions.push(buildExtKeyUsage({ usages: spec.extKeyUsage }));
   }
   if (spec.basicConstraints) {
     extensions.push(buildBasicConstraints(spec.basicConstraints));

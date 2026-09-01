@@ -312,7 +312,16 @@ buildBrowserExtension()
 # Exports STACK_TLS_DIR, STACK_TLS_CERT_FILE, STACK_TLS_KEY_FILE and
 # STACK_TLS_SPKI_PIN. The certificate is self-signed, so it is its own anchor:
 # STACK_TLS_CA_FILE is the same file under the name a truststore consumer wants
-# it by.
+# it by — which still holds now that there is a hierarchy above the leaf,
+# because stack-tls-cert.pem is a BUNDLE: leaf, issuing CA and root, in that
+# order. A server sends it as the chain; a truststore consumer finds the root
+# inside it. What a person imports into a browser is the root ALONE, which
+# ./generate-tls-cert.sh writes separately and names on the way out.
+#
+# STACK_TLS_CA_DIR, if set, is where the CA is kept and REUSED between runs.
+# Unset, the generator puts it under ${STACK_TLS_DIR} and it dies with the
+# run — which is what every launcher wants, and what ./generate-tls-cert.sh
+# deliberately does not.
 #
 # $1 optional extra subjectAltName DNS name (a deployed hostname, say). The
 # stack's own names — localhost, client, api and the loopback literals — are
@@ -408,14 +417,28 @@ generateStackTlsCertificate()
   mkdir -p "${STACK_TLS_DIR}"
   chmod 0755 "${STACK_TLS_DIR}"
 
+  # THE CERTIFICATE AUTHORITY'S DIRECTORY IS THE ONE THING THAT OUTLIVES A
+  # RUN, AND ONLY WHEN IT IS ASKED TO. Unset — which is every launcher — the
+  # generator puts the CA in ${STACK_TLS_DIR}/ca, so it is thrown away with
+  # the rest of the throwaway directory and each run gets a hierarchy of its
+  # own. ./generate-tls-cert.sh sets it to a fixed path instead, because that
+  # is the path a PERSON uses: the root is what they import into a browser,
+  # and reusing it is what makes that a one-time act rather than a chore
+  # repeated after every regeneration.
+  # Always passed, so there is no empty-array expansion to get wrong under
+  # `set -u` — which the launchers run with and which bash before 4.4 treats
+  # as an unbound variable.
+  local ca_dir="${STACK_TLS_CA_DIR:-${STACK_TLS_DIR}/ca}"
+
   local generated=""
   if [ -n "${extra_name}" ];
   then
     generated=$(node "${repo_root}/common/generate_tls_cert.js" \
-                  --out-dir "${STACK_TLS_DIR}" --name "${extra_name}")
+                  --out-dir "${STACK_TLS_DIR}" --ca-dir "${ca_dir}" \
+                  --name "${extra_name}")
   else
     generated=$(node "${repo_root}/common/generate_tls_cert.js" \
-                  --out-dir "${STACK_TLS_DIR}")
+                  --out-dir "${STACK_TLS_DIR}" --ca-dir "${ca_dir}")
   fi
   if [ -z "${generated}" ];
   then

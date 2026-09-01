@@ -388,3 +388,44 @@ textarea.ssf-field {
 .ssf-metadata-missing { color: #b00; font-weight: bold; }
 .ssf-metadata-absent { color: #8a6d00; }
 .ssf-metadata-extra { color: #555; font-style: italic; }
+
+/* ---------------------------------------------------------------------------
+   FOLDED PROSE, the way the SCIM page folds its own (`.scim-more`) and the
+   Kerberos pages theirs (`.krb-more`).
+
+   The explanations are the reason this workflow is worth using — why a subject
+   identifier with one extra member is one every conforming receiver MUST
+   reject, why a paused stream and a disabled one differ, why push delivery
+   cannot work in a browser and that being the specification rather than this
+   tool — so they are kept VERBATIM and folded rather than cut. A debugger
+   that omits why a thing fails is the thing nobody needed.
+
+   They ship CLOSED. This page carried about nine hundred words of prose above
+   and inside its panes, and a reader who wants to press a button was three
+   screens from the first one.
+   ------------------------------------------------------------------------ */
+.ssf-more {
+  margin: 6px 0;
+}
+
+.ssf-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.ssf-more > summary:hover {
+  text-decoration: underline;
+}
+
+/* A pane's own legend is styled by `.ssf-pane > legend`, and the collapse
+   triangle in front of it by `.dbg-legend::before` in css/debugger.css. The
+   pane is a <div class="ssf-pane dbg-pane"> now rather than a <fieldset>, so
+   that selector needs its child legend to still be matched — which it is,
+   because the legend is a direct child either way. What DOES need saying is
+   the cursor: `.dbg-legend` sets it and this sheet loads afterwards, so
+   nothing here may set `cursor` on that legend without putting it back. */
+.ssf-pane > legend.dbg-legend {
+  cursor: pointer;
+}

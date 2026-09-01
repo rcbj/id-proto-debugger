@@ -58,6 +58,10 @@ var ssfEvents = require("./ssf_events");
 var ssfHistory = require("./ssf_history");
 var handoff = require("./token_handoff");
 var opHistory = require("./op_history");
+// For DISCOVERY_INFO_KEY alone — the key the OAuth2 / OIDC workflow stores its
+// discovery document under. See the baseUrl block below for why the key is
+// taken from the module that owns it rather than written out again here.
+var opMetadata = require("./op_metadata");
 var jws = require("./jws");
 
 var log = bunyan.createLogger({ name: 'ssf', level: appconfig.logLevel });
@@ -65,6 +69,37 @@ log.info("Log initialized. logLevel=" + log.level());
 
 var API_URL = appconfig.apiUrl || '';
 var BACKEND_AVAILABLE = appconfig.backendAvailable !== false;
+
+// ---------------------------------------------------------------------------
+// WHAT A TOKEN FOR THIS WORKFLOW HAS TO CARRY, and why the names are a
+// starting point rather than a fact.
+//
+// SSF 1.0 section 8 requires the stream management, status, subject,
+// verification and poll endpoints to be protected, and has the transmitter
+// publish the SCHEMES it accepts in `authorization_schemes`. It stops there.
+// Each entry carries a `spec_urn` and NOTHING ELSE — no scope, no audience,
+// no resource — so a receiver that has discovered "this transmitter takes an
+// OAuth 2.0 bearer token" still has no way to discover what that token must
+// say, and the specification defines no scope names to guess at.
+//
+// `ssf:read` and `ssf:write` are what this stack's mock transmitter uses, and
+// they are the two names most transmitters have settled on. They are also two
+// DIFFERENT permissions rather than a pair: read gets a stream, its status
+// and its poll queue; write creates, updates, deletes, adds and removes
+// subjects, and triggers a verification event. Asking for one and using the
+// other is a 403 naming a scope, which is the most common way this workflow
+// fails for a reason that has nothing to do with SSF.
+//
+// `openid` is here for a different reason and is not the transmitter's
+// business at all: this pane names the authenticated user, and an access
+// token this service issues is opaque to a client — the identity is in the ID
+// Token, which is not issued without it.
+//
+// So this is ADVICE. It is merged into whatever the OAuth2 / OIDC page
+// already holds rather than replacing it, and it stays editable there,
+// because a transmitter using different names is not a bug in either page.
+// ---------------------------------------------------------------------------
+var HANDOFF_SCOPES = 'openid ssf:read ssf:write';
 
 // Fields written to localStorage. THE CREDENTIALS ARE NOT HERE — see the
 // header. `ssf_access_token`, `ssf_id_token`, `ssf_basic_password`,
@@ -250,10 +285,193 @@ function loadState() {
   } catch (e) {
     log.debug("loadState(): no storage — " + e.message);
   }
+  // THE THREE SOURCES OF baseUrl, in the only order that can be right.
+  //
+  // What is stored wins, because it is what somebody typed. Then the OAuth2 /
+  // OIDC workflow's discovery document, then this deployment's default. The
+  // ordering is the whole design: a discovered value that OVERWROTE a typed
+  // one would move the transmitter under a reader who had pointed this page
+  // somewhere on purpose — and it would do it on a page load, so the field
+  // would simply be wrong the next time they looked.
+  if (!val('ssf_base_url')) {
+    applyDiscoveredBaseUrl(false);
+  }
   if (!val('ssf_base_url')) {
     setVal('ssf_base_url', appconfig.ssfTransmitterUrlDefault || '');
+    baseUrlSource = "this deployment's default";
   }
+  renderBaseUrlSource();
   log.debug("Leaving loadState().");
+}
+
+// ---------------------------------------------------------------------------
+// baseUrl FROM THE OAuth2 / OIDC DISCOVERY DOCUMENT.
+//
+// This page already sends you to that workflow for a token (SSF 1.0 section 8
+// has every management endpoint protected, and almost every transmitter names
+// OAuth 2.0), and in every deployment this tool is pointed at, the thing that
+// issues the token and the thing that transmits the events are ONE SERVICE.
+// So the base URL is very nearly always the issuer that was just discovered,
+// and typing it a second time is a second chance to type it differently — an
+// SSF workflow pointed at a host one character away from the one the token was
+// minted for fails with a 401, which reads as a bad token.
+//
+// WHAT IS READ, AND WHY THE ISSUER RATHER THAN AN ENDPOINT. `issuer` is the
+// one member of an OpenID Provider / RFC 8414 document that is defined to be
+// the base the well-known path is composed against — which is exactly what
+// this page then does with it (`ssfClient.metadataCandidates()` looks for
+// `/.well-known/ssf-configuration` under it in both shapes). Any other member
+// is an endpoint whose path is that server's business, so deriving from one
+// would be composing a path out of somebody else's, which is the thing the
+// metadata pane's own note says this page never does.
+//
+// THE FALLBACK IS THE DOCUMENT'S URL, and only when there is no `issuer` —
+// a document that omits it is not conformant, and this is a debugger, so the
+// case is worth handling rather than refusing. The well-known segment is
+// removed in BOTH of the shapes it can appear in: OpenID Connect Discovery
+// APPENDS `/.well-known/openid-configuration` to the issuer and RFC 8414
+// INSERTS `/.well-known/oauth-authorization-server` before the issuer's path,
+// so stripping only a suffix would leave an RFC 8414 issuer's path behind.
+//
+// The KEY is `op_metadata`'s rather than the string `"discovery_info"` written
+// again. That module owns it, `oauth2_oidc_1.js` writes through it, and a key
+// spelled in two places is a page that silently reads nothing the day the
+// other one changes. It costs this bundle `op_metadata.js` and
+// `metadata_client.js` — about 1,200 lines of plain JavaScript and no new
+// third-party dependency, since `metadata_client.js` requires only bunyan.
+// ---------------------------------------------------------------------------
+
+// Which of the three sources the field currently holds, for the Source column.
+var baseUrlSource = 'you';
+
+// The well-known segments a discovery URL can carry, longest first so that a
+// prefix of another never matches before the whole one.
+var WELL_KNOWN_SEGMENTS = [
+  '/.well-known/oauth-authorization-server',
+  '/.well-known/openid-configuration'
+];
+
+function storedDiscoveryDocument() {
+  log.debug("Entering storedDiscoveryDocument().");
+  var raw = null;
+  try {
+    raw = localStorage.getItem(opMetadata.DISCOVERY_INFO_KEY);
+  } catch (e) {
+    log.debug("Leaving storedDiscoveryDocument(). No storage.");
+    return null;
+  }
+  if (!raw) {
+    log.debug("Leaving storedDiscoveryDocument(). None stored.");
+    return null;
+  }
+  try {
+    var doc = JSON.parse(raw);
+    log.debug("Leaving storedDiscoveryDocument().");
+    return (doc && typeof doc === 'object') ? doc : null;
+  } catch (e) {
+    // A document this browser can no longer read is the same as none, and it
+    // is not this page's business to complain about the other workflow's
+    // storage.
+    log.debug("Leaving storedDiscoveryDocument(). Not JSON.");
+    return null;
+  }
+}
+
+// The issuer's own base, from the URL the document was fetched from. Only
+// reached when the document names no `issuer`.
+function baseFromDiscoveryUrl() {
+  log.debug("Entering baseFromDiscoveryUrl().");
+  var url = '';
+  try {
+    url = localStorage.getItem('oidc_discovery_endpoint') || '';
+  } catch (e) {
+    url = '';
+  }
+  if (!url) {
+    log.debug("Leaving baseFromDiscoveryUrl(). None.");
+    return '';
+  }
+  for (var i = 0; i < WELL_KNOWN_SEGMENTS.length; i++) {
+    var seg = WELL_KNOWN_SEGMENTS[i];
+    var at = url.indexOf(seg);
+    if (at < 0) continue;
+    // OIDC Discovery appends the segment (everything before it is the issuer);
+    // RFC 8414 inserts it (the issuer's path follows it, so the two halves are
+    // joined back together).
+    var out = url.substring(0, at) + url.substring(at + seg.length);
+    log.debug("Leaving baseFromDiscoveryUrl(). " + out);
+    return out.replace(/\/+$/, '');
+  }
+  log.debug("Leaving baseFromDiscoveryUrl(). No well-known segment.");
+  return '';
+}
+
+// { url, from } for the transmitter base the OAuth2 / OIDC workflow implies,
+// or null when that workflow has discovered nothing in this browser.
+function discoveredBaseUrl() {
+  log.debug("Entering discoveredBaseUrl().");
+  var doc = storedDiscoveryDocument();
+  if (doc && typeof doc.issuer === 'string' && doc.issuer) {
+    log.debug("Leaving discoveredBaseUrl(). From the issuer.");
+    return { url: String(doc.issuer).replace(/\/+$/, ''),
+             from: 'the OAuth2 / OIDC issuer' };
+  }
+  var fromUrl = baseFromDiscoveryUrl();
+  if (fromUrl) {
+    log.debug("Leaving discoveredBaseUrl(). From the document's URL.");
+    return { url: fromUrl,
+             from: 'the OAuth2 / OIDC metadata URL (that document names no ' +
+                 'issuer)' };
+  }
+  log.debug("Leaving discoveredBaseUrl(). Nothing discovered.");
+  return null;
+}
+
+// Put it in the field. `force` is the button; without it this only fills an
+// EMPTY field, which is what makes it safe to call on every load.
+function applyDiscoveredBaseUrl(force) {
+  log.debug("Entering applyDiscoveredBaseUrl(). force=" + !!force);
+  var found = discoveredBaseUrl();
+  if (!found) {
+    log.debug("Leaving applyDiscoveredBaseUrl(). Nothing discovered.");
+    return false;
+  }
+  if (!force && val('ssf_base_url')) {
+    log.debug("Leaving applyDiscoveredBaseUrl(). The field is not empty.");
+    return false;
+  }
+  setVal('ssf_base_url', found.url);
+  baseUrlSource = found.from;
+  renderBaseUrlSource();
+  saveState();
+  log.debug("Leaving applyDiscoveredBaseUrl(). " + found.url);
+  return true;
+}
+
+// The button beside the field. It reports rather than failing quietly: a
+// control that does nothing when pressed is the one thing worse than one that
+// says why it cannot.
+function useDiscoveredBaseUrl() {
+  log.debug("Entering useDiscoveredBaseUrl().");
+  if (applyDiscoveredBaseUrl(true)) {
+    setStatus('ssf_discover_status', 'baseUrl set from ' + baseUrlSource +
+        '. Fetch the metadata to read this transmitter.', 'ok');
+    log.debug("Leaving useDiscoveredBaseUrl(). Applied.");
+    return false;
+  }
+  setStatus('ssf_discover_status', 'This browser holds no OAuth2 / OIDC ' +
+      'discovery document. Retrieve one on the OAuth2 / OIDC workflow first ' +
+      '— the same page this workflow gets its token from.', 'bad');
+  log.debug("Leaving useDiscoveredBaseUrl(). Nothing to apply.");
+  return false;
+}
+
+// The Source cell. It says which of the three the value came from, which is
+// the whole point of that column and the reason it is not a fixed "you".
+function renderBaseUrlSource() {
+  log.debug("Entering renderBaseUrlSource().");
+  setText('ssf_base_url_source', baseUrlSource);
+  log.debug("Leaving renderBaseUrlSource().");
 }
 
 function callPath() {
@@ -650,7 +868,8 @@ function startTokenHandoff() {
   saveState();
   var started = handoff.start({
     returnUrl: '/ssf.html',
-    label: 'the Shared Signals workflow'
+    label: 'the Shared Signals workflow',
+    scope: HANDOFF_SCOPES
   });
   if (!started) {
     setText('ssf_token_handoff_note',
@@ -661,7 +880,14 @@ function startTokenHandoff() {
     log.debug("Leaving startTokenHandoff(). Not recorded.");
     return false;
   }
-  setText('ssf_token_handoff_note', 'Going to the OAuth2 / OIDC workflow…');
+  // Named here as well as on the far page, because this is the sentence the
+  // reader is looking at when the navigation happens and the OAuth2 page's
+  // banner is one they have not seen yet.
+  setText('ssf_token_handoff_note', 'Going to the OAuth2 / OIDC workflow, ' +
+    'asking for "' + HANDOFF_SCOPES + '". Those scopes are added to the ' +
+    'scope field there rather than replacing what is in it, and they are ' +
+    'editable — a transmitter other than this stack\'s mock may name them ' +
+    'differently, since SSF 1.0 defines none.');
   window.location.href = '/oauth2_oidc_1.html';
   log.debug("Leaving startTokenHandoff().");
   return false;
@@ -2405,6 +2631,113 @@ function askApiLimits() {
 }
 
 // ---------------------------------------------------------------------------
+// PANE COLLAPSE, matching the .dbg-* chrome the rest of the tree uses.
+//
+// The markup contract is `scim.js`'s, which is the Kerberos pages':
+//
+//   <div class="ssf-pane dbg-pane" id="pane_x">
+//     <legend class="dbg-legend" id="x_expand_button">Title</legend>
+//     <fieldset name="x_fieldset" id="x_fieldset"
+//               style="display: block;">…</fieldset>
+//   </div>
+//
+// The legend and the fieldset are PAIRED BY CONVENTION — `x_expand_button`
+// drives `x_fieldset` — rather than by an inline
+// `onclick="ssf.togglePane('x_fieldset')"`. The inline spelling repeats the id
+// in two places and fails silently when the two drift: a title that does
+// nothing at all, with nothing in the page complaining. Here a drifted pair is
+// a warning in the console, and this page's console is asserted clean by
+// `tests/ssf_page.js` — so it is a failure rather than a shrug.
+//
+// The `style="display: block"` in the markup is not decoration either:
+// css/debugger.css turns the triangle with
+// `.dbg-pane:has(fieldset[style*="display: none"])`, which reads the INLINE
+// style, so a pane that started with no inline display at all would show an
+// expanded triangle over a pane the toggle had never touched.
+//
+// The panes were plain `<fieldset class="ssf-pane">` elements until this
+// existed, which is why the conversion moved the legend OUT of the fieldset:
+// the fieldset is the collapse target now, and a legend inside the thing being
+// hidden is a pane that cannot be brought back.
+// ---------------------------------------------------------------------------
+function togglePane(bodyId) {
+  log.debug("Entering togglePane(). id=" + bodyId);
+  var body = el(bodyId);
+  if (!body) {
+    log.debug("Leaving togglePane(). No such pane.");
+    return false;
+  }
+  body.style.display = (body.style.display === 'none') ? 'block' : 'none';
+  log.debug("Leaving togglePane(). " + body.style.display);
+  return false;
+}
+
+// Expand or collapse every pane on the page.
+//
+// The fieldsets are DISCOVERED rather than listed, which is `scim.js`'s
+// argument and not a preference: several workflows here keep an array of pane
+// ids instead, and every one of those is a list a new pane has to be
+// remembered into — the kind of omission whose only symptom is one pane the
+// switch skips.
+function setAllPanes(expand) {
+  log.debug("Entering setAllPanes(). expand=" + !!expand);
+  var panes = document.querySelectorAll('.dbg-pane fieldset');
+  for (var i = 0; i < panes.length; i++) {
+    panes[i].style.display = expand ? 'block' : 'none';
+  }
+  var text = document.querySelector('.dbg-toggle-text');
+  if (text) {
+    text.textContent = expand ? 'Collapse all panes' : 'Expand all panes';
+  }
+  log.debug("Leaving setAllPanes(). " + panes.length + " pane(s).");
+  return false;
+}
+
+// Bind every pane's title to its fieldset, and the one switch to all of them.
+//
+// A legend whose fieldset is missing is REPORTED rather than skipped: that is
+// precisely the drift the id convention exists to prevent, and a silent
+// `continue` would hide it again behind a title that does nothing.
+function wirePanes() {
+  log.debug("Entering wirePanes().");
+  var legends = document.querySelectorAll('.dbg-legend');
+  var wired = 0;
+  for (var i = 0; i < legends.length; i++) {
+    var legend = legends[i];
+    var id = legend.id || '';
+    if (id.indexOf('_expand_button') === -1) {
+      log.warn('a .dbg-legend has id ' + JSON.stringify(id) + ', which does ' +
+          'not end in _expand_button, so it cannot be paired with a fieldset');
+      continue;
+    }
+    var bodyId = id.replace('_expand_button', '_fieldset');
+    if (!el(bodyId)) {
+      log.warn('legend ' + id + ' names no fieldset ' + bodyId + ' — the ' +
+          "pane's ids have drifted and the title will do nothing");
+      continue;
+    }
+    legend.addEventListener('click', (function (target) {
+      return function () {
+        togglePane(target);
+        return false;
+      };
+    })(bodyId));
+    wired += 1;
+  }
+  var toggleAll = el('dbg_toggle_all');
+  if (toggleAll) {
+    toggleAll.addEventListener('change', function () {
+      setAllPanes(toggleAll.checked);
+    });
+  } else {
+    log.warn('there is no dbg_toggle_all on this page, so nothing expands or ' +
+        'collapses every pane at once');
+  }
+  log.debug("Leaving wirePanes(). " + wired + " pane(s) wired.");
+  return wired;
+}
+
+// ---------------------------------------------------------------------------
 // LOAD.
 // ---------------------------------------------------------------------------
 function onload() {
@@ -2412,6 +2745,7 @@ function onload() {
   fillSubjectFormats();
   fillEventTypes();
   loadState();
+  wirePanes();
   applyBackendAvailability();
   collectHandedTokens();
   subjectFormatChanged();
@@ -2434,6 +2768,13 @@ function onload() {
     // because this page has forty fields and an attribute per field is forty
     // chances to forget one — the same reason saveState() is one listener.
     var id = event && event.target ? event.target.id : '';
+    // Typing in the field makes it yours again. Without this the Source cell
+    // would go on crediting a discovery document for a value somebody has
+    // since replaced, which is the one thing that column must not do.
+    if (id === 'ssf_base_url') {
+      baseUrlSource = 'you';
+      renderBaseUrlSource();
+    }
     if (id === 'ssf_auth_scheme') {
       authSchemeChanged();
     }
@@ -2455,6 +2796,7 @@ module.exports = {
   readPastedTokens: readPastedTokens,
   clearTokenHistory: clearTokenHistory,
   discover: discover,
+  useDiscoveredBaseUrl: useDiscoveredBaseUrl,
   deliveryChanged: deliveryChanged,
   createStream: createStream,
   readStream: readStream,
@@ -2486,6 +2828,9 @@ module.exports = {
   // and "the button did nothing".
   streamBody: streamBody,
   saveState: saveState,
+  togglePane: togglePane,
+  setAllPanes: setAllPanes,
+  discoveredBaseUrl: discoveredBaseUrl,
   takeReceivedToken: takeReceivedToken,
   notePollEndpoint: notePollEndpoint
 };

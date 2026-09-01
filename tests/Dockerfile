@@ -176,6 +176,11 @@ COPY client/src/wstrust_msg.js client/src/jose_jwe.js client/src/edge_landing.js
 # replace it. The module keeps its own name because saml_response.js and
 # saml_authnrequest.js both require ./saml_message.
 COPY client/src/saml_message.js ./
+# The node-only test of that module. It is called saml_message_engine.js and
+# NOT saml_message.js for the reason the paragraph above gives — this directory
+# is flat and the last COPY wins, so a test of that name would replace the
+# module it drives, silently.
+COPY tests/saml_message_engine.js ./
 # The JWK -> SPKI PEM encoder, tested the same way (tests/jwk_pem_encoding.js
 # requires it directly). Note that in this image there is no client/src tree, so
 # that test's scan for requires which would pull `elliptic` back into a bundle
@@ -248,6 +253,12 @@ COPY client/src/contexts ./contexts
 # directly — they are what these two require at load time, and a missing one is
 # a MODULE_NOT_FOUND at require, i.e. a hard failure rather than a silent skip.
 COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
+# The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
+# and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
+# directory is flat and the last COPY wins, so a test of that name would
+# silently replace the module it drives. It needs its own line because the
+# `tests/sd_jwt_vc_*` files above are named individually rather than globbed.
+COPY tests/sd_jwt_vc_engine.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires

@@ -62,13 +62,13 @@ over, then fails here instead of being nobody's test.
 
 ## The page is five panes, and it was seven
 
-This page carries more fields than any other in the tree: a key pair, sixteen
-certificate fields, a distinguished name, **twenty** X.509v3 extension cards and
-a TLS pane. On 2026-08-18 its first three panes — *Key Pair*, *Issue a
-Certificate*, *X.509v3 Extensions* — became one, `pane_config`, its fields laid
-out in three columns, with the extension list flowing in three of its own and
-the TLS pane in two. Nothing was removed; what changed is where it sits and how
-much margin it pays.
+This page carries more fields than any other in the tree: a key pair (and,
+optionally, the CSR for it), sixteen certificate fields, a distinguished name,
+**twenty** X.509v3 extension cards and a TLS pane. On 2026-08-18 its first
+three panes — *Key Pair*, *Issue a Certificate*, *X.509v3 Extensions* — became
+one, `pane_config`, its fields laid out in three columns, with the extension
+list flowing in three of its own and the TLS pane in two. Nothing was removed;
+what changed is where it sits and how much margin it pays.
 
 **What it bought, measured at 1366x768 in headless Chrome.** The page went from
 **4941px** to **3323px** — a third of it — and the *Keys & Certificates* pane,
@@ -109,6 +109,25 @@ the key pair ended in 283px of nothing. Three blocks of roughly equal height
 spend that space instead of paying for it. `tests/pki_page.js` measures both the
 heights (a column under 60% of the tallest is dead space with a border) and the
 **tops** — see the next paragraph for what makes them move.
+
+**So a field added to the TALL column is charged twice**, and that is the one
+thing to hold on to before adding one. It costs its own height there, and it
+costs the same height again as dead space at the foot of each of the other two,
+because the row is as tall as the tallest item in it. The CSR field is the
+worked example: three rows of textarea and a checkbox took the key-pair column
+from 453px to 505px beside a 274px one — under the 60% floor, on a margin that
+had been 2px. What paid for it was **Cryptographic Approach**, which moved to
+the certificate column: it is a property of the certificate rather than of the
+key (it narrows the Signature Algorithm as well as the Key Algorithm, and the
+Profile and the issuer above it are already deciding the same question), so it
+reads better there and it leaves the three columns at 383 / 395 / 374px with
+the CSR field open and 383 / 339 / 374 with it shut.
+
+**Both of those numbers matter, and hiding the field is not what makes them
+legal.** The CSR field is `display: none` until its box is ticked, so the page
+the test measures is the shut one — and a layout that only balances while a
+field is hidden is a layout that breaks the first time somebody uses it, with
+no test in front of it. The open figure is the one that had to be paid for.
 
 **Four traps live in that layout, and all four are invisible until something
 is narrow.** `.pki-cols` is `auto-fit` with a **390px** minimum, and that
@@ -314,6 +333,107 @@ Two things came out of that extraction that are worth knowing:
   has to wrap it in, because **pkijs cannot import an Ed25519 public key**. The
   certificate is `x509.js`'s job now, so the format works and the refusal is
   gone.
+
+## The CSR is optional, and this page is the authority that ignores it
+
+**Generate a CSR when the certificate is issued**, the checkbox in the Key
+Pair column under Public Key, fills the third field below it: the PKCS#10
+certification request this key pair and this subject *would have* sent to an
+external authority. Nothing on this page consumes it. That is the point rather
+than an omission: a CSR is what you send to an authority that will not take a
+certificate you made yourself, and this page **is** the authority — it signs
+with a CA from the store below.
+
+**The field is not there until the box is ticked**, and unticking clears it as
+well as hiding it. An empty textarea for a thing the page does not produce
+unless asked reads as something broken; and a request describes one key pair
+and one subject, so a CSR kept out of sight across an issue would come back
+into view describing a certificate other than the one in the store — wrong in
+a way nothing on the page could contradict. `onGenCsrChange()` does both, and
+`onload()` calls it so a ticked box survives a reload.
+
+**The checkbox is beside that field rather than in the action row** with the
+issue button, and that is layout rather than preference — `.pki-actions` is
+`flex-wrap: nowrap` above 1330px and its four controls only fit the column at
+1366px because the two checkbox labels wrap inside it. A fifth is drawn
+*outside* the column, over the one beside it, with nothing clipped and no
+scrollbar to say so. With the field hidden by default the label is also the
+only thing on the page that says the field exists, so it could not go
+anywhere else in any case.
+
+So the request is for reference, and it is worth having for one reason: the
+signature on it is by the private key in the field above, and that signature is
+the **proof of possession** which lets an authority certify a key it has never
+seen. `x509.js`'s own header says it; the field lets you hold the bytes.
+
+**It is built from the same objects the certificate is** — the same `subject`,
+the same key pair, the same `spec.extensions` — inside `issue()`, after
+`issueCertificate()` returns. A request assembled from a second reading of the
+form would differ from the certificate in ways nobody could see, and the one
+question a reader brings to this field ("is this the request for *that*
+certificate?") would have no answer.
+
+**Four extensions travel and the rest do not.** A CSR carries what the
+requester ASKS FOR, and an authority is free to ignore all of it — most do.
+`certificationRequest()` takes key usage, extended key usage, basic constraints
+and subjectAltName, and nothing else goes in. `subjectKeyIdentifier` and
+`authorityKeyIdentifier` are the deliberate omissions: they are the **issuer's**
+to compute, and a requester asserting them is asking a CA to certify its own
+arithmetic.
+
+Two smaller decisions:
+
+* **Failure here never fails the issue.** The certificate is the product and
+  the CSR is a note beside it, so a request that cannot be built says so in its
+  own field — not only in the status line, which the certificate's own message
+  is about to overwrite — and leaves the certificate alone.
+* **Unticked clears the field** rather than leaving it. A request for a key
+  pair that is no longer in the boxes above is the one genuinely misleading
+  state this field can hold.
+
+The three textareas are **three rows each**. They were 5 and 4, so the third
+field costs the pane no height at all — which is the only reason it could be
+added to a pane the rest of the page is already sized around.
+
+### The bug this uncovered, which had been silent since the function was written
+
+The PKI page is the **first caller to pass key usage or extended key usage** to
+`certificationRequest()`. SPIFFE's five call sites pass `subject` and
+`subjectAltName` and nothing else, which is why nobody had been down this path.
+
+It called `buildKeyUsage({ bits: … })` and `buildExtKeyUsage({ ekus: … })`, and
+both builders read `spec.usages` — names those functions have never used. Each
+returned `null`, the existing `.filter(Boolean)` two lines below dropped it, and
+**every CSR this module ever produced carried neither extension while reporting
+no error anywhere.** Nothing threw, the request was valid, `openssl req -verify`
+was happy, and the only symptom was an authority granting a key usage nobody
+had asked for.
+
+It is the exact failure that filter's own comment describes guarding against,
+arriving through the argument instead of the return value. Fixed in
+`client/src/x509.js`; SPIFFE's requests are byte-identical before and after,
+which is what makes the fix safe to make here.
+
+### Where this sits beside central key generation
+
+A CSR is the **subscriber generates the key** direction: the private half never
+moves, and the request proves possession of it. The opposite model — the
+authority generates the key pair *and* the certificate together and delivers
+both — is equally real and is standardised in EST's `/serverkeygen`
+(RFC 7030 §4.4) and in CMP/CRMF's central key generation with private-key
+archival (RFC 4210 / RFC 4211).
+
+What cannot exist is the middle: an authority handed a CSR cannot produce the
+matching private key, because the request carries only the public half and
+deriving the private one is precisely what the cryptography prevents.
+
+The page already does both directions, without labelling them. The CA hierarchy
+builder **is** central key generation — it makes the key and the certificate in
+one action — and this checkbox is the artefact of the other. Which is
+appropriate depends on what the certificate is for: an encryption certificate
+wants key recovery (lose the key, lose the data, which is what the
+`key-encipherment` profile is), and a signing certificate must not have it, or
+the non-repudiation `digital-signature` exists to provide is gone.
 
 ## The profile fills in the subject CN
 

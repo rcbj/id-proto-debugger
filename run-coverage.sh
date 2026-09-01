@@ -364,10 +364,50 @@ echo "API (Node) coverage:         ./coverage/api/index.html"
 # the paths the modules were loaded from and only that filesystem has them.
 echo "Node (in-process) coverage:  ./coverage/node/index.html"
 
+# ---------------------------------------------------------------------------
+# THE FOURTH THING, AND IT IS THE ONE TO READ: the three domains merged into one
+# number and one ranked list, plus the ratchet.
+#
+# Those three reports do not reconcile, and until this ran, ranking the files by
+# what any one of them called uncovered pointed at the wrong work — the failure
+# COVERAGE.md documents for the third domain, fixed there for the TOTAL and
+# never for the FILE LIST. On the 2026-08-29 run `common/xmldsig.js` headed BOTH
+# the frontend list (594 uncovered, 45.4%) and the api list (1,475, 33.7%) and
+# was 86.8% covered once the three were merged: whoever wrote tests off either
+# list would have written tests that already existed. See tests/coverage_merge.js.
+#
+# ON THE HOST, and it can only be here. The three lcov files land on this bind
+# mount and the containers that could read them are gone by now — the stack was
+# torn down two commands ago, deliberately, because ./coverage/api is not
+# written until c8 flushes on the api container's clean stop. The script takes
+# no dependency for the same reason: a checkout need not have installed
+# tests/node_modules to have run this launcher.
+#
+# --check IS A GATE and its exit code is kept, but it must not overwrite a
+# failing suite's: a coverage regression reported in place of a red test is a
+# report about the wrong thing, and the tests are the stronger signal. So it
+# only decides the exit code of a run whose tests all passed.
+# ---------------------------------------------------------------------------
+COVERAGE_RC=0
+if command -v node >/dev/null 2>&1;
+then
+  node "${CURRENT_DIR}/tests/coverage_merge.js" --check
+  COVERAGE_RC=$?
+  echo "Merged coverage:             ./coverage/merged/summary.json"
+else
+  echo "WARNING: node is not on the PATH, so the three reports were not" \
+       "merged and the coverage floors were not checked. Every number" \
+       "printed above is one domain's view; see COVERAGE.md."
+fi
+
 # Propagate the suite result as this script's exit code.
 if [ "${TEST_RC}" -ne 0 ]; then
   echo "Test suite FAILED (exit ${TEST_RC})."
-else
-  echo "Test suite passed."
+  exit ${TEST_RC}
 fi
-exit ${TEST_RC}
+echo "Test suite passed."
+if [ "${COVERAGE_RC}" -ne 0 ]; then
+  echo "Coverage is below a floor in tests/coverage_floors.json."
+  exit ${COVERAGE_RC}
+fi
+exit 0

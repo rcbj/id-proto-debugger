@@ -202,10 +202,85 @@ startup naming the file they could not read — deliberately, because a service
 that invented a key pair of its own would be up and serving something nothing
 else in the stack trusts.
 
-Access the app at `https://localhost:3000`. The certificate is **self-signed**,
-so a browser shows an interstitial the first time; `./generate-tls-cert.sh`
-prints the SHA-256 fingerprint if you want to check it against what you are
-being shown.
+**It is a THREE-CERTIFICATE HIERARCHY, and which file you trust is the point.**
+A Root CA, an Issuing CA beneath it, and the leaf the two services present —
+from `client/src/x509.js`'s own `root-ca`, `issuing-ca` and `tls-server`
+profiles, which are three of the fourteen the PKI page offers, used unwrapped.
+It was one self-signed leaf until 2026-09-01.
+
+| File | What it is |
+|---|---|
+| `./generated-tls-ca/stack-tls-root.pem` | the Root CA. **Trust this one.** |
+| `./generated-tls-ca/stack-tls-issuing.pem` | the Issuing CA under it |
+| `./generated-tls/stack-tls-cert.pem` | leaf + issuing + root, as served |
+
+**The CA is REUSED between runs and the leaf is not, which is the whole
+reason it exists.** A trust decision names a KEY — an accepted interstitial, an
+imported anchor, a pinned SPKI — so while the only key was the leaf, every one
+of them was void the next time the script ran. Re-running now issues a fresh
+leaf from the same root, so a root already in your browser or OS store keeps
+working and there is nothing to accept again. `./generate-tls-cert.sh
+--rotate-ca` throws the CA away and starts over, invalidating that trust on
+purpose.
+
+The CA lives OUTSIDE `./generated-tls` because compose bind-mounts that
+directory into the api and the client, and the root's private key — the one a
+developer has told a browser to trust, which can mint a certificate for any
+name at all — has no business in a container that never signs anything. It is
+`0600`, host-only, and `.gitignore` covers `generated-tls-ca/` as well.
+
+**The mock STS serves that same leaf, which is what makes it ONE warning rather
+than two.** It issued its own self-signed certificate at every start and
+published it from `GET /tls/server-certificate` for a caller to fetch and trust
+— which works, and costs a second anchor on a third origin, replaced on every
+restart. The leaf's subjectAltNames now carry that service's own
+`tls.hostnames` defaults (`sts`, `sts-mock`, `sts.example.com`) beside
+`localhost`, `client` and `api`, and the three compose files mount the pair and
+set `STS_TLS_CERT_FILE` / `STS_TLS_KEY_FILE`. One supplied pair reaches all
+FOUR of that process's TLS sockets, because they share one: 8081 under
+`global.https`, the two TLS/mutual-TLS listeners on 8443 and 9443, and the
+directory's LDAPS listener on 636. The submodule half is `tls.certificateFile`
+/ `tls.keyFile` in `sts/tls/tls_server.js`, which falls back to the self-signed
+certificate when they are unset — so a bare `docker run` of that image is
+unchanged. `api/sts_truststore.sh`'s `STS_CERT_URL` fetch is now redundant on
+this stack (the api verifies the mock from the shared root alone, which was
+checked) and is left in place, because it is still the right bootstrap for a
+mock that generates its own.
+
+**Nothing downstream had to change**, because `stack-tls-cert.pem` is a
+*bundle*: a server sends it as the chain, and a truststore consumer finds the
+root inside it. So `STACK_TLS_CA_FILE` is still that same file,
+`NODE_EXTRA_CA_CERTS` still names it in both compose files, and the SPKI pin is
+still the leaf's — everything that reads a certificate out of that file takes
+the first one.
+
+Access the app at `https://localhost:3000`. Until the root is trusted a browser
+shows an interstitial; `./generate-tls-cert.sh` prints both fingerprints, the
+root's first.
+
+**Or accept it on BOTH ports, and the second one is the trap.** Trusting the
+root once is the way out of this paragraph; what follows is what happens when
+you have not. The api is a different ORIGIN, and a certificate exception is per
+scheme, host AND port — so clicking through the interstitial on
+`https://localhost:3000` does nothing for `https://localhost:4000`, which you
+are never shown an interstitial for because no tab ever navigates there. Every
+call the page makes to the api then dies in the TLS handshake, and a preflight
+that got no response is reported by the browser as **a CORS error**: "Response
+to preflight request doesn't pass access control check", or a bare
+`TypeError: Failed to fetch`. The api's CORS is not
+involved and is very likely correct — `resolveAllowedOrigins()` in
+`api/server.js` builds the allow-list from `uiUrl`, and `curl -k -X OPTIONS`
+against the endpoint with an `Origin:` header will show the right
+`Access-Control-Allow-Origin` while the browser still refuses. Visit
+`https://localhost:4000/claimdescription` once and accept it there too; it
+answers 200, so a clean load is the confirmation. **Regenerating the pair voids
+both exceptions**, and the UI's is re-granted the moment you load the page while
+the api's is not — which is why this arrives as a CORS failure that started on
+its own, naming a header nobody changed. Since the leaf is issued from a root
+that outlives it, trusting that root ends this failure mode rather than
+postponing it, and it is the only route that works for **Firefox**, which
+carries its own NSS store on every platform and has no equivalent of Chrome's
+`--ignore-certificate-errors-spki-list`.
 
 **One pair for both services, and the reason is the mock STS.** It PUSHES to
 the api — RFC 8935 Shared Signals delivery — so that container is handed the

@@ -19,7 +19,8 @@
 //
 // The certificate is made by `common/generate_tls_cert.js`, which is a caller
 // of THIS PROJECT'S OWN X.509 authoring module — `client/src/x509.js`'s
-// `tls-server` profile over a `client/src/key_material.js` key pair. That is
+// `root-ca`, `issuing-ca` and `tls-server` profiles over
+// `client/src/key_material.js` key pairs. That is
 // deliberate and it is the second time the argument has had to be made in this
 // tree: `common/xmldsig.js` exists because three private canonicalizers
 // disagreed with each other, and a fourth certificate encoder here would be
@@ -31,6 +32,15 @@
 //
 // So the arrangement is: ONE generator, outside the services, writing a key
 // and a certificate to disk; and both services reading that file.
+//
+// WHAT THAT FILE HOLDS IS A CHAIN, not a single certificate: the leaf, the
+// issuing CA and the root, in that order. Nothing here had to change for it —
+// node takes a PEM bundle for `cert` and sends every certificate in it, which
+// is exactly what a client needs to build a path. The root is in there so that
+// the same file is still a usable anchor for NODE_EXTRA_CA_CERTS, which is
+// what STACK_TLS_CA_FILE and both compose files point at. `serverCertificate()`
+// below therefore publishes the chain, which is a superset of what it
+// published when the leaf was self-signed.
 //
 // ONE PAIR FOR THE WHOLE STACK, and the reason is not tidiness. The mock STS
 // PUSHES to the api — RFC 8935 Shared Signals delivery, `POST

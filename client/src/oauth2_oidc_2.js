@@ -2202,7 +2202,7 @@ function resetUI(value)
       recalculateTokenRequestDescription();
       recalculateRefreshRequestDescription();
       $("#h2_title_2").innerHTML = "Obtain Access Token";
-      $("#token_endpoint_result").html("");
+      clearResultPane("#token_endpoint_result");
       $("#display_token_request").show();
       $("#usePKCE-yes").prop("checked", false);
       $("#usePKCE-no").prop("checked", true);
@@ -2231,8 +2231,8 @@ function resetUI(value)
       recalculateTokenRequestDescription();
       recalculateRefreshRequestDescription();
       $("#h2_title_2").html("Obtain Access Token");
-      $("#authorization_endpoint_result").html("");
-      $("#token_endpoint_result").html("");
+      clearResultPane("#authorization_endpoint_result");
+      clearResultPane("#token_endpoint_result");
       $("#display_authz_request_class").hide();
       $("#display_token_request").show();
       displayOpenIDConnectArtifacts = false;
@@ -2289,7 +2289,7 @@ function resetUI(value)
       $("#token_grant_type")
         .val("urn:ietf:params:oauth:grant-type:device_code");
       $("#h2_title_2").html("Exchange Device Code for Access Token");
-      $("#authorization_endpoint_result").html("");
+      clearResultPane("#authorization_endpoint_result");
       $("#display_token_request").show();
       recalculateTokenRequestDescription();
       recalculateRefreshRequestDescription();
@@ -3364,6 +3364,13 @@ function collapseFirstPaneRow() {
 $(document).ready(function() {
   log.debug("Entering document.ready() function.");
 
+  // FIRST, before anything renders into one of them. These five containers
+  // hold a collapsed placeholder pane in the markup so the page has no empty
+  // columns before its first call; this records that markup so a reset can put
+  // it back. Taken here rather than at the point of use because by then one of
+  // them may already hold a result. See PLACEHOLDER_PANES.
+  capturePlaceholderPanes();
+
   if (!appconfig) {
     log.debug('Failed to load appconfig.');
   }
@@ -3903,6 +3910,27 @@ function offerTokenToHandoff(token, source, set) {
 // The banner itself, put up on load so that a page which is about to send a
 // token somewhere else says so BEFORE the reader runs a grant on it, and
 // reused by offerTokenToHandoff() once there is one to send.
+//
+// It also fills in the SCOPE the waiting workflow asked for, the way
+// oauth2_oidc_1.js does and for the same reason — the field here is a
+// different one and the grants that read it are different, which is the whole
+// reason both pages have to do this:
+//
+//   * `#scope` on page 1 is the AUTHORIZATION request's scope, which is what
+//     the authorization code and the three OIDC flows ask with.
+//   * `#token_scope` here is the TOKEN request's, which is what client
+//     credentials and resource owner password ask with — grants that never
+//     touch page 1 at all, since onload() there sends them straight here.
+//
+// A reader running client credentials would otherwise reach a filled-in
+// banner on a page whose scope field the handoff had never seen.
+//
+// `#refresh_scope` and `#tokenexchange_scope` are deliberately NOT filled.
+// A refresh must ask for the scope of the original grant or a subset of it
+// (RFC 6749 section 6) and empty is how "the same as before" is spelled, so
+// writing the workflow's scopes there could only narrow what a token already
+// carries; and a token exchange is a request for a DIFFERENT token, whose
+// scope is a question about the exchange rather than about the handoff.
 function maybeShowTokenHandoffBanner() {
   log.debug("Entering maybeShowTokenHandoffBanner().");
   if (!tokenHandoff.isActive()) {
@@ -3913,11 +3941,32 @@ function maybeShowTokenHandoffBanner() {
     log.debug("Leaving maybeShowTokenHandoffBanner(). Already shown.");
     return true;
   }
+  var wanted = tokenHandoff.requestedScope();
+  var filled = "";
+  if (wanted && $("#token_scope").length) {
+    filled = tokenHandoff.mergeScope($("#token_scope").val(), wanted);
+    $("#token_scope").val(filled);
+    // A value set in script fires no change event, and the next thing this
+    // reader does is press a button that posts to the token endpoint.
+    writeValuesToLocalStorage();
+  }
   $(".container").prepend("<div class='vc-handoff-banner' " +
       "id='token_handoff_banner'><strong>An access token was asked for by " +
       "<span id='token_handoff_who'></span></strong> — whichever grant " +
-      "returns one first, it is carried back there.</div>");
+      "returns one first, it is carried back there. " +
+      "<span id='token_handoff_scope_note'></span></div>");
   $("#token_handoff_who").text(tokenHandoff.label());
+  // TEXT rather than markup: both of these crossed a page load in session
+  // storage. The note is empty when no scope was asked for, which is every
+  // handoff before the Shared Signals workflow.
+  $("#token_handoff_scope_note").text(wanted
+      ? "It needs the scope \u201c" + wanted + "\u201d" + (filled
+          ? ", so the token request's Scope field now reads \u201c" +
+            filled + "\u201d"
+          : "") + ". Edit it if this authorization server names those " +
+        "permissions differently. If the token came back from an " +
+        "authorization request, the scope that counts is the one page 1 sent."
+      : "");
   log.debug("Leaving maybeShowTokenHandoffBanner(). " +
       tokenHandoff.label());
   return true;
@@ -4678,8 +4727,14 @@ function renderTokenHistory() {
     // Absent or unreadable storage: keep the default.
   }
   if (history.length === 0) {
-    collapsePane("#token-history-panel");
-    log.debug("Leaving renderTokenHistory().");
+    // NOT collapsePane() on its own, which is what this was and why the panel
+    // was invisible rather than collapsed: with no history there is no pane
+    // inside this container to collapse, so hiding "the first fieldset" hides
+    // nothing and the column renders empty. Restoring the placeholder gives it
+    // a titled pane again — which also says, in one line, what will appear
+    // there.
+    clearResultPane("#token-history-panel");
+    log.debug("Leaving renderTokenHistory(). No history.");
     return;
   }
   var activeIndex =
@@ -5009,6 +5064,76 @@ function generateCustomParametersListUI()
 // result panels before their first call — has no fieldset and nothing to
 // collapse, which is not a failure: an empty container occupies its column
 // and shows nothing, which is exactly the state wanted.
+// ---------------------------------------------------------------------------
+// THE FIVE RESULT PANES THAT DO NOT EXIST UNTIL SOMETHING HAS BEEN CALLED.
+//
+// Each of these containers is filled at runtime with a pane BUILT AS A STRING
+// — the Authorization Endpoint's tokens, the token endpoint's, the refresh
+// call's, the set selected out of Token History, and the history itself. Until
+// then the container is empty, and an empty flex child is not a gap: it is a
+// COLUMN with nothing in it, so the page showed a row of three panes with two
+// blanks in it.
+//
+// `collapsePane()` was already being called on all five and could not help.
+// It shows the container and hides the first fieldset INSIDE it — and a
+// container with no pane inside has no fieldset and no legend, so it collapses
+// to nothing at all. That is the difference between COLLAPSED and INVISIBLE,
+// and the fix is not in this function: each container now carries a collapsed
+// PLACEHOLDER pane in oauth2_oidc_2.html, so there is something to collapse.
+//
+// WHAT IS LEFT FOR THE BUNDLE IS PUTTING IT BACK. Four places used to
+// `.html("")` one of these panes away when the grant type changed, which
+// re-opened the same hole a moment after the page had been laid out
+// correctly — and that is why fixing this in the markup alone did not hold.
+// The placeholder is SNAPSHOTTED here at load rather than written out a second
+// time in this file: five titles spelled in two places are five titles that
+// drift, and the markup is the copy a reader can see.
+//
+// Three notes on the snapshot. It is taken BEFORE anything renders, so it
+// captures the placeholder rather than a result. A container that is absent
+// (the page is shared with no one, but a build could drop one) is skipped
+// rather than throwing. And restoring is a no-op when the snapshot is missing,
+// so `clearResultPane()` is always at least as good as the `.html("")` it
+// replaced.
+// ---------------------------------------------------------------------------
+var PLACEHOLDER_PANES = ["#authorization_endpoint_result",
+  "#token_endpoint_result", "#refresh_endpoint_result",
+  "#currently-viewing-panel", "#token-history-panel"];
+
+var placeholderMarkup = {};
+
+function capturePlaceholderPanes() {
+  log.debug("Entering capturePlaceholderPanes().");
+  PLACEHOLDER_PANES.forEach(function (selector) {
+    var host = $(selector);
+    if (host.length === 0) {
+      log.warn("capturePlaceholderPanes(): no " + selector + " on this page, " +
+        "so a reset will leave an empty column where that pane should be.");
+      return;
+    }
+    placeholderMarkup[selector] = host.html();
+  });
+  log.debug("Leaving capturePlaceholderPanes(). " +
+    Object.keys(placeholderMarkup).length + " captured.");
+}
+
+// Empty a result pane back to its placeholder. This is what the four
+// `.html("")` calls became: emptying the container outright is what put the
+// hole back.
+function clearResultPane(selector) {
+  log.debug("Entering clearResultPane(). selector=" + selector);
+  if (placeholderMarkup[selector] === undefined) {
+    // Nothing captured — the page loaded without that container, or this ran
+    // before onload. Emptying is what the old code did, so this is no worse.
+    $(selector).html("");
+    log.debug("Leaving clearResultPane(). No placeholder captured.");
+    return;
+  }
+  $(selector).html(placeholderMarkup[selector]);
+  collapsePane(selector);
+  log.debug("Leaving clearResultPane().");
+}
+
 function paneFieldset(selector) {
   log.debug("Entering paneFieldset(). selector=" + selector);
   var found = $(selector).find("fieldset").first();
