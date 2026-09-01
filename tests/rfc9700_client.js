@@ -350,11 +350,13 @@ function run() {
     assertBlocking(rfc9700.checkAuthorizationRequest(goodRequest({
       redirectUri: "http://client.example.com/callback"
     })), ["1.3"], "an http redirect_uri on a public host");
-    // RFC 8252's exception, and the one this whole mode depends on locally:
-    // the debugger's own callback is http://localhost:3000/callback.
+    // The debugger's own callback, which is https://localhost:3000/callback
+    // since the client began serving https — so it passes on the https arm
+    // rather than on RFC 8252's loopback exception. The 127.0.0.1 case
+    // below is the one that still exercises that exception.
     assertBlocking(rfc9700.checkAuthorizationRequest(goodRequest({
       redirectUri: "https://localhost:3000/callback"
-    })), [], "an http redirect_uri on loopback");
+    })), [], "the debugger's own https callback on loopback");
     assertBlocking(rfc9700.checkAuthorizationRequest(goodRequest({
       redirectUri: "http://127.0.0.1:54321/callback"
     })), [], "an http redirect_uri on 127.0.0.1 with a high port");

@@ -385,11 +385,47 @@ generateStackTlsCertificate()
     return 1
   fi
 
-  # The generator prints one KEY=value per line on stdout and everything it
-  # says about itself on stderr, so this is an eval of assignments rather than
-  # a parse. `eval` on a value this repository just produced is not the hazard
-  # it would be on a value from anywhere else.
-  eval "${generated}"
+  # THE GENERATOR'S STDOUT IS PARSED, NOT EVALUATED, AND THAT IS THE SECOND
+  # HALF OF A FIX. It prints one KEY=value per line and says everything about
+  # itself on stderr — but the modules it requires are ordinary client
+  # modules, each with a bunyan logger whose default stream is stdout and
+  # whose level comes from CONFIG_FILE, which every launcher exports and both
+  # ./env/*.js it can name set to "debug". So a few hundred Entering/Leaving
+  # records used to land on the channel this reads, and `eval` applied quote
+  # removal and brace expansion to the JSON and reported
+  # `name:pqc: command not found` fourteen times, naming a module that had
+  # done nothing wrong. common/generate_tls_cert.js now takes stdout away from
+  # everything but its own three lines; this reads only assignments it asked
+  # for, so no future call site can corrupt the result by adding a log line.
+  # Split with parameter expansion rather than `IFS='=' read var value`,
+  # which looks equivalent and is not: `read` strips a TRAILING delimiter, so
+  # the base64 SPKI pin arrives without its own `=` padding — and a pin that
+  # is one character short is not rejected anywhere, it simply never matches,
+  # which looks exactly like Chrome ignoring the flag.
+  local line=""
+  local var=""
+  local value=""
+  while IFS= read -r line;
+  do
+    var="${line%%=*}"
+    value="${line#*=}"
+    case "${var}" in
+      STACK_TLS_KEY_FILE|STACK_TLS_CERT_FILE|STACK_TLS_SPKI_PIN)
+        printf -v "${var}" '%s' "${value}"
+        ;;
+    esac
+  done <<< "${generated}"
+
+  if [ -z "${STACK_TLS_KEY_FILE:-}" ] || [ -z "${STACK_TLS_CERT_FILE:-}" ] ||
+     [ -z "${STACK_TLS_SPKI_PIN:-}" ];
+  then
+    echo "ERROR: common/generate_tls_cert.js printed no usable" \
+         "STACK_TLS_* assignment. It said:" >&2
+    echo "${generated}" >&2
+    [ -n "${xtrace_was_on}" ] && set -x
+    echo "Leaving generateStackTlsCertificate(). Unparseable output."
+    return 1
+  fi
   # BOTH 0644, INCLUDING THE KEY, and that is a deliberate trade rather than an
   # oversight. Every container here runs as uid 10001 (see "Containers run as
   # non-root" in the repo-root CLAUDE.md) and has to READ this key to serve

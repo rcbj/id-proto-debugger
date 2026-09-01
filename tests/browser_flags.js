@@ -21,6 +21,39 @@
 //    passing locally, where an http page talking to http localhost raises none
 //    of this.
 //
+//    **--allow-running-insecure-content IS IGNORED BY THE OLD HEADLESS
+//    IMPLEMENTATION, so a test carrying it is not necessarily covered by it.**
+//    A test that asks for bare `--headless` rather than `--headless=new` gets
+//    headless_shell, and in the Chrome 121 this image pins that binary blocks
+//    the mixed-content fetch anyway: the XHR completes with `readyState 4,
+//    status 0` and no console entry naming mixed content. Measured directly on
+//    121.0.6167.85 through this suite's own chromedriver — an https page
+//    fetching an http origin, both flags identical, the ONLY difference being
+//    the headless mode: `--headless` fails, `--headless=new` returns 200.
+//    --unsafely-treat-insecure-origin-as-secure on the target origin does NOT
+//    rescue it, so section 2's flag is no substitute.
+//
+//    THAT COST THE CONTAINERIZED RUN OF 2026-08-31 — thirteen of its fourteen
+//    failures. Once the api and the client moved to https
+//    (common/tls_listener.js), every page in the suite became an https origin
+//    while Keycloak stayed on http://keycloak:8080, so the discovery XHR the
+//    OAuth2/OIDC page makes became mixed content for the first time. The
+//    eleven scripts that still asked for bare `--headless` all failed at the
+//    same line — `Waiting for element to be located By(css selector,
+//    .btn_oidc_populate_meta_data)` — because that button is only rendered
+//    when the discovery document arrives, so what the log named was a missing
+//    button on a page that was fine. The jobs that populate the same metadata
+//    from the same Keycloak under `--headless=new` (oidc_flows.js) passed in
+//    half a second on the same run, which is the shape to look for: a failure
+//    that splits along the headless mode and nothing else.
+//
+//    It does NOT reproduce on ./local-run-tests.sh, and that is the second
+//    half of why it went unseen: there Keycloak is http://localhost:8080,
+//    which Chrome already counts as potentially trustworthy, so nothing about
+//    the request is mixed content and the old implementation has nothing to
+//    block. Only the containerized stack gives Keycloak a name that is not
+//    loopback.
+//
 // 2. SECURE CONTEXT — needed when the page is served over plain HTTP from a
 //    name that is not localhost, which is the containerized stack
 //    (http://client:3000). `window.crypto.subtle` exists only in a secure

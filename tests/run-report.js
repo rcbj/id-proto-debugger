@@ -427,6 +427,26 @@ function buildJobs() {
     env: {},
   });
 
+  // The one channel the stack's TLS certificate crosses. Every launcher runs
+  // common/generate_tls_cert.js and reads three `KEY=value` lines off its
+  // stdout — and the generator is a CALLER of client/src/x509.js, so every
+  // bunyan logger under client/src writes to that same stdout at the level
+  // CONFIG_FILE names, which on both test stacks is debug. common.sh used to
+  // `eval` what came back: ~885 JSON records, quote removal and brace
+  // expansion applied to them, and fourteen `name:pqc: command not found`
+  // lines naming a module that had done nothing wrong and a line number in a
+  // shell function that had not changed. Nothing failed — the assignments
+  // came last, so the certificate was still generated — which is why it took
+  // somebody reading a run log to notice. Node only; its two source sections
+  // run everywhere and the two that RUN the generator need
+  // client/node_modules and say so when it is absent.
+  jobs.push({
+    name: "Stack TLS certificate stdout contract (three assignments and " +
+        "nothing else; parsed, not evaluated)",
+    script: "tls_cert_stdout_contract.js",
+    env: {},
+  });
+
   jobs.push({
     name: "OAuth2 Client Credentials",
     script: "oauth2_client_credentials.js",

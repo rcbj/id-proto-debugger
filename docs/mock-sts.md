@@ -75,7 +75,7 @@ GET /oauth2/authorize?response_type=code&client_id=…   no session
   302 -> /authn/login?authn=<id>                        the request is stashed with a return URL
   POST /authn/login  username=alice                     Set-Cookie: sts_mock_session=…
   302 -> /oauth2/authorize?<the original query, minus prompt>
-  302 -> http://localhost:3000/callback?code=…          answered per spec
+  302 -> https://localhost:3000/callback?code=…         answered per spec
 ```
 
 **What this changes for a test driving the flow over HTTP** — the browser tests are unaffected, since a browser follows the redirect and still finds `#username`, `#password` and `#kc-login` where they were:

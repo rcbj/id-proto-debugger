@@ -132,10 +132,11 @@ var REQUIREMENTS = [
   { id: "1.3", section: 1, level: "MUST", enforced: "enforced",
     title: "redirect_uri is https, or loopback",
     note: "RFC 8252's loopback exception is honoured: 127.0.0.1, [::1] and " +
-          "localhost may be http and may use any port. That exception is " +
-          "load-bearing here rather than theoretical — the debugger's own " +
-          "callback is http://localhost:3000/callback, so without it this " +
-          "mode could not be used against a local stack at all." },
+          "localhost may be http and may use any port. The debugger's own " +
+          "callback no longer needs it — the client serves https, so " +
+          "https://localhost:3000/callback satisfies this through the " +
+          "https arm — but a native or desktop client redirecting to a " +
+          "loopback port still does, which is what the exception is for." },
   { id: "1.4", section: 1, level: "MUST", enforced: "enforced",
     title: "the authorization endpoint is https, or loopback",
     note: "An authorization response MUST NOT travel over an unencrypted " +

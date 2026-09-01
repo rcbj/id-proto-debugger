@@ -100,6 +100,35 @@ var log = {
 const DNS_NAMES = ['localhost', 'client', 'api'];
 const IP_NAMES = ['127.0.0.1', '::1'];
 
+// ---------------------------------------------------------------------------
+// THE STDOUT CONTRACT IS ENFORCED HERE, NOT MERELY DOCUMENTED.
+//
+// The two modules below are ordinary client modules, and every module under
+// client/src carries a bunyan logger whose stream is process.stdout and whose
+// level is read from CONFIG_FILE — which the launchers export, which resolves
+// from client/src/ because require() is relative to the module that calls it,
+// and which in both ./env/local.js and ./env/docker-tests.js says "debug". So
+// merely REQUIRING x509.js under a launcher put a few hundred
+// Entering/Leaving records on the one channel common/common.sh reads back:
+// bash applied quote removal and brace expansion to the JSON and reported
+// `name:pqc: command not found` fourteen times, naming a module that had done
+// nothing wrong.
+//
+// Lowering the level here would only narrow that — an info line from any of
+// the thirty modules underneath would do it again — so stdout is taken away
+// for the whole run instead and handed back only to the three lines main()
+// prints, through the reference captured here. Only under `require.main`: a
+// consumer that requires this file for altNames() or spkiPin() keeps its own
+// stdout.
+// ---------------------------------------------------------------------------
+const RUNNING_AS_SCRIPT = require.main === module;
+const writeStdout = process.stdout.write.bind(process.stdout);
+if (RUNNING_AS_SCRIPT) {
+  process.stdout.write = function () {
+    return process.stderr.write.apply(process.stderr, arguments);
+  };
+}
+
 // The project's own authoring modules. Required by path rather than through
 // tests/module_paths.js, which is the TEST suite's resolver and is not
 // reachable from a launcher.
@@ -206,12 +235,13 @@ async function main() {
     return;
   }
   const made = await generate(args.outDir, args.extraNames);
-  // One KEY=value per line on stdout, so that a shell can eval it. Everything
-  // this script says about itself goes to stderr (see the log shim above), so
-  // stdout carries nothing a caller has to filter.
-  process.stdout.write('STACK_TLS_KEY_FILE=' + made.keyFile + '\n');
-  process.stdout.write('STACK_TLS_CERT_FILE=' + made.certFile + '\n');
-  process.stdout.write('STACK_TLS_SPKI_PIN=' + made.pin + '\n');
+  // One KEY=value per line, through the saved reference rather than through
+  // process.stdout.write — which by now goes to stderr, so that these three
+  // lines are the ONLY thing on the channel common/common.sh parses. See the
+  // stdout note above the requires.
+  writeStdout('STACK_TLS_KEY_FILE=' + made.keyFile + '\n');
+  writeStdout('STACK_TLS_CERT_FILE=' + made.certFile + '\n');
+  writeStdout('STACK_TLS_SPKI_PIN=' + made.pin + '\n');
   log.debug('Leaving main().');
 }
 

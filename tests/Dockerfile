@@ -146,6 +146,19 @@ COPY docker-compose.yml ./
 COPY local-tests.yml ./
 COPY keycloak-tests.yml ./
 
+# The certificate the api, the client and the mock STS all bind on crosses ONE
+# channel — three `KEY=value` lines from common/generate_tls_cert.js into
+# common/common.sh's generateStackTlsCertificate() — and that channel is also
+# where every bunyan logger under client/src writes, since the generator
+# requires x509.js and key_material.js and CONFIG_FILE says debug. It cost
+# fourteen `name:pqc: command not found` lines out of a shell function that
+# had not changed, on a run that then carried on and passed. Both halves of
+# the file are read as SOURCE here (common.sh arrives with the COPY at the top
+# of this stage), so this runs in the image; the two sections that RUN the
+# generator need client/node_modules and say so when it is absent.
+COPY tests/tls_cert_stdout_contract.js ./
+COPY common/generate_tls_cert.js ./
+
 # The XML Signature/Encryption interop test drives the frontend crypto module
 # directly (no browser); copy it next to the test so it can require('./xmldsig.js')
 # and resolve its deps (node-forge, etc.) from this image's node_modules. The

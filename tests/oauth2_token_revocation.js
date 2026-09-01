@@ -196,7 +196,13 @@ async function returnToDebugger(driver) {
   const link =
     By.css('a[href="/oauth2_oidc_2.html?redirectFromTokenDetail=true"]');
   await driver.wait(until.elementLocated(link), waitTime);
-  await driver.findElement(link).click();
+  // clickStable() rather than a bare click(), for the scrollIntoView it does
+  // first. The navbar in bottom.css is position:fixed at the foot of the
+  // VIEWPORT, and a WebDriver click scrolls its element to the BOTTOM of the
+  // viewport — which is underneath that bar — so the click lands on the
+  // navbar's own "Home" anchor and reports "element click intercepted" naming
+  // an <a href="#" class="active"> that has nothing to do with this flow.
+  await clickStable(driver, link, "the Return to debugger link");
   // Wait until the token results pane (with its Introspect links) is rendered.
   await driver.wait(until.elementLocated(By.css(
                     'a[href="/introspection.html?type=refresh"]')), waitTime);
@@ -207,7 +213,15 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    options.addArguments("--headless");
+    // "=new", not bare --headless. This page fetches the discovery document
+    // itself, from a Keycloak that is http://keycloak:8080 on the
+    // containerized stack while the page is now https — and the OLD headless
+    // implementation in the Chrome 121 this image pins IGNORES
+    // --allow-running-insecure-content, so that XHR is blocked with
+    // readyState 4 / status 0 and no console entry naming mixed content.
+    // What the test then reports is a missing Populate button. See section 1
+    // of browser_flags.js.
+    options.addArguments("--headless=new");
   }
   options.addArguments("--no-sandbox");
   // Use /tmp instead of the container's tiny (64MB) /dev/shm, which otherwise

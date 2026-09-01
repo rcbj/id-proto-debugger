@@ -83,9 +83,10 @@ var waitTime = appconfig.waitTime || 20000;
 // REQUIREMENT 1.3 RATHER THAN THE TEST.
 //
 // In mode the client refuses to send a redirect_uri that is neither https nor
-// on the loopback interface — RFC 8252's exception, which is what lets the
-// debugger's own `http://localhost:3000/callback` be used against a local
-// stack. A HOST run is already there and this is unset.
+// on the loopback interface — RFC 8252's exception. The debugger's own
+// `https://localhost:3000/callback` clears the rule on the https arm now
+// that the client serves https; the exception covers a plain-http loopback
+// callback. A HOST run satisfies it either way and this is unset.
 //
 // The CONTAINERIZED stack is not: it serves the debugger at
 // `http://client:3000`, a plain-http name that is not loopback, so the mode

@@ -8,7 +8,7 @@
   "host_permissions": [
     "https://localhost:3000/*",
     "http://localhost:3100/*",
-    "http://client:3000/*",
+    "https://client:3000/*",
     "https://idptools.com/*",
     "https://test.idptools.com/*"
   ],
@@ -18,7 +18,7 @@
       "matches": [
         "https://localhost:3000/*",
         "http://localhost:3100/*",
-        "http://client:3000/*",
+        "https://client:3000/*",
         "https://idptools.com/*",
         "https://test.idptools.com/*"
       ],
