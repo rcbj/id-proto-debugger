@@ -652,6 +652,105 @@ function bigIntLiteralsStayOutOfTheBundles() {
 }
 
 
+// ---------------------------------------------------------------------------
+// Every bundled module must parse as a MODULE, which browserify does not
+// require and the COVERAGE build does.
+//
+// browserify parses each file as a sloppy SCRIPT, where a second
+// `function foo()` at the same level is legal and simply wins. babelify — the
+// transform the coverage build adds, and only the coverage build — parses as a
+// module, where a function declaration is LEXICAL and a redeclaration is a
+// SyntaxError. So a duplicated block sails through `./docker-run-tests.sh` and
+// stops `./run-coverage.sh` dead before it builds a single bundle.
+//
+// That is run 658 of the Selenium Tests workflow: `client/src/jws.js` carried
+// two identical copies of `backendFor()` and `payloadText()`, the plain suite
+// was 284 green beside it, and the coverage job died in the client image's
+// browserify loop with `Identifier 'backendFor' has already been declared.
+// (1302:9)` — having built nothing and run no test. Nothing but the coverage
+// build could see it, and the coverage build is the slower of the two, so it
+// was found late and by the wrong job.
+//
+// NOTE `sourceType: "module"` is the whole point and a strict-mode SCRIPT parse
+// is NOT a substitute: ES2015 made duplicate function declarations legal at the
+// top of a function body even in strict mode, so wrapping the file in a strict
+// function and parsing it accepts exactly the file this check exists to reject.
+// Measured against jws.js as it stood in run 658.
+//
+// Only the PARSE happens — nothing is executed — so a module needing a DOM or
+// Web Crypto is checked like any other.
+// ---------------------------------------------------------------------------
+function bundledSourcesParseAsModules() {
+  log.debug("Entering bundledSourcesParseAsModules().");
+  log.info("[module parse] Parsing client/src the way babelify does in the " +
+           "coverage build, which is stricter than browserify's own parse.");
+  const srcDir = checkoutSrcDir();
+  if (!srcDir) {
+    log.info("[module parse] SKIPPED — no client/package.json in this " +
+             "layout, so this is the tests image (which carries only a " +
+             "partial mirror of client/src) rather than a checkout.");
+    log.debug("Leaving bundledSourcesParseAsModules().");
+    return;
+  }
+  // Required here rather than at the top of the file: in the tests image the
+  // check above has already returned, and acorn is a dependency of tests/
+  // rather than something every layout carries.
+  const acorn = require("acorn");
+  // common/ goes in as well: ten browser bundles require modules from there
+  // and client/build.js stages them into client/src, so a duplicate in
+  // xmldsig.js or krb5/ fails the coverage build in exactly the same place —
+  // and it is not under client/src to be found by the sweep above.
+  const roots = [{ label: "client/src", dir: srcDir },
+    { label: "common", dir: path.join(__dirname, "..", "common") }];
+  const files = [];
+  roots.forEach(function (root) {
+    if (!fs.existsSync(root.dir)) {
+      return;
+    }
+    (function walk(dir) {
+      fs.readdirSync(dir, { withFileTypes: true }).forEach(function (entry) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name === "node_modules") {
+            return;
+          }
+          walk(full);
+        } else if (/\.js$/.test(entry.name)) {
+          files.push({ name: root.label + "/" +
+              path.relative(root.dir, full).split(path.sep).join("/"),
+            full: full });
+        }
+      });
+    })(root.dir);
+  });
+  assert.ok(files.length > 0, "found no .js files in client/src");
+  const offences = [];
+  files.forEach(function (file) {
+    // A leading shebang is not JavaScript to acorn and is not a defect; the
+    // build scripts carry one.
+    const text = fs.readFileSync(file.full, "utf8")
+      .replace(/^#![^\n]*/, "");
+    try {
+      acorn.parse(text, { ecmaVersion: "latest", sourceType: "module" });
+    } catch (e) {
+      offences.push(file.name + "  " +
+                    (e && e.message ? e.message : String(e)));
+    }
+  });
+  assert.deepStrictEqual(offences, [],
+    "these files parse for browserify and NOT for babelify, so the plain " +
+        "suite stays green and\n" +
+    "`./run-coverage.sh` fails inside the client image before any test " +
+        "runs. A duplicated\n" +
+    "top-level function is the usual cause — legal in a sloppy script, a " +
+        "SyntaxError in a\n" +
+    "module:\n  " +
+    offences.join("\n  "));
+  log.info("[module parse] OK — " + files.length +
+           " files in client/src and common, all parse as modules.");
+  log.debug("Leaving bundledSourcesParseAsModules().");
+}
+
 // client/src/coverage_beacon.js is the one file here that is NOT browserified.
 // The Dockerfile's coverage step appends it to each finished bundle with
 //   cat src/coverage_beacon.js >> public/js/${src_name}.js
@@ -1672,6 +1771,7 @@ async function test() {
   privateMembersAreIgnored();
   ellipticStaysOutOfTheBundles();
   bigIntLiteralsStayOutOfTheBundles();
+  bundledSourcesParseAsModules();
   appendedBeaconNeedsNoModuleSystem();
   coverageListCoversEveryBundle();
   testsImageHasNoCollidingFilenames();

@@ -190,6 +190,28 @@ async function capturesFromBridge(driver) {
     "                   window.location.origin);");
 }
 
+// The sections after the first one all read the capture the first one waited
+// for, and reading it off a bridge answer that carries none is a
+// `Cannot read properties of undefined` naming a member of the capture — which
+// is what three of the four failures in run 658 of the Selenium Tests workflow
+// said, none of them naming the empty buffer they all shared. This says it
+// once, in the one place that can.
+function firstCapture(answer) {
+  log.debug("Entering firstCapture().");
+  assert.ok(answer, "the bridge did not answer at all.");
+  assert.ok(!answer.timedOut,
+      "the bridge did not answer within its own timeout, so the service " +
+      "worker is asleep or gone rather than the buffer being empty.");
+  assert.ok(answer.captures && answer.captures.length,
+      "the bridge answered and holds NO captures" +
+      (answer.armed ? ", though it is armed for " + answer.armed.origin +
+        " — so the ceremony ran outside the observed origin, or before the " +
+        "dynamic content scripts were registered."
+        : ", and it is NOT ARMED — so nothing was observing anything."));
+  log.debug("Leaving firstCapture().");
+  return answer.captures[0];
+}
+
 let failures = 0;
 async function section(name, fn) {
   log.debug("Entering section().");
@@ -303,7 +325,8 @@ async function test() {
   try {
     await driver.addVirtualAuthenticator(authenticatorOptions());
 
-    await section("the extension is actually loaded", async () => {
+    await section("the extension is actually loaded and ARMED for the " +
+                  "third-party origin", async () => {
       await driver.get(baseUrl + "/webauthn_analyzer.html");
       await driver.wait(until.elementLocated(By.id("wa_input")), waitTime * 4);
       const marker = await driver.executeScript(
@@ -315,7 +338,43 @@ async function test() {
             "Chrome refuses to " +
         "side-load an unpacked extension; use Chrome for Testing " +
             "(CHROME_BIN).");
-      return "version " + marker;
+
+      // AND THEN WAIT FOR THE ARM, WHICH IS A DIFFERENT FACT AND THE ONE THIS
+      // TEST ACTUALLY DEPENDS ON.
+      //
+      // bridge.js is a STATIC content script declared in the manifest for the
+      // debugger's own origins, so the attribute above appears the moment the
+      // browser loads the extension. The scripts that observe somebody else's
+      // ceremony — shim.js and relay.js — are DYNAMIC: background.js registers
+      // them in arm(), which the CI build reaches from an async
+      // chrome.runtime.onInstalled handler that reads autoarm.json. Those two
+      // events are not ordered with respect to each other, and they are not
+      // ordered with respect to this test either.
+      //
+      // So driving the ceremony straight after the marker is a race, and
+      // losing it is unrecoverable: registerContentScripts() at runAt
+      // document_start affects the NEXT navigation, so a ceremony that starts
+      // first is simply never observed and there is nothing to retry. That is
+      // what happened to run 658 of the Selenium Tests workflow — the ceremony
+      // completed, the bridge answered, and it held an empty capture list, so
+      // four sections failed and not one of them named the arm.
+      //
+      // The arm state is already published by the bridge's getCaptures reply
+      // (background.js), so this waits on the extension's own answer rather
+      // than on a sleep.
+      let armed = null;
+      await driver.wait(async function () {
+        const answer = await capturesFromBridge(driver);
+        armed = answer && answer.armed;
+        return !!(armed && armed.origin &&
+            STS.indexOf(String(armed.origin).replace(/\/+$/, "")) === 0);
+      }, waitTime * 8,
+          "the extension never armed for " + STS + ". The CI build arms " +
+          "itself from autoarm.json in chrome.runtime.onInstalled; if that " +
+          "file is absent, or names a different origin, nothing observes " +
+          "the ceremony and every capture assertion below fails naming " +
+          "something else.");
+      return "version " + marker + ", armed for " + armed.origin;
     });
 
     await section("a ceremony on a third-party origin is captured", async () =>
@@ -352,7 +411,7 @@ async function test() {
     await section("the REQUEST half is captured — the part no relying " +
                   "party shows", async () => {
       const answer = await capturesFromBridge(driver);
-      const capture = answer.captures[0];
+      const capture = firstCapture(answer);
       const pk = capture.request && capture.request.publicKey;
       assert.ok(pk,
           "the capture should carry the options the relying party passed in");
@@ -374,7 +433,7 @@ async function test() {
     await section("a decoded capture agrees with the ceremony it recorded",
                   async () => {
       const answer = await capturesFromBridge(driver);
-      const capture = answer.captures[0];
+      const capture = firstCapture(answer);
       // Feed it to the Analyzer the way a user would, and require the page to
       // decode it — the capture format and the paste format are the same shape
       // precisely so that this works.

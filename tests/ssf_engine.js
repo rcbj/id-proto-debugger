@@ -1258,6 +1258,22 @@ function theApiProxyRefusesWhatItShould() {
         'page cannot discover it any other way.');
     assert.ok(limits.receiver.enabled);
   });
+  check('the limits document says whether the ADDRESS layers are in force, ' +
+      'and defaults that answer to yes', function () {
+    // The same rule ssrf_guard.js is written under: only an explicit false
+    // disables the address layers, so a missing or misspelled key must read
+    // as ON here too. A limits document that said "off" for a guard that is
+    // on would have a page report a hole that is not there — and the reverse
+    // is worse.
+    assert.strictEqual(
+        proxy.limits({}, { enabled: true }).addressPolicyEnabled, true);
+    assert.strictEqual(
+        proxy.limits({ blockPrivateNetworkCalls: 'no' },
+            { enabled: true }).addressPolicyEnabled, true);
+    assert.strictEqual(
+        proxy.limits({ blockPrivateNetworkCalls: false },
+            { enabled: true }).addressPolicyEnabled, false);
+  });
   log.info("[api proxy] OK.");
 }
 

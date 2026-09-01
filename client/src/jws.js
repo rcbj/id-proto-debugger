@@ -1295,46 +1295,6 @@ function assembleSign(prep, signature, options, backend) {
   return result;
 }
 
-// Which backend signs. A CryptoKey can only be used by Web Crypto — that is
-// the whole reason a page holds one — and everything else defaults to the
-// pure-JS path, which is the one that works over plain HTTP and covers the two
-// algorithms crypto.subtle does not have.
-function backendFor(requested, keyInput) {
-  log.debug("Entering backendFor().");
-  if (requested) {
-    log.debug("Leaving backendFor(). Requested " + requested + ".");
-    return requested;
-  }
-  if (typeof CryptoKey !== 'undefined' && keyInput instanceof CryptoKey) {
-    log.debug("Leaving backendFor(). CryptoKey implies webcrypto.");
-    return 'webcrypto';
-  }
-  if (keyInput && keyInput.cryptoKey) {
-    log.debug("Leaving backendFor(). Wrapped CryptoKey implies webcrypto.");
-    return 'webcrypto';
-  }
-  log.debug("Leaving backendFor(). Default js.");
-  return 'js';
-}
-
-// The payload as octets-to-be. An object is serialized compactly, which is
-// what every JWT-shaped caller wants; a string is used EXACTLY as given, which
-// is what the Digital Signature pane needs, because a payload reformatted
-// between validation and signing is signed as something the user never saw.
-function payloadText(payload) {
-  log.debug("Entering payloadText().");
-  if (payload == null) {
-    log.debug("Leaving payloadText(). Empty.");
-    return '';
-  }
-  if (typeof payload === 'string') {
-    log.debug("Leaving payloadText(). Verbatim.");
-    return payload;
-  }
-  log.debug("Leaving payloadText(). Serialized.");
-  return JSON.stringify(payload);
-}
-
 // The synchronous entry point: pure JS only, and it says so rather than
 // silently doing something else if handed a Web Crypto key.
 function signJws(opts) {

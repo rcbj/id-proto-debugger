@@ -427,6 +427,16 @@ function limits(appconfig, receiver) {
         'obeys: api/ssrf_guard.js, installed on the shared axios instance, ' +
         'so loopback and private ranges are refused on the request AND on ' +
         'any redirect into one. It is not re-implemented here.',
+    // Whether the ADDRESS layers of that policy are actually switched on
+    // here, which is a different question from whether they exist. A stack
+    // whose identity provider IS a private address turns them off — every
+    // configuration under api/env/ that this suite runs against does — and a
+    // caller that cannot tell the two apart reads "the metadata address was
+    // not refused" as a hole in the guard rather than as a deployment that
+    // asked for it. The SCHEME check (file:, data:) is not configurable and
+    // is on either way, which is why this names the address layers only.
+    addressPolicyEnabled:
+        !!(appconfig && appconfig.blockPrivateNetworkCalls !== false),
     statusRule: 'A refusal by this service is a 400; a network failure is a ' +
         '502; and an SSF error from the transmitter is a 200 carrying that ' +
         'status and its {err, description}. Those refusals are the most ' +

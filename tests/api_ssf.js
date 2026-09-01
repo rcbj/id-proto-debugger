@@ -150,6 +150,13 @@ async function theLimitsDocumentIsPublished() {
     assert.ok(limits.maxRequestBytes > 0);
     assert.ok(limits.callTimeoutMs > 0);
   });
+  check('it says whether the ADDRESS layers of the guard are switched on',
+    function () {
+      assert.strictEqual(typeof limits.addressPolicyEnabled, 'boolean',
+          'A sentence describing the policy is not the same as saying ' +
+          'whether it is in force, and a caller cannot tell the two apart ' +
+          'from a call that went through.');
+    });
   log.info("[limits] OK.");
 }
 
@@ -212,19 +219,63 @@ async function theAddressPolicyStillApplies() {
   log.info("[proxy] api/ssrf_guard.js is installed ONCE on the shared axios " +
       "instance and is deliberately NOT re-implemented in the SSF proxy. " +
       "This is where \"and it still covers this endpoint\" is asserted.");
+
+  // THE ADDRESS LAYERS. Every configuration this suite runs against turns it
+  // OFF — on a compose network the mock STS and the identity provider ARE
+  // private addresses — so asserting a refusal here would be asserting
+  // something the deployment did not ask for. It was worse than useless
+  // before 2026-09-01: with the guard off, `http://127.0.0.1:1` and
+  // `http://169.254.169.254` merely FAIL TO CONNECT, which is a 502, and a
+  // 502 satisfied the assertion. That made both checks a test of the local
+  // network rather than of the guard — and on a cloud runner it stopped even
+  // being that, because 169.254.169.254 is the instance metadata service and
+  // it ANSWERS: run 658 of the Selenium Tests workflow failed here with a 200
+  // carrying an IIS 404 from Azure's IMDS, on a machine where nothing about
+  // this repository had changed.
+  //
+  // So the api now publishes which state it is in, and this asserts the one
+  // that is true. tests/api_ssrf_guard.js is where the refusals themselves
+  // live: it drives the guard module directly, with a policy of its own, and
+  // needs no network at all.
+  if (!limits.addressPolicyEnabled) {
+    skip('the address layers refuse loopback and cloud metadata',
+        'this api has blockPrivateNetworkCalls off, because on this network ' +
+        'the mock STS and the identity provider ARE private addresses. ' +
+        'tests/api_ssrf_guard.js drives those layers directly.');
+    check('the api SAYS the address layers are off, rather than leaving a ' +
+        'caller to infer it from a call that went through', function () {
+      assert.strictEqual(limits.addressPolicyEnabled, false);
+      assert.ok(String(limits.addressPolicy).indexOf('ssrf_guard') >= 0,
+          'and it still names the module the policy lives in.');
+    });
+    log.info("[proxy] OK.");
+    return;
+  }
+
+  // A blocked address is a 502 and not a 400 — nothing SSF-shaped happened and
+  // no response exists — so the STATUS alone cannot tell a refusal from a
+  // connection that failed. The `code` can, and it is the whole assertion:
+  // EBLOCKEDADDRESS is the guard, ECONNREFUSED is the network.
   const loopback = await json('POST', '/ssf/call',
       { url: 'http://127.0.0.1:1/ssf/stream', method: 'GET' });
-  check('a loopback address is refused', function () {
-    assert.ok(loopback.status === 502 || loopback.status === 400,
-        'It answered ' + loopback.status + ': ' + loopback.text);
-    const said = String((loopback.body || {}).error || '');
-    assert.ok(said.length > 0, 'The refusal says nothing.');
-  });
+  check('a loopback address is refused BY THE GUARD, not by the network',
+    function () {
+      assert.strictEqual(loopback.status, 502,
+          'It answered ' + loopback.status + ': ' + loopback.text);
+      assert.strictEqual((loopback.body || {}).code, 'EBLOCKEDADDRESS',
+          'It answered with code ' + ((loopback.body || {}).code || '(none)') +
+          '. A connection that merely failed carries ECONNREFUSED, and ' +
+          'accepting either would make this a test of the local network.');
+    });
   const metadata = await json('POST', '/ssf/call',
       { url: 'http://169.254.169.254/latest/meta-data/', method: 'GET' });
-  check('the cloud metadata address is refused', function () {
-    assert.ok(metadata.status === 502 || metadata.status === 400,
+  check('the cloud metadata address is refused BY THE GUARD', function () {
+    assert.strictEqual(metadata.status, 502,
         'It answered ' + metadata.status + ': ' + metadata.text);
+    assert.strictEqual((metadata.body || {}).code, 'EBLOCKEDADDRESS',
+        'It answered with code ' + ((metadata.body || {}).code || '(none)') +
+        '. On a cloud runner that address ANSWERS, so anything short of a ' +
+        'refusal here is the guard being absent.');
   });
   log.info("[proxy] OK.");
 }

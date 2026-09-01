@@ -316,8 +316,22 @@ type drops such a token with no error anybody sees and it is a finding worth
 surfacing. A parser that refused it would hide the finding behind an empty body.
 
 `GET /ssf/limits` publishes all of it, and it is also how the page learns there
-is an api at all. `tests/api_ssf.js` drives the routes; `tests/ssf_engine.js`
-drives both modules with no listener. See `docs/ssf.md`.
+is an api at all. **It also says whether the ADDRESS layers of the SSRF guard
+are actually in force** (`addressPolicyEnabled`, from
+`blockPrivateNetworkCalls`), which is a different question from whether the
+policy exists, and it is published because a caller cannot tell the two apart
+from a call that went through. Every configuration under `api/env/` turns those
+layers off — on a compose network the mock STS and the identity provider ARE
+private addresses — so a test that read "the metadata address was not refused"
+as a hole in the guard would be reading a deployment's own choice as a defect.
+That is not hypothetical: `tests/api_ssf.js` asserted a refusal unconditionally
+until 2026-09-01, passed on every developer machine because the address merely
+failed to connect, and went red on a GitHub Actions runner where
+`169.254.169.254` is Azure's instance metadata service and ANSWERS. The refusals
+themselves belong to `tests/api_ssrf_guard.js`, which drives the guard module
+directly and needs no network. The SCHEME check (`file:`, `data:`) is not
+configurable and is on either way. `tests/api_ssf.js` drives the routes;
+`tests/ssf_engine.js` drives both modules with no listener. See `docs/ssf.md`.
 
 ## SPIFFE: gRPC, and the only endpoint here that dials a filesystem path
 
