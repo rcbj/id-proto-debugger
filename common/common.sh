@@ -342,15 +342,56 @@ generateStackTlsCertificate()
 
   # client/node_modules is where client/src/x509.js's own requires resolve.
   # Without it the generator dies on `Cannot find module 'pkijs'`, which names
-  # a package rather than a missing install, so it is checked here by name.
+  # a package rather than a missing install, so it is handled here by name.
+  #
+  # IT IS INSTALLED RATHER THAN ONLY REPORTED, and that is the fix for a red
+  # CI run rather than a convenience. This function is called by all four
+  # launchers and none of them installs the CLIENT's dependencies — each does
+  # `npm install --prefix tests` and no more — so the directory exists only
+  # because somebody ran an install in client/ at some earlier point. That is
+  # true on a developer's machine and false on a fresh checkout, which is
+  # exactly what a GitHub Actions runner is: run 662 of the Selenium Tests
+  # workflow died here in eight seconds, in both jobs, before compose was
+  # called, having built nothing and run no test. Reporting a missing install
+  # is the right thing to do about a missing TOOL; a dependency of this
+  # repository that this repository knows how to install is one this function
+  # installs, the way requireMockStsCheckout() initialises a submodule.
+  #
+  # PLAIN `npm ci`, NOT `--omit=dev`. Only the runtime dependencies are needed
+  # here (pkijs, asn1js, the @noble family, node-forge, bunyan — every one of
+  # them in `dependencies`), so the flag would be correct for this caller and
+  # would leave the tree wrong for the next one: `cd client && npm run build`
+  # is what clean-artifacts.sh documents as the restore, and it wants
+  # browserify and the three minifiers. A half-installed tree fails that with
+  # `browserify: not found`, which names a package rather than an omitted
+  # flag. Both images install this way too — see the `comments` block in
+  # client/package.json. `npm ci` and not `npm install` because the lock is
+  # committed and reproducing it is the point.
   if [ ! -d "${repo_root}/client/node_modules" ];
   then
-    echo "ERROR: ${repo_root}/client/node_modules is missing, and" \
-         "common/generate_tls_cert.js needs it — client/src/x509.js requires" \
-         "pkijs and asn1js. Run 'npm install --prefix client' first." >&2
-    [ -n "${xtrace_was_on}" ] && set -x
-    echo "Leaving generateStackTlsCertificate(). No client dependencies."
-    return 1
+    if ! command -v npm >/dev/null 2>&1;
+    then
+      echo "ERROR: ${repo_root}/client/node_modules is missing, and" \
+           "common/generate_tls_cert.js needs it — client/src/x509.js" \
+           "requires pkijs and asn1js. There is no npm on PATH to install" \
+           "it with. Install node/npm, or run 'npm ci --prefix client'" \
+           "elsewhere and bring the tree with you." >&2
+      [ -n "${xtrace_was_on}" ] && set -x
+      echo "Leaving generateStackTlsCertificate(). No npm."
+      return 1
+    fi
+    echo "${repo_root}/client/node_modules is missing;" \
+         "installing the client's dependencies, which is where" \
+         "common/generate_tls_cert.js resolves pkijs and asn1js."
+    if ! npm ci --prefix "${repo_root}/client";
+    then
+      echo "ERROR: 'npm ci --prefix ${repo_root}/client' failed, so" \
+           "common/generate_tls_cert.js cannot run and the api and the" \
+           "client have no certificate to serve." >&2
+      [ -n "${xtrace_was_on}" ] && set -x
+      echo "Leaving generateStackTlsCertificate(). Install failed."
+      return 1
+    fi
   fi
 
   # A throwaway directory, the shape generateSpKeyPair() and
