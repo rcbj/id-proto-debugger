@@ -243,15 +243,41 @@ function addBrowserAccessFlags(options, baseUrl, extraOrigins) {
 // identity provider never showed its sign-in screen (no #username field)" —
 // four jobs naming a login form, on a page titled `Privacy error`. Adding the
 // call is one line; finding out that it was the missing line is not.
+//
+// TWO PINS NOW, AND THE FLAG TAKES A LIST. Since the api and the client serve
+// TLS as well (common/tls_listener.js), a browser here meets TWO self-signed
+// certificates: the mock's, regenerated on its every start, and the stack's
+// own, generated per run by common/common.sh's generateStackTlsCertificate().
+// `--ignore-certificate-errors-spki-list` is comma-separated, and — this is
+// the part that bites — CHROME KEEPS ONLY THE LAST OCCURRENCE OF A SWITCH, so
+// adding the flag twice silently discards the first pin rather than merging
+// them. The same trap is documented above for
+// --unsafely-treat-insecure-origin-as-secure, and it is the same fix: build
+// the list, add the flag once.
+//
+// Either pin may be absent — a run against a plain-http mock, a stack with TLS
+// off — and an absent one contributes nothing rather than an empty list entry,
+// which Chrome would read as a pin that matches no key.
 function addStsTrustFlags(options) {
   log.debug("Entering addStsTrustFlags().");
-  var pin = String(process.env.STS_SPKI_PIN || "").trim();
-  if (!pin) {
-    log.debug("Leaving addStsTrustFlags(). No STS_SPKI_PIN; nothing added.");
+  var pins = [process.env.STS_SPKI_PIN, process.env.STACK_TLS_SPKI_PIN]
+    .map(function (one) {
+      return String(one || "").trim();
+    })
+    .filter(function (one) {
+      return one;
+    })
+    .filter(function (one, at, all) {
+      return all.indexOf(one) === at;
+    });
+  if (!pins.length) {
+    log.debug("Leaving addStsTrustFlags(). No pins; nothing added.");
     return options;
   }
-  options.addArguments("--ignore-certificate-errors-spki-list=" + pin);
-  log.info("Trusting the mock STS's public key by SPKI pin.");
+  options.addArguments("--ignore-certificate-errors-spki-list=" +
+                       pins.join(","));
+  log.info("Trusting " + pins.length + " public key(s) by SPKI pin (the " +
+           "mock STS, and this stack's own api and client where TLS is on).");
   log.debug("Leaving addStsTrustFlags().");
   return options;
 }

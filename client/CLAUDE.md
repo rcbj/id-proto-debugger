@@ -1,5 +1,28 @@
 # client/ — the Express frontend (port 3000) and everything in the browser
 
+**It serves TLS.** `https://localhost:3000` on the host launchers,
+`https://client:3000` on the containerized bridge — `common/tls_listener.js`
+decides it, `https: true` in `client/src/env/local.js` and
+`docker-tests.js` turns it on, and the pair is the one
+`common/common.sh`'s `generateStackTlsCertificate()` writes before compose
+starts, **shared with the api**. `prod.js` and `test-idptools-com.js` are
+untouched: those are static builds with no `server.js` behind them at all, and
+the sites they describe were already https.
+
+**The thing this changed for the pages themselves is the SECURE CONTEXT.**
+`window.crypto.subtle` exists only on https or a loopback name, so on the
+containerized stack's `http://client:3000` it was **undefined** — and every
+page here that signs, verifies, hashes or encrypts (`jwt_tools.js`,
+`jose_jwe.js`, `vci_wallet.js`, `sd_jwt_vc.js`, `sd_jwt_vp.js`,
+`metadata_client.js`, `token_detail.js`, `digital_signature.js`,
+`encoding_tools.js`, `pki.js`) silently had no cryptography there. The suite
+worked around it with `--unsafely-treat-insecure-origin-as-secure`, which had
+to be remembered per test and which cost a run when it was not. That origin is
+https now, so the workaround is a no-op rather than a requirement, and a page
+added tomorrow inherits a secure context rather than a flag somebody has to
+know about. `tests/browser_flags.js` records the whole history.
+
+
 Scope: `client/src/`, `client/public/`, the bundles, the pages and their layout. Cross-cutting matters — versioning and the `{{VERSION}}` stamp, `CONFIG_FILE`, the key-material opt-out rule, how the suite is run — stay in the repo-root `CLAUDE.md`. The tests that drive these pages are in `tests/CLAUDE.md`, the edge landings they hand off to in `infra/CLAUDE.md`, and the mock issuer/verifier they talk to in `docs/mock-sts.md`.
 
 **`/client/`** — Express frontend (port 3000). Serves static HTML/JS pages and handles the OAuth2 redirect callback at `/callback`, forwarding query params to `oauth2_oidc_2.html`.

@@ -67,7 +67,7 @@ var log = bunyan.createLogger({ name: "pki_page",
     level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 // Headless by DEFAULT, and initialized true rather than false: a test that
 // pops a window on every unattended run is a stolen desktop locally and a dead
 // run in CI, which has no display. tests/browser_tests_headless.js asserts

@@ -295,13 +295,71 @@ function everyBrowserTestCanStartInAContainer(files) {
   log.debug("Leaving everyBrowserTestCanStartInAContainer().");
 }
 
+
+// --- 4. every browser test trusts this stack's certificates -----------------
+//
+// THE CLIENT AND THE api SERVE https, ON A SELF-SIGNED PAIR GENERATED PER RUN.
+// A browser given no anchor for it stops on a certificate interstitial, and
+// what the test then reports is a MISSING ELEMENT on a page titled "Privacy
+// error" — which names the page the test was about and never names a
+// certificate. That is the same failure browser_flags.js already records for
+// the mock STS ("four jobs naming a login form, on a page titled Privacy
+// error"), and moving these two services to TLS turned it from a hazard for
+// the six tests that talk to the mock into a hazard for EVERY browser test in
+// this directory.
+//
+// It cost a run on 2026-08-31, the first full suite after the change: 18 of
+// the 74 browser tests built their Chrome options by hand and none of them
+// carried the flag, so they failed in about 2.8 seconds each — a duration
+// that is itself the tell, since it is too fast for any real flow.
+//
+// `addStsTrustFlags()` alone is enough (it installs every pin this run has);
+// `addBrowserAccessFlags()` calls it, so a test using the recommended helper
+// satisfies this without doing anything extra.
+function everyBrowserTestTrustsTheStack(files) {
+  log.debug("Entering everyBrowserTestTrustsTheStack().");
+  log.info("[trust] Every test that builds a driver must install the SPKI " +
+      "pins.");
+  const offences = [];
+  let browserTests = 0;
+  files.forEach(function (file) {
+    const source = fs.readFileSync(file, "utf8");
+    if (!buildsADriver(source)) {
+      return;
+    }
+    browserTests++;
+    const trusts = /addStsTrustFlags\s*\(/.test(source) ||
+        /addBrowserAccessFlags\s*\(/.test(source);
+    if (!trusts) {
+      offences.push(path.basename(file));
+    }
+  });
+  assert.ok(browserTests > 0,
+    "no browser tests were found at all, so this check asserted nothing — " +
+    "has buildsADriver() stopped matching?");
+  assert.deepStrictEqual(offences, [],
+    "these browser tests build a driver without installing this stack's " +
+    "SPKI pins, so they will meet a certificate interstitial on " +
+    "https://localhost:3000 and report a missing element on a page titled " +
+    "\"Privacy error\": " + offences.join(", ") + ". Call " +
+    "browserFlags.addBrowserAccessFlags(options, baseUrl) — or, if the test " +
+    "builds its options by hand and needs nothing else, " +
+    "browserFlags.addStsTrustFlags(options).");
+  log.info("[trust] OK — all " + browserTests + " browser tests install the " +
+      "pins.");
+  log.debug("Leaving everyBrowserTestTrustsTheStack().");
+  return browserTests;
+}
+
 async function test() {
   log.debug("Entering test().");
-  log.info("Starting Test run. Every browser test starts Chrome headless.");
+  log.info("Starting Test run. Every browser test starts Chrome headless " +
+      "and trusts this stack's certificates.");
   const files = testFiles();
   const browserTests = everyBrowserTestIsHeadless(files);
   headlessIsTheDefault(files);
   everyBrowserTestCanStartInAContainer(files);
+  everyBrowserTestTrustsTheStack(files);
   log.debug("the driver-building tests are: " + browserTests.join(", "));
   log.info("Test completed successfully.");
   log.debug("Leaving test().");

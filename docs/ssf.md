@@ -302,6 +302,35 @@ assuming one poll drains the queue. The page lifts it out and says so.
 
 ---
 
+## Push delivery crosses TLS now, and the mock had to be told
+
+The api serves **https** (`common/tls_listener.js`), and `POST /ssf/receiver`
+builds the `deliveryEndpoint` it hands back from `req.protocol` — so the URL
+that goes into a stream's `delivery.endpoint_url` is
+`https://api:4000/ssf/receiver/:id` with nothing having been told to change.
+Two consequences, and both were found by tests rather than anticipated.
+
+**The transmitter has to trust that certificate.** The mock STS is the only
+service here that makes an outbound connection TO the api, and a push is it.
+The stack's certificate is therefore handed to that container as
+`NODE_EXTRA_CA_CERTS` in every compose file — which is the whole reason the
+pair is generated ONCE, on the host, before compose starts, rather than by each
+service at its own startup: an environment cannot carry an anchor for a
+certificate that does not exist yet. Without it the push dies at the handshake
+and the page waits for an event that was never delivered, which reads as a
+transmitter that sent nothing.
+
+**And the api has to trust its own.** `POST /ssf/call` is a proxy the caller
+aims, and this workflow legitimately aims it at this same service's own
+receiver — which is how `tests/api_ssf.js` asserts the third outcome (a far-end
+refusal comes back as a 200 carrying it) with no transmitter in the picture.
+Before `api/sts_truststore.sh` learned to write a **bundle** rather than point
+`NODE_EXTRA_CA_CERTS` at one file, that call failed verification and the proxy
+reported a **502** — "the far end did not deliver" — so a receiver correctly
+refusing a malformed Security Event Token was indistinguishable from a network
+failure. `NODE_EXTRA_CA_CERTS` names one file and node reads it once, so two
+anchors is a concatenation or it is nothing.
+
 ## The Security Event Token, and the three things implementations get wrong
 
 A SET is a JWT whose payload carries an `events` **map** from event-type URI to

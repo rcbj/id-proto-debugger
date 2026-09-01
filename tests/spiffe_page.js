@@ -68,7 +68,7 @@ var log = bunyan.createLogger({ name: "spiffe_page",
 log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = process.env.BASE_URL || "http://localhost:3000";
-var apiUrl = process.env.API_URL || "http://localhost:4000";
+var apiUrl = process.env.API_URL || "https://localhost:4000";
 var stsUrl = process.env.STS_URL || "https://localhost:8081";
 // The API's view of each surface, which on the containerized stack is a
 // different name from this test's — the same distinction LDAP_URL draws, and

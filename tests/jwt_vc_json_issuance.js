@@ -45,7 +45,7 @@ var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "jwt_vc_json_issuance",
                                 level: appconfig.logLevel || "info" });
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime || 15000;
 

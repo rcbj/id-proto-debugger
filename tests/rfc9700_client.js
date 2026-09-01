@@ -353,7 +353,7 @@ function run() {
     // RFC 8252's exception, and the one this whole mode depends on locally:
     // the debugger's own callback is http://localhost:3000/callback.
     assertBlocking(rfc9700.checkAuthorizationRequest(goodRequest({
-      redirectUri: "http://localhost:3000/callback"
+      redirectUri: "https://localhost:3000/callback"
     })), [], "an http redirect_uri on loopback");
     assertBlocking(rfc9700.checkAuthorizationRequest(goodRequest({
       redirectUri: "http://127.0.0.1:54321/callback"

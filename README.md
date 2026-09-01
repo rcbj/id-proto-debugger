@@ -82,10 +82,11 @@ To be clear about what we do with that data:
 If sending authorization codes to a third-party hosting provider is not acceptable for your use case (for example, when testing against a production Identity Provider), we strongly encourage you to **run a local build of the debugger** so that nothing leaves your machine. See [Getting Started / running locally](#general-usage-notes) below — in short:
 
 ```bash
+./generate-tls-cert.sh                 # once per checkout: the TLS pair
 sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
 
-Then use the debugger at `http://localhost:3000`, and register `http://localhost:3000/callback` as your redirect URI with your Identity Provider. In a local build, the authorization code is delivered to the debugger running on your own machine and never transits a third-party host.
+Then use the debugger at `https://localhost:3000`, and register `https://localhost:3000/callback` as your redirect URI with your Identity Provider. The certificate is self-signed and generated per checkout by `./generate-tls-cert.sh`, so your browser will ask you to accept it once; that script prints its SHA-256 fingerprint. In a local build, the authorization code is delivered to the debugger running on your own machine and never transits a third-party host.
 
 # AI Coding Tool Disclosure
 As of Q1, 2026, Anthropic Claude was used to implement some new features of this project. All code is reviewed by a human before being merged into the main branch.
@@ -138,6 +139,7 @@ If you have docker / docker-compose installed already:
 git clone --recurse-submodules https://github.com/rcbj/id-proto-debugger.git
 cd id-proto-debugger
 sudo CONFIG_FILE=./env/local.js docker-compose build
+./generate-tls-cert.sh                 # once per checkout: the TLS pair
 sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
 Note, you will need at least 950MB of disk space ree in order to build this Docker image.
@@ -178,6 +180,7 @@ dnf install docker
 systemctl start docker
 cd id-proto-debugger
 sudo CONFIG_FILE=./env/local.js docker-compose build
+./generate-tls-cert.sh                 # once per checkout: the TLS pair
 sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
 # Clean Up / Start Over
@@ -194,13 +197,13 @@ This is a nuclear option to cleanup docker. You may not want to do this if you h
 On other systems, the commands needed to start the debugger in a local docker container will be similar. The docker Sinatra/Ruby runtime will have to be able to establish connections to remote IdP endpoint (whether locally in other docker containers, on the host VM, or over the network/internet). On the test system, it was necessary to add "--net=host" to the "docker run" args. The network connectivity details for docker may vary from platform-to-platform.
 
 ### Running
-* Open your favorite browser and enter "http://localhost:3000" in the address bar.
+* Open your favorite browser and enter "https://localhost:3000" in the address bar.
 * Choose the OAuth2 Grant or OIDC Flow that you want to test.
 * Enter the Authorization Endpoint.
 * Enter the Token Endpoint.
 #### OAuth2 AUthorization Grant:
 * Enter the client identifier.
-* Enter the Redirect URI (use http://localhost:3000/callback by default)
+* Enter the Redirect URI (use https://localhost:3000/callback by default)
 * Enter the scope information.
 * If you need to provide a resource parameter, click the radio button.  Then, enter the desired resource parameter.
 * Click the Authorize button.  
@@ -216,7 +219,7 @@ On other systems, the commands needed to start the debugger in a local docker co
 * The standard tokens that are returned from the token endpoint are displayed at the bottom.
 #### OAuth2 Implicit Grant:
 * Enter the client identifier.
-* Enter the Redirect URI  (use http://localhost:3000/callback by default)
+* Enter the Redirect URI  (use https://localhost:3000/callback by default)
 * Enter the scope information.
 * If you need to provide a resource parameter, click the radio button.  Then, enter the desired resource parameter.
 * Click the Authorize button.
@@ -699,7 +702,7 @@ Reach it from the **Tools** pane on `saml_request.html`, or browse directly to `
 
 ### Pane #1 — Compose
 * **Version** — SAML 2.0, 1.1, or 1.0. Switching versions rebuilds the assertion and hides the controls that do not exist in the selected version.
-* **Issuer** — defaults to this debugger's own URL plus an `/issuer` path (e.g. `http://localhost:3000/issuer`); override it with any entityID. SAML 2.0 emits a `<saml:Issuer>` element, SAML 1.x the `Issuer` attribute.
+* **Issuer** — defaults to this debugger's own URL plus an `/issuer` path (e.g. `https://localhost:3000/issuer`); override it with any entityID. SAML 2.0 emits a `<saml:Issuer>` element, SAML 1.x the `Issuer` attribute.
 * **Identifier and timestamps** — the assertion ID (`ID` in 2.0, `AssertionID` in 1.x) is generated as an NCName, and `IssueInstant`, `NotBefore`, `NotOnOrAfter`, `AuthnInstant`, and the confirmation/session expiries are populated from the current UTC time. A validity window and clock-skew allowance drive them; **Refresh Times** and **New ID** regenerate. Each field stays editable.
 * **NameID** — value, Format, NameQualifier, and (2.0 only) SPNameQualifier. Emitted as `<saml:NameID>` in 2.0 and `<saml:NameIdentifier>` in 1.x.
 * **Optional elements** — check the ones the assertion should carry: `Subject` / `SubjectConfirmation` (bearer, holder-of-key, sender-vouches, artifact — the URI follows the version), `Conditions` with the validity window, `AudienceRestriction` (`AudienceRestrictionCondition` in 1.x), `OneTimeUse` (`DoNotCacheCondition` in 1.1; absent from 1.0), `ProxyRestriction` (2.0), `Advice`, the authentication statement with `AuthnContextClassRef` (2.0) or `AuthenticationMethod` (1.x) and `SubjectLocality`, the `AttributeStatement`, and the authorization decision statement.
@@ -1198,7 +1201,7 @@ Thanks to the following:
 
 # Flows
 ## OAuth2 Client Credentials Grant
-1. Open http://localhost:3000
+1. Open https://localhost:3000
 2. Expand "Metadata Retrieval", enter the "Metadata Endpoint URL" and click "Retrieve"
 ![alt text](docs/images/image-10.png)
 3. Scroll down to end of Discovery Endpoint Information table and click "Populate Meta Data"
@@ -1212,7 +1215,7 @@ Thanks to the following:
 ![alt text](docs/images/image-9.png)
 
 ## OIDC Authorization Code Flow
-1. Open http://localhost:3000
+1. Open https://localhost:3000
 2. Expand "Metadata Retrieval", enter the "Metadata Endpoint URL" and click "Retrieve"
 ![alt text](docs/images/image-10.png)
 3. Scroll down to end of Discovery Endpoint Information table and click "Populate Meta Data"

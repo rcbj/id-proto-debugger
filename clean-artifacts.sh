@@ -242,6 +242,13 @@ remove sp-cert.pem
 group "Per-run rendered config (restore: the next test run renders it)"
 remove waltid/generated-config
 remove waltid/generated-verifier-config
+# The TLS pair the api and the client serve, for the bare `docker-compose up`
+# path (./generate-tls-cert.sh writes it; the test launchers use a throwaway
+# directory of their own instead). Regenerated on demand, and a stale one is
+# worse than none: the key it holds is what those two services present, so a
+# copy left behind after somebody has regenerated is a certificate the browser
+# and node were told to trust and nothing is serving.
+remove generated-tls
 
 # ---------------------------------------------------------------------------
 # Terraform provider caches. Opt-in because getting them back is a ~700MB

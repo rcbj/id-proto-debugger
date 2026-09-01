@@ -5,6 +5,29 @@ services:
     image: rcbj/api
     environment:
       - CONFIG_FILE=./env/local.js
+      - TLS_ENABLED=true
+      - TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    # ---------------------------------------------------------------------
+    # THE STACK'S TLS PAIR.
+    #
+    # `client/src/env/local.js` and `api/env/local.js` both set `https: true`,
+    # so these two services serve TLS and need a certificate. THIS compose
+    # file has no launcher in front of it — the repo-root CLAUDE.md documents
+    # `CONFIG_FILE=./env/local.js docker-compose up` as a bare command — so
+    # generate the pair once, first:
+    #
+    #     ./generate-tls-cert.sh
+    #
+    # It writes ./generated-tls, which is what this mounts and what
+    # .gitignore already covers. Without it compose creates that path as an
+    # EMPTY directory and both services exit at startup naming the file they
+    # could not read — the same shape as the walt.id `generated-*-config`
+    # hazard this repository already records, and the message names the
+    # generator.
+    # ---------------------------------------------------------------------
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       context: .
       dockerfile: ./api/Dockerfile
@@ -21,6 +44,29 @@ services:
     image: rcbj/client
     environment:
       - CONFIG_FILE=./env/local.js
+      - TLS_ENABLED=true
+      - TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    # ---------------------------------------------------------------------
+    # THE STACK'S TLS PAIR.
+    #
+    # `client/src/env/local.js` and `api/env/local.js` both set `https: true`,
+    # so these two services serve TLS and need a certificate. THIS compose
+    # file has no launcher in front of it — the repo-root CLAUDE.md documents
+    # `CONFIG_FILE=./env/local.js docker-compose up` as a bare command — so
+    # generate the pair once, first:
+    #
+    #     ./generate-tls-cert.sh
+    #
+    # It writes ./generated-tls, which is what this mounts and what
+    # .gitignore already covers. Without it compose creates that path as an
+    # EMPTY directory and both services exit at startup naming the file they
+    # could not read — the same shape as the walt.id `generated-*-config`
+    # hazard this repository already records, and the message names the
+    # generator.
+    # ---------------------------------------------------------------------
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       context: .
       dockerfile: ./client/Dockerfile
@@ -36,6 +82,15 @@ services:
     environment:
       # Log level, chosen the same way as for api and client.
       - CONFIG_FILE=./env/local.js
+      # THE ADDRESS THE MOCK HANDS THE END-USER BACK TO, and it has to be set
+      # here now rather than left to that service's default. mock-sts's own
+      # `oid4vci.walletUrl` defaults to `http://localhost:3000`, which was
+      # this client's address until it started serving TLS; left alone, a
+      # Credential Offer would send the End-User to an http origin nothing is
+      # listening on. The submodule is somebody else's checkout, so the fix
+      # belongs on this side. `oid4vp.walletUrl` is DERIVED from this one (see
+      # sts/common/config.js), so the verifier's hand-back follows.
+      - OID4VCI_WALLET_URL=https://localhost:3000
     container_name: sts
     image: rcbj/sts
     # ROOT, and the only container here that is. It binds 88 (TCP and UDP),

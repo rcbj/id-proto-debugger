@@ -17,6 +17,12 @@ const ssrfGuard = require('./ssrf_guard.js');
 const connectTimeout = require('./connect_timeout.js');
 const krb5Relay = require('./krb5_relay.js');
 const tlsProbeModule = require('./tls_probe.js');
+// The listener itself — whether this service binds TLS or plain HTTP, and with
+// what certificate. In common/ because the client makes the same decision and
+// the two must not disagree; see the header there. `../common/...` resolves in
+// a checkout and in the image alike, which is what api/Dockerfile's staging of
+// common/spiffe/ already established.
+const tlsListener = require('../common/tls_listener.js');
 
 // Constants
 const PORT = appconfig.port || 4000;
@@ -3072,11 +3078,16 @@ app.post('/tls/connect', function (req, res) {
       // network failure is a 502 (the far end did not deliver). Note that a
       // failed HANDSHAKE is neither — it resolves with a report, because the
       // alert is the answer.
+      // The last three are the name lists — groups, ciphers, signature
+      // algorithms — that OpenSSL refuses before a byte is sent. They join
+      // the 400s rather than the 502s because nothing was dialled: the
+      // caller asked for an algorithm this api's OpenSSL does not have.
       var refusedByPolicy = ['ETLSPORTNOTALLOWED', 'EBLOCKEDADDRESS',
                              'ETLSNOHOST', 'ETLSBADPORT', 'ETLSBADVERSION',
                              'ETLSNOCLIENTKEY', 'ETLSCLIENTMATERIAL',
-                             'ETLSTRUSTTOOLARGE',
-                             'ETLSBADHTTPPATH'].indexOf(error.code) !== -1;
+                             'ETLSTRUSTTOOLARGE', 'ETLSBADHTTPPATH',
+                             'ETLSGROUPS', 'ETLSCIPHERS',
+                             'ETLSSIGALGS'].indexOf(error.code) !== -1;
       var status = refusedByPolicy ? STATUS_400 : 502;
       log.warn('POST /tls/connect failed [' + error.code + ']: ' +
           error.message);
@@ -3640,8 +3651,39 @@ app.get('/spiffe/limits', function (req, res) {
 });
 
 expressSwagger(options)
-app.listen(PORT, HOST);
-log.info(`Running on http://${HOST}:${PORT}`);
+
+/**
+ * The certificate this service is serving, as PEM, so that a caller can trust
+ * it before it verifies anything.
+ *
+ * IT IS ON THE TLS PORT ITSELF, which looks circular and is the ordinary
+ * bootstrap: fetching the PEM over a connection you cannot yet verify is the
+ * same act as trusting the PEM it hands back, done one step earlier. The mock
+ * STS publishes its own certificate at the same path for the same reason, and
+ * common/common.sh's trustStsCertificate() is the client for both.
+ *
+ * 404 on a plain listener rather than an empty 200: "this service is not
+ * serving TLS" and "this service is serving TLS and will not say with what"
+ * are different answers and a caller acts differently on them.
+ *
+ * @route GET /tls/server-certificate
+ * @returns {string} 200 - the PEM
+ * @returns {object} 404 - this service is not serving TLS
+ */
+app.get('/tls/server-certificate', function (req, res) {
+  log.debug('Entering GET /tls/server-certificate.');
+  var pem = tlsListener.serverCertificate();
+  if (!pem) {
+    log.debug('Leaving GET /tls/server-certificate. Plain listener.');
+    return res.status(404).json({ error: 'This api is not serving TLS, so ' +
+      'it has no certificate to publish.', code: 'ENOTLS' });
+  }
+  res.set('Content-Type', 'application/x-pem-file');
+  log.debug('Leaving GET /tls/server-certificate.');
+  return res.status(STATUS_200).send(pem);
+});
+
+tlsListener.listen(app, appconfig, { name: 'api', port: PORT, host: HOST });
 
 // When running under coverage (c8), exit cleanly on container stop so the V8
 // coverage is flushed to NODE_V8_COVERAGE before the process is terminated.

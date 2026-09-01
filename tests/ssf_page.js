@@ -50,8 +50,8 @@ var log = bunyan.createLogger({ name: "ssf_page",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
-var apiUrl = process.env.API_URL || "http://localhost:4000";
+var baseUrl = "https://localhost:3000";
+var apiUrl = process.env.API_URL || "https://localhost:4000";
 // The transmitter as the BROWSER must reach it, which on the containerized
 // stack is not the name this test uses and not the name the api uses. Three
 // different answers to one question, and confusing them has cost this suite a

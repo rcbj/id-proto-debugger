@@ -732,6 +732,27 @@ DH and returns an empty object for anything else, which under OpenSSL 3.5 means
 an ML-KEM hybrid — *or* a resumed session. The report says both readings rather
 than guessing between them.
 
+**All three of those results need an OpenSSL that HAS the algorithms, so on an
+older node they are skipped rather than asserted.** That is the same argument
+as *"Why the tests ask a different OpenSSL"* below, arriving one layer up, and
+each of the three fails differently enough to be worth naming. A group name
+OpenSSL does not know is refused where the secure context is built, before a
+byte is sent, with `Failed to set ECDH curve` — which names neither the group
+nor the release that would have it, and which this endpoint used to wrap in a
+sentence about the client key and certificate not being a pair, sending a
+reader after a PEM they may not have supplied. `POST /tls/connect` now
+attributes a synchronous refusal to the input it was actually about
+(`ETLSGROUPS`, `ETLSCIPHERS`, `ETLSSIGALGS`, else `ETLSCLIENTMATERIAL`) and
+says which OpenSSL this api is linked against. The SLH-DSA case is the one
+that most needed the gate, because it asserts a *refusal*: OpenSSL 3.0 refuses
+too, with `decode error` — it cannot read the key at all — so the check would
+have gone on "passing" while proving nothing about TLS signature-algorithm
+codepoints, and while being indistinguishable from this project having encoded
+the key wrongly. `tests/openssl35.js` answers both questions
+(`available()` for the certificate algorithms, `tlsGroupAvailable()` for the
+supported-groups list), each by probing rather than by reading a version
+string.
+
 ### Why the tests ask a different OpenSSL
 
 `tests/pki_x509.js` asserts by handing certificates to the `openssl` **binary**,
@@ -1169,7 +1190,7 @@ above in place of the section it cannot run there.
 | `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles; a four-deep chain; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers; and the minimal DER encoding of an ECDSA signature's `r` and `s`, fed in as vectors because the matrix only meets that case about one run in eight | never |
 | `tests/pki_key_formats.js` | every one of the 41 key algorithms generated and read back (classical by the `openssl` binary, post-quantum by node's OpenSSL 3.5); 11 of them × 4 formats × password on/off; a PKCS#12 carrying a whole chain; the refusals by name, including a composite key as a JWK; PEM↔JWK round trips, AKP for the post-quantum families | never |
 | `tests/pki_pqc_x509.js` | the post-quantum half: 34 algorithm identifiers checked against a second transcription of the standards; every key's SPKI and PKCS#8 read by OpenSSL 3.5, all three arms of the private-key CHOICE; pure certificates verified by OpenSSL; the 16 composites with **both halves** tampered in turn; 126 links of chains that mix classical and post-quantum issuers; the hybrid extensions, verified here and accepted by the OpenSSL 3.0 binary that knows none of it; the preTBSCertificate's two removals; post-quantum CSRs; **all fourteen profiles** issued with a post-quantum key, including the key-encipherment one over ML-KEM — which is what an encryption certificate IS, and which can never be self-signed; and the refusals (a self-signed ML-KEM certificate, an algorithm mismatch, signing from a seedless key) | never — except the OpenSSL cross-checks, which need node ≥ 24 and say so |
-| `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, and the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success | node-only, so it never skips for want of a service — but `PKI_TLS_AVAILABLE=false` (a deployed static target) skips it, because it would pass there and mean nothing |
+| `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success — and the post-quantum section: the hybrid group, the ML-DSA chain, the SLH-DSA refusal | node-only, so it never skips for want of a service — but `PKI_TLS_AVAILABLE=false` (a deployed static target) skips it, because it would pass there and mean nothing, and the three post-quantum activities skip individually on a node whose OpenSSL predates 3.5 |
 | `tests/pki_page.js` | the hierarchy built through the form, the *View certificate details* hand-off read back on `saml_cert.html` for every key algorithm, the store surviving a reload, the private-key opt-out in both states, the serial number (shown, persisted, signed, rotated, and typed over), the subject-DN defaults and the profile subjectAltName, a tooltip on every one of the 131 controls, the validity pickers and the ISO-8601 values an older build stored, the list-field syntax, the TLS test end to end, no browser-side TLS option, the pane **switched off** when the build has no api — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, no control drawn outside its column, and every folded note still holding its prose and no control | needs the client; without an api the TLS section is replaced by the switched-off assertion rather than skipped |
 | `tests/pki_mutual_tls.js` | the same page against a server that **answers back**: a client certificate issued through the form, presented with its chain to the mock STS's two listeners, and the **server's own account** of the connection — the chain it built, the anchor it verified against, and `required` told apart from `required-and-rejected` by trusting the CA between two otherwise identical runs. Then the same round trip with an **ML-DSA-65** CA and client certificate, where the last assertion is that the server's account names ML-DSA — without it, a silent fallback to something classical would satisfy every other check | needs the client, the api and `STS_TLS_URL`; also gated on `PKI_TLS_AVAILABLE` |
 

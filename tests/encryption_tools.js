@@ -38,7 +38,7 @@ var log = bunyan.createLogger({ name: 'encryption_tools',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 // Headless by DEFAULT, and asserted to be by tests/browser_tests_headless.js:
 // a CI runner and the tests container have no display, so a `false` here is a
 // suite that dies at `session not created` on every unattended run.
@@ -777,6 +777,15 @@ var AGREEMENT_PANES = [
     selectors: [{ id: 'enc_ffc_group',
                   values: ['modp-2048', 'modp-3072'] },
                 { id: 'enc_ffc_mode', values: ['hybrid', 'elgamal'] }],
+    // BOTH of this pane's modes are put through the wrong-key check, because
+    // they answer it differently and only one of them can promise anything —
+    // see the note above anotherKeyDoesNotOpenIt(). MODP-2048 for both: each
+    // case generates two key pairs, the question being asked is about keys
+    // and modes rather than about group sizes, and the larger group is
+    // already driven four times by the round-trip loop above.
+    wrongKeyCases: [{ enc_ffc_group: 'modp-2048', enc_ffc_mode: 'hybrid' },
+                    { enc_ffc_group: 'modp-2048', enc_ffc_mode: 'elgamal' }],
+    unauthenticated: { id: 'enc_ffc_mode', value: 'elgamal' },
     generate: 'Generate Keys', usesInfo: true }
 ];
 
@@ -862,8 +871,74 @@ async function agreementPane(driver, pane) {
       "encryptions of one message to one recipient must differ");
   }
 
-  // Somebody else's key must not open it: generate a second key pair and try.
+  // Somebody else's key must not open it.
+  const wrongKeyCases = pane.wrongKeyCases || [cases[cases.length - 1]];
+  for (const combination of wrongKeyCases) {
+    await anotherKeyDoesNotOpenIt(driver, pane, combination);
+  }
+
+  log.info("[" + pane.prefix + "] OK — " + cases.length + " combinations " +
+           "round-trip, each is non-deterministic, and " +
+           wrongKeyCases.length + " wrong-key case(s) answered as the " +
+           "scheme can.");
+  log.debug("Leaving agreementPane().");
+}
+
+// ---------------------------------------------------------------------------
+// SOMEBODY ELSE'S KEY, AND THE ONE SCHEME HERE THAT CANNOT PROMISE TO NOTICE.
+//
+// Every one of these panes but one derives a secret and puts an AEAD over the
+// message, so a second key pair produces a tag that does not verify and the
+// refusal is CERTAIN. Textbook ElGamal is the exception, and it is the
+// scheme's own property rather than a defect in this page: it is the raw
+// c1/c2 pair with no tag at all, and the only thing standing between a wrong
+// private key and a plausible answer is the single 0x01 marker the pane
+// writes so that a plaintext with a leading zero byte survives the trip
+// through an integer. A wrong key recovers a uniformly random element of the
+// group, and roughly ONE TIME IN 256 that element's leading byte is 0x01, the
+// marker check passes, and the pane reports a successful decryption of 383
+// bytes of noise. Measured over MODP-3072: 12 of 3000 wrong keys were
+// accepted (0.40%), and not one of them recovered the original message.
+//
+// That is what happened on 2026-08-31, on the last combination of this pane —
+// MODP-3072, ElGamal — after the assertion had passed for weeks. It is not a
+// flake to retry past: the assertion was asking for a guarantee the scheme
+// does not make, and the pane's own description says so in the words
+// "unauthenticated" and "malleable".
+//
+// So the assertion is SPLIT by what the mode can keep. Where there is an
+// AEAD, the wrong key must be REFUSED and the plaintext box must stay empty.
+// Where there is not, the requirement is the one that is actually true and
+// still worth asserting: whatever comes back, it is not the message — a wrong
+// key recovering the right plaintext would be a catastrophe, and it is the
+// only thing here that would be.
+//
+// checkFiniteField() in tests/crypto_engines.js already draws this line for
+// the MAULED-ciphertext case one layer down, in the same words and for the
+// same reason ("the assertion is 'never the original plaintext', by either
+// route"). This is that argument applied to a wrong KEY, up in the page.
+// ---------------------------------------------------------------------------
+async function anotherKeyDoesNotOpenIt(driver, pane, combination) {
+  log.debug("Entering anotherKeyDoesNotOpenIt().");
+  const label = Object.keys(combination).map(function (id) {
+    return combination[id];
+  }).join(" / ");
+  const authenticated = !(pane.unauthenticated &&
+    combination[pane.unauthenticated.id] === pane.unauthenticated.value);
+  for (const id of Object.keys(combination)) {
+    await selectOption(driver, id, combination[id]);
+  }
+
+  await clickButton(driver, pane.pane, pane.generate);
+  await waitForSettled(driver, pane.prefix,
+    pane.name + " " + label + ": the first key pair never arrived", keyWait);
   const firstPrivate = await getField(driver, pane.prefix, 'private_key');
+  await setField(driver, pane.prefix, 'plaintext', MESSAGE);
+  await clickButton(driver, pane.pane, 'Encrypt');
+  assertAccepted(await waitForSettled(driver, pane.prefix,
+    pane.name + " " + label + ": the encryption to be attacked produced no " +
+    "status", cryptoWait), pane.name + " " + label + " encryption");
+
   const held = {
     encapsulation: await getField(driver, pane.prefix, 'encapsulation'),
     iv: await getField(driver, pane.prefix, 'iv'),
@@ -872,29 +947,49 @@ async function agreementPane(driver, pane) {
   };
   await clickButton(driver, pane.pane, pane.generate);
   await waitForSettled(driver, pane.prefix,
-    pane.name + ": the second key pair never arrived", keyWait);
-  const secondPrivate = await getField(driver, pane.prefix, 'private_key');
-  assert.notStrictEqual(secondPrivate, firstPrivate,
-    pane.name + " generated the same key pair twice");
+    pane.name + " " + label + ": the second key pair never arrived", keyWait);
+  assert.notStrictEqual(await getField(driver, pane.prefix, 'private_key'),
+                        firstPrivate,
+    pane.name + " " + label + " generated the same key pair twice");
   for (const name of Object.keys(held)) {
     await pasteField(driver, pane.prefix, name, held[name]);
   }
   await setField(driver, pane.prefix, 'plaintext', "");
   await clickButton(driver, pane.pane, 'Decrypt');
   const wrongKey = await waitForSettled(driver, pane.prefix,
-    pane.name + ": decrypting under the wrong key produced no status",
-    cryptoWait);
-  assert.ok(/did not verify|length marker|error/i.test(wrongKey),
-    pane.name + " accepted a ciphertext under a key that did not make it: " +
-    wrongKey);
-  assert.strictEqual(await getField(driver, pane.prefix, 'plaintext'), "",
-    pane.name + " put something in the plaintext box while decrypting under " +
-    "the wrong key");
+    pane.name + " " + label + ": decrypting under the wrong key produced no " +
+    "status", cryptoWait);
+  const recovered = await getField(driver, pane.prefix, 'plaintext');
 
-  log.info("[" + pane.prefix + "] OK — " + cases.length + " combinations " +
-           "round-trip, each is non-deterministic, and another key does not " +
-           "open the result.");
-  log.debug("Leaving agreementPane().");
+  if (authenticated) {
+    assert.ok(/did not verify|length marker|error/i.test(wrongKey),
+      pane.name + " " + label + " accepted a ciphertext under a key that " +
+      "did not make it: " + wrongKey);
+    assert.strictEqual(recovered, "",
+      pane.name + " " + label + " put something in the plaintext box while " +
+      "decrypting under the wrong key");
+    log.debug("Leaving anotherKeyDoesNotOpenIt(). Refused.");
+    return;
+  }
+
+  // The unauthenticated arm. Both outcomes are correct behaviour; what is
+  // asserted is the same thing either way, and the branch is logged so that a
+  // run says which one it met rather than leaving the 1-in-256 invisible.
+  assert.notStrictEqual(recovered, MESSAGE,
+    pane.name + " " + label + " recovered the ORIGINAL MESSAGE under a key " +
+    "that did not encrypt it. That is not the malleability this mode is " +
+    "documented to have — it would mean the private key is not reaching the " +
+    "computation at all.");
+  if (/length marker|error/i.test(wrongKey)) {
+    log.info("[" + pane.prefix + "] " + label + ": the wrong key was caught " +
+             "by the 0x01 marker, which is the usual 255 times in 256.");
+  } else {
+    log.info("[" + pane.prefix + "] " + label + ": the wrong key produced " +
+             "noise that happened to carry a 0x01 marker (about one time in " +
+             "256) and the pane reported a decryption — correct for an " +
+             "unauthenticated mode. Status: " + wrongKey);
+  }
+  log.debug("Leaving anotherKeyDoesNotOpenIt(). Unauthenticated.");
 }
 
 // The one thing the finite-field pane does that the others do not: the two

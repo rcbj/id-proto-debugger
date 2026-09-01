@@ -169,6 +169,20 @@ check_return_code $?
 # The walt.id issuer's configuration is rendered before compose brings the stack
 # up: the container mounts the result, and the signing key it contains is
 # generated per run and gitignored. See common/common.sh.
+# ---------------------------------------------------------------------------
+# THE STACK'S TLS PAIR, BEFORE THE BUILD.
+#
+# The api and the client serve https, and this is the pair they serve. It has
+# to exist before compose starts, and not for their sake: the MOCK STS pushes
+# Security Event Tokens to the api (RFC 8935), so its container is handed the
+# anchor in its environment, and a certificate a service invents at its own
+# startup cannot be in an environment built a moment earlier. One pair for
+# both services; see common/tls_listener.js. STACK_TLS_DIR is the bind-mount
+# source every compose file here names.
+# ---------------------------------------------------------------------------
+generateStackTlsCertificate "${CURRENT_DIR}"
+check_return_code $?
+
 generateWaltidIssuerKey
 check_return_code $?
 generateWaltidVerifierKey

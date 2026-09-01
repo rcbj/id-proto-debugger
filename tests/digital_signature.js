@@ -12,7 +12,7 @@ var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: 'digital_signature',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 // Building a tree is not filling in a field: even the smallest parameter sets
@@ -54,6 +54,7 @@ var BBS_SUITES = ['BLS12-381-SHA-256', 'BLS12-381-SHAKE-256'];
 // them through the PAGE is what says the pane's field handling — its message
 // splitting, its hex mode, its KeyGen inputs — produces the draft's bytes and
 // not merely bytes the page itself agrees with.
+const browserFlags = require("./browser_flags.js");
 var BBS_VECTORS = require("./bbs_vectors.json");
 var BBS_MESSAGES = ['given_name:Alice', 'family_name:Smith',
                     'birthdate:1980-01-01', 'country:US'];
@@ -1956,6 +1957,12 @@ async function test() {
   // in run-report.js.
   options.addArguments("--user-data-dir=/tmp/digital-signature-chrome-" +
                        Date.now() + "-" + process.pid);
+  // THE STACK'S CERTIFICATE, AS AN EXACT KEY PIN. The client and the api serve
+  // https (common/tls_listener.js), on a self-signed pair generated per run, so
+  // without this Chrome stops on a certificate interstitial and every
+  // assertion below reports a missing element on a page titled "Privacy
+  // error". See browser_flags.js.
+  browserFlags.addStsTrustFlags(options);
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 

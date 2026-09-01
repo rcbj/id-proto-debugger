@@ -83,11 +83,31 @@ subjectAltName. See `docs/spiffe.md`.
 
 The project is split into two independent Node.js services:
 
-- **`/api/`** — Express backend (port 4000). Proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It fetches URLs its **caller** chooses, so its outbound calls are governed by an address policy and **sixteen** settings in `api/env/*.js` — none of which may be dropped from a new call site. Four of its capabilities are worth knowing before adding a rule for a fifth. `POST /scim` is an ordinary fetch and needs none of its own — the SCIM page calls a SCIM server straight from the browser and works with no api at all, which is what separates it from LDAP and Kerberos. **`POST /ssf/call` is the same shape and the api's SSF RECEIVER is not**: `api/ssf_receiver.js` hosts an RFC 8935 push endpoint on the page's behalf, and it is there for the one thing in this tree a browser genuinely cannot do — not CORS and not a certificate, but the fact that **a page is not an HTTP server**, so it cannot be the far end of a push. Poll delivery has the receiver come to the transmitter and needs none of it, which is why the SSF page still ships to the static sites with the push half unavailable and says so. The other three are not HTTP fetches and reuse that policy's *decision* over a raw socket: the Kerberos relay; `POST /tls/connect`, which opens a TLS or mutual-TLS connection for the PKI page because a browser cannot choose a client certificate, cannot be given a truststore, and cannot read the handshake it made; and `POST /spiffe/call`, which carries BOTH of SPIFFE's gRPC surfaces and is the only endpoint here that connects to a **filesystem path its caller chose** — an address policy cannot judge one, so `spiffeAllowedSocketPaths` stands in its place. See `api/CLAUDE.md` before touching `api/server.js`.
+- **`/api/`** — Express backend (port 4000, **https**). Proxies token endpoint calls server-side and provides a `/claimdescription` endpoint with cached IANA JWT claim metadata. It fetches URLs its **caller** chooses, so its outbound calls are governed by an address policy and **sixteen** settings in `api/env/*.js` — none of which may be dropped from a new call site. Four of its capabilities are worth knowing before adding a rule for a fifth. `POST /scim` is an ordinary fetch and needs none of its own — the SCIM page calls a SCIM server straight from the browser and works with no api at all, which is what separates it from LDAP and Kerberos. **`POST /ssf/call` is the same shape and the api's SSF RECEIVER is not**: `api/ssf_receiver.js` hosts an RFC 8935 push endpoint on the page's behalf, and it is there for the one thing in this tree a browser genuinely cannot do — not CORS and not a certificate, but the fact that **a page is not an HTTP server**, so it cannot be the far end of a push. Poll delivery has the receiver come to the transmitter and needs none of it, which is why the SSF page still ships to the static sites with the push half unavailable and says so. The other three are not HTTP fetches and reuse that policy's *decision* over a raw socket: the Kerberos relay; `POST /tls/connect`, which opens a TLS or mutual-TLS connection for the PKI page because a browser cannot choose a client certificate, cannot be given a truststore, and cannot read the handshake it made; and `POST /spiffe/call`, which carries BOTH of SPIFFE's gRPC surfaces and is the only endpoint here that connects to a **filesystem path its caller chose** — an address policy cannot judge one, so `spiffeAllowedSocketPaths` stands in its place. See `api/CLAUDE.md` before touching `api/server.js`.
 - **`/api/node-ldapjs/`** — a fork of [`ldapjs`](https://github.com/ldapjs/node-ldapjs), linked here as a **submodule** on branch `master` ([`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs)), for the LDAP support of issue #257. It is a submodule rather than a line in `api/package.json` because **upstream is decommissioned** — its maintainer stopped the project on 2024-05-14 and said so in its README — so the fork is pinned at that final commit and there is nobody upstream to publish a fix to npm. **Nothing in this tree requires it yet**: no `require`, no `COPY`, no compose service, so an uninitialised checkout currently breaks nothing and no launcher initialises it the way `requireMockStsCheckout()` does `sts/`. That stops being true at the first call site, and whatever adds one adds the initialisation with it. Until then, treat an edit under `api/node-ldapjs/` the way you treat one under `sts/` — it is somebody else's checkout, and `git status` reports it as a modified submodule rather than as a modified file.
-- **`/client/`** — Express frontend (port 3000). Serves static HTML/JS pages and handles the OAuth2 redirect callback at `/callback`, forwarding query params to `oauth2_oidc_2.html`. Every protocol implementation that runs in the browser is here; see `client/CLAUDE.md`.
+- **`/client/`** — Express frontend (port 3000, **https**). Serves static HTML/JS pages and handles the OAuth2 redirect callback at `/callback`, forwarding query params to `oauth2_oidc_2.html`. Every protocol implementation that runs in the browser is here; see `client/CLAUDE.md`.
 - **`/common/data.js`** — Shared `convertToOAuth2Format()` function used by both services to normalize grant parameters (including PKCE and custom params).
 - **`/api/node-ldapjs/` and `/sts/node-ldapjs/`** — [`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs) (ldapjs 3.0.7), pinned as a submodule and used **UNMODIFIED**, twice: once for the api's LDAP client and once, inside the mock STS submodule, for its embedded directory. **Two copies rather than one shared, and the reason is npm rather than taste** — npm installs a `file:` dependency as a symlink and node resolves that package's own requires by walking up from where the REAL directory lives, so a copy outside the package root never reaches the `node_modules` the install just wrote (`Cannot find module 'abstract-logging'`, from inside ldapjs). Two further consequences: `sts/node-ldapjs` is a submodule of a submodule, so `git submodule update --init` stops one level short of it and **`--recursive` is required**; and `npm install` on a `file:` dependency installs that package's devDependencies too — ldapjs's are tap and eslint, about 200 packages and a dozen advisories — which is why both repositories carry an `.npmrc` with `omit=dev` and both Dockerfiles pass `--omit=dev` as well. An uninitialised submodule is an EMPTY DIRECTORY, so the build succeeds and the service dies at startup with `Cannot find module 'ldapjs'`. See `docs/ldap.md`.
+- **`/common/tls_listener.js` and `/common/generate_tls_cert.js`** — **the
+  TLS listener both services bind with, and the one thing that makes their
+  certificate.** They are in `common/` for the reason `xmldsig.js` is: both
+  services listen, the decision is the same one twice, and two copies of it are
+  two chances for the api and the client to end up on different schemes — which
+  is not cosmetic, because an https page whose form posts to an http action is
+  a form Chrome **does not submit at all**, behind a "Form is not secure"
+  interstitial. `tls_listener.js` does **no cryptography**: it reads a key and
+  a certificate file, or binds plain HTTP when `https` is off (the default in
+  code; the stack configurations turn it on). `generate_tls_cert.js` is the ONE
+  generator, and it is a **caller of `client/src/x509.js`'s `tls-server`
+  profile** rather than a second certificate encoder — that module is the one
+  whose output ~240 certificates in `tests/pki_x509.js` hand to OpenSSL, so it
+  is the only encoder here shown to agree with somebody else's parser, and a
+  dozen lines of forge boilerplate would have had none of that behind it.
+  **One pair for both services**, because the mock STS pushes to the api (RFC
+  8935) and therefore has to be handed the anchor in its environment before
+  anything starts. `common/common.sh`'s `generateStackTlsCertificate()` runs it
+  for the launchers; `./generate-tls-cert.sh` is the same thing for a bare
+  `docker-compose up`.
 - **`/common/xmldsig.js`** — **the** XML Signature and XML Encryption
   implementation, in `common/` because both services sign with it: ten
   browser bundles require it (staged into `client/src/` at build time the way
@@ -156,6 +176,10 @@ The project is split into two independent Node.js services:
 # a message naming a package rather than a submodule.
 git submodule update --init --recursive
 
+# Once per checkout: the TLS pair the api and the client serve. Both refuse to
+# bind without one. See the note below the block.
+./generate-tls-cert.sh
+
 # Start all services (api + client + sts)
 CONFIG_FILE=./env/local.js docker-compose up
 
@@ -163,7 +187,36 @@ CONFIG_FILE=./env/local.js docker-compose up
 CONFIG_FILE=./env/local.js docker-compose build
 ```
 
-Access the app at `http://localhost:3000`.
+**Generate the TLS certificate first**, once per checkout — the api and the
+client both serve **https** and refuse to bind without one:
+
+```bash
+./generate-tls-cert.sh
+```
+
+It writes `./generated-tls`, which the compose files mount and `.gitignore`
+covers. The four test launchers do this themselves
+(`generateStackTlsCertificate()` in `common/common.sh`); only the bare
+`docker-compose up` above needs the script. Skip it and both services exit at
+startup naming the file they could not read — deliberately, because a service
+that invented a key pair of its own would be up and serving something nothing
+else in the stack trusts.
+
+Access the app at `https://localhost:3000`. The certificate is **self-signed**,
+so a browser shows an interstitial the first time; `./generate-tls-cert.sh`
+prints the SHA-256 fingerprint if you want to check it against what you are
+being shown.
+
+**One pair for both services, and the reason is the mock STS.** It PUSHES to
+the api — RFC 8935 Shared Signals delivery — so that container is handed the
+api's anchor in its environment, which is impossible for a certificate a
+service generates at its own startup. `common/generate_tls_cert.js` makes it,
+and it is a caller of this project's own `client/src/x509.js` (`tls-server`
+profile) rather than another certificate encoder: that module is the one whose
+output ~240 certificates in `tests/pki_x509.js` hand to OpenSSL, so it is the
+only encoder here shown to agree with somebody else's parser.
+`common/tls_listener.js` is what both services bind with, and it does no
+cryptography at all — it reads the file.
 
 ## Containers run as non-root
 

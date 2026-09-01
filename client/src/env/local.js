@@ -1,6 +1,33 @@
 var config = {
-  apiUrl: "http://localhost:4000",
-  uiUrl: "http://localhost:3000",
+  apiUrl: "https://localhost:4000",
+  uiUrl: "https://localhost:3000",
+  // ---------------------------------------------------------------------------
+  // THIS SERVICE SERVES TLS, AND EVERY ADDRESS ABOVE FOLLOWS IT.
+  //
+  // The api and the client both bind https now (common/tls_listener.js), on ONE
+  // certificate generated per run by common/common.sh's
+  // generateStackTlsCertificate() — which calls common/generate_tls_cert.js,
+  // which is a caller of this project's own client/src/x509.js rather than
+  // another encoder.
+  //
+  // The certificate itself is NOT named here. The launchers pass
+  // TLS_CERT_FILE and TLS_KEY_FILE, which outrank this file, because a
+  // checked-in configuration cannot name a path that is created per run — the
+  // same reason the mock STS's certificate is fetched rather than declared. A
+  // process started with `https: true` and no certificate refuses to bind and
+  // says which generator makes one, rather than inventing a key nothing in the
+  // run trusts.
+  //
+  // WHAT THIS BOUGHT, beyond the obvious: an https origin is a SECURE CONTEXT,
+  // so `window.crypto.subtle` exists on the containerized stack without
+  // --unsafely-treat-insecure-origin-as-secure; and an https page may submit a
+  // form to an https action, which is what Chrome's "Form is not secure"
+  // interstitial had been refusing for every SAML and WS-Federation response
+  // once the mock went TLS (53 of 77 jobs on 2026-08-27). Both hazards are
+  // recorded in tests/browser_flags.js and both are now structurally absent
+  // rather than flagged around.
+  // ---------------------------------------------------------------------------
+  https: true,
   hostname: "0.0.0.0",
   port: "3000",
   logLevel: "debug",
@@ -9,13 +36,13 @@ var config = {
   backendAvailable: true,
   // SAML Service Provider identity + ACS/SLO endpoints (hosted by the api
   // layer).
-  spEntityId: "http://localhost:3000/saml/sp",
-  acsUrl: "http://localhost:4000/samlacs",
-  sloUrl: "http://localhost:4000/samlslo",
+  spEntityId: "https://localhost:3000/saml/sp",
+  acsUrl: "https://localhost:4000/samlacs",
+  sloUrl: "https://localhost:4000/samlslo",
   // WS-Federation: RP realm default + the API landing endpoint (wreply target)
   // that captures the IdP's POSTed wresult and redirects to the response page.
   wsfedRealm: "urn:wsfed:test:rp",
-  wsfedAcsUrl: "http://localhost:4000/wsfed",
+  wsfedAcsUrl: "https://localhost:4000/wsfed",
   wsfedMetadataUrlDefault: "http://localhost:8082/auth/realms/wsfed-testing/protocol/wsfed/descriptor",
   samlMetadataUrlDefault: "http://localhost:8080/realms/debugger-testing/protocol/saml/descriptor",
   // ---------------------------------------------------------------------------

@@ -68,7 +68,7 @@ var log = bunyan.createLogger({ name: 'sd_jwt_vc_issuance',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 // THE BUDGET FOR A WAIT THAT GATES ON THE MOCK ANSWERING, as against one that
@@ -1177,10 +1177,19 @@ async function stepFour(driver, context) {
 
   // ---- send the refresh ---------------------------------------------------
   await click(driver, By.id("vc_refresh_button"));
+  // The PENDING line the click itself writes is "Exchanging the refresh token
+  // for a fresh access token", so a predicate matching "fresh access token" is
+  // satisfied before the token endpoint has answered at all. The test then
+  // reads localStorage one round trip too early and fails on the assertion
+  // below, saying nothing was refreshed — which names the page rather than the
+  // wait. Match the TERMINAL wording of each outcome instead.
   var refreshStatus = await waitForStatus(driver, "vc_refresh_status",
-    function (s) { return /fresh access token|refused|failed/.test(s); },
+    function (s) {
+      return /fresh access token was issued|refused the refresh/.test(s) ||
+             /refresh request failed|nothing to send/.test(s);
+    },
     "the refresh produced no verdict");
-  assert.ok(/fresh access token/.test(refreshStatus),
+  assert.ok(/fresh access token was issued/.test(refreshStatus),
     "the refresh should succeed. Got: " + refreshStatus);
   var afterRefresh = await driver.executeScript(
     "return { accessToken: localStorage.getItem('token_access_token')," +

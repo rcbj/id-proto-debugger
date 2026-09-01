@@ -1,4 +1,5 @@
 const { Builder, By, until } = require("selenium-webdriver");
+const browserFlags = require("./browser_flags.js");
 const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const jwt = require("jsonwebtoken");
@@ -10,7 +11,7 @@ var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: 'oauth2_client_credentials',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
-var baseUrl = "http://localhost:3000"
+var baseUrl = "https://localhost:3000"
 var headless = true;
 var waitTime = appconfig.waitTime;
 
@@ -37,6 +38,12 @@ async function test() {
   options.addArguments(
       "--disable-features=BlockInsecurePrivateNetworkRequests," +
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
+  // THE STACK'S CERTIFICATE, AS AN EXACT KEY PIN. The client and the api serve
+  // https (common/tls_listener.js), on a self-signed pair generated per run, so
+  // without this Chrome stops on a certificate interstitial and every
+  // assertion below reports a missing element on a page titled "Privacy
+  // error". See browser_flags.js.
+  browserFlags.addStsTrustFlags(options);
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 

@@ -36,7 +36,9 @@
 // DISABLED, which is what the local and containerized stacks do anyway. The
 // policy itself is tested separately, enabled.
 //
-// No browser and no services: node only, so it never skips.
+// No browser and no services: node only. The ONE thing it skips for is
+// node's own OpenSSL — see the post-quantum section below, which needs
+// 3.5 and says so rather than failing on a development machine.
 // ---------------------------------------------------------------------------
 const assert = require("assert");
 const net = require("net");
@@ -59,6 +61,8 @@ function sharedModule(dir, name) {
   log.debug("Leaving sharedModule().");
   return found;
 }
+
+const openssl35 = require("./openssl35.js");
 
 const tlsProbe = sharedModule("api", "tls_probe.js");
 const keys = sharedModule(path.join("client", "src"), "key_material.js");
@@ -1244,6 +1248,10 @@ async function mlDsaCertificatesNegotiate() {
   log.debug("Leaving mlDsaCertificatesNegotiate().");
 }
 
+// The one hybrid group both ends usually pick with nobody asking, named here
+// because the skip above and the connection below have to mean the same one.
+const HYBRID_GROUP = "X25519MLKEM768";
+
 async function theKeyExchangeIsReportedSeparately() {
   log.debug("Entering theKeyExchangeIsReportedSeparately().");
   const built = await buildPki();
@@ -1268,22 +1276,38 @@ async function theKeyExchangeIsReportedSeparately() {
     assert.ok(/NOT protected/.test(classical.postQuantum.keyExchangeNote),
       "the note about a classical group does not say what it costs");
 
-    // And the hybrid one. Node cannot NAME it — its API has no case for an
-    // ML-KEM group — so the assertion is exactly that: the handshake
-    // completed, and the report says node could not name what was used
-    // rather than guessing.
+    // And the hybrid one, which needs an OpenSSL that HAS the group. Node
+    // rejects an unknown name where the secure context is built, before a
+    // byte is sent, and the message is "Failed to set ECDH curve" — which
+    // names neither the group nor the release that would have it, and which
+    // this endpoint then wraps in its own sentence about client certificates.
+    // On a development machine running node 22 (OpenSSL 3.0) that read as
+    // the probe rejecting a key pair it had never been given, so the check
+    // is asked first and the skip says which half went unrun.
+    if (!openssl35.tlsGroupAvailable(HYBRID_GROUP)) {
+      // The `finally` below closes the listener; a close here as well would
+      // be the second one.
+      log.warn("[key exchange] the classical half ran; the " + HYBRID_GROUP +
+          " half is skipped. " + openssl35.unavailableReason());
+      log.debug("Leaving theKeyExchangeIsReportedSeparately(). No ML-KEM.");
+      return;
+    }
+
+    // Node cannot NAME the hybrid group — its API has no case for an ML-KEM
+    // one — so the assertion is exactly that: the handshake completed, and
+    // the report says node could not name what was used rather than guessing.
     const hybrid = (await probe.connect({
       host: "127.0.0.1", port: listener.port, servername: "probe.example.test",
-      trustCertificates: [built.ourRoot.cert.pem], groups: "X25519MLKEM768"
+      trustCertificates: [built.ourRoot.cert.pem], groups: HYBRID_GROUP
     })).result;
     assert.strictEqual(hybrid.connected, true,
-      "X25519MLKEM768 was refused by an OpenSSL that has it: " +
+      HYBRID_GROUP + " was refused by an OpenSSL that has it: " +
       JSON.stringify(hybrid.error));
     assert.strictEqual(hybrid.postQuantum.ephemeralKey, null,
       "node named the hybrid group — if a release has taught " +
       "getEphemeralKeyInfo() about ML-KEM, this report should use the name " +
       "rather than explaining its absence");
-    assert.strictEqual(hybrid.postQuantum.requestedGroups, "X25519MLKEM768",
+    assert.strictEqual(hybrid.postQuantum.requestedGroups, HYBRID_GROUP,
       "the group asked for is not echoed back, so a reader cannot tell " +
       "which connection this report describes");
     assert.ok(/ML-KEM hybrid/.test(hybrid.postQuantum.keyExchangeNote),
@@ -1373,8 +1397,21 @@ async function test() {
   await everyDeadlineIsSeparateAndArmed();
   await everyPathSettles();
   await theKeyExchangeIsReportedSeparately();
-  await slhDsaCertificatesAreRefusedByTls();
-  await mlDsaCertificatesNegotiate();
+  // The last two both need OpenSSL 3.5, and the SLH-DSA one is the reason to
+  // say so rather than let them run. It asserts a refusal, so an older
+  // OpenSSL "passes" it — for the wrong reason and by a hair: 3.0 cannot
+  // DECODE an SLH-DSA key at all and says `decode error`, which is a
+  // statement about the release rather than about TLS having no signature
+  // algorithm for the scheme, and which is indistinguishable from this
+  // project having encoded the key wrongly. The ML-DSA one simply fails
+  // there, at tls.createServer(), for the same underlying reason.
+  if (openssl35.available()) {
+    await slhDsaCertificatesAreRefusedByTls();
+    await mlDsaCertificatesNegotiate();
+  } else {
+    log.warn("[post-quantum certificates] both certificate checks are " +
+        "skipped. " + openssl35.unavailableReason());
+  }
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

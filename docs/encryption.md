@@ -103,6 +103,27 @@ that a mauled ciphertext decrypts to something different, and the marker made
 it throw instead; the assertion is now "never the original plaintext", by
 either route.
 
+**The browser test had to learn that same lesson a second time, and it cost a
+run to find out.** `tests/encryption_tools.js` drives each key-agreement pane
+and then tries the ciphertext under a SECOND key pair, and it demanded a
+refusal from all of them — which is right for ECIES, ML-KEM and DHIES, whose
+AEAD tag makes the refusal certain, and is a guarantee textbook ElGamal does
+not make. A wrong private key recovers a uniformly random element of the
+group, and about one time in 256 that element's leading byte happens to be
+`0x01`: the marker check passes, the pane reports *Decrypted 383 bytes (not
+UTF-8 — shown as hex)*, and the assertion fails. That is exactly what happened
+on 2026-08-31, on MODP-3072/ElGamal — the last combination of that pane and so
+the state the check ran in — after passing for weeks. Measured over 3000 wrong
+keys in that group: 12 accepted (0.40%), and **not one** recovered the
+original message. So the check is now split by what the mode can keep. Where
+there is an AEAD, the wrong key must be refused and the plaintext box must
+stay empty; where there is not, the requirement is the one that is true and
+still worth having — whatever comes back, it is not the message, because a
+wrong key recovering the right plaintext would mean the private key is not
+reaching the computation at all. Both of that pane's modes are now driven
+(`wrongKeyCases` in the pane table), and the branch it met is logged, so the
+1-in-256 is visible in a run rather than lying in wait for one.
+
 The groups are RFC 3526's named MODP groups (14 and 15). Generating a fresh
 safe prime in a browser is minutes of work for no benefit — a DH group is
 public and shared by design. `tests/crypto_engines.js` runs Miller-Rabin over

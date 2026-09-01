@@ -405,7 +405,7 @@ function initValuesToLocalStorage()
       localStorage.setItem("usePKCE_yes", true);
       localStorage.setItem("client_id", "abcxyz");
       localStorage.setItem("redirect_uri", (appconfig.uiUrl ?
-                           appconfig.uiUrl : "http://localhost:3000") +
+                           appconfig.uiUrl : "https://localhost:3000") +
                            "/callback");
       localStorage.setItem("scope", "openid profile");
       localStorage.setItem("useRefreshToken_no", false);
@@ -496,7 +496,7 @@ function loadValuesFromLocalStorage()
   // different origin, so switching sites (e.g. localhost -> test.idptools.com)
   // re-defaults the field instead of keeping the old value.
   var redirectBase = (appconfig.uiUrl ?
-      appconfig.uiUrl : "http://localhost:3000");
+      appconfig.uiUrl : "https://localhost:3000");
   var storedRedirectUri = localStorage.getItem("redirect_uri");
   if (!storedRedirectUri || storedRedirectUri.indexOf(redirectBase) !== 0) {
     storedRedirectUri = redirectBase + "/callback";
@@ -2611,7 +2611,7 @@ function buildDefaultClientMetadata() {
   var redirectUri = $("#redirect_uri").val();
   if (!redirectUri) {
     redirectUri = (appconfig.uiUrl ?
-        appconfig.uiUrl : "http://localhost:3000") + "/callback";
+        appconfig.uiUrl : "https://localhost:3000") + "/callback";
   }
   // A generic, spec-aligned default client metadata document. The field names
   // and the placeholder client.example.org values follow the client metadata

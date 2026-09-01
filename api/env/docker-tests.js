@@ -1,6 +1,33 @@
 var config = {
-  apiUrl: "http://api:4000",
-  uiUrl: "http://client:3000",
+  apiUrl: "https://api:4000",
+  uiUrl: "https://client:3000",
+  // ---------------------------------------------------------------------------
+  // THIS SERVICE SERVES TLS, AND EVERY ADDRESS ABOVE FOLLOWS IT.
+  //
+  // The api and the client both bind https now (common/tls_listener.js), on ONE
+  // certificate generated per run by common/common.sh's
+  // generateStackTlsCertificate() — which calls common/generate_tls_cert.js,
+  // which is a caller of this project's own client/src/x509.js rather than
+  // another encoder.
+  //
+  // The certificate itself is NOT named here. The launchers pass
+  // TLS_CERT_FILE and TLS_KEY_FILE, which outrank this file, because a
+  // checked-in configuration cannot name a path that is created per run — the
+  // same reason the mock STS's certificate is fetched rather than declared. A
+  // process started with `https: true` and no certificate refuses to bind and
+  // says which generator makes one, rather than inventing a key nothing in the
+  // run trusts.
+  //
+  // WHAT THIS BOUGHT, beyond the obvious: an https origin is a SECURE CONTEXT,
+  // so `window.crypto.subtle` exists on the containerized stack without
+  // --unsafely-treat-insecure-origin-as-secure; and an https page may submit a
+  // form to an https action, which is what Chrome's "Form is not secure"
+  // interstitial had been refusing for every SAML and WS-Federation response
+  // once the mock went TLS (53 of 77 jobs on 2026-08-27). Both hazards are
+  // recorded in tests/browser_flags.js and both are now structurally absent
+  // rather than flagged around.
+  // ---------------------------------------------------------------------------
+  https: true,
   hostname: "0.0.0.0",
   port: "4000",
   // ---------------------------------------------------------------------
@@ -329,9 +356,9 @@ var config = {
   // and went quiet. Omit it for the code default of 45000.
   spiffeStreamTimeout: 45000,
   // SAML Service Provider identity (this debugger acting as an SP).
-  spEntityId: "http://client:3000/saml/sp",
-  acsUrl: "http://api:4000/samlacs",
-  sloUrl: "http://api:4000/samlslo",
+  spEntityId: "https://client:3000/saml/sp",
+  acsUrl: "https://api:4000/samlacs",
+  sloUrl: "https://api:4000/samlslo",
   // SSRF guard (api/ssrf_guard.js). OFF here for the same reason as local.js:
   // on the compose network the identity provider (keycloak:8080) and the mock
   // STS (sts:8081) ARE private addresses, so the guard would refuse every call

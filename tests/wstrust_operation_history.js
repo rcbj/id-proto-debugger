@@ -30,7 +30,7 @@ var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: 'wstrust_operation_history',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var headless = true;
 var waitTime = appconfig.waitTime;

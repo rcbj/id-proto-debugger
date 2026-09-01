@@ -88,7 +88,7 @@ var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: "saml_response_decoder_page",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 // Pure-JS RSA: key generation and signing want room on a loaded host, and this

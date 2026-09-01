@@ -53,7 +53,7 @@ const events = paths.requireSharedModule(
 const jws = paths.requireSharedModule(
   [__dirname + "/../client/src/jws.js", __dirname + "/jws.js"], "jws.js");
 
-var apiUrl = process.env.API_URL || "http://localhost:4000";
+var apiUrl = process.env.API_URL || "https://localhost:4000";
 
 let checks = 0;
 let skips = [];

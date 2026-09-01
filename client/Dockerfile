@@ -61,6 +61,11 @@ COPY client/public/ /usr/src/app/public/
 #COPY dist/ /usr/src/app/public/dist/
 COPY client/src/env/ /usr/src/app/env/
 COPY client/server.js /usr/src/app
+# The listener this server binds with. WORKDIR is /usr/src/app, so this lands
+# where `require('../common/tls_listener.js')` resolves it — the same relative
+# path that works in a bare checkout. Shared with api/server.js on purpose;
+# see the header there.
+COPY common/tls_listener.js /usr/src/common/tls_listener.js
 COPY client/package.json /usr/src/app
 # Application version: the repo-root VERSION file (M.N) plus the stamping module.
 COPY VERSION /usr/src/app/VERSION

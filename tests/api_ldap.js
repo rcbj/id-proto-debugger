@@ -125,7 +125,7 @@ var log = bunyan.createLogger({ name: "api_ldap",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var apiUrl = process.env.API_URL || "http://localhost:4000";
+var apiUrl = process.env.API_URL || "https://localhost:4000";
 // Where the mock's HTTP side is, as THIS TEST must reach it.
 var stsUrl = process.env.STS_URL || "https://localhost:8081";
 // Where the directory is, as the API must reach it — a different question, and

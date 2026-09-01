@@ -50,7 +50,7 @@ var log = bunyan.createLogger({ name: "jwks_page",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 // The JWKS endpoint as THE BROWSER must reach it — its own variable, because on
 // the containerized stack the browser's view of the mock is not the api's. That
 // distinction has cost this suite a run before, on the LDAP and SPNEGO

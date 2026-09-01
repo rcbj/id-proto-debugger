@@ -124,6 +124,30 @@ services:
       # api_ssrf_guard.js, api_tls_probe.js and url_safety_schemes.js assert.
       # ---------------------------------------------------------------------
       - STS_CERT_URL=https://localhost:8081/tls/server-certificate
+      - TLS_ENABLED=true
+      - TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    # ---------------------------------------------------------------------
+    # THE STACK'S TLS PAIR, WHICH THIS SERVICE SERVES.
+    #
+    # One pair for the api and the client both, generated on the host before
+    # compose starts by common/common.sh's generateStackTlsCertificate() —
+    # which calls common/generate_tls_cert.js, which is a caller of this
+    # project's own client/src/x509.js rather than another encoder. See the
+    # header of common/tls_listener.js for why it is one pair and not one
+    # each: the mock STS PUSHES to the api (RFC 8935), so that container has
+    # to be handed the anchor in its environment, which is impossible for a
+    # certificate a service invents at its own startup.
+    #
+    # A FIXED PATH INSIDE THE CONTAINER, so nothing downstream — the
+    # healthcheck below included — has to interpolate a host path. If
+    # STACK_TLS_DIR is unset, compose creates ./generated-tls as an EMPTY
+    # directory and this service dies at startup saying which file it could
+    # not read; that is the walt.id `generated-*-config` hazard this
+    # repository already records, and the message names the generator.
+    # ---------------------------------------------------------------------
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       context: .
       dockerfile: api/Dockerfile
@@ -142,7 +166,17 @@ services:
       sts:
         condition: service_healthy
     healthcheck:
-      test: curl -X GET http://localhost:4000
+      # https now, and --cacert rather than -k: this service's certificate is
+      # mounted right there, so the probe can VERIFY it. -k would report a
+      # healthy container for a service serving a certificate nothing in the
+      # run trusts, which is the one failure a healthcheck here could hide.
+      # NO -f, matching what this probe has always asserted: the api answers
+      # 404 at `/` (it has no route there), so a status check would fail a
+      # perfectly healthy container. What is being tested is that the port
+      # answers and that the TLS handshake completes — which --cacert makes a
+      # real assertion rather than the decoration -k would leave it as.
+      test: curl -s --cacert /etc/idptools/tls/stack-tls-cert.pem
+        https://localhost:4000
       interval: 10s
       timeout: 5s
       retries: 5
@@ -154,13 +188,40 @@ services:
     network_mode: "host"
     environment:
       - CONFIG_FILE=./env/local.js
+      - TLS_ENABLED=true
+      - TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    # ---------------------------------------------------------------------
+    # THE STACK'S TLS PAIR, WHICH THIS SERVICE SERVES.
+    #
+    # One pair for the api and the client both, generated on the host before
+    # compose starts by common/common.sh's generateStackTlsCertificate() —
+    # which calls common/generate_tls_cert.js, which is a caller of this
+    # project's own client/src/x509.js rather than another encoder. See the
+    # header of common/tls_listener.js for why it is one pair and not one
+    # each: the mock STS PUSHES to the api (RFC 8935), so that container has
+    # to be handed the anchor in its environment, which is impossible for a
+    # certificate a service invents at its own startup.
+    #
+    # A FIXED PATH INSIDE THE CONTAINER, so nothing downstream — the
+    # healthcheck below included — has to interpolate a host path. If
+    # STACK_TLS_DIR is unset, compose creates ./generated-tls as an EMPTY
+    # directory and this service dies at startup saying which file it could
+    # not read; that is the walt.id `generated-*-config` hazard this
+    # repository already records, and the message names the generator.
+    # ---------------------------------------------------------------------
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       context: .
       dockerfile: client/Dockerfile 
       args:
         CONFIG_FILE: ${CONFIG_FILE}
     healthcheck:
-      test: curl -X GET http://localhost:3000
+      # See the api's: https, and verified against the mounted certificate.
+      # See the api's, above: no -f, and --cacert rather than -k.
+      test: curl -s --cacert /etc/idptools/tls/stack-tls-cert.pem
+        https://localhost:3000
       interval: 10s
       timeout: 5s
       retries: 5
@@ -233,6 +294,34 @@ services:
       # does it for the host-side launchers; the `api` service above does its
       # own, because it starts before any launcher could hand it one.
       - STS_HTTPS=true
+      # THE ADDRESS THE MOCK HANDS THE END-USER BACK TO, and it has to be set
+      # here now rather than left to that service's default. mock-sts's own
+      # `oid4vci.walletUrl` defaults to `http://localhost:3000`, which was
+      # this client's address until it started serving TLS; left alone, a
+      # Credential Offer would send the End-User to an http origin nothing is
+      # listening on. The submodule is somebody else's checkout, so the fix
+      # belongs on this side. `oid4vp.walletUrl` is DERIVED from this one (see
+      # sts/common/config.js), so the verifier's hand-back follows.
+      - OID4VCI_WALLET_URL=https://localhost:3000
+      # ---------------------------------------------------------------------
+      # THE STACK'S ANCHOR, IN THE MOCK'S TRUSTSTORE, AND IT IS NOT SYMMETRY.
+      #
+      # This service is the only one here that makes an outbound connection TO
+      # the api: RFC 8935 Shared Signals PUSH delivery, where the transmitter
+      # POSTs each Security Event Token to the `delivery.endpoint_url` the
+      # receiver gave it — `https://.../ssf/receiver/:id` on the api now that
+      # the api serves TLS, because api/server.js derives that URL from
+      # `req.protocol`. Without this the push fails the handshake and the SSF
+      # page waits for an event that was never delivered, which reads as a
+      # transmitter that sent nothing.
+      #
+      # It is an ADDITION to node's default store, like every other trust
+      # arrangement in this repository, and not NODE_TLS_REJECT_UNAUTHORIZED.
+      # The mount is the same read-only one the api and the client get.
+      # ---------------------------------------------------------------------
+      - NODE_EXTRA_CA_CERTS=/etc/idptools/tls/stack-tls-cert.pem
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.

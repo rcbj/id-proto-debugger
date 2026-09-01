@@ -42,6 +42,7 @@
 // still accept the certificate.
 // ---------------------------------------------------------------------------
 const crypto = require("crypto");
+const tls = require("tls");
 const asn1js = require("asn1js");
 
 var bunyan = require("bunyan");
@@ -50,6 +51,7 @@ var log = bunyan.createLogger({ name: "openssl35",
     level: appconfig.LOG_LEVEL || "info" });
 
 var probed = null;
+var groupProbes = {};
 
 // Whether this node's OpenSSL knows the post-quantum algorithms. Probed once
 // by actually generating a key rather than by reading a version string: the
@@ -68,6 +70,36 @@ function available() {
   }
   log.debug("Leaving available(). " + probed);
   return probed;
+}
+
+// Whether this node's OpenSSL will accept a named group for TLS's
+// supported-groups list. This is a SECOND question from available() above and
+// it is asked separately on purpose: a certificate algorithm and a key
+// exchange are different halves of OpenSSL 3.5, they are reached through
+// different APIs, and a build could carry one without the other. It is also
+// probed rather than derived from a version string, for the same reason
+// available() is.
+//
+// `ecdhCurve` is node's name for the supported-groups list, and an unknown
+// name is rejected the moment a secure context is built — synchronously, with
+// the message "Failed to set ECDH curve", which names neither the group nor
+// the release that would have it. That is exactly what an OpenSSL 3.0 host
+// says about X25519MLKEM768, and it is why this probe exists rather than a
+// try/catch around the connection itself.
+function tlsGroupAvailable(name) {
+  log.debug("Entering tlsGroupAvailable(). name=" + name);
+  if (!Object.prototype.hasOwnProperty.call(groupProbes, name)) {
+    try {
+      tls.createSecureContext({ ecdhCurve: name });
+      groupProbes[name] = true;
+    } catch (e) {
+      log.warn("openssl35: node's OpenSSL (" + process.versions.openssl +
+          ") does not know the TLS group " + name + ": " + e.message);
+      groupProbes[name] = false;
+    }
+  }
+  log.debug("Leaving tlsGroupAvailable(). " + groupProbes[name]);
+  return groupProbes[name];
 }
 
 // The sentence a test prints when it has to go on without the oracle. One
@@ -187,6 +219,7 @@ function publicKeyFromCertificate(certPem) {
 
 module.exports = {
   available: available,
+  tlsGroupAvailable: tlsGroupAvailable,
   unavailableReason: unavailableReason,
   publicKey: publicKey,
   privateKey: privateKey,

@@ -15,7 +15,7 @@ var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: 'wstrust',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 

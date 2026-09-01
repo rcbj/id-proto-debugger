@@ -38,8 +38,48 @@
 # ordinary bootstrap for a certificate regenerated every start rather than a
 # hole: it is the same act as trusting the PEM the endpoint hands back, done one
 # step earlier. mock-sts's own README says so at /tls.
+#
+# ---------------------------------------------------------------------------
+# THERE ARE TWO ANCHORS NOW, SO WHAT THIS WRITES IS A BUNDLE.
+#
+# The api and the client serve TLS themselves (common/tls_listener.js), on a
+# pair generated per run and mounted at TLS_CERT_FILE. **This service makes
+# outbound calls to that certificate**, which is not obvious until it fails:
+# `POST /ssf/call` is a general HTTP proxy the caller aims, and the SSF
+# workflow legitimately aims it at this same service's own push receiver —
+# `https://localhost:4000/ssf/receiver/:id`, the endpoint `POST /ssf/receiver`
+# just handed out. Without the anchor that call dies at the handshake and the
+# proxy reports a **502**, which by this endpoint's own three-outcomes rule
+# means "the far end did not deliver" — so a receiver that refused a malformed
+# Security Event Token perfectly correctly is indistinguishable from a network
+# failure. tests/api_ssf.js asserts exactly that distinction and is what
+# caught it.
+#
+# `NODE_EXTRA_CA_CERTS` NAMES ONE FILE and node reads it once at startup:
+# there is no list form and no second variable, so two anchors is a
+# concatenation or it is nothing. A PEM bundle is just concatenated
+# certificates, so the whole implementation is `cat`. The same reasoning, and
+# the same answer, as addTrustAnchor() in common/common.sh.
 # ---------------------------------------------------------------------------
 set -uo pipefail
+
+# The bundle every anchor below is appended to. Rebuilt from empty on each
+# start, because the mock's certificate is new on each of its own starts and a
+# bundle that accumulated them would trust keys that are no longer in use.
+TRUST_BUNDLE="${TRUST_BUNDLE:-/tmp/api-trust-bundle.pem}"
+: > "${TRUST_BUNDLE}" 2>/dev/null || TRUST_BUNDLE=""
+
+# The stack's own pair, when this service is serving TLS. It is a FILE that is
+# already mounted rather than something to fetch, so there is nothing to wait
+# for and no failure mode but a bad mount.
+if [ -n "${TRUST_BUNDLE}" ] && [ -n "${TLS_CERT_FILE:-}" ] &&
+   [ -f "${TLS_CERT_FILE}" ];
+then
+  cat "${TLS_CERT_FILE}" >> "${TRUST_BUNDLE}"
+  export NODE_EXTRA_CA_CERTS="${TRUST_BUNDLE}"
+  echo "sts_truststore: trusting this stack's own certificate" \
+       "(${TLS_CERT_FILE}) — this service calls its own https endpoints."
+fi
 
 if [ -n "${STS_CERT_URL:-}" ];
 then
@@ -53,8 +93,16 @@ then
   if curl -sk --fail --retry 40 --retry-connrefused --retry-delay 2 \
           -o "${STS_CA_FILE}" "${STS_CERT_URL}";
   then
-    export NODE_EXTRA_CA_CERTS="${STS_CA_FILE}"
-    echo "Leaving sts_truststore. NODE_EXTRA_CA_CERTS=${STS_CA_FILE}"
+    if [ -n "${TRUST_BUNDLE}" ];
+    then
+      cat "${STS_CA_FILE}" >> "${TRUST_BUNDLE}"
+      export NODE_EXTRA_CA_CERTS="${TRUST_BUNDLE}"
+    else
+      # No writable bundle (a read-only /tmp, say). One anchor is better than
+      # none, and the mock's is the one this service cannot do without.
+      export NODE_EXTRA_CA_CERTS="${STS_CA_FILE}"
+    fi
+    echo "Leaving sts_truststore. NODE_EXTRA_CA_CERTS=${NODE_EXTRA_CA_CERTS}"
   else
     # NOT fatal, and deliberately so. This service has a great deal to do that
     # has nothing to do with the mock, and a stack whose mock never came up

@@ -113,11 +113,11 @@ var log = bunyan.createLogger({ name: "kerberos_spnego_signin",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 
-var apiUrl = process.env.API_URL || "http://localhost:4000";
+var apiUrl = process.env.API_URL || "https://localhost:4000";
 var stsUrl = (process.env.STS_URL || "https://localhost:8081")
     .replace(/\/+$/, "");
 var kdcHost = process.env.KRB5_KDC_HOST || "localhost";

@@ -48,3 +48,7 @@ infra/**/.terraform/
 *.tfstate.*
 *.tfplan
 crash.log
+
+# The per-run TLS pair the api and the client serve (./generate-tls-cert.sh).
+# Regenerated on demand and never committed — see common/generate_tls_cert.js.
+generated-tls/

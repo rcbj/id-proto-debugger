@@ -1,4 +1,5 @@
 const { Builder, By, until } = require("selenium-webdriver");
+const browserFlags = require("./browser_flags.js");
 const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const crypto = require("crypto");
@@ -18,7 +19,7 @@ log.info("Log initialized. logLevel=" + log.level());
 // the controls are wired to the engine — including the two panes added for
 // FIPS 202 and SP 800-185, whose vectors are used below precisely because
 // they come from NIST rather than from the code under test.
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 // Hashing is synchronous and pure JavaScript now (client/src/hash_tools.js,
@@ -589,6 +590,12 @@ async function test() {
   // in run-report.js.
   options.addArguments("--user-data-dir=/tmp/encoding-tools-chrome-" +
                        Date.now() + "-" + process.pid);
+  // THE STACK'S CERTIFICATE, AS AN EXACT KEY PIN. The client and the api serve
+  // https (common/tls_listener.js), on a self-signed pair generated per run, so
+  // without this Chrome stops on a certificate interstitial and every
+  // assertion below reports a missing element on a page titled "Privacy
+  // error". See browser_flags.js.
+  browserFlags.addStsTrustFlags(options);
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 

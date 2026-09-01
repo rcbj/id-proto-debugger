@@ -55,7 +55,7 @@ var asn1 = shared("krb5_asn1.js");
 var msgs = shared("krb5_messages.js");
 var kcrypto = shared("krb5_crypto.js");
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 
 const b64 = (b) => Buffer.from(prim.toBytes(b)).toString("base64");
 

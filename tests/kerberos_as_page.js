@@ -43,7 +43,7 @@ var log = bunyan.createLogger({ name: "kerberos_as_page",
     level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 // Where the KDC is, and who to ask for. The mock KDC's realm and passwords are
 // its own (see the submodule's krb5_principals.js); the defaults here match it.
 // Left NULL by default on purpose: with nothing to type, the page's own

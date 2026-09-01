@@ -44,7 +44,7 @@ log.info("Log initialized. logLevel=" + log.level());
 // has".
 var OIDC_DUMMY_DEFAULT = "https://localhost/oidc/.well-known";
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime;
 var fetchWait = Math.max(waitTime, 15000);

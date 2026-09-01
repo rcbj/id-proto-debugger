@@ -49,7 +49,7 @@ const registry = require("./sts_applications.js");
 
 var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 const STS = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/, "");
-let BASE = "http://localhost:3000";
+let BASE = "https://localhost:3000";
 
 // The wallet's client_id, named once. It is seeded into the page's own storage
 // below AND declared in the mock's application registry before the page is

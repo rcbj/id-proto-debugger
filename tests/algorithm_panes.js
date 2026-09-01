@@ -36,7 +36,7 @@ var log = bunyan.createLogger({ name: "algorithm_panes",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 
 // The options a `<select>` offers, read from the live page rather than from
 // the source — this job is about what a person can actually choose.

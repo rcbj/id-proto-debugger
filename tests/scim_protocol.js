@@ -120,7 +120,7 @@ const scenarios = paths.requireSharedModule(
   [__dirname + "/../client/src/scim_scenarios.js",
    __dirname + "/scim_scenarios.js"], "scim_scenarios.js");
 
-var apiUrl = process.env.API_URL || "http://localhost:4000";
+var apiUrl = process.env.API_URL || "https://localhost:4000";
 // The mock's HTTP side as THIS TEST reaches it — for /admin-api and the token
 // endpoint.
 var stsUrl = process.env.STS_URL || "https://localhost:8081";

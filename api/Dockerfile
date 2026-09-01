@@ -101,6 +101,13 @@ COPY common/xmldsig.js .
 # same relative path that works in a bare checkout, which is what keeps this
 # from becoming a checked-in copy the way common/data.js had to.
 COPY common/spiffe/ /usr/src/common/spiffe/
+# The listener: whether this service binds TLS or plain HTTP, and with what
+# certificate. Same staging and the same reason as common/spiffe/ above —
+# `require('../common/tls_listener.js')` from /usr/src/app resolves here and
+# in a bare checkout alike. It is in common/ because client/server.js makes
+# the identical decision and the two must not disagree: an https page whose
+# form posts to an http api is a form Chrome does not submit at all.
+COPY common/tls_listener.js /usr/src/common/tls_listener.js
 
 # Application version: the repo-root VERSION file (M.N) plus the shared stamping
 # module, which is the client's — there is one implementation of the scheme and

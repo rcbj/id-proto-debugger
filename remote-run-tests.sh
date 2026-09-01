@@ -44,7 +44,7 @@ set -x
 #
 #   ./remote-run-tests.sh https://test.idptools.com
 #   ./remote-run-tests.sh https://idptools.com
-#   ./remote-run-tests.sh http://localhost:3000        # local dev server
+#   ./remote-run-tests.sh https://localhost:3000       # local dev server
 #   DEBUGGER_BASE_URL=https://test.idptools.com ./remote-run-tests.sh
 #
 # Override Keycloak location with KEYCLOAK_BASE_URL (default http://localhost:8080).
@@ -53,7 +53,7 @@ init()
 {
   # The one thing that varies per target: where the debugger UI lives. Accept it
   # as $1, or the DEBUGGER_BASE_URL env var, defaulting to the local dev server.
-  DEBUGGER_BASE_URL="${1:-${DEBUGGER_BASE_URL:-http://localhost:3000}}"
+  DEBUGGER_BASE_URL="${1:-${DEBUGGER_BASE_URL:-https://localhost:3000}}"
 
   # Keycloak used for these tests — a local instance on :8080 by default.
   # KEYCLOAK_BASE_URL is what the browser (debugger UI) uses to reach Keycloak
@@ -95,8 +95,8 @@ init()
   # under any arrangement.
   case "${DEBUGGER_BASE_URL}" in
     *localhost*|*127.0.0.1*)
-      API_BASE_URL="${API_BASE_URL:-http://localhost:4000}"
-      SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://localhost:3000/saml/sp}"
+      API_BASE_URL="${API_BASE_URL:-https://localhost:4000}"
+      SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-https://localhost:3000/saml/sp}"
       SAML_BACKEND_AVAILABLE="${SAML_BACKEND_AVAILABLE:-true}"
       # A local dev server is served by client/Dockerfile's build, which carries
       # every page — the Kerberos ones included.
@@ -339,6 +339,49 @@ init()
   # nothing is written to the repository.
   generateSpKeyPair
   check_return_code $?
+  # ------------------------------------------------------------------------
+  # THE STACK'S TLS PAIR, BEFORE COMPOSE.
+  #
+  # The api and the client serve https, and this is the pair they serve. It
+  # has to exist BEFORE the stack starts, not because those two need it early
+  # but because the MOCK STS does: it pushes Security Event Tokens to the api
+  # (RFC 8935), so its container is handed the anchor in its environment, and
+  # a certificate a service invents at its own startup cannot be in an
+  # environment built a moment earlier. One pair for both services; see
+  # common/tls_listener.js.
+  #
+  # It also installs the anchor for every node process this launcher spawns
+  # (NODE_EXTRA_CA_CERTS, through the shared bundle) and exports the SPKI pin
+  # browser_flags.js turns into Chrome's exact-key trust.
+  # ------------------------------------------------------------------------
+  # AGAINST A LOCAL DEV SERVER, THE PAIR THAT SERVER IS ALREADY SERVING.
+  #
+  # This launcher's target is usually a deployed site with a real certificate,
+  # where none of this is needed and an unused extra anchor costs nothing. The
+  # documented exception is `./remote-run-tests.sh https://localhost:3000` — a
+  # dev server started by hand, which is serving whatever
+  # `./generate-tls-cert.sh` wrote into ./generated-tls. Generating a SECOND
+  # pair here would trust a key nothing is serving and the browser would meet
+  # an interstitial on a stack that is working perfectly. So an existing pair
+  # wins, and generateStackTlsCertificate() treats one as caller-supplied.
+  if [ -f "${CURRENT_DIR}/generated-tls/stack-tls-cert.pem" ] &&
+     [ -f "${CURRENT_DIR}/generated-tls/stack-tls-key.pem" ];
+  then
+    STACK_TLS_CERT_FILE="${CURRENT_DIR}/generated-tls/stack-tls-cert.pem"
+    STACK_TLS_KEY_FILE="${CURRENT_DIR}/generated-tls/stack-tls-key.pem"
+    STACK_TLS_CA_FILE="${STACK_TLS_CERT_FILE}"
+    STACK_TLS_SPKI_PIN="$(openssl x509 -in "${STACK_TLS_CERT_FILE}" \
+                            -pubkey -noout \
+                          | openssl pkey -pubin -outform der \
+                          | openssl dgst -sha256 -binary \
+                          | openssl enc -base64)"
+    export STACK_TLS_CERT_FILE STACK_TLS_KEY_FILE STACK_TLS_CA_FILE
+    export STACK_TLS_SPKI_PIN
+    echo "Using the existing stack TLS pair in ${CURRENT_DIR}/generated-tls."
+  fi
+  generateStackTlsCertificate "${CURRENT_DIR}"
+  check_return_code $?
+  addTrustAnchor "${STACK_TLS_CA_FILE}"
   # walt.id's configuration is rendered before compose brings anything up: both
   # services mount a directory this repository does not contain, because each holds
   # a freshly generated signing key and no key material is committed. Without this

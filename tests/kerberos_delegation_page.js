@@ -52,8 +52,8 @@ var log = bunyan.createLogger({ name: "kerberos_delegation_page",
     level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
-var apiUrl = process.env.API_URL || "http://localhost:4000";
+var baseUrl = "https://localhost:3000";
+var apiUrl = process.env.API_URL || "https://localhost:4000";
 var kdcHost = process.env.KRB5_KDC_HOST || "localhost";
 var kdcPort = process.env.KRB5_KDC_PORT || "88";
 var realm = process.env.KRB5_REALM || "EXAMPLE.COM";

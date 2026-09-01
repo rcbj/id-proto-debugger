@@ -44,7 +44,7 @@ var log = bunyan.createLogger({ name: "kerberos_page_density",
     level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 
 // 640px at 1366x768, the house standard — see the note in tests/navigation.js
 // on CARD_HEIGHT_BUDGET and the same constant in kerberos_as_page.js. Headless

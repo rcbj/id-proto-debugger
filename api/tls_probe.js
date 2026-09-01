@@ -355,6 +355,49 @@ function createProbe(appconfig, guard, log, deps) {
     return error;
   }
 
+  // Which input OpenSSL threw about, read off its own message, so that the
+  // sentence added to it names a field of this request. The three named
+  // cases are the three name LISTS a caller may send — a group, a signature
+  // algorithm, a cipher — each of which is rejected by name and each of
+  // which a caller can be wrong about for the same reason: the algorithm is
+  // newer than the OpenSSL this api is linked against. Anything else falls
+  // through to the client material, which is where a synchronous throw
+  // usually does come from.
+  function startupDetail(message, presentingClientCertificate) {
+    logger.debug("Entering startupDetail().");
+    const text = String(message || '');
+    if (/ECDH curve/i.test(text)) {
+      logger.debug("Leaving startupDetail(). groups");
+      return { code: 'ETLSGROUPS', note: 'That is the `groups` list: ' +
+        'OpenSSL rejects a group name it does not know, and a hybrid ' +
+        'ML-KEM group (X25519MLKEM768 and its siblings) needs OpenSSL 3.5 ' +
+        'or later. This api is linked against ' + process.versions.openssl +
+        '.' };
+    }
+    if (/no cipher match/i.test(text)) {
+      logger.debug("Leaving startupDetail(). ciphers");
+      return { code: 'ETLSCIPHERS', note: 'That is the `ciphers` list: no ' +
+        'cipher suite in it is one this OpenSSL (' +
+        process.versions.openssl + ') offers. Note that the TLS 1.3 suites ' +
+        'are configured separately and are not filtered by this list.' };
+    }
+    if (/lib\(0\)|reason\(0\)/i.test(text) && !presentingClientCertificate) {
+      // The signature-algorithm list is the one OpenSSL refuses with an
+      // EMPTY error — no library, no reason — so it can only be told from a
+      // genuinely unknown failure by what was sent. That is weak evidence,
+      // hence the hedge in the sentence rather than a flat statement.
+      logger.debug("Leaving startupDetail(). sigalgs");
+      return { code: 'ETLSSIGALGS', note: 'OpenSSL gave no reason at all, ' +
+        'which is how it refuses a `sigalgs` list holding a name it does ' +
+        'not know. This api is linked against OpenSSL ' +
+        process.versions.openssl + '.' };
+    }
+    logger.debug("Leaving startupDetail(). client material");
+    return { code: 'ETLSCLIENTMATERIAL', note: 'When a client certificate ' +
+      'is being presented, this is usually the key or the certificate not ' +
+      'being PEM, or the two not being a pair.' };
+  }
+
   function assertPortAllowed(port) {
     logger.debug("Entering assertPortAllowed().");
     if (anyPort) {
@@ -983,12 +1026,17 @@ function createProbe(appconfig, guard, log, deps) {
       try {
         socket = connectTls(connectOptions);
       } catch (e) {
-        // A bad key or certificate throws synchronously, and the message
-        // ("error:0480006C:PEM routines::no start line") names neither.
+        // FOUR of this call's inputs are rejected synchronously, before a
+        // byte is sent, and OpenSSL's message names the LIBRARY rather than
+        // the field a caller filled in. Attributing every one of them to the
+        // client key and certificate — which is what this branch used to do
+        // — sends a reader looking at a PEM they may not even have supplied:
+        // an ML-KEM group name on an api whose OpenSSL predates 3.5 arrives
+        // here as `Failed to set ECDH curve` and was reported as a key that
+        // did not match its certificate.
+        const detail = startupDetail(e.message, !!options.clientCertificatePem);
         return finish(reject, refuse('Could not start the TLS connection: ' +
-          e.message + '. When a client certificate is being presented, this ' +
-          'is usually the key or the certificate not being PEM, or the two ' +
-          'not being a pair.', 'ETLSCLIENTMATERIAL'));
+          e.message + '. ' + detail.note, detail.code));
       }
 
       socket.on('connect', function () {

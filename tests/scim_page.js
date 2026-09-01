@@ -81,8 +81,8 @@ var log = bunyan.createLogger({ name: "scim_page",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
-var apiUrl = process.env.API_URL || "http://localhost:4000";
+var baseUrl = "https://localhost:3000";
+var apiUrl = process.env.API_URL || "https://localhost:4000";
 // The SCIM service root as THE BROWSER must reach it. Its own variable, and on
 // the containerized stack a different answer from the api's view — the browser
 // resolves this one, and that distinction has cost this suite a run before on

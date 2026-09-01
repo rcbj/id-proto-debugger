@@ -39,7 +39,7 @@ const waitForContent = require("./wait_for.js");
 var log = bunyan.createLogger({ name: "metadata_schema_test",
                                 level: appconfig.logLevel || "info" });
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var headless = true;
 var waitTime = appconfig.waitTime || 15000;
 

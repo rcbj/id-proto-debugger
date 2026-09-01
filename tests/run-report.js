@@ -70,7 +70,7 @@ const REPORT_DIR = path.join(TESTS_DIR, "report");
 const RUN_ID = new Date().toISOString().replace(/:/g, "-").replace(/\..+$/, "");
 const RUN_DIR = path.join(REPORT_DIR, RUN_ID);
 const LOGS_DIR = path.join(RUN_DIR, "logs");
-const BASE_URL = process.env.DEBUGGER_BASE_URL || "http://localhost:3000";
+const BASE_URL = process.env.DEBUGGER_BASE_URL || "https://localhost:3000";
 const env = process.env;
 
 // ---------------------------------------------------------------------------
@@ -2562,7 +2562,7 @@ function buildJobs() {
     name: "Kerberos TGS + AP pages (the credential handoff, 0x8003, mutual auth, per-message tokens)",
     script: "kerberos_tgs_ap_page.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
@@ -2616,7 +2616,7 @@ function buildJobs() {
     name: "SPNEGO page (the routing loop, the handshake, the ticket, and three refusals)",
     script: "kerberos_spnego_page.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
@@ -2665,7 +2665,7 @@ function buildJobs() {
         "flow completes on it)",
     script: "kerberos_spnego_signin.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
@@ -2789,7 +2789,7 @@ function buildJobs() {
         "same five over LDAPS, and what a result code is)",
     script: "api_ldap.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       LDAP_URL: env.LDAP_URL || "ldap://sts:389",
       LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
@@ -2829,7 +2829,7 @@ function buildJobs() {
         "membership, and what it remembers)",
     script: "ldap_page.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       LDAP_URL: env.LDAP_URL || "ldap://sts:389",
       LDAP_BASE_DN: env.LDAP_BASE_DN || "dc=example,dc=com",
@@ -2889,7 +2889,7 @@ function buildJobs() {
         "schemes)",
     script: "scim_protocol.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       SCIM_BASE_URL: env.SCIM_BASE_URL || "https://sts:8081/scim/v2",
       LDAP_URL: env.LDAP_URL || "ldap://sts:389",
@@ -2919,7 +2919,7 @@ function buildJobs() {
         "it remembers)",
     script: "scim_page.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       SCIM_BROWSER_URL: env.SCIM_BROWSER_URL ||
           (env.STS_URL || "https://localhost:8081") + "/scim/v2",
@@ -3002,7 +3002,7 @@ function buildJobs() {
         "for application/secevent+jwt)",
     script: "api_ssf.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
     },
   };
   if (ssfApiSkip) ssfApiJob.skip = ssfApiSkip;
@@ -3023,7 +3023,7 @@ function buildJobs() {
         "whole token set)",
     script: "ssf_page.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL ||
           env.WSTRUST_STS_URL || "https://localhost:8081",
     },
@@ -3123,7 +3123,7 @@ function buildJobs() {
         "200 with the code)",
     script: "api_spiffe.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092",
       SPIFFE_SERVER_ADDRESS: env.SPIFFE_SERVER_ADDRESS || "sts:8181",
@@ -3150,7 +3150,7 @@ function buildJobs() {
         "readers, and what it remembers)",
     script: "spiffe_page.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       STS_URL: env.STS_URL || "https://localhost:8081",
       SPIFFE_WORKLOAD_ADDRESS: env.SPIFFE_WORKLOAD_ADDRESS || "sts:8092",
       SPIFFE_SERVER_ADDRESS: env.SPIFFE_SERVER_ADDRESS || "sts:8181",
@@ -3204,7 +3204,7 @@ function buildJobs() {
     name: "Kerberos delegation page (S4U2Self, S4U2Proxy, RBCD, forwarding, renewal)",
     script: "kerberos_delegation_page.js",
     env: {
-      API_URL: env.API_URL || "http://localhost:4000",
+      API_URL: env.API_URL || "https://localhost:4000",
       KRB5_KDC_HOST: env.KRB5_KDC_HOST || "sts",
       KRB5_KDC_PORT: env.KRB5_KDC_PORT || "88",
     },

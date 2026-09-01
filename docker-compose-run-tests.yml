@@ -91,6 +91,9 @@ services:
       # api_ssrf_guard.js, api_tls_probe.js and url_safety_schemes.js assert.
       # ---------------------------------------------------------------------
       - STS_CERT_URL=https://sts:8081/tls/server-certificate
+      - TLS_ENABLED=true
+      - TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
     build:
       context: .
       dockerfile: api/Dockerfile
@@ -108,8 +111,23 @@ services:
       # ordinary case into no retries at all.
       sts:
         condition: service_healthy
+    # The stack's TLS pair, generated on the host before compose starts. See
+    # the same mount in local-tests.yml and the header of
+    # common/tls_listener.js: ONE pair for the api and the client, because the
+    # mock STS has to be handed the api's anchor in order to push to it.
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     healthcheck:
-      test: curl -X GET http://localhost:4000
+      # https, verified against the certificate mounted above rather than -k:
+      # a healthcheck that skipped verification would report a healthy
+      # container for a service serving a certificate nothing else trusts.
+      # NO -f, matching what this probe has always asserted: the api answers
+      # 404 at `/` (it has no route there), so a status check would fail a
+      # perfectly healthy container. What is being tested is that the port
+      # answers and that the TLS handshake completes — which --cacert makes a
+      # real assertion rather than the decoration -k would leave it as.
+      test: curl -s --cacert /etc/idptools/tls/stack-tls-cert.pem
+        https://localhost:4000
       interval: 10s
       timeout: 5s
       retries: 5
@@ -129,13 +147,25 @@ services:
       # client has no test.js at all, and contributed ZERO debug lines here —
       # its logging goes to the BROWSER console.
       - CONFIG_FILE=./env/docker-tests.js
+      - TLS_ENABLED=true
+      - TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
     build:
       context: .
       dockerfile: client/Dockerfile 
       args:
         CONFIG_FILE: ${CONFIG_FILE}
+    # The stack's TLS pair, generated on the host before compose starts. See
+    # the same mount in local-tests.yml and the header of
+    # common/tls_listener.js: ONE pair for the api and the client, because the
+    # mock STS has to be handed the api's anchor in order to push to it.
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     healthcheck:
-      test: curl -X GET http://localhost:3000
+      # See the api's.
+      # See the api's, above: no -f, and --cacert rather than -k.
+      test: curl -s --cacert /etc/idptools/tls/stack-tls-cert.pem
+        https://localhost:3000
       interval: 10s
       timeout: 5s
       retries: 5
@@ -249,7 +279,7 @@ services:
       # localhost:3000 is nothing at all, so those links went nowhere and the H.1
       # and presentation flows timed out waiting for a page that never loaded.
       # OID4VP_WALLET_URL falls back to this, so one setting covers both.
-      - OID4VCI_WALLET_URL=http://client:3000
+      - OID4VCI_WALLET_URL=https://client:3000
       # THE SPIRE SERVER API'S PRIVATE UNIX SOCKET, which ships OFF.
       #
       # It is on here for one reason: it is the `local` entity, and `local` is
@@ -292,12 +322,19 @@ services:
       # in its own entrypoint (STS_CERT_URL) and the tests container fetches it
       # in trustStsCertificate() (common/common.sh).
       - STS_HTTPS=true
+      # The stack's anchor, so this service can PUSH a Security Event Token to
+      # the api over TLS (RFC 8935). See the long note on the same line in
+      # local-tests.yml: this is the only outbound connection from the mock to
+      # the api, and without the anchor the push fails the handshake and reads
+      # as a transmitter that sent nothing.
+      - NODE_EXTRA_CA_CERTS=/etc/idptools/tls/stack-tls-cert.pem
     volumes:
       # Shared with the tests container so `spiffe_protocol.js` can dial it.
       # A socket is a rendezvous point rather than a file — it holds no bytes,
       # it is unlinked on close, and a fresh process makes a fresh one — so
       # what crosses here is reachability and nothing else.
       - spire-server-socket:/spire-sock
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
@@ -538,6 +575,13 @@ services:
       # service on HOST networking, where the test's own default of
       # `localhost` is already the right answer.
       SSF_RECEIVER_HOST: tests
+      # The SPKI pin for the stack's own certificate, so Chrome in here
+      # trusts https://client:3000 and https://api:4000. FORWARDED rather
+      # than recomputed from the mounted PEM, so that the pin Chrome is
+      # given and the key the services serve cannot disagree. Bare form:
+      # unset on the host means unset here, which is a stack with TLS off
+      # rather than an empty pin Chrome would match against no key.
+      STACK_TLS_SPKI_PIN:
       # Where the mock's SPIRE Server API private socket is mounted in this
       # container. It is the `local` entity and the only route to a method
       # SPIRE's own table marks local-only.
@@ -557,6 +601,11 @@ services:
       # variable that test SKIPS its local-socket section with a reason rather
       # than passing vacuously.
       - spire-server-socket:/spire-sock
+      # The stack's TLS pair. The jobs in here fetch https://api:4000 and
+      # https://client:3000, so this container needs the anchor for node
+      # and the SPKI pin for Chrome — run-tests-in-container.sh installs
+      # both from this mount.
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     depends_on:
       client:
         condition: service_healthy

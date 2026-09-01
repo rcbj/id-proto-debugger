@@ -20,12 +20,12 @@ init()
   # KEYCLOAK_BASE_URL=http://localhost:8080). Note the live-site runs no longer
   # come through this script at all — remote-run-tests.sh drives them on the
   # host, browser included — so this override path is now only for a hand-run.
-  DEBUGGER_BASE_URL="${DEBUGGER_BASE_URL:-http://client:3000}"
+  DEBUGGER_BASE_URL="${DEBUGGER_BASE_URL:-https://client:3000}"
   KEYCLOAK_BASE_URL="${KEYCLOAK_BASE_URL:-http://keycloak:8080}"
   KEYCLOAK_LOCALHOST_BASE_URL="${KEYCLOAK_LOCALHOST_BASE_URL:-http://keycloak:8080}"
   # SAML: must match the client bundle's baked env (service DNS names).
-  API_BASE_URL="${API_BASE_URL:-http://api:4000}"
-  SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-http://client:3000/saml/sp}"
+  API_BASE_URL="${API_BASE_URL:-https://api:4000}"
+  SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-https://client:3000/saml/sp}"
   # THE api AND THE MOCK STS AS THIS CONTAINER REACHES THEM, and neither is
   # API_BASE_URL above. That one is the SAML / WS-Federation variable — the
   # address the identity provider is told to POST to, which common.sh registers
@@ -52,8 +52,8 @@ init()
   # any other target run-report.js's own localhost defaults are the right
   # answer, and each of those jobs says for itself when there is no backend.
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
-      API_URL="${API_URL:-http://api:4000}"
+    https://client:*|http://client:*)
+      API_URL="${API_URL:-https://api:4000}"
       STS_URL="${STS_URL:-https://sts:8081}"
       ;;
   esac
@@ -77,7 +77,7 @@ init()
   # The mock STS binds both on 0.0.0.0 and neither is published to the host
   # here, which is fine: everything that dials them is on the bridge.
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
+    https://client:*|http://client:*)
       SPIFFE_WORKLOAD_ADDRESS="${SPIFFE_WORKLOAD_ADDRESS:-sts:8092}"
       SPIFFE_SERVER_ADDRESS="${SPIFFE_SERVER_ADDRESS:-sts:8181}"
       SPIFFE_TEST_WORKLOAD_ADDRESS="${SPIFFE_TEST_WORKLOAD_ADDRESS:-sts:8092}"
@@ -106,7 +106,7 @@ init()
   # on any other target run-report.js's own localhost default is the right
   # answer, and the job says for itself when the KDC is not there.
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
+    https://client:*|http://client:*)
       KRB5_TEST_KDC_HOST="${KRB5_TEST_KDC_HOST:-sts}"
       KRB5_TEST_KDC_PORT="${KRB5_TEST_KDC_PORT:-88}"
       ;;
@@ -132,7 +132,7 @@ init()
   # the WS-Trust jobs (as it skips the SAML Artifact job on a backend-less target)
   # rather than failing.
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
+    https://client:*|http://client:*)
       WSTRUST_STS_URL="${WSTRUST_STS_URL:-https://sts:8081/sts}"
       ;;
   esac
@@ -149,7 +149,7 @@ init()
   # point at a real Apache CXF STS, which has no WS-Federation endpoint at all;
   # deriving would turn "not this protocol" into a run of failing jobs.
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
+    https://client:*|http://client:*)
       WSFED_STS_METADATA_URL="${WSFED_STS_METADATA_URL:-https://sts:8081/FederationMetadata/2007-06/FederationMetadata.xml}"
       ;;
   esac
@@ -167,7 +167,7 @@ init()
   # run's. Nothing has to be provisioned for it: the mock accepts any entityID
   # and mints the document on the ask.
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
+    https://client:*|http://client:*)
       SAML_STS_SP_SLUG="app-$(printf '%s' "${SAML_SP_ENTITY_ID}" | sha256sum | cut -c1-12)"
       SAML_STS_METADATA_URL="${SAML_STS_METADATA_URL:-https://sts:8081/saml2/metadata/${SAML_STS_SP_SLUG}}"
       SAML11_METADATA_URL="${SAML11_METADATA_URL:-https://sts:8081/saml11/metadata/${SAML_STS_SP_SLUG}}"
@@ -209,33 +209,29 @@ init()
   # The realm is created below, once, after the certificate is trusted; it is
   # held in memory by a service that persists nothing, so there is nowhere to
   # declare it and nothing to declare it in.
-  # THE REDIRECT URI THOSE JOBS SEND, and it is loopback ON PURPOSE.
+  # THE REDIRECT URI THOSE JOBS SEND — AND THIS STACK NO LONGER NEEDS TO BEND
+  # IT, WHICH IS WORTH RECORDING BECAUSE THE WORKAROUND WAS HERE FOR MONTHS.
   #
   # RFC 9700 requirement 1.3 (RFC 8252's loopback exception) is that a
-  # redirect_uri is https, or http on 127.0.0.1 / [::1] / localhost. The
-  # debugger enforces it in mode and refuses to send anything else — so on THIS
-  # stack, where the pages are served from the plain-http name
-  # http://client:3000, the client correctly refused every authorization
-  # request and the three flow jobs failed at a sign-in screen that never
-  # appeared. The product was right; the address was wrong.
+  # redirect_uri is https, OR http on 127.0.0.1 / [::1] / localhost. The
+  # debugger enforces it in mode and refuses to send anything else. While the
+  # pages here were served from the plain-http name http://client:3000 that
+  # was neither, so the client correctly refused every authorization request
+  # and the three flow jobs failed at a sign-in screen that never appeared —
+  # the product was right and the address was wrong. The fix was to move the
+  # callback alone to loopback and give Chrome
+  # `--host-resolver-rules=MAP localhost:3000 client:3000` so it could still
+  # be reached.
   #
-  # So the callback alone moves to loopback, and rfc9700_flows.js gives Chrome
-  # `--host-resolver-rules=MAP localhost:3000 client:3000` so the browser can
-  # actually reach it. That hop is stateless — /callback reads nothing and 303s
-  # to appconfig.uiUrl, which is http://client:3000 — so every page the test
-  # drives, and the transaction state in that origin's localStorage, stay
-  # exactly where they were. It is also what a real user does: the debugger's
-  # own callback IS http://localhost:3000/callback, which is the case
-  # requirement 1.3 exists to permit.
+  # The client serves **https** now, so `https://client:3000/callback`
+  # satisfies 1.3 on its own first clause and the whole arrangement is gone:
+  # no special case, no host-resolver rule, and the same /callback a user's
+  # own browser would be sent to. RFC9700_REDIRECT_URI is left unset on every
+  # stack, and rfc9700_flows.js falls back to the base URL's own callback.
   #
-  # Unset everywhere else: a host run is already on localhost, and a deployed
-  # target is https, so both satisfy 1.3 with their own /callback and the test
-  # defaults to it.
-  case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
-      RFC9700_REDIRECT_URI="${RFC9700_REDIRECT_URI:-http://localhost:3000/callback}"
-      ;;
-  esac
+  # Keep the shape of this in mind rather than the code: a requirement about
+  # SCHEMES cannot be satisfied by a test that changes an ADDRESS, and the
+  # only durable fix was to serve the scheme the requirement asks for.
   export RFC9700_REDIRECT_URI
   # The same mock STS hosts the TLS / mutual-TLS endpoint the PKI page presents
   # a client certificate to. This one is NOT browser-facing — the api opens the
@@ -245,7 +241,7 @@ init()
   # stack and nowhere else. Unset elsewhere, so run-report.js skips that job
   # rather than pointing a deployed api at a host on somebody's laptop.
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
+    https://client:*|http://client:*)
       STS_TLS_URL="${STS_TLS_URL:-https://sts:8081}"
       ;;
   esac
@@ -256,7 +252,7 @@ init()
   # every URL walt.id publishes is built from the base URL it was configured
   # with. Unset elsewhere, so run-report.js skips that job rather than failing.
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
+    https://client:*|http://client:*)
       WALTID_ISSUER_URL="${WALTID_ISSUER_URL:-http://waltid-issuer:7005}"
       # walt.id's verifier-api2, behind its own CORS proxy, for the PRESENTATION
       # interoperability job. Same rule again: the browser reaches it by this
@@ -310,8 +306,29 @@ init()
   # a deployed target's mock is somebody else's and this container has no
   # business reconfiguring it.
   # ------------------------------------------------------------------------
+  # ------------------------------------------------------------------------
+  # THE STACK'S OWN ANCHOR, BEFORE THE MOCK'S.
+  #
+  # The api and the client serve TLS here, on a pair generated on the host and
+  # mounted read-only at /etc/idptools/tls. It goes into the same bundle the
+  # mock's certificate goes into, because NODE_EXTRA_CA_CERTS names ONE file
+  # and node reads it once — see addTrustAnchor() in common/common.sh. The
+  # SPKI pin Chrome needs is forwarded from the host rather than recomputed,
+  # so that the two halves cannot disagree about which key was trusted.
+  # ------------------------------------------------------------------------
+  if [ -f /etc/idptools/tls/stack-tls-cert.pem ];
+  then
+    addTrustAnchor /etc/idptools/tls/stack-tls-cert.pem || true
+  else
+    echo "WARNING: /etc/idptools/tls/stack-tls-cert.pem is not mounted, so" \
+         "every job that talks to the api or the client over https will" \
+         "fail verification (DEPTH_ZERO_SELF_SIGNED_CERT in node, an" \
+         "interstitial in Chrome). The launcher generates it with" \
+         "generateStackTlsCertificate() and compose mounts STACK_TLS_DIR." >&2
+  fi
+
   case "${DEBUGGER_BASE_URL}" in
-    http://client:*)
+    https://client:*|http://client:*)
       trustStsCertificate https://sts:8081 || true
       if configureStsRfc9700Realm https://sts:8081;
       then

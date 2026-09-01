@@ -965,7 +965,7 @@ async function theSessionSatisfiesAnApplication(session) {
     protocols: ["oauth2", "oidc"],
     fields: {
       oauthClientId: clientId,
-      oauthRedirectUri: ["http://localhost:3000/callback"],
+      oauthRedirectUri: ["https://localhost:3000/callback"],
       oauthResponseType: ["code"],
       oauthGrantType: ["authorization_code"],
       oauthScope: ["openid"],
@@ -977,7 +977,7 @@ async function theSessionSatisfiesAnApplication(session) {
 
   const authorize = stsUrl + "/oauth2/authorize?response_type=code&client_id=" +
       encodeURIComponent(clientId) + "&redirect_uri=" +
-      encodeURIComponent("http://localhost:3000/callback") +
+      encodeURIComponent("https://localhost:3000/callback") +
       "&scope=openid&state=krb-cli&nonce=krb-cli-nonce";
   const result = curl(["-b", "sts_mock_session=" + session, authorize]);
   assert.ok(result.httpStatus >= 300 && result.httpStatus < 400,

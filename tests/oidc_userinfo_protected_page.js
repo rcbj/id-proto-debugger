@@ -51,7 +51,7 @@ var log = bunyan.createLogger({ name: "oidc_userinfo_protected_page",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 var stsUrl = process.env.WSTRUST_STS_URL || "";
 var stsBase = process.env.OID4VCI_ISSUER_URL ||
     stsUrl.replace(/\/sts\/?$/, "");

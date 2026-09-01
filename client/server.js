@@ -8,6 +8,11 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+// Whether this service binds TLS or plain HTTP, and with what certificate. In
+// common/ because the api makes the same decision and the two must not
+// disagree — an https page whose form posts to an http api is a form Chrome
+// does not submit at all. See the header there.
+const tlsListener = require('../common/tls_listener.js');
 var appconfig = require(process.env.CONFIG_FILE);
 const expressLogging = require('express-logging');
 const logger = require('logops');
@@ -233,5 +238,21 @@ app.post('/callback',
   res.end();
 });
 
-app.listen(PORT, HOST);
-log.info(`Running on http://${HOST}:${PORT}`);
+// The certificate this service is serving, as PEM. See the note on the api's
+// copy of this route: it is on the TLS port itself, and that is the ordinary
+// bootstrap rather than a hole.
+app.get('/tls/server-certificate', (req, res) => {
+  log.debug('Entering GET /tls/server-certificate.');
+  var pem = tlsListener.serverCertificate();
+  if (!pem) {
+    log.debug('Leaving GET /tls/server-certificate. Plain listener.');
+    return res.status(404).json({ error: 'This client is not serving TLS, ' +
+      'so it has no certificate to publish.', code: 'ENOTLS' });
+  }
+  res.set('Content-Type', 'application/x-pem-file');
+  log.debug('Leaving GET /tls/server-certificate.');
+  return res.status(200).send(pem);
+});
+
+tlsListener.listen(app, appconfig,
+                   { name: 'client', port: PORT, host: HOST });

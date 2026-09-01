@@ -360,7 +360,7 @@ provider at all.
 SLUG="app-$(printf '%s' "$SAML_SP_ENTITY_ID" | sha256sum | cut -c1-12)"
 SAML11_METADATA_URL="https://localhost:8081/saml11/metadata/${SLUG}" \
 SAML_BINDING=artifact CONFIG_FILE=./env/local.js \
-  node tests/saml11_sso.js --url http://localhost:3000
+  node tests/saml11_sso.js --url https://localhost:3000
 ```
 
 `SAML_SP_PRIVATE_KEY` and `SAML_SP_CERT` have to be in the environment, exactly as

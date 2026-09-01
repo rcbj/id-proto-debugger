@@ -2189,7 +2189,7 @@ function resetUI(value)
 {
     log.debug("Entering resetUI().");
     $("#logout_post_redirect_uri").val((appconfig.uiUrl ?
-      appconfig.uiUrl : "http://localhost:3000") + "/logout.html");
+      appconfig.uiUrl : "https://localhost:3000") + "/logout.html");
     if( value == "client_credential" &&
         getParameterByName("redirectFromTokenDetail") != "true")
     {
@@ -2583,7 +2583,7 @@ function loadValuesFromLocalStorage()
   // or a deployed site. So what is healed here is only a value that could not
   // be sent at all.
   var redirectBase = (appconfig.uiUrl ?
-      appconfig.uiUrl : "http://localhost:3000");
+      appconfig.uiUrl : "https://localhost:3000");
   var storedRedirectUri = localStorage.getItem("redirect_uri");
   if (!isAbsoluteRedirectUri(storedRedirectUri)) {
     storedRedirectUri = redirectBase + "/callback";

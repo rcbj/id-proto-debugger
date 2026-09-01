@@ -50,7 +50,7 @@ var log = bunyan.createLogger({ name: "oauth2_config_pane_layout",
     level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
 
-var baseUrl = "http://localhost:3000";
+var baseUrl = "https://localhost:3000";
 
 // Both pages carry the pane under the same id, with the same table, and it is
 // collapsed on arrival on page 2 — the probe opens it either way.

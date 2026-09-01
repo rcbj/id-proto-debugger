@@ -354,12 +354,12 @@ export SAML_SIG_VALIDATION
 
 init()
 {
-  DEBUGGER_BASE_URL=http://localhost:3000
+  DEBUGGER_BASE_URL=https://localhost:3000
   KEYCLOAK_BASE_URL=http://localhost:8080
   KEYCLOAK_LOCALHOST_BASE_URL=http://localhost:8080
   # SAML: must match the client bundle's baked env (client/src/env/local.js).
-  API_BASE_URL=http://localhost:4000
-  SAML_SP_ENTITY_ID=http://localhost:3000/saml/sp
+  API_BASE_URL=https://localhost:4000
+  SAML_SP_ENTITY_ID=https://localhost:3000/saml/sp
   # WS-Trust STS (mock) on the host (local-tests.yml, host networking). Must match
   # the client bundle's baked wstrustStsUrlDefault (local.js).
   #
@@ -535,6 +535,24 @@ init()
   # on the SAML client). Nothing is written to the repository.
   generateSpKeyPair
   check_return_code $?
+  # ------------------------------------------------------------------------
+  # THE STACK'S TLS PAIR, BEFORE COMPOSE.
+  #
+  # The api and the client serve https, and this is the pair they serve. It
+  # has to exist BEFORE the stack starts, not because those two need it early
+  # but because the MOCK STS does: it pushes Security Event Tokens to the api
+  # (RFC 8935), so its container is handed the anchor in its environment, and
+  # a certificate a service invents at its own startup cannot be in an
+  # environment built a moment earlier. One pair for both services; see
+  # common/tls_listener.js.
+  #
+  # It also installs the anchor for every node process this launcher spawns
+  # (NODE_EXTRA_CA_CERTS, through the shared bundle) and exports the SPKI pin
+  # browser_flags.js turns into Chrome's exact-key trust.
+  # ------------------------------------------------------------------------
+  generateStackTlsCertificate "${CURRENT_DIR}"
+  check_return_code $?
+  addTrustAnchor "${STACK_TLS_CA_FILE}"
   # walt.id's issuer, and the identity provider it authenticates End-Users at.
   # These are the addresses the BROWSER uses: every URL walt.id publishes in its
   # metadata is built from WALTID_BASE_URL, and the authorize redirect goes to
@@ -975,7 +993,7 @@ declareStsLogoutService()
 {
   echo "Entering declareStsLogoutService()."
   local api="https://localhost:8081/admin-api/saml2"
-  local slo="${SAML_STS_SLO_URL:-http://localhost:4000/samlslo}"
+  local slo="${SAML_STS_SLO_URL:-https://localhost:4000/samlslo}"
   curl -sS -o /dev/null -X POST "${api}/register" \
     -H 'Content-Type: application/json' \
     -d "{\"sp\":\"${SAML_SP_ENTITY_ID}\"}" \
