@@ -85,6 +85,15 @@ jobs:
   # are the same contention seen from the other side, browser jobs whose
   # waitTime is 2 seconds reporting a race as an assertion about the page.
   #
+  # THAT LAST SENTENCE IS ALSO WHAT WENT WRONG AT 3 ON 2026-09-01, so read it
+  # before raising this again: 288 of 289 jobs passed and [08] OAuth2
+  # Authorization Code (public, PKCE=false) failed on a two-second wait for
+  # `#token_client_id` after the Keycloak redirect — an instrumented page's
+  # load time, reported as an assertion about the page. run-coverage.sh now
+  # exports TEST_WAIT_TIME_MS=10000 for this run alone, and the client's log
+  # level went to `info` with it. Neither touches the pool: the binding
+  # constraint above is still one job, and this number is still 3.
+  #
   # So raising this number buys ~7% of wall clock and costs the run. The
   # levers that would actually work are SPLITTING job 109, or a runner with
   # more cores. Fix one of those before touching this again.
@@ -122,9 +131,17 @@ jobs:
         # driving it. The variable outranks whatever env/docker-tests.js says,
         # so nothing on this machine or anybody else's changes with it.
         #
-        # The api and the client are still at debug and cannot be turned down
-        # the same way: their level comes from the config file alone, and the
-        # client's is compiled into the browser bundle. See issue #269.
+        # THE api AND THE CLIENT ARE AT `info` TOO NOW, and not through a
+        # variable — issue #269's second half was a decision rather than a
+        # knob. Their level comes from the config file alone and the client's
+        # is compiled into the browser bundle by browserify, so no runtime
+        # variable can reach either; `api/env/docker-tests.js` changed on
+        # 2026-08-31 and `client/src/env/docker-tests.js` on 2026-09-01, each
+        # saying so beside the key. `env/local.js` stays at `debug` on both,
+        # which is the stack somebody watches. The client's mattered most:
+        # that one is what every PAGE logs at, in Chrome, while this job is
+        # serving Istanbul-instrumented bundles to a pool of jobs whose every
+        # browser wait is two seconds.
         env:
           STS_LOG_LEVEL: info
         run: ./run-coverage.sh

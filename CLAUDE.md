@@ -303,6 +303,18 @@ TEST_CONCURRENCY=6 ./run-coverage.sh
 # is, so it works on all three.
 TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
 
+# HOW LONG A BROWSER WAIT MAY TAKE. `waitTime` in tests/env/*.js is the
+# timeout every driver.wait() in the suite is given and it is 2000ms, which
+# is right for these bundles and not for the Istanbul-INSTRUMENTED ones
+# ./run-coverage.sh serves to a pool of jobs on a four-core runner — on
+# 2026-09-01 that took one job of 289 red on a two-second wait for a field
+# after a redirect, i.e. it reported the page's LOAD TIME as an assertion
+# about the page. That launcher therefore exports 10000 of its own; this is
+# how any run overrides it. A wait is a TIMEOUT and not a sleep, so raising
+# it costs a passing run nothing and only lets a broken job take longer to
+# fail. Forwarded past sudo and into compose exactly as the two above are.
+TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
+
 # Tests from local shell, dependencies still in containers
 ./local-run-tests.sh
 
@@ -502,18 +514,23 @@ code you write **as you write it**, not as a later sweep.
   edit to any field on that page rebuilds the assertion and re-runs the
   compliance check, and one rebuild passes through those accessors on the order
   of a thousand times. At `logLevel: "debug"` — which `client/src/env/local.js`
-  **and** `client/src/env/docker-tests.js` both set, so both test stacks emit
-  every line — a record is a JSON serialization plus a console write, ~15µs
-  measured in headless Chrome 121. Adding the pairs took `tests/saml_tools.js`'s
-  in-page power-set sweep (2^10 rebuilds per version, one `executeScript` call)
-  from 1.9s to 34s locally and past the WebDriver **script timeout** on a
-  GitHub Actions runner, where the whole test died with `script timeout
-  (Session info: chrome=121.0.6167.85)` — a message that names no page, no
-  function and no log line, three steps after the last thing it printed. So
-  before logging a getter, ask what calls it and how often: a pair of log lines
-  in a one-line accessor is not a trace, it is the entire log. The functions
-  that *call* those helpers keep their logging, which is where a trace of the
-  rebuild actually lives.
+  sets, and which `client/src/env/docker-tests.js` set as well until
+  2026-09-01, so the containerized stacks emitted every line too — a record is
+  a JSON serialization plus a console write, ~15µs measured in headless
+  Chrome 121. **The containerized stacks are at `info` now** (issue #269's
+  client half; the api's `env/docker-tests.js` went the same way on
+  2026-08-31), which shortens no argument below: `env/local.js` is still
+  `debug` on purpose, that is the stack a person watches, and a getter logged
+  at that level is still the entire log. Adding the pairs took
+  `tests/saml_tools.js`'s in-page power-set sweep (2^10 rebuilds per version,
+  one `executeScript` call) from 1.9s to 34s locally and past the WebDriver
+  **script timeout** on a GitHub Actions runner, where the whole test died
+  with `script timeout (Session info: chrome=121.0.6167.85)` — a message that
+  names no page, no function and no log line, three steps after the last thing
+  it printed. So before logging a getter, ask what calls it and how often: a
+  pair of log lines in a one-line accessor is not a trace, it is the entire
+  log. The functions that *call* those helpers keep their logging, which is
+  where a trace of the rebuild actually lives.
 
 - **No single-line `try`/`catch`.** There is a newline after every `try {` and
   after every `} catch (e) {` (and after `} finally {`), so the first statement

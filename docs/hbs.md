@@ -115,8 +115,10 @@ key generation is three million hash calls.
 **Nothing in the inner loops logs.** `coef()`, `wotsChain()`, `thashF()`,
 `thashH()`, `prf()`, `lmotsHash()` and `cat()` carry no `log.debug`, and
 `tests/hbs_signatures.js` asserts it — a pair of log lines in `wotsChain()`
-would be tens of millions of records for one key, and `client/src/env/local.js`
-and `docker-tests.js` both set `logLevel: "debug"`.
+would be tens of millions of records for one key, and
+`client/src/env/local.js` sets `logLevel: "debug"` — `docker-tests.js` did
+too until 2026-09-01, which changes nothing here: `local.js` is the stack
+somebody watches this page work on.
 
 **Concatenation is not `crypto_bytes.concatBytes` here.** That function logs on
 entry and exit and calls `asBytes()` (which logs twice more) per argument —

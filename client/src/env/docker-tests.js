@@ -30,7 +30,35 @@ var config = {
   https: true,
   hostname: "0.0.0.0",
   port: "3000",
-  logLevel: "debug",
+  // ---------------------------------------------------------------------
+  // `info`, AND IT WAS `debug` UNTIL 2026-09-01 — the CLIENT half of the
+  // change api/env/docker-tests.js records beside it, which went to `info`
+  // a day earlier (issue #269).
+  //
+  // THIS ONE REACHES THE BROWSER. `client/build.js` bakes the file this key
+  // lives in into every bundle (browserify -t envify --CONFIG_FILE), so the
+  // level is not only the client SERVER's: it is the level every page logs
+  // at, in Chrome, inside the tests container. A record there is a JSON
+  // serialization plus a console write — ~15us measured in headless Chrome —
+  // and the root CLAUDE.md's style notes already record what that costs when
+  // it is on a path something walks a thousand times.
+  //
+  // IT IS WORST ON THE RUN THAT COULD AFFORD IT LEAST. `./run-coverage.sh`
+  // serves Istanbul-INSTRUMENTED bundles, which are slower to parse and
+  // slower to execute, to a pool of jobs sharing a four-core GitHub runner —
+  // and every browser wait in this suite is `waitTime`, two seconds. On
+  // 2026-09-01 that combination took [08] OAuth2 Authorization Code (public,
+  // PKCE=false) red on a two-second wait for `#token_client_id` after the
+  // Keycloak redirect, i.e. it reported the page's LOAD TIME as an assertion
+  // about the page. See TEST_WAIT_TIME_MS in tests/env/test.js for the other
+  // half of that fix.
+  //
+  // For a debug run of this stack, set it back for the length of that run —
+  // or use `env/local.js`, which is still `debug` for exactly that reason.
+  // Nothing else changes: the SEVERE console assertions several tests make
+  // are error-level and are unaffected by this key.
+  // ---------------------------------------------------------------------
+  logLevel: "info",
   // api backend is available, so both frontend and backend initiation are
   // offered.
   backendAvailable: true,

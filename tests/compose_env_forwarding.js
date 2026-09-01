@@ -203,6 +203,7 @@ const TUNING_VARS = [
   { name: "TEST_CONCURRENCY", file: "docker-compose-run-tests.yml" },
   { name: "TEST_JOB_TIMEOUT_MS", file: "docker-compose-run-tests.yml" },
   { name: "STS_LOG_LEVEL", file: "docker-compose-run-tests.yml" },
+  { name: "TEST_WAIT_TIME_MS", file: "docker-compose-run-tests.yml" },
 ];
 
 function theTuningVariablesReachTheContainer(forwarded, files) {
@@ -228,7 +229,7 @@ function theTuningVariablesReachTheContainer(forwarded, files) {
       "COMPOSE_FORWARDED_VARS (common/common.sh), so sudo drops it before " +
       "compose can substitute it.");
   });
-  log.info("the three tuning variables are read by the compose file AND " +
+  log.info("every tuning variable is read by the compose file AND " +
            "forwarded past sudo: " + TUNING_VARS.map(function (v) {
              return v.name;
            }).join(", "));

@@ -559,6 +559,14 @@ services:
       # stack shares the machine with the pool, so a job that is merely starved
       # looks exactly like one that has hung.
       TEST_JOB_TIMEOUT_MS: ${TEST_JOB_TIMEOUT_MS:-}
+      # HOW LONG A BROWSER WAIT MAY TAKE, passed through for the run that
+      # needs a different answer from the plain one. `waitTime` in
+      # tests/env/*.js is two seconds, which is right for these bundles and
+      # not right for the Istanbul-INSTRUMENTED ones ./run-coverage.sh
+      # serves — that launcher exports 10000 and this is how it arrives.
+      # Empty means the config file's own value, so nothing changes for a
+      # run that asks for nothing. See tests/env/test.js.
+      TEST_WAIT_TIME_MS: ${TEST_WAIT_TIME_MS:-}
       # THE NAME THE TRANSMITTER HAS TO REACH THIS CONTAINER BY, which is
       # the one thing about RFC 8935 push delivery that cannot be worked out
       # from inside the test. `ssf_protocol.js` hosts a push endpoint of its
