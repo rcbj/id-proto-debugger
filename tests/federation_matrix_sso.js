@@ -1329,15 +1329,30 @@ async function signInAtIdp(driver, user, idpBase) {
     await passwordBoxes[0].sendKeys("no password is checked here");
   }
   await driver.findElement(By.id("kc-login")).click();
-  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
-  // a scope already agreed to in this run, or one carried as a global consent
-  // on the application's entry, draws no screen at all. What asserts the screen
-  // itself is the mock repository's own tests/vendored/sts_consent.js.
-  await consentScreen.passInBrowser(driver, By);
 
+  // THE SECOND FACTOR BEFORE THE CONSENT SCREEN, because that is the order the
+  // service asks in: the ceremony is part of AUTHENTICATING and the screen is
+  // drawn by the authorization endpoint once somebody is authenticated. Passing
+  // the screen first — which this did until 2026-09-02 — spends its window on
+  // the ceremony page, finds no button, and leaves every consent screen in the
+  // flow unanswered. It fails as "the flow never came back to the debugger",
+  // four functions away, with the consent screen's own words in the message.
   if (MECHANISM === "webauthn") {
     await runTheCeremony(driver, user);
   }
+
+  // AND THE CONSENT SCREENS, if there are any. They are PASSED rather than
+  // asserted: a scope already agreed to in this run, or one carried as a global
+  // consent on the application's entry, draws no screen at all. What asserts
+  // the screen itself is the mock's own tests/vendored/sts_consent.js.
+  //
+  // ALL of them, not the first: a federated sign-in is TWO authorization
+  // requests, so realm 2 asks whether realm 1 may act for this person and then
+  // realm 1 asks whether the application may. Which of the two is drawn depends
+  // on the point of the grid — the far one when the federation protocol is
+  // OAuth 2.0 or OIDC, the near one when the application protocol is — and the
+  // twenty points where both are draw both.
+  await consentScreen.passAllInBrowser(driver, By);
   log.debug("Leaving signInAtIdp().");
 }
 

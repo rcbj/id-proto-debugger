@@ -116,11 +116,6 @@ async function signIn(driver, username, url) {
   await driver.wait(until.elementLocated(By.id("username")), waitTime * 4);
   await driver.findElement(By.id("username")).sendKeys(username);
   await driver.findElement(By.id("kc-login")).click();
-  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
-  // a scope already agreed to in this run, or one carried as a global consent
-  // on the application's entry, draws no screen at all. What asserts the screen
-  // itself is the mock repository's own tests/vendored/sts_consent.js.
-  await consentScreen.passInBrowser(driver, By);
   log.debug("Leaving signIn().");
 }
 
@@ -129,6 +124,19 @@ async function signIn(driver, username, url) {
 // authorization response off the URL.
 async function codeFromRedirect(driver) {
   log.debug("Entering codeFromRedirect().");
+  // THE CONSENT SCREEN FIRST, if there is one. It is PASSED rather than
+  // asserted: a scope already agreed to in this run, or one carried as a global
+  // consent on the application's entry, draws no screen at all. What asserts
+  // the screen itself is the mock's own tests/vendored/sts_consent.js.
+  //
+  // HERE rather than after the `#kc-login` click, which is where this job put
+  // it until 2026-09-02, because the second factor stands between the two: the
+  // ceremony is part of AUTHENTICATING and the screen is drawn by the
+  // authorization endpoint once somebody is authenticated. Pressed at the
+  // earlier point it spent its window on the WebAuthn page and found nothing,
+  // and the three sections that run a ceremony then timed out here — on the
+  // callback the consent screen was holding up, naming the redirect.
+  await consentScreen.passInBrowser(driver, By);
   await driver.wait(until.urlContains("/oauth2/callback-sink"), waitTime * 8);
   const url = new URL(await driver.getCurrentUrl());
   const code = url.searchParams.get("code");

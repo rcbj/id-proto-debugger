@@ -161,11 +161,6 @@ async function runCeremony(driver, username) {
   await driver.wait(until.elementLocated(By.id("username")), waitTime * 4);
   await driver.findElement(By.id("username")).sendKeys(username);
   await driver.findElement(By.id("kc-login")).click();
-  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
-  // a scope already agreed to in this run, or one carried as a global consent
-  // on the application's entry, draws no screen at all. What asserts the screen
-  // itself is the mock repository's own tests/vendored/sts_consent.js.
-  await consentScreen.passInBrowser(driver, By);
   await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
   // A headless window is neither focused nor visible for its first second or
   // so, and WebAuthn refuses on such a page with a bare NotAllowedError that
@@ -173,6 +168,18 @@ async function runCeremony(driver, username) {
   // tests/wait_for.js.
   await waitForFocus(driver, waitTime * 8);
   await driver.findElement(By.id("wa-go")).click();
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock's own tests/vendored/sts_consent.js.
+  //
+  // AFTER the ceremony and not after the `#kc-login` click, which is where this
+  // job put it until 2026-09-02: the ceremony is part of AUTHENTICATING and the
+  // screen is drawn by the authorization endpoint once somebody is
+  // authenticated, so at the earlier point there is a WebAuthn page where the
+  // Allow button will be. The whole job died on the wait below, naming the
+  // redirect that the unanswered screen was holding up.
+  await consentScreen.passInBrowser(driver, By);
   await driver.wait(until.urlContains("/oauth2/callback-sink"), waitTime * 8);
   const url = new URL(await driver.getCurrentUrl());
   log.debug("Leaving runCeremony().");

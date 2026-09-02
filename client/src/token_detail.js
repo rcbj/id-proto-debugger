@@ -182,6 +182,18 @@ function resolveTokenFromParams() {
   } else if (type === 'refresh_id') {
     log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('refresh_id_token');
+  } else if (type === 'tokenexchange_access') {
+    // The token a Token Exchange (RFC 8693) call issued. It arrives in
+    // `access_token` whatever type it is — section 2.2.1 — so this is the
+    // type to ask for even when `issued_token_type` named an ID token.
+    log.debug("Leaving resolveTokenFromParams().");
+    return localStorage.getItem('tokenexchange_access_token');
+  } else if (type === 'tokenexchange_refresh') {
+    log.debug("Leaving resolveTokenFromParams().");
+    return localStorage.getItem('tokenexchange_refresh_token');
+  } else if (type === 'tokenexchange_id') {
+    log.debug("Leaving resolveTokenFromParams().");
+    return localStorage.getItem('tokenexchange_id_token');
   } else if (type === 'history_access' || type === 'history_refresh' ||
              type === 'history_id_token') {
     var generation = parseInt(getParameterByName('generation'), 10);

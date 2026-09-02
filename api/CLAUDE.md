@@ -109,7 +109,7 @@ The fetch itself is made without verification (`curl -k`) — the ordinary
 bootstrap for a per-start certificate, and the same act as trusting the PEM that
 endpoint hands back, done one step earlier.
 
-## The HTTP trace on `POST /token`: what only this service can see
+## The HTTP trace on `POST /token` and `POST /tokenexchange`: what only this service can see
 
 The OAuth2/OIDC workflow's token exchange pane has an **HTTP tab** showing the Token Request and its response as they actually went — method, URL, headers and body each way, and how long the far end took. On the browser-direct setting the page records that itself. On the **proxied** setting, which is that pane's default because a great many identity providers refuse a browser-origin Token Request outright, the request is made *here*, and the browser is not party to it: all it ever receives is the parsed token payload. So `POST /token` hands back what it saw, and it is the only thing that can.
 
@@ -124,6 +124,8 @@ Three things about it are deliberate, and each is the answer to a way it could h
 **All three branches of the handler produce one**, including the one where there was no response at all: a timeout, a refused connection, a blocked address. That branch is the common one (see the handler bug above), and its elapsed time is what tells a timeout apart from a connection refused.
 
 `tests/token_http_exchange.js` covers it from the browser end, and mutation-testing it means switching `wantsTrace` off here: the test then fails at the pane's note, with **this service's own URL** in the message, which is exactly what the fallback looks like when the trace goes missing.
+
+**`POST /tokenexchange` answers with one too, and it is the same five lines rather than a second implementation.** The Token Exchange (RFC 8693) pane grew an HTTP tab, and that pane's default is proxied for exactly the reason the one above it is, so the same problem had the same answer: `wantsTrace`, a per-call `received` sink through `captureRawBody()`, the `sentRequest` as it actually goes out, and `withHttpTrace()` on all three branches — the answer, the refusal, and the one where nothing came back. Two things are worth knowing before touching it. That handler builds its outbound form body from **named parameters** (`addParam()`), so `http_trace` reaches no authorization server, which is the same guarantee `convertToOAuth2Format()` gives the handler above and had to be checked separately because it is a different function. And a **refusal** is the branch that matters most here: an exchange is refused for what the SUBJECT token is, RFC 8693 section 2.2.2 puts the reason in the body, and before this that body reached the browser with no headers, no status line and no elapsed time around it.
 
 ## The Kerberos relay: a raw socket, and the two bounds that are new because of it
 

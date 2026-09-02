@@ -766,11 +766,19 @@ async function chooseAndSignIn(driver, which, user) {
     await passwords[0].sendKeys("no password is checked here");
   }
   await driver.findElement(By.id("kc-login")).click();
-  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
-  // a scope already agreed to in this run, or one carried as a global consent
-  // on the application's entry, draws no screen at all. What asserts the screen
-  // itself is the mock repository's own tests/vendored/sts_consent.js.
-  await consentScreen.passInBrowser(driver, By);
+  // AND THE CONSENT SCREENS, if there are any. They are PASSED rather than
+  // asserted: a scope already agreed to in this run, or one carried as a global
+  // consent on the application's entry, draws no screen at all. What asserts
+  // the screen itself is the mock's own tests/vendored/sts_consent.js.
+  //
+  // ALL of them, not the first, and the two partners here differ in how many
+  // there are. A sign-in through "choice-oidc" is TWO authorization requests —
+  // federation-choice-2 asks whether federation-choice-1 may act for this
+  // person, and then federation-choice-1 asks whether webapp-sso-1 may — where
+  // a sign-in through "choice-saml2" meets only the second. Answering the first
+  // and walking away leaves the browser on the second, which is reported by
+  // signInThrough() as a flow that never came back.
+  await consentScreen.passAllInBrowser(driver, By);
   log.debug("Leaving chooseAndSignIn().");
 }
 

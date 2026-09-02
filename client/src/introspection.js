@@ -210,6 +210,22 @@ function loadValuesFromLocalStorage() {
                               localStorage.getItem("refresh_refresh_token");
       document.getElementById("introspection_token_type_hint").value =
                               "refresh_token";
+    } else if (type == 'tokenexchange_access') {
+      // The token a Token Exchange (RFC 8693) call issued. Introspecting one
+      // is how the exchange is checked: the whole point of the call is that
+      // the subject, the audience and the scope came out DIFFERENT, and
+      // RFC 7662 is what says what they came out as.
+      document.getElementById("introspection_token").value =
+                              localStorage.getItem(
+                                  "tokenexchange_access_token");
+      document.getElementById("introspection_token_type_hint").value =
+                              "access_token";
+    } else if (type == 'tokenexchange_refresh') {
+      document.getElementById("introspection_token").value =
+                              localStorage.getItem(
+                                  "tokenexchange_refresh_token");
+      document.getElementById("introspection_token_type_hint").value =
+                              "refresh_token";
     } else if (type == 'history_access' || type == 'history_refresh' ||
                type == 'history_id_token') {
       var generation = parseInt(getParameterByName('generation'), 10);

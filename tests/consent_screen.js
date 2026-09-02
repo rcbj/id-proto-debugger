@@ -33,6 +33,10 @@
 //   * `passInBrowser()` — for the Selenium jobs. It looks for the Allow button,
 //     presses it if it is there, and returns quietly if it is not.
 //
+//   * `passAllInBrowser()` — the same thing until there are no more screens.
+//     A FEDERATED sign-in meets two of them (the far realm's and the near
+//     realm's) and a caller that cannot know which it is should use this one.
+//
 // **NEITHER OF THEM ASSERTS THAT THE SCREEN APPEARED**, and that is deliberate
 // rather than lax. A scope under `oauthGlobalConsent`, a username that has
 // consented before in the same run, and `oauth2.consentRequired` turned off are
@@ -262,9 +266,22 @@ async function passInBrowser(driver, By, opts) {
       found = [];
     }
     if (found.length) {
-      await found[0].click();
-      log.debug("Leaving passInBrowser(). Pressed " + id + ".");
-      return true;
+      try {
+        await found[0].click();
+        log.debug("Leaving passInBrowser(). Pressed " + id + ".");
+        return true;
+      } catch (e) {
+        // FOUND AND THEN GONE, which is a hop in flight rather than a fault.
+        // `findElements()` and the click are two round trips, and the redirect
+        // chain this screen sits in the middle of can land between them — so
+        // the reference is stale by the time it is pressed
+        // (`StaleElementReferenceError`), and where the far realm's screen is
+        // being replaced by the near realm's, the button that arrives is a
+        // different one anyway. Retried on the next pass of this loop rather
+        // than reported: the deadline below still ends it, and a screen that
+        // is really there is found again in a tenth of a second.
+        log.debug("passInBrowser(): " + e.message);
+      }
     }
     if (Date.now() >= deadline) {
       log.debug("Leaving passInBrowser(). No consent screen appeared within " +
@@ -276,10 +293,51 @@ async function passInBrowser(driver, By, opts) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// EVERY SCREEN ON THE WAY OUT, rather than the first one.
+//
+// One authorization request draws at most one screen, and a FEDERATED sign-in
+// is two authorization requests: the far realm asks whether the near realm may
+// act for this person, and then the near realm asks whether the application
+// may. Both are answered by a browser walking one redirect chain, so a caller
+// that pressed Allow once and moved on is left sitting on the second screen —
+// which is how this failed before, reported four functions later as "the flow
+// never came back to the application".
+//
+// A caller that cannot know how many screens are coming should use this one.
+// It costs nothing extra in the ordinary case: pressing the last Allow puts the
+// browser on the application's own origin, which `passInBrowser()` recognises
+// and returns from at once.
+//
+// Returns how many screens were answered. The bound is a bound and not a
+// limit — four is far past anything correct, and stopping there is better than
+// a loop that a service answering its own consent screen with another one
+// could spin in for ever.
+// ---------------------------------------------------------------------------
+async function passAllInBrowser(driver, By, opts) {
+  log.debug("Entering passAllInBrowser().");
+  const options = opts || {};
+  const bound = options.bound || 4;
+  let screens = 0;
+  while (screens < bound) {
+    const pressed = await passInBrowser(driver, By, options);
+    if (!pressed) {
+      log.debug("Leaving passAllInBrowser(). " + screens + " screen(s) " +
+                "answered.");
+      return screens;
+    }
+    screens++;
+  }
+  log.debug("Leaving passAllInBrowser(). Stopped at the bound of " + bound +
+            " screen(s).");
+  return screens;
+}
+
 module.exports = {
   isConsentScreen: isConsentScreen,
   isAuthorizeEndpoint: isAuthorizeEndpoint,
   consentIdOf: consentIdOf,
   settleAuthorization: settleAuthorization,
-  passInBrowser: passInBrowser
+  passInBrowser: passInBrowser,
+  passAllInBrowser: passAllInBrowser
 };
