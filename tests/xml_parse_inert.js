@@ -37,6 +37,7 @@
 //
 // No browser and no services: node only, so it never skips.
 const assert = require("assert");
+const { declineToRun } = require("./expectation.js");
 const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
@@ -313,10 +314,13 @@ async function test() {
   // PARTIAL mirror of client/src; say so rather than sweeping that mirror and
   // reporting either a silent pass or an absence that reads as a moved page.
   if (!isCheckout()) {
-    log.info("SKIPPED — no client/package.json in this layout, so this is " +
-             "the tests image (which carries only a partial mirror of " +
-             "client/src) rather than a checkout; this check runs in a " +
-             "checkout, where the sources are present.");
+    // A genuine ABSENCE and so a skip — but a RECORDED one since 2026-09-02,
+    // rather than an exit 0 the runner counted as a pass. See
+    // tests/expectation.js.
+    declineToRun(log, "no client/package.json in this layout, so this is " +
+                 "the tests image (which carries only a partial mirror of " +
+                 "client/src) rather than a checkout; this check runs in a " +
+                 "checkout, where the sources are present.");
     log.debug("Leaving test().");
     return;
   }

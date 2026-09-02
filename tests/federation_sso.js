@@ -117,8 +117,8 @@
 // `WSTRUST_STS_URL` locates the mock, as it does for every other STS-backed job
 // here. The job SKIPS with a reason when there is none, and it skips with a
 // DIFFERENT reason when the mock is too old to have the two application
-// attributes — which is read off `GET /ldap/applications`, the schema that
-// service publishes, rather than guessed from a version.
+// attributes — which is read off `GET /admin-api/ldap/applications`, the
+// schema that service publishes, rather than guessed from a version.
 // ===========================================================================
 
 const { Builder, By, until, logging } = require("selenium-webdriver");
@@ -135,6 +135,7 @@ const browserFlags = require("./browser_flags.js");
 const { clearSessionsAt } = require("./session_reset.js");
 const { loadPage } = require("./page_load.js");
 const { usernameFor } = require("./random_username.js");
+const { declineToRun, mustBeAbleTo } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -147,6 +148,12 @@ var headless = true;
 var waitTime = appconfig.waitTime;
 
 const waitForModule = require("./wait_for.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 waitForModule.configure({ log: log, waitTime: waitTime });
 const { waitForPageBundle } = waitForModule;
 
@@ -572,6 +579,11 @@ async function signIn(driver, user) {
     await passwords[0].sendKeys("no password is checked here");
   }
   await driver.findElement(By.id("kc-login")).click();
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
   log.debug("Leaving signIn().");
 }
 
@@ -716,7 +728,7 @@ async function clearingTheTieRestoresTheLocalScreen(driver, spBase,
 // checkout would name a missing element on a sign-in screen.
 async function mockKnowsTheAttributes(stsBase) {
   log.debug("Entering mockKnowsTheAttributes().");
-  const response = await fetch(stsBase + "/ldap/applications",
+  const response = await fetch(stsBase + "/admin-api/ldap/applications",
                                { headers: { Accept: "application/json" } });
   if (response.status !== 200) {
     log.debug("Leaving mockKnowsTheAttributes(). " + response.status);
@@ -770,21 +782,24 @@ async function test() {
   log.debug("Entering test().");
   const stsUrl = process.env.WSTRUST_STS_URL || "";
   if (!stsUrl) {
-    log.info("SKIPPED: WSTRUST_STS_URL is not set, so there is no mock STS to " +
-             "build two trust realms in. This test needs that service and " +
-             "nothing else.");
+    // ABSENT, so a skip: there is no mock STS on this target at all. See
+    // tests/expectation.js for why the check below is not one of these.
+    declineToRun(log, "WSTRUST_STS_URL is not set, so there is no mock STS " +
+                 "to build two trust realms in. This test needs that " +
+                 "service and nothing else.");
     log.debug("Leaving test(). Skipped.");
     return;
   }
   const stsBase = stsUrl.replace(/\/sts\/?$/, "");
-  if (!(await mockKnowsTheAttributes(stsBase))) {
-    log.info("SKIPPED: the mock STS at " + stsBase + " does not publish " +
-             "appFederationRelationship in its application schema, so it " +
-             "predates the attribute that ties an application to a federation " +
-             "relationship. Bump the sts/ submodule.");
-    log.debug("Leaving test(). Skipped, the mock is too old.");
-    return;
-  }
+  // PRESENT and lacking a capability, so a failure. The mock answered; what
+  // is missing is an attribute it is supposed to publish, which is a moved
+  // endpoint or an un-bumped gitlink rather than a fact about this machine.
+  mustBeAbleTo(await mockKnowsTheAttributes(stsBase),
+    "The mock STS at " + stsBase + " is reachable, but",
+    "it does not publish appFederationRelationship in the application " +
+    "schema at GET /admin-api/ldap/applications, so nothing here can tie " +
+    "an application to a federation relationship. Either the sts/ submodule " +
+    "predates the attribute (bump it) or that endpoint has moved again.");
   const spBase = stsBase + "/realm/" + SP_REALM;
   const idpBase = stsBase + "/realm/" + IDP_REALM;
   const callbackUri = baseUrl + "/callback";

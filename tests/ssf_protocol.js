@@ -50,6 +50,7 @@ const assert = require("assert");
 const http = require("http");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
+const { mustBeAbleTo } = require("./expectation.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -1002,17 +1003,18 @@ async function test() {
     }).catch(function () {
       return false;
     });
-  if (!reachable) {
-    // Skipped WITH ITS REASON rather than failed: this file needs a
-    // transmitter, and a run with none is a run that legitimately cannot
-    // exercise it. The rule tests/CLAUDE.md states for this family.
-    log.warn("SKIPPED — no SSF transmitter answered at " + stsUrl +
-        "/ssf. Set SSF_TRANSMITTER_URL to one that does — and note it is a " +
-        "BASE url, not the WS-Trust endpoint WSTRUST_STS_URL holds.");
-    log.info("Test completed successfully (skipped).");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip since 2026-09-02. This used to skip on the
+  // rule tests/CLAUDE.md states for this family — "each skips with a reason
+  // when there is no STS to talk to" — and that rule still holds for a
+  // transmitter that was never CONFIGURED. It does not hold here: stsUrl
+  // falls back to this suite\'s own mock, so this address always resolves to
+  // something, and "nothing answered" therefore means the stack is down
+  // rather than that this target has no transmitter. A skip there is a green
+  // run with the job switched off. See tests/expectation.js.
+  mustBeAbleTo(reachable, "The SSF transmitter this job was pointed at,",
+    stsUrl + "/ssf, did not answer. Start the stack, or set " +
+    "SSF_TRANSMITTER_URL to one that does — and note it is a BASE url, not " +
+    "the WS-Trust endpoint WSTRUST_STS_URL holds.");
   await startReceiver();
   try {
     await theMetadataIsReadable();

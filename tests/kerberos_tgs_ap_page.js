@@ -44,6 +44,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
@@ -489,16 +490,10 @@ async function test() {
   log.info("Starting Test run. The TGS and AP exchange pages at " + baseUrl +
       ".");
   const ready = await preconditions();
-  if (!ready.ok) {
-    // Named, never silent. A skip that did not say which precondition failed
-    // would be indistinguishable from a pass.
-    log.warn("SKIPPED: " + ready.why + ". This test needs the client, the " +
-        "api and the mock STS " +
-      "(KDC and ticket-protected service), and the api's krb5ServicePorts " +
-          "set.");
-    log.info("Test completed successfully.");
-    return;
-  }
+  // A FAILURE rather than a skip. See tests/expectation.js.
+  mustBeReady(ready, "the client, the api and the mock STS (KDC and " +
+              "ticket-protected service), and the api\'s krb5ServicePorts " +
+              "set.");
   if (ready.kdcPort && ready.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + ready.kdcPort +
         "; using that.");

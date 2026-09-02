@@ -105,7 +105,7 @@
 // `WSTRUST_STS_URL` locates the mock, as in every other STS-backed job here.
 // The job SKIPS with a reason when there is none, and with a DIFFERENT reason
 // when the mock predates `fedAuthnMechanism` — read off
-// `GET /ldap/federations`,
+// `GET /admin-api/ldap/federations`,
 // the schema that service publishes, rather than guessed from a version.
 // ===========================================================================
 
@@ -123,6 +123,7 @@ const browserFlags = require("./browser_flags.js");
 const { clearSessionsAt } = require("./session_reset.js");
 const { loadPage } = require("./page_load.js");
 const { usernameFor } = require("./random_username.js");
+const { declineToRun, mustBeAbleTo } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -135,6 +136,12 @@ var headless = true;
 var waitTime = appconfig.waitTime;
 
 const waitForModule = require("./wait_for.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 waitForModule.configure({ log: log, waitTime: waitTime });
 const { waitForPageBundle } = waitForModule;
 
@@ -699,6 +706,11 @@ async function signInAtWsFed(driver, user) {
   // screen since 2026-08-26 rather than drawing one of its own. See the note
   // beside the protocol assertion in test().
   await driver.findElement(By.id("kc-login")).click();
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
   log.debug("Leaving signInAtWsFed().");
 }
 
@@ -942,7 +954,7 @@ async function theMechanismIsWhatDecides(driver, bridgeBase, appBase,
 // would name a missing element on a sign-in screen three redirects away.
 async function mockKnowsTheMechanism(stsBase) {
   log.debug("Entering mockKnowsTheMechanism().");
-  const response = await fetch(stsBase + "/ldap/federations",
+  const response = await fetch(stsBase + "/admin-api/ldap/federations",
                                { headers: { Accept: "application/json" } });
   if (response.status !== 200) {
     log.debug("Leaving mockKnowsTheMechanism(). " + response.status);
@@ -997,21 +1009,22 @@ async function test() {
   log.debug("Entering test().");
   const stsUrl = process.env.WSTRUST_STS_URL || "";
   if (!stsUrl) {
-    log.info("SKIPPED: WSTRUST_STS_URL is not set, so there is no mock STS " +
-             "to build three trust realms in. This test needs that service " +
-             "and nothing else.");
+    // ABSENT, so a skip. The capability check below is a FAILURE instead —
+    // see tests/expectation.js.
+    declineToRun(log, "WSTRUST_STS_URL is not set, so there is no mock STS " +
+                 "to build three trust realms in. This test needs that " +
+                 "service and nothing else.");
     log.debug("Leaving test(). Skipped.");
     return;
   }
   const stsBase = stsUrl.replace(/\/sts\/?$/, "");
-  if (!(await mockKnowsTheMechanism(stsBase))) {
-    log.info("SKIPPED: the mock STS at " + stsBase + " does not publish " +
-             "fedAuthnMechanism in its federation schema, so it predates the " +
-             "attribute that lets one federation relationship authenticate " +
-             "through another. Bump the sts/ submodule.");
-    log.debug("Leaving test(). Skipped, the mock is too old.");
-    return;
-  }
+  mustBeAbleTo(await mockKnowsTheMechanism(stsBase),
+    "The mock STS at " + stsBase + " is reachable, but",
+    "it does not publish fedAuthnMechanism in the federation schema at GET " +
+    "/admin-api/ldap/federations, so no relationship can authenticate " +
+    "through another and the bridge realm this test is about cannot exist. " +
+    "Either the sts/ submodule predates the attribute (bump it) or that " +
+    "endpoint has moved again.");
   const appBase = stsBase + "/realm/" + APP_REALM;
   const bridgeBase = stsBase + "/realm/" + BRIDGE_REALM;
   const idpBase = stsBase + "/realm/" + IDP_REALM;

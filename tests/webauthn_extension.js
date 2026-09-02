@@ -45,6 +45,12 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
 const { waitForFocus } = require("./wait_for.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -155,6 +161,11 @@ async function runCeremony(driver, username) {
   await driver.wait(until.elementLocated(By.id("username")), waitTime * 4);
   await driver.findElement(By.id("username")).sendKeys(username);
   await driver.findElement(By.id("kc-login")).click();
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
   await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
   // A headless window is neither focused nor visible for its first second or
   // so, and WebAuthn refuses on such a page with a bare NotAllowedError that

@@ -47,6 +47,7 @@ const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
+const { declineToRun, mustBeAbleTo } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -689,8 +690,11 @@ async function test() {
            " against the mock STS at " + (stsBaseUrl || "(not set)"));
 
   if (!stsBaseUrl) {
-    log.info("SKIPPING: STS_TLS_URL is not set, so there is no TLS endpoint " +
-      "to present a certificate to. This test needs the mock STS's HTTPS " +
+    // ABSENT — no endpoint was configured at all — so a skip, and a RECORDED
+    // one since 2026-09-02. The two checks below are FAILURES instead: they
+    // ask a service that IS there. See tests/expectation.js.
+    declineToRun(log, "STS_TLS_URL is not set, so there is no TLS endpoint " +
+      "to present a certificate to. This test needs the mock STS\'s HTTPS " +
       "listeners (8443 and 9443) and its plain HTTP port to configure them.");
     log.debug("Leaving test(). Skipped.");
     return;
@@ -719,10 +723,14 @@ async function test() {
     ports = { optional: optional.port, required: required.port };
     tlsHost = new URL(stsBaseUrl).hostname;
   } catch (e) {
-    log.info("SKIPPING: the mock STS at " + stsBaseUrl + " has no TLS " +
-      "endpoint (" + e.message + "). It is older than this test.");
-    log.debug("Leaving test(). Skipped.");
-    return;
+    // PRESENT and lacking the capability, so a FAILURE rather than a skip:
+    // STS_TLS_URL named this service, so it is there. See
+    // tests/expectation.js.
+    log.debug("Leaving test(). The mock publishes no TLS endpoint.");
+    mustBeAbleTo(false, "The mock STS at " + stsBaseUrl + " is reachable, " +
+      "but", "it publishes no TLS endpoint (" + e.message + "). Either the " +
+      "sts/ submodule predates its 8443/9443 listeners (bump it) or that " +
+      "document has moved.");
   }
   log.info("The mock STS's TLS listeners are on " + tlsHost + ":" +
            ports.optional + " (client certificate optional) and " + tlsHost +
@@ -784,9 +792,11 @@ async function test() {
         "return !!e && e.style.display !== 'none';");
     })();
     if (backendNoticeShown) {
-      log.info("SKIPPING: this build has no api behind it " +
-        "(backendAvailable is false), and a browser cannot present a client " +
-        "certificate, choose a truststore or read a handshake.");
+      // ABSENT — a static deployment has no api at all — so a skip, and a
+      // RECORDED one since 2026-09-02. See tests/expectation.js.
+      declineToRun(log, "this build has no api behind it " +
+        "(backendAvailable is false), and a browser cannot present a " +
+        "client certificate, choose a truststore or read a handshake.");
       log.debug("Leaving test(). Skipped.");
       return;
     }

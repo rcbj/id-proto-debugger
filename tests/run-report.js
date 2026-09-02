@@ -33,6 +33,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const bunyan = require("bunyan");
+const { SELF_SKIP_EXIT, SELF_SKIP_MARKER } =
+    require("./expectation.js");
 
 // The runner's own progress lines. They used to be console.log, which made this
 // the last thing in this directory writing outside bunyan — every test it
@@ -4942,6 +4944,28 @@ process.on("exit", reapAllJobGroups);
 // opened and the header written before the child starts, and flushed as
 // output arrives, so the full output survives even if the suite is killed
 // or a test hangs. Returns a Promise resolving to the result.
+// The reason a job gave for declining to run, off the plain-text marker line
+// tests/expectation.js writes to stdout. Plain text rather than a bunyan record
+// on purpose: every other line a job emits is JSON, and the runner should not
+// have to parse a log format to find out whether the test ran at all.
+function selfSkipReason(output) {
+  log.debug("Entering selfSkipReason().");
+  for (const line of String(output || "").split("\n")) {
+    const at = line.indexOf(SELF_SKIP_MARKER);
+    if (at >= 0) {
+      const reason = line.slice(at + SELF_SKIP_MARKER.length).trim();
+      log.debug("Leaving selfSkipReason(). Found.");
+      return reason || "no reason given";
+    }
+  }
+  // Exited with the skip code and said nothing. Reported rather than guessed:
+  // a job that declines silently is the thing this whole mechanism exists to
+  // stop, so it must not read as a tidy skip.
+  log.debug("Leaving selfSkipReason(). No marker.");
+  return "declined to run and gave no reason (no " +
+      SELF_SKIP_MARKER.trim() + " line in its output)";
+}
+
 function runJob(job, index, live) {
   log.debug("Entering runJob().");
   log.debug("Leaving runJob().");
@@ -4999,9 +5023,18 @@ function runJob(job, index, live) {
       killJobGroup(pgid, "SIGKILL");
       liveJobGroups.delete(pgid);
       const durationMs = Date.now() - startMs;
-      const passed = code === 0;
+      // THE THIRD OUTCOME. A test that declined to run exits SELF_SKIP_EXIT
+      // and says why on a plain-text marker line; anything else is the pass
+      // or the failure it always was. Before 2026-09-02 a test that declined
+      // returned out of test(), which exits 0, and the runner had no way at
+      // all to tell it from a test that ran — see tests/expectation.js for
+      // the fifty-four jobs that cost.
+      const selfSkipped = code === SELF_SKIP_EXIT;
+      const reason = selfSkipped ? selfSkipReason(output) : null;
+      const passed = code === 0 || selfSkipped;
+      const label = selfSkipped ? "SKIP" : passed ? "PASS" : "FAIL";
       logStream.end(
-        `\n===== RESULT: ${passed ? "PASS" : "FAIL"} ` +
+        `\n===== RESULT: ${label} ` +
           `(exit ${codeLabel}, ${(durationMs / 1000).toFixed(1)}s) =====\n`
       );
       // Buffered rather than echoed as it arrived (see CONCURRENCY), so write
@@ -5011,7 +5044,7 @@ function runJob(job, index, live) {
         const secs = (durationMs / 1000).toFixed(1);
         process.stdout.write(
           `\n===== [${index + 1}] ${job.name} — ` +
-          `${passed ? "PASS" : "FAIL"} (${secs}s) =====\n` +
+          `${label} (${secs}s) =====\n` +
           output +
           `===== end of ${job.name} =====\n`);
       }
@@ -5020,7 +5053,10 @@ function runJob(job, index, live) {
         script: job.script,
         type: job.type || "browser",
         passed,
-        code: codeLabel,
+        skipped: selfSkipped || undefined,
+        selfSkipped: selfSkipped || undefined,
+        reason: reason || undefined,
+        code: selfSkipped ? "self-skip" : codeLabel,
         durationMs,
         output,
         logFile: path.relative(TESTS_DIR, logPath),
@@ -5103,10 +5139,14 @@ function makeSkipResult(job, index) {
 // is the order things completed; the report itself is written in job order.
 function reportOne(result, index, total) {
   log.debug("Entering reportOne().");
+  const label = result.skipped ? "SKIP" : result.passed ? "PASS" : "FAIL";
   log.info(`----- [${index + 1}/${total}] ` +
-      `${result.passed ? "PASS" : "FAIL"} ` +
+      `${label} ` +
       `(${(result.durationMs / 1000).toFixed(1)}s) → ${result.logFile} ` +
       `— ${result.name}`);
+  if (result.selfSkipped) {
+    log.warn(`----- DID NOT RUN: ${result.reason}`);
+  }
   log.debug("Leaving reportOne().");
 }
 
@@ -5555,7 +5595,7 @@ function coverageExcludes(jobs) {
   log.debug("Entering coverageExcludes().");
   const names = new Set(jobs.map((job) => job.script));
   ["run-report.js", "module_paths.js", "wait_for.js", "random_username.js",
-    "common.sh"].forEach(function (name) {
+    "consent_screen.js", "common.sh"].forEach(function (name) {
     names.add(name);
   });
   // Every pattern is `**/`-prefixed, and that is not cosmetic: a bare
@@ -5707,6 +5747,52 @@ function demoResults() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// EVERY JOB THAT DID NOT RUN, SPELLED OUT AT THE END OF THE RUN.
+//
+// `0 failed` is the line everybody reads, and on its own it says nothing about
+// how much of the suite executed. On 2026-09-01 it said `292 passed, 0 failed,
+// 2 skipped` for a run in which fifty-four jobs had switched themselves off
+// over a moved URL — because a test that returned early exited 0, and exit 0
+// is a pass. The skips are first-class results now (see tests/expectation.js),
+// and this prints them where the summary is read rather than leaving them to
+// be found one log file at a time.
+//
+// The two kinds are labelled, because they mean different things to whoever is
+// reading. DECLARED is run-report.js deciding, from the environment, that this
+// target cannot exercise this workflow — a static deployment with no api, no
+// Windows domain controller. SELF is the test itself declining once it was
+// already running, which is the kind worth a second look: it is the shape the
+// 2026-09-01 hole had, and a self-skip whose reason sounds like a defect in a
+// service rather than a fact about this machine belongs in expectation.js's
+// mustBeAbleTo() as a failure instead.
+// ---------------------------------------------------------------------------
+function reportJobsThatDidNotRun(results) {
+  log.debug("Entering reportJobsThatDidNotRun().");
+  const missed = results.filter(function (r) {
+    return r && r.skipped;
+  });
+  if (missed.length === 0) {
+    log.info("Every job ran. No job skipped itself and none was gated out.");
+    log.debug("Leaving reportJobsThatDidNotRun(). None.");
+    return;
+  }
+  const self = missed.filter(function (r) {
+    return r.selfSkipped;
+  }).length;
+  log.warn("");
+  log.warn(missed.length + " of " + results.length + " job(s) DID NOT RUN " +
+      "(" + self + " declined by the test itself, " +
+      (missed.length - self) + " gated out by the launcher). A test that " +
+      "does not run is not a passing test:");
+  for (const r of missed) {
+    log.warn("  [" + (r.selfSkipped ? "SELF" : "DECLARED") + "] " + r.name);
+    log.warn("      " + (r.reason || "no reason recorded"));
+  }
+  log.warn("");
+  log.debug("Leaving reportJobsThatDidNotRun(). " + missed.length + ".");
+}
+
 async function main() {
   log.debug("Entering main().");
   const demo = process.argv.includes("--demo");
@@ -5748,6 +5834,7 @@ async function main() {
   log.info(`Summary: ${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`);
   log.info(`Of those, ${units} are unit jobs (no browser) and ` +
     `${results.length - units} drive one.`);
+  reportJobsThatDidNotRun(results);
 
   // Don't fail the demo run; otherwise signal failures to the caller/CI.
   process.exit(demo ? 0 : failed > 0 ? 1 : 0);

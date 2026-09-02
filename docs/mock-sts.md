@@ -66,6 +66,35 @@ That is the direction of difference that hides a bug rather than causing one. A 
 
 **One place the mock still differs from Windows on purpose.** A service ticket's PAC here carries `PAC_ATTRIBUTES_INFO` (17) and `PAC_REQUESTOR` (18); the captured Windows service ticket carries neither, and its seven buffers are 1, 6, 7, 10, 12, 16, 19. That divergence is left alone rather than "fixed": `tests/krb5_tgs_ap.js` uses `PAC_ATTRIBUTES_INFO` to tell apart the three PAC-request states, which is a real property worth testing, and the Windows side of it is a single observation of one service ticket. `tests/krb5_windows_vectors.js` pins what Windows actually sent, so if the two ever need reconciling the evidence is on file.
 
+## The consent screen, and why every OAuth job in this suite grew a hop
+
+Since 2026-09-01 that service **asks before it issues**. The first time a given
+username signs in to a given `client_id` for a given scope, `/oauth2/consent` is
+drawn listing the scopes that are new; nothing is issued until somebody presses
+Allow, and Deny returns `access_denied` to the client. `oauth2.consentRequired`
+governs it and is **ON by default**, which is the only policy in that service
+that is — the argument being that consent is not a refusal but the screen every
+real authorization server draws on a first sign-in, and a client that has never
+met one has never run the code that survives it.
+
+For this suite that means one more hop between the sign-in screen and the
+authorization response, in the middle of a redirect chain several jobs walk by
+hand. `tests/consent_screen.js` is the shared module that passes it —
+`settleAuthorization()` for the jobs that follow redirects with
+`redirect: "manual"`, `passInBrowser(driver, By)` for the Selenium ones — and
+`docs/test-suite-map.md` carries the whole note, including why neither of them
+asserts that the screen appeared and which two jobs are deliberately not part of
+the sweep.
+
+Two things about the feature are worth knowing when reading a failure. The
+answer is recorded **per (person, application, scope)** on the person's own entry
+under `ou=users`, so the second sign-in in a run is silent and the first is not —
+a job whose usernames are minted per run meets the screen every time, and one
+that reuses a name meets it once. And `oauthGlobalConsent` on an application's
+entry consents a scope for **everybody** who signs in to it without writing
+anything about anybody, which is what `krb5_mit_client.js` registers its
+application with rather than teaching `curl` to press a button.
+
 ## The authentication service is its own endpoint
 
 Until 2026-08-19 the sign-in screen was rendered *inside* `GET /oauth2/authorize`: no session meant a 200 with the login form in the body, at the authorization endpoint's own URL. It is now `/authn/login` — its own endpoint, in its own module (`authn.js`), which owns the session store, the screen and the WebAuthn second factor beside it. The protocol endpoint redirects:

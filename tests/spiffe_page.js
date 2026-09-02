@@ -57,6 +57,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
 const listeners = require("./spiffe_listeners.js");
 const waitFor = require("./wait_for.js");
@@ -1251,12 +1252,12 @@ async function test() {
     log.debug("Leaving test(). A stranger holds the port.");
     throw new Error(ready.why);
   }
-  if (!ready.ok) {
-    log.warn("SKIP: " + ready.why);
-    log.info("Test skipped.");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip: run-report.js gates this job on
+  // SPIFFE_AVAILABLE, so reaching this line means the launcher expected the
+  // api and a SPIRE server to be there. See tests/expectation.js.
+  mustBeReady(ready, "the client (for spiffe.html) and the api with its " +
+              "/spiffe/* endpoints, pointed at a Workload API and a SPIRE " +
+              "Server API.");
   log.info("driving " + baseUrl + "/spiffe.html against the api at " + apiUrl +
     ", which will dial " + workloadAddress + " and " + serverAddress);
 

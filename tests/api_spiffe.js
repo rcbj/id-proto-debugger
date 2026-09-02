@@ -40,6 +40,7 @@
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const listeners = require("./spiffe_listeners.js");
+const { declineToRun, mustBeAbleTo } = require("./expectation.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -96,19 +97,23 @@ async function gate() {
   try {
     response = await fetch(API_URL + "/spiffe/limits");
   } catch (e) {
-    log.warn("SKIPPING: the api at " + API_URL + " could not be reached (" +
-      e.message + "). This deployment has no api behind it, so neither of " +
-      "SPIFFE's gRPC surfaces exists here — which is the known state of a " +
-      "static site rather than something to go looking for.");
+    // A FAILURE rather than a skip since 2026-09-02. It reads like the known
+    // state of a static site, and on such a target run-report.js has already
+    // gated this job out on SPIFFE_AVAILABLE — so reaching this line means
+    // the launcher expected an api here and did not get one. See
+    // tests/expectation.js.
     log.debug("Leaving gate(). Unreachable.");
-    return null;
+    mustBeAbleTo(false, "The api this job was pointed at,", API_URL +
+      ", could not be reached (" + e.message + "). Start the stack, or set " +
+      "API_URL to one that answers — and note that inside the tests " +
+      "container the api is https://api:4000 rather than localhost.");
   }
   if (response.status === 404) {
-    log.warn("SKIPPING: the api at " + API_URL + " answered 404 for GET " +
-      "/spiffe/limits, so it is an older build with no SPIFFE support. That " +
-      "is a different thing from a SPIRE server that will not answer.");
     log.debug("Leaving gate(). 404.");
-    return null;
+    mustBeAbleTo(false, "The api at " + API_URL + " is reachable, but",
+      "it answered 404 for GET /spiffe/limits, so it is an older build with " +
+      "no SPIFFE support. That is a different thing from a SPIRE server " +
+      "that will not answer.");
   }
   if (!response.ok) {
     throw new Error("GET /spiffe/limits answered " + response.status);
@@ -131,7 +136,12 @@ async function gate() {
     throw new Error(verdict.why);
   }
   if (!verdict.ok) {
-    log.warn("SKIPPING: " + verdict.why);
+    // The one branch here that stays a skip, and tests/CLAUDE.md already
+    // states why: spiffe_listeners.js has THREE verdicts, and "no TCP
+    // listener described at all" is an absent capability rather than a
+    // service that is wrong. It is a RECORDED skip since 2026-09-02 rather
+    // than an exit 0 the runner counted as a pass.
+    declineToRun(log, verdict.why);
     log.debug("Leaving gate(). Not served over TCP.");
     return null;
   }
@@ -448,7 +458,9 @@ async function test() {
   log.debug("Entering test().");
   const limits = await gate();
   if (!limits) {
-    log.info("Test completed successfully (skipped).");
+    // gate() has already recorded the skip through declineToRun(). It does
+    // NOT say "Test completed successfully" any more: that sentence, on a job
+    // that ran nothing, is the whole reason tests/expectation.js exists.
     log.debug("Leaving test(). Skipped.");
     return;
   }

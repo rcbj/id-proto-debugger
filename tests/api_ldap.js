@@ -118,6 +118,7 @@ const crypto = require("crypto");
 const { Command, Option } = require("commander");
 const { usernameFor, runStamp } = require("./random_username.js");
 const registry = require("./sts_applications.js");
+const { mustBeReady } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -287,7 +288,7 @@ async function preconditions() {
   const published = await limits.json();
   let directory;
   try {
-    directory = await fetch(stsUrl + "/ldap?format=json");
+    directory = await fetch(stsUrl + "/admin-api/ldap/service");
   } catch (e) {
     log.debug("Leaving preconditions(). The mock is unreachable.");
     return { ok: false, why: "could not reach the mock STS at " + stsUrl +
@@ -296,8 +297,8 @@ async function preconditions() {
   if (!directory.ok) {
     log.debug("Leaving preconditions(). The mock has no directory.");
     return { ok: false, why: "the mock STS has no embedded LDAP directory (" +
-      stsUrl + "/ldap answered " + directory.status + ") — the sts/ gitlink " +
-      "probably predates it" };
+      stsUrl + "/admin-api/ldap/service answered " + directory.status +
+      ") — the sts/ gitlink probably predates it" };
   }
   const described = await directory.json();
   // The HTTP view answers 200 whether or not the socket bound — 389 is
@@ -2213,12 +2214,13 @@ async function aTestUsersGroupIsLeftBehind() {
 async function test() {
   log.debug("Entering test().");
   const ready = await preconditions();
-  if (!ready.ok) {
-    log.warn("SKIP: " + ready.why);
-    log.info("Test skipped.");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip: run-report.js gates this job on
+  // LDAP_AVAILABLE, so a target without the workflow never gets here. Reaching
+  // this line means the launcher expected the api and the mock's directory to
+  // be up. See tests/expectation.js.
+  mustBeReady(ready, "the api (for its /ldap/* endpoints) and the mock STS " +
+              "with its embedded directory listening on 389. Start the " +
+              "stack, or run ./local-run-tests.sh which does.");
   log.info("the api is at " + apiUrl + ", the directory it will open is " +
            ldapUrl + " (base " + baseDn + "), and this run's names are " +
            userDn + " and " + groupDn);

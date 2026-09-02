@@ -46,6 +46,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
@@ -722,13 +723,9 @@ async function test() {
   log.info("Starting Test run. The SPNEGO page, and the routing that feeds " +
       "it.");
   const ready = await preconditions();
-  if (!ready.ok) {
-    log.warn("SKIPPED: " + ready.why + ". This test needs the client, the " +
-        "api and the mock STS (its KDC and its SPNEGO-protected page).");
-    log.info("Test completed successfully.");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip. See tests/expectation.js.
+  mustBeReady(ready, "the client, the api and the mock STS (its KDC and " +
+              "its SPNEGO-protected page).");
   if (ready.kdcPort && ready.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + ready.kdcPort +
         "; using that.");

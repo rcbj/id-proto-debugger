@@ -72,6 +72,18 @@ COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js
 # demands.
 COPY tests/random_username.js ./
 
+# THE SKIP / FAILURE RULE, required by every job that has a gate in front of it
+# — the four federation ones, both LDAP, both SCIM, the five Kerberos page
+# jobs, SPIFFE, SSF, DPoP, PKI mutual TLS and the two source sweeps. A SHARED
+# MODULE rather than a test, exactly like random_username.js above, and with
+# the same failure mode when this line is missing: a job that requires it dies
+# with MODULE_NOT_FOUND in a tenth of a second, naming this file rather than a
+# build, and nothing schedules it so the run-report cross-check in
+# jwk_pem_encoding.js cannot notice. Worse than the usual case, because the
+# jobs that require it are precisely the ones whose whole purpose here is not
+# to fail quietly.
+COPY tests/expectation.js ./
+
 # THE APPLICATIONS REGISTRY CLIENT, required by every job that presents an
 # identifier to the mock STS — which since 2026-08-27 is most of them: the OAuth
 # and OIDC jobs, the OID4VC family, WS-Trust, WS-Federation, both SAML profiles,
@@ -82,6 +94,18 @@ COPY tests/random_username.js ./
 # schedules it so no cross-check notices it gone. Its name collides with nothing
 # under client/src or sts/, which is what this flat directory demands.
 COPY tests/sts_applications.js ./
+
+# THE CONSENT SCREEN CLIENT, required by every job that signs a person in to the
+# mock STS and then expects an authorization response — which since 2026-09-01
+# is every OAuth 2.0 and OpenID Connect job here, the OID4VC family and the
+# federation grid. That service asks before it issues the first time a given
+# username, client_id and scope meet (oauth2.consentRequired, on by default), so
+# the flow has one more hop in it than it had the day before. A SHARED MODULE
+# rather than a test, exactly like sts_applications.js above, and with the same
+# failure mode when this line is missing: a job that requires it dies with
+# MODULE_NOT_FOUND in a tenth of a second, naming this file rather than a build,
+# and nothing schedules it so no cross-check notices it gone.
+COPY tests/consent_screen.js ./
 
 # THE FEDERATION GRID — one parameterised script that run-report schedules
 # forty-nine times, once per combination of application protocol, federation

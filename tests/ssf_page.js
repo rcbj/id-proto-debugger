@@ -43,6 +43,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1165,12 +1166,11 @@ async function cleanUp() {
 async function test() {
   log.debug("Entering test().");
   const ready = await preconditions();
-  if (!ready.ok) {
-    log.warn("SKIP: " + ready.why);
-    log.info("Test skipped.");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip: the launcher gates this job itself, so
+  // reaching this line means it expected the page and a transmitter to be
+  // there. See tests/expectation.js.
+  mustBeReady(ready, "the client (for ssf.html), the api (for its push " +
+              "receiver) and the mock STS acting as an SSF transmitter.");
   log.info("driving " + baseUrl + "/ssf.html against the transmitter at " +
       stsUrl + " and the api at " + apiUrl);
 

@@ -37,6 +37,12 @@ const crypto = require("crypto");
 const { Command, Option } = require('commander');
 const { usernameFor } = require("./random_username.js");
 const registry = require("./sts_applications.js");
+// The mock's consent screen, which stands between a signed-in person and an
+// authorization response since 2026-09-01. A SHARED MODULE for the reason
+// sts_applications.js is one: every job in this suite that signs somebody in
+// meets the same hop, and a hand-written copy of it per job is a chance per job
+// to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -212,8 +218,20 @@ async function authorize(meta, params, options) {
   const first = r.headers.get("location");
   if (first.indexOf("/authn/") !== 0 &&
       first.indexOf(meta.issuer + "/authn/") !== 0) {
-    const out = parseRedirect(first);
+    // THE SESSION STOOD, WHICH IS NOT THE SAME AS THE RESPONSE BEING READY.
+    // A person whose session skipped the sign-in screen can still be asked for
+    // consent — that question is about the SCOPE and the CLIENT, not about who
+    // they are — so the hops that stay on this service are walked before the
+    // Location is read as the client redirect_uri. Without this the parse below
+    // is handed "/oauth2/consent?consent=..." , which is not a URL, and the job
+    // dies inside parseRedirect() naming nothing.
+    const settledFirst = await consentScreen.settleAuthorization({
+      base: meta.issuer, location: first, cookie: options.cookie,
+      decision: options.consent
+    });
+    const out = parseRedirect(settledFirst.location || first);
     out.prompted = false;
+    out.consented = settledFirst.screens;
     out.cookie = options.cookie;
     log.debug("Leaving authorize().");
     return out;
@@ -273,8 +291,21 @@ async function authorize(meta, params, options) {
   assert.strictEqual(r.status, 302,
     "the authorization endpoint should answer after the login, got HTTP " +
         r.status + ".");
-  const out = parseRedirect(r.headers.get("location"));
+  // AND THE CONSENT SCREEN, which is the hop between signing in and being
+  // issued anything. It is PASSED rather than asserted: a scope this username
+  // has already agreed to in this run, or one carried on the application entry
+  // as a global consent, draws no screen at all, and a helper that insisted on
+  // one would make this job also a test of the consent feature. The mock
+  // repository own sts_consent.js is what asserts the screen appears and what
+  // is on it.
+  const settled = await consentScreen.settleAuthorization({
+    base: meta.issuer, location: r.headers.get("location"), cookie: cookie,
+    decision: options.consent
+  });
+  const out = parseRedirect(settled.location || r.headers.get("location"));
   out.prompted = true;
+  out.consented = settled.screens;
+  out.consentPage = settled.page;
   out.cookie = cookie;
   out.username = username;
   out.page = page;
