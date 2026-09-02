@@ -2589,6 +2589,49 @@ function bitsSet(bitString, table) {
   return out;
 }
 
+// The KeyUsage extension of a parsed certificate — the X.509v3 field that
+// says what the key inside it may be USED for (RFC 5280 section 4.2.1.3).
+//
+// `present` is reported beside the list because the specification draws a
+// distinction a validator must not lose: a certificate carrying NO KeyUsage
+// extension restricts its key to nothing at all, while a certificate that
+// carries one may be used ONLY for the bits it asserts. So an empty `usages`
+// with `present` true is a key permitted to do nothing, and an empty one with
+// `present` false is a key permitted to do anything — and a check that
+// conflated the two would either refuse every certificate without the
+// extension or accept one that forbids the very operation being checked.
+function keyUsageOf(cert) {
+  log.debug("Entering keyUsageOf().");
+  var extensions = cert.extensions || [];
+  for (var i = 0; i < extensions.length; i++) {
+    if (extensions[i].extnID !== EXT_OIDS.keyUsage) continue;
+    var parsed = asn1js.fromBER(
+      extensions[i].extnValue.valueBlock.valueHexView);
+    if (parsed.offset === -1) {
+      log.warn("keyUsageOf(): the KeyUsage extension did not parse.");
+      break;
+    }
+    log.debug("Leaving keyUsageOf(). Present.");
+    return { present: true, critical: !!extensions[i].critical,
+             usages: bitsSet(parsed.result, KEY_USAGE_BITS) };
+  }
+  log.debug("Leaving keyUsageOf(). Absent.");
+  return { present: false, critical: false, usages: [] };
+}
+
+// Whether a KeyUsage from keyUsageOf() permits `usage`, by the rule above:
+// an absent extension permits everything, a present one permits only what it
+// asserts. Callers pass the name from KEY_USAGE_BITS — `digitalSignature`
+// for a key that verifies a signature over something that is not a
+// certificate, `keyCertSign` for one that signs the certificate below it.
+function keyUsagePermits(keyUsage, usage) {
+  log.debug("Entering keyUsagePermits(). usage=" + usage);
+  var permitted = !keyUsage || !keyUsage.present ||
+      keyUsage.usages.indexOf(usage) !== -1;
+  log.debug("Leaving keyUsagePermits(). " + permitted);
+  return permitted;
+}
+
 function describeExtension(ext) {
   log.debug("Entering describeExtension(). oid=" + ext.extnID);
   var name = EXT_BY_OID[ext.extnID] || ext.extnID;
@@ -2825,7 +2868,13 @@ async function verifyChain(pems) {
       signedBy: dnToString(issuer.subject),
       namesMatch: dnToString(certs[i].issuer) === dnToString(issuer.subject),
       selfSigned: !certs[i + 1],
-      signatureValid: false
+      signatureValid: false,
+      // What this certificate's own key is allowed to do. The verdict on it
+      // is the CALLER's, because it depends on the position: the first
+      // certificate here verifies a signature over something that is not a
+      // certificate (digitalSignature) and every one above it signs the
+      // certificate below (keyCertSign).
+      keyUsage: keyUsageOf(certs[i])
     };
     try {
       link.signatureValid = await verifySignature(certs[i], issuer);
@@ -2959,6 +3008,8 @@ module.exports = {
   issueCertificate: issueCertificate,
   certificationRequest: certificationRequest,
   describeCertificate: describeCertificate,
+  keyUsageOf: keyUsageOf,
+  keyUsagePermits: keyUsagePermits,
   extensionValueText: extensionValueText,
   verifyChain: verifyChain,
   verifySignature: verifySignature,

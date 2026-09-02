@@ -70,6 +70,7 @@ const assert = require("assert");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
 const registry = require("./sts_applications.js");
+const listeners = require("./spiffe_listeners.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -289,6 +290,27 @@ async function gate() {
       "SPIFFE service (HTTP " + described.status + "). Either this mock STS " +
       "predates SPIFFE or spiffe.enabled is off.");
     log.debug("Leaving gate(). Not enabled.");
+    return false;
+  }
+  // AND THE TWO PORTS BELONG TO THE MOCK THAT WAS JUST DESCRIBED. Enabled is
+  // not bound: this service carries on when a SPIFFE listener loses its port
+  // to another process, and every assertion below would then be made about a
+  // stranger — including the administrator one, which sets `spiffe.adminIds`
+  // over HTTP on one process and exercises it over gRPC on another. See
+  // tests/spiffe_listeners.js.
+  const verdict = await listeners.verify(STS_URL, [
+    { surface: "workloadApi", address: WORKLOAD_ADDRESS,
+      what: "the Workload API" },
+    { surface: "serverApi", address: SERVER_ADDRESS,
+      what: "the SPIRE Server API" }
+  ]);
+  if (verdict.stranger) {
+    log.debug("Leaving gate(). A stranger holds the port.");
+    throw new Error(verdict.why);
+  }
+  if (!verdict.ok) {
+    log.warn("SKIPPING: " + verdict.why);
+    log.debug("Leaving gate(). Not served over TCP.");
     return false;
   }
   log.debug("Leaving gate(). Enabled.");

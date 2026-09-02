@@ -1280,9 +1280,24 @@ function secureConnection() {
 
 // SHA-256 over the DER inside a PEM, formatted the way node and the mock both
 // format a certificate fingerprint: uppercase hex, colon separated.
+//
+// THE FIRST CERTIFICATE, and the `?` in that regex is the whole of it. What
+// GET /tls/server-certificate hands back stopped being one certificate on
+// 2026-09-01: the stack's TLS pair is a leaf issued by an issuing CA under a
+// root, `stack-tls-cert.pem` is all three, and the mock serves that file. A
+// strip of every `-----…-----` line then concatenates three DERs and hashes
+// the join, which is a value no tool anywhere will ever print — not
+// `openssl x509 -fingerprint -sha256`, not node's `fingerprint256`, not the
+// socket's. It is also perfectly stable, so it compares equal to itself and
+// the only thing that ever notices is a comparison against a real handshake.
+// A chain is read the way every truststore consumer reads one: the first
+// certificate is the leaf, and the leaf is what the socket presents.
 function fingerprintOf(pem) {
   log.debug("Entering fingerprintOf().");
-  const der = Buffer.from(String(pem).replace(/-----[^-]+-----/g, "")
+  const block = String(pem).match(
+    /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+  const der = Buffer.from(String(block ? block[0] : pem)
+      .replace(/-----[^-]+-----/g, "")
       .replace(/\s+/g, ""), "base64");
   const hex = crypto.createHash("sha256").update(der).digest("hex")
       .toUpperCase();

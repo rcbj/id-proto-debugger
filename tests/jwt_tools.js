@@ -10,6 +10,18 @@ const path = require("path");
 const { Command, Option } = require('commander');
 var appconfig = require(process.env.CONFIG_FILE);
 
+// The certificate authority, the key material and the JWS signer this test
+// builds an x5c token with are the PAGE'S OWN modules, not a second
+// implementation of any of them: in a checkout they are under client/src, and
+// the tests image copies them flat beside these scripts. See module_paths.js.
+const modulePaths = require("./module_paths.js");
+function clientModule(name) {
+  return modulePaths.requireSharedModule(
+    [path.join(__dirname, "..", "client", "src", name),
+     path.join(__dirname, name)],
+    "client/src/" + name);
+}
+
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({ name: 'jwt_tools',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -27,6 +39,13 @@ const { populateMetadata, getAccessTokenAuthCode } =
 // but can exceed the 2s element-wait on a busy CI host, so results get a
 // generous, separate timeout.
 var cryptoWait = Math.max(waitTime, 15000);
+
+// Loaded after `log` exists, because requireSharedModule() reports a missing
+// COPY through its own logger.
+const keyMaterial = clientModule("key_material.js");
+const x509 = clientModule("x509.js");
+const jwsLib = clientModule("jws.js");
+const cryptoBytes = clientModule("crypto_bytes.js");
 
 function decodeJWT(jwt_) {
   log.debug("Entering decodeJWT().");
@@ -521,6 +540,425 @@ async function idTokenDecodeActivities(driver, id_token) {
   log.debug("Leaving idTokenDecodeActivities().");
 }
 
+// The Encoded JWT field takes a FILE as well as a paste, behind a "Load from
+// file" checkbox, for tokens too large to paste comfortably — a real 10MB one
+// is what prompted it. Two things are asserted here that a paste cannot show:
+// that a multi-megabyte token arrives intact and decodes, and that a file over
+// the 15MB cap is refused before a byte of it is read, leaving the field
+// alone.
+async function encodedFileLoadActivities(driver) {
+  log.debug("Entering encodedFileLoadActivities().");
+  const fileDir = fs.mkdtempSync(path.join(os.tmpdir(),
+      "idptools-jwt-upload-"));
+  try {
+    log.info("Navigate to jwt_tools.html for the file-load pane.");
+    await driver.get(baseUrl + "/jwt_tools.html");
+    await waitForValue(driver, By.id("jwt_tools_payload"),
+      function (v) { return v.indexOf("garbage") !== -1; },
+      "JWT Tools default payload did not load.");
+
+    log.info("The chooser is hidden until the checkbox asks for it.");
+    var chooser = By.id("jwt_tools_encoded_file");
+    var shown = await driver.findElement(chooser).isDisplayed();
+    assert.strictEqual(shown, false,
+      "The file chooser should be hidden until Load from file is ticked.");
+
+    await click(driver, By.id("jwt_tools_load_from_file"));
+    await driver.wait(until.elementIsVisible(driver.findElement(chooser)),
+                      waitTime,
+                      "Ticking Load from file did not reveal the chooser.");
+
+    // ~2MB of payload: past anything a person would paste, and far enough
+    // below the cap that this asserts the loading rather than the limit. The
+    // trailing newline is deliberate — a token saved to a file almost always
+    // has one, and it must not reach the field, where it would make the last
+    // segment fail to decode.
+    var big = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" }))
+        .toString("base64url") + "." +
+        Buffer.from(JSON.stringify({ iss: "https://big.example.com",
+                                     sub: "big-subject-1",
+                                     data: "x".repeat(2 * 1024 * 1024) }))
+            .toString("base64url") + ".";
+    var bigPath = path.join(fileDir, "big.jwt");
+    fs.writeFileSync(bigPath, big + "\n");
+    log.info("Load " + bigPath + " (" + big.length + " chars).");
+    await driver.findElement(chooser).sendKeys(bigPath);
+
+    var loaded = await waitForValue(driver, By.id("jwt_tools_sync_status"),
+      function (v) { return v.indexOf("Loaded big.jwt") !== -1; },
+      "The file was not loaded into the Encoded JWT field.");
+    log.info("Status: " + loaded);
+
+    // Read a DESCRIPTION of the field rather than the field: getAttribute
+    // would drag the whole multi-megabyte value across the WebDriver wire on
+    // every poll.
+    var state = await driver.executeScript(
+      "var v = document.getElementById('jwt_tools_encoded').value;" +
+      "var p = document.getElementById('jwt_tools_payload').value;" +
+      "return { length: v.length, tail: v.slice(-1)," +
+      " decoded: p.indexOf('big.example.com') !== -1 };");
+    assert.strictEqual(state.length, big.length,
+      "The Encoded JWT field does not hold the whole token: expected " +
+          big.length + " characters, got " + state.length + ".");
+    assert.strictEqual(state.tail, ".",
+      "The file's trailing newline reached the Encoded JWT field.");
+    assert.ok(state.decoded,
+      "The loaded token was not decoded into the JWT Payload field.");
+    log.info("A 2MB token loaded from a file, intact and decoded.");
+
+    // Over the cap: refused before it is read, and the field keeps what the
+    // first file put there.
+    var tooBigPath = path.join(fileDir, "too-big.jwt");
+    fs.writeFileSync(tooBigPath, Buffer.alloc(16 * 1024 * 1024, 0x41));
+    log.info("Offer a 16MB file, which is over the 15MB cap.");
+    await driver.findElement(chooser).sendKeys(tooBigPath);
+    var refused = await waitForValue(driver, By.id("jwt_tools_sync_status"),
+      function (v) { return v.indexOf("Nothing was loaded") !== -1; },
+      "The oversize file was not refused.");
+    log.info("Status: " + refused);
+    assert.ok(refused.indexOf("15.0 MB") !== -1,
+      "The refusal should name the 15MB limit. Got: " + refused);
+    var after = await driver.executeScript(
+      "return document.getElementById('jwt_tools_encoded').value.length;");
+    assert.strictEqual(after, big.length,
+      "A refused file must leave the Encoded JWT field alone; its length " +
+          "changed from " + big.length + " to " + after + ".");
+    log.info("The oversize file was refused and the field was left alone.");
+
+    // Unticking hides the chooser again.
+    await click(driver, By.id("jwt_tools_load_from_file"));
+    await driver.wait(until.elementIsNotVisible(driver.findElement(chooser)),
+                      waitTime,
+                      "Unticking Load from file did not hide the chooser.");
+    log.info("Unticking Load from file hides the chooser again.");
+  } finally {
+    try {
+      fs.rmSync(fileDir, { recursive: true, force: true });
+    } catch (e) {
+      /* ignore */
+    }
+  }
+  log.debug("Leaving encodedFileLoadActivities().");
+}
+
+// A three-tier hierarchy and a token that carries it, built with the page's
+// own modules — a Root CA, an Issuing CA beneath it, and a signer certificate
+// beneath that, plus an unrelated root for the case where the chain offered
+// is somebody else's. P-256 throughout: this asserts what the page does with
+// a chain, and an RSA key pair per tier would be most of the test's runtime.
+async function buildX5cFixture() {
+  log.debug("Entering buildX5cFixture().");
+  const rootKey = await keyMaterial.generateKeyPair("ec-p256");
+  const caKey = await keyMaterial.generateKeyPair("ec-p256");
+  const signerKey = await keyMaterial.generateKeyPair("ec-p256");
+  const otherKey = await keyMaterial.generateKeyPair("ec-p256");
+
+  const root = await x509.issueCertificate({
+    profile: "root-ca",
+    subject: "CN=JWT Tools Test Root CA,O=idptools",
+    subjectPublicKey: rootKey.publicPem,
+    issuerPrivateKey: rootKey.privatePem,
+    signatureAlg: "sha256-ecdsa",
+    extensions: x509.defaultExtensions("root-ca")
+  });
+  const ca = await x509.issueCertificate({
+    profile: "issuing-ca",
+    subject: "CN=JWT Tools Test Issuing CA,O=idptools",
+    subjectPublicKey: caKey.publicPem,
+    issuer: { certificatePem: root.pem, privateKeyPem: rootKey.privatePem,
+              keyAlg: "ec-p256" },
+    signatureAlg: "sha256-ecdsa",
+    extensions: x509.defaultExtensions("issuing-ca")
+  });
+  const signer = await x509.issueCertificate({
+    profile: "tls-server",
+    subject: "CN=jwt-tools-signer.example,O=idptools",
+    subjectPublicKey: signerKey.publicPem,
+    issuer: { certificatePem: ca.pem, privateKeyPem: caKey.privatePem,
+              keyAlg: "ec-p256" },
+    signatureAlg: "sha256-ecdsa",
+    extensions: x509.defaultExtensions("tls-server")
+  });
+  const other = await x509.issueCertificate({
+    profile: "root-ca",
+    subject: "CN=Somebody Else Root CA,O=elsewhere",
+    subjectPublicKey: otherKey.publicPem,
+    issuerPrivateKey: otherKey.privatePem,
+    signatureAlg: "sha256-ecdsa",
+    extensions: x509.defaultExtensions("root-ca")
+  });
+
+  // The SAME key, certified for encipherment instead — KeyUsage
+  // keyEncipherment and dataEncipherment, and no digitalSignature. A token
+  // signed with that key and carrying this certificate verifies
+  // cryptographically and must still be refused: the certificate says the
+  // key is not for signing, which is a fact no amount of correct arithmetic
+  // over the signing input can overrule.
+  const noSign = await x509.issueCertificate({
+    profile: "key-encipherment",
+    subject: "CN=jwt-tools-encipherment-only.example,O=idptools",
+    subjectPublicKey: signerKey.publicPem,
+    issuer: { certificatePem: ca.pem, privateKeyPem: caKey.privatePem,
+              keyAlg: "ec-p256" },
+    signatureAlg: "sha256-ecdsa",
+    extensions: x509.defaultExtensions("key-encipherment")
+  });
+
+  // RFC 7515 section 4.1.6: base64 DER — NOT base64url — signer first, each
+  // certificate after it certifying the one before.
+  function der64(pem) {
+    return cryptoBytes.bytesToB64(cryptoBytes.pemToDer(pem));
+  }
+  const signed = await jwsLib.signJwsAsync({
+    algId: "ES256",
+    protectedHeader: { alg: "ES256", typ: "JWT",
+        x5c: [der64(signer.pem), der64(ca.pem), der64(root.pem)] },
+    payload: { iss: "https://x5c.example.com", sub: "x5c-subject-1" },
+    privateKey: signerKey.privatePem
+  });
+  // Same key, same issuers, same everything — except the certificate at the
+  // head of the x5c, which forbids signing.
+  const noSignSigned = await jwsLib.signJwsAsync({
+    algId: "ES256",
+    protectedHeader: { alg: "ES256", typ: "JWT",
+        x5c: [der64(noSign.pem), der64(ca.pem), der64(root.pem)] },
+    payload: { iss: "https://x5c.example.com", sub: "x5c-subject-2" },
+    privateKey: signerKey.privatePem
+  });
+  log.debug("Leaving buildX5cFixture().");
+  return { jwt: signed.serialized, signer: signer.pem, ca: ca.pem,
+           root: root.pem, other: other.pem,
+           noSignJwt: noSignSigned.serialized, noSign: noSign.pem };
+}
+
+// Put a token into the Encoded JWT field the way a paste does. setInput()
+// would send it a key at a time, which for a token carrying three
+// certificates is thousands of round trips.
+async function pasteEncoded(driver, text) {
+  log.debug("Entering pasteEncoded().");
+  await driver.executeScript(
+    "var el = document.getElementById('jwt_tools_encoded');" +
+    "el.value = arguments[0];" +
+    "el.dispatchEvent(new Event('input', { bubbles: true }));", text);
+  log.debug("Leaving pasteEncoded().");
+}
+
+// Click Verify and return what the pane says. The output box is emptied
+// first, so this waits for THIS click's answer rather than reading the
+// previous one back.
+async function clickVerify(driver) {
+  log.debug("Entering clickVerify().");
+  await driver.executeScript(
+    "document.getElementById('jwt_verification_output').value = '';");
+  await click(driver, onclickBtn("verifyJWT"));
+  var out = await waitForValue(driver, By.id("jwt_verification_output"),
+    function (v) { return v.trim().length > 0; },
+    "Verify produced no output.");
+  log.debug("Leaving clickVerify().");
+  return out;
+}
+
+async function setChainBox(driver, pem) {
+  log.debug("Entering setChainBox().");
+  await driver.executeScript(
+    "document.getElementById('verify_chain_pem').value = arguments[0];", pem);
+  log.debug("Leaving setChainBox().");
+}
+
+async function setKeyBox(driver, pem) {
+  log.debug("Entering setKeyBox().");
+  await driver.executeScript(
+    "document.getElementById('jwt_verification_key').value = arguments[0];",
+    pem);
+  log.debug("Leaving setKeyBox().");
+}
+
+// x5c, and the trust chain that turns it into an answer.
+//
+// A certificate a token carries about itself proves nothing on its own — a
+// signature that verifies against it says only that the token is internally
+// consistent, which is exactly what a forger's own certificate would also
+// say. So the assertions below are as much about the FALSE cases as the true
+// one: an intact chain missing its root, and a chain belonging to somebody
+// else, must both refuse the signature the page has just found to be
+// cryptographically valid.
+async function x5cTrustChainActivities(driver) {
+  log.debug("Entering x5cTrustChainActivities().");
+  log.info("Build a Root CA, an Issuing CA, a signer and an x5c token.");
+  var fixture = await buildX5cFixture();
+
+  await driver.get(baseUrl + "/jwt_tools.html");
+  await waitForValue(driver, By.id("jwt_tools_payload"),
+    function (v) { return v.indexOf("garbage") !== -1; },
+    "JWT Tools default payload did not load.");
+
+  log.info("Paste the x5c token into the Encoded JWT field.");
+  await pasteEncoded(driver, fixture.jwt);
+  await waitForValue(driver, By.id("jwt_verification_key"),
+    function (v) { return v.indexOf("BEGIN CERTIFICATE") !== -1; },
+    "The header's x5c did not populate the Verification Key field.");
+
+  var type = await getValue(driver, By.id("jwt_verification_type"));
+  assert.strictEqual(type, "x509",
+    "An x5c should switch the Verification Type to the certificate one. " +
+        "Got: " + type);
+  var keyField = await getValue(driver, By.id("jwt_verification_key"));
+  assert.strictEqual(keyField.trim(), fixture.signer.trim(),
+    "The Verification Key field should hold the SIGNER certificate — the " +
+        "first entry of x5c — and holds something else.");
+  var ticked = await driver.findElement(By.id("verify_chain_enabled"))
+      .isSelected();
+  assert.ok(ticked,
+    "An x5c carrying CA certificates should tick the trust-chain box.");
+  var chainShown = await driver.findElement(By.id("verify_chain_field"))
+      .isDisplayed();
+  assert.ok(chainShown,
+    "Ticking the trust-chain box should reveal the CA Trust Chain field.");
+  var chainField = await getValue(driver, By.id("verify_chain_pem"));
+  assert.strictEqual(chainField.trim(),
+    (fixture.ca + fixture.root).trim(),
+    "The CA Trust Chain field should hold everything in x5c EXCEPT the " +
+        "signer certificate, converted to PEM.");
+  log.info("x5c populated the signer certificate and the CA chain " +
+           "separately, in PEM.");
+
+  log.info("Verify with the whole chain present.");
+  var good = await clickVerify(driver);
+  log.info("Verification output:\n" + good);
+  assert.ok(good.indexOf("Signature Verified: true") === 0,
+    "A signature whose chain reaches a self-signed root should verify. " +
+        "Got:\n" + good);
+  assert.ok(good.indexOf("trust anchor") !== -1,
+    "The output should say the signer certificate reached a trust anchor. " +
+        "Got:\n" + good);
+  assert.ok(good.indexOf("JWT Tools Test Root CA") !== -1,
+    "Every link of the chain should be reported, the root included. Got:\n" +
+        good);
+
+  log.info("Verify with the root removed — the chain no longer reaches one.");
+  await setChainBox(driver, fixture.ca);
+  var noAnchor = await clickVerify(driver);
+  log.info("Verification output:\n" + noAnchor);
+  assert.ok(noAnchor.indexOf("Signature Verified: false") === 0,
+    "A chain that reaches no anchor must not report a verified signature. " +
+        "Got:\n" + noAnchor);
+  assert.ok(noAnchor.indexOf("NO TRUST ANCHOR") !== -1,
+    "The output should name the missing anchor. Got:\n" + noAnchor);
+  assert.ok(noAnchor.indexOf("cryptographically valid") !== -1,
+    "The output should still say the signature itself verified — that " +
+        "distinction is the whole point of the pane. Got:\n" + noAnchor);
+
+  log.info("Verify against somebody else's CA.");
+  await setChainBox(driver, fixture.other);
+  var wrongCa = await clickVerify(driver);
+  log.info("Verification output:\n" + wrongCa);
+  assert.ok(wrongCa.indexOf("Signature Verified: false") === 0,
+    "A chain that does not belong to this signer must not verify it. Got:\n" +
+        wrongCa);
+  assert.ok(wrongCa.indexOf("does not belong to this signer") !== -1,
+    "The output should say the chain is not this signer's. Got:\n" + wrongCa);
+
+  // A bundle is pasted in whatever order its source wrote it, and an unused
+  // certificate in it is not an error — so this is the same chain, shuffled,
+  // with a stranger's root added.
+  log.info("Verify with the chain out of order and a spare certificate.");
+  await setChainBox(driver, fixture.root + fixture.other + fixture.ca);
+  var shuffled = await clickVerify(driver);
+  log.info("Verification output:\n" + shuffled);
+  assert.ok(shuffled.indexOf("Signature Verified: true") === 0,
+    "A correct chain in the wrong order should still validate — the path " +
+        "is built by name. Got:\n" + shuffled);
+  assert.ok(shuffled.indexOf("not part of this path") !== -1,
+    "The spare certificate should be reported as unused. Got:\n" + shuffled);
+
+  // A chain is usually distributed as ONE PEM file, signer first, and that
+  // is how it gets pasted. The two fields are concatenated for the check —
+  // the first certificate is the one the signature is verified with and
+  // everything after it, in either field, is offered as its issuers — so
+  // this must reach the same verdict as the same certificates split across
+  // the two boxes above.
+  log.info("Verify with the signer and its whole chain in one field.");
+  await setChainBox(driver, "");
+  await setKeyBox(driver, fixture.signer + fixture.ca + fixture.root);
+  var bundled = await clickVerify(driver);
+  log.info("Verification output:\n" + bundled);
+  assert.ok(bundled.indexOf("Signature Verified: true") === 0,
+    "A whole chain pasted into the Verification Key field should verify — " +
+        "the signer certificate and the CA chain are checked together. " +
+        "Got:\n" + bundled);
+  assert.ok(bundled.indexOf("3 certificate(s)") !== -1,
+    "All three certificates should be in the path. Got:\n" + bundled);
+  assert.ok(bundled.indexOf("JWT Tools Test Root CA") !== -1,
+    "The root pasted with the signer should have been reached. Got:\n" +
+        bundled);
+  await setKeyBox(driver, fixture.signer);
+  await setChainBox(driver, fixture.ca + fixture.root);
+
+  log.info("Untick the box: the same token verifies with no chain check.");
+  await click(driver, By.id("verify_chain_enabled"));
+  var unchecked = await clickVerify(driver);
+  log.info("Verification output:\n" + unchecked);
+  assert.ok(unchecked.indexOf("Signature Verified: true") === 0,
+    "With the trust chain unchecked, the signature alone decides. Got:\n" +
+        unchecked);
+  assert.ok(unchecked.indexOf("Trust chain") === -1,
+    "With the box unticked no chain should be reported at all. Got:\n" +
+        unchecked);
+
+  // KEY USAGE. The certificate at the head of this token's x5c was issued
+  // for encipherment and asserts no digitalSignature bit, so the key in it
+  // may not sign — and the signature is nonetheless correct, because it was
+  // made with that key. pkijs verifies signatures and says nothing about
+  // what a key is permitted to do, so this is the case that would pass
+  // against a chain check built only out of the library.
+  log.info("A signer certificate whose KeyUsage forbids signing.");
+  await pasteEncoded(driver, fixture.noSignJwt);
+  var wanted = fixture.noSign.trim();
+  await waitForValue(driver, By.id("jwt_verification_key"),
+    function (v) { return v.trim() === wanted; },
+    "The encipherment-only token did not replace the Verification Key — " +
+        "the field already held a certificate, so this waits for THIS " +
+        "token's one rather than for any.");
+  var badUsage = await clickVerify(driver);
+  log.info("Verification output:\n" + badUsage);
+  assert.ok(badUsage.indexOf("Signature Verified: false") === 0,
+    "A certificate whose KeyUsage forbids digitalSignature must not verify " +
+        "a JWS, however good the signature is. Got:\n" + badUsage);
+  assert.ok(badUsage.indexOf("KEY USAGE FORBIDS SIGNING") !== -1,
+    "The output should say which check refused it. Got:\n" + badUsage);
+  assert.ok(badUsage.indexOf("keyEncipherment") !== -1,
+    "The output should name the usages the certificate DOES assert. Got:\n" +
+        badUsage);
+  assert.ok(badUsage.indexOf("cryptographically valid") !== -1,
+    "The output should still say the signature itself verified — the " +
+        "certificate is what refused it. Got:\n" + badUsage);
+  assert.ok(badUsage.indexOf("JWT Tools Test Root CA") !== -1,
+    "The chain still reaches the root; only the key usage refused it. " +
+        "Got:\n" + badUsage);
+
+  log.info("Untick the box: the key usage check goes with the rest of it.");
+  await click(driver, By.id("verify_chain_enabled"));
+  var usageUnchecked = await clickVerify(driver);
+  assert.ok(usageUnchecked.indexOf("Signature Verified: true") === 0,
+    "With the box unticked the signature alone decides, key usage " +
+        "included. Got:\n" + usageUnchecked);
+
+  log.info("Load a token with no x5c: what x5c filled in is cleared.");
+  await pasteEncoded(driver, fixture.jwt);
+  await waitForValue(driver, By.id("jwt_verification_key"),
+    function (v) { return v.indexOf("BEGIN CERTIFICATE") !== -1; },
+    "The x5c token did not repopulate the Verification Key field.");
+  await pasteEncoded(driver, "eyJhbGciOiJub25lIn0.eyJzdWIiOiJwbGFpbiJ9.");
+  await waitForValue(driver, By.id("jwt_verification_key"),
+    function (v) { return v.trim() === ""; },
+    "A token with no x5c must clear the certificate the previous one left " +
+        "behind — a stale chain would be checked against the new token.");
+  var leftover = await getValue(driver, By.id("verify_chain_pem"));
+  assert.strictEqual(leftover.trim(), "",
+    "The CA Trust Chain field should have been cleared with it.");
+  log.debug("Leaving x5cTrustChainActivities().");
+}
+
 async function test() {
   log.debug("Entering test().");
   // JWT Tools clicks key-download buttons. On host runs the browser is the
@@ -629,6 +1067,12 @@ async function test() {
 
     // ---- Paste the ID Token into JWT Tools and verify the decoded payload -
     await idTokenDecodeActivities(driver, id_token);
+
+    // ---- Load the Encoded JWT from a file, and refuse an oversize one -----
+    await encodedFileLoadActivities(driver);
+
+    // ---- x5c: the signer certificate, its CA chain, and the trust check ---
+    await x5cTrustChainActivities(driver);
 
     // ---- Run the standard JWT Tools activities ----------------------------
     await jwtToolsActivities(driver);

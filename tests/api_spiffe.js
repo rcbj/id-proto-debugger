@@ -39,6 +39,7 @@
 
 const assert = require("assert");
 const { Command, Option } = require("commander");
+const listeners = require("./spiffe_listeners.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -113,6 +114,27 @@ async function gate() {
     throw new Error("GET /spiffe/limits answered " + response.status);
   }
   const limits = await response.json();
+  // AND THE TWO PORTS ARE THIS MOCK'S. This file is the one of the three that
+  // survives a stranger on them — it asserts the api's STATUS-CODE contract,
+  // and another instance of the same mock answers every one of those the same
+  // way — so a run where the SPIFFE listeners lost their ports reported this
+  // job green while the two beside it failed for reasons that named neither
+  // the port nor each other. See tests/spiffe_listeners.js.
+  const verdict = await listeners.verify(STS_URL, [
+    { surface: "workloadApi", address: WORKLOAD_ADDRESS,
+      what: "the Workload API" },
+    { surface: "serverApi", address: SERVER_ADDRESS,
+      what: "the SPIRE Server API" }
+  ]);
+  if (verdict.stranger) {
+    log.debug("Leaving gate(). A stranger holds the port.");
+    throw new Error(verdict.why);
+  }
+  if (!verdict.ok) {
+    log.warn("SKIPPING: " + verdict.why);
+    log.debug("Leaving gate(). Not served over TCP.");
+    return null;
+  }
   log.debug("Leaving gate(). Available.");
   return limits;
 }

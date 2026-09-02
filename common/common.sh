@@ -1412,6 +1412,121 @@ requireStsReachable()
 }
 
 # ---------------------------------------------------------------------------
+# Require that the mock STS BOUND its two SPIFFE gRPC ports, and fail with the
+# port when it did not.
+#
+# requireStsReachable() above asks that question of the HTTP port, and the mock
+# answers it by dying: that listen has no error handler, so a stranger holding
+# 8081 leaves no container to check. THE SPIFFE LISTENERS ARE DIFFERENT AND
+# THAT IS THE HAZARD. They are optional to that service — it logs `spiffe:
+# could not bind 0.0.0.0:8181 ... EADDRINUSE` at level 50 and CARRIES ON — so
+# the stack comes up healthy, every HTTP-backed job passes, and the three
+# SPIFFE jobs spend the run talking to whatever holds those ports. That is not
+# hypothetical: it cost the 2026-09-01 run two red tests whose messages named
+# an authorization rule and a TLS chain, and a third that passed against the
+# stranger because the stranger was another instance of the same mock.
+#
+# The fact is the mock's own: GET /spiffe?format=json publishes every listener
+# with `listening` and the bind error beside it. So this asks, rather than
+# probing the ports — a probe cannot tell our listener from somebody else's,
+# which is the entire problem.
+#
+# FATAL, like requireStsReachable(). A stranger on those ports does not make
+# the SPIFFE workflow absent; it makes three jobs' results untrue, and one of
+# them writes `spiffe.adminIds` to this mock and exercises it on the other.
+#
+# node rather than jq: this reads one document with two nested arrays, every
+# launcher already runs node, and the parse belongs where the shape is known.
+#
+# $1 the mock's base URL, $2 the service name, for the message.
+# ---------------------------------------------------------------------------
+requireStsSpiffeListeners()
+{
+  echo "Entering requireStsSpiffeListeners(). url=${1}"
+  local url="${1%/}"
+  local service="${2:-sts}"
+  if [ -z "${url}" ];
+  then
+    echo "ERROR: requireStsSpiffeListeners() needs the mock's base URL." >&2
+    echo "Leaving requireStsSpiffeListeners(). No URL."
+    return 1
+  fi
+
+  local xtrace_was_on=""
+  case "$-" in
+    *x*) xtrace_was_on="yes"; set +x ;;
+  esac
+
+  local document unbound
+  # --insecure for requireStsReachable()'s own reason: this is asking what the
+  # service says about itself, not whether its certificate is trusted yet.
+  document=$(curl -s -k -m 10 "${url}/spiffe?format=json" 2>/dev/null || true)
+  if [ -z "${document}" ];
+  then
+    # No document is not a failure here. A deployment with no SPIFFE service at
+    # all is one the three jobs skip by themselves, with a reason, and inventing
+    # a stack failure from a missing endpoint would break every target that has
+    # none.
+    [ -n "${xtrace_was_on}" ] && set -x
+    echo "Leaving requireStsSpiffeListeners(). Nothing described."
+    return 0
+  fi
+
+  unbound=$(printf '%s' "${document}" | node -e '
+    let raw = "";
+    process.stdin.on("data", function (chunk) { raw += chunk; });
+    process.stdin.on("end", function () {
+      let doc = null;
+      try {
+        doc = JSON.parse(raw);
+      } catch (e) {
+        process.exit(0);
+      }
+      if (!doc || !doc.enabled) {
+        process.exit(0);
+      }
+      const surfaces = [["workloadApi", "the Workload API"],
+                        ["serverApi", "the SPIRE Server API"]];
+      surfaces.forEach(function (pair) {
+        const one = doc[pair[0]] || {};
+        (one.listeners || []).forEach(function (listener) {
+          if (listener.socket === true || listener.listening === true) {
+            return;
+          }
+          console.log(pair[1] + " on " + listener.address + ": " +
+                      (listener.error || "no reason given"));
+        });
+      });
+    });
+  ' 2>/dev/null || true)
+
+  if [ -n "${unbound}" ];
+  then
+    echo "ERROR: ${service} has SPIFFE enabled but did NOT bind:" >&2
+    # sed rather than printf's own padding: `unbound` is one line per listener
+    # and a format string indents only the first of them.
+    printf '%s\n' "${unbound}" | sed 's/^/       /' >&2
+    echo "       Under host networking that port is this machine's, so" \
+         "whoever bound it first is what answers there —" >&2
+    echo "       and it is not this mock. The SPIFFE jobs would write a" \
+         "setting to this process over HTTP and then" >&2
+    echo "       exercise it against another one over gRPC, which reads as" \
+         "an authorization bug and a TLS chain" >&2
+    echo "       failure rather than as a port. Find it BY PID, never by" \
+         "pattern:" >&2
+    echo "         ss -ltnp | grep -E ':(8092|8181)'   # then: kill <pid>" >&2
+    reportContainerLog "local-tests.yml" "${service}" 2>/dev/null || true
+    [ -n "${xtrace_was_on}" ] && set -x
+    echo "Leaving requireStsSpiffeListeners(). A port is held by somebody else."
+    return 1
+  fi
+
+  [ -n "${xtrace_was_on}" ] && set -x
+  echo "Leaving requireStsSpiffeListeners(). Every SPIFFE listener is bound."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # INSTALL THE MOCK STS'S CERTIFICATE, FOR NODE AND FOR CHROME.
 #
 # The mock serves its main port over TLS in every stack here (STS_HTTPS=true in

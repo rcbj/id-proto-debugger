@@ -913,6 +913,12 @@ COPY api/spiffe_client.js ./
 COPY api/protos/ ./protos/
 COPY tests/spiffe_engine.js tests/spiffe_protocol.js ./
 COPY tests/api_spiffe.js tests/spiffe_page.js ./
+# And the listener check the three networked ones gate on. Nothing schedules
+# it, so no cross-check notices it missing: without this line those three die
+# with MODULE_NOT_FOUND in a tenth of a second here while passing on every
+# host run — the trap `tests/random_username.js` and `tests/sts_applications.js`
+# each record above.
+COPY tests/spiffe_listeners.js ./
 # ---------------------------------------------------------------------------
 # The JWKS page. Named jwks_PAGE.js for the same reason as the three above:
 # client/src/jwks.js is bundle source and could one day be copied here, and two
