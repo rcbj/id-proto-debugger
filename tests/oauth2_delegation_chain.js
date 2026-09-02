@@ -216,6 +216,14 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const waitFor = require("./wait_for.js");
 const common = require("./jwt_vc_json_common.js");
+// THE SHARED REGISTRY MODULE, FOR THE PERMISSION HALF ONLY. The four
+// applications above are still created by this file's own code — the note at
+// provisionApplication() says why, and the reason has not changed: the
+// assertion that matters most here is an ABSENCE, and `provision()` checks
+// containment. A DELEGATED PERMISSION has no such wrinkle, so writing a second
+// copy of `delegate()` here would be exactly the fourth hand-written copy that
+// module exists to stop.
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -520,8 +528,90 @@ async function provisionApplications() {
   for (let i = 0; i < APPLICATIONS.length; i++) {
     entries.push(await provisionApplication(APPLICATIONS[i]));
   }
+  await provisionDelegatedPermissions();
   log.debug("Leaving provisionApplications(). " + entries.length + ".");
   return entries;
+}
+
+// ---------------------------------------------------------------------------
+// AND THE THREE RELATIONSHIPS BETWEEN THEM, WHICH THE FOUR ENTRIES ABOVE DO
+// NOT STATE.
+//
+// The entries say what each tier IS. They say nothing about who may reach
+// whom — and that is the whole subject of this file, so leaving it to the
+// service's permissiveness was leaving the interesting half unconfigured. Each
+// resource now exposes an API (`read` and `write`, the suite-wide default) and
+// each tier is GRANTED those permissions on the tier it forwards to:
+//
+//   webapp1 -> apigw1     https://apigw1.example.com/{read,write}
+//   apigw1  -> esb1       https://esb1.example.com/{read,write}
+//   esb1    -> sp1        https://sp1.example.com/{read,write}
+//
+// **IT CHANGES NOTHING ABOUT WHAT THIS TEST SENDS, AND THAT IS DELIBERATE.**
+// The three hops still name the next tier's BARE client_id in `scope` and the
+// two exchanges still send its URI in `audience`, exactly as the header at the
+// top of this file describes, because that is the shape the deployment being
+// copied has. A scope naming a client_id is the DEFAULT permission — the whole
+// API, unnamed — and it is not going away. What the grants add is a register
+// that agrees with the chain instead of one that has never heard of it, and
+// the ability to turn `oauth2.delegatedPermissionsEnforced` on without
+// re-provisioning anything.
+//
+// **THE BASE URI IS THE AUDIENCE EACH TIER ALREADY REGISTERED**, which is what
+// keeps the two configurations from describing two different APIs: the second
+// hop asks for `https://esb1.example.com`, so the permissions esb1 exposes
+// have to hang off that and not off a URI invented for them. `delegate()`
+// normalises it — a permission identifier is a plain concatenation, so the
+// separator has to be there — and registers the normalised spelling as an
+// audience beside the one already on the entry, so a token addressed to either
+// resolves back to the application rather than to a URL.
+//
+// webapp1 exposes NOTHING, and that is the same assertion the entries make
+// about its audience: a browser application is what a token is issued to and
+// never what one is addressed to, so an API on it would be one nobody can
+// reach. It appears here only as a client.
+// ---------------------------------------------------------------------------
+const DELEGATIONS = [
+  { client: WEBAPP, resource: GATEWAY,
+    why: "the browser application presents its token to the gateway" },
+  { client: GATEWAY, resource: ESB,
+    why: "the gateway forwards to the service bus" },
+  { client: ESB, resource: PROVIDER,
+    why: "the service bus forwards to the service at the far end" }
+];
+
+async function provisionDelegatedPermissions() {
+  log.debug("Entering provisionDelegatedPermissions().");
+  log.info("=== Granting the three delegated permission pairs ===");
+  for (let i = 0; i < DELEGATIONS.length; i++) {
+    const pair = DELEGATIONS[i];
+    await registry.delegate(stsBase(), {
+      client: pair.client,
+      resource: pair.resource,
+      // Read from the same table the hops read, so the API the permissions
+      // hang off and the audience the exchange asks for cannot drift apart.
+      baseUri: audienceOf(pair.resource),
+      why: pair.why
+    });
+  }
+  // WEBAPP1 EXPOSES NOTHING, asserted rather than assumed — `delegate()`
+  // checks containment, and an application that acquired an API would pass
+  // every check above while being the one arrangement this cast is built to
+  // exclude. The same reasoning as the empty-audience assertion on its entry.
+  const register = await registry.permissionsRegister(stsBase());
+  const exposed = (register.permissions || []).filter(function (one) {
+    return one.resource === WEBAPP;
+  });
+  assert.strictEqual(exposed.length, 0,
+    WEBAPP + " is a browser application and should expose no API, and the " +
+    "permission register says it exposes [" +
+    exposed.map(function (one) { return one.id || one.name; }).join(", ") +
+    "]. It is issued tokens and is never the audience of one, so a " +
+    "permission on it is one no client could ever be granted for a reason " +
+    "anybody would want.");
+  log.info("[permissions] " + DELEGATIONS.length + " pair(s) granted, and " +
+           WEBAPP + " exposes nothing.");
+  log.debug("Leaving provisionDelegatedPermissions().");
 }
 
 // ---------------------------------------------------------------------------

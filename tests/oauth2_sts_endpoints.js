@@ -61,6 +61,32 @@ var CLIENT_ID = "sts-endpoint-test-client";
 var RO_USER = process.env.STS_RO_USER || usernameFor("oauth2-sts-endpoints");
 
 // ---------------------------------------------------------------------------
+// THE OTHER END OF THE TOKEN EXCHANGE, WHICH USED TO BE A URL AND NOTHING ELSE.
+//
+// testOtherGrants() performs an RFC 8693 exchange for `audience:
+// https://api.example.com` — a token this client asks for and is not itself
+// the audience of, which is the whole definition of a delegation. Until now
+// nothing in the registry answered to that URI, so the act was filed against a
+// string: the delegation map drew a box labelled with a URL, and no
+// configuration anywhere said the exchange was allowed to happen.
+//
+// So the API is an application, like the three tiers in
+// `oauth2_delegation_chain.js`, and this client is GRANTED `read` and `write`
+// on it before the exchange is sent. Two consequences, both wanted: the act
+// resolves back to an application (`applications.forAudience()` is an exact
+// match on `oauthAudience`, which is why the entry registers the URI in the
+// spelling the request uses AND the normalised one the permissions hang off),
+// and the request is backed by a grant for the day
+// `oauth2.delegatedPermissionsEnforced` goes on.
+//
+// **NOTHING THIS FILE SENDS CHANGES.** The exchange still names the URI in
+// `audience` and RFC 8693 section 2.1's parameter still wins the `aud`, so the
+// assertion below it is untouched. The grant is configuration, not a request.
+// ---------------------------------------------------------------------------
+var EXCHANGE_AUDIENCE = "https://api.example.com";
+var EXCHANGE_RESOURCE = "sts-endpoint-test-api";
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 function b64u(buf) {
@@ -807,14 +833,14 @@ async function testOtherGrants(meta, verify, codeTokens) {
     grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
     subject_token: refreshed.body.access_token,
     subject_token_type: "urn:ietf:params:oauth:token-type:access_token",
-    audience: "https://api.example.com", client_id: CLIENT_ID
+    audience: EXCHANGE_AUDIENCE, client_id: CLIENT_ID
   });
   assert.strictEqual(tx.status, 200, "the token exchange failed: " + tx.raw);
   assert.strictEqual(tx.body.issued_token_type,
                      "urn:ietf:params:oauth:token-type:access_token",
     "RFC 8693: the response must say what kind of token was issued.");
   const txClaims = verify(tx.body.access_token, "the exchanged access token");
-  assert.strictEqual(txClaims.aud, "https://api.example.com",
+  assert.strictEqual(txClaims.aud, EXCHANGE_AUDIENCE,
     "the exchanged token should be for the requested audience.");
   assert.strictEqual(txClaims.sub, claimsOf(refreshed.body.access_token).sub,
     "the exchanged token should keep the subject of the token it was " +
@@ -1016,6 +1042,31 @@ async function test() {
       oauthConfidential: "FALSE"
     },
     why: "the one client this file drives every advertised endpoint with"
+  });
+
+  // The API the exchange above aims at, and the grant that says this client
+  // may aim at it. See the note beside EXCHANGE_AUDIENCE — both spellings of
+  // the URI are registered, because an audience is matched exactly and a
+  // permission base is normalised.
+  await registry.provision(registry.baseOf(stsBase), {
+    identifier: EXCHANGE_RESOURCE,
+    name: EXCHANGE_RESOURCE + " (the API the token exchange aims at)",
+    protocols: ["oauth2"],
+    fields: {
+      oauthClientId: EXCHANGE_RESOURCE,
+      oauthAudience: [EXCHANGE_AUDIENCE]
+    },
+    why: "the resource server this file's RFC 8693 exchange asks for a " +
+         "token for. It answers no request here — nothing in this suite is a " +
+         "resource server — so it registers an audience and an API and no " +
+         "grant type at all"
+  });
+  await registry.delegate(registry.baseOf(stsBase), {
+    client: CLIENT_ID,
+    resource: EXCHANGE_RESOURCE,
+    baseUri: EXCHANGE_AUDIENCE,
+    why: "the token exchange in testOtherGrants() asks for a token aimed at " +
+         "this API"
   });
 
   await testEveryAdvertisedEndpointAnswers(meta);

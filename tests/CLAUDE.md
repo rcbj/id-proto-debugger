@@ -78,7 +78,33 @@ Four things about using it, each of which is a way of getting it wrong:
 
 **`tests/sts_applications.js` needs its own `COPY` line in `tests/Dockerfile`**, the way `random_username.js` does, and for the same reason: nothing schedules it, so no cross-check notices it missing and a job that requires it dies with `MODULE_NOT_FOUND` in a tenth of a second while passing on every host run.
 
-**Three files keep hand-written copies of this and are not being migrated**: `oauth2_delegation_chain.js`, `wstrust_delegation_chain.js` and the four `federation_*` jobs, which all provisioned through `/admin-api` before the shared module existed. Each asserts more about its entries than `provision()` does — an audience that must be ABSENT, a relationship list that must be exactly one — and rewriting them to call the shared one would lose that. They are the reason it exists; they are not what it replaces.
+**Three files keep hand-written copies of this and are not being migrated**: `oauth2_delegation_chain.js`, `wstrust_delegation_chain.js` and the four `federation_*` jobs, which all provisioned through `/admin-api` before the shared module existed. Each asserts more about its entries than `provision()` does — an audience that must be ABSENT, a relationship list that must be exactly one — and rewriting them to call the shared one would lose that. They are the reason it exists; they are not what it replaces. **`oauth2_delegation_chain.js` calls the shared module for the PERMISSION half anyway**, and the distinction is the one above: the absence it asserts is about an entry, and a grant has no such wrinkle, so a private copy of `delegate()` would be the fourth hand-written copy rather than a fifth thing worth keeping.
+
+### And a job that asks for somebody ELSE'S audience grants itself the permission first
+
+`provision()` puts one application in the registry. `delegate()` — the second half of the same module, since 2026-09-01 — configures a PAIR, and it is the step this suite was skipping entirely. **Wherever an OAuth 2.0 or OIDC job asks for an access token whose audience is anything other than its own `client_id`, the target application exposes an API and the asking application is granted permissions on it, before the browser starts:**
+
+```js
+await registry.delegate(stsBase, {
+  client: "webapp1", resource: "apigw1",
+  baseUri: "https://apigw1.example.com",     // optional; read off oauthAudience
+  why: "the browser application presents its token to the gateway"
+});
+```
+
+`read` and `write` unless the caller names its own — `DEFAULT_PERMISSIONS`, and two rather than one because a resource exposing a single permission cannot show the difference between a grant that was consulted and a grant that was assumed. Both call sites at present are `oauth2_delegation_chain.js` (three pairs, one per hop) and `oauth2_sts_endpoints.js` (whose RFC 8693 exchange asks for `https://api.example.com`, which is now an application rather than a URL nothing answers to).
+
+Five things about it, each of which is a way of getting it wrong:
+
+* **The ordering is the SERVICE's rule.** A permission must be DEFINED on the resource before it can be GRANTED to a client — `updateApplication()` refuses an `oauthDelegatedPermission` naming a permission no entry defines — which is the whole reason `delegate()` does both halves in one call rather than leaving callers to make two.
+* **Defining is the one write here that is NOT idempotent.** Everything else in this registry answers `ok` with `changed: false` for a value already present, which is what makes provisioning safe to repeat and safe to race. A second permission of the same NAME is refused instead, because a permission has one description. That refusal means "it is already there" and is reconciled; every other refusal still fails the job.
+* **The base URI is the audience the resource ALREADY registered**, never one invented from its identifier. The permissions have to hang off the URI the run actually asks for, or the register describes a different API from the one the hop reaches. Omit `baseUri` and the module reads the first `oauthAudience` off the entry; a resource that has registered none is a failure that says so.
+* **The normalised base is registered as an audience too**, and that is the line nobody would guess. `oauthPermissionBaseUri` is normalised (a trailing separator is added) and `oauthAudience` is matched EXACTLY by `applications.forAudience()`, so a resource registered as `https://apigw1.example.com` exposing permissions under `https://apigw1.example.com/` would have every permission-scoped token filed against a URL no application answers to — a box in the delegation map labelled with a URL, beside the box for the application it is.
+* **It refuses nothing today, and that is why it has to be done now.** `oauth2.delegatedPermissionsEnforced` is OFF in the mock, so an ungranted permission is honoured and merely recorded as ungranted. A suite that only ever ran against the permissive default cannot tell a service that consulted the register from one that has no register — the same argument this whole section makes about registration, one attribute further on. The flag is coming; the grants are made now so that turning it on is a setting rather than a migration.
+
+**The old spelling is not being replaced.** A scope naming the target's BARE `client_id` — `scope=openid email profile offline_access apigw1` — still becomes that token's audience, and it is what every job here sends, because it is what the deployments this suite copies actually do. Read it as the DEFAULT permissions: the whole API, unnamed. A named permission (`https://apigw1.example.com/read`) is the more precise ask beside it, and the register can tell the two apart.
+
+**OAuth 2.0 and OIDC only, deliberately.** Kerberos and WS-Trust delegate too and neither is wired to this register — S4U2Proxy is policed off `msDS-AllowedToDelegateTo`, and `OnBehalfOf`/`ActAs` is policed off nothing at all. Their turn is a later change and the model will not be this one, because a delegated permission is an OAuth scope and those two families have no scopes.
 
 ## One job drives the mock with a client NOBODY HERE WROTE, and it is the only one that can
 
