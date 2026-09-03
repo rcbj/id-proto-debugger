@@ -959,6 +959,431 @@ async function x5cTrustChainActivities(driver) {
   log.debug("Leaving x5cTrustChainActivities().");
 }
 
+// ---------------------------------------------------------------------------
+// A COMPLETE CA TRUST CHAIN, and the six ways a token still fails against one.
+//
+// x5cTrustChainActivities() above asks what happens when the CHAIN is wrong:
+// truncated below its root, or somebody else's altogether. This asks the
+// harder question. Here the chain is COMPLETE and CORRECT every time — four
+// certificates, each really issued by the one above it, ending at a
+// self-signed root the path actually reaches — and the token must still be
+// refused, because reaching an anchor is not the only thing a validator has to
+// be satisfied about. Validity dates, the KeyUsage of an ISSUER rather than of
+// the signer, an impostor CA carrying the right NAME and the wrong key, and a
+// signature that is simply not the signer's each get a case, and each case
+// leaves exactly ONE thing wrong: a checker that refused everything would pass
+// a test that only read the verdict, so every assertion below names the
+// particular thing that should have been objected to.
+//
+// The positives are here for the same reason. A three-certificate chain is the
+// shortest one that has a middle at all, so it cannot show that the path
+// building walks further than one hop; these run four deep, and pass the same
+// four certificates in the wrong order and buried in the commentary an
+// `openssl x509 -text` dump puts between PEM blocks, which is how a CA bundle
+// is actually distributed.
+// ---------------------------------------------------------------------------
+
+// A profile's own extensions with one thing about them changed. The page's
+// defaults are the starting point deliberately: a certificate hand-built here
+// would be a second issuer implementation, and every case below turns on the
+// single field this alters.
+function extensionsFor(profile, mutate) {
+  log.debug("Entering extensionsFor(). profile=" + profile);
+  var extensions = x509.defaultExtensions(profile);
+  if (mutate) {
+    mutate(extensions);
+  }
+  log.debug("Leaving extensionsFor().");
+  return extensions;
+}
+
+// Root CA -> Intermediate CA -> Issuing CA -> signer, and the six tokens that
+// hang off it. Everything is P-256: this asserts what the page does with a
+// chain, and an RSA key pair per tier would be most of the test's runtime.
+async function buildDeepChainFixture() {
+  log.debug("Entering buildDeepChainFixture().");
+  var rootKey = await keyMaterial.generateKeyPair("ec-p256");
+  var interKey = await keyMaterial.generateKeyPair("ec-p256");
+  var issuingKey = await keyMaterial.generateKeyPair("ec-p256");
+  var signerKey = await keyMaterial.generateKeyPair("ec-p256");
+  var noCertSignKey = await keyMaterial.generateKeyPair("ec-p256");
+  var impostorKey = await keyMaterial.generateKeyPair("ec-p256");
+  var strangerKey = await keyMaterial.generateKeyPair("ec-p256");
+
+  var root = await x509.issueCertificate({
+    profile: "root-ca",
+    subject: "CN=JWT Tools Deep Root CA,O=idptools",
+    subjectPublicKey: rootKey.publicPem,
+    issuerPrivateKey: rootKey.privatePem,
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("root-ca")
+  });
+  var rootIssuer = { certificatePem: root.pem,
+                     privateKeyPem: rootKey.privatePem, keyAlg: "ec-p256" };
+  var inter = await x509.issueCertificate({
+    profile: "intermediate-ca",
+    subject: "CN=JWT Tools Deep Intermediate CA,O=idptools",
+    subjectPublicKey: interKey.publicPem,
+    issuer: rootIssuer,
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("intermediate-ca")
+  });
+  var interIssuer = { certificatePem: inter.pem,
+                      privateKeyPem: interKey.privatePem, keyAlg: "ec-p256" };
+  var issuing = await x509.issueCertificate({
+    profile: "issuing-ca",
+    subject: "CN=JWT Tools Deep Issuing CA,O=idptools",
+    subjectPublicKey: issuingKey.publicPem,
+    issuer: interIssuer,
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("issuing-ca")
+  });
+  var issuingIssuer = { certificatePem: issuing.pem,
+                        privateKeyPem: issuingKey.privatePem,
+                        keyAlg: "ec-p256" };
+
+  // The signer, on the profile a JWS signer should actually be issued under:
+  // digitalSignature and nonRepudiation, no serverAuth.
+  var signer = await x509.issueCertificate({
+    profile: "digital-signature",
+    subject: "CN=jwt-tools-deep-signer.example,O=idptools",
+    subjectPublicKey: signerKey.publicPem,
+    issuer: issuingIssuer,
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("digital-signature")
+  });
+
+  // THE SAME KEY AND THE SAME ISSUER, certified for a window that has closed.
+  // Nothing about the chain changes: the certificate was genuinely issued by
+  // that CA, and the CA is genuinely under the root. Only the clock refuses
+  // it, which is a fact no amount of correct arithmetic over the signing
+  // input can overrule.
+  var now = Date.now();
+  var day = 24 * 60 * 60 * 1000;
+  var expired = await x509.issueCertificate({
+    profile: "digital-signature",
+    subject: "CN=jwt-tools-expired-signer.example,O=idptools",
+    subjectPublicKey: signerKey.publicPem,
+    issuer: issuingIssuer,
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("digital-signature"),
+    notBefore: new Date(now - 900 * day).toISOString(),
+    notAfter: new Date(now - 30 * day).toISOString()
+  });
+  // And the other end of the same mistake: a certificate whose window has not
+  // opened. It is a separate case because it is a separate BUG to write —
+  // a comparison in the wrong direction reports one of these correctly and
+  // the other not at all.
+  var future = await x509.issueCertificate({
+    profile: "digital-signature",
+    subject: "CN=jwt-tools-future-signer.example,O=idptools",
+    subjectPublicKey: signerKey.publicPem,
+    issuer: issuingIssuer,
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("digital-signature"),
+    notBefore: new Date(now + 30 * day).toISOString(),
+    notAfter: new Date(now + 400 * day).toISOString()
+  });
+
+  // AN ISSUER WHOSE KEYUSAGE FORBIDS ISSUING. The bit that matters here is
+  // keyCertSign and it is the CA's, not the signer's — so this is the case a
+  // key-usage check written only about the leaf passes. Everything else about
+  // it is in order: the intermediate really issued it, and it really issued
+  // the certificate below.
+  var noCertSign = await x509.issueCertificate({
+    profile: "issuing-ca",
+    subject: "CN=JWT Tools No CertSign CA,O=idptools",
+    subjectPublicKey: noCertSignKey.publicPem,
+    issuer: interIssuer,
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("issuing-ca", function (extensions) {
+      extensions.keyUsage.usages = ["digitalSignature", "cRLSign"];
+    })
+  });
+  var underNoCertSign = await x509.issueCertificate({
+    profile: "digital-signature",
+    subject: "CN=jwt-tools-under-nocertsign.example,O=idptools",
+    subjectPublicKey: signerKey.publicPem,
+    issuer: { certificatePem: noCertSign.pem,
+              privateKeyPem: noCertSignKey.privatePem, keyAlg: "ec-p256" },
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("digital-signature")
+  });
+
+  // AN IMPOSTOR CA: the Issuing CA's distinguished name exactly, a different
+  // key, and a complete chain of its own to a root it self-signed. Offered as
+  // the signer's chain it is the one forgery that survives every check made
+  // by NAME — the issuer name matches, the path is built, an anchor is
+  // reached — and only verifying the signature on the signer certificate
+  // catches it.
+  var impostorRoot = await x509.issueCertificate({
+    profile: "root-ca",
+    subject: "CN=Impostor Root CA,O=elsewhere",
+    subjectPublicKey: strangerKey.publicPem,
+    issuerPrivateKey: strangerKey.privatePem,
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("root-ca")
+  });
+  var impostor = await x509.issueCertificate({
+    profile: "issuing-ca",
+    subject: "CN=JWT Tools Deep Issuing CA,O=idptools",
+    subjectPublicKey: impostorKey.publicPem,
+    issuer: { certificatePem: impostorRoot.pem,
+              privateKeyPem: strangerKey.privatePem, keyAlg: "ec-p256" },
+    signatureAlg: "sha256-ecdsa",
+    extensions: extensionsFor("issuing-ca")
+  });
+
+  // RFC 7515 section 4.1.6: base64 DER — NOT base64url — signer first, each
+  // certificate after it certifying the one before.
+  function der64(pem) {
+    return cryptoBytes.bytesToB64(cryptoBytes.pemToDer(pem));
+  }
+  async function tokenFor(chain, privateKeyPem, subject) {
+    var signed = await jwsLib.signJwsAsync({
+      algId: "ES256",
+      protectedHeader: { alg: "ES256", typ: "JWT", x5c: chain.map(der64) },
+      payload: { iss: "https://deep-chain.example.com", sub: subject },
+      privateKey: privateKeyPem
+    });
+    return signed.serialized;
+  }
+  var above = [issuing.pem, inter.pem, root.pem];
+  var fixture = {
+    root: root.pem,
+    inter: inter.pem,
+    issuing: issuing.pem,
+    signer: signer.pem,
+    impostor: impostor.pem,
+    impostorRoot: impostorRoot.pem,
+    expiredSigner: expired.pem,
+    futureSigner: future.pem,
+    underNoCertSign: underNoCertSign.pem,
+    jwt: await tokenFor([signer.pem].concat(above), signerKey.privatePem,
+                        "deep-chain-good"),
+    expiredJwt: await tokenFor([expired.pem].concat(above),
+                               signerKey.privatePem, "deep-chain-expired"),
+    futureJwt: await tokenFor([future.pem].concat(above),
+                              signerKey.privatePem, "deep-chain-future"),
+    noCertSignJwt: await tokenFor(
+        [underNoCertSign.pem, noCertSign.pem, inter.pem, root.pem],
+        signerKey.privatePem, "deep-chain-nocertsign"),
+    // The good certificates, and a signature made with a key that is not the
+    // one inside any of them. The chain is beyond reproach and the token is
+    // still not this signer's.
+    strangerSignedJwt: await tokenFor([signer.pem].concat(above),
+                                      strangerKey.privatePem,
+                                      "deep-chain-stranger")
+  };
+  log.debug("Leaving buildDeepChainFixture().");
+  return fixture;
+}
+
+// Wrap PEM blocks in the commentary `openssl x509 -text` writes around them,
+// which is how a CA bundle usually arrives. Nothing between an END and the
+// next BEGIN may reach the parser.
+function withOpensslCommentary(pems) {
+  log.debug("Entering withOpensslCommentary().");
+  var out = "# This bundle was written by `openssl x509 -text`.\n";
+  for (var i = 0; i < pems.length; i++) {
+    out += "Certificate:\n    Data:\n        Version: 3 (0x2)\n" +
+        "        Serial Number: (see below)\n" +
+        "    Signature Algorithm: ecdsa-with-SHA256\n" + pems[i] + "\n";
+  }
+  log.debug("Leaving withOpensslCommentary().");
+  return out;
+}
+
+// Paste a token and wait for the page to have finished with it. The `sub`
+// claim is what is waited on rather than the certificate field: two of these
+// tokens carry the SAME signer certificate and differ only in who signed
+// them, so a wait for "a certificate appeared" would pass on the previous
+// token's one.
+async function pasteAndSettle(driver, token, subject) {
+  log.debug("Entering pasteAndSettle(). sub=" + subject);
+  await pasteEncoded(driver, token);
+  await waitForValue(driver, By.id("jwt_tools_payload"),
+    function (v) { return v.indexOf(subject) !== -1; },
+    "The token whose sub is " + subject + " was not decoded into the " +
+        "JWT Payload field.");
+  await waitForValue(driver, By.id("jwt_verification_key"),
+    function (v) { return v.indexOf("BEGIN CERTIFICATE") !== -1; },
+    "The header's x5c did not populate the Verification Key field.");
+  log.debug("Leaving pasteAndSettle().");
+}
+
+async function deepTrustChainActivities(driver) {
+  log.debug("Entering deepTrustChainActivities().");
+  log.info("Build a four-tier hierarchy and the tokens that hang off it.");
+  var fixture = await buildDeepChainFixture();
+
+  await driver.get(baseUrl + "/jwt_tools.html");
+  await waitForValue(driver, By.id("jwt_tools_payload"),
+    function (v) { return v.indexOf("garbage") !== -1; },
+    "JWT Tools default payload did not load.");
+
+  // ---- POSITIVE: the whole hierarchy, signer first ------------------------
+  log.info("A token whose x5c carries all four certificates.");
+  await pasteAndSettle(driver, fixture.jwt, "deep-chain-good");
+  var signerField = await getValue(driver, By.id("jwt_verification_key"));
+  assert.strictEqual(signerField.trim(), fixture.signer.trim(),
+    "The Verification Key field should hold the signer certificate.");
+  var chainField = await getValue(driver, By.id("verify_chain_pem"));
+  assert.strictEqual(chainField.trim(),
+    (fixture.issuing + fixture.inter + fixture.root).trim(),
+    "The CA Trust Chain field should hold the three certificates above the " +
+        "signer, in x5c order.");
+
+  var good = await clickVerify(driver);
+  log.info("Verification output:\n" + good);
+  assert.ok(good.indexOf("Signature Verified: true") === 0,
+    "A four-certificate chain reaching a self-signed root should verify. " +
+        "Got:\n" + good);
+  assert.ok(good.indexOf("4 certificate(s)") !== -1,
+    "All four certificates should be in the reported path — a three-deep " +
+        "chain cannot show that the path walks past the first CA. Got:\n" +
+        good);
+  assert.ok(good.indexOf("JWT Tools Deep Intermediate CA") !== -1,
+    "The MIDDLE of the chain should be reported, not just its ends. Got:\n" +
+        good);
+  assert.ok(good.indexOf("(self-signed root)") !== -1,
+    "The output should say which certificate was the anchor. Got:\n" + good);
+  assert.ok(good.indexOf("nonRepudiation") !== -1,
+    "The signer's own key usages should be reported beside its link. Got:\n" +
+        good);
+
+  // ---- POSITIVE: the same bundle as a CA download actually arrives --------
+  log.info("The same three CAs, out of order and full of openssl commentary.");
+  await setChainBox(driver, withOpensslCommentary(
+    [fixture.root, fixture.issuing, fixture.inter]));
+  var messy = await clickVerify(driver);
+  log.info("Verification output:\n" + messy);
+  assert.ok(messy.indexOf("Signature Verified: true") === 0,
+    "A bundle in the wrong order, with text between its PEM blocks, holds " +
+        "the same chain and should reach the same verdict. Got:\n" + messy);
+  assert.ok(messy.indexOf("4 certificate(s)") !== -1,
+    "The path built from the messy bundle should still be four deep. " +
+        "Got:\n" + messy);
+  assert.ok(messy.indexOf("not part of this path") === -1,
+    "Every certificate in that bundle belongs to this path; none should be " +
+        "reported as unused. Got:\n" + messy);
+
+  // ---- NEGATIVE: the box is ticked and nothing is offered -----------------
+  log.info("Ticked, with no CA certificate anywhere.");
+  await setChainBox(driver, "");
+  var noCa = await clickVerify(driver);
+  log.info("Verification output:\n" + noCa);
+  assert.ok(noCa.indexOf("Signature Verified: false") === 0,
+    "With the check asked for and no CA supplied, nothing is established " +
+        "and the answer must not be true. Got:\n" + noCa);
+  assert.ok(noCa.indexOf("no CA certificate was supplied") !== -1,
+    "The output should say the chain field was empty rather than blame the " +
+        "signer certificate. Got:\n" + noCa);
+
+  // ---- NEGATIVE: an expired signer under a chain that is beyond reproach --
+  log.info("An EXPIRED signer certificate, chain otherwise intact.");
+  await pasteAndSettle(driver, fixture.expiredJwt, "deep-chain-expired");
+  var expired = await clickVerify(driver);
+  log.info("Verification output:\n" + expired);
+  assert.ok(expired.indexOf("Signature Verified: false") === 0,
+    "A signer certificate whose validity window has closed must not verify " +
+        "a JWS, however good its chain. Got:\n" + expired);
+  assert.ok(expired.indexOf("EXPIRED") !== -1,
+    "The output should say which check refused it. Got:\n" + expired);
+  assert.ok(expired.indexOf("cryptographically valid") !== -1,
+    "The output should still say the signature itself verified — the " +
+        "certificate is what refused it. Got:\n" + expired);
+  assert.ok(expired.indexOf("4 certificate(s)") !== -1 &&
+            expired.indexOf("(self-signed root)") !== -1,
+    "The chain still reaches the root; only the dates refused it. Got:\n" +
+        expired);
+
+  // ---- NEGATIVE: and the same mistake the other way round ----------------
+  log.info("A signer certificate whose window has not opened yet.");
+  await pasteAndSettle(driver, fixture.futureJwt, "deep-chain-future");
+  var future = await clickVerify(driver);
+  log.info("Verification output:\n" + future);
+  assert.ok(future.indexOf("Signature Verified: false") === 0,
+    "A signer certificate that is not valid yet must not verify a JWS. " +
+        "Got:\n" + future);
+  assert.ok(future.indexOf("NOT YET VALID") !== -1,
+    "The output should say the certificate is not valid YET rather than " +
+        "that it expired — a comparison written the wrong way round reports " +
+        "one of these and not the other. Got:\n" + future);
+  assert.ok(future.indexOf("EXPIRED") === -1,
+    "A certificate that is not valid yet has not expired. Got:\n" + future);
+
+  // ---- NEGATIVE: the ISSUER may not issue --------------------------------
+  log.info("An intermediate whose KeyUsage forbids issuing certificates.");
+  await pasteAndSettle(driver, fixture.noCertSignJwt,
+                       "deep-chain-nocertsign");
+  var noIssue = await clickVerify(driver);
+  log.info("Verification output:\n" + noIssue);
+  assert.ok(noIssue.indexOf("Signature Verified: false") === 0,
+    "A CA whose KeyUsage omits keyCertSign may not issue the certificate " +
+        "below it, so nothing under it is trusted. Got:\n" + noIssue);
+  assert.ok(noIssue.indexOf("KEY USAGE FORBIDS ISSUING") !== -1,
+    "The output should say which check refused it — and it is the CA's key " +
+        "usage, not the signer's, which is the case a check written only " +
+        "about the leaf would pass. Got:\n" + noIssue);
+  assert.ok(noIssue.indexOf("JWT Tools No CertSign CA") !== -1,
+    "The output should name the certificate that may not issue. Got:\n" +
+        noIssue);
+  assert.ok(noIssue.indexOf("KEY USAGE FORBIDS SIGNING") === -1,
+    "The signer's own key usage permits signing; only its issuer was " +
+        "refused. Got:\n" + noIssue);
+  assert.ok(noIssue.indexOf("cryptographically valid") !== -1,
+    "The output should still say the signature itself verified. Got:\n" +
+        noIssue);
+
+  // ---- NEGATIVE: the right name over the wrong key ------------------------
+  log.info("An impostor CA carrying the Issuing CA's name and another key.");
+  await pasteAndSettle(driver, fixture.jwt, "deep-chain-good");
+  await setChainBox(driver, fixture.impostor + fixture.impostorRoot);
+  var impostor = await clickVerify(driver);
+  log.info("Verification output:\n" + impostor);
+  assert.ok(impostor.indexOf("Signature Verified: false") === 0,
+    "A chain whose names line up and whose signatures do not must not " +
+        "verify. Got:\n" + impostor);
+  assert.ok(impostor.indexOf("SIGNATURE INVALID") !== -1,
+    "The output should say the signature on the signer certificate is what " +
+        "failed. Got:\n" + impostor);
+  assert.ok(impostor.indexOf("does not belong to this signer") === -1,
+    "This chain DOES name this signer's issuer — that is what makes it a " +
+        "forgery rather than a mix-up, and reporting it as the wrong chain " +
+        "would send the reader looking for the wrong mistake. Got:\n" +
+        impostor);
+  assert.ok(impostor.indexOf("Impostor Root CA") !== -1,
+    "The impostor's own anchor was reached and should be reported: an " +
+        "anchor is not the same thing as a trustworthy one. Got:\n" +
+        impostor);
+
+  // ---- NEGATIVE: an impeccable chain over somebody else's signature -------
+  //
+  // The mirror image of every case above: there the signature was good and
+  // the certificates were not. This token carries the real signer's whole
+  // hierarchy and was signed by a key that is in none of it.
+  log.info("The real chain, and a signature made with a stranger's key.");
+  await pasteAndSettle(driver, fixture.strangerSignedJwt,
+                       "deep-chain-stranger");
+  var stranger = await clickVerify(driver);
+  log.info("Verification output:\n" + stranger);
+  assert.ok(stranger.indexOf("Signature Verified: false") === 0,
+    "A signature that is not the signer certificate's must not verify, " +
+        "however good that certificate's chain is. Got:\n" + stranger);
+  assert.ok(stranger.indexOf("cryptographically valid") === -1,
+    "Nothing here was cryptographically valid — that sentence belongs to " +
+        "the cases where the certificate refused a good signature, and " +
+        "printing it for a bad one would invert the finding. Got:\n" +
+        stranger);
+  assert.ok(stranger.indexOf("4 certificate(s)") !== -1 &&
+            stranger.indexOf("(self-signed root)") !== -1,
+    "The chain is impeccable and should be reported as such; the two " +
+        "checks are independent and a failure of one must not suppress the " +
+        "other. Got:\n" + stranger);
+  log.debug("Leaving deepTrustChainActivities().");
+}
+
 async function test() {
   log.debug("Entering test().");
   // JWT Tools clicks key-download buttons. On host runs the browser is the
@@ -1073,6 +1498,9 @@ async function test() {
 
     // ---- x5c: the signer certificate, its CA chain, and the trust check ---
     await x5cTrustChainActivities(driver);
+
+    // ---- A COMPLETE chain, and the things that refuse a token anyway ------
+    await deepTrustChainActivities(driver);
 
     // ---- Run the standard JWT Tools activities ----------------------------
     await jwtToolsActivities(driver);
