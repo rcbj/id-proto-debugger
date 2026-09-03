@@ -991,22 +991,41 @@ function bothDeliveriesCompose() {
 // 9. THE VOCABULARY, THE HISTORIES AND THE api's TWO MODULES.
 // ---------------------------------------------------------------------------
 function theVocabularyIsSsfsTwoAndSaysWhatIsMissing() {
-  log.info("[events] SSF defines TWO event types of its own, both about the " +
-      "pipe. CAEP and RISC are the vocabularies over it and this build says " +
-      "so rather than leaving a short list to read as broken.");
-  check('exactly the two SSF types are implemented', function () {
-    assert.strictEqual(events.EVENT_URIS.length, 2);
+  log.info("[events] SSF defines TWO event types OF ITS OWN, both about the " +
+      "pipe. CAEP and RISC are the vocabularies over it — CAEP has been here " +
+      "since 2026-09-03 and is asserted by caep_engine.js — and this build " +
+      "says which are present rather than leaving a short list to read as a " +
+      "broken page.");
+  check('exactly the two SSF types are SSF\'s own', function () {
+    assert.strictEqual(events.SSF_EVENTS.length, 2,
+        'SSF 1.0 defines two events and both are about the PIPE. A third ' +
+        'here would be this workflow inventing one — the whole vocabulary ' +
+        'that is not the pipe\'s belongs to CAEP or RISC.');
     assert.ok(events.EVENT_BY_URI[events.SSF_PREFIX + 'verification']);
     assert.ok(events.EVENT_BY_URI[events.SSF_PREFIX + 'stream-updated']);
   });
-  check('both have NO subject, and that is stated', function () {
-    events.EVENTS.forEach(function (row) {
-      assert.strictEqual(row.subject, 'none',
-          row.uri + ' is about the STREAM rather than about anybody, so a ' +
-          'receiver that insisted on a subject could not be verified.');
+  check('and the catalogue is the union of the vocabularies present',
+    function () {
+      assert.strictEqual(events.EVENT_URIS.length,
+          events.SSF_EVENTS.length + events.CAEP_EVENTS.length,
+          'EVENTS is SSF_EVENTS concat CAEP_EVENTS and nothing else. A row ' +
+          'in neither would be an event type with no vocabulary, which no ' +
+          'stream could ever request.');
     });
-  });
-  check('the three families are listed and two say they are absent',
+  check('BOTH SSF EVENTS HAVE NO SUBJECT, and every CAEP one requires one',
+    function () {
+      events.SSF_EVENTS.forEach(function (row) {
+        assert.strictEqual(row.subject, 'none',
+            row.uri + ' is about the STREAM rather than about anybody, so a ' +
+            'receiver that insisted on a subject could not be verified.');
+      });
+      events.CAEP_EVENTS.forEach(function (row) {
+        assert.strictEqual(row.subject, 'required',
+            row.uri + ' is about a SESSION, and one that names nobody is ' +
+            'dropped at the far end with no error anybody sees.');
+      });
+    });
+  check('the three families are listed and RISC says it is absent',
     function () {
       assert.strictEqual(events.FAMILIES.length, 3);
       const implemented = events.FAMILIES.filter(function (row) {
@@ -1014,7 +1033,7 @@ function theVocabularyIsSsfsTwoAndSaysWhatIsMissing() {
       });
       assert.deepStrictEqual(implemented.map(function (row) {
         return row.id;
-      }), ['ssf']);
+      }), ['ssf', 'caep']);
       events.FAMILIES.forEach(function (row) {
         assert.ok(row.what.length > 40, row.id + ' has no description.');
         if (!row.implemented) {
@@ -1072,18 +1091,30 @@ function theVocabularyIsSsfsTwoAndSaysWhatIsMissing() {
     assert.ok(!events.validateEvent(uri, 'a string').ok);
     assert.ok(!events.validateEvent(uri, []).ok);
   });
-  check('describeEvents reads a whole events map', function () {
-    const map = {};
-    map[events.SSF_PREFIX + 'verification'] = { state: 's' };
-    map[events.CAEP_PREFIX + 'session-revoked'] = { reason_user: 'x' };
-    const rows = events.describeEvents(map);
-    assert.strictEqual(rows.length, 2,
-        'A SET may carry SEVERAL events — that is what the map is for — and ' +
-        'a reader that showed only the first would drop events silently.');
-    assert.strictEqual(rows[0].known, true);
-    assert.strictEqual(rows[1].known, false);
-    assert.strictEqual(rows[1].family, 'caep');
-  });
+  check('describeEvents reads a whole events map, ACROSS vocabularies',
+    function () {
+      const map = {};
+      map[events.SSF_PREFIX + 'verification'] = { state: 's' };
+      map[events.CAEP_PREFIX + 'session-revoked'] = {};
+      map[events.RISC_PREFIX + 'account-disabled'] = { reason: 'x' };
+      const rows = events.describeEvents(map);
+      assert.strictEqual(rows.length, 3,
+          'A SET may carry SEVERAL events — that is what the map is for — ' +
+          'and a reader that showed only the first would drop events ' +
+          'silently. They need not be from one vocabulary either: what a ' +
+          'transmitter sends together is what happened together.');
+      assert.strictEqual(rows[0].known, true);
+      assert.strictEqual(rows[0].family, 'ssf');
+      assert.strictEqual(rows[1].known, true,
+          'CAEP is implemented, so its types are known here now.');
+      assert.strictEqual(rows[1].family, 'caep');
+      assert.strictEqual(rows[2].known, false,
+          'RISC is not implemented and an arriving RISC event is still ' +
+          'PLACED rather than called unknown — "a RISC event this build does ' +
+          'not implement" says the transmitter is ahead of this tool rather ' +
+          'than wrong.');
+      assert.strictEqual(rows[2].family, 'risc');
+    });
   log.info("[events] OK.");
 }
 

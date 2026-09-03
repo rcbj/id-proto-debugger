@@ -354,6 +354,22 @@ const JOB_LOCKS = {
   // the transmitter's queue rather than the streams themselves.
   "ssf_protocol.js": "sts-ssf",
   "ssf_page.js": "sts-ssf",
+  // CAEP travels on the same streams and reconfigures the same service:
+  // `caep_protocol.js` turns `caep.autoEmit` OFF to prove the setting is
+  // real, and `caep.omitEventTimestamp` ON to produce the conforming event
+  // that breaks receivers. Both are restored, and not instantly — so a job
+  // reading a stream inside that window would get an event with no
+  // timestamp, or none at all where it expected one, and would report it as
+  // a transmitter that had stopped sending.
+  //
+  // `caep_page.js` is here for a second reason as well, and it is the one
+  // that would be missed: it SIGNS PEOPLE IN AND OUT at the mock, and with
+  // automatic emission on, a sign-out anywhere in this suite now puts a
+  // Security Event Token on every stream that asked for one. A job holding a
+  // stream would see events about somebody else's session arriving in the
+  // middle of its own poll.
+  "caep_protocol.js": "sts-ssf",
+  "caep_page.js": "sts-ssf",
   // `ssf_engine.js` is deliberately absent: it needs no transmitter at all,
   // so nothing it does can collide with this. `api_ssf.js` is absent for a
   // different reason — it drives the api's own receiver and never touches
@@ -2124,6 +2140,11 @@ function buildJobs() {
   //     browser call path is the one a static site has, and its own callPath
   //     section asserts that the api option is switched OFF there rather than
   //     merely marked — which is the half no other job can see.
+  //   * the three CAEP jobs follow the same three rules: `caep_engine.js` is
+  //     never gated, `caep_protocol.js` needs a transmitter and skips itself
+  //     with a reason when there is none, and `caep_page.js` needs neither an
+  //     api nor a backend — its whole subject is the page reconfiguring
+  //     itself and a session model that lives in the browser.
   //
   // WHAT A STATIC TARGET REALLY LOSES IS PUSH DELIVERY, and that is RFC 8935
   // rather than a property of this deployment: a browser cannot be an HTTP
@@ -3084,6 +3105,64 @@ function buildJobs() {
       // nothing about this page.
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
           "https://localhost:8081",
+    },
+  });
+
+  // ------------------------------------------------------------------------
+  // CAEP — the SESSION vocabulary over the pipe above, and three jobs split
+  // the same way the four SSF ones are: by what each NEEDS rather than by
+  // what it covers. A failure in the first names a member of the
+  // specification, in the second a transmitter, and in the third a page.
+  //
+  // **THE SECOND ONE IS THE ONE THAT COULD NOT EXIST BEFORE CAEP.** Every
+  // other job in this suite drives a request and reads the answer; that one
+  // signs somebody IN and waits for a Security Event Token nobody asked for.
+  // It is the only test here whose subject is something the far end decided
+  // to do.
+  // ------------------------------------------------------------------------
+  jobs.push({
+    name: "CAEP engines (the eight event types written out from the " +
+        "specification, every required member and closed enumeration, the " +
+        "four claims CAEP gives them all — reason_admin as a LANGUAGE MAP, " +
+        "which is the mistake with no symptom — the three OPEN " +
+        "enumerations, the complex subject through the pipe's own RFC 9493 " +
+        "grammar, and the session state machine's one hard refusal)",
+    script: "caep_engine.js",
+    env: {},
+  });
+
+  jobs.push({
+    name: "CAEP protocol (the eight types offered and agreed on a stream, " +
+        "AUTOMATIC EMISSION — a sign-in, a single sign-on and a sign-out " +
+        "each producing a Security Event Token nobody asked for — the " +
+        "setting that turns it off, every event emitted by hand through the " +
+        "management API, and the per-session register that outlives the " +
+        "session it describes)",
+    script: "caep_protocol.js",
+    env: {
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+          "https://localhost:8081",
+    },
+  });
+
+  jobs.push({
+    name: "CAEP page (the profile switch reconfiguring the workflow, the " +
+        "CAEP session seeded from SIX DIFFERENT OAuth2 / OIDC grants — " +
+        "including the two that issue no ID Token at all — every one of the " +
+        "eight events simulated and pushed, the state and the counters that " +
+        "follow them, and the reset that starts over)",
+    script: "caep_page.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+          "https://localhost:8081",
+      // The two the OAuth2 / OIDC jobs are given, because this one drives
+      // those pages: it runs the whole grant matrix through them so that the
+      // CAEP session is seeded from a real token set rather than a fixture.
+      DISCOVERY_ENDPOINT: env.DISCOVERY_ENDPOINT ||
+          ((env.STS_URL || "https://localhost:8081") +
+           "/.well-known/openid-configuration"),
+      CLIENT_ID: env.CLIENT_ID || "webapp1",
     },
   });
 

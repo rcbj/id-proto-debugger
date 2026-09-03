@@ -16,6 +16,57 @@ Most of them, anyway. **A handful drive the mock STS DIRECTLY over HTTP with no 
 
 `api_ssf.js` exists for four things no module test can see, and the first is the one that would be silent: **the body parser for `application/secevent+jwt`.** Neither `bodyParser.json()` nor `bodyParser.urlencoded()` touches that media type, so without the text parser `api/server.js` installs for it every push arrives as an empty body — a failure that reads as a transmitter sending nothing.
 
+**AND CAEP ADDED THREE MORE, SPLIT THE SAME WAY** — `caep_engine.js` names a
+member of the specification, `caep_protocol.js` names a transmitter, and
+`caep_page.js` names a page. Two things about that family are worth knowing
+before touching any of the three.
+
+**`caep_protocol.js` is the only test in this suite whose subject is something
+the far end DECIDED TO DO.** Every other job here drives a request and reads
+the answer; that one signs somebody in over HTTP and then waits for a Security
+Event Token nobody asked for. Two consequences follow. It drives the mock's
+sign-in screen by hand — `GET /oauth2/authorize` for the pending id, then
+`POST /authn/login` — and **stops at the session** rather than redeeming a
+code, because `startSession()` is where the event is emitted and going further
+would mean answering the consent screen, which is a setting this job holds no
+lock on. And it is in `JOB_LOCKS` under `sts-ssf` for a reason the SSF three
+did not have: with `caep.autoEmit` on, **a sign-out anywhere in this suite now
+puts an event on every stream that asked for one**, so a job holding a stream
+would see events about somebody else's session arriving in the middle of its
+own poll.
+
+**`caep_page.js` drives two grants for real and maps all eight onto the three
+SHAPES they produce.** The two are resource owner password (with `openid`, so
+an ID Token) and client credentials (no ID Token at all) — chosen because
+neither goes near a browser sign-in or a consent screen, and because those are
+the two shapes that matter to the CAEP pane. The other six reach the same
+hand-off through the same function in `oauth2_oidc_2.js`, and whether each of
+them redeems correctly is `oauth2_*.js` and `oidc_flows.js`'s subject rather
+than this one's: four sign-ins driven through the mock's consent screen here
+would be a second copy of what those jobs already own, failing for their
+reasons and reported as a CAEP defect.
+
+Two hazards in that file are recorded here because both cost a run while it was
+being written. **`oauth2_oidc_1.html` remembers the last grant** and its
+`onload()` sends a token-endpoint-only one straight on to page 2, so the second
+round trip has to clear `authorization_grant_type` first or the next helper
+times out on a field it was skipped past. And **those pages remember which
+panes were collapsed**, per browser, while `populateMetadata()` waits for the
+discovery field to be VISIBLE — so a pane the previous round trip left shut
+fails the next one with *Waiting until element is visible*, naming a field on a
+page that is perfectly fine.
+
+**AND ONE PRODUCT BUG THAT ONLY A BROWSER TEST COULD HAVE FOUND**, which is
+the best argument in this directory for the page half of a family existing at
+all. The CAEP pane redrew its eight simulate buttons on every field change, and
+a field's `change` fires on BLUR — which lands between a click's mousedown and
+its mouseup. So the button under the pointer was removed and re-created
+mid-click and the click never fired: typing a session id and then pressing a
+simulate button did nothing, once, silently, and pressing it again worked. No
+engine test could see it, no protocol test could see it, and the page test saw
+it as a token that never appeared.
+
+
 **What each individual test covers is in `docs/test-suite-map.md`** — 24 files' worth of notes, including which services each needs and what gates or skips it. Read it before changing a test you did not write, or before adding one that overlaps. What follows here is the part that applies to **every** test in the suite, and each item below has already cost a run.
 
 ## A TEST THAT DOES NOT RUN IS NOT A PASSING TEST
