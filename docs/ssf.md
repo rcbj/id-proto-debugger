@@ -10,10 +10,11 @@ receiver, or any of the four `tests/*ssf*.js`.
 delivery). The transmitter this workflow is built against is the mock STS's
 `/ssf`, whose own notes are in `sts/ssf/CLAUDE.md`.
 
-**This is part one of three.** SSF is the plumbing; **CAEP** and **RISC** are
-two different vocabularies spoken over it, and neither is implemented yet. The
-whole of this workflow is arranged so that adding one is rows in a table — see
-*The one thing to hold on to* below.
+**This is part one of three, and part two has landed.** SSF is the plumbing;
+**CAEP** and **RISC** are two different vocabularies spoken over it. CAEP has
+been here since 2026-09-03 — see **`docs/caep.md`** — and RISC has not. The
+whole of this workflow was arranged so that adding one is rows in a table, and
+the CAEP section below records what that actually cost.
 
 ---
 
@@ -77,10 +78,34 @@ API.
 two event types, that is the design going wrong**, and it will have to be undone
 twice.
 
-The page says which vocabularies are here and which are not, rather than leaving
-a two-item list to be read as a broken page: `FAMILIES` in `ssf_events.js` marks
-CAEP and RISC `implemented: false` with a sentence each, and `tests/ssf_engine.js`
-asserts that an absent family says so.
+The page says which vocabularies are here and which are not, rather than
+leaving a short list to be read as a broken page: `FAMILIES` in
+`ssf_events.js` marks RISC `implemented: false` with a sentence saying so, and
+`tests/ssf_engine.js` asserts that an absent family does.
+
+### What adding the first vocabulary actually cost
+
+The promise was rows in `ssf_events.js`'s table and nothing else. Eight rows
+later, what had to change outside that table was four things, and none of them
+is a branch naming a vocabulary:
+
+* **`client/src/caep_session.js`**, which is not vocabulary — a row says what
+  an event MEANS and that module holds what the events are ABOUT: a session,
+  the state CAEP believes it is in, and what has been said concerning it;
+* **four value types in `checkMember()`** — number, array-of-strings, object
+  and language map — which is the catalogue's own machinery;
+* on the mock, **one refusal in `transmit()`**, written against the ROW
+  (`subject: 'required'`) rather than against a family, so RISC will not
+  change it;
+* on the mock, **one rule in `streamCoversSubject()`**, without which CAEP
+  would deliver nothing at all: a stream naming a PERSON now covers a complex
+  subject naming a session of theirs. That is SSF section 4's own intent and
+  was simply unreachable while no event carried a complex subject.
+
+The page itself grew a **Profile** selector and a **CAEP session** pane, and
+narrows every event list to the chosen vocabulary. Nothing is hidden: every
+pane here is used by all three, because the pipe is the same machinery
+underneath.
 
 ---
 
@@ -590,11 +615,14 @@ has to say why.
 
 ## What this workflow deliberately does not do
 
-* **It generates no event on its own**, and neither does the mock. Every SET
-  either was asked for at the verification endpoint or was built by hand in the
-  Transmit pane. That is honest rather than unfinished: **SSF defines no event
-  about a session**, so anything that emitted one would be inventing a
-  vocabulary. It changes with CAEP.
+* **It generates no event on its own — and THE MOCK NOW DOES.** Every SET this
+  page sends was asked for at the verification endpoint, built by hand in the
+  Transmit pane, or built by the CAEP pane from a session you are simulating.
+  That asymmetry is the point rather than an inconsistency: one end of every
+  exchange has to be the one under test. On the mock, `caep.autoEmit` makes a
+  sign-in, a single sign-on and a sign-out each emit a Security Event Token
+  with nobody having asked — which is what CAEP is, and it is the sentence
+  that had to change when the second vocabulary arrived. See `docs/caep.md`.
 * **It does not retry a failed push.** `sts/ssf/ssf_http.js` argues it: a mock
   that retried would make a receiver's one-shot failure invisible, because a
   client answering 500 then 202 looks from its own logs like a client that works.

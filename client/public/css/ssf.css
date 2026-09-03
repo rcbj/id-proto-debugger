@@ -429,3 +429,48 @@ textarea.ssf-field {
 .ssf-pane > legend.dbg-legend {
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------------------------
+   THE PROFILE ROW AND THE CAEP SESSION PANE.
+   ---------------------------------------------------------------------------
+   Nothing here is a new look. Every rule below reuses a colour or a border
+   this sheet already uses, for the reason `tests/navigation.js` exists to
+   catch from the other direction: a class whose stylesheet was not loaded is
+   invisible on the page and loud in that test, and a second palette on one
+   pane would make this page read as two.
+
+   THE ONE THING THAT IS A DECISION IS `.ssf-caep-revoked`. A revoked session
+   must not read as ordinary — it is the whole point of the profile — so it
+   takes the same red `.ssf-bad` uses, and `presented` takes the green, and
+   `established` stays plain. Three states, two of which mean "alive".
+   ------------------------------------------------------------------------ */
+.ssf-profile {
+  align-items: center;
+  gap: 12px;
+}
+
+.ssf-profile-absent { color: #777; }
+
+/* The eight simulate buttons. `.ssf-buttons` already wraps and gaps; this
+   only stops one very long event name from stretching a row. */
+.ssf-caep-button { min-width: 190px; text-align: left; }
+
+.ssf-caep-state {
+  border: 1px solid #d6d6e0;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  background: #fafaff;
+}
+
+.ssf-caep-state-name { font-weight: bold; }
+.ssf-caep-established { color: #12107c; }
+.ssf-caep-presented { color: #2e7d32; }
+.ssf-caep-revoked { color: #b00; }
+
+/* One row per event type with its count. The zero rows are greyed rather than
+   dropped: "nothing has been sent of this type" is the answer to "why did
+   nothing arrive" nine times out of ten, and a table that omitted them would
+   hide exactly that. */
+.ssf-caep-counts { margin: 8px 0; }
+.ssf-caep-zero { color: #999; }

@@ -168,9 +168,12 @@ async function thePageLoadsAndTheBundleRan(driver) {
       "9493 defines eight formats and SSF adds the complex subject, so it " +
       "should have nine.");
   assert.strictEqual(counts.types, 2,
-      "The event type picker has " + counts.types + " options. SSF 1.0 " +
-      "defines two event types of its own; CAEP and RISC are later parts of " +
-      "this work.");
+      "The event type picker has " + counts.types + " options. This page " +
+      "loads in the PURE SSF profile, and SSF 1.0 defines two event types of " +
+      "its own — so a picker with ten in it means profileChanged() did not " +
+      "narrow the menu to the chosen vocabulary, and a reader would be able " +
+      "to send an event their stream was never agreed for. CAEP's eight are " +
+      "asserted in caep_page.js, which switches the profile first.");
   assert.ok(counts.algs > 20,
       "The signing algorithm picker has only " + counts.algs + " options. It " +
       "is built from jws.js's whole table, which carries the post-quantum " +
@@ -795,9 +798,12 @@ async function theAbsentVocabulariesSayTheyAreAbsent(driver) {
   assert.ok(families.indexOf("CAEP") >= 0 && families.indexOf("RISC") >= 0,
       "The page does not mention CAEP and RISC. A workflow offering two " +
       "event types where a reader expected eighteen reads as broken rather " +
-      "than as staged, so the two that are not here have to say so.");
+      "than as staged, so the vocabularies have to be named and the one " +
+      "that is not here has to say so.");
   assert.ok(families.indexOf("NOT IMPLEMENTED") >= 0,
-      "The absent vocabularies do not say they are absent.");
+      "RISC does not say it is absent. It is the third part of this work, " +
+      "and a reader who cannot tell 'this tool does not do RISC' from 'I " +
+      "have not found it yet' is being told the wrong thing by an omission.");
   log.info("[families] OK.");
   log.debug("Leaving theAbsentVocabulariesSayTheyAreAbsent().");
 }

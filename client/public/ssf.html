@@ -64,6 +64,52 @@
   collapse or expand it.</span>
 </p>
 
+<!-- ===================== Profile ===================== -->
+<div class="ssf-pane dbg-pane" id="pane_profile">
+  <legend class="dbg-legend"
+          id="profile_expand_button">Profile &mdash; which vocabulary this
+workflow speaks</legend>
+  <fieldset name="profile_fieldset" id="profile_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why this is a choice at all, and what each one changes</summary>
+    <p class="ssf-note"><strong>SSF is the pipe and not the
+    vocabulary.</strong> It says how two parties agree a stream, who the events
+    are about and how they get delivered &mdash; and exactly two events of its
+    own, both about the pipe. <strong>CAEP</strong> and <strong>RISC</strong>
+    are two different vocabularies spoken over it, and they answer two
+    different questions: CAEP says <em>this session is no longer
+    trustworthy</em>, RISC says <em>this account is no longer trustworthy</em>.
+    That distinction is the whole reason there are two specifications.</p>
+    <p class="ssf-note">Choosing one <strong>narrows every event list on this
+    page</strong> &mdash; the stream&rsquo;s <code>events_requested</code>
+    checkboxes and the <em>Transmit</em> pane&rsquo;s menu &mdash; so that a
+    stream cannot be agreed for events this page will not then send. Nothing is
+    hidden: the pipe is the same machinery underneath all three, and every
+    pane below is used by every profile. <strong>CAEP</strong> additionally
+    brings up the <em>CAEP session</em> pane, which is the thing its eight
+    events are <em>about</em>.</p>
+  </details>
+  <div class="ssf-row ssf-profile" id="ssf_profile_choices">
+    <label class="ssf-radio"><input type="radio" name="ssf_profile"
+           id="ssf_profile_ssf" value="ssf" checked
+           onchange="return ssf.profileChanged();"> Pure SSF</label>
+    <label class="ssf-radio"><input type="radio" name="ssf_profile"
+           id="ssf_profile_caep" value="caep"
+           onchange="return ssf.profileChanged();"> CAEP</label>
+    <label class="ssf-radio"><input type="radio" name="ssf_profile"
+           id="ssf_profile_risc" value="risc"
+           onchange="return ssf.profileChanged();"> RISC</label>
+    <input type="button" class="ssf-btn ssf-btn-danger" id="btn_ssf_reset"
+           value="Reset the session and start over"
+           onclick="return ssf.resetSession();"
+           title="Deletes the stream at the transmitter, drops the push inbox, empties both histories and the token set, and puts the CAEP session back to where it started. It asks first.">
+  </div>
+  <p class="ssf-status" id="ssf_profile_note"></p>
+  <div id="ssf_profile_what"></div>
+  </fieldset>
+</div>
+
 <!-- ===================== Identity and tokens ===================== -->
 <div class="ssf-pane dbg-pane" id="pane_tokens">
   <legend class="dbg-legend"
@@ -451,6 +497,191 @@ Subjects &mdash; who the stream is about</legend>
   </div>
   <p class="ssf-status" id="ssf_subject_status"></p>
   <div id="ssf_subject_findings"></div>
+  </fieldset>
+</div>
+
+<!-- ===================== CAEP session ===================== -->
+<div class="ssf-pane dbg-pane ssf-hidden" id="pane_caep">
+  <legend class="dbg-legend"
+          id="caep_expand_button">CAEP session &mdash; the thing these events
+are about</legend>
+  <fieldset name="caep_fieldset" id="caep_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why a CAEP event names a session and not a person</summary>
+    <p class="ssf-note"><strong>CAEP</strong> (OpenID Continuous Access
+    Evaluation Profile 1.0, final 2 September 2025) is the enterprise
+    <em>session</em> vocabulary. Its eight event types all say something about
+    one session, and the subject each of them carries is normally SSF&rsquo;s
+    <strong>complex</strong> subject &mdash; because <strong>the person is not
+    revoked, one session of theirs is</strong>. A subject naming only the
+    person asks a receiver to end every session that person has, which is a
+    much larger instruction than the one that was meant and looks perfectly
+    reasonable in a log.</p>
+    <p class="ssf-note">This pane holds a <strong>simulated</strong> session,
+    seeded from whatever the OAuth2 / OIDC workflow handed over. It is a model
+    and not a session anybody holds: what makes an event about a <em>real</em>
+    session is the <code>sid</code> claim, and where the ID Token carried none
+    the identifier below was generated here and says so. Every field is
+    editable, so a real one can be pasted in.</p>
+    <p class="ssf-note"><strong>Every simulate button below builds a whole
+    event, signs it and pushes it</strong> through the <em>Transmitting
+    events</em> pane &mdash; which is left visible on purpose, so that what
+    goes out can be read before and after. The session state and the counts
+    move with what was actually sent.</p>
+  </details>
+
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_caep_seed"
+           value="Fill from the ID Token"
+           onclick="return ssf.caepFillFromToken();"
+           title="Takes iss, sub, sid, acr and amr from the ID Token the OAuth2 / OIDC hand-off produced. A grant with no ID Token leaves the fields to you and says so.">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_caep_add_subject"
+           value="Add this subject to the stream"
+           onclick="return ssf.caepAddSubject();"
+           title="Adds the complex subject below to the stream, so the transmitter will deliver events about this session to it.">
+    <input type="button" class="ssf-btn ssf-btn-danger" id="btn_caep_reset"
+           value="Reset this session only"
+           onclick="return ssf.resetCaepSession();"
+           title="Clears the state, the counters and what has been said, and keeps the identity. Nothing at the transmitter is touched.">
+  </div>
+  <p class="ssf-status" id="caep_seed_note"></p>
+
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="caep_iss">iss</label>
+      <input class="ssf-field" type="text" id="caep_iss"
+             placeholder="https://sts.example.com"
+             title="The issuer the receiver already knows this person by. It is what an ID Token's `iss` said.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_sub">sub</label>
+      <input class="ssf-field" type="text" id="caep_sub"
+             placeholder="the subject identifier"
+             title="The person. With `iss` above it makes the RFC 9493 issuer_subject_id a receiver already holds.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_sid">sid &mdash; the session</label>
+      <input class="ssf-field ssf-mono" type="text" id="caep_sid"
+             placeholder="filled from the ID Token, or generated here"
+             title="OpenID Connect's `sid` claim. An event naming a session identifier this page invented is about nothing at the far end, which is why the source is drawn beside it.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_device">device</label>
+      <input class="ssf-field ssf-mono" type="text" id="caep_device"
+             placeholder="an opaque device identifier"
+             title="Named in the subject only when the box below is ticked. A device-compliance-change about a person on two devices is meaningless without it.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_tenant">tenant</label>
+      <input class="ssf-field" type="text" id="caep_tenant"
+             placeholder="optional"
+             title="Named in the subject only when the box below is ticked.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_acr">acr / amr</label>
+      <input class="ssf-field ssf-narrow" type="text" id="caep_acr"
+             placeholder="acr"
+             title="The authentication context class the session was established at.">
+      <input class="ssf-field ssf-narrow" type="text" id="caep_amr"
+             placeholder="amr, space separated"
+             title="The authentication methods. It crosses the wire as an ARRAY — a bare string is refused, because a session authenticated two ways has two values.">
+    </div>
+  </div>
+
+  <div class="ssf-row">
+    <label class="ssf-radio"><input type="checkbox" id="caep_subject_user"
+           checked
+           title="The person, as an RFC 9493 issuer_subject_id.">
+           user</label>
+    <label class="ssf-radio"><input type="checkbox" id="caep_subject_session"
+           checked
+           title="The session, as an opaque identifier. Clearing this is how to see what a receiver does with an event that names only the person.">
+           session</label>
+    <label class="ssf-radio"><input type="checkbox" id="caep_subject_device"
+           title="The device. Needed for device-compliance-change to mean anything.">
+           device</label>
+    <label class="ssf-radio"><input type="checkbox" id="caep_subject_tenant"
+           title="The tenant.">
+           tenant</label>
+  </div>
+  <label class="ssf-label" for="caep_subject_json">sub_id &mdash; the complex
+  subject this page will send</label>
+  <textarea class="ssf-field ssf-mono" id="caep_subject_json" rows="6" readonly
+            title="Built from the fields above through the same RFC 9493 grammar the Subjects pane uses. Checked against it, and the findings are drawn below."></textarea>
+  <div id="caep_subject_findings"></div>
+
+  <details class="ssf-more">
+    <summary>The four claims CAEP gives every one of its events</summary>
+    <p class="ssf-note">All four are <strong>optional</strong> (CAEP section
+    2), which surprises people about the first: a receiver deciding whether to
+    end a session wants <code>event_timestamp</code> more than anything else in
+    the payload, and a conforming transmitter need not send one. Leaving it out
+    here is how a receiver that assumes it is present gets to fail in a test.
+    <code>reason_admin</code> and <code>reason_user</code> are
+    <strong>objects keyed by a language tag</strong> and not strings &mdash;
+    the commonest mistake in the whole profile, and the one with no symptom,
+    because a receiver indexing by language reads nothing from a string and
+    reports no error.</p>
+  </details>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="caep_initiating">initiating_entity</label>
+      <select class="ssf-field" id="caep_initiating"
+              title="It is the member that lets a receiver tell 'an administrator revoked this' from 'a risk engine did'.">
+        <option value="">(omit it)</option>
+        <option value="admin">admin</option>
+        <option value="user">user</option>
+        <option value="policy" selected>policy</option>
+        <option value="system">system</option>
+      </select>
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_timestamp">event_timestamp</label>
+      <select class="ssf-field" id="caep_timestamp"
+              title="A NUMBER of seconds since the epoch. It is not the SET's `toe` and it is not `iat`.">
+        <option value="now">now</option>
+        <option value="hour">an hour ago &mdash; the token is minted now
+        </option>
+        <option value="omit">omit it &mdash; legal, and what breaks receivers
+        </option>
+      </select>
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_language">language tag</label>
+      <input class="ssf-field ssf-narrow" type="text" id="caep_language"
+             value="en"
+             title="The BCP 47 tag the two reason members are keyed under.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_reason_admin">reason_admin</label>
+      <input class="ssf-field" type="text" id="caep_reason_admin"
+             placeholder="why, for a log and an auditor">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_reason_user">reason_user</label>
+      <input class="ssf-field" type="text" id="caep_reason_user"
+             placeholder="why, in words meant for the person">
+    </div>
+  </div>
+
+  <details class="ssf-more">
+    <summary>What each button sends, and which of them a real transmitter
+      sends on its own</summary>
+    <p class="ssf-note">Three of the eight describe things a transmitter can
+    actually observe &mdash; a session starting, being presented and ending
+    &mdash; and this stack&rsquo;s mock sends those <strong>by itself</strong>
+    when you sign in, sign in again and sign out. The other five describe
+    things nothing observes for you: no device reports compliance to a mock and
+    no risk engine talks to one. Every button here builds the event this page
+    would send as the <em>transmitter</em>, whichever half you are testing.</p>
+  </details>
+  <div class="ssf-buttons" id="caep_simulate"></div>
+  <p class="ssf-status" id="caep_simulate_status"></p>
+
+  <div id="caep_state"></div>
+  <div id="caep_counts"></div>
+  <div id="caep_log"></div>
   </fieldset>
 </div>
 

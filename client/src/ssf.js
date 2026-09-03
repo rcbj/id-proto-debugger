@@ -56,6 +56,10 @@ var bunyan = require("bunyan");
 var ssfClient = require("./ssf_client");
 var ssfEvents = require("./ssf_events");
 var ssfHistory = require("./ssf_history");
+// The CAEP session model. Not vocabulary — that is `ssf_events.js` — but the
+// thing its eight event types are ABOUT, and DOM-free for the same reason
+// every other engine here is.
+var caepSession = require("./caep_session");
 var handoff = require("./token_handoff");
 var opHistory = require("./op_history");
 // For DISCOVERY_INFO_KEY alone — the key the OAuth2 / OIDC workflow stores its
@@ -111,7 +115,15 @@ var REMEMBERED = [
   'ssf_status_value', 'ssf_status_reason', 'ssf_verify_state',
   'ssf_poll_max', 'ssf_tx_type', 'ssf_tx_alg', 'ssf_tx_iss', 'ssf_tx_aud',
   'ssf_tx_txn', 'ssf_tx_media', 'ssf_tx_payload', 'ssf_tx_subject',
-  'ssf_tx_endpoint', 'ssf_auth_scheme', 'ssf_basic_user', 'ssf_verify_alg'
+  'ssf_tx_endpoint', 'ssf_auth_scheme', 'ssf_basic_user', 'ssf_verify_alg',
+  // The CAEP session's identity and its four common claims. None of them is a
+  // credential: an `iss`/`sub`/`sid` triple is who a session belongs to, which
+  // is exactly what the SETs on this page say out loud, and a reason message
+  // is prose. The profile itself is stored separately — it is a radio group,
+  // and `val()` reads one element by id.
+  'caep_iss', 'caep_sub', 'caep_sid', 'caep_device', 'caep_tenant',
+  'caep_acr', 'caep_amr', 'caep_initiating', 'caep_timestamp',
+  'caep_language', 'caep_reason_admin', 'caep_reason_user'
 ];
 
 // The operations log. `classPrefix` is `ssf` because this page does not link
@@ -1204,7 +1216,24 @@ function renderEventChoices(read) {
       '[object Array]') {
     supported = metadata.events_supported.map(String);
   }
-  var list = supported.length ? supported : ssfEvents.EVENT_URIS;
+  // NARROWED TO THE CHOSEN VOCABULARY, and both halves matter. A transmitter
+  // that publishes `events_supported` may well offer all three vocabularies
+  // at once, and a reader who has chosen CAEP does not want RISC's types in
+  // the list; a transmitter that publishes none falls back to what THIS BUILD
+  // implements, narrowed the same way. Narrowing the Transmit menu without
+  // narrowing this would let somebody agree a stream for types the page then
+  // has no way to send.
+  var family = ssfEvents.profileOf(currentProfile).family;
+  var inFamily = function (uri) {
+    var row = ssfEvents.EVENT_BY_URI[uri];
+    return row ? row.family === family
+      : ssfEvents.familyOf(uri) === family;
+  };
+  var list = (supported.length
+    ? supported
+    : ssfEvents.eventsForFamily(family).map(function (row) {
+        return row.uri;
+      })).filter(inFamily);
   list.forEach(function (uri) {
     var row = ssfEvents.EVENT_BY_URI[uri];
     var label = node('label');
@@ -2243,15 +2272,45 @@ function fillEventTypes() {
   log.debug("Entering fillEventTypes().");
   var select = el('ssf_tx_type');
   if (select) {
-    ssfEvents.EVENTS.forEach(function (row) {
+    // NARROWED TO THE CHOSEN VOCABULARY, and rebuilt rather than appended to,
+    // because this function is called again on every profile change. An
+    // append would leave the previous vocabulary's types in the menu, which
+    // is a workflow offering to send an event its stream was never agreed
+    // for — and SSF has no refusal for that, so it would simply never
+    // arrive.
+    while (select.firstChild) {
+      select.removeChild(select.firstChild);
+    }
+    var offered = ssfEvents.eventsForFamily(
+      ssfEvents.profileOf(currentProfile).family);
+    offered.forEach(function (row) {
       var option = document.createElement('option');
       option.value = row.uri;
       option.textContent = row.name + ' — ' + row.uri;
       select.appendChild(option);
     });
+    if (!offered.length) {
+      // A vocabulary with no rows is a REAL state — RISC today — and the
+      // menu says so rather than being empty, which reads as a broken page.
+      var none = document.createElement('option');
+      none.value = '';
+      none.textContent = 'This build implements no event type in this ' +
+        'vocabulary yet';
+      select.appendChild(none);
+    }
   }
   var algs = el('ssf_tx_alg');
   var verifyAlgs = el('ssf_verify_alg');
+  // ONCE, however often this function runs. It is called again on every
+  // profile change to rebuild the event menu above, and the algorithm menus
+  // have nothing to do with the vocabulary — appending to them a second time
+  // would give this page ninety algorithms with every name twice.
+  if (algs && algs.options.length) {
+    renderFamilies();
+    log.debug("Leaving fillEventTypes(). The algorithm menus are already " +
+        "filled.");
+    return;
+  }
   jws.algIds().forEach(function (id) {
     var spec = jws.algSpec(id);
     if (spec.alg === 'none') {
@@ -2453,28 +2512,39 @@ function renderBuiltEvent(claims, token, eventVerdict) {
   log.debug("Leaving renderBuiltEvent().");
 }
 
+// The button's handler, which answers false because that is what an inline
+// `onclick` on this page returns. The work is in `pushEventAsync()` below —
+// split so that `caepSimulate()` can wait for the outcome and count what was
+// actually sent rather than what it meant to send.
 function pushEvent() {
   log.debug("Entering pushEvent().");
+  pushEventAsync();
+  log.debug("Leaving pushEvent().");
+  return false;
+}
+
+function pushEventAsync() {
+  log.debug("Entering pushEventAsync().");
   var token = val('ssf_tx_token');
   var send = token ? Promise.resolve(token) : buildEvent();
-  Promise.resolve(send).then(function (signed) {
+  return Promise.resolve(send).then(function (signed) {
     if (!signed) {
-      log.debug("pushEvent(): nothing to send.");
-      return;
+      log.debug("Leaving pushEventAsync(). Nothing to send.");
+      return { jti: '', outcome: 'not built' };
     }
     var url = val('ssf_tx_endpoint');
     if (!url) {
       setStatus('ssf_tx_status',
         'There is no receiver endpoint to push to.', 'bad');
-      log.debug("pushEvent(): no endpoint.");
-      return;
+      log.debug("Leaving pushEventAsync(). No endpoint.");
+      return { jti: '', outcome: 'no receiver endpoint' };
     }
     var push = ssfClient.buildPushRequest(signed, {
       mediaType: val('ssf_tx_media'),
       authorizationHeader: val('ssf_tx_auth')
     });
     var entry = recordCall('push event', url, val('ssf_stream_id'));
-    request({ method: 'POST', url: url, headers: push.headers,
+    return request({ method: 'POST', url: url, headers: push.headers,
       body: push.body }).then(function (answer) {
       drawExchange(answer.exchange);
       var verdict = ssfClient.readPushResponse(answer.status, answer.body);
@@ -2512,10 +2582,12 @@ function pushEvent() {
           : refusal(answer)),
         verdict.accepted ? 'ok' : 'bad');
       renderMessages();
-      log.debug("Leaving pushEvent(). " + verdict.status);
+      log.debug("Leaving pushEventAsync(). " + verdict.status);
+      return { jti: parsed.ok ? String(parsed.claims.jti || '') : '',
+        outcome: verdict.accepted ? 'accepted'
+          : (verdict.refused ? 'refused by the receiver' : 'not delivered') };
     });
   });
-  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -2737,12 +2809,627 @@ function wirePanes() {
   return wired;
 }
 
+// ===========================================================================
+// THE PROFILE, AND THE CAEP SESSION PANE.
+// ===========================================================================
+
+// Which vocabulary this workflow is speaking. It is stored under its own key
+// rather than through REMEMBERED, because the control is a RADIO GROUP and
+// `val()` reads an element by id — three ids, one value.
+var PROFILE_KEY = 'ssf_profile';
+var currentProfile = 'ssf';
+
+// The simulated session the CAEP pane is about. Never null after onload(), so
+// that nothing below has to guard: a page with no tokens still has a session
+// model, with every identifier generated here and saying so.
+var caepModel = null;
+
+// Which of the four complex-subject members the pane is currently offering.
+// `user` and `session` are ticked by default because together they are what
+// makes a CAEP event mean "this session of this person's" — the sentence the
+// whole profile exists to carry.
+var CAEP_SUBJECT_BOXES = [
+  { id: 'caep_subject_user', option: 'includeUser' },
+  { id: 'caep_subject_session', option: 'includeSession' },
+  { id: 'caep_subject_device', option: 'includeDevice' },
+  { id: 'caep_subject_tenant', option: 'includeTenant' }
+];
+
+function readProfile() {
+  log.debug("Entering readProfile().");
+  var chosen = 'ssf';
+  ssfEvents.PROFILES.forEach(function (row) {
+    var box = el('ssf_profile_' + row.id);
+    if (box && box.checked) {
+      chosen = row.id;
+    }
+  });
+  log.debug("Leaving readProfile(). " + chosen);
+  return chosen;
+}
+
+// ---------------------------------------------------------------------------
+// THE PROFILE CHANGED, AND EVERY EVENT LIST ON THE PAGE FOLLOWS IT.
+//
+// **BOTH LISTS AND NOT ONE.** The stream's `events_requested` checkboxes and
+// the Transmit pane's menu are narrowed together, because narrowing only the
+// menu would let somebody agree a stream for event types this page then has no
+// way to send — and SSF has no refusal for that. The stream would look
+// perfectly healthy and nothing would ever arrive on it.
+//
+// **NOTHING IS HIDDEN EXCEPT THE CAEP PANE.** Every other pane on this page is
+// used by all three profiles: the pipe is the same machinery underneath, and a
+// workflow that hid the Stream pane in CAEP mode would be hiding the thing
+// CAEP events travel on. What CAEP adds is the session those events are about,
+// which has no meaning under the other two.
+// ---------------------------------------------------------------------------
+// The profile a reader last chose, out of storage. An unknown value — an
+// older stored preference, a hand-edited localStorage — falls back to the pipe
+// rather than throwing: a page that failed to load because of a stored string
+// would be the worst possible way to find that out.
+function restoreProfile() {
+  log.debug("Entering restoreProfile().");
+  var stored = '';
+  try {
+    stored = localStorage.getItem(PROFILE_KEY) || '';
+  } catch (e) {
+    log.debug("restoreProfile(): no storage — " + e.message);
+  }
+  currentProfile = ssfEvents.profileOf(stored).id;
+  var box = el('ssf_profile_' + currentProfile);
+  if (box) {
+    box.checked = true;
+  }
+  log.debug("Leaving restoreProfile(). " + currentProfile);
+  return currentProfile;
+}
+
+function profileChanged() {
+  log.debug("Entering profileChanged().");
+  currentProfile = readProfile();
+  try {
+    localStorage.setItem(PROFILE_KEY, currentProfile);
+  } catch (e) {
+    log.debug("profileChanged(): no storage — " + e.message);
+  }
+  var row = ssfEvents.profileOf(currentProfile);
+  show('pane_caep', currentProfile === 'caep');
+  // The simulate buttons are built once per vocabulary — see
+  // renderCaepButtons() for why a rebuild on every draw swallowed a click —
+  // so THIS is the one place that has to throw them away.
+  clear('caep_simulate');
+  fillEventTypes();
+  renderEventChoices(null);
+  transmitTypeChanged();
+  renderProfileNote(row);
+  if (currentProfile === 'caep') {
+    renderCaep();
+  }
+  saveState();
+  log.debug("Leaving profileChanged(). " + currentProfile);
+  return false;
+}
+
+// What the chosen profile is, and — for RISC — what it is not. An
+// unimplemented vocabulary is drawn saying so rather than left as an option
+// that silently does nothing, which is the same argument `renderFamilies()`
+// makes about the families table.
+function renderProfileNote(row) {
+  log.debug("Entering renderProfileNote().");
+  var host = clear('ssf_profile_what');
+  if (!host) {
+    log.debug("Leaving renderProfileNote(). No host.");
+    return;
+  }
+  var box = node('div', 'ssf-family' +
+    (row.implemented ? '' : ' ssf-family-absent'));
+  box.appendChild(node('span', 'ssf-family-name', row.label));
+  box.appendChild(document.createTextNode(' — ' + row.what));
+  host.appendChild(box);
+  var types = ssfEvents.eventsForFamily(row.family);
+  if (row.implemented) {
+    setText('ssf_profile_note', types.length + ' event type(s). Every event ' +
+      'list on this page now offers these and nothing else.', 'ssf-status');
+  } else {
+    setText('ssf_profile_note', 'This vocabulary is NOT IMPLEMENTED YET, so ' +
+      'no event type is offered and a stream created now would carry an ' +
+      'empty events_requested. The pipe below still works — discovery, the ' +
+      'stream lifecycle, subjects, both deliveries and the SET envelope are ' +
+      'the same machinery for all three vocabularies, which is the whole ' +
+      'reason SSF is a separate specification.', 'ssf-status ssf-pending');
+  }
+  log.debug("Leaving renderProfileNote(). " + row.id);
+}
+
+// ---------------------------------------------------------------------------
+// THE CAEP PANE.
+// ---------------------------------------------------------------------------
+
+// Take the session's identity out of the ID Token the hand-off produced. It
+// reads CLAIMS and verifies nothing, and says so: this workflow does not
+// consume an ID Token, so checking its signature here would answer a question
+// nothing on this page asks — the JWT Tools page is where that is done
+// properly. What it does report is which claims were actually there, because
+// an event naming a session identifier this page invented is about nothing at
+// the far end.
+function caepFillFromToken() {
+  log.debug("Entering caepFillFromToken().");
+  var claims = val('ssf_id_token') ? claimsOf(val('ssf_id_token')) : null;
+  var seeded = caepSession.seedFrom(claims || {}, caepModel);
+  caepModel = seeded.session;
+  setVal('caep_iss', caepModel.iss);
+  setVal('caep_sub', caepModel.sub);
+  setVal('caep_sid', caepModel.sid);
+  setVal('caep_device', caepModel.deviceId);
+  setVal('caep_tenant', caepModel.tenant);
+  setVal('caep_acr', caepModel.acr);
+  setVal('caep_amr', caepModel.amr.join(' '));
+  if (!claims) {
+    setText('caep_seed_note', 'There is no ID Token on this page, so nothing ' +
+      'was taken from one. Every field below is yours to fill in — and that ' +
+      'is the ordinary case for a grant that issues no ID Token at all, ' +
+      'which client credentials and resource owner password both are.',
+      'ssf-status ssf-pending');
+  } else if (seeded.problems.length) {
+    setText('caep_seed_note', seeded.problems.join(' '),
+      'ssf-status ssf-pending');
+  } else {
+    setText('caep_seed_note', 'Filled from the ID Token, WITHOUT VERIFYING ' +
+      'IT — this workflow does not consume an ID Token, so checking its ' +
+      'signature here would answer a question nothing on this page asks. ' +
+      'The JWT Tools page is where that is done properly.',
+      'ssf-status ssf-ok');
+  }
+  renderCaep();
+  saveState();
+  log.debug("Leaving caepFillFromToken().");
+  return false;
+}
+
+// The model, from whatever is in the fields. It is read on every draw rather
+// than kept in step by an onchange per field, for the reason saveState() is
+// one listener: this pane has a dozen fields and an attribute per field is a
+// dozen chances to forget one.
+function caepFromFields() {
+  log.debug("Entering caepFromFields().");
+  if (!caepModel) {
+    caepModel = caepSession.newSession({});
+  }
+  caepModel.iss = val('caep_iss');
+  caepModel.sub = val('caep_sub');
+  if (val('caep_sid')) {
+    caepModel.sid = val('caep_sid');
+  }
+  caepModel.deviceId = val('caep_device');
+  caepModel.tenant = val('caep_tenant');
+  caepModel.acr = val('caep_acr');
+  caepModel.amr = val('caep_amr').trim()
+    ? val('caep_amr').trim().split(/[\s,]+/) : [];
+  log.debug("Leaving caepFromFields(). sid=" + caepModel.sid);
+  return caepModel;
+}
+
+function caepSubjectOptions() {
+  log.debug("Entering caepSubjectOptions().");
+  var options = {};
+  CAEP_SUBJECT_BOXES.forEach(function (row) {
+    options[row.option] = isOn(row.id);
+  });
+  log.debug("Leaving caepSubjectOptions().");
+  return options;
+}
+
+// The whole pane: the subject, the state, the counts and the log. One function
+// rather than four call sites, because every one of the four changes when any
+// one of them does — a simulate moves the state AND the counts AND the log.
+function renderCaep() {
+  log.debug("Entering renderCaep().");
+  var session = caepFromFields();
+  var subject = caepSession.complexSubject(session, caepSubjectOptions());
+  setVal('caep_subject_json', pretty(subject));
+  renderCaepSubjectFindings(subject);
+  renderCaepButtons();
+  renderCaepState(session);
+  log.debug("Leaving renderCaep().");
+}
+
+// What the pipe's own RFC 9493 grammar says about the subject this pane
+// composed. It is drawn even when it is fine, because "checked and correct" and
+// "not checked" are different things to a reader — the same argument
+// `inspectSet()` makes about reporting every check by name.
+function renderCaepSubjectFindings(subject) {
+  log.debug("Entering renderCaepSubjectFindings().");
+  var host = clear('caep_subject_findings');
+  if (!host) {
+    log.debug("Leaving renderCaepSubjectFindings(). No host.");
+    return;
+  }
+  var verdict = caepSession.checkSubject(subject, criticalMembers());
+  if (verdict.ok) {
+    host.appendChild(node('p', 'ssf-note ssf-ok',
+      'Valid against RFC 9493 and SSF section 4 — ' +
+      ssfClient.describeSubject(subject) + '.'));
+  }
+  (verdict.errors || []).forEach(function (text) {
+    host.appendChild(node('p', 'ssf-note ssf-bad', text));
+  });
+  (verdict.warnings || []).forEach(function (text) {
+    host.appendChild(node('p', 'ssf-note ssf-pending', text));
+  });
+  if (!isOn('caep_subject_session')) {
+    host.appendChild(node('p', 'ssf-note ssf-pending',
+      'THE SESSION IS NOT IN THIS SUBJECT. What goes out then names only ' +
+      'the person, which asks a receiver to end EVERY session they have — a ' +
+      'much larger instruction than the one CAEP means, and one that looks ' +
+      'perfectly reasonable in a log. It is left possible on purpose: it is ' +
+      'the single most useful thing to send at a receiver under test.'));
+  }
+  log.debug("Leaving renderCaepSubjectFindings(). ok=" + verdict.ok);
+}
+
+// ---------------------------------------------------------------------------
+// ONE BUTTON PER EVENT TYPE, BUILT ONCE.
+//
+// Built rather than written into the markup, so that RISC's arrival is rows in
+// `ssf_events.js` and nothing here.
+//
+// **AND REBUILT ONLY WHEN THE VOCABULARY CHANGES, WHICH IS NOT A TIDINESS
+// POINT — IT IS THE FIX FOR A CLICK THAT WAS BEING SWALLOWED.** Every field in
+// this pane redraws it, and a redraw that replaced these buttons did so on the
+// BLUR of the field somebody had just typed in: the browser fires `change` on
+// blur, which lands between a click's mousedown and its mouseup, so the button
+// under the pointer was removed and re-created mid-click and the click event
+// never fired at all. Typing a session id and then pressing a simulate button
+// did nothing, once, silently — and pressing it a second time worked, which is
+// the worst possible symptom.
+//
+// The list depends on the PROFILE and on nothing else, so it is left alone
+// unless that changed.
+// ---------------------------------------------------------------------------
+function renderCaepButtons() {
+  log.debug("Entering renderCaepButtons().");
+  var host = el('caep_simulate');
+  if (!host) {
+    log.debug("Leaving renderCaepButtons(). No host.");
+    return;
+  }
+  var wanted = ssfEvents.eventsForFamily('caep');
+  if (host.children.length === wanted.length) {
+    log.debug("Leaving renderCaepButtons(). Already built.");
+    return;
+  }
+  clear('caep_simulate');
+  wanted.forEach(function (row) {
+    var button = document.createElement('input');
+    button.type = 'button';
+    button.className = 'ssf-btn ssf-caep-button';
+    button.id = 'btn_caep_' + row.uri.slice(ssfEvents.CAEP_PREFIX.length);
+    button.value = row.name;
+    button.title = row.what;
+    button.addEventListener('click', (function (uri) {
+      return function () {
+        caepSimulate(uri);
+        return false;
+      };
+    })(row.uri));
+    host.appendChild(button);
+  });
+  log.debug("Leaving renderCaepButtons().");
+}
+
+function renderCaepState(session) {
+  log.debug("Entering renderCaepState().");
+  var host = clear('caep_state');
+  if (!host) {
+    log.debug("Leaving renderCaepState(). No host.");
+    return;
+  }
+  var view = caepSession.describe(session);
+  var box = node('div', 'ssf-caep-state');
+  var line = node('p');
+  line.appendChild(document.createTextNode('State: '));
+  line.appendChild(node('span',
+    'ssf-caep-state-name ssf-caep-' + view.state, view.state));
+  line.appendChild(document.createTextNode(' — ' + view.stateWhat));
+  box.appendChild(line);
+  [['Assurance', view.assurance], ['Device', view.compliance],
+   ['Risk', view.risk + (view.riskReason ? ' (' + view.riskReason + ')' : '')]
+  ].forEach(function (pair) {
+    box.appendChild(node('p', 'ssf-note', pair[0] + ': ' +
+      (String(pair[1]).trim() ? pair[1]
+        : 'nothing has been said — which is not the same as "fine"')));
+  });
+  if (Object.keys(view.claims).length) {
+    box.appendChild(node('p', 'ssf-note', 'Claims changed: ' +
+      JSON.stringify(view.claims)));
+  }
+  if (view.credentials.length) {
+    box.appendChild(node('p', 'ssf-note', 'Credentials: ' +
+      view.credentials.map(function (one) {
+        return one.changeType + ' ' + one.credentialType;
+      }).join(', ')));
+  }
+  host.appendChild(box);
+  renderCaepCounts(view);
+  renderCaepLog(view);
+  log.debug("Leaving renderCaepState(). " + view.state);
+}
+
+// A row per event type WITH ITS COUNT, including the zeroes. The zeroes are
+// the point: "nothing of this type has been sent" is the answer to "why did
+// nothing arrive" nine times out of ten, and a table that dropped them would
+// hide exactly that.
+function renderCaepCounts(view) {
+  log.debug("Entering renderCaepCounts().");
+  var host = clear('caep_counts');
+  if (!host) {
+    log.debug("Leaving renderCaepCounts(). No host.");
+    return;
+  }
+  var table = node('table', 'ssf-table ssf-caep-counts');
+  var head = node('tr');
+  ['Event type', 'Sent'].forEach(function (text) {
+    head.appendChild(node('th', '', text));
+  });
+  table.appendChild(head);
+  view.counts.forEach(function (row) {
+    var tr = node('tr', row.count ? '' : 'ssf-caep-zero');
+    tr.appendChild(node('td', '', row.name));
+    tr.appendChild(node('td', '', String(row.count)));
+    table.appendChild(tr);
+  });
+  var total = node('tr');
+  total.appendChild(node('td', '', 'Total'));
+  total.appendChild(node('td', '', String(view.total)));
+  table.appendChild(total);
+  host.appendChild(table);
+  log.debug("Leaving renderCaepCounts(). " + view.total);
+}
+
+function renderCaepLog(view) {
+  log.debug("Entering renderCaepLog().");
+  var host = clear('caep_log');
+  if (!host) {
+    log.debug("Leaving renderCaepLog(). No host.");
+    return;
+  }
+  if (!view.events.length) {
+    host.appendChild(node('p', 'ssf-note',
+      'Nothing has been simulated for this session yet.'));
+    log.debug("Leaving renderCaepLog(). Empty.");
+    return;
+  }
+  var table = node('table', 'ssf-table');
+  var head = node('tr');
+  ['When', 'Event', 'jti', 'Outcome', 'What the model noticed']
+    .forEach(function (text) {
+      head.appendChild(node('th', '', text));
+    });
+  table.appendChild(head);
+  view.events.forEach(function (row) {
+    var tr = node('tr');
+    tr.appendChild(node('td', 'ssf-history-time',
+      new Date(row.at * 1000).toISOString()));
+    tr.appendChild(node('td', '', row.name));
+    tr.appendChild(node('td', 'ssf-jti', row.jti));
+    tr.appendChild(node('td', '', row.outcome));
+    tr.appendChild(node('td', 'ssf-note',
+      (row.warnings || []).join(' ') || '—'));
+    table.appendChild(tr);
+  });
+  host.appendChild(table);
+  log.debug("Leaving renderCaepLog(). " + view.events.length);
+}
+
+// The complex subject, on the stream. It goes through `subjectCall()` — the
+// same function the Subjects pane uses — rather than composing a second add:
+// one call site means one reading of what an add-subject request is, and the
+// operations history and the exchange pane get it for nothing.
+function caepAddSubject() {
+  log.debug("Entering caepAddSubject().");
+  var subject = caepSession.complexSubject(caepFromFields(),
+    caepSubjectOptions());
+  setVal('ssf_subject_json', pretty(subject));
+  var out = subjectCall('add_subject_endpoint', 'add CAEP subject');
+  setText('caep_seed_note', 'The subject was copied into the Subjects pane ' +
+    'and added from there, so the request and its answer are in the ' +
+    'operations history like any other. Watch events_delivered on the ' +
+    'stream: a transmitter that does not offer a type you asked for simply ' +
+    'omits it, and that omission is the only notice SSF gives.',
+    'ssf-status');
+  log.debug("Leaving caepAddSubject().");
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// SIMULATE ONE CAEP EVENT.
+//
+// It fills the Transmit pane and pushes through it rather than building a
+// second signer here, and that is the whole design of this pane: the signing
+// key, the algorithm, the media type, the `iss`/`aud`/`txn` and the receiver
+// endpoint are all one set of controls, visible, with the finished token in
+// the box below them. A CAEP pane that signed privately would be a second
+// implementation of everything that matters and would hide the artifact.
+//
+// **THE STATE IS APPLIED BEFORE THE PUSH AND THE COUNT AFTER IT.** The model
+// decides whether the event may happen at all — a `session-presented` about a
+// revoked session is refused, and refusing after signing would mean a token
+// existed for something this page says cannot have happened. The count is of
+// what was actually sent.
+// ---------------------------------------------------------------------------
+function caepSimulate(uri) {
+  log.debug("Entering caepSimulate(). " + uri);
+  var session = caepFromFields();
+  var payload = caepSession.buildPayload(session, uri, null, {
+    initiatingEntity: val('caep_initiating'),
+    eventTimestamp: caepTimestamp(),
+    language: val('caep_language') || 'en',
+    reasonAdmin: val('caep_reason_admin'),
+    reasonUser: val('caep_reason_user')
+  });
+  var verdict = ssfEvents.validateEvent(uri, payload);
+  if (!verdict.ok) {
+    setText('caep_simulate_status', verdict.errors.join(' '),
+      'ssf-status ssf-bad');
+    log.debug("Leaving caepSimulate(). The payload is invalid.");
+    return false;
+  }
+  var applied = caepSession.apply(session, uri, payload);
+  if (!applied.ok) {
+    setText('caep_simulate_status', applied.errors.join(' '),
+      'ssf-status ssf-bad');
+    renderCaep();
+    log.debug("Leaving caepSimulate(). The model refused it.");
+    return false;
+  }
+  var subject = caepSession.complexSubject(session, caepSubjectOptions());
+  setVal('ssf_tx_type', uri);
+  setVal('ssf_tx_payload', pretty(payload));
+  setVal('ssf_tx_subject', pretty(subject));
+  // The finished token from a PREVIOUS simulate must not be re-sent: pushEvent
+  // takes what is in that box when there is one, which is the right behaviour
+  // for the Transmit pane's own button and exactly wrong here.
+  setVal('ssf_tx_token', '');
+  if (!val('ssf_tx_iss')) {
+    setVal('ssf_tx_iss', val('caep_iss') || val('ssf_base_url'));
+  }
+  if (!val('ssf_tx_aud')) {
+    setVal('ssf_tx_aud', val('ssf_stream_aud'));
+  }
+  setText('caep_simulate_status',
+    (ssfEvents.EVENT_BY_URI[uri] || {}).name + ' built. ' +
+    (applied.warnings.length ? applied.warnings.join(' ') : '') +
+    ' Pushing it to the receiver endpoint in the Transmit pane…',
+    applied.warnings.length ? 'ssf-status ssf-pending' : 'ssf-status');
+  saveState();
+  Promise.resolve(pushEventAsync()).then(function (outcome) {
+    caepSession.record(session, uri, {
+      jti: (outcome && outcome.jti) || '',
+      outcome: (outcome && outcome.outcome) || 'not sent',
+      warnings: applied.warnings
+    });
+    renderCaep();
+    log.debug("Leaving caepSimulate(). Recorded.");
+  });
+  return false;
+}
+
+// `now`, `an hour ago` or omitted. The third is the one worth having: CAEP
+// section 2 makes `event_timestamp` optional, so an event without one is
+// perfectly conforming — and it is what every receiver that assumes a
+// timestamp breaks on.
+function caepTimestamp() {
+  log.debug("Entering caepTimestamp().");
+  var choice = val('caep_timestamp');
+  var out;
+  if (choice === 'omit') {
+    out = false;
+  } else if (choice === 'hour') {
+    out = Math.floor(Date.now() / 1000) - 3600;
+  } else {
+    out = Math.floor(Date.now() / 1000);
+  }
+  log.debug("Leaving caepTimestamp(). " + choice);
+  return out;
+}
+
+// Put the model back to where a fresh session starts, keeping who it is. It
+// touches nothing at the transmitter — the stream, its subjects and its queue
+// are all still there — which is the difference between this and the Reset in
+// the Profile pane, and the note says so, because a button called Reset that
+// silently left a stream behind is how somebody ends up debugging yesterday's.
+function resetCaepSession() {
+  log.debug("Entering resetCaepSession().");
+  caepSession.reset(caepFromFields());
+  setText('caep_simulate_status', 'The session model is back where it ' +
+    'started and the identity is unchanged. NOTHING AT THE TRANSMITTER WAS ' +
+    'TOUCHED: the stream, its subjects and anything queued on it are all ' +
+    'still there. Use the Reset in the Profile pane for that.',
+    'ssf-status ssf-ok');
+  renderCaep();
+  log.debug("Leaving resetCaepSession().");
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// RESET THE WHOLE WORKFLOW AND START OVER.
+//
+// It deletes the stream at the transmitter, drops the push inbox the api is
+// holding, empties both histories and the token set, and puts the CAEP session
+// model back. **AND IT REPORTS EACH OF THOSE SEPARATELY**, because the one
+// that matters is the one that can fail: a Reset that could not delete the
+// stream — the credential expired, the transmitter is down — and said nothing
+// would leave somebody debugging yesterday's stream while believing they had
+// started over. That is a far worse outcome than a button that says what it
+// could not do.
+//
+// It asks first. Everything on this list is somebody's work, and the stream in
+// particular is not this page's to throw away without being told to.
+// ---------------------------------------------------------------------------
+function resetSession() {
+  log.debug("Entering resetSession().");
+  var confirmed = true;
+  if (typeof window !== 'undefined' && window.confirm) {
+    confirmed = window.confirm(
+      'Start over? This deletes the stream at the transmitter, drops the ' +
+      'push inbox, and empties the token history, the message history and ' +
+      'the operations history. The transmitter\'s own configuration is not ' +
+      'touched.');
+  }
+  if (!confirmed) {
+    setText('ssf_profile_note', 'Nothing was reset.', 'ssf-status');
+    log.debug("Leaving resetSession(). Declined.");
+    return false;
+  }
+  var did = [];
+  var streamId = val('ssf_stream_id');
+  if (streamId && metadata) {
+    deleteStream();
+    did.push('asked the transmitter to delete stream ' + streamId +
+      ' — watch the operations history for the answer, because a delete ' +
+      'that was refused is the one failure this button must not hide');
+  } else if (streamId) {
+    did.push('left stream ' + streamId + ' ALONE: the metadata document has ' +
+      'not been fetched in this tab, so this page does not know where the ' +
+      'configuration endpoint is and will not invent one');
+  }
+  if (inbox) {
+    deleteReceiver();
+    did.push('dropped the push inbox the api was holding');
+  }
+  clearMessages();
+  clearOperations();
+  clearTokenHistory();
+  did.push('emptied the message, operations and token histories');
+  setVal('ssf_tx_token', '');
+  setVal('ssf_stream_id', '');
+  setText('ssf_stream_status_text', '', '');
+  if (caepModel) {
+    caepSession.reset(caepModel);
+    did.push('put the CAEP session model back to where it started, keeping ' +
+      'who it is');
+  }
+  saveState();
+  if (currentProfile === 'caep') {
+    renderCaep();
+  }
+  setText('ssf_profile_note', 'Started over: ' + did.join('; ') + '.',
+    'ssf-status ssf-ok');
+  log.debug("Leaving resetSession(). " + did.length + " step(s).");
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // LOAD.
 // ---------------------------------------------------------------------------
 function onload() {
   log.debug("Entering onload().");
   fillSubjectFormats();
+  // THE PROFILE IS READ BEFORE THE MENUS ARE BUILT, because fillEventTypes()
+  // narrows to it. Reading it after would draw the pipe's two event types
+  // into a page a reader had left in CAEP mode, and the first thing they
+  // would do is create a stream asking for the wrong ones.
+  restoreProfile();
   fillEventTypes();
   loadState();
   wirePanes();
@@ -2753,6 +3440,7 @@ function onload() {
   deliveryChanged();
   authSchemeChanged();
   renderIdentity(val('ssf_id_token') ? claimsOf(val('ssf_id_token')) : null);
+  profileChanged();
   renderTokenHistory();
   renderMessages();
   renderOperations();
@@ -2780,6 +3468,13 @@ function onload() {
     }
     if (id === 'ssf_stream_delivery') {
       deliveryChanged();
+    }
+    // Every field in the CAEP pane changes the subject or the state readout,
+    // and they are handled here for the reason the two above are: this page
+    // has fifty fields now and an attribute per field is fifty chances to
+    // forget one.
+    if (currentProfile === 'caep' && id.indexOf('caep_') === 0) {
+      renderCaep();
     }
   });
   log.debug("Leaving onload().");
@@ -2821,6 +3516,13 @@ module.exports = {
   generateTxKey: generateTxKey,
   buildEvent: buildEvent,
   pushEvent: pushEvent,
+  // The profile and the CAEP pane's own handlers.
+  profileChanged: profileChanged,
+  caepFillFromToken: caepFillFromToken,
+  caepAddSubject: caepAddSubject,
+  caepSimulate: caepSimulate,
+  resetCaepSession: resetCaepSession,
+  resetSession: resetSession,
   clearMessages: clearMessages,
   clearOperations: clearOperations,
   // Reached by tests/ssf_page.js, which asserts what the page composes rather
@@ -2832,5 +3534,19 @@ module.exports = {
   setAllPanes: setAllPanes,
   discoveredBaseUrl: discoveredBaseUrl,
   takeReceivedToken: takeReceivedToken,
-  notePollEndpoint: notePollEndpoint
+  notePollEndpoint: notePollEndpoint,
+  // Reached by tests/caep_page.js, which asserts what the pane COMPOSES —
+  // the complex subject and the model's state — rather than only what came
+  // back, because the difference between "the event was wrong" and "the
+  // button did nothing" is invisible from a receiver.
+  caepModel: function () {
+    return caepModel;
+  },
+  caepSubject: function () {
+    return caepSession.complexSubject(caepFromFields(), caepSubjectOptions());
+  },
+  currentProfile: function () {
+    return currentProfile;
+  },
+  renderCaep: renderCaep
 };
