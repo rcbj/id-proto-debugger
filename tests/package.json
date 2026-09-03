@@ -23,7 +23,7 @@
     "commander": "^14.0.2",
     "cors": "^2.8.5",
     "dompurify": "^3.4.14",
-    "express": "^4.22.2",
+    "express": "^5.2.1",
     "jsdom": "^29.1.1",
     "jsonld": "^9.0.0",
     "jsonwebtoken": "^9.0.2",
