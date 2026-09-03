@@ -19,7 +19,7 @@
     "bunyan": "latest",
     "create-hash": "^1.2.0",
     "dompurify": "^3.4.13",
-    "express": "^4.22.2",
+    "express": "^5.2.1",
     "express-logging": "latest",
     "jquery": "latest",
     "jsonld": "^9.0.0",
