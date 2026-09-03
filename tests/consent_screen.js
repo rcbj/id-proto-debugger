@@ -219,6 +219,29 @@ async function settleAuthorization(opts) {
 const STILL_AT_THE_IDENTITY_SERVICE =
   /\/(oauth2|authn|federation|wsfed|saml2|saml11|spnego|realm)\b/;
 
+// AND THE PATHS THAT ARE A HOP RATHER THAN A DESTINATION.
+//
+// A narrower set, used only to decide whether the short window below may be
+// extended. Every one of these is somewhere a browser passes THROUGH in the
+// middle of an authorization leg and never a page a finished flow rests on:
+// the authorization endpoint, the consent screen itself, and the two ends of a
+// federated hop — /federation/login on the way out and /federation/acs on the
+// way back, where the near realm redeems what the far realm issued before it
+// draws its own screen.
+//
+// /federation/acs IS THE ONE THAT WAS MISSING, and its absence is what took
+// the OIDC/OIDC/password point of the grid on 2026-09-03T08-01-08. A federated
+// sign-in draws TWO consent screens — the far realm asks whether the near realm
+// may act for this person, then the near realm asks whether the application may
+// — and between them the browser waits at /federation/acs while the near realm
+// redeems the code over a back channel. Past the four-second window that URL
+// was not recognised as mid-leg, so passInBrowser() returned false,
+// passAllInBrowser() stopped, and the near realm's screen was left standing.
+// It fails 100 seconds later in collectOauthArtifacts() as "the flow never came
+// back to the debugger", with that unanswered screen's own words quoted in it.
+const MID_AUTHORIZATION_LEG =
+  /\/(oauth2\/(authorize|consent)|federation\/(acs|login))\b/;
+
 // ---------------------------------------------------------------------------
 // THE BROWSER SURFACE.
 //
@@ -239,6 +262,18 @@ async function passInBrowser(driver, By, opts) {
   const decision = options.decision === "deny" ? "deny" : "allow";
   const id = decision === "deny" ? "consent-deny" : "consent-allow";
   const deadline = Date.now() + (options.timeoutMs || 4000);
+  // The cap on the extension below. Generous against the four-second window it
+  // extends, because what it is waiting out is a whole authorization leg, and
+  // bounded because a caller that is wrong about a screen coming must still
+  // return rather than hang.
+  const hardDeadline = Date.now() + (options.maxMs || 30000);
+  // THE MOVEMENT SIGNAL. `lastUrl` is what the browser said last time round
+  // this loop and `movedDeadline` is how long a change buys — one more window,
+  // renewed by the next change. A chain that is still redirecting therefore
+  // keeps its extension, and a page the flow has come to rest on loses it a
+  // window after it arrived.
+  let lastUrl = null;
+  let movedDeadline = 0;
   for (;;) {
     let url = "";
     try {
@@ -248,6 +283,12 @@ async function passInBrowser(driver, By, opts) {
       // below like any other unhelpful answer; the deadline ends this loop, not
       // the first stumble.
       log.debug("passInBrowser(): " + e.message);
+    }
+    if (url && url !== lastUrl) {
+      // The chain moved. Noted before anything below reads it, so that the
+      // extension at the bottom sees this pass's hop rather than the last.
+      lastUrl = url;
+      movedDeadline = Date.now() + (options.timeoutMs || 4000);
     }
     if (url && !STILL_AT_THE_IDENTITY_SERVICE.test(url)) {
       // THE BROWSER HAS ALREADY LANDED SOMEWHERE ELSE, which is what a flow
@@ -284,6 +325,47 @@ async function passInBrowser(driver, By, opts) {
       }
     }
     if (Date.now() >= deadline) {
+      // THE WINDOW IS EXTENDED WHILE THE FLOW IS DEMONSTRABLY STILL RUNNING,
+      // and without that this gives up on a screen that is on its way.
+      //
+      // Returning false here means "no screen is coming", and the four-second
+      // window is sized for that ordinary case — a scope already agreed to
+      // draws nothing and the caller should not pay for asking. But a FEDERATED
+      // sign-in draws two screens with a whole authorization leg between them:
+      // press the far realm's Allow, and the browser goes back through the near
+      // realm's authorize endpoint, completes the federated leg and only then
+      // draws the near realm's screen. On a pool of four browsers, straight
+      // after a WebAuthn ceremony, that chain takes longer than four seconds —
+      // so passAllInBrowser() saw `false`, stopped, and left the second screen
+      // standing. What that failure says, four functions later, is "the flow
+      // never came back to the debugger", with the unanswered screen's own
+      // words quoted in it. It took the OAuth2/OIDC/WebAuthn point of the grid
+      // on 2026-09-03T07-28-00.
+      //
+      // The distinction that makes this safe is that the browser itself says
+      // which case it is, and it says it TWO WAYS — neither of which covers the
+      // chain alone.
+      //
+      // THE URL: one of MID_AUTHORIZATION_LEG's paths is a hop and never a
+      // destination, so sitting on one is the flow demonstrably mid-leg.
+      //
+      // MOVEMENT: a URL that has changed since the last look is a redirect
+      // chain still walking, wherever it happens to be at this instant. That
+      // covers a hop this file has not thought of — and it expires, so a page
+      // the flow has come to REST on stops extending anything one window after
+      // it arrived, which is what keeps the ordinary "no screen is coming"
+      // answer as cheap as it was.
+      //
+      // Both are capped by the hard deadline, so a service that is genuinely
+      // stuck still ends this loop rather than hanging the job.
+      const stillWorking = MID_AUTHORIZATION_LEG.test(url) ||
+          Date.now() < movedDeadline;
+      if (stillWorking && Date.now() < hardDeadline) {
+        log.debug("passInBrowser(): past the window but still at " + url +
+                  "; the flow is mid-leg, so waiting on.");
+        await driver.sleep(100);
+        continue;
+      }
       log.debug("Leaving passInBrowser(). No consent screen appeared within " +
                 "the window, which is the ordinary case for a scope already " +
                 "agreed to or globally consented.");

@@ -35,6 +35,10 @@ const path = require("path");
 const bunyan = require("bunyan");
 const { SELF_SKIP_EXIT, SELF_SKIP_MARKER } =
     require("./expectation.js");
+// One Chrome fault this runner recovers from, recognised in one place. See
+// tests/renderer_wedge.js for what it is, why nothing inside the session can
+// undo it, and why nothing else here is retried.
+const rendererWedge = require("./renderer_wedge.js");
 
 // The runner's own progress lines. They used to be console.log, which made this
 // the last thing in this directory writing outside bunyan — every test it
@@ -426,6 +430,26 @@ function buildJobs() {
     name: "Compose environment forwarding (what survives sudo: " +
         "TEST_CONCURRENCY, TEST_JOB_TIMEOUT_MS, STS_LOG_LEVEL)",
     script: "compose_env_forwarding.js",
+    env: {},
+  });
+
+  // WHERE A DOWNLOADED FILE LANDS. Several pages here have a Download button
+  // and the tests that drive one write a real file; the browser's default
+  // directory on a host run is the developer's ~/Downloads, and the assertion
+  // every one of those tests makes is on the page's own status line, which
+  // reads "Downloaded ..." wherever the file went. So the run is green and
+  // the only evidence is somebody's home directory filling up with key
+  // material — 71 copies each of two keystores by 2026-09-03. It was fixed
+  // once per test, in jwt_tools.js and digital_signature.js, and came back
+  // the moment encryption_tools.js arrived with a key-download section and no
+  // reason to know those four lines existed. The rule now lives in
+  // browser_flags.js section (6), reached from the two functions every
+  // browser test calls, and this is what keeps it reached. Node only — no
+  // browser, no services — so it never skips.
+  jobs.push({
+    name: "Downloads never reach the home directory (browser_flags.js " +
+        "section 6, and every test that goes through it)",
+    script: "download_dir_pinned.js",
     env: {},
   });
 
@@ -4966,7 +4990,11 @@ function selfSkipReason(output) {
       SELF_SKIP_MARKER.trim() + " line in its output)";
 }
 
-function runJob(job, index, live) {
+// `again` is set only by the renderer-wedge retry below. It APPENDS to the
+// first attempt's log rather than opening a new one, so both attempts are in
+// the one file the report links to: a retry whose evidence replaced the
+// evidence of what caused it would be worse than no retry at all.
+function runJob(job, index, live, again) {
   log.debug("Entering runJob().");
   log.debug("Leaving runJob().");
   return new Promise((resolve) => {
@@ -4974,7 +5002,9 @@ function runJob(job, index, live) {
     const startMs = Date.now();
     fs.mkdirSync(LOGS_DIR, { recursive: true });
     const logPath = logPathFor(job.name, index);
-    const logStream = fs.createWriteStream(logPath);
+    const logStream = again
+      ? fs.createWriteStream(logPath, { flags: "a" })
+      : fs.createWriteStream(logPath);
     // A WriteStream with no 'error' listener throws its error as an unhandled
     // 'error' event, which is not a failed job — it is the whole runner
     // exiting mid-pool, naming a path rather than a test. Losing one job's
@@ -4984,7 +5014,12 @@ function runJob(job, index, live) {
       log.warn("Log file " + logPath + " is not writable (" + e.code +
         "); continuing without it.");
     });
-    logStream.write(logHeader(job.name, job.script, startedAt));
+    if (again) {
+      logStream.write("\n" + rendererWedge.wedgeNote(job.name) + "\n" +
+          "\n===== SECOND ATTEMPT, started " + startedAt + " =====\n");
+    } else {
+      logStream.write(logHeader(job.name, job.script, startedAt));
+    }
 
     let output = "";
     // The job's process group, its watchdog, and the guard that keeps the
@@ -5059,6 +5094,7 @@ function runJob(job, index, live) {
         code: selfSkipped ? "self-skip" : codeLabel,
         durationMs,
         output,
+        retried: again || undefined,
         logFile: path.relative(TESTS_DIR, logPath),
       });
       log.debug("Leaving finish().");
@@ -5100,6 +5136,37 @@ function runJob(job, index, live) {
     });
     child.on("close", (code) => finish(code, code));
   });
+}
+
+// THE ONE RETRY IN THIS RUNNER, and the only failure it applies to.
+//
+// A Chrome renderer that stops answering takes the tab with it for good —
+// nothing the test can issue against that session recovers it, so the failure
+// is not the test's and cannot be handled inside it. A second run of the job
+// is a second BROWSER, which is the only thing that clears it. Everything
+// about why, and why nothing else here is run twice, is in
+// tests/renderer_wedge.js.
+//
+// The second attempt's result is the job's result, and it carries
+// `retried: true` so the log line, the HTML row and the XML case all say a
+// browser had to be replaced. A run that met this is not the same as a run
+// that did not, and a retry nobody can see is a suite that quietly runs
+// everything twice.
+async function runJobAllowingOneRendererWedge(job, index, live) {
+  log.debug("Entering runJobAllowingOneRendererWedge().");
+  const first = await runJob(job, index, live);
+  if (first.passed || first.skipped ||
+      !rendererWedge.isRendererWedge(first.output)) {
+    log.debug("Leaving runJobAllowingOneRendererWedge(). First attempt " +
+        "stands.");
+    return first;
+  }
+  log.warn(rendererWedge.wedgeNote(job.name));
+  // The second attempt carries `retried` itself — runJob() sets it from the
+  // same flag that appended to the log, so the two cannot disagree.
+  const second = await runJob(job, index, live, true);
+  log.debug("Leaving runJobAllowingOneRendererWedge(). Retried.");
+  return second;
 }
 
 // Record a skipped job (a capability the target can't exercise, e.g. Artifact
@@ -5146,6 +5213,10 @@ function reportOne(result, index, total) {
       `— ${result.name}`);
   if (result.selfSkipped) {
     log.warn(`----- DID NOT RUN: ${result.reason}`);
+  }
+  if (result.retried) {
+    log.warn("----- RAN TWICE: the first attempt met Chrome's \"" +
+        rendererWedge.SIGNATURE + "\". This line is the second attempt.");
   }
   log.debug("Leaving reportOne().");
 }
@@ -5212,18 +5283,20 @@ function runPool(jobs, results, started, total) {
           reportOne(result, i, total);
           pump();
         };
-        runJob(job, i, CONCURRENCY === 1).then(settle, function (err) {
-          settle({
-            name: job.name,
-            script: job.script,
-            type: job.type || "browser",
-            passed: false,
-            code: "runner error: " + (err && err.message),
-            durationMs: 0,
-            output: "the runner failed to run this job: " + (err && err.stack),
-            logFile: "",
+        runJobAllowingOneRendererWedge(job, i, CONCURRENCY === 1)
+          .then(settle, function (err) {
+            settle({
+              name: job.name,
+              script: job.script,
+              type: job.type || "browser",
+              passed: false,
+              code: "runner error: " + (err && err.message),
+              durationMs: 0,
+              output: "the runner failed to run this job: " +
+                  (err && err.stack),
+              logFile: "",
+            });
           });
-        });
       }
       if (active === 0 && remaining === 0) {
         resolve();
@@ -5268,7 +5341,7 @@ async function runAllJobs(jobs, results) {
     started[i] = true;
     // Live output: nothing else is running, so there is nothing to interleave
     // with, and this pass is where a stack that came up wrong shows first.
-    results[i] = await runJob(job, i, true);
+    results[i] = await runJobAllowingOneRendererWedge(job, i, true);
     reportOne(results[i], i, total);
   }
 
@@ -5307,9 +5380,18 @@ function renderHtml(results, generatedAt, demo) {
             r.logFile)}</code></a>`
         : "";
       const type = r.type === "unit" ? "unit" : "browser";
+      // A job that had to be run twice says so beside its badge. See
+      // tests/renderer_wedge.js: the first attempt's output is in the same log
+      // file, above the second attempt's banner.
+      const retried = r.retried
+        ? `<br><span class="retried" title="The first attempt met Chrome's` +
+          ` &quot;${esc(rendererWedge.SIGNATURE)}&quot; and the browser could` +
+          ` not be recovered; this row is the second attempt.">ran twice` +
+          `</span>`
+        : "";
       return `
       <tr class="${cls}">
-        <td><span class="badge ${cls}">${badge}</span></td>
+        <td><span class="badge ${cls}">${badge}</span>${retried}</td>
         <td><span class="type ${type}">${type}</span></td>
         <td>${esc(r.name)}<br><code>${esc(r.script)}</code></td>
         <td class="num">${(r.durationMs / 1000).toFixed(1)}s</td>
@@ -5338,6 +5420,7 @@ function renderHtml(results, generatedAt, demo) {
   tr.fail{background:#fff5f5}tr.skip{background:#fbfbf5}
   .badge{font-weight:700;font-size:.75rem;padding:.15rem .5rem;border-radius:4px;color:#fff}
   .badge.pass{background:#1a7f37}.badge.fail{background:#c1121f}.badge.skip{background:#8a6d00}
+  .retried{display:inline-block;margin-top:.3rem;font-size:.7rem;color:#8a6d00;border:1px solid #e0cf8a;border-radius:4px;padding:.05rem .35rem;white-space:nowrap}
   .type{font-size:.7rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #d0d0d0;color:#555;white-space:nowrap}
   .type.unit{background:#eef4ff;border-color:#c3d4f5;color:#274b8f}
   code{background:#f3f3f3;padding:.05rem .3rem;border-radius:3px}
@@ -5525,7 +5608,14 @@ function renderJUnit(results, generatedAt) {
   const cases = results
     .map((r) => {
       const time = (r.durationMs / 1000).toFixed(3);
-      const sys = esc((r.output || "").trim());
+      // A job that had to be run twice says so at the top of its system-out,
+      // where a CI dashboard shows it. See tests/renderer_wedge.js.
+      const ranTwice = r.retried
+        ? "[runner] this job was RUN TWICE: the first attempt met Chrome's " +
+          "\"" + rendererWedge.SIGNATURE + "\" and the browser could not be " +
+          "recovered. What follows is the second attempt.\n\n"
+        : "";
+      const sys = esc(ranTwice + (r.output || "").trim());
       const body = r.skipped
         ? `<skipped message="${esc(r.reason || "skipped")}"/>`
         : r.passed

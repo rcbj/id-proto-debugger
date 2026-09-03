@@ -436,7 +436,8 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    // "=new", not bare --headless. The tests image pins Chrome 121, where plain
+    // "=new", not bare --headless. The tests image pinned Chrome 121,
+    // where plain
     // --headless selects the OLD headless implementation — and in that one
     // --unsafely-treat-insecure-origin-as-secure has no effect, so on the
     // containerized suite's http://client:3000 origin window.crypto.subtle

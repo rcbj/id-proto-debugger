@@ -919,7 +919,9 @@ is present but gated, and `generateKey`, `importKey` and `sign` naming
 `{ name: 'Ed25519' }` all reject with *Algorithm: Unrecognized name*. So on an
 older browser this page's `ed25519` key algorithm cannot produce a key, and
 node — which has had Ed25519 for years — cannot see that: `pki_x509.js` and
-`pki_key_formats.js` both pass. The tests image pins Chrome 121, so
+`pki_key_formats.js` both pass. The tests image pinned Chrome 121 until
+2026-09-03 and pins 152.0.7977.75 now, which has Ed25519 on by default — so
+the flag below is a no-op on it today and is kept for a pin moved backwards.
 `tests/pki_page.js` asks for the feature by name through
 `browserFlags.addWebCryptoEd25519Flags()`, which is a no-op on a browser that
 already has it.

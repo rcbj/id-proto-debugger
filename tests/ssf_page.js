@@ -616,6 +616,26 @@ async function thePageCanSignAndPushAnEvent(driver) {
       "find.");
   assert.ok(decoded.indexOf("sub_id") >= 0,
       "The page has to say the subject goes in sub_id rather than sub.");
+  // BLANK THE STATUS BEFORE PRESSING, because Build already filled it.
+  //
+  // waitForValue() waits for a field to be non-empty and not mid-flight, and
+  // #ssf_tx_status is a field this section has ALREADY written to: the Build
+  // above leaves "Signed with ES256." in it. So the wait was satisfied on its
+  // first poll by the value the wait exists to see replaced, and the assertion
+  // below graded the SIGNING step's message as though it were the delivery
+  // verdict — passing whenever the push happened to be quick and failing with
+  // `The push said: Signed with ES256. Nothing has been sent.` whenever it was
+  // not. It was not on the Chrome 152 run of 2026-09-03T07-28-00; on the
+  // browser this suite pinned for the eighteen months before that, it always
+  // was.
+  //
+  // The failure it produced is worse than a flake, because the passing case
+  // asserted nothing: a push that never happened at all reads exactly the
+  // same. Blanking first is what makes the wait mean "the push answered"
+  // rather than "some earlier step did", and it is the pattern the status
+  // hazard in tests/CLAUDE.md prescribes.
+  await driver.executeScript(
+      "document.getElementById('ssf_tx_status').value = '';");
   await click(driver, "btn_ssf_push");
   const pushed = await waitForValue(driver, "ssf_tx_status", "push status");
   assert.ok(pushed.indexOf("Delivered") === 0,

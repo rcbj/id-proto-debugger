@@ -651,10 +651,43 @@ async function issuerInitiated(driver) {
                    encodeURIComponent(offerParam));
   await driver.wait(until.elementLocated(By.id("pane_offer")), fetchWait,
     "the wallet should show the Credential Offer it was handed.");
-  await driver.wait(async function () {
-    return !!(await value(driver, "authorization_endpoint"));
-  }, fetchWait, "the wallet should discover walt.id and its authorization " +
-      "server from the offer alone.");
+  // WAIT FOR THE WRONG VALUE TO GO, not for the field to be non-empty.
+  //
+  // misconfigureTheWallet() has just PUT a value in this field — that is the
+  // whole point of WRONG_ISSUER above — so `!!value(...)` is satisfied on the
+  // first poll by the value the wait exists to see replaced, and every
+  // assertion below then grades whatever the page happened to have reached.
+  // The three fields do not arrive together: the metadata URL and the
+  // configuration id come straight off the offer, and the authorization
+  // endpoint is two fetches further on, so the vacuous wait passed here for
+  // months and failed on the coverage run of 2026-09-03T03-03 with
+  // `http://localhost:1/not-the-offering-issuer/authorize` — the planted
+  // value, reported as the wallet's answer.
+  //
+  // Waiting for discovery to have MOVED each of them off WRONG_ISSUER keeps
+  // the assertions exactly as strong (they still compare the whole URL) and
+  // makes the wait mean what its message says. waitFor() reports what the
+  // field last held, so a wallet that genuinely never discovers still says so.
+  var DISCOVERED = ["vci_metadata_endpoint", "vci_credential_configuration_id",
+                    "authorization_endpoint"];
+  await waitFor(driver,
+    async function () {
+      var seen = {};
+      for (var i = 0; i < DISCOVERED.length; i++) {
+        seen[DISCOVERED[i]] = await value(driver, DISCOVERED[i]);
+      }
+      return seen;
+    },
+    function (seen) {
+      return DISCOVERED.every(function (id) {
+        return seen[id] && String(seen[id]).indexOf(WRONG_ISSUER) !== 0 &&
+            seen[id] !== "NotTheOfferedCredential";
+      });
+    },
+    "the wallet should discover walt.id and its authorization server from " +
+        "the offer alone, replacing every value this section deliberately " +
+        "misconfigured",
+    fetchWait);
 
   assert.strictEqual(await value(driver, "vci_metadata_endpoint"), metadataUrl,
     "the offer names only the issuer identifier, so the wallet has to derive " +

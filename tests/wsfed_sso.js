@@ -795,7 +795,8 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
-  // `=new`, never bare `--headless`: on the tests image's pinned Chrome 121 the
+  // `=new`, never bare `--headless`: on the Chrome 121 the tests image
+  // pinned the
   // bare flag selects the OLD headless implementation, and there
   // --unsafely-treat-insecure-origin-as-secure (added by
   // addBrowserAccessFlags() below) has no effect — so on the containerized

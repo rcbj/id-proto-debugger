@@ -338,7 +338,7 @@ async function test() {
     // "=new", not bare --headless. This page fetches the discovery document
     // itself, from a Keycloak that is http://keycloak:8080 on the
     // containerized stack while the page is now https — and the OLD headless
-    // implementation in the Chrome 121 this image pins IGNORES
+    // implementation in the Chrome 121 this image pinned IGNORES
     // --allow-running-insecure-content, so that XHR is blocked with
     // readyState 4 / status 0 and no console entry naming mixed content.
     // What the test then reports is a missing Populate button. See section 1

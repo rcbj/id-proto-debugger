@@ -1387,19 +1387,12 @@ async function deepTrustChainActivities(driver) {
 async function test() {
   log.debug("Entering test().");
   // JWT Tools clicks key-download buttons. On host runs the browser is the
-  // user's real Chrome (default download dir ~/Downloads); redirect downloads
-  // to a throwaway temp dir (removed below) so nothing lands in the home
-  // directory. The test asserts only on the in-page status, never the
-  // downloaded file.
-  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(),
-      "idptools-selenium-dl-"));
+  // user's real Chrome, whose default download directory is ~/Downloads, so
+  // without this the run writes key pairs into the developer's home
+  // directory. addStsTrustFlags() below points them at a throwaway directory
+  // instead — see section (6) of browser_flags.js — and the test asserts only
+  // on the in-page status, never on the downloaded file.
   const options = new chrome.Options();
-  options.setUserPreferences({
-    "download.default_directory": downloadDir,
-    "download.prompt_for_download": false,
-    "download.directory_upgrade": true,
-    "safebrowsing.enabled": true,
-  });
   if (headless) {
     // Use "new" headless: unlike the legacy --headless mode, it honors the
     // --unsafely-treat-insecure-origin-as-secure override below, which is what
@@ -1439,15 +1432,9 @@ async function test() {
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 
-  // Belt-and-suspenders: also pin the download dir via CDP (independent of the
-  // profile prefs, which a custom --user-data-dir can bypass), so downloads
-  // never fall back to ~/Downloads.
-  try {
-    await driver.sendDevToolsCommand("Browser.setDownloadBehavior",
-      { behavior: "allow", downloadPath: downloadDir, eventsEnabled: false });
-  } catch (e) {
-    /* older Chrome/driver — the user-preferences download dir applies */
-  }
+  // Belt-and-suspenders: say the same thing to the browser that is already
+  // running, independent of the profile preference.
+  await browserFlags.pinDownloadDir(driver);
 
   // process.exit() is synchronous termination, so it would skip the finally
   // below and orphan the browser — and one headless Chrome is ~15 processes,
@@ -1511,11 +1498,6 @@ async function test() {
     testFailed = true;
   } finally {
     await driver.quit();
-    try {
-      fs.rmSync(downloadDir, { recursive: true, force: true });
-    } catch (e) {
-      /* ignore */
-    }
   }
   if (testFailed) {
     log.debug("Leaving test(). Failed.");

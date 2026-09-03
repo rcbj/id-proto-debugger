@@ -595,7 +595,8 @@ async function test() {
   }
 
   const options = new chrome.Options();
-  // --headless=new, never bare --headless: in the image's Chrome 121 the old
+  // --headless=new, never bare --headless: in the Chrome 121 pinned then,
+  // the old
   // mode ignores --unsafely-treat-insecure-origin-as-secure, so crypto.subtle
   // stays undefined and the key derivation on this page silently has no crypto.
   options.addArguments("--headless=new", "--no-sandbox",

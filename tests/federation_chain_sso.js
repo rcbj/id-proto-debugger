@@ -1094,7 +1094,7 @@ async function test() {
 
   const options = new chrome.Options();
   if (headless) {
-    // "=new", never bare --headless: the tests image pins Chrome 121, where
+    // "=new", never bare --headless: the tests image pinned Chrome 121, where
     // plain --headless selects the old implementation and
     // --unsafely-treat-insecure-origin-as-secure has no effect in it.
     options.addArguments("--headless=new");

@@ -345,21 +345,39 @@ async function test() {
   // Use /tmp instead of the container's tiny (64MB) /dev/shm, which otherwise
   // crashes the Chrome tab on heavy pages (e.g. jwt_tools) under coverage.
   options.addArguments("--disable-dev-shm-usage");
-  options.addArguments("--allow-running-insecure-content");
-  options.addArguments(
-      "--disable-features=BlockInsecurePrivateNetworkRequests," +
-      "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
 
-  // The mock STS serves https on a certificate it generated at startup (see
-  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
-  // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
-  // makes the whole argument. Without it the IdP half of this test meets a
-  // certificate interstitial instead of a sign-in screen, and what the log
-  // says is that the identity provider never showed its #username field.
-  // This file builds its Chrome options by hand rather than through
-  // addBrowserAccessFlags(), which is why the call is here instead of
-  // arriving with the rest.
-  browserFlags.addStsTrustFlags(options);
+  // THE SHARED HELPER, and it used to be a hand-copied HALF of it.
+  //
+  // This file carried its own --allow-running-insecure-content and
+  // --disable-features pair — section (1) of addBrowserAccessFlags() — plus a
+  // direct addStsTrustFlags() call, and silently omitted section (2): the
+  // --unsafely-treat-insecure-origin-as-secure that makes an http origin
+  // potentially trustworthy. That omission is invisible until a form on an
+  // https page POSTs to an http action, which is exactly the HTTP-POST
+  // binding: the debugger serves https and Keycloak is http, so Chrome
+  // refuses to submit the form at all and shows its "Form is not secure"
+  // interstitial instead. The test then reports that the identity provider
+  // never showed its #username field, with the browser sitting on a Chromium
+  // page that is not the IdP's.
+  //
+  // It stayed hidden because this file asks for bare `--headless`, which up to
+  // Chrome 131 selected the OLD headless implementation — and that one does
+  // not draw the interstitial. The 2026-09-03 pin move to 152 made the two
+  // spellings the same mode, and this and saml_encrypted_sso.js were the two
+  // jobs of 292 that went red. See tests/CLAUDE.md.
+  //
+  // THE IDP'S OWN ORIGIN HAS TO BE NAMED, which is what extraOrigins is for:
+  // the base URL covers the debugger and apiOrigins() covers the api, and
+  // neither is the identity provider this job was pointed at. It is read from
+  // the metadata URL rather than assumed, so the Keycloak half and the mock
+  // STS half each mark the server they actually use — and the mock's https
+  // origin is dropped by the helper as already secure. addStsTrustFlags() is
+  // called by the helper, so the direct call that used to be here is gone
+  // rather than duplicated: Chrome keeps only the LAST occurrence of a switch,
+  // and two spellings of the SPKI pin list is one edit away from the wrong one
+  // winning.
+  browserFlags.addBrowserAccessFlags(options, baseUrl,
+                                     [process.env.SAML_METADATA_URL]);
 
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);

@@ -84,6 +84,14 @@ COPY tests/random_username.js ./
 # to fail quietly.
 COPY tests/expectation.js ./
 
+# THE ONE CHROME FAULT THE RUNNER RECOVERS FROM, required by run-report.js
+# itself and by the check in jwk_pem_encoding.js. A SHARED MODULE, like the two
+# above, with the same failure mode when this line is missing — except that the
+# module missing here takes the WHOLE RUN rather than one job: run-report.js
+# requires it at load, so the tests container would exit with MODULE_NOT_FOUND
+# before a single test was spawned. See tests/renderer_wedge.js.
+COPY tests/renderer_wedge.js ./
+
 # THE APPLICATIONS REGISTRY CLIENT, required by every job that presents an
 # identifier to the mock STS — which since 2026-08-27 is most of them: the OAuth
 # and OIDC jobs, the OID4VC family, WS-Trust, WS-Federation, both SAML profiles,
@@ -169,6 +177,16 @@ COPY docker-compose-coverage.yml ./
 COPY docker-compose.yml ./
 COPY local-tests.yml ./
 COPY keycloak-tests.yml ./
+
+# Where a downloaded file lands. Several pages here have a Download button, and
+# the browser's default directory on a host run is the developer's ~/Downloads
+# — which no assertion anywhere can see, since the status line those tests read
+# says "Downloaded ..." whatever directory it went to. The rule lives in
+# browser_flags.js section (6); this reads every test script beside it (they
+# are all in this flat directory already, so it needs no COPY of its own
+# beyond this line) and fails when one builds a Chrome driver without going
+# through it.
+COPY tests/download_dir_pinned.js ./
 
 # The certificate the api, the client and the mock STS all bind on crosses ONE
 # channel — three `KEY=value` lines from common/generate_tls_cert.js into
@@ -1076,21 +1094,51 @@ ENV PATH $NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
 RUN node -v
 RUN npm -v
 
-# Chrome and chromedriver, pinned to 121.0.6167.85 and installed BEFORE the
-# staged files rather than after them. Nothing in this step reads anything
+# Chrome and chromedriver, pinned TOGETHER at one version and installed BEFORE
+# the staged files rather than after them. Nothing in this step reads anything
 # copied out of the staging stages, and putting it above them is what keeps
 # ~200 MB of download out of every rebuild: a layer's cache key includes its
 # parent, so while this sat below the COPYs, editing one test script
 # re-downloaded the browser.
-RUN wget -q -O chrome-linux64.zip https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/121.0.6167.85/linux64/chrome-linux64.zip && \
+#
+# ONE ARG FOR BOTH DOWNLOADS, and that is the load-bearing part. A Chrome for
+# Testing driven by a chromedriver from another release fails at session
+# creation on a version check, which reads as a broken image rather than as two
+# halves of different releases — the same trap run-report.js's browser probe
+# documents when it passes CHROMEDRIVER_BIN beside CHROME_BIN. Two literals
+# here is one edit away from that; one variable cannot drift.
+#
+# 152.0.7977.75 SINCE 2026-09-03, and the move was a REPAIR rather than
+# housekeeping. It was 121.0.6167.85 (January 2024), and under a pool of four
+# browser jobs that pair — Chrome 121 and `--headless=new` — wedged a renderer
+# in about a third of the sessions: the tab stopped answering for good while
+# the browser and the server stayed demonstrably healthy, and the run reported
+# a five-minute page-load timeout against whatever page the job happened to be
+# navigating to. tests/renderer_wedge.js carries the whole diagnosis and the
+# retry that still stands behind this as a guard.
+#
+# TWO WORKAROUNDS IN THIS SUITE BECAME NO-OPS with this move and are kept
+# anyway, both documented where they live: `--headless=new` (bare `--headless`
+# selected the OLD headless implementation up to Chrome 131, and that mode
+# ignored --unsafely-treat-insecure-origin-as-secure) and
+# addWebCryptoEd25519Flags() (Web Crypto Ed25519 was gated until Chrome 137).
+# Neither costs anything on a browser that no longer needs it, and both are
+# what a future pin BACKWARDS would need again.
+ARG CHROME_VERSION=152.0.7977.75
+RUN CFT=https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing && \
+    wget -q -O chrome-linux64.zip \
+        "${CFT}/${CHROME_VERSION}/linux64/chrome-linux64.zip" && \
     unzip chrome-linux64.zip && \
     rm chrome-linux64.zip && \
     mv chrome-linux64 /opt/chrome/ && \
     ln -s /opt/chrome/chrome /usr/local/bin/ && \
-    wget -q -O chromedriver-linux64.zip https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/121.0.6167.85/linux64/chromedriver-linux64.zip && \
+    wget -q -O chromedriver-linux64.zip \
+        "${CFT}/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" && \
     unzip -j chromedriver-linux64.zip chromedriver-linux64/chromedriver && \
     rm chromedriver-linux64.zip && \
-    mv chromedriver /usr/local/bin/
+    mv chromedriver /usr/local/bin/ && \
+    /usr/local/bin/chrome --version && \
+    /usr/local/bin/chromedriver --version
 
 # Everything the two staging stages assembled, in their original order so that
 # a later COPY still overwrites an earlier one (see the header). /usr/src is

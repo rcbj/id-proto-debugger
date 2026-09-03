@@ -282,6 +282,45 @@ mkdir -p coverage/frontend/.nyc_output coverage/api coverage/node \
     tests/report || true
 chmod -R 0777 coverage tests/report || true
 
+# ---------------------------------------------------------------------------
+# RAW COVERAGE OLDER THAN A WEEK IS DELETED, and it is deleted because nyc
+# MERGES whatever it finds rather than reporting on this run.
+#
+# The browser half of this report is not written by a process that finishes —
+# each instrumented page POSTs its window.__coverage__ to the client server on
+# a one-second interval, and the server writes every POST as its own file
+# under coverage/frontend/.nyc_output, named with a timestamp AND a random
+# suffix so no two collide. Nothing has ever removed one. `npx nyc report`
+# at the end of the run then reads the WHOLE directory, so the number printed
+# for this run is the union of this run and every run since the directory was
+# created — and the merged ratchet in tests/coverage_merge.js reads that same
+# lcov.
+#
+# Measured on 2026-09-03: 21,086 files and 14 GB going back to 2026-08-27,
+# six runs' worth, and about six minutes of the wall clock spent rendering
+# them. A line covered only by a test that was DELETED a week ago still
+# counted, which is the part that matters: a floor that a current run cannot
+# meet on its own stays green until the old data ages out, and then breaks in
+# a run that changed nothing.
+#
+# A WEEK rather than "this run only", deliberately. Several of the launchers
+# and the GitHub job write into the same directory, and a developer who runs
+# ./docker-run-tests.sh between two coverage runs would otherwise lose the
+# earlier one's browser data with nothing to say so. A week keeps a handful of
+# recent runs — enough that a flaky job's gap is filled by its neighbours —
+# and bounds the directory instead of letting it grow without limit.
+#
+# -mtime +7 is "last modified more than 7*24 hours ago", so a run started
+# yesterday is kept whole. Best-effort for the same reason the chmod above is:
+# a file left by a container running as another uid is not worth aborting a
+# suite over, and `find` reports the ones it could not remove.
+# ---------------------------------------------------------------------------
+COVERAGE_RETENTION_DAYS="${COVERAGE_RETENTION_DAYS:-7}"
+echo "Pruning raw coverage older than ${COVERAGE_RETENTION_DAYS} day(s)."
+find coverage/frontend/.nyc_output coverage/node/tmp coverage/api/tmp \
+    -type f -mtime "+${COVERAGE_RETENTION_DAYS}" -print -delete 2>/dev/null \
+    | wc -l | xargs echo "Pruned raw coverage file(s):" || true
+
 # Tear the stack down on ANY exit, including the early ones the checks below can
 # take. The normal path downs the stack itself after rendering the report and
 # clears this flag, so it is not done twice.

@@ -1031,7 +1031,8 @@ async function test() {
               kdcPort + ".");
 
   const options = new chrome.Options();
-  // --headless=new, never bare --headless: the image's Chrome 121 ignores
+  // --headless=new, never bare --headless: the Chrome 121 the image
+  // pinned ignores
   // --unsafely-treat-insecure-origin-as-secure in the old mode, and this page
   // derives keys with Web Crypto. Headless is not optional here either — a
   // test that opens a visible window steals focus on a developer's desktop
