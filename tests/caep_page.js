@@ -52,7 +52,14 @@ var log = bunyan.createLogger({ name: "caep_page",
 log.info("Log initialized. logLevel=" + log.level());
 
 var baseUrl = "https://localhost:3000";
-var apiUrl = process.env.API_URL || "https://localhost:4000";
+// NO apiUrl, deliberately. This job's whole subject is the page reconfiguring
+// itself and a session model that lives in the browser, and the events it
+// simulates are signed and sent BY the page — the debugger acting as a
+// transmitter, which is an ordinary fetch. It needs no backend and runs
+// against a deployed static site unchanged, which is why run-report.js hands
+// it no API_URL. A variable naming an api nothing here calls is an invitation
+// to start calling one.
+
 // The transmitter as the BROWSER must reach it, which on the containerized
 // stack is not the name this test uses and not the name the api uses — three
 // answers to one question, and confusing them has cost this suite a run.

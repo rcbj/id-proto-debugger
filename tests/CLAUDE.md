@@ -58,6 +58,19 @@ has no Single Logout at all and SPNEGO defines none, so those two use the OIDC
 one — which is not a workaround but the same point from the other side, since
 there is ONE session cookie here and every protocol shares it.
 
+**The PUSH HALF skips itself on a target with no api**, which is the other
+thing to know before changing it. RFC 8935 push lands on `POST /ssf/receiver`
+at the api — a page is not an HTTP server — and a deployed static site has no
+api at all, so `run-report.js` passes `SSF_PUSH_AVAILABLE=false` there (from
+`LDAP_AVAILABLE`, the same "does this target have a backend" fact the SCIM and
+SSF api jobs are gated on) and the job runs its sign-in and its POLL half and
+skips the other nine checks by name: 26 instead of 35, and the floor at the
+bottom of the file moves with the mode rather than being lowered to fit both.
+It is a section skip and not a job skip because poll is the delivery those
+sites actually use. Until 2026-09-04 the variable did not exist, and four of
+these five jobs failed nine checks each on every `./remote-run-tests.sh` run —
+against `https://localhost:4000`, a service that was never part of the target.
+
 **The SPNEGO job is SCHEDULED and skips itself**, with `declineToRun()` and a
 reason. The mock side is ready — `/authn/spnego` calls `startSession()` like
 every other door there — but it answers `401 WWW-Authenticate: Negotiate` and

@@ -2176,6 +2176,11 @@ function buildJobs() {
   //     with a reason when there is none, and `caep_page.js` needs neither an
   //     api nor a backend — its whole subject is the page reconfiguring
   //     itself and a session model that lives in the browser.
+  //   * `caep_session_protocols.js` — the per-protocol matrix — is the one
+  //     that is half of each: the sign-in and the POLL half need only the
+  //     transmitter, and the PUSH half needs the api. It is therefore not
+  //     gated as a job, and is handed SSF_PUSH_AVAILABLE so that it skips
+  //     that half by name. See ssfPushAvailable below.
   //
   // WHAT A STATIC TARGET REALLY LOSES IS PUSH DELIVERY, and that is RFC 8935
   // rather than a property of this deployment: a browser cannot be an HTTP
@@ -2195,6 +2200,19 @@ function buildJobs() {
       "dev server, or set LDAP_AVAILABLE=true for a remote target that IS " +
       "api-backed."
     : null;
+
+  // AND THE SAME FACT ONE STEP FINER, for the CAEP matrix jobs below. Those
+  // are not gated at all — the sign-in they drive is at the transmitter and
+  // the events they read back go through the debugger's own engines, neither
+  // of which needs a backend — but ONE HALF of each of them does: RFC 8935
+  // push lands on `POST /ssf/receiver` at the api, because a page is not an
+  // HTTP server, and a static deployment has no api to host it. So this is a
+  // SECTION skip carried into the job rather than a job skip, and the job
+  // says the sentence itself. Until 2026-09-04 nothing was passed and those
+  // four jobs each reported nine push failures against
+  // https://localhost:4000 on every remote run — a test blaming a service
+  // that was never part of the target.
+  const ssfPushAvailable = ldapOff ? "false" : "true";
 
   const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
@@ -3184,7 +3202,9 @@ function buildJobs() {
         "follow them, and the reset that starts over)",
     script: "caep_page.js",
     env: {
-      API_URL: env.API_URL || "https://localhost:4000",
+      // NO API_URL. This job needs no backend — see the note at the top of
+      // caep_page.js — and it ran against a deployed static site with one
+      // for months, which is a job carrying an address it never dialled.
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
           "https://localhost:8081",
       // The two the OAuth2 / OIDC jobs are given, because this one drives
@@ -3229,6 +3249,10 @@ function buildJobs() {
       env: {
         CAEP_SIGNIN_PROTOCOL: which,
         API_URL: env.API_URL || "https://localhost:4000",
+        // The push half only. See ssfPushAvailable above: on a target with
+        // no api the job still runs and the POLL half — the delivery those
+        // deployments actually use — is the whole of what it asserts.
+        SSF_PUSH_AVAILABLE: ssfPushAvailable,
         SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
             "https://localhost:8081",
         STS_URL: env.STS_URL || "https://localhost:8081",

@@ -115,6 +115,18 @@ const ssfClient = paths.requireSharedModule(
 var stsUrl = process.env.SSF_TRANSMITTER_URL || process.env.STS_URL ||
     "https://localhost:8081";
 var apiUrl = process.env.API_URL || "https://localhost:4000";
+// WHETHER THE PUSH HALF CAN RUN AT ALL ON THIS TARGET, which is a fact about
+// the DEPLOYMENT and not about the transmitter. RFC 8935 has the transmitter
+// come to the RECEIVER, a page is not an HTTP server, and so the debugger's
+// receive half is `POST /ssf/receiver` on the api — which a deployed static
+// site does not have. `run-report.js` sets this false for such a target, from
+// the same fact the SCIM and SSF api jobs are gated on. Unset (every
+// containerized and every local run) means the api is there, and then an api
+// that does not answer is this stack being wrong rather than a capability
+// this deployment never had. The POLL half needs none of it and runs
+// everywhere, which is the whole reason this is a section skip rather than a
+// job skip.
+var pushAvailable = process.env.SSF_PUSH_AVAILABLE !== "false";
 // Which sign-in this job is about. One value per job — see the header.
 var protocol = process.env.CAEP_SIGNIN_PROTOCOL || "oidc";
 
@@ -129,6 +141,7 @@ const AUTOMATIC = ['session-established', 'session-presented',
 
 let checks = 0;
 let failures = [];
+let skips = [];
 let created = [];
 let receiverId = '';
 
@@ -143,6 +156,17 @@ function check(what, fn) {
     log.error("  FAILED — " + what + ": " + e.message);
   }
   log.debug("Leaving check().");
+}
+
+// A SECTION THIS TARGET CANNOT RUN, said out loud. It is not a check and does
+// not count towards the floor at the bottom — a skipped section that raised
+// the tally would be a test reporting work it did not do, which is the shape
+// tests/expectation.js exists to forbid.
+function skip(what, why) {
+  log.debug("Entering skip(). " + what);
+  skips.push(what + ": " + why);
+  log.warn("  SKIPPED — " + what + " — " + why);
+  log.debug("Leaving skip().");
 }
 
 // ---------------------------------------------------------------------------
@@ -524,6 +548,25 @@ function spnegoNeedsATicket() {
   return why;
 }
 
+// Why the push half is not being run here. It is a sentence about the TARGET
+// and not about the transmitter, which is the distinction that matters when
+// somebody reads this in a report: the mock composed and would have sent the
+// events, and there was nowhere for them to land.
+function pushNeedsAnApi() {
+  log.debug("Entering pushNeedsAnApi().");
+  const why = 'RFC 8935 has the TRANSMITTER come to the receiver, and a page ' +
+    'is not an HTTP server — so the debugger\'s receive half is POST ' +
+    '/ssf/receiver on the api, and a deployed static site has no api at all ' +
+    'to host it. That is the protocol rather than a property of this build. ' +
+    'The POLL half below needs none of it and is the delivery those sites ' +
+    'really use, so it still runs and still says what the mock emitted. Run ' +
+    'this against the containerized stack (./docker-run-tests.sh) or a local ' +
+    'dev server, or set LDAP_AVAILABLE=true for a remote target that IS ' +
+    'api-backed.';
+  log.debug("Leaving pushNeedsAnApi().");
+  return why;
+}
+
 async function run() {
   log.debug("Entering run().");
   if (protocol === 'spnego') {
@@ -543,7 +586,10 @@ async function run() {
     why: 'the ' + protocol + ' sign-in this CAEP job drives'
   });
 
-  const inbox = await openApiInbox();
+  // NOT EVEN ASKED FOR when this target has no api: a POST to an api that is
+  // not there is a `fetch failed` in the log of a job that was never going to
+  // use the answer, and it reads as the failure this skip exists to replace.
+  const inbox = pushAvailable ? await openApiInbox() : null;
   const pollStream = await agreeStream(who, { method: 'urn:ietf:rfc:8936' });
   const pushStream = inbox
     ? await agreeStream(who, { method: 'urn:ietf:rfc:8935',
@@ -559,16 +605,22 @@ async function run() {
           (pollStream.events_delivered || []).length + ' of the eight asked ' +
           'for. A type missing here is one nothing will ever send.');
       });
-  check('and a second stream agrees them for PUSH delivery, through the ' +
-      'api\'s receiver — which exists for the one thing a browser genuinely ' +
-      'cannot do: a page is not an HTTP server', function () {
-        assert.ok(inbox, 'the api at ' + apiUrl + ' opened no push inbox. ' +
-          'It is POST /ssf/receiver there, and run-report.js only schedules ' +
-          'this job for a target it believes has an api — so an api that is ' +
-          'not there is this stack being wrong rather than this deployment ' +
-          'not having the capability.');
-        assert.ok(pushStream, 'the transmitter refused the push stream');
-      });
+  if (pushAvailable) {
+    check('and a second stream agrees them for PUSH delivery, through the ' +
+        'api\'s receiver — which exists for the one thing a browser ' +
+        'genuinely cannot do: a page is not an HTTP server', function () {
+          assert.ok(inbox, 'the api at ' + apiUrl + ' opened no push inbox. ' +
+            'It is POST /ssf/receiver there, and run-report.js only ' +
+            'schedules this job with SSF_PUSH_AVAILABLE unset for a target ' +
+            'it believes has an api — so an api that is not there is this ' +
+            'stack being wrong rather than this deployment not having the ' +
+            'capability.');
+          assert.ok(pushStream, 'the transmitter refused the push stream');
+        });
+  } else {
+    skip('the PUSH half — the second stream, the api\'s RFC 8935 receiver ' +
+        'and the eight arrivals through it', pushNeedsAnApi());
+  }
 
   // --- the three that happen on their own -------------------------------
   const session = await signIn(who);
@@ -656,14 +708,16 @@ async function run() {
             : ' This one is emitted by hand, so the emit above succeeded ' +
               'and the stream did not carry it.'));
       });
-    check(short + ' reached the debugger by PUSH as well, through the api\'s ' +
-        'RFC 8935 receiver', function () {
-          assert.ok(seen.push[short],
-            'nothing of that type arrived by push. Collected by push: ' +
-            (Object.keys(seen.push).join(', ') || '(nothing)') + '. A type ' +
-            'that arrives one way and not the other is a transmitter ' +
-            'composing an event correctly for one path and not the other.');
-        });
+    if (pushAvailable) {
+      check(short + ' reached the debugger by PUSH as well, through the ' +
+          'api\'s RFC 8935 receiver', function () {
+            assert.ok(seen.push[short],
+              'nothing of that type arrived by push. Collected by push: ' +
+              (Object.keys(seen.push).join(', ') || '(nothing)') + '. A type ' +
+              'that arrives one way and not the other is a transmitter ' +
+              'composing an event correctly for one path and not the other.');
+          });
+    }
     // AND IT IS AN EVENT THIS WORKFLOW UNDERSTANDS, which is the half a
     // count of arrivals cannot see: the defects this profile produces are
     // never crashes, and an event that validates against nothing looks
@@ -758,11 +812,24 @@ async function test() {
     return;
   }
   log.info(checks + " checks passed.");
+  if (skips.length) {
+    log.warn(skips.length + " section(s) skipped:");
+    skips.forEach(function (why) {
+      log.warn("  - " + why);
+    });
+  }
   // A FLOOR, for the reason ssf_engine.js gives: a section that stops being
-  // called is a suite that quietly stops testing something.
-  assert.ok(checks >= 25,
-    'Only ' + checks + ' checks ran and this file defines well over ' +
-    'twenty-five for a protocol that signs in. A section stopped running.');
+  // called is a suite that quietly stops testing something. IT MOVES WITH THE
+  // MODE rather than being set to the smaller of the two — nine of the
+  // thirty-five checks here are the push half, and a floor low enough to
+  // clear without them is a floor that would not notice them going missing on
+  // a stack that has an api.
+  const floor = pushAvailable ? 33 : 24;
+  assert.ok(checks >= floor,
+    'Only ' + checks + ' checks ran and this file defines at least ' + floor +
+    ' for a protocol that signs in' +
+    (pushAvailable ? '' : ' on a target with no api, where the push half is ' +
+      'skipped') + '. A section stopped running.');
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

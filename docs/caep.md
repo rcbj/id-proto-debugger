@@ -406,6 +406,18 @@ because **a page is not an HTTP server** — the one thing in this tree a browse
 genuinely cannot do. Sending the same eight both ways is what catches a
 transmitter that composes an event correctly for one path and not the other.
 
+**The PUSH half is skipped, by name, on a target with no api** — which is what
+`./remote-run-tests.sh https://test.idptools.com` is. Push needs a receiver and
+a page is not an HTTP server, so it needs `POST /ssf/receiver` on the api, and
+a static deployment has none; `run-report.js` therefore hands the job
+`SSF_PUSH_AVAILABLE=false` (from the same fact the SCIM and SSF api jobs are
+gated on) and it skips that section and reports 26 checks instead of 35. It is
+a SECTION skip and not a job skip on purpose: the sign-in and the poll half say
+everything they said before, and poll is the only delivery those sites can use
+anyway. Until 2026-09-04 nothing was passed, so four of these five jobs failed
+nine checks each on every remote run, naming an api at `https://localhost:4000`
+that was never part of the target.
+
 **And it does not merely count arrivals.** Every collected SET goes through the
 debugger's own `ssf_client.js` envelope reader and `ssf_events.js` catalogue,
 because the defects this profile produces are never crashes and eight malformed
