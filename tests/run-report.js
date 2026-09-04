@@ -3218,6 +3218,32 @@ function buildJobs() {
   });
 
   // ------------------------------------------------------------------------
+  // RISC, THE SECOND VOCABULARY OVER THE SAME PIPE.
+  //
+  // ONE JOB and not three, where CAEP has three, and the difference is what
+  // each of the three would need. `risc_engine.js` needs nothing — no
+  // transmitter, no browser — and is scheduled here beside `caep_engine.js`
+  // for that reason. The protocol and page halves of RISC are driven by the
+  // mock STS's own `tests/risc_register.js` and by the SSF and CAEP jobs that
+  // already exercise the pipe every RISC event travels on: the streams, the
+  // deliveries, the envelope and the subject grammar are vocabulary-
+  // independent, which is the whole claim `ssf_events.js`'s header makes.
+  // ------------------------------------------------------------------------
+  jobs.push({
+    name: "RISC engines (the fourteen event types written out from the " +
+        "specification, the ONE required member and the eleven types with " +
+        "no members at all — so the SUBJECT is the whole message — the " +
+        "three claims RISC gives to one event and the fourth it does not " +
+        "define, THE ONLY HYPHENATED MEMBER NAME IN ANY OF THE THREE " +
+        "VOCABULARIES and the near miss that names it, the two rows whose " +
+        "subject format overrides the pane's, the three state machines and " +
+        "the one sentence they refuse, and section 2.8's opt-out gate with " +
+        "the exception without which it is a trap)",
+    script: "risc_engine.js",
+    env: {},
+  });
+
+  // ------------------------------------------------------------------------
   // AND THE EVENT-TYPE x SIGN-IN-PROTOCOL MATRIX: one job per protocol, each
   // driving all EIGHT event types over a session that protocol established.
   //

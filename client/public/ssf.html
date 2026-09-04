@@ -711,6 +711,233 @@ are about</legend>
   </fieldset>
 </div>
 
+<!-- ===================== RISC account ===================== -->
+<div class="ssf-pane dbg-pane ssf-hidden" id="pane_risc">
+  <legend class="dbg-legend"
+          id="risc_expand_button">RISC account &mdash; the thing these events
+are about</legend>
+  <fieldset name="risc_fieldset" id="risc_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why a RISC event names a person and a CAEP event names a
+      session</summary>
+    <p class="ssf-note"><strong>RISC</strong> (OpenID RISC Profile
+    Specification 1.0, published 29 August 2025 and final on 2 September 2025)
+    is the <em>account</em> vocabulary. <a href="ssf.html">CAEP</a> says
+    <em>this session is no longer trustworthy</em>; RISC says <em>this account
+    is no longer trustworthy</em>, and the second is the larger sentence by
+    orders of magnitude &mdash; a revoked session is one sign-in at one
+    relying party, and a purged account is every session that person has
+    anywhere, for ever. CAEP is aimed within an enterprise and RISC
+    <strong>across providers</strong>: its origin is a consumer provider
+    noticing that an account has been taken over and telling every site that
+    account signs in to.</p>
+    <p class="ssf-note"><strong>The subject is a PLAIN one, and that is the
+    whole difference said in one line of JSON.</strong> SSF&rsquo;s complex
+    subject exists because a CAEP event is about one session of one person, so
+    <code>{user, session, device}</code> is how <em>that person, on that
+    device, in that session</em> is expressible at all. A RISC event is about
+    the account: the person <em>is</em> the subject, there is nothing to
+    narrow, and a complex subject here would say <em>this account was
+    disabled, on this device</em>, which is a sentence with no meaning.</p>
+    <p class="ssf-note"><strong>Eleven of the fourteen carry no payload
+    members at all</strong>, so for those the subject <em>is</em> the entire
+    message &mdash; <code>account-purged</code> says nothing but its own type
+    and who it is about. A subject naming the wrong person is therefore not a
+    partly wrong event; it is a wholly wrong one, with nothing else in it to
+    notice by. That is what makes the format selector below the consequential
+    control on this pane.</p>
+    <p class="ssf-note"><strong>Every simulate button builds a whole event,
+    signs it and pushes it</strong> through the <em>Transmitting events</em>
+    pane, which is left visible on purpose. The account&rsquo;s three states
+    and the counts move with what was actually sent.</p>
+  </details>
+
+  <!-- ===================================================================
+       WHICH SIGN-IN THIS ACCOUNT CAME FROM.
+
+       The same five as the CAEP pane, through the same session_handoff.js
+       table — and RISC needs LESS of what crosses. A RISC subject names a
+       PERSON and every one of the five carries one; the session identifier
+       three of them cannot supply is simply not what these fourteen events
+       are about. What RISC needs and CAEP does not is an ADDRESS, for two
+       of the fourteen, and whether anybody said it was verified.
+       =================================================================== -->
+  <div class="ssf-row">
+    <label class="ssf-label" for="risc_signin_protocol">Sign-in
+      protocol</label>
+    <select id="risc_signin_protocol"
+            onchange="return ssf.riscProtocolChanged();"
+            title="Which browser sign-in names the account. Unlike CAEP, all five carry what RISC needs — a person. What only OpenID Connect carries is whether an email address was verified.">
+    </select>
+    <input type="button" class="ssf-btn" id="btn_risc_signin"
+           value="Sign in over this protocol"
+           onclick="return ssf.startRiscHandoff();"
+           title="Runs that protocol's own workflow and brings the identity back here. Nothing is stored: it crosses in sessionStorage for one page load and is collected once.">
+  </div>
+  <p class="ssf-note" id="risc_protocol_note"></p>
+
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_risc_seed"
+           value="Fill from the ID Token"
+           onclick="return ssf.riscFillFromToken();"
+           title="Takes iss, sub, email and phone_number from the ID Token the OAuth2 / OIDC hand-off produced — and email_verified, which is the claim that decides whether this workflow may honestly send an identifier event.">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_risc_add_subject"
+           value="Add this subject to the stream"
+           onclick="return ssf.riscAddSubject();"
+           title="Adds the subject below to the stream, so the transmitter will deliver events about this account to it.">
+    <input type="button" class="ssf-btn ssf-btn-danger" id="btn_risc_reset"
+           value="Reset this account only"
+           onclick="return ssf.resetRiscAccount();"
+           title="Clears the three states, the counters and what has been said, and keeps the identity. Nothing at the transmitter is touched — and nothing is deleted, because deleting the row is what account-purged MEANS.">
+  </div>
+  <p class="ssf-status" id="risc_seed_note"></p>
+
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="risc_iss">iss</label>
+      <input class="ssf-field" type="text" id="risc_iss"
+             placeholder="https://sts.example.com"
+             title="The issuer the receiver already knows this person by. It is what an ID Token's `iss` said.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_sub">sub</label>
+      <input class="ssf-field" type="text" id="risc_sub"
+             placeholder="the subject identifier"
+             title="The person. With `iss` above it makes the RFC 9493 issuer_subject_id a receiver already holds — the identifier eleven of the fourteen event types name.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_email">email</label>
+      <input class="ssf-field" type="text" id="risc_email"
+             placeholder="the address identifier-changed is about"
+             title="The subject of identifier-changed and identifier-recycled, which MUST be an address or a number and carries the OLD value. An address this page invented makes those two events about nothing.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_phone">phone_number</label>
+      <input class="ssf-field" type="text" id="risc_phone"
+             placeholder="+12065550100"
+             title="The other identifier RISC's two identifier events accept. RFC 9493 spells the format `phone_number`; the RISC text says 'phone', which is the older RISC subject type name and not what SSF 1.0 uses.">
+    </div>
+  </div>
+
+  <div class="ssf-row">
+    <label class="ssf-label" for="risc_subject_format">subject format</label>
+    <select class="ssf-field" id="risc_subject_format"
+            onchange="return ssf.renderRiscFromEvent();"
+            title="THE CONSEQUENTIAL CONTROL ON THIS PANE, because eleven of the fourteen event types carry no payload at all and the subject is the whole message. The two identifier events override it and use email regardless.">
+      <option value="issuer_subject_id" selected>issuer_subject_id &mdash;
+        what a receiver already holds</option>
+      <option value="email">email &mdash; and identifier-recycled exists
+        because that key is unsafe</option>
+      <option value="phone_number">phone_number</option>
+      <option value="opaque">opaque</option>
+      <option value="account">account &mdash; an acct: URI</option>
+    </select>
+    <label class="ssf-radio"><input type="checkbox" id="risc_honour_optout"
+           checked
+           title="RISC section 2.8 says an opted-out account is not participating in event exchange. Clearing this is how a receiver that IGNORES an opt-out gets to be shown doing it — the four opt-out events are never gated either way.">
+           honour the opt-out state</label>
+  </div>
+  <label class="ssf-label" for="risc_subject_json">sub_id &mdash; the subject
+  this page will send</label>
+  <textarea class="ssf-field ssf-mono" id="risc_subject_json" rows="5" readonly
+            title="Built from the fields above through the same RFC 9493 grammar the Subjects pane uses. Checked against it, and against the per-event-type format rule, with the findings below."></textarea>
+  <div id="risc_subject_findings"></div>
+
+  <details class="ssf-more">
+    <summary>The three claims RISC gives to ONE of its fourteen events</summary>
+    <p class="ssf-note">CAEP section 2 gives <code>event_timestamp</code>,
+    <code>initiating_entity</code>, <code>reason_admin</code> and
+    <code>reason_user</code> to <em>every one</em> of its eight events. RISC
+    gives <strong>three</strong> of them &mdash; there is no
+    <code>initiating_entity</code> &mdash; and gives them to <strong>exactly
+    one</strong> of its fourteen, <code>credential-compromise</code>. On any
+    other type the fields below are composed and dropped, rather than sent as
+    members the specification does not define.</p>
+    <p class="ssf-note"><code>event_timestamp</code> means something different
+    here too: RISC section 2.7 words it as when the transmitter
+    <strong>discovered</strong> the compromise rather than when it happened. A
+    credential found in a breach corpus was compromised long before anybody
+    noticed, so a receiver reading it as an occurrence time dates the incident
+    from the wrong end.</p>
+    <p class="ssf-note">RISC does not repeat CAEP&rsquo;s requirement that the
+    two reason members be <strong>language maps</strong> rather than strings,
+    which makes a bare string arguably conforming to RISC and certainly
+    unreadable to a receiver built against CAEP. This page sends the map,
+    because that is the reading that is right under both.</p>
+  </details>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="risc_credential_type">credential_type
+      </label>
+      <input class="ssf-field" type="text" id="risc_credential_type"
+             value="password"
+             title="REQUIRED on credential-compromise, and the only required member in the whole vocabulary. RISC defines it BY REFERENCE to CAEP's credential-change, so the two lists are one list; an unlisted value is carried with a warning.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_timestamp">event_timestamp</label>
+      <select class="ssf-field" id="risc_timestamp"
+              title="A NUMBER of seconds since the epoch, and only credential-compromise defines it.">
+        <option value="now">now</option>
+        <option value="hour">an hour ago &mdash; the token is minted now
+        </option>
+        <option value="omit">omit it &mdash; legal, and what breaks receivers
+        </option>
+      </select>
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_language">language tag</label>
+      <input class="ssf-field ssf-narrow" type="text" id="risc_language"
+             value="en"
+             title="The BCP 47 tag the two reason members are keyed under.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_reason_admin">reason_admin</label>
+      <input class="ssf-field" type="text" id="risc_reason_admin"
+             placeholder="why, for a log and an auditor">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_reason_user">reason_user</label>
+      <input class="ssf-field" type="text" id="risc_reason_user"
+             placeholder="why, in words meant for the person">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_new_value">new-value</label>
+      <input class="ssf-field" type="text" id="risc_new_value"
+             placeholder="what the identifier became"
+             title="identifier-changed's only member, and THE ONLY HYPHENATED MEMBER NAME IN ANY OF THE THREE VOCABULARIES. `new_value` typed from habit produces an event that validates, delivers and tells the receiver nothing — this page names that near miss rather than silently correcting it.">
+    </div>
+  </div>
+
+  <details class="ssf-more">
+    <summary>What each button sends, and the two that are not what they
+      look like</summary>
+    <p class="ssf-note">Four of the fourteen describe things a transmitter can
+    actually observe in its own directory &mdash; a person deleted, an account
+    marked inactive or active again, an identifier moving &mdash; and this
+    stack&rsquo;s mock sends those <strong>by itself</strong> when the
+    directory changes over SCIM, over LDAP or from its console. That is a
+    <em>different</em> observer from CAEP&rsquo;s, watching the provisioning
+    layer rather than the authentication one.</p>
+    <p class="ssf-note"><strong>The four opt-out buttons ARE state
+    transitions</strong>, not reports of one: RISC section 2.8 words each as
+    <em>the account is in this state</em>, so pressing one moves the account
+    here. And <code>sessions-revoked</code> is <strong>deprecated by RISC
+    itself</strong> in favour of CAEP&rsquo;s <code>session-revoked</code> —
+    plural against singular, one letter apart, every session this person has
+    against the one the subject names. It is offered because a debugger that
+    could not build a deprecated event could not find out what a receiver does
+    with one.</p>
+  </details>
+  <div class="ssf-buttons" id="risc_simulate"></div>
+  <p class="ssf-status" id="risc_simulate_status"></p>
+
+  <div id="risc_state"></div>
+  <div id="risc_counts"></div>
+  <div id="risc_log"></div>
+  </fieldset>
+</div>
+
 <!-- ===================== Receiving ===================== -->
 <div class="ssf-pane dbg-pane" id="pane_receive">
   <legend class="dbg-legend"
