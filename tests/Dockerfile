@@ -926,6 +926,14 @@ COPY tests/api_ssf.js tests/ssf_page.js ./
 # module — `caep_session.js`, which is what the eight event types are ABOUT —
 # and three scripts, and reuses everything above.
 COPY tests/caep_engine.js tests/caep_protocol.js tests/caep_page.js ./
+# The event-type x sign-in-protocol matrix, scheduled five times with
+# CAEP_SIGNIN_PROTOCOL naming the sign-in. Its own COPY line rather
+# than a continuation of the one above: testsImageHasNoCollidingFilenames()
+# in jwk_pem_encoding.js reads this file A LINE AT A TIME, so a backslash
+# continuation makes every script on the joined line invisible to it --
+# which is how adding this file first reported all FOUR CAEP jobs as
+# uncopied.
+COPY tests/caep_session_protocols.js ./
 # ---------------------------------------------------------------------------
 # SPIFFE.
 #

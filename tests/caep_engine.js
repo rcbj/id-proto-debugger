@@ -74,6 +74,12 @@ const caep = paths.requireSharedModule(
 const ssf = paths.requireSharedModule(
   [__dirname + "/../client/src/ssf_client.js", __dirname + "/ssf_client.js"],
   "ssf_client.js");
+// The protocol table the pane's selector and both seeders read. It is here
+// because the assertion this file makes about seeding is an assertion about
+// the two ends AGREEING — see everySignInProtocolSeedsASession().
+const sessionHandoff = paths.requireSharedModule(
+  [__dirname + "/../client/src/session_handoff.js",
+   __dirname + "/session_handoff.js"], "session_handoff.js");
 
 const P = "https://schemas.openid.net/secevent/caep/event-type/";
 
@@ -870,6 +876,140 @@ function countersAndSuggestions() {
   log.debug("Leaving countersAndSuggestions().");
 }
 
+
+// ---------------------------------------------------------------------------
+// EVERY SIGN-IN PROTOCOL SEEDS A SESSION, AND THREE OF THE FIVE MUST ADMIT
+// THEY CANNOT NAME ONE.
+//
+// **CAEP IS NOT AN OAuth2 / OIDC FEATURE.** The profile is a vocabulary about
+// SESSIONS, nothing in `session-revoked` names a token endpoint, and it exists
+// precisely because SAML and OpenID Connect both authenticate at one instant
+// and leave a session good for hours afterwards. This pane read an ID Token
+// and nothing else until 2026-09-03, which made the whole workflow look like
+// something it never was — and the mock proves the point from the other end,
+// emitting for every browser sign-in it has through one funnel.
+//
+// **WHAT THIS SECTION IS REALLY ASSERTING IS THAT AN INVENTED SESSION
+// IDENTIFIER IS REPORTED AS ONE.** That is the whole risk in seeding from five
+// protocols instead of one, and it has no symptom anywhere else: an event
+// naming a session identifier this workflow made up is well-formed, it
+// validates against the catalogue two sections above, a conforming receiver
+// accepts it — and it revokes a session nobody has. Nothing downstream can
+// tell the two apart, so it has to be right here.
+//
+// It is also the section that would have caught the defect this feature
+// actually shipped with for one revision: `deliver()` computed the fact under
+// one member name and the seeder read another, so a REAL WS-Federation
+// SessionIndex came back marked as invented. Nothing failed; the note was
+// simply wrong, in the one direction that matters.
+// ---------------------------------------------------------------------------
+function everySignInProtocolSeedsASession() {
+  log.info("=== Seeding from all five browser sign-in protocols ===");
+
+  // The two ends of the same table. A protocol the pane offers and the seeder
+  // cannot label is a selector entry that produces an unexplained session.
+  const offered = sessionHandoff.protocols();
+  check('the pane offers five sign-in protocols, which is every browser SSO ' +
+      'profile the mock reaches through authn.startSession()', function () {
+        assert.deepStrictEqual(offered.map(function (one) {
+          return one.id;
+        }), ['oidc', 'saml2', 'saml11', 'wsfed', 'spnego']);
+      });
+  offered.forEach(function (one) {
+    check('"' + one.id + '" has a label and says where its session ' +
+        'identifier comes from — the sentence the pane draws under the ' +
+        'selector, and the only warning a reader gets', function () {
+          assert.ok(one.label && one.label.length > 2, 'no label');
+          assert.ok(one.where && one.where.length > 10, 'no provenance');
+        });
+  });
+
+  // A session identifier that came off the wire is KEPT and reported as real.
+  [['oidc', 'oidc-sid-1'], ['saml2', '_session-index-99'],
+   ['wsfed', '_session-index-77']].forEach(function (pair) {
+    const seeded = caep.seedFromSession({
+      protocol: pair[0], iss: 'https://idp.example.com', sub: 'alice',
+      sid: pair[1], sidFromTheWire: true, acr: 'urn:example:pwd', amr: ['pwd']
+    }, null);
+    check(pair[0] + ' keeps a session identifier the protocol really ' +
+        'carried, so an event built on it names a session the far end holds',
+      function () {
+        assert.strictEqual(seeded.session.sid, pair[1]);
+        assert.strictEqual(seeded.problems.length, 0,
+          'a real session identifier must produce no warning, and produced: ' +
+          seeded.problems.join(' '));
+      });
+  });
+
+  // THE OTHER HALF, and the one that matters. SAML 1.1 and SPNEGO cannot
+  // carry one at all; WS-Federation could not this time.
+  ['saml11', 'wsfed', 'spnego'].forEach(function (protocol) {
+    const seeded = caep.seedFromSession({
+      protocol: protocol, iss: 'https://idp.example.com', sub: 'alice',
+      sid: '', sidFromTheWire: false, acr: 'urn:example:pwd'
+    }, null);
+    check(protocol + ' with no session identifier on the wire generates a ' +
+        'MARKED one and says so — an event naming it is well-formed, ' +
+        'validates, and is about nothing at the far end', function () {
+          assert.ok(/^debugger-sid-/.test(seeded.session.sid),
+            'the invented identifier must say so IN THE VALUE, because a ' +
+            'random hex string is indistinguishable from a transmitter\'s ' +
+            'and somebody will paste it into a real system. Got: ' +
+            seeded.session.sid);
+          assert.ok(seeded.problems.length >= 1,
+            'and it must be reported, or the pane shows an invented ' +
+            'identifier with no warning at all');
+        });
+    check(protocol + '\'s warning names ITS OWN protocol rather than a ' +
+        'missing `sid` claim, which would name a document it never carried',
+      function () {
+        const said = seeded.problems.join(' ');
+        assert.ok(said.indexOf('sid') === -1 || said.indexOf('claim') === -1,
+          'a SAML or Kerberos sign-in reported as a missing ID Token claim ' +
+          'sends a reader looking for an OP that was never involved: ' + said);
+      });
+  });
+
+  // THE ROUND TRIP, which is where the shipped defect lived: what `deliver()`
+  // WRITES has to be what `seedFromSession()` READS. Asserting each half on
+  // its own passed while the two disagreed.
+  const bag = {};
+  const realWindow = global.window;
+  global.window = { sessionStorage: {
+    getItem: function (k) {
+      return (k in bag) ? bag[k] : null;
+    },
+    setItem: function (k, v) {
+      bag[k] = String(v);
+    },
+    removeItem: function (k) {
+      delete bag[k];
+    }
+  } };
+  try {
+    sessionHandoff.start({ returnUrl: '/ssf.html', label: 'the suite',
+      protocol: 'wsfed' });
+    sessionHandoff.deliver({ protocol: 'wsfed', iss: 'https://idp', sub: 'a',
+      sid: '_idx77', sidFromTheWire: true }, 'the suite');
+    const taken = sessionHandoff.take();
+    const seeded = caep.seedFromSession(taken.session, null);
+    check('a session survives the hand-off WITH the fact that its identifier ' +
+        'was real — the two ends name that fact identically, and when they ' +
+        'did not, a genuine WS-Federation SessionIndex was reported as ' +
+        'invented with nothing failing', function () {
+          assert.strictEqual(seeded.session.sid, '_idx77');
+          assert.strictEqual(seeded.problems.length, 0,
+            'the round trip lost it: ' + seeded.problems.join(' '));
+        });
+    check('and the slot is empty afterwards, because a session collected ' +
+        'twice is two workflows believing they own one', function () {
+          assert.strictEqual(sessionHandoff.isDelivered(), false);
+        });
+  } finally {
+    global.window = realWindow;
+  }
+}
+
 async function test() {
   log.debug("Entering test().");
   theEightUris();
@@ -879,14 +1019,15 @@ async function test() {
   theComplexSubject();
   theStateMachine();
   countersAndSuggestions();
+  everySignInProtocolSeedsASession();
 
   // A FLOOR ON THE COUNT, for the reason ssf_engine.js gives: a section that
   // stops being called is a suite that quietly stops testing something, and
   // nothing else would report it.
   log.info(checks + " checks passed.");
-  assert.ok(checks >= 55,
+  assert.ok(checks >= 70,
       'Only ' + checks + ' checks ran and this file defines well over ' +
-      'fifty-five. A section has stopped being called.');
+      'seventy. A section has stopped being called.');
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

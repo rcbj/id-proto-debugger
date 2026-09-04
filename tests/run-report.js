@@ -374,6 +374,13 @@ const JOB_LOCKS = {
   // middle of its own poll.
   "caep_protocol.js": "sts-ssf",
   "caep_page.js": "sts-ssf",
+  // The five per-protocol jobs share the script and therefore the
+  // lock. They agree streams on the mock and sign people in and out
+  // of it, so a caep_protocol.js or ssf_protocol.js run overlapping
+  // one would see events about somebody else's session arriving in
+  // the middle of its own poll — which is the exact hazard the
+  // sts-ssf lock was created for when caep.autoEmit landed.
+  "caep_session_protocols.js": "sts-ssf",
   // `ssf_engine.js` is deliberately absent: it needs no transmitter at all,
   // so nothing it does can collide with this. `api_ssf.js` is absent for a
   // different reason — it drives the api's own receiver and never touches
@@ -3188,6 +3195,45 @@ function buildJobs() {
            "/.well-known/openid-configuration"),
       CLIENT_ID: env.CLIENT_ID || "webapp1",
     },
+  });
+
+  // ------------------------------------------------------------------------
+  // AND THE EVENT-TYPE x SIGN-IN-PROTOCOL MATRIX: one job per protocol, each
+  // driving all EIGHT event types over a session that protocol established.
+  //
+  // **ONE JOB PER PROTOCOL AND NOT ONE PER COMBINATION.** The federation grid
+  // next door is scheduled the other way — forty-nine jobs, one per point —
+  // and the difference is where the cost is. There, each point is a different
+  // SIGN-IN and the eight-second job is the sign-in; here the sign-in is done
+  // once and the eight event types over it are a few hundred milliseconds
+  // each, so a job per combination would pay for forty sign-ins to run the
+  // same eight events five times. The report still names the protocol, which
+  // is the property that mattered about the grid: a failure says `SAML 1.1`
+  // rather than being one row of forty.
+  //
+  // Gated on a transmitter the way the other CAEP jobs are. The SPNEGO one is
+  // scheduled and SKIPS ITSELF with a reason — it needs a Kerberos service
+  // ticket to answer the acceptor's 401, which only krb5_mit_client.js has
+  // the machinery for — and that is deliberately a scheduled skip rather than
+  // an absent job, because a job nobody schedules is a gap nobody can see.
+  // ------------------------------------------------------------------------
+  ["oidc", "saml2", "saml11", "wsfed", "spnego"].forEach(function (which) {
+    jobs.push({
+      name: "CAEP over " + which + " (all eight event types, about a session " +
+          "established by that sign-in, sent by the mock and collected by " +
+          "the debugger over BOTH deliveries — poll, which needs no api, and " +
+          "RFC 8935 push through the api's receiver, which exists because a " +
+          "page is not an HTTP server — and every one put through the " +
+          "debugger's own catalogue rather than merely counted)",
+      script: "caep_session_protocols.js",
+      env: {
+        CAEP_SIGNIN_PROTOCOL: which,
+        API_URL: env.API_URL || "https://localhost:4000",
+        SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+            "https://localhost:8081",
+        STS_URL: env.STS_URL || "https://localhost:8081",
+      },
+    });
   });
 
   // ------------------------------------------------------------------------

@@ -198,7 +198,53 @@ own**, and it is the whole reason CAEP makes those members required.
 last forty; *how many session-revoked have gone out* and *what were the last
 few* are two different questions.
 
-### The session is seeded from the OAuth2 / OIDC hand-off, and there are three shapes
+### The session is seeded from ANY of five browser sign-ins, and that is the fix to the biggest thing this workflow implied
+
+**Until 2026-09-03 this pane read an ID Token and nothing else**, which made
+the whole workflow look like an OAuth2 / OIDC feature. It never was. CAEP is a
+vocabulary about **sessions**: nothing in `session-revoked` names a token
+endpoint, and the profile exists precisely because SAML and OpenID Connect both
+authenticate at one instant and leave a session good for hours afterwards. The
+mock made the same point from the other end all along — every browser sign-in
+there reaches ONE funnel, `authn.startSession()`, and every one of them emits.
+
+`client/src/session_handoff.js` is the route. It is a **sibling** of
+`token_handoff.js` and not a generalization of it, for a reason that decided
+the design: that module carries a BEARER TOKEN — its slot is the access token,
+its `deliver()` refuses a call without one, its scope member is advice about an
+OAuth grant — and four of the five sign-ins here produce none of those. Bending
+it would have meant a token slot holding something that is not a token, checked
+by a guard that had to stop checking.
+
+**What differs between the five is not the identity — it is whether a SESSION
+IDENTIFIER exists at all**, and for three of them it does not:
+
+| protocol | where the session identifier comes from |
+|---|---|
+| OAuth 2.0 / OIDC | the ID Token's `sid` claim, **when the OP issues one** |
+| SAML 2.0 | `<saml:AuthnStatement SessionIndex="…">` |
+| SAML 1.1 | **nothing** — the protocol has no session index |
+| WS-Federation | the SessionIndex of the SAML 2.0 token it carries; a SAML 1.1 token has none, and the IdP chooses which to send |
+| SPNEGO | **nothing** — a service ticket names a SERVICE, not a session |
+
+That is the most useful thing the pane reports, because an event naming an
+identifier this workflow invented is **well-formed, validates, is accepted by a
+receiver, and revokes a session nobody has**. Nothing downstream can tell the
+two apart. So `sidFromTheWire` crosses beside the value, an invented one is
+marked `debugger-sid-…` in the value itself, and each protocol's warning is
+written in its OWN words rather than reporting a missing `sid` claim — which
+would name a document three of them never carried.
+
+**WS-Federation is the one that goes either way**, and it is why that flag is
+computed from what was FOUND rather than from the profile's name: the same
+workflow against the same IdP can hand over a real SessionIndex one run and
+nothing the next. Getting that backwards is what the feature shipped with for
+one revision — `deliver()` wrote the fact under one member name and the seeder
+read another, so a genuine SessionIndex came back marked as invented. Nothing
+failed; the note was simply wrong, in the one direction that matters.
+`tests/caep_engine.js` now drives the round trip rather than each half.
+
+### The OAuth2 / OIDC seeding, and there are three shapes
 
 | What came back | What the pane says |
 |---|---|
@@ -261,9 +307,25 @@ Three acts the mock can actually observe now emit on their own:
 
 | Act | Event | Where |
 |---|---|---|
-| a session is created | `session-established` | `authn.startSession()` |
-| a session is presented and honoured | `session-presented` | the authorization endpoint, through `authn.notePresented()` |
+| a session is created | `session-established` | `authn.startSession()` — the ONE funnel every browser SSO profile there reaches |
+| a session is presented and honoured | `session-presented` | `authn.notePresented()`, from **all four** browser SSO endpoints |
 | a session ends | `session-revoked` | `authn.dropSession()`, which every sign-out door reaches |
+
+**`session-presented` was emitted from the OAuth2 authorization endpoint ALONE
+until 2026-09-03, and that was the one real gap in this feature.** The other
+two were protocol-independent from the day CAEP landed, because both go through
+a funnel; a presentation has no funnel — it is a thing each protocol endpoint
+decides it is doing — and only `oauth-oidc/oauth2.js` said so. `saml2_sso.js`,
+`saml11_sso.js` and `wsfed.js` each called `sessionOf(req)` to answer a request
+out of an existing session, which *is* single sign-on, and reported nothing.
+
+A receiver watching a SAML session therefore saw it start and end with every
+single sign-on between the two missing — **silently**, because the evidence was
+a count of zero, and in this protocol a count of zero is also what *nobody
+asked for that type* looks like. The three calls are in place now and
+`sts/tests/caep_presented_every_protocol.js` holds them there, in the
+submodule, asserting both that `notePresented()` is protocol-independent and
+that every browser SSO profile actually calls it.
 
 `caep.autoEmit` puts the old behaviour back rather than leaving it only in the
 history of the file.
@@ -308,7 +370,7 @@ notice of that.
 
 ---
 
-## The three test files, and what only each of them can see
+## The test files, and what only each of them can see
 
 | File | Needs | What only it can catch |
 |---|---|---|
@@ -319,3 +381,46 @@ notice of that.
 `caep_protocol.js` is **the only test in this suite whose subject is something
 the far end decided to do.** Everything else drives a request and reads the
 answer; that one signs somebody in and waits.
+
+### `caep_session_protocols.js` — the event-type x sign-in-protocol matrix
+
+**Five jobs, one per sign-in protocol**, each signing in over its own protocol
+and then driving **all eight event types** over the session that produced —
+three by really doing the thing (a sign-in, a single sign-on, a sign-out) and
+five through `POST /admin-api/caep/emit`, because no device reports compliance
+to a mock and no risk engine talks to one.
+
+It is one job per protocol rather than one per combination — the opposite of
+the federation grid next door — and the difference is where the cost is. There
+each point is a different sign-in and the sign-in is the whole job; here the
+sign-in is done once and the eight events over it are a few hundred
+milliseconds each, so forty jobs would pay for forty sign-ins to run the same
+eight events five times. The report still names the protocol, which is the
+property that mattered about the grid.
+
+**Both deliveries, and they prove different things.** Poll (RFC 8936) is the
+receiver coming to the transmitter — ordinary HTTPS with a JSON body, so it is
+what the page does with no api at all and the only delivery the deployed static
+sites can use. Push (RFC 8935) goes through `POST /ssf/receiver` on the api,
+because **a page is not an HTTP server** — the one thing in this tree a browser
+genuinely cannot do. Sending the same eight both ways is what catches a
+transmitter that composes an event correctly for one path and not the other.
+
+**And it does not merely count arrivals.** Every collected SET goes through the
+debugger's own `ssf_client.js` envelope reader and `ssf_events.js` catalogue,
+because the defects this profile produces are never crashes and eight malformed
+events look exactly like eight good ones from a counter. The mock has its own
+reading of RFC 9493 and this side has its own, so agreement there is two
+readings agreeing rather than one implementation agreeing with itself.
+
+**Ordering is load-bearing**: `session-revoked` runs LAST, because the model's
+one hard refusal is an event about a session that has already ended — driving
+it earlier makes the five that follow refusals, and the failure then names the
+state machine rather than the ordering.
+
+**SPNEGO is scheduled and skips itself**, with a reason. The mock side is ready
+— `/authn/spnego` calls `startSession()` like every other door — but that
+endpoint answers `401 WWW-Authenticate: Negotiate`, and answering it needs a
+Kerberos service ticket: a KDC, a keytab and a credential cache, which only
+`krb5_mit_client.js` has the machinery for. It is a *scheduled* skip rather
+than an absent job on purpose: a job nobody schedules is a gap nobody can see.

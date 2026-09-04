@@ -68,6 +68,10 @@ var client = require("./krb5_client.js");
 // on this page.
 var panes = require("./kerberos_panes.js");
 var ophistory = require("./kerberos_history.js");
+// The SESSION hand-off to the Shared Signals workflow. See
+// `session_handoff.js` — and note SPNEGO is the protocol in that table
+// that can never supply a session identifier.
+var sessionHandoff = require("./session_handoff.js");
 var tickets = require("./kerberos_tickets.js");
 var hexview = require("./kerberos_hex.js");
 // The key fields in the ticket pane. They are what open the PAC inside the
@@ -1221,12 +1225,62 @@ async function confirmContext(parsed, built, init, result) {
     log.debug("Leaving confirmContext(). With problems.");
     return;
   }
+  handSessionToSharedSignals();
   status("krb_spnego_status",
     "accept-completed. The server accepted a Kerberos ticket carried in an " +
     "HTTP header" + (parsed.responseToken ? " and proved its own identity" :
         "") + ", in " + (result.response.status === 200 ? "one round trip " +
         "after the challenge" : "a completed negotiation") + ".", "krb-ok");
   log.debug("Leaving confirmContext(). Complete.");
+}
+
+// ---------------------------------------------------------------------------
+// HAND THE SESSION TO THE SHARED SIGNALS WORKFLOW, IF IT ASKED FOR ONE.
+//
+// **CAEP is a vocabulary about SESSIONS**, and the far end of a SPNEGO
+// exchange really does hold one: the mock's `/authn/spnego` calls the same
+// `startSession()` every other sign-in there reaches, so a Kerberos sign-in
+// emits `session-established` exactly as an OIDC one does.
+//
+// **AND THIS IS THE PROTOCOL THAT CAN NEVER NAME IT.** A service ticket names
+// a SERVICE and a principal; nothing in RFC 4559, RFC 4178 or the AP-REQ
+// carries the identifier the acceptor filed its session under, and there is no
+// field this reader has simply failed to look in. So the subject crosses — the
+// client principal is a perfectly good `sub` and the realm a perfectly good
+// issuer — and `sidFromTheWire` is false, always, which the far page reports
+// as an identifier it invented rather than printing one a receiver could never
+// match. That is the honest answer and it is the useful one: it tells a reader
+// that to revoke this session they need the identifier from the acceptor's own
+// console, not from anything on this page.
+// ---------------------------------------------------------------------------
+function handSessionToSharedSignals() {
+  log.debug("Entering handSessionToSharedSignals().");
+  if (!sessionHandoff.isActive()) {
+    log.debug("Leaving handSessionToSharedSignals(). Nobody is waiting.");
+    return false;
+  }
+  if (!chosenTicket) {
+    log.debug("Leaving handSessionToSharedSignals(). No ticket.");
+    return false;
+  }
+  var who = msgs.principalToString(chosenTicket.client, chosenTicket.realm);
+  var delivered = sessionHandoff.deliver({
+    protocol: 'spnego',
+    // The REALM is the closest thing this protocol has to an issuer, and
+    // saying so is better than an empty field: it is what a receiver would
+    // have to resolve to find the acceptor.
+    iss: String(chosenTicket.realm || ''),
+    sub: who,
+    name: who,
+    sid: '',
+    sidFromTheWire: false,
+    // RFC 8176's value for a proof-of-possession Kerberos ticket. It is the
+    // amr an OP would write for exactly this authentication.
+    acr: '',
+    amr: ['krb']
+  }, 'the SPNEGO workflow');
+  log.debug("Leaving handSessionToSharedSignals(). " + delivered);
+  return delivered;
 }
 
 // ---------------------------------------------------------------------------

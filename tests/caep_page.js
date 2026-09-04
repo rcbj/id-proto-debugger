@@ -813,7 +813,11 @@ async function theConsoleIsCleanAndTheStylesAreThere(driver) {
 
   const entries = await driver.manage().logs().get("browser");
   const bad = entries.filter(function (one) {
-    return one.level && one.level.name === "SEVERE";
+    // A load the browser abandoned because its own certificate or network
+    // configuration changed under it says nothing about this workflow. See
+    // browser_flags.js.
+    return one.level && one.level.name === "SEVERE" &&
+      !browserFlags.isTransientLoadError(one.message);
   }).map(function (one) {
     return one.message;
   });

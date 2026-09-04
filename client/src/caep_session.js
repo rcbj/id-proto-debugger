@@ -38,23 +38,54 @@
 // ---------------------------------------------------------------------------
 // IT SIMULATES A SESSION; IT DOES NOT HOLD ONE.
 //
-// The session here is a MODEL, seeded from whatever the OAuth2 / OIDC workflow
-// handed over — an ID Token's `sub`, `iss`, `sid`, `acr` and `amr` — and
-// editable in every field. That is the honest shape for a debugger: this page
-// is pretending to be a transmitter, and a transmitter's session is the one
-// thing it has that a receiver has to take on trust.
+// The session here is a MODEL, seeded from whatever a sign-in workflow handed
+// over, and editable in every field. That is the honest shape for a debugger:
+// this page is pretending to be a transmitter, and a transmitter's session is
+// the one thing it has that a receiver has to take on trust.
 //
-// **AND IT IS WHY THE `sid` MATTERS MORE THAN IT LOOKS.** OpenID Connect's
-// `sid` claim (RFC 9552 / OIDC Session Management) is the identifier a real
-// transmitter would name in the subject, and an ID Token that carries one is
-// the difference between an event about A SESSION and an event about a person
-// with a session identifier this page invented. `seedFrom()` says which of the
-// two happened, and the pane draws it.
+// **AND IT IS WHY THE SESSION IDENTIFIER MATTERS MORE THAN IT LOOKS.** It is
+// what a real transmitter names in the subject, and whether one arrived is the
+// difference between an event about A SESSION and an event about a person with
+// a session identifier this page invented. The second is well-formed, it
+// validates, a receiver accepts it — and it revokes a session nobody has.
+//
+// ---------------------------------------------------------------------------
+// FIVE SIGN-IN PROTOCOLS SEED IT, NOT ONE, AND CAEP IS WHY.
+//
+// This pane read an ID Token and nothing else until 2026-09-03, which made the
+// whole workflow look like an OAuth2 / OIDC feature. **It is not, and never
+// was**: CAEP is a vocabulary about SESSIONS, nothing in `session-revoked`
+// names a token endpoint, and the profile exists precisely because SAML and
+// OpenID Connect both authenticate at one instant and leave a session good for
+// hours afterwards. The mock proves the same point from the other end — every
+// browser sign-in there reaches one funnel, `authn.startSession()`, and every
+// one of them emits.
+//
+// So `seedFrom()` reads an ID Token and `seedFromSession()` takes what
+// `session_handoff.js` carries from any of the five. What separates them is
+// not the identity — it is where a SESSION IDENTIFIER comes from, and three of
+// the five have none to give:
+//
+//   | protocol       | the session identifier                        |
+//   |----------------|-----------------------------------------------|
+//   | OAuth2 / OIDC  | the ID Token's `sid`, WHEN the OP issues one  |
+//   | SAML 2.0       | <saml:AuthnStatement SessionIndex="…">        |
+//   | SAML 1.1       | none: the protocol has no session index       |
+//   | WS-Federation  | the SessionIndex of a SAML 2.0 token; a 1.1   |
+//   |                | token has none, and the IdP chooses which     |
+//   | SPNEGO         | none: a service ticket names a SERVICE        |
+//
+// Each says so in its own words rather than reporting a missing `sid` claim,
+// which would name a document three of them never carried.
 // ---------------------------------------------------------------------------
 
 var bunyan = require("bunyan");
 var ssfClient = require("./ssf_client");
 var ssfEvents = require("./ssf_events");
+// The protocol table and the "is this session identifier real"
+// question, which is shared with the pages that PRODUCE a handoff so
+// that both ends answer it the same way. See seedFromSession().
+var sessionHandoff = require("./session_handoff");
 
 var log = bunyan.createLogger({
   name: "caep_session",
@@ -100,14 +131,26 @@ function newSession(seed) {
     tenant: String(asked.tenant || ''),
     acr: String(asked.acr || ''),
     amr: toStringArray(asked.amr),
+    // WHICH SIGN-IN PRODUCED THIS SESSION. Empty for a session built by hand,
+    // which is the honest answer for one: the pane's fields are all editable
+    // and a reader who typed a session identifier in did not sign in over
+    // anything. See `seedFromSession()`.
+    protocol: String(asked.protocol || ''),
     // Where the identifiers came from, which the pane draws. "generated"
     // beside a session id is not a defect and IS something a reader has to
     // know: an event naming a session this page invented is about nothing at
     // the far end.
+    //
+    // `from` NAMES THE DOCUMENT rather than assuming an ID Token, and that is
+    // the whole of what made this function OIDC-only. A SAML 2.0 session's
+    // subject came from a <saml:NameID> and its session identifier from a
+    // SessionIndex; printing "the ID Token" beside either would be this pane
+    // telling a reader something false about a protocol it can now speak.
+    // The default keeps the OAuth2 / OIDC caller byte-identical.
     source: {
-      sub: asked.sub ? 'the ID Token' : 'generated here',
-      sid: asked.sid ? 'the ID Token' : 'generated here',
-      iss: asked.iss ? 'the ID Token' : 'you'
+      sub: asked.sub ? (asked.from || 'the ID Token') : 'generated here',
+      sid: asked.sid ? (asked.from || 'the ID Token') : 'generated here',
+      iss: asked.iss ? (asked.from || 'the ID Token') : 'you'
     },
     startedAt: nowSeconds(),
     state: 'established',
@@ -207,6 +250,89 @@ function seedFrom(claims, previous) {
     deviceId: previous && previous.deviceId ? previous.deviceId : ''
   });
   log.debug("Leaving seedFrom(). " + problems.length + " problem(s).");
+  return { session: session, problems: problems };
+}
+
+// ---------------------------------------------------------------------------
+// SEEDING FROM A SESSION THAT WAS NOT AN OAuth2 / OIDC ONE.
+//
+// `seedFrom()` above reads an ID Token's claims, and it was the only way into
+// this pane while the only sign-in the Shared Signals workflow could reach was
+// the OAuth2 / OIDC one. That was never a property of CAEP: **the profile is a
+// vocabulary about SESSIONS and says nothing about the protocol that minted
+// one** — which is exactly why the mock emits `session-established` for a SAML
+// 2.0 sign-in through the same funnel it uses for an OIDC one.
+//
+// So this takes what `session_handoff.js` carries, from any of the five
+// browser sign-in protocols, and produces the same `{ session, problems }` the
+// caller already handles.
+//
+// **THE PROBLEMS ARE THE POINT, AND THEY ARE PER PROTOCOL.** The single most
+// useful thing this pane can tell a reader is that the session identifier it
+// is about to name in a subject is one this workflow INVENTED — an event
+// carrying it is well-formed, validates, is accepted by a receiver, and
+// revokes a session nobody has. Three of the five protocols cannot supply one
+// at all, and each has its own reason:
+//
+//   * SAML 1.1 has no session index in the protocol. There is nothing to
+//     paste, and no version of that sign-in would have produced one.
+//   * WS-Federation carries whichever SAML token the identity provider chose:
+//     a 2.0 one has a SessionIndex and a 1.1 one does not, so the same
+//     workflow against the same IdP can go either way between runs.
+//   * SPNEGO's service ticket names a SERVICE. The far end may well hold a
+//     session, and nothing in the exchange tells this workflow its name.
+//
+// Saying "there is no `sid` claim" for any of those — which is what reusing
+// `seedFrom()` would have done — names a document that was never involved.
+// ---------------------------------------------------------------------------
+function seedFromSession(descriptor, previous) {
+  log.debug("Entering seedFromSession().");
+  var asked = (descriptor && typeof descriptor === 'object') ? descriptor : {};
+  var protocol = String(asked.protocol || '');
+  var profile = sessionHandoff.protocolFor(protocol);
+  var label = sessionHandoff.labelForProtocol(protocol);
+  var problems = [];
+  if (!asked.sub) {
+    problems.push('There is no subject to name the person with. The ' + label +
+        ' sign-in did not carry one this workflow could read, and the ' +
+        'subject below is this page\'s invention until you type a real one.');
+  }
+  // Believed only when the producer says it came off the wire. An invented
+  // session identifier looks exactly like a real one, which is why this is
+  // not a test of the VALUE.
+  var real = sessionHandoff.sessionIdIsReal(asked);
+  if (!real) {
+    problems.push('The session identifier below was GENERATED HERE, so an ' +
+        'event naming it is about nothing at the far end. ' +
+        (profile
+          ? 'With ' + label + ' it comes from ' + profile.where + '.'
+          : 'This workflow does not know where ' + label + ' would carry ' +
+            'one.') +
+        ' Paste one in if you have it — the identity provider\'s own console ' +
+        'will show it.');
+  }
+  var session = newSession({
+    protocol: protocol,
+    // The document the identifiers came out of, for the pane's own labels.
+    // It is the PROTOCOL's name rather than the document's, because three of
+    // the five carry the subject somewhere a one-word name would misdescribe.
+    from: 'the ' + label + ' sign-in',
+    iss: asked.iss || (previous && previous.iss) || '',
+    sub: asked.sub || '',
+    name: asked.name || '',
+    // Only a session identifier this workflow was told is real is carried
+    // through. An unreal one is dropped so that `newSession()` generates a
+    // marked `debugger-sid-…` in its place, which is the same treatment an
+    // ID Token with no `sid` already gets and is the reason that marking
+    // exists.
+    sid: real ? String(asked.sid || '') : '',
+    acr: asked.acr || '',
+    amr: asked.amr,
+    tenant: asked.tenant || '',
+    deviceId: previous && previous.deviceId ? previous.deviceId : ''
+  });
+  log.debug("Leaving seedFromSession(). " + protocol + ", " +
+      problems.length + " problem(s).");
   return { session: session, problems: problems };
 }
 
@@ -604,6 +730,7 @@ module.exports = {
   EVENTS_KEPT: EVENTS_KEPT,
   newSession: newSession,
   seedFrom: seedFrom,
+  seedFromSession: seedFromSession,
   complexSubject: complexSubject,
   checkSubject: checkSubject,
   suggest: suggest,

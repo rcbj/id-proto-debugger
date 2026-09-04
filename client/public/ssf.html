@@ -531,6 +531,32 @@ are about</legend>
     move with what was actually sent.</p>
   </details>
 
+  <!-- ===================================================================
+       WHICH SIGN-IN THIS SESSION CAME FROM.
+
+       CAEP is a vocabulary about SESSIONS and says nothing about the
+       protocol that minted one — which is why the mock emits for every
+       browser sign-in it has, through one funnel. This pane read an ID
+       Token and nothing else until 2026-09-03, which made the whole
+       workflow look like an OAuth2 / OIDC feature it never was.
+
+       The options are built from `session_handoff.js`'s own table so a
+       sixth protocol is a row there rather than an edit here.
+       =================================================================== -->
+  <div class="ssf-row">
+    <label class="ssf-label" for="caep_signin_protocol">Sign-in
+      protocol</label>
+    <select id="caep_signin_protocol"
+            onchange="return ssf.caepProtocolChanged();"
+            title="Which browser sign-in seeds this session. Three of the five carry no session identifier at all, and the note below says so rather than reporting a missing ID Token claim.">
+    </select>
+    <input type="button" class="ssf-btn" id="btn_caep_signin"
+           value="Sign in over this protocol"
+           onclick="return ssf.startSessionHandoff();"
+           title="Runs that protocol's own workflow and brings the session back here. Nothing is stored: the session crosses in sessionStorage for one page load and is collected once.">
+  </div>
+  <p class="ssf-note" id="caep_protocol_note"></p>
+
   <div class="ssf-row">
     <input type="button" class="ssf-btn" id="btn_caep_seed"
            value="Fill from the ID Token"

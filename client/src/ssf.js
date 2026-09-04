@@ -61,6 +61,12 @@ var ssfHistory = require("./ssf_history");
 // every other engine here is.
 var caepSession = require("./caep_session");
 var handoff = require("./token_handoff");
+// The SESSION hand-off, which is a sibling of the token one rather than
+// a generalization of it: four of the five sign-in protocols this pane
+// can seed from produce no access token and no scope, so there is
+// nothing a `deliver(token, …)` could honestly be handed. See
+// `session_handoff.js`.
+var sessionHandoff = require("./session_handoff");
 var opHistory = require("./op_history");
 // For DISCOVERY_INFO_KEY alone — the key the OAuth2 / OIDC workflow stores its
 // discovery document under. See the baseUrl block below for why the key is
@@ -2824,6 +2830,14 @@ var currentProfile = 'ssf';
 // model, with every identifier generated here and saying so.
 var caepModel = null;
 
+// WHICH SIGN-IN PROTOCOL the pane is set to. Kept beside the model rather than
+// on it, because it is a property of the PAGE's state — what the reader has
+// selected — while `caepModel.protocol` records what actually seeded the
+// session that is there now. They differ exactly when somebody has chosen a
+// protocol and not yet signed in over it, which is the moment the note under
+// the selector is written for.
+var caepProtocol = 'oidc';
+
 // Which of the four complex-subject members the pane is currently offering.
 // `user` and `session` are ticked by default because together they are what
 // makes a CAEP event mean "this session of this person's" — the sentence the
@@ -2957,13 +2971,7 @@ function caepFillFromToken() {
   var claims = val('ssf_id_token') ? claimsOf(val('ssf_id_token')) : null;
   var seeded = caepSession.seedFrom(claims || {}, caepModel);
   caepModel = seeded.session;
-  setVal('caep_iss', caepModel.iss);
-  setVal('caep_sub', caepModel.sub);
-  setVal('caep_sid', caepModel.sid);
-  setVal('caep_device', caepModel.deviceId);
-  setVal('caep_tenant', caepModel.tenant);
-  setVal('caep_acr', caepModel.acr);
-  setVal('caep_amr', caepModel.amr.join(' '));
+  caepWriteFields();
   if (!claims) {
     setText('caep_seed_note', 'There is no ID Token on this page, so nothing ' +
       'was taken from one. Every field below is yours to fill in — and that ' +
@@ -2984,6 +2992,182 @@ function caepFillFromToken() {
   saveState();
   log.debug("Leaving caepFillFromToken().");
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// THE SIGN-IN PROTOCOL SELECTOR, AND THE SESSION HAND-OFF BEHIND IT.
+//
+// **CAEP IS NOT AN OAuth2 / OIDC FEATURE**, and this pane implied it was for
+// as long as the only thing it could read was an ID Token. The profile is a
+// vocabulary about SESSIONS — nothing in `session-revoked` names a token
+// endpoint — and it exists precisely because SAML and OpenID Connect both
+// authenticate at one instant and leave a session good for hours afterwards.
+// The mock makes the same point from the other end: every browser sign-in
+// there reaches ONE funnel, `authn.startSession()`, and every one of them
+// emits.
+//
+// So the selector offers all five, `session_handoff.js` carries whichever
+// arrives back, and `caep_session.js`'s `seedFromSession()` reads it. What
+// differs between them is not the identity — it is whether a SESSION
+// IDENTIFIER came off the wire, and for three of the five it cannot.
+// ---------------------------------------------------------------------------
+function caepProtocolOptions() {
+  log.debug("Entering caepProtocolOptions().");
+  var select = el('caep_signin_protocol');
+  if (!select) {
+    log.debug("Leaving caepProtocolOptions(). No selector on this page.");
+    return;
+  }
+  // Rebuilt from the module's own table rather than typed into the markup, so
+  // a sixth protocol is a row there and nothing here.
+  select.innerHTML = '';
+  sessionHandoff.protocols().forEach(function (one) {
+    var option = document.createElement('option');
+    option.value = one.id;
+    option.textContent = one.label;
+    select.appendChild(option);
+  });
+  select.value = caepProtocol || 'oidc';
+  caepProtocolChanged();
+  log.debug("Leaving caepProtocolOptions().");
+}
+
+// The note under the selector, which is the one sentence on this pane a reader
+// most needs before they simulate anything: an event naming a session
+// identifier this workflow invented is well-formed, validates, is accepted by
+// a receiver, and revokes a session nobody has.
+function caepProtocolChanged() {
+  log.debug("Entering caepProtocolChanged().");
+  var select = el('caep_signin_protocol');
+  caepProtocol = select ? String(select.value || '') : caepProtocol;
+  var profile = sessionHandoff.protocolFor(caepProtocol);
+  if (!profile) {
+    setText('caep_protocol_note', '');
+    log.debug("Leaving caepProtocolChanged(). No such protocol.");
+    return false;
+  }
+  setText('caep_protocol_note',
+    profile.sessionIdOnTheWire
+      ? 'The session identifier comes from ' + profile.where + '. When it ' +
+        'arrives, events built here name a session the far end really holds.'
+      : 'THIS PROTOCOL CARRIES NO SESSION IDENTIFIER: it comes from ' +
+        profile.where + '. The identifier below will be one this page ' +
+        'invented — an event naming it is well-formed, validates, and is ' +
+        'about nothing at the far end. Paste a real one in if you have it.',
+    profile.sessionIdOnTheWire ? 'ssf-note' : 'ssf-note ssf-pending');
+  saveState();
+  log.debug("Leaving caepProtocolChanged(). " + caepProtocol);
+  return false;
+}
+
+// Where each protocol's own workflow starts. The SSF page has no sign-in of
+// its own for any of them and must not grow one: each of these pages is the
+// thing under test in its own suite, and a second implementation of a sign-in
+// here would be a second thing to keep right.
+var SIGN_IN_PAGES = {
+  oidc: '/oauth2_oidc_1.html',
+  saml2: '/saml_request.html',
+  saml11: '/saml_request.html',
+  wsfed: '/wsfed_request.html',
+  spnego: '/spnego.html'
+};
+
+function startSessionHandoff() {
+  log.debug("Entering startSessionHandoff().");
+  saveState();
+  var wanted = caepProtocol || 'oidc';
+  var where = SIGN_IN_PAGES[wanted];
+  var label = sessionHandoff.labelForProtocol(wanted);
+  if (!where) {
+    setText('caep_protocol_note', 'There is no sign-in page here for ' +
+      label + '.', 'ssf-note ssf-bad');
+    log.debug("Leaving startSessionHandoff(). No page.");
+    return false;
+  }
+  var started = sessionHandoff.start({
+    returnUrl: '/ssf.html',
+    label: 'the Shared Signals workflow',
+    protocol: wanted
+  });
+  if (!started) {
+    setText('caep_protocol_note', 'The hand-off could not be started — this ' +
+      'browser has no session storage for this origin, so a session cannot ' +
+      'be carried back automatically. Run the ' + label + ' workflow and ' +
+      'fill the fields below in by hand.', 'ssf-note ssf-bad');
+    log.debug("Leaving startSessionHandoff(). Not recorded.");
+    return false;
+  }
+  // The OAuth2 / OIDC one starts BOTH hand-offs, because it is the only
+  // protocol here whose sign-in produces a token set as well as a session and
+  // this page wants both. The other four have no token to carry.
+  if (wanted === 'oidc') {
+    handoff.start({ returnUrl: '/ssf.html',
+      label: 'the Shared Signals workflow', scope: HANDOFF_SCOPES });
+  }
+  setText('caep_protocol_note', 'Going to the ' + label + ' workflow. ' +
+    'Complete the sign-in there and this page will collect the session — ' +
+    'it crosses in sessionStorage, for one page load, and is read once.',
+    'ssf-note ssf-ok');
+  window.location.href = where;
+  log.debug("Leaving startSessionHandoff(). " + where);
+  return false;
+}
+
+// Collect whatever a sign-in workflow left, on load. `take()` clears the slot
+// whether or not there was anything in it.
+function collectHandedSession() {
+  log.debug("Entering collectHandedSession().");
+  var taken = sessionHandoff.take();
+  if (taken.expired) {
+    setText('caep_seed_note', 'A session was handed back by a sign-in ' +
+      'workflow more than half an hour ago and has not been used, so it was ' +
+      'dropped rather than filled in here. Sign in again.',
+      'ssf-status ssf-pending');
+    log.debug("Leaving collectHandedSession(). Expired.");
+    return;
+  }
+  if (!taken.session) {
+    log.debug("Leaving collectHandedSession(). Nothing waiting.");
+    return;
+  }
+  var seeded = caepSession.seedFromSession(taken.session, caepModel);
+  caepModel = seeded.session;
+  caepProtocol = String(taken.session.protocol || caepProtocol);
+  var select = el('caep_signin_protocol');
+  if (select) {
+    select.value = caepProtocol;
+  }
+  caepProtocolChanged();
+  caepWriteFields();
+  var label = sessionHandoff.labelForProtocol(caepProtocol);
+  if (seeded.problems.length) {
+    setText('caep_seed_note', 'Seeded from the ' + label + ' sign-in. ' +
+      seeded.problems.join(' '), 'ssf-status ssf-pending');
+  } else {
+    setText('caep_seed_note', 'Seeded from the ' + label + ' sign-in, ' +
+      'INCLUDING A SESSION IDENTIFIER THE PROTOCOL REALLY CARRIED — so an ' +
+      'event built here names a session the far end holds. Nothing was ' +
+      'verified: this workflow does not consume that assertion.',
+      'ssf-status ssf-ok');
+  }
+  renderCaep();
+  saveState();
+  log.debug("Leaving collectHandedSession(). " + caepProtocol);
+}
+
+// The fields, from the model. Extracted so that the two seeders — an ID Token
+// and a handed session — write them in exactly one place; two copies of a
+// seven-field write is one field forgotten.
+function caepWriteFields() {
+  log.debug("Entering caepWriteFields().");
+  setVal('caep_iss', caepModel.iss);
+  setVal('caep_sub', caepModel.sub);
+  setVal('caep_sid', caepModel.sid);
+  setVal('caep_device', caepModel.deviceId);
+  setVal('caep_tenant', caepModel.tenant);
+  setVal('caep_acr', caepModel.acr);
+  setVal('caep_amr', caepModel.amr.join(' '));
+  log.debug("Leaving caepWriteFields().");
 }
 
 // The model, from whatever is in the fields. It is read on every draw rather
@@ -3435,6 +3619,11 @@ function onload() {
   wirePanes();
   applyBackendAvailability();
   collectHandedTokens();
+  // The selector is built BEFORE the session is collected, because
+  // collecting one sets the selector to whichever protocol arrived — and
+  // a value set on a select with no options in it is silently dropped.
+  caepProtocolOptions();
+  collectHandedSession();
   subjectFormatChanged();
   transmitTypeChanged();
   deliveryChanged();
@@ -3519,6 +3708,8 @@ module.exports = {
   // The profile and the CAEP pane's own handlers.
   profileChanged: profileChanged,
   caepFillFromToken: caepFillFromToken,
+  caepProtocolChanged: caepProtocolChanged,
+  startSessionHandoff: startSessionHandoff,
   caepAddSubject: caepAddSubject,
   caepSimulate: caepSimulate,
   resetCaepSession: resetCaepSession,

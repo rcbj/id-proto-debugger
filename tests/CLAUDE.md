@@ -35,6 +35,36 @@ puts an event on every stream that asked for one**, so a job holding a stream
 would see events about somebody else's session arriving in the middle of its
 own poll.
 
+**AND FIVE MORE ARRIVED ON 2026-09-03: `caep_session_protocols.js`, one job
+per SIGN-IN PROTOCOL.** Each signs in over its own protocol — OAuth2/OIDC, SAML
+2.0, SAML 1.1, WS-Federation, SPNEGO — and drives all eight event types over
+the session it made, collecting them by BOTH deliveries and putting each
+through the debugger's own catalogue rather than counting arrivals.
+
+**It is one job per protocol and NOT one per combination, which is the opposite
+of the federation grid, and the reason is where the cost is.** There each point
+is a different sign-in and the sign-in is the whole job. Here the sign-in is
+done once and the eight events over it are a few hundred milliseconds apiece,
+so forty jobs would pay for forty sign-ins to run the same eight events five
+times. The report still names the protocol, which is the property that made the
+grid worth forty-nine jobs.
+
+**Two things about it are worth knowing before changing it.** The order is
+load-bearing — `session-revoked` is LAST, because the model's one hard refusal
+is an event about a session that has already ended, so driving it earlier turns
+the five that follow into refusals and the failure names the state machine
+rather than the ordering. And **the SIGN-OUT DOOR is not one door**: SAML 1.1
+has no Single Logout at all and SPNEGO defines none, so those two use the OIDC
+one — which is not a workaround but the same point from the other side, since
+there is ONE session cookie here and every protocol shares it.
+
+**The SPNEGO job is SCHEDULED and skips itself**, with `declineToRun()` and a
+reason. The mock side is ready — `/authn/spnego` calls `startSession()` like
+every other door there — but it answers `401 WWW-Authenticate: Negotiate` and
+answering that needs a KDC, a keytab and a credential cache, which only
+`krb5_mit_client.js` has. A scheduled skip rather than an absent job, for the
+reason the section above gives: a job nobody schedules is a gap nobody can see.
+
 **`caep_page.js` drives two grants for real and maps all eight onto the three
 SHAPES they produce.** The two are resource owner password (with `openid`, so
 an ID Token) and client credentials (no ID Token at all) — chosen because

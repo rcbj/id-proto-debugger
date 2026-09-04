@@ -4,6 +4,11 @@ const appconfig = require(process.env.CONFIG_FILE);
 const opMetadata = require("./op_metadata");
 const sdJwtVc = require("./sd_jwt_vc");
 const tokenHandoff = require("./token_handoff");
+// The SESSION hand-off. A sibling of the one above rather than a
+// generalization: four of the five sign-in protocols the Shared Signals
+// workflow can seed from produce no token at all. See
+// `session_handoff.js`.
+const sessionHandoff = require("./session_handoff");
 // DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
 // see oauth_dpop.js for why the two are separate state.
 const oauthDpop = require("./oauth_dpop");
@@ -4076,8 +4081,88 @@ function maybeContinueSdJwtVcFlow() {
 // reports WHO the authenticated user is, and neither is answerable from an
 // access token this service issued: they are opaque to a client, and the
 // identity is in the ID Token.
+// ---------------------------------------------------------------------------
+// HAND THE SESSION TO A WORKFLOW THAT ASKED FOR ONE.
+//
+// **CAEP is a vocabulary about SESSIONS**, and the Shared Signals workflow can
+// now seed one from any of five browser sign-ins rather than from an ID Token
+// alone. This is the OIDC producer, and the only one of the five that also
+// hands over a token set.
+//
+// **THE `sid` CLAIM IS WHAT DECIDES WHETHER THE SESSION IS NAMEABLE.** OpenID
+// Connect Session Management puts the OP's own session identifier there; an OP
+// that issues none leaves a receiver nothing to match, so `sidFromTheWire`
+// follows the claim and not the protocol. Two of the six supported grants
+// issue no ID Token at all, which is not an error path — it is the ordinary
+// case for client credentials and resource owner password — and it arrives
+// here as no claims and is reported as such at the far end.
+// ---------------------------------------------------------------------------
+function offerSessionToHandoff(set) {
+  log.debug("Entering offerSessionToHandoff().");
+  if (!sessionHandoff.isActive()) {
+    log.debug("Leaving offerSessionToHandoff(). Nobody is waiting.");
+    return false;
+  }
+  var idToken = (set && set.idToken) || "";
+  var claims = idToken ? decodeJwtClaims(idToken) : null;
+  if (!claims) {
+    // Delivered ANYWAY, with nothing in it but the protocol. The far page has
+    // a sentence for exactly this and it is a useful one — a grant that
+    // issues no ID Token produced a real session at the OP all the same, and
+    // silence here would read as a hand-off that failed.
+    var bare = sessionHandoff.deliver({ protocol: "oidc" },
+        "the OAuth2 / OIDC workflow");
+    log.debug("Leaving offerSessionToHandoff(). No ID Token. " + bare);
+    return bare;
+  }
+  var delivered = sessionHandoff.deliver({
+    protocol: "oidc",
+    iss: claims.iss || "",
+    sub: claims.sub || "",
+    name: claims.name || claims.preferred_username || claims.email || "",
+    sid: claims.sid || "",
+    sidFromTheWire: !!claims.sid,
+    acr: claims.acr || "",
+    amr: claims.amr,
+    tenant: claims.tid || claims.tenant || ""
+  }, "the OAuth2 / OIDC workflow");
+  log.debug("Leaving offerSessionToHandoff(). " + delivered);
+  return delivered;
+}
+
+// A JWT's claims, WITHOUT verifying anything. This page issued the request
+// that produced the token and is handing its own result on; verifying here
+// would answer a question nothing in this hand-off asks, and the JWT Tools
+// page is where it is asked properly.
+function decodeJwtClaims(token) {
+  log.debug("Entering decodeJwtClaims().");
+  var parts = String(token || "").split(".");
+  if (parts.length < 2) {
+    log.debug("Leaving decodeJwtClaims(). Not a JWT.");
+    return null;
+  }
+  try {
+    var padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (padded.length % 4 !== 0) {
+      padded += "=";
+    }
+    var claims = JSON.parse(atob(padded));
+    log.debug("Leaving decodeJwtClaims(). Read.");
+    return claims;
+  } catch (e) {
+    log.debug("Leaving decodeJwtClaims(). " + e.message);
+    return null;
+  }
+}
+
 function offerTokenToHandoff(token, source, set) {
   log.debug("Entering offerTokenToHandoff(). source=" + source);
+  // THE SESSION GOES WITH IT, and it is a separate hand-off because it is a
+  // separate thing: the Shared Signals workflow needs to know what a SESSION
+  // is, which no access token answers. OIDC is the only protocol here whose
+  // sign-in produces both, so this is the one call site that offers both —
+  // and each refuses independently when nothing is waiting on it.
+  offerSessionToHandoff(set);
   if (!tokenHandoff.deliver(token, source, set)) {
     log.debug("Leaving offerTokenToHandoff(). Not delivered.");
     return false;
