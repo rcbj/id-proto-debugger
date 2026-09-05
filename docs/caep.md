@@ -9,7 +9,7 @@ Read this before touching `client/src/ssf_events.js`'s CAEP rows,
 Specification on 2 September 2025, spoken over the Shared Signals pipe that
 `docs/ssf.md` describes. **This is part two of three.** SSF was the plumbing;
 CAEP is what happened to a **session**; RISC — what happened to an **account**
-— is part three and is not here.
+— is part three and landed on 2026-09-04. See `docs/risc.md`.
 
 The transmitter this workflow is built against is the mock STS's `/ssf` and
 `/admin/caep`, whose own notes are in `sts/ssf/CLAUDE.md`.
@@ -166,9 +166,12 @@ through the same deliveries, in the same envelope, so hiding the Stream pane in
 CAEP mode would be hiding the thing they travel on. What CAEP *adds* is the
 session those events are about.
 
-**RISC is listed and says it is not implemented.** A workflow that omitted the
+**RISC is the third option and is implemented since 2026-09-04.** It was
+listed and marked absent before that, because a workflow that omitted the
 option would leave a reader unable to tell *this tool does not do RISC* from
-*I have not found it yet*, and those are different sentences.
+*I have not found it yet* — and the same rule now runs the other way: a row
+claiming a vocabulary that is not there is the same defect. `tests/ssf_engine.js`
+asserts that each of the three is honest about itself.
 
 ### `caep_session.js` — the model, and why it is not vocabulary
 
@@ -176,7 +179,9 @@ A row in `ssf_events.js` says what an event MEANS. This says what has HAPPENED
 to one session — which is not a property of any event type, cannot be derived
 from the catalogue, and is the only thing the pane shows that a protocol trace
 does not already contain. Putting it in the catalogue would have made that
-table's shape specific to CAEP, and RISC would have had to undo it.
+table's shape specific to CAEP, and RISC would have had to undo it. **It did
+not have to**: `risc_account.js` is this file's sibling, written the same way
+against a different thing, and the catalogue was untouched by its arrival.
 
 **No DOM**, so `tests/caep_engine.js` drives all of it in node.
 

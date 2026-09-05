@@ -71,6 +71,12 @@ var clientId = process.env.CLIENT_ID || "webapp1";
 
 const WAIT = 20000;
 const P = "https://schemas.openid.net/secevent/caep/event-type/";
+// The other vocabulary's prefix, for the one section that drives the
+// profile selector all the way round. This file is about CAEP and asserts
+// nothing else about RISC — `risc_engine.js` is where that lives — but the
+// SELECTOR is CAEP's own control and reconfiguring the page is what it
+// does, so the third position has to be walked here too.
+const RISC_PREFIX = "https://schemas.openid.net/secevent/risc/event-type/";
 
 // The eight, in catalogue order, so the button ids below can be composed.
 const SHORTS = ['session-revoked', 'session-established', 'session-presented',
@@ -269,23 +275,45 @@ async function theProfileSwitchReconfiguresThePage(driver) {
   }
   passed("every other pane is still there");
 
+  // RISC, WHICH THIS BLOCK ASSERTED THE ABSENCE OF UNTIL 2026-09-04. What it
+  // guarded is unchanged and is now checked in the other direction: the
+  // selector has to reconfigure the page around the chosen vocabulary, and a
+  // profile offering the wrong event types is the defect either way.
   await chooseProfile(driver, 'risc');
   const riscMenu = await eventMenu(driver);
   const riscNote = await textOf(driver, "ssf_profile_note");
-  check('RISC offers no event type AND SAYS SO', function () {
-    assert.strictEqual(riscMenu.length, 1,
-        'The menu holds ' + riscMenu.length + ' entries.');
-    assert.strictEqual(riscMenu[0], '',
-        'An empty menu reads as a broken page; this one carries a single ' +
-        'entry saying the vocabulary is not implemented yet.');
-    assert.ok(/NOT IMPLEMENTED/i.test(riscNote),
-        'The note says: ' + JSON.stringify(riscNote) + '. A reader who ' +
-        'cannot tell "this tool does not do RISC" from "I have not found ' +
-        'it yet" is being told the wrong thing by an omission.');
+  check('RISC offers its fourteen and narrows the menu to them', function () {
+    assert.strictEqual(riscMenu.length, 14,
+        'The menu holds ' + riscMenu.length + ' entries and RISC 1.0 ' +
+        'defines fourteen event types.');
+    riscMenu.forEach(function (uri) {
+      assert.ok(uri.indexOf(RISC_PREFIX) === 0,
+          uri + ' is not a RISC type. Narrowing the menu without the ' +
+          'stream checkboxes — or the reverse — would let somebody agree a ' +
+          'stream for types the page cannot send, and SSF has no refusal ' +
+          'for that: the stream would look healthy and deliver nothing.');
+    });
+    assert.ok(!/NOT IMPLEMENTED/i.test(riscNote),
+        'The note still says the vocabulary is absent: ' +
+        JSON.stringify(riscNote));
   });
   assert.strictEqual(await paneVisible(driver, 'pane_caep'), false,
       'The CAEP pane is showing in RISC mode.');
   passed("and the CAEP pane is gone again");
+
+  // AND THE PANE RISC ADDS, which is the other half of what a profile does:
+  // each vocabulary shows the thing its events are ABOUT, and neither pane
+  // has any meaning under the other two profiles.
+  assert.strictEqual(await paneVisible(driver, 'pane_risc'), true,
+      'The RISC account pane is not showing in RISC mode.');
+  passed("the RISC account pane appears");
+  for (name of stillThere) {
+    assert.strictEqual(await paneVisible(driver, name), true,
+        name + ' was hidden by the RISC profile. Every pane but the two ' +
+        'vocabulary ones is used by all three profiles, because the pipe is ' +
+        'the same machinery underneath.');
+  }
+  passed("and every other pane survives RISC too");
 
   // THE CHOICE SURVIVES A RELOAD, which is what makes it a setting rather
   // than a mood. A reader who left the page in CAEP mode and came back to

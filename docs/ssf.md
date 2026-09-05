@@ -10,11 +10,13 @@ receiver, or any of the four `tests/*ssf*.js`.
 delivery). The transmitter this workflow is built against is the mock STS's
 `/ssf`, whose own notes are in `sts/ssf/CLAUDE.md`.
 
-**This is part one of three, and part two has landed.** SSF is the plumbing;
+**This is part one of three, and all three have landed.** SSF is the plumbing;
 **CAEP** and **RISC** are two different vocabularies spoken over it. CAEP has
-been here since 2026-09-03 — see **`docs/caep.md`** — and RISC has not. The
-whole of this workflow was arranged so that adding one is rows in a table, and
-the CAEP section below records what that actually cost.
+been here since 2026-09-03 — see **`docs/caep.md`** — and RISC since
+2026-09-04, see **`docs/risc.md`**. The whole of this workflow was arranged so
+that adding one is rows in a table, and the two sections below record what that
+actually cost: four things for the first vocabulary and, for the second, none
+of those four.
 
 ---
 
@@ -58,30 +60,36 @@ The vocabularies are:
   change, credential change, assurance level change, device compliance change.
   It says *this session is no longer trustworthy*.
 * **RISC** — the account-lifecycle vocabulary, aimed ACROSS providers rather
-  than within one enterprise. Account disabled, purged, credentials
-  compromised, credential change required, identifier changed or recycled. It
-  says *this account is no longer trustworthy*.
+  than within one enterprise, in fourteen event types: account disabled,
+  enabled and purged, credential change required, credential compromise,
+  identifier changed and recycled, four opt-out events, recovery activated and
+  recovery information changed, and one the specification deprecates in favour
+  of a CAEP event. It says *this account is no longer trustworthy*, and
+  **eleven of the fourteen carry no payload members at all** — so the SUBJECT
+  is the entire message, which is the exact inversion of CAEP, where the
+  subject narrows and the payload says what happened.
 
 Those are two different sentences and the distinction is the reason there are
 two specifications.
 
 ### What that means for this code
 
-`client/src/ssf_events.js` is the vocabulary and **is the only file the next two
-parts change**. `client/src/ssf_client.js` is the pipe — the subject grammar,
-the SET envelope, stream configurations, both deliveries — and it names no event
-type anywhere. The same split holds in the mock (`sts/ssf/ssf_events.js` against
-everything else in that directory), on the console page, and in the management
-API.
+`client/src/ssf_events.js` is the vocabulary and **was the only file the other
+two parts changed**. `client/src/ssf_client.js` is the pipe — the subject
+grammar, the SET envelope, stream configurations, both deliveries — and
+twenty-two vocabulary rows later it still names no event type anywhere. The
+same split holds in the mock (`sts/ssf/ssf_events.js` against everything else
+in that directory), on the console page, and in the management API.
 
-**If a function in `ssf_client.js` ever grows a branch that names one of SSF's
-two event types, that is the design going wrong**, and it will have to be undone
-twice.
+**If a function in `ssf_client.js` ever grows a branch that names one of the
+twenty-four event types, that is the design going wrong.**
 
-The page says which vocabularies are here and which are not, rather than
-leaving a short list to be read as a broken page: `FAMILIES` in
-`ssf_events.js` marks RISC `implemented: false` with a sentence saying so, and
-`tests/ssf_engine.js` asserts that an absent family does.
+The page says which vocabularies are here, rather than leaving a short list to
+be read as a broken page. `FAMILIES` in `ssf_events.js` marks all three
+`implemented: true` now, and `tests/ssf_engine.js` asserts that each row is
+honest about itself — which is the same check in the other direction: a row
+CLAIMING a vocabulary that is not there would leave a reader unable to tell
+*this tool does not do it* from *I have not found it yet*.
 
 ### What adding the first vocabulary actually cost
 
@@ -101,6 +109,36 @@ is a branch naming a vocabulary:
   would deliver nothing at all: a stream naming a PERSON now covers a complex
   subject naming a session of theirs. That is SSF section 4's own intent and
   was simply unreachable while no event carried a complex subject.
+
+### And what adding the SECOND vocabulary cost, which is the shorter list
+
+**None of those four.** `checkMember()` grew not one value type; the mock's
+`transmit()` refusal was already written against the row and did not move; and
+`streamCoversSubject()`'s complex-subject rule is CAEP's — RISC's subjects are
+plain, so it was not touched. Fourteen event types cost the catalogue's
+machinery nothing at all, which is the only kind of evidence a claim like the
+one above can have.
+
+What RISC added is one thing CAEP also added and one genuinely new:
+
+* **`client/src/risc_account.js`**, which is not vocabulary — the ACCOUNT, the
+  three states RISC tracks and what has been said concerning it. It is
+  `caep_session.js`'s SIBLING and not its generalization: a session begins, is
+  used and ends and one person has many, while an account IS the person and
+  outlives every session on it;
+* on the mock, **a second observer, on a different store**. CAEP watches
+  `authn.js` — the authentication layer; RISC watches `ldap/ldap_server.js` —
+  the provisioning layer. That is not a second copy of one mechanism, and the
+  whole difference between the two profiles is which of the two the sentence
+  is about.
+
+Three smaller things fell out of the specification rather than the design, and
+each is documented at length in `docs/risc.md`: the mock's `observe()` answers
+with a LIST because one directory write can be two events; the register is
+keyed on the PERSON rather than on the subject, because the two identifier
+events use a different format and a subject-keyed register would split one
+person in two at exactly the moment their identifier changed; and there is an
+opt-out GATE, which CAEP has no equivalent of.
 
 The page itself grew a **Profile** selector and a **CAEP session** pane, and
 narrows every event list to the chosen vocabulary. Nothing is hidden: every

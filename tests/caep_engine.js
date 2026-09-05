@@ -193,26 +193,32 @@ function theEightUris() {
     });
   });
 
-  check("the CAEP family is implemented and RISC says it is not",
+  // ALL THREE ARE IMPLEMENTED SINCE 2026-09-04, and this check asserted the
+  // opposite for RISC until that day. It is worth keeping in this file rather
+  // than only in `risc_engine.js`: what it guards is that the three rows stay
+  // HONEST about themselves, and a row claiming a vocabulary that is not
+  // there is the same defect in the other direction — a reader unable to tell
+  // "this tool does not do it" from "I have not found it yet".
+  check("all three families say they are implemented, because they are",
       function () {
     const byId = {};
     events.FAMILIES.forEach(function (row) {
       byId[row.id] = row;
     });
     assert.strictEqual(byId.caep.implemented, true);
-    assert.strictEqual(byId.risc.implemented, false,
-        'RISC is part three. The row has to SAY so — a workflow that ' +
-        'silently omitted it would leave a reader unable to tell "this tool ' +
-        'does not do RISC" from "I have not found it yet".');
-    assert.ok(byId.risc.what.indexOf('NOT IMPLEMENTED') >= 0);
+    assert.strictEqual(byId.risc.implemented, true,
+        'RISC arrived on 2026-09-04 and the row has to say so — see ' +
+        'risc_engine.js, which asserts the fourteen event types behind it.');
+    assert.ok(byId.risc.what.indexOf('NOT IMPLEMENTED') < 0,
+        'the RISC row still describes itself as absent.');
   });
 
-  check("the three profiles, and RISC offers no event type", function () {
+  check("the three profiles, and what each offers", function () {
     assert.strictEqual(events.PROFILES.length, 3);
     assert.strictEqual(events.eventsForFamily('ssf').length, 2);
     assert.strictEqual(events.eventsForFamily('caep').length, 8);
-    assert.strictEqual(events.eventsForFamily('risc').length, 0,
-        'and that is what an unimplemented vocabulary honestly looks like.');
+    assert.strictEqual(events.eventsForFamily('risc').length, 14,
+        'RISC offers fourteen event types since 2026-09-04.');
   });
 
   check("an unknown profile answers the pipe rather than throwing",

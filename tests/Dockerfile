@@ -896,13 +896,14 @@ COPY client/src/scim_client.js client/src/scim_scenarios.js ./
 COPY api/scim_proxy.js ./
 COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 # ---------------------------------------------------------------------------
-# SHARED SIGNALS (SSF 1.0) AND CAEP 1.0.
+# SHARED SIGNALS (SSF 1.0), CAEP 1.0 AND RISC 1.0.
 #
-# Seven test scripts and the six modules they load directly, FLAT beside the
+# Eight test scripts and the seven modules they load directly, FLAT beside the
 # tests — which is why every one of these scripts is named `ssf_<something>`,
-# `caep_<something>` or `api_ssf.js` and none of them is called
-# `ssf_client.js`, `ssf_events.js`, `ssf_history.js`, `caep_session.js`,
-# `ssf_proxy.js` or `ssf_receiver.js`. Two files of one name
+# `caep_<something>`, `risc_<something>` or `api_ssf.js` and none of them is
+# called `ssf_client.js`, `ssf_events.js`, `ssf_history.js`,
+# `caep_session.js`, `risc_account.js`, `ssf_proxy.js` or
+# `ssf_receiver.js`. Two files of one name
 # copied here means whichever COPY ran last wins, silently, and the test would
 # end up loading itself. Same trap the SCIM block above records.
 #
@@ -919,6 +920,7 @@ COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 # on either side has to be made here too.
 COPY client/src/ssf_client.js client/src/ssf_events.js ./
 COPY client/src/ssf_history.js client/src/caep_session.js ./
+COPY client/src/risc_account.js ./
 COPY api/ssf_proxy.js api/ssf_receiver.js ./
 COPY tests/ssf_engine.js tests/ssf_protocol.js ./
 COPY tests/api_ssf.js tests/ssf_page.js ./
@@ -934,6 +936,11 @@ COPY tests/caep_engine.js tests/caep_protocol.js tests/caep_page.js ./
 # which is how adding this file first reported all FOUR CAEP jobs as
 # uncopied.
 COPY tests/caep_session_protocols.js ./
+# RISC is the SECOND vocabulary over SSF and adds exactly what CAEP added: one
+# module — `risc_account.js`, which is what the fourteen event types are ABOUT
+# — and its own scripts, reusing everything above. Its own COPY line for the
+# reason the line above has one.
+COPY tests/risc_engine.js ./
 # ---------------------------------------------------------------------------
 # SPIFFE.
 #

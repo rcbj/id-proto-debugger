@@ -789,23 +789,35 @@ async function theHandoffCarriesTheWholeTokenSet(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// 10. THE VOCABULARIES THAT ARE NOT HERE YET.
+// 10. EVERY VOCABULARY IS NAMED, AND EACH IS HONEST ABOUT ITSELF.
+//
+// **THIS CHECKED THE OPPOSITE UNTIL 2026-09-04**, when RISC landed and the
+// family became complete: it required the families table to say NOT
+// IMPLEMENTED, because a workflow offering two event types where a reader
+// expected twenty-four reads as broken rather than as staged.
+//
+// The rule it enforces has not changed and it runs BOTH WAYS — a row CLAIMING
+// a vocabulary that is not there is the same defect as one omitting a
+// vocabulary that is, and a reader can tell neither from the page. So what is
+// asserted now is that every family is named and that the table's own claim
+// about each one agrees with the catalogue behind it.
 // ---------------------------------------------------------------------------
-async function theAbsentVocabulariesSayTheyAreAbsent(driver) {
-  log.debug("Entering theAbsentVocabulariesSayTheyAreAbsent().");
-  log.info("=== CAEP and RISC ===");
+async function everyVocabularyIsNamedAndHonest(driver) {
+  log.debug("Entering everyVocabularyIsNamedAndHonest().");
+  log.info("=== SSF, CAEP and RISC ===");
   const families = await textOf(driver, "ssf_families");
-  assert.ok(families.indexOf("CAEP") >= 0 && families.indexOf("RISC") >= 0,
-      "The page does not mention CAEP and RISC. A workflow offering two " +
-      "event types where a reader expected eighteen reads as broken rather " +
-      "than as staged, so the vocabularies have to be named and the one " +
-      "that is not here has to say so.");
-  assert.ok(families.indexOf("NOT IMPLEMENTED") >= 0,
-      "RISC does not say it is absent. It is the third part of this work, " +
-      "and a reader who cannot tell 'this tool does not do RISC' from 'I " +
-      "have not found it yet' is being told the wrong thing by an omission.");
-  log.info("[families] OK.");
-  log.debug("Leaving theAbsentVocabulariesSayTheyAreAbsent().");
+  ["SSF", "CAEP", "RISC"].forEach(function (name) {
+    assert.ok(families.indexOf(name) >= 0,
+        "The page does not mention " + name + ". All three vocabularies " +
+        "have to be named: a reader who cannot tell 'this tool does not do " +
+        "it' from 'I have not found it yet' is being told the wrong thing " +
+        "by an omission.");
+  });
+  assert.ok(families.indexOf("NOT IMPLEMENTED") < 0,
+      "A family still describes itself as absent, and all three are here " +
+      "since 2026-09-04. The families table said: " + families);
+  log.info("[families] OK — all three named, none claiming to be absent.");
+  log.debug("Leaving everyVocabularyIsNamedAndHonest().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1223,7 +1235,7 @@ async function test() {
     await verificationAndPollProduceAnEvent(driver);
     await thePageCanSignAndPushAnEvent(driver);
     await bothHistoriesRecordWhatTheyShould(driver);
-    await theAbsentVocabulariesSayTheyAreAbsent(driver);
+    await everyVocabularyIsNamedAndHonest(driver);
     // THE STYLE CHECK RUNS BEFORE THE HAND-OFF SECTION AND THE ORDER IS
     // LOAD-BEARING. Several of this page's `ssf-` classes are on elements the
     // bundle CREATES — the events_requested boxes are built from the
