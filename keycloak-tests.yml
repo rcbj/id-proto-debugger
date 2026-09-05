@@ -19,6 +19,8 @@ services:
     command: ["start-dev", "--features=dpop"]
     hostname: keycloak
     network_mode: "host"
+    security_opt:
+      - no-new-privileges:true
     environment:
       KC_HTTP_PORT: "8080"
       # Both the modern (26+) and legacy bootstrap-admin vars, for compatibility.
