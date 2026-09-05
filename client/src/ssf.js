@@ -2300,8 +2300,12 @@ function fillEventTypes() {
       select.appendChild(option);
     });
     if (!offered.length) {
-      // A vocabulary with no rows is a REAL state — RISC today — and the
-      // menu says so rather than being empty, which reads as a broken page.
+      // A vocabulary with no rows is a real state and the menu says so
+      // rather than being empty, which reads as a broken page. **NO
+      // VOCABULARY IS IN IT SINCE 2026-09-04** — RISC was, and this branch
+      // is kept for the fourth one rather than deleted, because it is the
+      // shape a staged vocabulary has to have on the day its rows are still
+      // being written.
       var none = document.createElement('option');
       none.value = '';
       none.textContent = 'This build implements no event type in this ' +
@@ -2933,10 +2937,11 @@ function profileChanged() {
   return false;
 }
 
-// What the chosen profile is, and — for RISC — what it is not. An
-// unimplemented vocabulary is drawn saying so rather than left as an option
-// that silently does nothing, which is the same argument `renderFamilies()`
-// makes about the families table.
+// What the chosen profile is, and — for a vocabulary that is only listed —
+// what it is not. All three are implemented since 2026-09-04, so the second
+// branch is unreachable today; it is kept for the same reason
+// `fillEventTypes()`'s empty-menu branch is, because an option that silently
+// does nothing is the one thing a profile selector must never be.
 function renderProfileNote(row) {
   log.debug("Entering renderProfileNote().");
   var host = clear('ssf_profile_what');
