@@ -33,6 +33,12 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const bunyan = require("bunyan");
+const { SELF_SKIP_EXIT, SELF_SKIP_MARKER } =
+    require("./expectation.js");
+// One Chrome fault this runner recovers from, recognised in one place. See
+// tests/renderer_wedge.js for what it is, why nothing inside the session can
+// undo it, and why nothing else here is retried.
+const rendererWedge = require("./renderer_wedge.js");
 
 // The runner's own progress lines. They used to be console.log, which made this
 // the last thing in this directory writing outside bunyan — every test it
@@ -352,6 +358,29 @@ const JOB_LOCKS = {
   // the transmitter's queue rather than the streams themselves.
   "ssf_protocol.js": "sts-ssf",
   "ssf_page.js": "sts-ssf",
+  // CAEP travels on the same streams and reconfigures the same service:
+  // `caep_protocol.js` turns `caep.autoEmit` OFF to prove the setting is
+  // real, and `caep.omitEventTimestamp` ON to produce the conforming event
+  // that breaks receivers. Both are restored, and not instantly — so a job
+  // reading a stream inside that window would get an event with no
+  // timestamp, or none at all where it expected one, and would report it as
+  // a transmitter that had stopped sending.
+  //
+  // `caep_page.js` is here for a second reason as well, and it is the one
+  // that would be missed: it SIGNS PEOPLE IN AND OUT at the mock, and with
+  // automatic emission on, a sign-out anywhere in this suite now puts a
+  // Security Event Token on every stream that asked for one. A job holding a
+  // stream would see events about somebody else's session arriving in the
+  // middle of its own poll.
+  "caep_protocol.js": "sts-ssf",
+  "caep_page.js": "sts-ssf",
+  // The five per-protocol jobs share the script and therefore the
+  // lock. They agree streams on the mock and sign people in and out
+  // of it, so a caep_protocol.js or ssf_protocol.js run overlapping
+  // one would see events about somebody else's session arriving in
+  // the middle of its own poll — which is the exact hazard the
+  // sts-ssf lock was created for when caep.autoEmit landed.
+  "caep_session_protocols.js": "sts-ssf",
   // `ssf_engine.js` is deliberately absent: it needs no transmitter at all,
   // so nothing it does can collide with this. `api_ssf.js` is absent for a
   // different reason — it drives the api's own receiver and never touches
@@ -424,6 +453,26 @@ function buildJobs() {
     name: "Compose environment forwarding (what survives sudo: " +
         "TEST_CONCURRENCY, TEST_JOB_TIMEOUT_MS, STS_LOG_LEVEL)",
     script: "compose_env_forwarding.js",
+    env: {},
+  });
+
+  // WHERE A DOWNLOADED FILE LANDS. Several pages here have a Download button
+  // and the tests that drive one write a real file; the browser's default
+  // directory on a host run is the developer's ~/Downloads, and the assertion
+  // every one of those tests makes is on the page's own status line, which
+  // reads "Downloaded ..." wherever the file went. So the run is green and
+  // the only evidence is somebody's home directory filling up with key
+  // material — 71 copies each of two keystores by 2026-09-03. It was fixed
+  // once per test, in jwt_tools.js and digital_signature.js, and came back
+  // the moment encryption_tools.js arrived with a key-download section and no
+  // reason to know those four lines existed. The rule now lives in
+  // browser_flags.js section (6), reached from the two functions every
+  // browser test calls, and this is what keeps it reached. Node only — no
+  // browser, no services — so it never skips.
+  jobs.push({
+    name: "Downloads never reach the home directory (browser_flags.js " +
+        "section 6, and every test that goes through it)",
+    script: "download_dir_pinned.js",
     env: {},
   });
 
@@ -1489,6 +1538,34 @@ function buildJobs() {
     env: {},
   });
 
+  // The five panes on oauth2_oidc_2.html that do not exist until something
+  // has been called — the Authorization Endpoint's tokens, the token
+  // endpoint's, the refresh call's, the set chosen out of Token History, and
+  // the history itself. Each is built as a STRING by the bundle and dropped
+  // into an empty container, so before the first call the container held
+  // nothing — and an empty flex child is not a gap, it is a COLUMN with
+  // nothing in it, so those rows showed blanks where panes should be.
+  //
+  // `collapsePane()` was already being called on all five and could not help:
+  // it hides the first fieldset INSIDE the container, and a container with no
+  // pane inside has no fieldset and no legend, so it collapses to nothing.
+  // That is the difference between COLLAPSED and INVISIBLE, and it is why this
+  // was fixed more than once without holding.
+  //
+  // IT WALKS EVERY GRANT THE MENU OFFERS, and that is what earns the job. With
+  // the markup half of the fix alone, three of the eleven were still broken on
+  // arrival — `resource_owner` lost two panes, `client_credential` and
+  // `device_authorization_grant` one each — because `resetUI()` runs from
+  // document.ready on every load and empties them per grant. A check of the
+  // default grant would have passed over all three. Needs the client alone,
+  // so it never skips and runs against a deployed static site unchanged.
+  jobs.push({
+    name: "OAuth2/OIDC result panes (collapsed rather than invisible, for " +
+        "every grant type)",
+    script: "oauth2_result_panes.js",
+    env: {},
+  });
+
   // The "save this key pair in browser localStorage" opt-out on the SAML and
   // WS-Trust request pages, exercised in BOTH states. Worth a browser test
   // because the failure mode is silent and reassuring: if the guard in
@@ -2094,6 +2171,16 @@ function buildJobs() {
   //     browser call path is the one a static site has, and its own callPath
   //     section asserts that the api option is switched OFF there rather than
   //     merely marked — which is the half no other job can see.
+  //   * the three CAEP jobs follow the same three rules: `caep_engine.js` is
+  //     never gated, `caep_protocol.js` needs a transmitter and skips itself
+  //     with a reason when there is none, and `caep_page.js` needs neither an
+  //     api nor a backend — its whole subject is the page reconfiguring
+  //     itself and a session model that lives in the browser.
+  //   * `caep_session_protocols.js` — the per-protocol matrix — is the one
+  //     that is half of each: the sign-in and the POLL half need only the
+  //     transmitter, and the PUSH half needs the api. It is therefore not
+  //     gated as a job, and is handed SSF_PUSH_AVAILABLE so that it skips
+  //     that half by name. See ssfPushAvailable below.
   //
   // WHAT A STATIC TARGET REALLY LOSES IS PUSH DELIVERY, and that is RFC 8935
   // rather than a property of this deployment: a browser cannot be an HTTP
@@ -2113,6 +2200,19 @@ function buildJobs() {
       "dev server, or set LDAP_AVAILABLE=true for a remote target that IS " +
       "api-backed."
     : null;
+
+  // AND THE SAME FACT ONE STEP FINER, for the CAEP matrix jobs below. Those
+  // are not gated at all — the sign-in they drive is at the transmitter and
+  // the events they read back go through the debugger's own engines, neither
+  // of which needs a backend — but ONE HALF of each of them does: RFC 8935
+  // push lands on `POST /ssf/receiver` at the api, because a page is not an
+  // HTTP server, and a static deployment has no api to host it. So this is a
+  // SECTION skip carried into the job rather than a job skip, and the job
+  // says the sentence itself. Until 2026-09-04 nothing was passed and those
+  // four jobs each reported nine push failures against
+  // https://localhost:4000 on every remote run — a test blaming a service
+  // that was never part of the target.
+  const ssfPushAvailable = ldapOff ? "false" : "true";
 
   const kerberosPagesSkip = kerberosOff
     ? "the Kerberos pages are not on this deployment: the workflow needs the " +
@@ -3006,7 +3106,12 @@ function buildJobs() {
         "drops, poll and push end to end, and both deliberate defects)",
     script: "ssf_protocol.js",
     env: {
-      WSTRUST_STS_URL: env.WSTRUST_STS_URL || "https://localhost:8081",
+      // NOT WSTRUST_STS_URL, which is what this passed until 2026-09-01 and
+      // is why this job skipped on every run: that variable is a WS-Trust
+      // ENDPOINT carrying a `/sts` path, and SSF is served at the root. See
+      // the comment on `stsUrl` in the script.
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+          "https://localhost:8081",
       SSF_RECEIVER_HOST: env.SSF_RECEIVER_HOST || "localhost",
     },
   });
@@ -3044,9 +3149,141 @@ function buildJobs() {
     script: "ssf_page.js",
     env: {
       API_URL: env.API_URL || "https://localhost:4000",
-      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL ||
-          env.WSTRUST_STS_URL || "https://localhost:8081",
+      // env.STS_URL and not env.WSTRUST_STS_URL. Same reason as the protocol
+      // job above, and the same three months of green runs that proved
+      // nothing about this page.
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+          "https://localhost:8081",
     },
+  });
+
+  // ------------------------------------------------------------------------
+  // CAEP — the SESSION vocabulary over the pipe above, and three jobs split
+  // the same way the four SSF ones are: by what each NEEDS rather than by
+  // what it covers. A failure in the first names a member of the
+  // specification, in the second a transmitter, and in the third a page.
+  //
+  // **THE SECOND ONE IS THE ONE THAT COULD NOT EXIST BEFORE CAEP.** Every
+  // other job in this suite drives a request and reads the answer; that one
+  // signs somebody IN and waits for a Security Event Token nobody asked for.
+  // It is the only test here whose subject is something the far end decided
+  // to do.
+  // ------------------------------------------------------------------------
+  jobs.push({
+    name: "CAEP engines (the eight event types written out from the " +
+        "specification, every required member and closed enumeration, the " +
+        "four claims CAEP gives them all — reason_admin as a LANGUAGE MAP, " +
+        "which is the mistake with no symptom — the three OPEN " +
+        "enumerations, the complex subject through the pipe's own RFC 9493 " +
+        "grammar, and the session state machine's one hard refusal)",
+    script: "caep_engine.js",
+    env: {},
+  });
+
+  jobs.push({
+    name: "CAEP protocol (the eight types offered and agreed on a stream, " +
+        "AUTOMATIC EMISSION — a sign-in, a single sign-on and a sign-out " +
+        "each producing a Security Event Token nobody asked for — the " +
+        "setting that turns it off, every event emitted by hand through the " +
+        "management API, and the per-session register that outlives the " +
+        "session it describes)",
+    script: "caep_protocol.js",
+    env: {
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+          "https://localhost:8081",
+    },
+  });
+
+  jobs.push({
+    name: "CAEP page (the profile switch reconfiguring the workflow, the " +
+        "CAEP session seeded from SIX DIFFERENT OAuth2 / OIDC grants — " +
+        "including the two that issue no ID Token at all — every one of the " +
+        "eight events simulated and pushed, the state and the counters that " +
+        "follow them, and the reset that starts over)",
+    script: "caep_page.js",
+    env: {
+      // NO API_URL. This job needs no backend — see the note at the top of
+      // caep_page.js — and it ran against a deployed static site with one
+      // for months, which is a job carrying an address it never dialled.
+      SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+          "https://localhost:8081",
+      // The two the OAuth2 / OIDC jobs are given, because this one drives
+      // those pages: it runs the whole grant matrix through them so that the
+      // CAEP session is seeded from a real token set rather than a fixture.
+      DISCOVERY_ENDPOINT: env.DISCOVERY_ENDPOINT ||
+          ((env.STS_URL || "https://localhost:8081") +
+           "/.well-known/openid-configuration"),
+      CLIENT_ID: env.CLIENT_ID || "webapp1",
+    },
+  });
+
+  // ------------------------------------------------------------------------
+  // RISC, THE SECOND VOCABULARY OVER THE SAME PIPE.
+  //
+  // ONE JOB and not three, where CAEP has three, and the difference is what
+  // each of the three would need. `risc_engine.js` needs nothing — no
+  // transmitter, no browser — and is scheduled here beside `caep_engine.js`
+  // for that reason. The protocol and page halves of RISC are driven by the
+  // mock STS's own `tests/risc_register.js` and by the SSF and CAEP jobs that
+  // already exercise the pipe every RISC event travels on: the streams, the
+  // deliveries, the envelope and the subject grammar are vocabulary-
+  // independent, which is the whole claim `ssf_events.js`'s header makes.
+  // ------------------------------------------------------------------------
+  jobs.push({
+    name: "RISC engines (the fourteen event types written out from the " +
+        "specification, the ONE required member and the eleven types with " +
+        "no members at all — so the SUBJECT is the whole message — the " +
+        "three claims RISC gives to one event and the fourth it does not " +
+        "define, THE ONLY HYPHENATED MEMBER NAME IN ANY OF THE THREE " +
+        "VOCABULARIES and the near miss that names it, the two rows whose " +
+        "subject format overrides the pane's, the three state machines and " +
+        "the one sentence they refuse, and section 2.8's opt-out gate with " +
+        "the exception without which it is a trap)",
+    script: "risc_engine.js",
+    env: {},
+  });
+
+  // ------------------------------------------------------------------------
+  // AND THE EVENT-TYPE x SIGN-IN-PROTOCOL MATRIX: one job per protocol, each
+  // driving all EIGHT event types over a session that protocol established.
+  //
+  // **ONE JOB PER PROTOCOL AND NOT ONE PER COMBINATION.** The federation grid
+  // next door is scheduled the other way — forty-nine jobs, one per point —
+  // and the difference is where the cost is. There, each point is a different
+  // SIGN-IN and the eight-second job is the sign-in; here the sign-in is done
+  // once and the eight event types over it are a few hundred milliseconds
+  // each, so a job per combination would pay for forty sign-ins to run the
+  // same eight events five times. The report still names the protocol, which
+  // is the property that mattered about the grid: a failure says `SAML 1.1`
+  // rather than being one row of forty.
+  //
+  // Gated on a transmitter the way the other CAEP jobs are. The SPNEGO one is
+  // scheduled and SKIPS ITSELF with a reason — it needs a Kerberos service
+  // ticket to answer the acceptor's 401, which only krb5_mit_client.js has
+  // the machinery for — and that is deliberately a scheduled skip rather than
+  // an absent job, because a job nobody schedules is a gap nobody can see.
+  // ------------------------------------------------------------------------
+  ["oidc", "saml2", "saml11", "wsfed", "spnego"].forEach(function (which) {
+    jobs.push({
+      name: "CAEP over " + which + " (all eight event types, about a session " +
+          "established by that sign-in, sent by the mock and collected by " +
+          "the debugger over BOTH deliveries — poll, which needs no api, and " +
+          "RFC 8935 push through the api's receiver, which exists because a " +
+          "page is not an HTTP server — and every one put through the " +
+          "debugger's own catalogue rather than merely counted)",
+      script: "caep_session_protocols.js",
+      env: {
+        CAEP_SIGNIN_PROTOCOL: which,
+        API_URL: env.API_URL || "https://localhost:4000",
+        // The push half only. See ssfPushAvailable above: on a target with
+        // no api the job still runs and the POLL half — the delivery those
+        // deployments actually use — is the whole of what it asserts.
+        SSF_PUSH_AVAILABLE: ssfPushAvailable,
+        SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
+            "https://localhost:8081",
+        STS_URL: env.STS_URL || "https://localhost:8081",
+      },
+    });
   });
 
   // ------------------------------------------------------------------------
@@ -3279,6 +3516,37 @@ function buildJobs() {
   jobs.push({
     name: "API outbound call policy (timeouts, caps, User-Agent, keep-alive)",
     script: "api_connect_timeout.js",
+    env: {},
+  });
+
+  // THE WALLET'S MEMORY, in node, with no issuer and no browser. It needs
+  // nothing at all, so it never skips, and it is FIRST of this family for the
+  // reason scim_engine.js is first of its own: the decisions it covers are
+  // what the browser jobs below depend on, so a defect here makes those fail
+  // in ways that look like a broken issuer.
+  //
+  // IT IS NOT A DUPLICATE OF THOSE JOBS, and the measurement is the argument
+  // rather than the shape of the sentence. With all eight SD-JWT VC /
+  // jwt_vc_json / ldp_vc browser jobs running, `client/src/sd_jwt_vc.js` was
+  // 72.7% covered with 538 lines untouched (tests/coverage_merge.js); this
+  // file alone reaches 128 of those. A workflow test takes ONE path — key
+  // saving on, the holder key present, a cnf naming it — and every ALTERNATIVE
+  // outcome in that module is a branch it never enters.
+  //
+  // What those branches decide is whether somebody is stranded. ABSENT BY
+  // CHOICE and ABSENT AND LOST are the same empty storage slot: with saving
+  // off there is a field on the next page to paste into and the workflow must
+  // NOT block, and with saving on the key was never generated in this browser,
+  // there is nothing to paste, and it must. It also covers the opt-out's PURGE
+  // — a gate that only declines new writes leaves yesterday's private key in
+  // storage and looks exactly like an opt-out — and which key a credential is
+  // bound to under Holder of Key, where the DPoP key IS the holder key and
+  // both are in storage at once.
+  jobs.push({
+    name: "SD-JWT VC wallet memory (the key-saving opt-out and its purge, " +
+        "the bound key, DPoP and presentation readiness, and the Credential " +
+        "History, in node)",
+    script: "sd_jwt_vc_engine.js",
     env: {},
   });
 
@@ -3778,7 +4046,43 @@ function buildJobs() {
     script: "saml_response_decoder_page.js",
     env: {},
   });
-  
+
+  // THE READER THOSE TWO PAGES DRAW FROM, in node, with no browser and no
+  // fixtures built by anything but itself. It needs nothing at all, so it
+  // never skips, and it is FIRST of the three for the reason scim_engine.js
+  // is first of its family: a broken reader makes both page jobs above fail
+  // in ways that look like a broken page.
+  //
+  // It exists because of a measurement rather than a hunch.
+  // client/src/saml_message.js was the second-largest block of untested code
+  // in this tree — 700 uncovered lines at 59.9% on the merged report of
+  // 2026-08-29 (tests/coverage_merge.js) — and what was uncovered was whole
+  // functions never entered once: summarize() at 198 lines,
+  // summarizeResponse() at 157, assertionSummary() at 126, classify() at 96.
+  // The two page jobs above BUILD their fixtures with this module and neither
+  // READS one, so every reader in it was exercised only through a rendered
+  // table, where a wrong row is a wrong cell and nothing says which of two
+  // dozen readers produced it.
+  //
+  // What it asserts is the class of defect that never raises: a reader
+  // written for SAML 2.0 renders a perfectly good 1.1 message as a page of
+  // blanks, in five separate places (the issuer is an attribute, the id is
+  // ResponseID, the status is a QName, the confirmation method is a child
+  // element, an attribute's name is split across two attributes); a Redirect
+  // signature rebuilt in the wrong parameter order is a clean INVALID on a
+  // good signature; an assertion serialized without its inherited namespace
+  // declarations verifies against nothing; and an ArtifactResponse's own
+  // Success reported as the result is a failed sign-in reported as a
+  // successful one.
+  jobs.push({
+    name: "SAML message reader (binding classification, the artifact, the " +
+        "Redirect signed octets, and the request and response readers in " +
+        "both protocol versions, in node)",
+    script: "saml_message_engine.js",
+    env: {},
+  });
+
+
  // SAML 2.0 SP-initiated SSO across all three bindings: load IdP metadata, sign
   // the AuthnRequest (redirect = query-string sig; post = enveloped XML-DSIG;
   // artifact = redirect send + SOAP ArtifactResolve back-channel), log in at
@@ -4839,7 +5143,33 @@ process.on("exit", reapAllJobGroups);
 // opened and the header written before the child starts, and flushed as
 // output arrives, so the full output survives even if the suite is killed
 // or a test hangs. Returns a Promise resolving to the result.
-function runJob(job, index, live) {
+// The reason a job gave for declining to run, off the plain-text marker line
+// tests/expectation.js writes to stdout. Plain text rather than a bunyan record
+// on purpose: every other line a job emits is JSON, and the runner should not
+// have to parse a log format to find out whether the test ran at all.
+function selfSkipReason(output) {
+  log.debug("Entering selfSkipReason().");
+  for (const line of String(output || "").split("\n")) {
+    const at = line.indexOf(SELF_SKIP_MARKER);
+    if (at >= 0) {
+      const reason = line.slice(at + SELF_SKIP_MARKER.length).trim();
+      log.debug("Leaving selfSkipReason(). Found.");
+      return reason || "no reason given";
+    }
+  }
+  // Exited with the skip code and said nothing. Reported rather than guessed:
+  // a job that declines silently is the thing this whole mechanism exists to
+  // stop, so it must not read as a tidy skip.
+  log.debug("Leaving selfSkipReason(). No marker.");
+  return "declined to run and gave no reason (no " +
+      SELF_SKIP_MARKER.trim() + " line in its output)";
+}
+
+// `again` is set only by the renderer-wedge retry below. It APPENDS to the
+// first attempt's log rather than opening a new one, so both attempts are in
+// the one file the report links to: a retry whose evidence replaced the
+// evidence of what caused it would be worse than no retry at all.
+function runJob(job, index, live, again) {
   log.debug("Entering runJob().");
   log.debug("Leaving runJob().");
   return new Promise((resolve) => {
@@ -4847,7 +5177,9 @@ function runJob(job, index, live) {
     const startMs = Date.now();
     fs.mkdirSync(LOGS_DIR, { recursive: true });
     const logPath = logPathFor(job.name, index);
-    const logStream = fs.createWriteStream(logPath);
+    const logStream = again
+      ? fs.createWriteStream(logPath, { flags: "a" })
+      : fs.createWriteStream(logPath);
     // A WriteStream with no 'error' listener throws its error as an unhandled
     // 'error' event, which is not a failed job — it is the whole runner
     // exiting mid-pool, naming a path rather than a test. Losing one job's
@@ -4857,7 +5189,12 @@ function runJob(job, index, live) {
       log.warn("Log file " + logPath + " is not writable (" + e.code +
         "); continuing without it.");
     });
-    logStream.write(logHeader(job.name, job.script, startedAt));
+    if (again) {
+      logStream.write("\n" + rendererWedge.wedgeNote(job.name) + "\n" +
+          "\n===== SECOND ATTEMPT, started " + startedAt + " =====\n");
+    } else {
+      logStream.write(logHeader(job.name, job.script, startedAt));
+    }
 
     let output = "";
     // The job's process group, its watchdog, and the guard that keeps the
@@ -4896,9 +5233,18 @@ function runJob(job, index, live) {
       killJobGroup(pgid, "SIGKILL");
       liveJobGroups.delete(pgid);
       const durationMs = Date.now() - startMs;
-      const passed = code === 0;
+      // THE THIRD OUTCOME. A test that declined to run exits SELF_SKIP_EXIT
+      // and says why on a plain-text marker line; anything else is the pass
+      // or the failure it always was. Before 2026-09-02 a test that declined
+      // returned out of test(), which exits 0, and the runner had no way at
+      // all to tell it from a test that ran — see tests/expectation.js for
+      // the fifty-four jobs that cost.
+      const selfSkipped = code === SELF_SKIP_EXIT;
+      const reason = selfSkipped ? selfSkipReason(output) : null;
+      const passed = code === 0 || selfSkipped;
+      const label = selfSkipped ? "SKIP" : passed ? "PASS" : "FAIL";
       logStream.end(
-        `\n===== RESULT: ${passed ? "PASS" : "FAIL"} ` +
+        `\n===== RESULT: ${label} ` +
           `(exit ${codeLabel}, ${(durationMs / 1000).toFixed(1)}s) =====\n`
       );
       // Buffered rather than echoed as it arrived (see CONCURRENCY), so write
@@ -4908,7 +5254,7 @@ function runJob(job, index, live) {
         const secs = (durationMs / 1000).toFixed(1);
         process.stdout.write(
           `\n===== [${index + 1}] ${job.name} — ` +
-          `${passed ? "PASS" : "FAIL"} (${secs}s) =====\n` +
+          `${label} (${secs}s) =====\n` +
           output +
           `===== end of ${job.name} =====\n`);
       }
@@ -4917,9 +5263,13 @@ function runJob(job, index, live) {
         script: job.script,
         type: job.type || "browser",
         passed,
-        code: codeLabel,
+        skipped: selfSkipped || undefined,
+        selfSkipped: selfSkipped || undefined,
+        reason: reason || undefined,
+        code: selfSkipped ? "self-skip" : codeLabel,
         durationMs,
         output,
+        retried: again || undefined,
         logFile: path.relative(TESTS_DIR, logPath),
       });
       log.debug("Leaving finish().");
@@ -4963,6 +5313,37 @@ function runJob(job, index, live) {
   });
 }
 
+// THE ONE RETRY IN THIS RUNNER, and the only failure it applies to.
+//
+// A Chrome renderer that stops answering takes the tab with it for good —
+// nothing the test can issue against that session recovers it, so the failure
+// is not the test's and cannot be handled inside it. A second run of the job
+// is a second BROWSER, which is the only thing that clears it. Everything
+// about why, and why nothing else here is run twice, is in
+// tests/renderer_wedge.js.
+//
+// The second attempt's result is the job's result, and it carries
+// `retried: true` so the log line, the HTML row and the XML case all say a
+// browser had to be replaced. A run that met this is not the same as a run
+// that did not, and a retry nobody can see is a suite that quietly runs
+// everything twice.
+async function runJobAllowingOneRendererWedge(job, index, live) {
+  log.debug("Entering runJobAllowingOneRendererWedge().");
+  const first = await runJob(job, index, live);
+  if (first.passed || first.skipped ||
+      !rendererWedge.isRendererWedge(first.output)) {
+    log.debug("Leaving runJobAllowingOneRendererWedge(). First attempt " +
+        "stands.");
+    return first;
+  }
+  log.warn(rendererWedge.wedgeNote(job.name));
+  // The second attempt carries `retried` itself — runJob() sets it from the
+  // same flag that appended to the log, so the two cannot disagree.
+  const second = await runJob(job, index, live, true);
+  log.debug("Leaving runJobAllowingOneRendererWedge(). Retried.");
+  return second;
+}
+
 // Record a skipped job (a capability the target can't exercise, e.g. Artifact
 // on a backendless deployment). Written to a log + returned as a result that is
 // neither pass nor fail, so it doesn't count against the suite.
@@ -5000,10 +5381,18 @@ function makeSkipResult(job, index) {
 // is the order things completed; the report itself is written in job order.
 function reportOne(result, index, total) {
   log.debug("Entering reportOne().");
+  const label = result.skipped ? "SKIP" : result.passed ? "PASS" : "FAIL";
   log.info(`----- [${index + 1}/${total}] ` +
-      `${result.passed ? "PASS" : "FAIL"} ` +
+      `${label} ` +
       `(${(result.durationMs / 1000).toFixed(1)}s) → ${result.logFile} ` +
       `— ${result.name}`);
+  if (result.selfSkipped) {
+    log.warn(`----- DID NOT RUN: ${result.reason}`);
+  }
+  if (result.retried) {
+    log.warn("----- RAN TWICE: the first attempt met Chrome's \"" +
+        rendererWedge.SIGNATURE + "\". This line is the second attempt.");
+  }
   log.debug("Leaving reportOne().");
 }
 
@@ -5069,18 +5458,20 @@ function runPool(jobs, results, started, total) {
           reportOne(result, i, total);
           pump();
         };
-        runJob(job, i, CONCURRENCY === 1).then(settle, function (err) {
-          settle({
-            name: job.name,
-            script: job.script,
-            type: job.type || "browser",
-            passed: false,
-            code: "runner error: " + (err && err.message),
-            durationMs: 0,
-            output: "the runner failed to run this job: " + (err && err.stack),
-            logFile: "",
+        runJobAllowingOneRendererWedge(job, i, CONCURRENCY === 1)
+          .then(settle, function (err) {
+            settle({
+              name: job.name,
+              script: job.script,
+              type: job.type || "browser",
+              passed: false,
+              code: "runner error: " + (err && err.message),
+              durationMs: 0,
+              output: "the runner failed to run this job: " +
+                  (err && err.stack),
+              logFile: "",
+            });
           });
-        });
       }
       if (active === 0 && remaining === 0) {
         resolve();
@@ -5125,7 +5516,7 @@ async function runAllJobs(jobs, results) {
     started[i] = true;
     // Live output: nothing else is running, so there is nothing to interleave
     // with, and this pass is where a stack that came up wrong shows first.
-    results[i] = await runJob(job, i, true);
+    results[i] = await runJobAllowingOneRendererWedge(job, i, true);
     reportOne(results[i], i, total);
   }
 
@@ -5164,9 +5555,18 @@ function renderHtml(results, generatedAt, demo) {
             r.logFile)}</code></a>`
         : "";
       const type = r.type === "unit" ? "unit" : "browser";
+      // A job that had to be run twice says so beside its badge. See
+      // tests/renderer_wedge.js: the first attempt's output is in the same log
+      // file, above the second attempt's banner.
+      const retried = r.retried
+        ? `<br><span class="retried" title="The first attempt met Chrome's` +
+          ` &quot;${esc(rendererWedge.SIGNATURE)}&quot; and the browser could` +
+          ` not be recovered; this row is the second attempt.">ran twice` +
+          `</span>`
+        : "";
       return `
       <tr class="${cls}">
-        <td><span class="badge ${cls}">${badge}</span></td>
+        <td><span class="badge ${cls}">${badge}</span>${retried}</td>
         <td><span class="type ${type}">${type}</span></td>
         <td>${esc(r.name)}<br><code>${esc(r.script)}</code></td>
         <td class="num">${(r.durationMs / 1000).toFixed(1)}s</td>
@@ -5195,6 +5595,7 @@ function renderHtml(results, generatedAt, demo) {
   tr.fail{background:#fff5f5}tr.skip{background:#fbfbf5}
   .badge{font-weight:700;font-size:.75rem;padding:.15rem .5rem;border-radius:4px;color:#fff}
   .badge.pass{background:#1a7f37}.badge.fail{background:#c1121f}.badge.skip{background:#8a6d00}
+  .retried{display:inline-block;margin-top:.3rem;font-size:.7rem;color:#8a6d00;border:1px solid #e0cf8a;border-radius:4px;padding:.05rem .35rem;white-space:nowrap}
   .type{font-size:.7rem;padding:.1rem .45rem;border-radius:10px;border:1px solid #d0d0d0;color:#555;white-space:nowrap}
   .type.unit{background:#eef4ff;border-color:#c3d4f5;color:#274b8f}
   code{background:#f3f3f3;padding:.05rem .3rem;border-radius:3px}
@@ -5382,7 +5783,14 @@ function renderJUnit(results, generatedAt) {
   const cases = results
     .map((r) => {
       const time = (r.durationMs / 1000).toFixed(3);
-      const sys = esc((r.output || "").trim());
+      // A job that had to be run twice says so at the top of its system-out,
+      // where a CI dashboard shows it. See tests/renderer_wedge.js.
+      const ranTwice = r.retried
+        ? "[runner] this job was RUN TWICE: the first attempt met Chrome's " +
+          "\"" + rendererWedge.SIGNATURE + "\" and the browser could not be " +
+          "recovered. What follows is the second attempt.\n\n"
+        : "";
+      const sys = esc(ranTwice + (r.output || "").trim());
       const body = r.skipped
         ? `<skipped message="${esc(r.reason || "skipped")}"/>`
         : r.passed
@@ -5452,7 +5860,7 @@ function coverageExcludes(jobs) {
   log.debug("Entering coverageExcludes().");
   const names = new Set(jobs.map((job) => job.script));
   ["run-report.js", "module_paths.js", "wait_for.js", "random_username.js",
-    "common.sh"].forEach(function (name) {
+    "consent_screen.js", "common.sh"].forEach(function (name) {
     names.add(name);
   });
   // Every pattern is `**/`-prefixed, and that is not cosmetic: a bare
@@ -5604,6 +6012,52 @@ function demoResults() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// EVERY JOB THAT DID NOT RUN, SPELLED OUT AT THE END OF THE RUN.
+//
+// `0 failed` is the line everybody reads, and on its own it says nothing about
+// how much of the suite executed. On 2026-09-01 it said `292 passed, 0 failed,
+// 2 skipped` for a run in which fifty-four jobs had switched themselves off
+// over a moved URL — because a test that returned early exited 0, and exit 0
+// is a pass. The skips are first-class results now (see tests/expectation.js),
+// and this prints them where the summary is read rather than leaving them to
+// be found one log file at a time.
+//
+// The two kinds are labelled, because they mean different things to whoever is
+// reading. DECLARED is run-report.js deciding, from the environment, that this
+// target cannot exercise this workflow — a static deployment with no api, no
+// Windows domain controller. SELF is the test itself declining once it was
+// already running, which is the kind worth a second look: it is the shape the
+// 2026-09-01 hole had, and a self-skip whose reason sounds like a defect in a
+// service rather than a fact about this machine belongs in expectation.js's
+// mustBeAbleTo() as a failure instead.
+// ---------------------------------------------------------------------------
+function reportJobsThatDidNotRun(results) {
+  log.debug("Entering reportJobsThatDidNotRun().");
+  const missed = results.filter(function (r) {
+    return r && r.skipped;
+  });
+  if (missed.length === 0) {
+    log.info("Every job ran. No job skipped itself and none was gated out.");
+    log.debug("Leaving reportJobsThatDidNotRun(). None.");
+    return;
+  }
+  const self = missed.filter(function (r) {
+    return r.selfSkipped;
+  }).length;
+  log.warn("");
+  log.warn(missed.length + " of " + results.length + " job(s) DID NOT RUN " +
+      "(" + self + " declined by the test itself, " +
+      (missed.length - self) + " gated out by the launcher). A test that " +
+      "does not run is not a passing test:");
+  for (const r of missed) {
+    log.warn("  [" + (r.selfSkipped ? "SELF" : "DECLARED") + "] " + r.name);
+    log.warn("      " + (r.reason || "no reason recorded"));
+  }
+  log.warn("");
+  log.debug("Leaving reportJobsThatDidNotRun(). " + missed.length + ".");
+}
+
 async function main() {
   log.debug("Entering main().");
   const demo = process.argv.includes("--demo");
@@ -5645,6 +6099,7 @@ async function main() {
   log.info(`Summary: ${passed} passed, ${failed} failed, ${skipped} skipped, ${results.length} total`);
   log.info(`Of those, ${units} are unit jobs (no browser) and ` +
     `${results.length - units} drive one.`);
+  reportJobsThatDidNotRun(results);
 
   // Don't fail the demo run; otherwise signal failures to the caller/CI.
   process.exit(demo ? 0 : failed > 0 ? 1 : 0);

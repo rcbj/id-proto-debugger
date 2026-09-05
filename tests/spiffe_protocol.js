@@ -70,6 +70,8 @@ const assert = require("assert");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
 const registry = require("./sts_applications.js");
+const listeners = require("./spiffe_listeners.js");
+const { declineToRun, mustBeAbleTo } = require("./expectation.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -278,17 +280,44 @@ async function gate() {
   try {
     described = await json(STS_URL + "/spiffe?format=json");
   } catch (e) {
-    log.warn("SKIPPING: " + STS_URL + " could not be reached (" + e.message +
-      "). This test needs the mock STS's SPIFFE surfaces; a deployment " +
-      "without them is not a failure of this workflow.");
+    // A FAILURE rather than a skip since 2026-09-02: run-report.js gates this
+    // job on SPIFFE_AVAILABLE, so a deployment without these surfaces never
+    // reaches here and this means the stack is down. See
+    // tests/expectation.js.
     log.debug("Leaving gate(). Unreachable.");
-    return false;
+    mustBeAbleTo(false, "The mock STS this job was pointed at,", STS_URL +
+      ", could not be reached (" + e.message + "). Start the stack, or run " +
+      "./local-run-tests.sh which does.");
   }
   if (described.status !== 200 || !described.body || !described.body.enabled) {
-    log.warn("SKIPPING: " + STS_URL + "/spiffe did not describe an enabled " +
-      "SPIFFE service (HTTP " + described.status + "). Either this mock STS " +
-      "predates SPIFFE or spiffe.enabled is off.");
     log.debug("Leaving gate(). Not enabled.");
+    mustBeAbleTo(false, "The mock STS at " + STS_URL + " is reachable, but",
+      "GET /spiffe?format=json did not describe an enabled SPIFFE service " +
+      "(HTTP " + described.status + "). Either this mock STS predates " +
+      "SPIFFE (bump the sts/ submodule) or spiffe.enabled is off.");
+  }
+  // AND THE TWO PORTS BELONG TO THE MOCK THAT WAS JUST DESCRIBED. Enabled is
+  // not bound: this service carries on when a SPIFFE listener loses its port
+  // to another process, and every assertion below would then be made about a
+  // stranger — including the administrator one, which sets `spiffe.adminIds`
+  // over HTTP on one process and exercises it over gRPC on another. See
+  // tests/spiffe_listeners.js.
+  const verdict = await listeners.verify(STS_URL, [
+    { surface: "workloadApi", address: WORKLOAD_ADDRESS,
+      what: "the Workload API" },
+    { surface: "serverApi", address: SERVER_ADDRESS,
+      what: "the SPIRE Server API" }
+  ]);
+  if (verdict.stranger) {
+    log.debug("Leaving gate(). A stranger holds the port.");
+    throw new Error(verdict.why);
+  }
+  if (!verdict.ok) {
+    // Stays a skip, for api_spiffe.js's reason exactly: this is
+    // spiffe_listeners.js's third verdict, an absent capability rather than a
+    // service that is wrong. RECORDED since 2026-09-02.
+    declineToRun(log, verdict.why);
+    log.debug("Leaving gate(). Not served over TCP.");
     return false;
   }
   log.debug("Leaving gate(). Enabled.");
@@ -1346,7 +1375,8 @@ async function testNoIdentityPath(adminBase, restore) {
 async function test() {
   log.debug("Entering test().");
   if (!(await gate())) {
-    log.info("Test completed successfully (skipped).");
+    // gate() has already recorded the skip through declineToRun(). See
+    // api_spiffe.js for why the "completed successfully" line went.
     log.debug("Leaving test(). Skipped.");
     return;
   }

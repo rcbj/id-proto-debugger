@@ -282,6 +282,45 @@ mkdir -p coverage/frontend/.nyc_output coverage/api coverage/node \
     tests/report || true
 chmod -R 0777 coverage tests/report || true
 
+# ---------------------------------------------------------------------------
+# RAW COVERAGE OLDER THAN A WEEK IS DELETED, and it is deleted because nyc
+# MERGES whatever it finds rather than reporting on this run.
+#
+# The browser half of this report is not written by a process that finishes —
+# each instrumented page POSTs its window.__coverage__ to the client server on
+# a one-second interval, and the server writes every POST as its own file
+# under coverage/frontend/.nyc_output, named with a timestamp AND a random
+# suffix so no two collide. Nothing has ever removed one. `npx nyc report`
+# at the end of the run then reads the WHOLE directory, so the number printed
+# for this run is the union of this run and every run since the directory was
+# created — and the merged ratchet in tests/coverage_merge.js reads that same
+# lcov.
+#
+# Measured on 2026-09-03: 21,086 files and 14 GB going back to 2026-08-27,
+# six runs' worth, and about six minutes of the wall clock spent rendering
+# them. A line covered only by a test that was DELETED a week ago still
+# counted, which is the part that matters: a floor that a current run cannot
+# meet on its own stays green until the old data ages out, and then breaks in
+# a run that changed nothing.
+#
+# A WEEK rather than "this run only", deliberately. Several of the launchers
+# and the GitHub job write into the same directory, and a developer who runs
+# ./docker-run-tests.sh between two coverage runs would otherwise lose the
+# earlier one's browser data with nothing to say so. A week keeps a handful of
+# recent runs — enough that a flaky job's gap is filled by its neighbours —
+# and bounds the directory instead of letting it grow without limit.
+#
+# -mtime +7 is "last modified more than 7*24 hours ago", so a run started
+# yesterday is kept whole. Best-effort for the same reason the chmod above is:
+# a file left by a container running as another uid is not worth aborting a
+# suite over, and `find` reports the ones it could not remove.
+# ---------------------------------------------------------------------------
+COVERAGE_RETENTION_DAYS="${COVERAGE_RETENTION_DAYS:-7}"
+echo "Pruning raw coverage older than ${COVERAGE_RETENTION_DAYS} day(s)."
+find coverage/frontend/.nyc_output coverage/node/tmp coverage/api/tmp \
+    -type f -mtime "+${COVERAGE_RETENTION_DAYS}" -print -delete 2>/dev/null \
+    | wc -l | xargs echo "Pruned raw coverage file(s):" || true
+
 # Tear the stack down on ANY exit, including the early ones the checks below can
 # take. The normal path downs the stack itself after rendering the report and
 # clears this flag, so it is not done twice.
@@ -364,10 +403,50 @@ echo "API (Node) coverage:         ./coverage/api/index.html"
 # the paths the modules were loaded from and only that filesystem has them.
 echo "Node (in-process) coverage:  ./coverage/node/index.html"
 
+# ---------------------------------------------------------------------------
+# THE FOURTH THING, AND IT IS THE ONE TO READ: the three domains merged into one
+# number and one ranked list, plus the ratchet.
+#
+# Those three reports do not reconcile, and until this ran, ranking the files by
+# what any one of them called uncovered pointed at the wrong work — the failure
+# COVERAGE.md documents for the third domain, fixed there for the TOTAL and
+# never for the FILE LIST. On the 2026-08-29 run `common/xmldsig.js` headed BOTH
+# the frontend list (594 uncovered, 45.4%) and the api list (1,475, 33.7%) and
+# was 86.8% covered once the three were merged: whoever wrote tests off either
+# list would have written tests that already existed. See tests/coverage_merge.js.
+#
+# ON THE HOST, and it can only be here. The three lcov files land on this bind
+# mount and the containers that could read them are gone by now — the stack was
+# torn down two commands ago, deliberately, because ./coverage/api is not
+# written until c8 flushes on the api container's clean stop. The script takes
+# no dependency for the same reason: a checkout need not have installed
+# tests/node_modules to have run this launcher.
+#
+# --check IS A GATE and its exit code is kept, but it must not overwrite a
+# failing suite's: a coverage regression reported in place of a red test is a
+# report about the wrong thing, and the tests are the stronger signal. So it
+# only decides the exit code of a run whose tests all passed.
+# ---------------------------------------------------------------------------
+COVERAGE_RC=0
+if command -v node >/dev/null 2>&1;
+then
+  node "${CURRENT_DIR}/tests/coverage_merge.js" --check
+  COVERAGE_RC=$?
+  echo "Merged coverage:             ./coverage/merged/summary.json"
+else
+  echo "WARNING: node is not on the PATH, so the three reports were not" \
+       "merged and the coverage floors were not checked. Every number" \
+       "printed above is one domain's view; see COVERAGE.md."
+fi
+
 # Propagate the suite result as this script's exit code.
 if [ "${TEST_RC}" -ne 0 ]; then
   echo "Test suite FAILED (exit ${TEST_RC})."
-else
-  echo "Test suite passed."
+  exit ${TEST_RC}
 fi
-exit ${TEST_RC}
+echo "Test suite passed."
+if [ "${COVERAGE_RC}" -ne 0 ]; then
+  echo "Coverage is below a floor in tests/coverage_floors.json."
+  exit ${COVERAGE_RC}
+fi
+exit 0

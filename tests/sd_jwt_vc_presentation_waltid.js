@@ -41,6 +41,12 @@ var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 const waitForContent = require("./wait_for.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation_waltid',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
@@ -286,6 +292,11 @@ async function issueFromWaltid(driver) {
   await driver.findElement(By.id("username")).sendKeys(clientId);
   await driver.findElement(By.id("password")).sendKeys(clientId);
   await click(driver, By.id("kc-login"));
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
   await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "the code should have been exchanged and the workflow returned to step 2.");
 

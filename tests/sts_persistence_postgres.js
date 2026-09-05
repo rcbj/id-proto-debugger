@@ -110,6 +110,7 @@ const { Command, Option } = require("commander");
 const { spawn, spawnSync } = require("child_process");
 const common = require("./jwt_vc_json_common.js");
 const names = require("./random_username.js");
+const { declineToRun } = require("./expectation.js");
 
 var appconfig;
 try {
@@ -1257,10 +1258,14 @@ async function test() {
   log.debug("Entering test().");
   const ready = await preconditions();
   if (!ready.ok) {
-    // Named, never silent. A skip that did not say which precondition failed
-    // is a skip nobody ever turns back into a run.
-    log.warn("SKIPPED: " + ready.why);
-    log.info("Test completed successfully (skipped).");
+    // Named, never silent — and RECORDED as a skip since 2026-09-02 rather
+    // than exiting 0 under "Test completed successfully (skipped)", which the
+    // runner counted as a pass. Both of this job's preconditions are genuine
+    // ABSENCES of things this machine was never given (a complete mock STS
+    // checkout; a database, or the docker to start one), so this stays a skip
+    // where the service checks elsewhere became failures. See
+    // tests/expectation.js.
+    declineToRun(log, ready.why);
     log.debug("Leaving test(). Skipped.");
     return;
   }

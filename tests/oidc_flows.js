@@ -85,6 +85,12 @@ const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 var log = bunyan.createLogger({ name: 'oidc_flows',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
@@ -492,6 +498,11 @@ async function signIn(driver, user) {
     await passwordFields[0].sendKeys(user);
   }
   await driver.findElement(By.id("kc-login")).click();
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
   log.info("Leaving signIn().");
   log.debug("Leaving signIn().");
 }
@@ -844,7 +855,8 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    // "=new", not bare --headless. The tests image pins Chrome 121, where plain
+    // "=new", not bare --headless. The tests image pinned Chrome 121,
+    // where plain
     // --headless selects the OLD headless implementation — and in that one
     // --unsafely-treat-insecure-origin-as-secure has no effect, so on the
     // containerized suite's http://client:3000 origin window.crypto.subtle

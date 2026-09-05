@@ -1452,6 +1452,13 @@ async function test() {
 
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
+  // WHERE THE KEYSTORE DOWNLOADS LAND. keyDownloads() below clicks every key
+  // pane's Download button, and on a host run the browser is the developer's
+  // real Chrome — default download directory ~/Downloads. The call above has
+  // already pointed the profile at a throwaway directory; this says the same
+  // thing to the browser that is now running. See section (6) of
+  // browser_flags.js, which records what this cost when it was missing.
+  await browserFlags.pinDownloadDir(driver);
   // process.exit() is synchronous termination, so it would skip the finally
   // below and orphan the browser — and one headless Chrome is ~15 processes,
   // which is how a run of this suite once left 559 of them on the machine.

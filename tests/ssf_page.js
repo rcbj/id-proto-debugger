@@ -43,6 +43,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -56,8 +57,21 @@ var apiUrl = process.env.API_URL || "https://localhost:4000";
 // stack is not the name this test uses and not the name the api uses. Three
 // different answers to one question, and confusing them has cost this suite a
 // run before — see tests/CLAUDE.md.
+// NOT `WSTRUST_STS_URL`, and that fallback is why this job SKIPPED on every
+// run of this suite from the day it was written until 2026-09-01 — reporting
+// PASS each time, because a skip is a pass here. That variable is a WS-Trust
+// ENDPOINT and carries a path: the launchers set it to
+// `https://localhost:8081/sts` (`https://sts:8081/sts` containerized), and its
+// own comment in local-run-tests.sh says it may be pointed at a real Apache
+// CXF STS that answers nothing else at all. The mock serves SSF at the ROOT,
+// so `/sts/.well-known/ssf-configuration` is a 404 and preconditions() read
+// that as "the sts/ gitlink predates SSF".
+//
+// `STS_URL` is the base URL of the mock and is what to fall back to: it is
+// set only on the containerized stack (to `https://sts:8081`) and run-report's
+// own localhost default is right everywhere else.
 var stsUrl = process.env.SSF_TRANSMITTER_URL ||
-    process.env.WSTRUST_STS_URL || "https://localhost:8081";
+    process.env.STS_URL || "https://localhost:8081";
 
 const WAIT = 20000;
 
@@ -154,9 +168,12 @@ async function thePageLoadsAndTheBundleRan(driver) {
       "9493 defines eight formats and SSF adds the complex subject, so it " +
       "should have nine.");
   assert.strictEqual(counts.types, 2,
-      "The event type picker has " + counts.types + " options. SSF 1.0 " +
-      "defines two event types of its own; CAEP and RISC are later parts of " +
-      "this work.");
+      "The event type picker has " + counts.types + " options. This page " +
+      "loads in the PURE SSF profile, and SSF 1.0 defines two event types of " +
+      "its own — so a picker with ten in it means profileChanged() did not " +
+      "narrow the menu to the chosen vocabulary, and a reader would be able " +
+      "to send an event their stream was never agreed for. CAEP's eight are " +
+      "asserted in caep_page.js, which switches the profile first.");
   assert.ok(counts.algs > 20,
       "The signing algorithm picker has only " + counts.algs + " options. It " +
       "is built from jws.js's whole table, which carries the post-quantum " +
@@ -165,6 +182,159 @@ async function thePageLoadsAndTheBundleRan(driver) {
   log.info("[page] OK — the bundle ran, and the three pickers are built " +
       "from the modules.");
   log.debug("Leaving thePageLoadsAndTheBundleRan().");
+}
+
+// ---------------------------------------------------------------------------
+// 1b. THE PANES COLLAPSE, AND THE PROSE SHIPS FOLDED.
+//
+// This page carried about nine hundred words of explanation above and inside
+// its panes and no way to put any of it away, so a reader who wanted to press
+// a button was three screens from the first one. It now has the `.dbg-*`
+// chrome every other workflow here has — a switch that collapses every pane
+// and a clickable title per pane — plus `<details class="ssf-more">` folds
+// around the prose, which is `scim.js`'s arrangement and the Kerberos pages'
+// before it.
+//
+// FOUR THINGS ARE ASSERTED AND EACH FAILS SILENTLY IN THE BROWSER.
+//
+//   * The legend/fieldset PAIRING. `wirePanes()` matches `x_expand_button` to
+//     `x_fieldset` by convention rather than by an inline onclick, so a
+//     drifted pair is a title that does nothing at all — and the console
+//     check further down would not see it, because what wirePanes() logs is a
+//     warning rather than an error.
+//   * The folds ship CLOSED. A `<details>` with `open` is prose back on the
+//     page, and the whole point of the change is that it is not.
+//   * The TRIANGLE tracks the real state. css/debugger.css turns it with
+//     `.dbg-pane:has(fieldset[style*="display: none"])`, which reads the
+//     INLINE style — so a pane collapsed by setting a class, or one that
+//     shipped with no inline display at all, shows an expanded triangle over a
+//     collapsed pane.
+//   * A pane's own title still works after the switch has been used, which is
+//     what makes a collapsed page recoverable one pane at a time.
+//
+// It restores the expanded state before returning: every section below reads
+// and clicks controls inside these panes, and a control inside a collapsed
+// fieldset is `element not interactable` — a message naming the control rather
+// than the pane around it.
+// ---------------------------------------------------------------------------
+async function thePanesCollapseAndTheProseIsFolded(driver) {
+  log.debug("Entering thePanesCollapseAndTheProseIsFolded().");
+  log.info("=== Pane collapse and folded prose ===");
+
+  const start = await driver.executeScript(
+      "const panes = [].slice.call(" +
+      "    document.querySelectorAll('.dbg-pane fieldset'));" +
+      "const legends = [].slice.call(" +
+      "    document.querySelectorAll('.dbg-legend'));" +
+      "const folds = [].slice.call(" +
+      "    document.querySelectorAll('details.ssf-more'));" +
+      "return {" +
+      "  panes: panes.length," +
+      "  legends: legends.length," +
+      "  expanded: panes.filter(function (f) {" +
+      "      return f.style.display === 'block'; }).length," +
+      "  unpaired: legends.filter(function (l) {" +
+      "      return !document.getElementById(" +
+      "          String(l.id).replace('_expand_button', '_fieldset'));" +
+      "    }).map(function (l) { return l.id; })," +
+      "  folds: folds.length," +
+      "  foldsOpen: folds.filter(function (d) { return d.open; }).length," +
+      "  triangle: getComputedStyle(legends[0], '::before').content," +
+      "  toggleText: (document.querySelector('.dbg-toggle-text') || {})" +
+      "      .textContent" +
+      "};");
+
+  assert.ok(start.panes >= 10,
+      "This page has " + start.panes + " collapsible panes and it has ten " +
+      "of them. A pane left as a bare <fieldset class=\"ssf-pane\"> is one " +
+      "the switch cannot reach and whose title does nothing.");
+  assert.strictEqual(start.legends, start.panes,
+      "There are " + start.legends + " .dbg-legend titles and " + start.panes +
+      " collapsible fieldsets. Every pane needs both halves.");
+  assert.deepStrictEqual(start.unpaired, [],
+      "These legends name no fieldset: " + start.unpaired.join(", ") + ". " +
+      "wirePanes() pairs `x_expand_button` with `x_fieldset` by convention, " +
+      "so a drifted pair is a pane title that does nothing when clicked and " +
+      "says so nowhere on the page.");
+  assert.strictEqual(start.expanded, start.panes,
+      "Only " + start.expanded + " of " + start.panes + " panes ship open. " +
+      "They must ALL ship open — the folds are what shorten this page, and a " +
+      "pane that starts closed hides a control somebody came here to press.");
+  assert.ok(start.folds >= 15,
+      "Only " + start.folds + " prose folds. The intro and the explanation " +
+      "in every pane are folded, which is about sixteen of them.");
+  assert.strictEqual(start.foldsOpen, 0,
+      start.foldsOpen + " of the " + start.folds + " prose folds ship OPEN. " +
+      "A <details> with `open` is prose back on the page, which is the thing " +
+      "the folds exist to end.");
+  assert.ok(/25be|▾/.test(start.triangle),
+      "An expanded pane's title shows " + JSON.stringify(start.triangle) +
+      " rather than the down triangle. css/debugger.css draws it with " +
+      "`.dbg-legend::before`; a missing one usually means that sheet is not " +
+      "linked on this page.");
+  assert.strictEqual(start.toggleText, "Collapse all panes",
+      "The switch reads " + JSON.stringify(start.toggleText) + ". With every " +
+      "pane open it should offer to collapse them.");
+
+  // THE LABEL, NEVER THE CHECKBOX. `.dbg-toggle input` is
+  // `position: absolute; opacity: 0; width: 0; height: 0` — visually hidden,
+  // so clicking it is `element not interactable`, which reads as a broken
+  // control rather than as a hidden one.
+  await driver.findElement(By.css("label.dbg-toggle")).click();
+  const collapsed = await driver.executeScript(
+      "const panes = [].slice.call(" +
+      "    document.querySelectorAll('.dbg-pane fieldset'));" +
+      "return {" +
+      "  closed: panes.filter(function (f) {" +
+      "      return f.style.display === 'none'; }).length," +
+      "  toggleText: document.querySelector('.dbg-toggle-text').textContent," +
+      "  triangle: getComputedStyle(" +
+      "      document.querySelector('.dbg-legend'), '::before').content" +
+      "};");
+  assert.strictEqual(collapsed.closed, start.panes,
+      "The switch collapsed " + collapsed.closed + " of " + start.panes +
+      " panes. setAllPanes() reads them off the DOM rather than from a list, " +
+      "so a shortfall means a pane's fieldset is not inside its .dbg-pane.");
+  assert.strictEqual(collapsed.toggleText, "Expand all panes",
+      "The switch still reads " + JSON.stringify(collapsed.toggleText) +
+      " with every pane closed.");
+  assert.ok(/25b8|▸/.test(collapsed.triangle),
+      "A collapsed pane's title shows " + JSON.stringify(collapsed.triangle) +
+      " rather than the right-pointing triangle. That indicator is a CSS " +
+      ":has() rule over the fieldset's INLINE display, so this failing while " +
+      "the pane really did collapse means the rule and the code disagree " +
+      "about how a pane is hidden.");
+
+  // One title re-opens its own pane and no other.
+  await driver.findElement(By.id("stream_expand_button")).click();
+  const one = await driver.executeScript(
+      "const panes = [].slice.call(" +
+      "    document.querySelectorAll('.dbg-pane fieldset'));" +
+      "return { open: panes.filter(function (f) {" +
+      "      return f.style.display === 'block'; }).length," +
+      "  stream: document.getElementById('stream_fieldset').style.display };");
+  assert.strictEqual(one.stream, "block",
+      "Clicking the Stream pane's title did not open it.");
+  assert.strictEqual(one.open, 1,
+      "Clicking one title opened " + one.open + " panes. A title toggles its " +
+      "own fieldset and nothing else.");
+
+  // Put the page back the way the rest of this file expects it. A control
+  // inside a collapsed fieldset is `element not interactable`, and that
+  // message names the control rather than the pane around it.
+  await driver.findElement(By.css("label.dbg-toggle")).click();
+  const restored = await driver.executeScript(
+      "return [].slice.call(" +
+      "    document.querySelectorAll('.dbg-pane fieldset'))" +
+      "  .filter(function (f) {" +
+      "      return f.style.display === 'block'; }).length;");
+  assert.strictEqual(restored, start.panes,
+      "Only " + restored + " panes reopened. The rest of this test drives " +
+      "controls inside them.");
+
+  log.info("[panes] OK — " + start.panes + " panes collapse and reopen, the " +
+      "triangle follows, and all " + start.folds + " prose folds ship closed.");
+  log.debug("Leaving thePanesCollapseAndTheProseIsFolded().");
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +619,26 @@ async function thePageCanSignAndPushAnEvent(driver) {
       "find.");
   assert.ok(decoded.indexOf("sub_id") >= 0,
       "The page has to say the subject goes in sub_id rather than sub.");
+  // BLANK THE STATUS BEFORE PRESSING, because Build already filled it.
+  //
+  // waitForValue() waits for a field to be non-empty and not mid-flight, and
+  // #ssf_tx_status is a field this section has ALREADY written to: the Build
+  // above leaves "Signed with ES256." in it. So the wait was satisfied on its
+  // first poll by the value the wait exists to see replaced, and the assertion
+  // below graded the SIGNING step's message as though it were the delivery
+  // verdict — passing whenever the push happened to be quick and failing with
+  // `The push said: Signed with ES256. Nothing has been sent.` whenever it was
+  // not. It was not on the Chrome 152 run of 2026-09-03T07-28-00; on the
+  // browser this suite pinned for the eighteen months before that, it always
+  // was.
+  //
+  // The failure it produced is worse than a flake, because the passing case
+  // asserted nothing: a push that never happened at all reads exactly the
+  // same. Blanking first is what makes the wait mean "the push answered"
+  // rather than "some earlier step did", and it is the pattern the status
+  // hazard in tests/CLAUDE.md prescribes.
+  await driver.executeScript(
+      "document.getElementById('ssf_tx_status').value = '';");
   await click(driver, "btn_ssf_push");
   const pushed = await waitForValue(driver, "ssf_tx_status", "push status");
   assert.ok(pushed.indexOf("Delivered") === 0,
@@ -599,20 +789,35 @@ async function theHandoffCarriesTheWholeTokenSet(driver) {
 }
 
 // ---------------------------------------------------------------------------
-// 10. THE VOCABULARIES THAT ARE NOT HERE YET.
+// 10. EVERY VOCABULARY IS NAMED, AND EACH IS HONEST ABOUT ITSELF.
+//
+// **THIS CHECKED THE OPPOSITE UNTIL 2026-09-04**, when RISC landed and the
+// family became complete: it required the families table to say NOT
+// IMPLEMENTED, because a workflow offering two event types where a reader
+// expected twenty-four reads as broken rather than as staged.
+//
+// The rule it enforces has not changed and it runs BOTH WAYS — a row CLAIMING
+// a vocabulary that is not there is the same defect as one omitting a
+// vocabulary that is, and a reader can tell neither from the page. So what is
+// asserted now is that every family is named and that the table's own claim
+// about each one agrees with the catalogue behind it.
 // ---------------------------------------------------------------------------
-async function theAbsentVocabulariesSayTheyAreAbsent(driver) {
-  log.debug("Entering theAbsentVocabulariesSayTheyAreAbsent().");
-  log.info("=== CAEP and RISC ===");
+async function everyVocabularyIsNamedAndHonest(driver) {
+  log.debug("Entering everyVocabularyIsNamedAndHonest().");
+  log.info("=== SSF, CAEP and RISC ===");
   const families = await textOf(driver, "ssf_families");
-  assert.ok(families.indexOf("CAEP") >= 0 && families.indexOf("RISC") >= 0,
-      "The page does not mention CAEP and RISC. A workflow offering two " +
-      "event types where a reader expected eighteen reads as broken rather " +
-      "than as staged, so the two that are not here have to say so.");
-  assert.ok(families.indexOf("NOT IMPLEMENTED") >= 0,
-      "The absent vocabularies do not say they are absent.");
-  log.info("[families] OK.");
-  log.debug("Leaving theAbsentVocabulariesSayTheyAreAbsent().");
+  ["SSF", "CAEP", "RISC"].forEach(function (name) {
+    assert.ok(families.indexOf(name) >= 0,
+        "The page does not mention " + name + ". All three vocabularies " +
+        "have to be named: a reader who cannot tell 'this tool does not do " +
+        "it' from 'I have not found it yet' is being told the wrong thing " +
+        "by an omission.");
+  });
+  assert.ok(families.indexOf("NOT IMPLEMENTED") < 0,
+      "A family still describes itself as absent, and all three are here " +
+      "since 2026-09-04. The families table said: " + families);
+  log.info("[families] OK — all three named, none claiming to be absent.");
+  log.debug("Leaving everyVocabularyIsNamedAndHonest().");
 }
 
 // ---------------------------------------------------------------------------
@@ -675,6 +880,119 @@ async function everyStyleClassIsDefined(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 11b. baseUrl FROM THE OAuth2 / OIDC DISCOVERY DOCUMENT.
+//
+// This workflow already sends you to that page for a token — SSF 1.0 section 8
+// has every management endpoint protected and almost every transmitter names
+// OAuth 2.0 — and in every deployment this tool is pointed at, the service
+// that issues the token and the service that transmits the events are ONE. So
+// the base URL is very nearly always the issuer that was just discovered, and
+// typing it a second time is a second chance to type it differently: an SSF
+// workflow one character away from the host the token was minted for fails
+// with a 401, which reads as a bad token.
+//
+// THE ORDERING IS THE PART WORTH TESTING, and both halves of it fail silently.
+// A stored value must WIN — a discovered one that overwrote it would move the
+// transmitter under somebody who had pointed this page somewhere on purpose,
+// on a page load, so the field would simply be wrong the next time they
+// looked. And an empty field must be FILLED, or the feature does nothing for
+// the reader who has just come back from the token hand-off, which is the one
+// it was written for.
+//
+// It runs LAST because it writes both `discovery_info` and `ssf_base_url` and
+// reloads the page twice. It puts both back.
+// ---------------------------------------------------------------------------
+async function theBaseUrlComesFromTheOAuth2Discovery(driver) {
+  log.debug("Entering theBaseUrlComesFromTheOAuth2Discovery().");
+  log.info("=== baseUrl from the OAuth2 / OIDC discovery document ===");
+
+  const ISSUER = "https://transmitter.example.test/realm/prod";
+  const TYPED = "https://someone-typed-this.example.test";
+
+  // What the rest of this run has been using, so it can be put back.
+  const saved = await driver.executeScript(
+      "return { base: localStorage.getItem('ssf_base_url')," +
+      "         discovery: localStorage.getItem('discovery_info') };");
+
+  // 1. An EMPTY field is filled from the document's `issuer`, on load, with no
+  //    button pressed.
+  await driver.executeScript(
+      "localStorage.removeItem('ssf_base_url');" +
+      "localStorage.setItem('discovery_info', JSON.stringify(" +
+      "    { issuer: arguments[0] }));", ISSUER);
+  await driver.navigate().refresh();
+  await driver.wait(async function () {
+    return await driver.executeScript("return typeof window.ssf === 'object';");
+  }, WAIT, "the bundle did not run after the reload");
+  let seen = await driver.executeScript(
+      "return { base: document.getElementById('ssf_base_url').value," +
+      "         source: document.getElementById('ssf_base_url_source')" +
+      "             .textContent };");
+  assert.strictEqual(seen.base, ISSUER,
+      "With no stored baseUrl and a discovery document in this browser, the " +
+      "field holds " + JSON.stringify(seen.base) + " rather than the " +
+      "issuer. A reader arriving from the token hand-off has to type the " +
+      "host they just authenticated against, which is where they get it " +
+      "wrong by one character and read the 401 as a bad token.");
+  assert.ok(/issuer/.test(seen.source),
+      "The Source cell says " + JSON.stringify(seen.source) + ". That column " +
+      "exists to say where each value came from, and a discovered value " +
+      "credited to 'you' is the one thing it must not do.");
+
+  // 2. A value somebody TYPED survives, and takes the credit back.
+  await driver.executeScript(
+      "const f = document.getElementById('ssf_base_url');" +
+      "f.value = arguments[0];" +
+      "f.dispatchEvent(new Event('change', { bubbles: true }));", TYPED);
+  await driver.navigate().refresh();
+  await driver.wait(async function () {
+    return await driver.executeScript("return typeof window.ssf === 'object';");
+  }, WAIT, "the bundle did not run after the second reload");
+  seen = await driver.executeScript(
+      "return { base: document.getElementById('ssf_base_url').value," +
+      "         source: document.getElementById('ssf_base_url_source')" +
+      "             .textContent };");
+  assert.strictEqual(seen.base, TYPED,
+      "A typed baseUrl was replaced by the discovered one on reload. What is " +
+      "stored wins: overwriting it moves the transmitter under somebody who " +
+      "pointed this page somewhere deliberately.");
+  assert.strictEqual(seen.source, "you",
+      "The Source cell says " + JSON.stringify(seen.source) + " over a value " +
+      "that was typed.");
+
+  // 3. The button adopts it explicitly, over a value already there.
+  await driver.findElement(By.id("btn_ssf_base_url_from_discovery")).click();
+  seen = await driver.executeScript(
+      "return { base: document.getElementById('ssf_base_url').value," +
+      "         source: document.getElementById('ssf_base_url_source')" +
+      "             .textContent," +
+      "         status: document.getElementById('ssf_discover_status')" +
+      "             .value };");
+  assert.strictEqual(seen.base, ISSUER,
+      "The button did not replace the typed value. Unlike the load path it " +
+      "is a deliberate act, so it overwrites — otherwise it is a control " +
+      "that does nothing whenever the field is not empty, which is almost " +
+      "always.");
+  assert.ok(seen.status && seen.status.length > 0,
+      "The button changed the field and said nothing on the status line. A " +
+      "control that acts silently is one whose failure is also silent.");
+
+  // Put back what the rest of the run was using.
+  await driver.executeScript(
+      "if (arguments[0] === null) {" +
+      "  localStorage.removeItem('ssf_base_url');" +
+      "} else { localStorage.setItem('ssf_base_url', arguments[0]); }" +
+      "if (arguments[1] === null) {" +
+      "  localStorage.removeItem('discovery_info');" +
+      "} else { localStorage.setItem('discovery_info', arguments[1]); }",
+      saved.base, saved.discovery);
+
+  log.info("[baseUrl] OK — an empty field takes the OAuth2 / OIDC issuer, a " +
+      "typed one is left alone, and the button adopts it on request.");
+  log.debug("Leaving theBaseUrlComesFromTheOAuth2Discovery().");
+}
+
+// ---------------------------------------------------------------------------
 // 12. THE CONSOLE.
 // ---------------------------------------------------------------------------
 async function theConsoleIsClean(driver) {
@@ -699,6 +1017,146 @@ async function theConsoleIsClean(driver) {
     "buttons simply stop working and every wait times out naming an " +
     "element.");
   log.debug("Leaving theConsoleIsClean().");
+}
+
+// ---------------------------------------------------------------------------
+// 13. THE HAND-OFF ASKS FOR THE SCOPES THESE ENDPOINTS ACTUALLY NEED.
+//
+// Section 9 proves the tokens come BACK. This proves the request that earns
+// them asks for the right thing, which is a different failure and a much
+// quieter one: the round trip completes, a token arrives, the page fills in,
+// and the first call to a stream endpoint is refused with a 403 naming a
+// scope — three pages away from the field that was missing a word, and
+// reading like a broken hand-off rather than a missing permission.
+//
+// SSF 1.0 gives no route to discover the names. Section 8 has the transmitter
+// publish `authorization_schemes`, and each entry carries `spec_urn` and
+// nothing else — no scope, no audience — so "an OAuth 2.0 bearer token" is
+// the whole of what a receiver can learn. `ssf:read` and `ssf:write` are this
+// stack's mock's, and they are what ssf.js names.
+//
+// FOUR THINGS ARE ASSERTED, and the last two are the ones that would rot:
+//
+//   * the authorization request's scope (`#scope`, oauth2_oidc_1.html) — the
+//     field the code and the three OIDC flows send;
+//   * the token request's (`#token_scope`, oauth2_oidc_2.html) — a DIFFERENT
+//     field, read by client credentials and resource owner password, which
+//     never touch page 1 at all because its onload() sends them straight on;
+//   * a scope the reader already had SURVIVES. It is a merge and not a
+//     replacement, and `openid` is the case that matters — it is how an ID
+//     Token is asked for, and this page names the signed-in user off one, so
+//     a hand-off that overwrote the field would take away the identity of
+//     the very workflow that asked;
+//   * and it is IDEMPOTENT. Running the hand-off twice must not leave
+//     "ssf:read ssf:read" in the field.
+//
+// It runs after the console check on purpose: it navigates to two other
+// pages, and `logs().get("browser")` drains the whole session, so a discovery
+// fetch failing on the OAuth2 page would otherwise fail THIS test with a
+// message about a page it is not testing.
+// ---------------------------------------------------------------------------
+async function theHandoffAsksForTheScopesTheEndpointsNeed(driver) {
+  log.debug("Entering theHandoffAsksForTheScopesTheEndpointsNeed().");
+  log.info("=== The hand-off's scope request ===");
+  await driver.get(baseUrl + "/ssf.html");
+  await driver.wait(until.elementLocated(By.id("pane_tokens")), WAIT,
+      "ssf.html did not come back for the scope check");
+
+  // A scope of the reader's own, planted the way the OAuth2 pages keep it.
+  // Same origin, so this is the very entry those pages read on load.
+  await driver.executeScript(
+      "localStorage.setItem('scope', 'openid profile');" +
+      "localStorage.setItem('token_scope', '');");
+
+  await click(driver, "btn_ssf_get_token");
+  await driver.wait(async function () {
+    const url = await driver.getCurrentUrl();
+    return /oauth2_oidc_1\.html/.test(url);
+  }, WAIT, "the button did not go to the OAuth2 / OIDC workflow — an inline " +
+      "onclick before the bundle exists is a silent no-op, which is what " +
+      "this looks like");
+  await driver.wait(until.elementLocated(By.id("scope")), WAIT,
+      "oauth2_oidc_1.html did not load");
+  await driver.wait(async function () {
+    return await driver.executeScript(
+        "return !!document.getElementById('token_handoff_banner');");
+  }, WAIT, "no hand-off banner appeared on the OAuth2 / OIDC page, so its " +
+      "onload() never reached maybeShowTokenHandoffBanner() and nothing " +
+      "would have filled the scope either");
+
+  const authzScope = await valueOf(driver, "scope");
+  const authzTokens = authzScope.split(/\s+/).filter(Boolean);
+  ["ssf:read", "ssf:write"].forEach(function (wanted) {
+    assert.ok(authzTokens.indexOf(wanted) >= 0,
+        "the authorization request's Scope field reads \"" + authzScope +
+        "\" and does not ask for \"" + wanted + "\". SSF 1.0 section 8 " +
+        "protects the stream, status, subject, verification and poll " +
+        "endpoints and publishes no scope name to discover, so if this " +
+        "workflow does not put one in the request nothing else will — and " +
+        "the failure arrives much later, as a 403 from the transmitter.");
+  });
+  assert.ok(authzTokens.indexOf("openid") >= 0,
+      "the Scope field reads \"" + authzScope + "\" and has lost " +
+      "\"openid\", which was in it before the hand-off. It is a MERGE and " +
+      "not a replacement: an access token this service issues is opaque to " +
+      "a client, the identity is in the ID Token, and without `openid` there " +
+      "is no ID Token — so overwriting the field takes the signed-in user's " +
+      "name away from the page that asked for the hand-off.");
+  assert.ok(authzTokens.indexOf("profile") >= 0,
+      "the Scope field reads \"" + authzScope + "\" and has dropped the " +
+      "reader's own \"profile\". A hand-off arriving from another page is " +
+      "a poor moment to discard a scope somebody typed on purpose.");
+  assert.strictEqual(authzTokens.length,
+      new Set(authzTokens).size,
+      "the Scope field reads \"" + authzScope + "\", which repeats a " +
+      "token. The merge has to be idempotent — the same hand-off run twice " +
+      "is the ordinary case, not an unusual one.");
+
+  const banner = await driver.executeScript(
+      "var e = document.getElementById('token_handoff_banner');" +
+      "return e ? String(e.textContent || '') : '';");
+  assert.ok(/Shared Signals/.test(banner),
+      "the banner does not name the workflow that is waiting: " +
+      banner.slice(0, 200));
+  assert.ok(/ssf:read/.test(banner),
+      "the banner does not say which scopes were added, so a field that " +
+      "changed under the reader changed for no stated reason: " +
+      banner.slice(0, 300));
+
+  // The OTHER field, on the OTHER page. Client credentials and resource
+  // owner password never pass through the page above.
+  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await driver.wait(until.elementLocated(By.id("token_scope")), WAIT,
+      "oauth2_oidc_2.html did not load");
+  await driver.wait(async function () {
+    return await driver.executeScript(
+        "return !!document.getElementById('token_handoff_banner');");
+  }, WAIT, "no hand-off banner on the results page");
+  const tokenScope = await valueOf(driver, "token_scope");
+  const tokenTokens = tokenScope.split(/\s+/).filter(Boolean);
+  ["ssf:read", "ssf:write"].forEach(function (wanted) {
+    assert.ok(tokenTokens.indexOf(wanted) >= 0,
+        "the token request's Scope field reads \"" + tokenScope + "\" and " +
+        "does not ask for \"" + wanted + "\". This is the field client " +
+        "credentials and resource owner password send, and neither of them " +
+        "ever visits oauth2_oidc_1.html — its onload() sends them straight " +
+        "here — so filling the other page's field alone leaves those two " +
+        "grants asking for nothing.");
+  });
+
+  // Put the origin back the way the sections above left it: the hand-off is
+  // still active, and a stray one would follow this browser into whatever
+  // runs next.
+  await driver.executeScript(
+      "['token_handoff_active','token_handoff_return','token_handoff_label'," +
+      " 'token_handoff_token','token_handoff_meta','token_handoff_set'," +
+      " 'token_handoff_scope'].forEach(function (k) {" +
+      "  sessionStorage.removeItem(k); });" +
+      "localStorage.removeItem('scope');" +
+      "localStorage.removeItem('token_scope');");
+  log.info("[scope] OK — both scope fields ask for ssf:read and ssf:write, " +
+      "and the reader's own scopes survived.");
+  log.debug("Leaving theHandoffAsksForTheScopesTheEndpointsNeed().");
 }
 
 // ---------------------------------------------------------------------------
@@ -746,12 +1204,11 @@ async function cleanUp() {
 async function test() {
   log.debug("Entering test().");
   const ready = await preconditions();
-  if (!ready.ok) {
-    log.warn("SKIP: " + ready.why);
-    log.info("Test skipped.");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip: the launcher gates this job itself, so
+  // reaching this line means it expected the page and a transmitter to be
+  // there. See tests/expectation.js.
+  mustBeReady(ready, "the client (for ssf.html), the api (for its push " +
+              "receiver) and the mock STS acting as an SSF transmitter.");
   log.info("driving " + baseUrl + "/ssf.html against the transmitter at " +
       stsUrl + " and the api at " + apiUrl);
 
@@ -770,6 +1227,7 @@ async function test() {
 
   try {
     await thePageLoadsAndTheBundleRan(driver);
+    await thePanesCollapseAndTheProseIsFolded(driver);
     await theCallPathRowReflectsWhetherThereIsAnApi(driver);
     await discoveryReadsEveryMember(driver);
     await aStreamIsCreatedAndRead(driver);
@@ -777,7 +1235,7 @@ async function test() {
     await verificationAndPollProduceAnEvent(driver);
     await thePageCanSignAndPushAnEvent(driver);
     await bothHistoriesRecordWhatTheyShould(driver);
-    await theAbsentVocabulariesSayTheyAreAbsent(driver);
+    await everyVocabularyIsNamedAndHonest(driver);
     // THE STYLE CHECK RUNS BEFORE THE HAND-OFF SECTION AND THE ORDER IS
     // LOAD-BEARING. Several of this page's `ssf-` classes are on elements the
     // bundle CREATES — the events_requested boxes are built from the
@@ -788,7 +1246,18 @@ async function test() {
     // longer has the classes it is meant to be checking.
     await everyStyleClassIsDefined(driver);
     await theHandoffCarriesTheWholeTokenSet(driver);
+    // LAST but for the console check: it writes `discovery_info` and
+    // `ssf_base_url` and reloads the page twice, so anything after it would
+    // be driving a page pointed at a transmitter that does not exist. It puts
+    // both keys back.
+    await theBaseUrlComesFromTheOAuth2Discovery(driver);
     await theConsoleIsClean(driver);
+    // AFTER the console check, deliberately: this one navigates to
+    // oauth2_oidc_1.html and oauth2_oidc_2.html, and logs().get("browser")
+    // drains the whole session rather than the current page — so anything
+    // those two pages log would otherwise fail the check above with a
+    // message about a page this file does not test.
+    await theHandoffAsksForTheScopesTheEndpointsNeed(driver);
     log.info("Test completed successfully.");
   } finally {
     // driver.quit() in a FINALLY and never after a process.exit(): the

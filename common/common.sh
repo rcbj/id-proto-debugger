@@ -312,7 +312,16 @@ buildBrowserExtension()
 # Exports STACK_TLS_DIR, STACK_TLS_CERT_FILE, STACK_TLS_KEY_FILE and
 # STACK_TLS_SPKI_PIN. The certificate is self-signed, so it is its own anchor:
 # STACK_TLS_CA_FILE is the same file under the name a truststore consumer wants
-# it by.
+# it by — which still holds now that there is a hierarchy above the leaf,
+# because stack-tls-cert.pem is a BUNDLE: leaf, issuing CA and root, in that
+# order. A server sends it as the chain; a truststore consumer finds the root
+# inside it. What a person imports into a browser is the root ALONE, which
+# ./generate-tls-cert.sh writes separately and names on the way out.
+#
+# STACK_TLS_CA_DIR, if set, is where the CA is kept and REUSED between runs.
+# Unset, the generator puts it under ${STACK_TLS_DIR} and it dies with the
+# run — which is what every launcher wants, and what ./generate-tls-cert.sh
+# deliberately does not.
 #
 # $1 optional extra subjectAltName DNS name (a deployed hostname, say). The
 # stack's own names — localhost, client, api and the loopback literals — are
@@ -408,14 +417,28 @@ generateStackTlsCertificate()
   mkdir -p "${STACK_TLS_DIR}"
   chmod 0755 "${STACK_TLS_DIR}"
 
+  # THE CERTIFICATE AUTHORITY'S DIRECTORY IS THE ONE THING THAT OUTLIVES A
+  # RUN, AND ONLY WHEN IT IS ASKED TO. Unset — which is every launcher — the
+  # generator puts the CA in ${STACK_TLS_DIR}/ca, so it is thrown away with
+  # the rest of the throwaway directory and each run gets a hierarchy of its
+  # own. ./generate-tls-cert.sh sets it to a fixed path instead, because that
+  # is the path a PERSON uses: the root is what they import into a browser,
+  # and reusing it is what makes that a one-time act rather than a chore
+  # repeated after every regeneration.
+  # Always passed, so there is no empty-array expansion to get wrong under
+  # `set -u` — which the launchers run with and which bash before 4.4 treats
+  # as an unbound variable.
+  local ca_dir="${STACK_TLS_CA_DIR:-${STACK_TLS_DIR}/ca}"
+
   local generated=""
   if [ -n "${extra_name}" ];
   then
     generated=$(node "${repo_root}/common/generate_tls_cert.js" \
-                  --out-dir "${STACK_TLS_DIR}" --name "${extra_name}")
+                  --out-dir "${STACK_TLS_DIR}" --ca-dir "${ca_dir}" \
+                  --name "${extra_name}")
   else
     generated=$(node "${repo_root}/common/generate_tls_cert.js" \
-                  --out-dir "${STACK_TLS_DIR}")
+                  --out-dir "${STACK_TLS_DIR}" --ca-dir "${ca_dir}")
   fi
   if [ -z "${generated}" ];
   then
@@ -1385,6 +1408,121 @@ requireStsReachable()
 
   [ -n "${xtrace_was_on}" ] && set -x
   echo "Leaving requireStsReachable(). ${service} answers ${scheme} on ${url}."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# Require that the mock STS BOUND its two SPIFFE gRPC ports, and fail with the
+# port when it did not.
+#
+# requireStsReachable() above asks that question of the HTTP port, and the mock
+# answers it by dying: that listen has no error handler, so a stranger holding
+# 8081 leaves no container to check. THE SPIFFE LISTENERS ARE DIFFERENT AND
+# THAT IS THE HAZARD. They are optional to that service — it logs `spiffe:
+# could not bind 0.0.0.0:8181 ... EADDRINUSE` at level 50 and CARRIES ON — so
+# the stack comes up healthy, every HTTP-backed job passes, and the three
+# SPIFFE jobs spend the run talking to whatever holds those ports. That is not
+# hypothetical: it cost the 2026-09-01 run two red tests whose messages named
+# an authorization rule and a TLS chain, and a third that passed against the
+# stranger because the stranger was another instance of the same mock.
+#
+# The fact is the mock's own: GET /spiffe?format=json publishes every listener
+# with `listening` and the bind error beside it. So this asks, rather than
+# probing the ports — a probe cannot tell our listener from somebody else's,
+# which is the entire problem.
+#
+# FATAL, like requireStsReachable(). A stranger on those ports does not make
+# the SPIFFE workflow absent; it makes three jobs' results untrue, and one of
+# them writes `spiffe.adminIds` to this mock and exercises it on the other.
+#
+# node rather than jq: this reads one document with two nested arrays, every
+# launcher already runs node, and the parse belongs where the shape is known.
+#
+# $1 the mock's base URL, $2 the service name, for the message.
+# ---------------------------------------------------------------------------
+requireStsSpiffeListeners()
+{
+  echo "Entering requireStsSpiffeListeners(). url=${1}"
+  local url="${1%/}"
+  local service="${2:-sts}"
+  if [ -z "${url}" ];
+  then
+    echo "ERROR: requireStsSpiffeListeners() needs the mock's base URL." >&2
+    echo "Leaving requireStsSpiffeListeners(). No URL."
+    return 1
+  fi
+
+  local xtrace_was_on=""
+  case "$-" in
+    *x*) xtrace_was_on="yes"; set +x ;;
+  esac
+
+  local document unbound
+  # --insecure for requireStsReachable()'s own reason: this is asking what the
+  # service says about itself, not whether its certificate is trusted yet.
+  document=$(curl -s -k -m 10 "${url}/spiffe?format=json" 2>/dev/null || true)
+  if [ -z "${document}" ];
+  then
+    # No document is not a failure here. A deployment with no SPIFFE service at
+    # all is one the three jobs skip by themselves, with a reason, and inventing
+    # a stack failure from a missing endpoint would break every target that has
+    # none.
+    [ -n "${xtrace_was_on}" ] && set -x
+    echo "Leaving requireStsSpiffeListeners(). Nothing described."
+    return 0
+  fi
+
+  unbound=$(printf '%s' "${document}" | node -e '
+    let raw = "";
+    process.stdin.on("data", function (chunk) { raw += chunk; });
+    process.stdin.on("end", function () {
+      let doc = null;
+      try {
+        doc = JSON.parse(raw);
+      } catch (e) {
+        process.exit(0);
+      }
+      if (!doc || !doc.enabled) {
+        process.exit(0);
+      }
+      const surfaces = [["workloadApi", "the Workload API"],
+                        ["serverApi", "the SPIRE Server API"]];
+      surfaces.forEach(function (pair) {
+        const one = doc[pair[0]] || {};
+        (one.listeners || []).forEach(function (listener) {
+          if (listener.socket === true || listener.listening === true) {
+            return;
+          }
+          console.log(pair[1] + " on " + listener.address + ": " +
+                      (listener.error || "no reason given"));
+        });
+      });
+    });
+  ' 2>/dev/null || true)
+
+  if [ -n "${unbound}" ];
+  then
+    echo "ERROR: ${service} has SPIFFE enabled but did NOT bind:" >&2
+    # sed rather than printf's own padding: `unbound` is one line per listener
+    # and a format string indents only the first of them.
+    printf '%s\n' "${unbound}" | sed 's/^/       /' >&2
+    echo "       Under host networking that port is this machine's, so" \
+         "whoever bound it first is what answers there —" >&2
+    echo "       and it is not this mock. The SPIFFE jobs would write a" \
+         "setting to this process over HTTP and then" >&2
+    echo "       exercise it against another one over gRPC, which reads as" \
+         "an authorization bug and a TLS chain" >&2
+    echo "       failure rather than as a port. Find it BY PID, never by" \
+         "pattern:" >&2
+    echo "         ss -ltnp | grep -E ':(8092|8181)'   # then: kill <pid>" >&2
+    reportContainerLog "local-tests.yml" "${service}" 2>/dev/null || true
+    [ -n "${xtrace_was_on}" ] && set -x
+    echo "Leaving requireStsSpiffeListeners(). A port is held by somebody else."
+    return 1
+  fi
+
+  [ -n "${xtrace_was_on}" ] && set -x
+  echo "Leaving requireStsSpiffeListeners(). Every SPIFFE listener is bound."
   return 0
 }
 

@@ -56,6 +56,20 @@ function setVal(id, v) {
   log.debug("Leaving setVal().");
 }
 
+function isChecked(id) {
+  log.debug("Entering isChecked().");
+  var el = document.getElementById(id);
+  log.debug("Leaving isChecked().");
+  return !!(el && el.checked);
+}
+
+function setChecked(id, on) {
+  log.debug("Entering setChecked().");
+  var el = document.getElementById(id);
+  if (el) el.checked = !!on;
+  log.debug("Leaving setChecked().");
+}
+
 // ---------------------------------------------------------------------------
 // Base64url / PEM / byte helpers, and everything JWE.
 //
@@ -161,6 +175,11 @@ function onEncodedInput() {
     setVal('jwt_tools_header', JSON.stringify(header, null, 2));
     setVal('jwt_tools_payload', JSON.stringify(payload, null, 2));
 
+    // A header carrying x5c says which certificate signed it and which CAs
+    // vouch for that certificate, and both belong in the Sign pane rather
+    // than in a box the user has to copy out of by hand.
+    var x5cNote = applyX5cFromHeader(header);
+
     var signature = parts.length >= 3 ? parts[2] : '';
     if (signature) {
       // Signed token: hand the whole thing to the Sign pane.
@@ -168,15 +187,129 @@ function onEncodedInput() {
       setVal('verify_input', encoded);
       setVal('jwt_tools_sync_status', 'Decoded header & payload; signature ' +
              'captured (populated Signed JWT and JWT to Verify in the ' +
-             'Sign pane).');
+             'Sign pane).' + x5cNote);
     } else {
       setVal('jwt_tools_sync_status',
-             'Decoded header & payload (no signature present).');
+             'Decoded header & payload (no signature present).' + x5cNote);
     }
   } catch (e) {
     setVal('jwt_tools_sync_status', 'Cannot decode JWT: ' + e.message);
   }
   log.debug("Leaving onEncodedInput().");
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// Loading the Encoded JWT from a file.
+//
+// Pasting is the right way in for a token of ordinary size and stays the
+// default. It stops being so somewhere above a megabyte — a real 10MB JWT
+// turned up on this page — because a clipboard round trip of one is slow
+// enough to look like a hang, and some browsers truncate what they hand over
+// without saying so. So the field takes a file as well, behind a checkbox:
+// the chooser is hidden until it is asked for, because this is the exception
+// rather than the usual route.
+// ---------------------------------------------------------------------------
+// The cap is on the FILE and is checked before a byte is read. FileReader
+// loads the whole thing into memory as one string, so a file chosen by
+// mistake — a disk image, a core dump — has to be refused up front rather
+// than read and then found wanting.
+var MAX_ENCODED_FILE_BYTES = 15 * 1024 * 1024;
+
+// Sizes are reported in the unit the number is legible in: "0.0 MB" for a
+// small file says nothing about what was loaded, and a byte count for a
+// 10MB one says nothing about how it compares with the limit.
+function formatFileSize(bytes) {
+  log.debug("Entering formatFileSize().");
+  var out;
+  if (bytes < 1024) {
+    out = bytes + ' bytes';
+  } else if (bytes < 1024 * 1024) {
+    out = (bytes / 1024).toFixed(1) + ' KB';
+  } else {
+    out = (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+  log.debug("Leaving formatFileSize().");
+  return out;
+}
+
+// The "Load from file" checkbox shows and hides the chooser beside it.
+function toggleEncodedFileLoad() {
+  log.debug("Entering toggleEncodedFileLoad().");
+  var box = document.getElementById('jwt_tools_load_from_file');
+  var input = document.getElementById('jwt_tools_encoded_file');
+  var on = !!(box && box.checked);
+  if (input) {
+    input.hidden = !on;
+    if (!on) {
+      // Forget whatever was chosen, so re-opening the row does not offer the
+      // name of a file that is not going to be read, and so choosing the same
+      // file again still fires a change event.
+      input.value = '';
+    }
+  }
+  log.debug("Leaving toggleEncodedFileLoad(). on=" + on);
+  return false;
+}
+
+// Read the chosen file into the Encoded JWT field and decode it exactly as a
+// paste would — onEncodedInput() does the rest, including populating the Sign
+// pane when the token carries a signature.
+function onEncodedFileChange(evt) {
+  log.debug("Entering onEncodedFileChange().");
+  var input = (evt && evt.target) ? evt.target :
+      document.getElementById('jwt_tools_encoded_file');
+  var file = (input && input.files) ? input.files[0] : null;
+  if (!file) {
+    setVal('jwt_tools_sync_status', 'No file chosen.');
+    log.debug("Leaving onEncodedFileChange(). Nothing chosen.");
+    return false;
+  }
+  if (file.size > MAX_ENCODED_FILE_BYTES) {
+    setVal('jwt_tools_sync_status', file.name + ' is ' +
+           formatFileSize(file.size) + ' — the limit is ' +
+           formatFileSize(MAX_ENCODED_FILE_BYTES) +
+           '. Nothing was loaded.');
+    input.value = '';
+    log.debug("Leaving onEncodedFileChange(). Too large: " + file.size);
+    return false;
+  }
+  setVal('jwt_tools_sync_status', 'Reading ' + file.name + ' (' +
+         formatFileSize(file.size) + ') \u2026');
+  var reader = new FileReader();
+  reader.onload = function () {
+    log.debug("Entering onEncodedFileChange onload().");
+    // A token saved to a file almost always ends in a newline, and some
+    // editors put a BOM in front of it. Either one makes a segment fail to
+    // base64url-decode, which reads as a corrupt token rather than as a stray
+    // byte the file picked up on its way here.
+    var text = String(reader.result || '').replace(/^\uFEFF/, '').trim();
+    // Cleared whatever happens next, so the same file can be chosen again
+    // after a correction — otherwise the second attempt fires no change event
+    // and the chooser looks broken.
+    input.value = '';
+    if (!text) {
+      setVal('jwt_tools_sync_status', file.name + ' is empty.');
+      log.debug("Leaving onEncodedFileChange onload(). Empty file.");
+      return;
+    }
+    setVal('jwt_tools_encoded', text);
+    // Same work a paste of the same token does, and it is the expensive part
+    // for a large one: JSON.parse of the payload plus a pretty-print into the
+    // textarea on the left.
+    onEncodedInput();
+    setVal('jwt_tools_sync_status', 'Loaded ' + file.name + ' (' +
+           formatFileSize(file.size) + '). ' + val('jwt_tools_sync_status'));
+    log.debug("Leaving onEncodedFileChange onload().");
+  };
+  reader.onerror = function () {
+    log.debug("Entering onEncodedFileChange onerror().");
+    setVal('jwt_tools_sync_status', 'Could not read ' + file.name + '.');
+    input.value = '';
+    log.debug("Leaving onEncodedFileChange onerror().");
+  };
+  reader.readAsText(file);
+  log.debug("Leaving onEncodedFileChange().");
   return false;
 }
 
@@ -661,8 +794,335 @@ function verificationKeyInput(type, keyText) {
     log.debug("Leaving verificationKeyInput(). JWK Set.");
     return { jwks: JSON.parse(text) };
   }
+  // A certificate BUNDLE is one paste, and the key that verifies the
+  // signature is the first certificate in it — everything after it is that
+  // certificate's issuers. pemToDer() reads ONE block (two padded base64
+  // bodies concatenated are not one base64 value), so handing the whole
+  // bundle to the verifier fails on the encoding rather than on the
+  // signature. Nothing is lost by taking the head here: the trust-chain
+  // check below reads the same field and takes the TAIL as CA certificates.
+  var certificates = splitPemCertificates(text);
+  if (certificates.length > 1) {
+    log.debug("Leaving verificationKeyInput(). First of " +
+              certificates.length + " certificates.");
+    return certificates[0];
+  }
   log.debug("Leaving verificationKeyInput(). PEM.");
   return text;
+}
+
+// ---------------------------------------------------------------------------
+// x5c — the certificates a token carries about itself, and what they are
+// worth.
+//
+// RFC 7515 section 4.1.6 orders the member: the certificate holding the key
+// that signed this JWS comes FIRST, and each one after it certifies the one
+// before, up to a root. So the head of the list is the key to verify WITH and
+// the tail is the issuing chain to check that key AGAINST, and the two halves
+// go to two different fields here. Keeping them apart is the whole point: a
+// signature that verifies against a certificate the token supplied about
+// itself has established that the token is internally consistent and nothing
+// else, which is why the trust-chain check below is what turns an x5c into an
+// answer.
+//
+// The member holds base64 DER and NOT base64url — x5c is the one place in a
+// JOSE header where that is so, and getting it wrong is common enough that a
+// base64url-encoded x5c is read anyway, with a note, rather than refused with
+// a message about an invalid character.
+// ---------------------------------------------------------------------------
+
+// Whether the fields below were last filled from a token's x5c. A stale chain
+// left in the box after a DIFFERENT token is loaded would be checked against
+// that token and is exactly the trap this page exists to expose, so what this
+// filled in, this clears.
+var x5cApplied = false;
+
+function x5cToPems(x5c) {
+  log.debug("Entering x5cToPems().");
+  var pems = [];
+  var wasB64Url = false;
+  for (var i = 0; i < x5c.length; i++) {
+    var text = String(x5c[i] || '').replace(/\s+/g, '');
+    if (!text) continue;
+    if (/[-_]/.test(text)) wasB64Url = true;
+    // b64uToBytes() reads both alphabets and supplies the padding, so this
+    // takes the conforming base64 and the mistaken base64url alike; the flag
+    // above is what lets the page SAY which it was handed.
+    pems.push(jose.derToPem(jose.b64uToBytes(text), 'CERTIFICATE'));
+  }
+  log.debug("Leaving x5cToPems(). " + pems.length + " certificate(s).");
+  return { pems: pems, wasB64Url: wasB64Url };
+}
+
+// Split a PEM bundle into its certificates. Only what lies between a BEGIN
+// and its END is taken, so a bundle carrying comments or `openssl x509
+// -text` output between the blocks — which is how most CA downloads are
+// written — is read rather than refused.
+function splitPemCertificates(text) {
+  log.debug("Entering splitPemCertificates().");
+  var found = String(text || '').match(
+    /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) || [];
+  log.debug("Leaving splitPemCertificates(). " + found.length + " found.");
+  return found;
+}
+
+// Fill the verification fields from a decoded header's x5c, or undo that when
+// a token without one arrives. Returns a sentence for the sync status, or "".
+function applyX5cFromHeader(header) {
+  log.debug("Entering applyX5cFromHeader().");
+  var x5c = header ? header.x5c : null;
+  var haveX5c = !!(x5c && Object.prototype.toString.call(x5c) ===
+      '[object Array]' && x5c.length);
+  if (!haveX5c) {
+    if (!x5cApplied) {
+      log.debug("Leaving applyX5cFromHeader(). No x5c, nothing to undo.");
+      return '';
+    }
+    setVal('jwt_verification_key', '');
+    setVal('verify_chain_pem', '');
+    setChecked('verify_chain_enabled', false);
+    toggleTrustChain();
+    x5cApplied = false;
+    log.debug("Leaving applyX5cFromHeader(). Cleared the previous x5c.");
+    return " The previous token's x5c certificates were cleared " +
+        "from the Sign pane; this header carries none.";
+  }
+  try {
+    var read = x5cToPems(x5c);
+    if (!read.pems.length) {
+      log.debug("Leaving applyX5cFromHeader(). x5c held nothing readable.");
+      return ' The header has an x5c, but no certificate could be read ' +
+          'from it.';
+    }
+    setVal('jwt_verification_type', 'x509');
+    setVal('jwt_verification_key', read.pems[0]);
+    var cas = read.pems.slice(1);
+    setVal('verify_chain_pem', cas.join(''));
+    setChecked('verify_chain_enabled', cas.length > 0);
+    toggleTrustChain();
+    x5cApplied = true;
+    var note = ' Header carries x5c: the signer certificate is now the ' +
+        'Verification Key';
+    note += cas.length
+      ? ', and the ' + cas.length + ' certificate(s) above it are the CA ' +
+        'Trust Chain.'
+      : ', and there is nothing above it — the x5c is a single certificate, ' +
+        'so it carries no chain to check it against.';
+    if (read.wasB64Url) {
+      note += ' NOTE: that x5c is base64url; RFC 7515 section 4.1.6 says ' +
+          'base64. It was read anyway.';
+    }
+    log.debug("Leaving applyX5cFromHeader(). Applied " + read.pems.length +
+              " certificate(s).");
+    return note;
+  } catch (e) {
+    log.error('applyX5cFromHeader: ' + e.message);
+    log.debug("Leaving applyX5cFromHeader(). Failed.");
+    return " The header's x5c could not be read: " + e.message;
+  }
+}
+
+// The CA Trust Chain box appears only when the box beside it is ticked.
+function toggleTrustChain() {
+  log.debug("Entering toggleTrustChain().");
+  var field = document.getElementById('verify_chain_field');
+  if (field) field.hidden = !isChecked('verify_chain_enabled');
+  log.debug("Leaving toggleTrustChain().");
+  return false;
+}
+
+// Put the CA certificates into issuer order, walking up from the signer.
+//
+// A pasted bundle arrives in whatever order its source wrote it, and an x5c
+// is ordered but may be trimmed; ordering by NAME rather than by position
+// means a correct chain in the wrong order validates, and an incomplete one
+// says which certificate is missing instead of reporting a name mismatch
+// three lines lower down.
+async function buildTrustPath(signerPem, caPems) {
+  log.debug("Entering buildTrustPath().");
+  var signer = await x509.describeCertificate(signerPem);
+  var cas = [];
+  for (var i = 0; i < caPems.length; i++) {
+    var described = await x509.describeCertificate(caPems[i]);
+    cas.push({ pem: caPems[i], subject: described.subject,
+               issuer: described.issuer, selfSigned: described.selfSigned });
+  }
+  var path = [signerPem];
+  var wanted = signer.issuer;
+  var used = {};
+  var anchored = signer.selfSigned;
+  while (!anchored) {
+    var next = -1;
+    for (var j = 0; j < cas.length; j++) {
+      if (!used[j] && cas[j].subject === wanted) {
+        next = j;
+        break;
+      }
+    }
+    if (next === -1) break;
+    used[next] = true;
+    path.push(cas[next].pem);
+    if (cas[next].selfSigned) {
+      anchored = true;
+      break;
+    }
+    wanted = cas[next].issuer;
+  }
+  var unused = cas.length - Object.keys(used).length;
+  log.debug("Leaving buildTrustPath(). " + path.length + " in path, " +
+            unused + " unused, anchored=" + anchored);
+  return { path: path, anchored: anchored, missing: anchored ? null : wanted,
+           unused: unused, reachedNothing: path.length === 1 && !anchored };
+}
+
+// One certificate's KeyUsage as a phrase for the report.
+//
+// An absent extension is said to be absent rather than printed as an empty
+// list, because RFC 5280 section 4.2.1.3 leaves such a key unrestricted —
+// that is a fact about the certificate the reader needs, and a blank would
+// read as a key permitted nothing, which is the opposite.
+function keyUsageText(keyUsage) {
+  log.debug("Entering keyUsageText().");
+  var text;
+  if (!keyUsage || !keyUsage.present) {
+    text = 'no KeyUsage extension, so unrestricted';
+  } else if (!keyUsage.usages.length) {
+    text = 'a KeyUsage extension asserting nothing';
+  } else {
+    text = keyUsage.usages.join(', ');
+  }
+  log.debug("Leaving keyUsageText().");
+  return text;
+}
+
+// What the certificate at `index` of a path is being asked to DO, and so
+// which KeyUsage bit has to permit it.
+//
+// The signer certificate verifies a signature over a JWS, which is not a
+// certificate, so RFC 5280 section 4.2.1.3 puts that under digitalSignature.
+// Every certificate above it in the path signed the one below, which is
+// keyCertSign — a different bit, deliberately, so that a certificate issued
+// to sign documents cannot also issue certificates.
+function chainUsageFor(index) {
+  log.debug("Entering chainUsageFor().");
+  log.debug("Leaving chainUsageFor().");
+  return index === 0 ? 'digitalSignature' : 'keyCertSign';
+}
+
+// Check the signer certificate to a trust anchor and describe every link.
+// `trusted` is null when no check applies, which is not the same as false —
+// only false stops a signature being reported as verified.
+async function trustChainReport(type, keyText) {
+  log.debug("Entering trustChainReport().");
+  if (type !== 'x509') {
+    log.debug("Leaving trustChainReport(). Not an X.509 verification.");
+    return { trusted: null, reason: '',
+        lines: ['Trust chain: not checked — chain ' +
+        'validation applies to the X.509 Certificate verification type, and ' +
+        'this verification is by ' + type + '.'] };
+  }
+  var keyPems = splitPemCertificates(keyText);
+  var signerPem = keyPems[0];
+  if (!signerPem) {
+    log.debug("Leaving trustChainReport(). No signer certificate.");
+    return { trusted: false,
+        reason: 'the Verification Key field holds no certificate',
+        lines: ['Trust chain: the Verification Key ' +
+        'field holds no certificate. A bare public key names nobody and can ' +
+        'be checked against no CA, so no trust can be established.'] };
+  }
+  // THE SIGNER CERTIFICATE AND THE CA CHAIN ARE CHECKED AS ONE BUNDLE, and
+  // the bundle is BOTH fields: the signer certificate first, then every
+  // certificate offered as an issuer — those in the CA Trust Chain box, and
+  // any that came after the signer in the Verification Key box, which is how
+  // a chain pasted whole into one field arrives. Reading only one of the two
+  // would report a chain as unanchored while its anchor sat in the other.
+  var caPems = keyPems.slice(1).concat(
+    splitPemCertificates(val('verify_chain_pem')));
+  if (!caPems.length) {
+    log.debug("Leaving trustChainReport(). No CA certificates.");
+    return { trusted: false,
+        reason: 'no CA certificate was offered to check the signer ' +
+            'certificate against',
+        lines: ['Trust chain: no CA certificate was supplied — the CA ' +
+        'Trust Chain field is empty and the Verification Key field holds ' +
+        'nothing above the signer, so there is no anchor to check the ' +
+        'signer certificate against.'] };
+  }
+  var built = await buildTrustPath(signerPem, caPems);
+  var lines = [];
+  var trusted = built.anchored;
+  var usageRefused = false;
+  if (built.reachedNothing) {
+    lines.push('Trust chain: no certificate offered as its chain was ' +
+        'issued to "' + built.missing + '", which is who issued the signer ' +
+        'certificate. The chain does not belong to this signer.');
+    log.debug("Leaving trustChainReport(). Nothing chained to the signer.");
+    return { trusted: false, lines: lines,
+             reason: 'the certificates offered as its chain do not belong ' +
+                 'to this signer' };
+  }
+  var links = await x509.verifyChain(built.path);
+  lines.push('Trust chain: ' + built.path.length + ' certificate(s), ' +
+      'signer first.');
+  for (var i = 0; i < links.length; i++) {
+    var link = links[i];
+    var last = i === links.length - 1;
+    var problems = [];
+    if (last && !built.anchored) {
+      // The last certificate of an unanchored path is compared with ITSELF by
+      // verifyChain, so both its verdict and its "signed by" are about a
+      // comparison nobody asked for: calling that signature invalid would
+      // blame the certificate for the anchor nobody supplied, and naming
+      // itself as its issuer would contradict the line beside it.
+      problems.push('NO TRUST ANCHOR: its issuer is not in the chain');
+    } else {
+      if (!link.namesMatch) problems.push('issuer name does not match');
+      if (!link.signatureValid) {
+        problems.push(link.error ? 'signature not checked: ' + link.error
+                                 : 'SIGNATURE INVALID');
+      }
+      if (link.expired) problems.push('EXPIRED');
+      if (link.notYetValid) problems.push('NOT YET VALID');
+    }
+    // THE KEY USAGE CHECK, and it applies to every certificate in the path
+    // including one that reached no anchor: a certificate whose KeyUsage
+    // forbids the operation being performed with it is not made acceptable
+    // by the certificate above it. `verifyChain()` reports the extension and
+    // this decides, because only the caller knows the POSITION — see
+    // chainUsageFor().
+    var usage = chainUsageFor(i);
+    if (!x509.keyUsagePermits(link.keyUsage, usage)) {
+      usageRefused = true;
+      problems.push(usage === 'digitalSignature'
+        ? 'KEY USAGE FORBIDS SIGNING: its KeyUsage extension asserts ' +
+          keyUsageText(link.keyUsage) + ', which does not include ' +
+          'digitalSignature, so this key may not sign a JWS'
+        : 'KEY USAGE FORBIDS ISSUING: its KeyUsage extension asserts ' +
+          keyUsageText(link.keyUsage) + ', which does not include ' +
+          'keyCertSign, so this key may not issue the certificate below it');
+    }
+    if (problems.length) trusted = false;
+    var by = (last && !built.anchored) ? link.issuer : link.signedBy;
+    lines.push('  ' + (i === 0 ? '[signer] ' : '') + link.subject +
+        ' — issued by ' + by +
+        (last && built.anchored ? ' (self-signed root)' : '') + ': ' +
+        (problems.length ? problems.join('; ') : 'ok') +
+        ' [key usage: ' + keyUsageText(link.keyUsage) + ']');
+  }
+  if (built.unused) {
+    lines.push('  (' + built.unused + ' certificate(s) offered as the ' +
+        'chain were not part of this path and were not checked.)');
+  }
+  var reason = usageRefused
+    ? 'a certificate in its chain is not permitted the use being made of ' +
+      'it (see the KEY USAGE line below)'
+    : !built.anchored
+      ? 'the signer certificate could not be validated to a trust anchor'
+      : 'a link in its chain did not check out';
+  log.debug("Leaving trustChainReport(). trusted=" + trusted +
+            " usageRefused=" + usageRefused);
+  return { trusted: trusted, lines: lines, reason: reason };
 }
 
 async function verifyJWT() {
@@ -689,10 +1149,29 @@ async function verifyJWT() {
       jws: jwt_, publicKey: keyInput, backend: 'webcrypto'
     });
     var first = result.signatures[0] || {};
-    setVal('jwt_verification_output', result.valid
-      ? 'Signature Verified: true'
-      : 'Signature Verified: false' +
-        (first.reason ? ' — ' + first.reason : ''));
+
+    // The chain is checked SECOND and reported FIRST, and the verdict is the
+    // two together: a signature that verifies against a certificate nothing
+    // vouches for is a signature by whoever wrote the token. So an
+    // unestablished chain makes the answer false, and the line below it says
+    // that the cryptography was fine — which is the distinction a debugger
+    // exists to draw, and which one boolean would destroy.
+    var chain = { trusted: null, lines: [], reason: '' };
+    if (isChecked('verify_chain_enabled')) {
+      chain = await trustChainReport(type, key);
+    }
+    var verified = !!result.valid && chain.trusted !== false;
+    var head = 'Signature Verified: ' + (verified ? 'true' : 'false');
+    if (!result.valid) {
+      head += first.reason ? ' — ' + first.reason : '';
+    } else if (chain.trusted === false) {
+      head += ' — the signature is cryptographically valid, but ' +
+          (chain.reason || 'the signer certificate could not be validated ' +
+              'to a trust anchor') + '.';
+    } else if (chain.trusted === true) {
+      head += ' — signer certificate validated to a trust anchor.';
+    }
+    setVal('jwt_verification_output', [head].concat(chain.lines).join('\n'));
   } catch (err) {
     log.error('verifyJWT: ' + err.message);
     setVal('jwt_verification_output', 'Error: ' + err.message);
@@ -1184,6 +1663,8 @@ window.onload = function () {
 module.exports = {
   updateEncoded,
   onEncodedInput,
+  toggleEncodedFileLoad,
+  onEncodedFileChange,
   addClaim,
   checkCompliance,
   checkRfc9068Compliance,
@@ -1199,6 +1680,7 @@ module.exports = {
   downloadEncryptionKeys,
   toggleKeyFormat,
   syncVerificationKey,
+  toggleTrustChain,
   copyField,
   populateTable
 };

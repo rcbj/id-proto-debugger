@@ -37,6 +37,12 @@ const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
 const { waitForFocus } = require("./wait_for.js");
 const { usernameFor } = require("./random_username.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -118,6 +124,19 @@ async function signIn(driver, username, url) {
 // authorization response off the URL.
 async function codeFromRedirect(driver) {
   log.debug("Entering codeFromRedirect().");
+  // THE CONSENT SCREEN FIRST, if there is one. It is PASSED rather than
+  // asserted: a scope already agreed to in this run, or one carried as a global
+  // consent on the application's entry, draws no screen at all. What asserts
+  // the screen itself is the mock's own tests/vendored/sts_consent.js.
+  //
+  // HERE rather than after the `#kc-login` click, which is where this job put
+  // it until 2026-09-02, because the second factor stands between the two: the
+  // ceremony is part of AUTHENTICATING and the screen is drawn by the
+  // authorization endpoint once somebody is authenticated. Pressed at the
+  // earlier point it spent its window on the WebAuthn page and found nothing,
+  // and the three sections that run a ceremony then timed out here — on the
+  // callback the consent screen was holding up, naming the redirect.
+  await consentScreen.passInBrowser(driver, By);
   await driver.wait(until.urlContains("/oauth2/callback-sink"), waitTime * 8);
   const url = new URL(await driver.getCurrentUrl());
   const code = url.searchParams.get("code");

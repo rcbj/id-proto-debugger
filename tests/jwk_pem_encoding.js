@@ -1615,6 +1615,113 @@ function transientLoadErrorsAreFilteredNotSwallowed() {
 }
 
 // ---------------------------------------------------------------------------
+// THE RUNNER'S ONE RETRY IS SCOPED TO ONE MESSAGE, AND IS STILL WIRED IN.
+//
+// run-report.js runs a job a second time when Chrome's renderer stops
+// answering — the wedge tests/renderer_wedge.js describes, which no test can
+// recover from because the tab is gone for the life of that browser. That is
+// the only failure it retries, and both halves of that sentence are things a
+// later edit can quietly break in opposite directions:
+//
+//   * WIDEN the predicate, and the suite starts running failing tests twice.
+//     A retried failure still fails, so nothing goes green — it simply takes
+//     twice as long to report every genuine breakage, and the report says a
+//     browser had to be replaced when none did.
+//   * UNWIRE it, and nothing fails at all: the pool goes back to calling
+//     runJob() directly, every job still runs, and the only symptom is the
+//     wedge coming back as a red test naming whatever page it was loading.
+//
+// So this asserts the predicate's edges and that the pool still goes through
+// the wrapper. It reads run-report.js as STATEMENTS rather than as lines, for
+// the reason the top of this file's other source sweeps do: the 80-column
+// sweep wrapped a call and silenced two checks that were anchored to a line.
+// ---------------------------------------------------------------------------
+function rendererWedgeIsRetriedNotSwallowed() {
+  log.debug("Entering rendererWedgeIsRetriedNotSwallowed().");
+  const rendererWedge = require("./renderer_wedge.js");
+
+  // (A) What it matches, and — the half that matters — what it does not.
+  const RETRIED = [
+    "TimeoutError: timeout: Timed out receiving message from renderer: " +
+        "299.995\n  (Session info: chrome=121.0.6167.85)",
+    "timeout: Timed out receiving message from renderer: 59.994"
+  ];
+  const KEPT = [
+    // A wait that expired. The page was there and the field was not.
+    "TimeoutError: the wallet should discover walt.id and its authorization " +
+        "server from the offer alone. Wait timed out after 10080ms",
+    // A page that never loaded. page_load.js is what retries this one.
+    "unknown error: net::ERR_CONNECTION_REFUSED",
+    // A browser that died rather than one that stopped answering. A retry
+    // would hide a container that is out of memory.
+    "unknown error: session deleted because of page crash",
+    // The thing this suite exists to report.
+    "AssertionError [ERR_ASSERTION]: the offered credential should be the " +
+        "one selected."
+  ];
+  RETRIED.forEach(function (output) {
+    assert.strictEqual(rendererWedge.isRendererWedge(output), true,
+      "renderer_wedge.isRendererWedge() must recognise the wedge, and did " +
+      "not for:\n  " + output.split("\n")[0]);
+  });
+  KEPT.forEach(function (output) {
+    assert.strictEqual(rendererWedge.isRendererWedge(output), false,
+      "renderer_wedge.isRendererWedge() must NOT match an ordinary failure — " +
+      "a suite that runs its red tests twice takes twice as long to report " +
+      "them. It matched:\n  " + output.split("\n")[0]);
+  });
+  assert.strictEqual(rendererWedge.isRendererWedge(""), false);
+  assert.strictEqual(rendererWedge.isRendererWedge(null), false);
+  assert.ok(rendererWedge.wedgeNote("a job").indexOf(
+      rendererWedge.SIGNATURE) !== -1,
+    "the note the log and the report carry must quote the message it is " +
+    "about, or a reader cannot tell which fault was retried.");
+
+  // (B) The pool still goes through the wrapper, and the wrapper still asks
+  // the predicate. Read as statements: a line-anchored regex over this file
+  // stops matching the moment somebody wraps the call.
+  const runner = path.join(__dirname, "run-report.js");
+  if (!fs.existsSync(runner)) {
+    log.info("[renderer wedge] partial — run-report.js is not beside this " +
+             "test, so only the predicate was checked.");
+    log.debug("Leaving rendererWedgeIsRetriedNotSwallowed().");
+    return;
+  }
+  const statements = fs.readFileSync(runner, "utf8")
+    .replace(/\s*\n\s*/g, " ");
+  assert.ok(/runJobAllowingOneRendererWedge\(job, i, CONCURRENCY === 1\)/
+      .test(statements),
+    "run-report.js's pool no longer calls runJobAllowingOneRendererWedge(), " +
+    "so a wedged renderer is a red test again. See tests/renderer_wedge.js.");
+  assert.ok(/results\[i\] = await runJobAllowingOneRendererWedge\(job, i, true\)/
+      .test(statements),
+    "run-report.js's EXCLUSIVE pass no longer calls " +
+    "runJobAllowingOneRendererWedge(), so a wedged renderer is a red test " +
+    "again there. See tests/renderer_wedge.js.");
+  assert.ok(/rendererWedge\.isRendererWedge\(first\.output\)/
+      .test(statements),
+    "run-report.js no longer decides on renderer_wedge.isRendererWedge(), so " +
+    "whatever it retries now is not what this check describes.");
+
+  // (C) And the module reaches the image, which nothing else can notice: it
+  // is not a job, so testsImageHasNoCollidingFilenames() never looks for it,
+  // and run-report.js requires it at LOAD — so a missing COPY line does not
+  // fail one job, it exits the tests container before the first one starts.
+  const dockerfile = path.join(__dirname, "Dockerfile");
+  if (fs.existsSync(dockerfile)) {
+    assert.ok(/COPY\s+tests\/renderer_wedge\.js/
+        .test(fs.readFileSync(dockerfile, "utf8")),
+      "tests/Dockerfile does not COPY tests/renderer_wedge.js, which " +
+      "run-report.js requires at load — so the containerized suite would " +
+      "exit with MODULE_NOT_FOUND before spawning a single job.");
+  }
+  log.info("[renderer wedge] OK — " + RETRIED.length + " wedge message(s) " +
+    "are retried, " + KEPT.length + " ordinary failures are not, and the " +
+    "runner still routes both of its job passes through the wrapper.");
+  log.debug("Leaving rendererWedgeIsRetriedNotSwallowed().");
+}
+
+// ---------------------------------------------------------------------------
 // NO DOCKERFILE STAGE MAY OUTGROW DOCKER'S LAYER LIMIT.
 //
 // Docker's layer store refuses a chain deeper than 125 layers (`maxDepth` in
@@ -1779,6 +1886,7 @@ async function test() {
   stagedSharedModuleListsAreComplete();
   everyJobDeclaresTheUrlOption();
   transientLoadErrorsAreFilteredNotSwallowed();
+  rendererWedgeIsRetriedNotSwallowed();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

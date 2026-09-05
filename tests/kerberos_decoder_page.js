@@ -426,7 +426,8 @@ async function test() {
   log.info("Starting Test run. Verifying the Kerberos Decoder page at " +
       baseUrl + ".");
   const options = new chrome.Options();
-  // --headless=new, never bare --headless: in the image's Chrome 121 the old
+  // --headless=new, never bare --headless: in the Chrome 121 pinned then,
+  // the old
   // headless mode ignores --unsafely-treat-insecure-origin-as-secure, so
   // crypto.subtle stays undefined however carefully the flags were set. See
   // tests/CLAUDE.md.

@@ -583,6 +583,11 @@ function loadValuesFromLocalStorage()
       }
     } else if (type === 'refresh_access_token') {
       token_access_token = localStorage.getItem('refresh_access_token');
+    } else if (type === 'tokenexchange_access') {
+      // The token a Token Exchange (RFC 8693) call issued, which is the one
+      // whose UserInfo answer is worth reading: an impersonated token names a
+      // different subject from the one that was exchanged for it.
+      token_access_token = localStorage.getItem('tokenexchange_access_token');
     } else {
       token_access_token = localStorage.getItem("token_access_token");
     }

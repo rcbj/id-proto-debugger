@@ -388,3 +388,89 @@ textarea.ssf-field {
 .ssf-metadata-missing { color: #b00; font-weight: bold; }
 .ssf-metadata-absent { color: #8a6d00; }
 .ssf-metadata-extra { color: #555; font-style: italic; }
+
+/* ---------------------------------------------------------------------------
+   FOLDED PROSE, the way the SCIM page folds its own (`.scim-more`) and the
+   Kerberos pages theirs (`.krb-more`).
+
+   The explanations are the reason this workflow is worth using — why a subject
+   identifier with one extra member is one every conforming receiver MUST
+   reject, why a paused stream and a disabled one differ, why push delivery
+   cannot work in a browser and that being the specification rather than this
+   tool — so they are kept VERBATIM and folded rather than cut. A debugger
+   that omits why a thing fails is the thing nobody needed.
+
+   They ship CLOSED. This page carried about nine hundred words of prose above
+   and inside its panes, and a reader who wants to press a button was three
+   screens from the first one.
+   ------------------------------------------------------------------------ */
+.ssf-more {
+  margin: 6px 0;
+}
+
+.ssf-more > summary {
+  cursor: pointer;
+  color: #31708f;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.ssf-more > summary:hover {
+  text-decoration: underline;
+}
+
+/* A pane's own legend is styled by `.ssf-pane > legend`, and the collapse
+   triangle in front of it by `.dbg-legend::before` in css/debugger.css. The
+   pane is a <div class="ssf-pane dbg-pane"> now rather than a <fieldset>, so
+   that selector needs its child legend to still be matched — which it is,
+   because the legend is a direct child either way. What DOES need saying is
+   the cursor: `.dbg-legend` sets it and this sheet loads afterwards, so
+   nothing here may set `cursor` on that legend without putting it back. */
+.ssf-pane > legend.dbg-legend {
+  cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------------
+   THE PROFILE ROW AND THE CAEP SESSION PANE.
+   ---------------------------------------------------------------------------
+   Nothing here is a new look. Every rule below reuses a colour or a border
+   this sheet already uses, for the reason `tests/navigation.js` exists to
+   catch from the other direction: a class whose stylesheet was not loaded is
+   invisible on the page and loud in that test, and a second palette on one
+   pane would make this page read as two.
+
+   THE ONE THING THAT IS A DECISION IS `.ssf-caep-revoked`. A revoked session
+   must not read as ordinary — it is the whole point of the profile — so it
+   takes the same red `.ssf-bad` uses, and `presented` takes the green, and
+   `established` stays plain. Three states, two of which mean "alive".
+   ------------------------------------------------------------------------ */
+.ssf-profile {
+  align-items: center;
+  gap: 12px;
+}
+
+.ssf-profile-absent { color: #777; }
+
+/* The eight simulate buttons. `.ssf-buttons` already wraps and gaps; this
+   only stops one very long event name from stretching a row. */
+.ssf-caep-button { min-width: 190px; text-align: left; }
+
+.ssf-caep-state {
+  border: 1px solid #d6d6e0;
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin: 8px 0;
+  background: #fafaff;
+}
+
+.ssf-caep-state-name { font-weight: bold; }
+.ssf-caep-established { color: #12107c; }
+.ssf-caep-presented { color: #2e7d32; }
+.ssf-caep-revoked { color: #b00; }
+
+/* One row per event type with its count. The zero rows are greyed rather than
+   dropped: "nothing has been sent of this type" is the answer to "why did
+   nothing arrive" nine times out of ten, and a table that omitted them would
+   hide exactly that. */
+.ssf-caep-counts { margin: 8px 0; }
+.ssf-caep-zero { color: #999; }

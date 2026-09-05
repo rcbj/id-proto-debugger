@@ -9,6 +9,12 @@
     <link href="/css/footer.css" rel="stylesheet">
     <link href="/css/common.css" rel="stylesheet">
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <!-- The shared .dbg-* pane chrome: the Expand / Collapse All switch and
+         the collapse triangle on each pane's title. BEFORE ssf.css, which is
+         the order scim.html uses and is load-bearing rather than tidy — both
+         sheets style a pane and a legend, and this page's own look is the one
+         that should win. -->
+    <link href="/css/debugger.css" rel="stylesheet">
     <link href="/css/ssf.css" rel="stylesheet">
   </head>
 
@@ -25,42 +31,113 @@
 <p class="ssf-return"><a href="/index.html">&larr; All protocols</a></p>
 <h3 class="ssf-title">Shared Signals (SSF) Debugger</h3>
 
-<p class="ssf-intro">The <strong>Shared Signals Framework</strong> (OpenID SSF
-1.0, final 2 September 2025) is the one protocol on this site that runs the
-other way round. SAML and OpenID Connect authenticate at <strong>one
-instant</strong>; after that the relying party holds a session that stays good
-for hours whatever happens next. Shared Signals inverts it: the identity
-provider <em>tells</em> the relying party when something changed.</p>
+<details class="ssf-more">
+  <summary>What Shared Signals is, and how this page is laid out</summary>
+  <p class="ssf-intro">The <strong>Shared Signals Framework</strong> (OpenID SSF
+  1.0, final 2 September 2025) is the one protocol on this site that runs the
+  other way round. SAML and OpenID Connect authenticate at <strong>one
+  instant</strong>; after that the relying party holds a session that stays good
+  for hours whatever happens next. Shared Signals inverts it: the identity
+  provider <em>tells</em> the relying party when something changed.</p>
 
-<p class="ssf-intro"><strong>SSF is the pipe and not the vocabulary.</strong> It
-defines how two parties agree a <em>stream</em>, who the events are about
-(<strong>RFC 9493</strong> subject identifiers), what they travel in
-(<strong>RFC 8417</strong> Security Event Tokens) and how they get there
-(<strong>RFC 8935</strong> push, <strong>RFC 8936</strong> poll) &mdash; and
-exactly two events of its own, both about the pipe. The vocabularies are
-<strong>CAEP</strong> (what happened to a session) and <strong>RISC</strong>
-(what happened to an account); this page implements the framework, and those
-two are the next parts of this work. The <em>Transmit</em> pane says which
-event types are here and which are not, rather than leaving a short list to be
-read as a broken page.</p>
+  <p class="ssf-intro"><strong>SSF is the pipe and not the
+  vocabulary.</strong> It
+  defines how two parties agree a <em>stream</em>, who the events are about
+  (<strong>RFC 9493</strong> subject identifiers), what they travel in
+  (<strong>RFC 8417</strong> Security Event Tokens) and how they get there
+  (<strong>RFC 8935</strong> push, <strong>RFC 8936</strong> poll) &mdash; and
+  exactly two events of its own, both about the pipe. The vocabularies are
+  <strong>CAEP</strong> (what happened to a session) and <strong>RISC</strong>
+  (what happened to an account); this page implements the framework, and those
+  two are the next parts of this work. The <em>Transmit</em> pane says which
+  event types are here and which are not, rather than leaving a short list to be
+  read as a broken page.</p>
+</details>
+
+<p class="dbg-controls">
+  <label class="dbg-toggle" title="Expand or collapse every pane on this page.">
+    <input type="checkbox" id="dbg_toggle_all" checked="checked" />
+    <span class="dbg-toggle-slider"></span>
+    <span class="dbg-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="dbg-controls-hint">Tip: click a pane&rsquo;s title to
+  collapse or expand it.</span>
+</p>
+
+<!-- ===================== Profile ===================== -->
+<div class="ssf-pane dbg-pane" id="pane_profile">
+  <legend class="dbg-legend"
+          id="profile_expand_button">Profile &mdash; which vocabulary this
+workflow speaks</legend>
+  <fieldset name="profile_fieldset" id="profile_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why this is a choice at all, and what each one changes</summary>
+    <p class="ssf-note"><strong>SSF is the pipe and not the
+    vocabulary.</strong> It says how two parties agree a stream, who the events
+    are about and how they get delivered &mdash; and exactly two events of its
+    own, both about the pipe. <strong>CAEP</strong> and <strong>RISC</strong>
+    are two different vocabularies spoken over it, and they answer two
+    different questions: CAEP says <em>this session is no longer
+    trustworthy</em>, RISC says <em>this account is no longer trustworthy</em>.
+    That distinction is the whole reason there are two specifications.</p>
+    <p class="ssf-note">Choosing one <strong>narrows every event list on this
+    page</strong> &mdash; the stream&rsquo;s <code>events_requested</code>
+    checkboxes and the <em>Transmit</em> pane&rsquo;s menu &mdash; so that a
+    stream cannot be agreed for events this page will not then send. Nothing is
+    hidden: the pipe is the same machinery underneath all three, and every
+    pane below is used by every profile. <strong>CAEP</strong> additionally
+    brings up the <em>CAEP session</em> pane, which is the thing its eight
+    events are <em>about</em>.</p>
+  </details>
+  <div class="ssf-row ssf-profile" id="ssf_profile_choices">
+    <label class="ssf-radio"><input type="radio" name="ssf_profile"
+           id="ssf_profile_ssf" value="ssf" checked
+           onchange="return ssf.profileChanged();"> Pure SSF</label>
+    <label class="ssf-radio"><input type="radio" name="ssf_profile"
+           id="ssf_profile_caep" value="caep"
+           onchange="return ssf.profileChanged();"> CAEP</label>
+    <label class="ssf-radio"><input type="radio" name="ssf_profile"
+           id="ssf_profile_risc" value="risc"
+           onchange="return ssf.profileChanged();"> RISC</label>
+    <input type="button" class="ssf-btn ssf-btn-danger" id="btn_ssf_reset"
+           value="Reset the session and start over"
+           onclick="return ssf.resetSession();"
+           title="Deletes the stream at the transmitter, drops the push inbox, empties both histories and the token set, and puts the CAEP session back to where it started. It asks first.">
+  </div>
+  <p class="ssf-status" id="ssf_profile_note"></p>
+  <div id="ssf_profile_what"></div>
+  </fieldset>
+</div>
 
 <!-- ===================== Identity and tokens ===================== -->
-<fieldset class="ssf-pane" id="pane_tokens">
-  <legend>Who you are, and the tokens this session has used</legend>
-  <p class="ssf-note">SSF 1.0 section 8 requires a transmitter&rsquo;s stream
-  management, status, subject, verification and poll endpoints to be protected,
-  and it has the transmitter <strong>publish</strong> what it accepts in
-  <code>authorization_schemes</code> &mdash; so a receiver discovers the scheme
-  rather than guessing. Almost every transmitter names OAuth 2.0, and this
-  workflow gets its token the way the SCIM page does: it sends you to the
-  <strong>OAuth2 / OIDC</strong> workflow, you run any grant there, and the
-  tokens come back here.</p>
-  <p class="ssf-note"><strong>The whole set comes back, not just the bearer
-  token</strong>, and that is why this pane can name you: an access token this
-  service issues is opaque to a client, and the identity is in the ID Token.
-  Every set is kept below for the length of this tab &mdash; the same
-  <em>Token History</em> the OAuth2 / OIDC results page keeps, for the reason a
-  stream outlives the token that created it.</p>
+<div class="ssf-pane dbg-pane" id="pane_tokens">
+  <legend class="dbg-legend"
+          id="tokens_expand_button">
+Who you are, and the tokens this session has used</legend>
+  <fieldset name="tokens_fieldset" id="tokens_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>How this workflow gets a token, and why the whole set comes
+      back</summary>
+    <p class="ssf-note">SSF 1.0 section 8 requires a transmitter&rsquo;s stream
+    management, status, subject, verification and poll endpoints to be
+    protected,
+    and it has the transmitter <strong>publish</strong> what it accepts in
+    <code>authorization_schemes</code> &mdash; so a receiver discovers the
+    scheme
+    rather than guessing. Almost every transmitter names OAuth 2.0, and this
+    workflow gets its token the way the SCIM page does: it sends you to the
+    <strong>OAuth2 / OIDC</strong> workflow, you run any grant there, and the
+    tokens come back here.</p>
+    <p class="ssf-note"><strong>The whole set comes back, not just the bearer
+    token</strong>, and that is why this pane can name you: an access token this
+    service issues is opaque to a client, and the identity is in the ID Token.
+    Every set is kept below for the length of this tab &mdash; the same
+    <em>Token History</em> the OAuth2 / OIDC results page keeps, for the reason
+    a
+    stream outlives the token that created it.</p>
+  </details>
   <div class="ssf-row">
     <input type="button" class="ssf-btn" id="btn_ssf_get_token"
            value="Get tokens from the OAuth2 / OIDC workflow"
@@ -97,23 +174,36 @@ read as a broken page.</p>
   <div id="ssf_token_history">
     <p class="ssf-note">No tokens recorded yet.</p>
   </div>
-</fieldset>
+  </fieldset>
+</div>
 
 <!-- ===================== Configuration ===================== -->
-<fieldset class="ssf-pane" id="pane_config">
-  <legend>Configuration Parameters</legend>
-  <p class="ssf-note">Everything the panes below read, with the
-  <strong>source</strong> of each. The transmitter&rsquo;s own endpoints are
-  <em>not</em> here: SSF fixes no paths, so every one of them is discovered
-  from the metadata document in the next pane and this page composes none.</p>
+<div class="ssf-pane dbg-pane" id="pane_config">
+  <legend class="dbg-legend"
+          id="config_expand_button">Configuration Parameters</legend>
+  <fieldset name="config_fieldset" id="config_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why the transmitter&rsquo;s own endpoints are not in this
+      table</summary>
+    <p class="ssf-note">Everything the panes below read, with the
+    <strong>source</strong> of each. The transmitter&rsquo;s own endpoints are
+    <em>not</em> here: SSF fixes no paths, so every one of them is discovered
+    from the metadata document in the next pane and this page composes none.</p>
+  </details>
   <table class="ssf-table ssf-config" id="ssf_config_table">
     <tr><th>Setting</th><th>Value</th><th>Source</th></tr>
     <tr>
       <td><label class="ssf-label" for="ssf_base_url">baseUrl</label></td>
       <td><input class="ssf-field" type="text" id="ssf_base_url"
                  placeholder="https://sts:8081"
-                 title="The transmitter's base URL. The well-known document is looked for under it in BOTH shapes RFC 8414 and OpenID Connect Discovery define."></td>
-      <td class="ssf-source">you</td>
+                 title="The transmitter's base URL. The well-known document is looked for under it in BOTH shapes RFC 8414 and OpenID Connect Discovery define."
+                 ><input type="button" class="ssf-btn ssf-btn-quiet"
+                 id="btn_ssf_base_url_from_discovery"
+                 value="Use the OAuth2 / OIDC issuer"
+                 onclick="return ssf.useDiscoveredBaseUrl();"
+                 title="Take the base URL from the discovery document the OAuth2 / OIDC workflow retrieved in this browser: its `issuer`, which is the base a well-known path is composed against. In every deployment this tool is pointed at, the service that issues the token and the service that transmits the events are the same one."></td>
+      <td class="ssf-source" id="ssf_base_url_source">you</td>
     </tr>
     <tr id="ssf_config_callpath_row">
       <td><label class="ssf-label">callPath</label></td>
@@ -152,7 +242,8 @@ read as a broken page.</p>
       <td class="ssf-source">you</td>
     </tr>
     <tr id="ssf_basic_row" class="ssf-hidden">
-      <td><label class="ssf-label" for="ssf_basic_user">Basic credentials</label>
+      <td><label class="ssf-label" for="ssf_basic_user">Basic
+      credentials</label>
       </td>
       <td><input class="ssf-field ssf-narrow" type="text" id="ssf_basic_user"
                  placeholder="username">
@@ -164,19 +255,29 @@ read as a broken page.</p>
   </table>
   <p class="ssf-limits" id="ssf_limits">Asking the api what it will
   do&hellip;</p>
-</fieldset>
+  </fieldset>
+</div>
 
 <!-- ===================== Discovery ===================== -->
-<fieldset class="ssf-pane" id="pane_metadata">
-  <legend>Transmitter configuration metadata</legend>
-  <p class="ssf-note">SSF 1.0 section 6. <strong>Every endpoint this workflow
-  calls comes out of this document</strong> and none is composed here &mdash; a
-  transmitter that publishes its stream management API at
-  <code>/v1/streams/manage</code> is driven with nothing typed. It is looked
-  for at <code>/.well-known/ssf-configuration</code> in both shapes: RFC 8414
-  <em>inserts</em> the well-known segment before the issuer&rsquo;s path and
-  OpenID Connect Discovery <em>appends</em> it, and insertion is tried
-  first.</p>
+<div class="ssf-pane dbg-pane" id="pane_metadata">
+  <legend class="dbg-legend"
+          id="metadata_expand_button">
+Transmitter configuration metadata</legend>
+  <fieldset name="metadata_fieldset" id="metadata_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Where the well-known document is looked for, and in which two
+      shapes</summary>
+    <p class="ssf-note">SSF 1.0 section 6. <strong>Every endpoint this workflow
+    calls comes out of this document</strong> and none is composed here &mdash;
+    a
+    transmitter that publishes its stream management API at
+    <code>/v1/streams/manage</code> is driven with nothing typed. It is looked
+    for at <code>/.well-known/ssf-configuration</code> in both shapes: RFC 8414
+    <em>inserts</em> the well-known segment before the issuer&rsquo;s path and
+    OpenID Connect Discovery <em>appends</em> it, and insertion is tried
+    first.</p>
+  </details>
   <div class="ssf-row">
     <input type="button" class="ssf-btn" id="btn_ssf_discover"
            value="Fetch the metadata" onclick="return ssf.discover();"
@@ -187,18 +288,26 @@ read as a broken page.</p>
   <div id="ssf_metadata_table">
     <p class="ssf-note">Nothing fetched yet.</p>
   </div>
-</fieldset>
+  </fieldset>
+</div>
 
 <!-- ===================== Streams ===================== -->
-<fieldset class="ssf-pane" id="pane_stream">
-  <legend>Stream</legend>
-  <p class="ssf-note">The control plane. One path and five methods, which is
-  the specification&rsquo;s own shape: the configuration endpoint <em>is</em>
-  the resource. <strong>Read <code>events_delivered</code> rather than
-  <code>events_requested</code> when the answer comes back</strong> &mdash; the
-  first is what will be sent and the second is what you asked for, and SSF has
-  no refusal for an event type a transmitter will not agree to. Its absence
-  from that list is the only notice you get, so this page says so out loud.</p>
+<div class="ssf-pane dbg-pane" id="pane_stream">
+  <legend class="dbg-legend" id="stream_expand_button">Stream</legend>
+  <fieldset name="stream_fieldset" id="stream_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>What the stream management API is</summary>
+    <p class="ssf-note">The control plane. One path and five methods, which is
+    the specification&rsquo;s own shape: the configuration endpoint <em>is</em>
+    the resource. <strong>Read <code>events_delivered</code> rather than
+    <code>events_requested</code> when the answer comes back</strong> &mdash;
+    the
+    first is what will be sent and the second is what you asked for, and SSF has
+    no refusal for an event type a transmitter will not agree to. Its absence
+    from that list is the only notice you get, so this page says so out
+    loud.</p>
+  </details>
   <div class="ssf-grid">
     <div>
       <label class="ssf-label" for="ssf_stream_aud">aud</label>
@@ -284,12 +393,17 @@ read as a broken page.</p>
   <div id="ssf_stream_view">
     <p class="ssf-note">No stream yet.</p>
   </div>
-  <p class="ssf-note"><strong>Status.</strong> A <em>paused</em> stream keeps
-  queueing and delivers nothing, so what happened while it was paused is still
-  there when it is enabled again; a <em>disabled</em> one drops it. That is the
-  difference between &ldquo;I was not listening&rdquo; and &ldquo;it did not
-  happen&rdquo;, and it is why a receiver taking a maintenance window pauses
-  rather than disables.</p>
+  <details class="ssf-more">
+    <summary>What <em>paused</em> and <em>disabled</em> mean, and why they
+      differ</summary>
+    <p class="ssf-note"><strong>Status.</strong> A <em>paused</em> stream keeps
+    queueing and delivers nothing, so what happened while it was paused is still
+    there when it is enabled again; a <em>disabled</em> one drops it. That is
+    the
+    difference between &ldquo;I was not listening&rdquo; and &ldquo;it did not
+    happen&rdquo;, and it is why a receiver taking a maintenance window pauses
+    rather than disables.</p>
+  </details>
   <div class="ssf-row">
     <select class="ssf-field ssf-narrow" id="ssf_status_value">
       <option value="enabled">enabled</option>
@@ -297,18 +411,23 @@ read as a broken page.</p>
       <option value="disabled">disabled</option>
     </select>
     <input class="ssf-field ssf-grow" type="text" id="ssf_status_reason"
-           placeholder="reason (shown to the transmitter, and echoed in the event)">
+           placeholder="reason (shown to the transmitter, and echoed in the
+           event)">
     <input type="button" class="ssf-btn" id="btn_ssf_set_status"
            value="Set status" onclick="return ssf.setStatus();">
     <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_get_status"
            value="Read status" onclick="return ssf.getStatus();">
   </div>
-  <p class="ssf-note"><strong>Verification</strong> is the only end-to-end test
-  a stream has. Everything above exercises the management API and proves
-  nothing about whether an event can actually be delivered; this asks the
-  transmitter to send one down the ordinary path. The <code>state</code> comes
-  back inside the event unchanged, and it is the only thing tying the two
-  together.</p>
+  <details class="ssf-more">
+    <summary>Why verification is the only end-to-end test a stream has</summary>
+    <p class="ssf-note"><strong>Verification</strong> is the only end-to-end
+    test
+    a stream has. Everything above exercises the management API and proves
+    nothing about whether an event can actually be delivered; this asks the
+    transmitter to send one down the ordinary path. The <code>state</code> comes
+    back inside the event unchanged, and it is the only thing tying the two
+    together.</p>
+  </details>
   <div class="ssf-row">
     <input class="ssf-field ssf-grow" type="text" id="ssf_verify_state"
            placeholder="state — anything; it comes back in the event"
@@ -317,26 +436,37 @@ read as a broken page.</p>
            value="Ask for a verification event"
            onclick="return ssf.verifyStream();">
   </div>
-</fieldset>
+  </fieldset>
+</div>
 
 <!-- ===================== Subjects ===================== -->
-<fieldset class="ssf-pane" id="pane_subjects">
-  <legend>Subjects &mdash; who the stream is about</legend>
-  <p class="ssf-note">RFC 9493 gives eight formats and SSF adds the
-  <em>complex</em> subject, whose members are each themselves an identifier.
-  That is what makes &ldquo;this session was revoked&rdquo; expressible at all:
-  the person is not revoked, one session of theirs is.</p>
-  <p class="ssf-note"><strong>Each format&rsquo;s member set is closed.</strong>
-  A subject carrying an extra member is one a conforming receiver
-  <em>must</em> reject &mdash; it cannot tell whether the member narrows the
-  subject &mdash; and it looks perfectly fine in a log. This page refuses it
-  and names the member, which is what the <em>Check</em> button is for.</p>
-  <p class="ssf-note">What an <strong>empty</strong> subject list means is
-  <code>default_subjects</code> in the metadata: with <code>ALL</code> the
-  stream is about everybody and adding a subject narrows nothing; with
-  <code>NONE</code> it is about nobody until one is added. Guessing wrong gets
-  you every event in the estate or none, and both look like a broken
-  transmitter.</p>
+<div class="ssf-pane dbg-pane" id="pane_subjects">
+  <legend class="dbg-legend"
+          id="subjects_expand_button">
+Subjects &mdash; who the stream is about</legend>
+  <fieldset name="subjects_fieldset" id="subjects_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>The eight formats, their closed member sets, and what an empty
+      subject list means</summary>
+    <p class="ssf-note">RFC 9493 gives eight formats and SSF adds the
+    <em>complex</em> subject, whose members are each themselves an identifier.
+    That is what makes &ldquo;this session was revoked&rdquo; expressible at
+    all:
+    the person is not revoked, one session of theirs is.</p>
+    <p class="ssf-note"><strong>Each format&rsquo;s member set is
+    closed.</strong>
+    A subject carrying an extra member is one a conforming receiver
+    <em>must</em> reject &mdash; it cannot tell whether the member narrows the
+    subject &mdash; and it looks perfectly fine in a log. This page refuses it
+    and names the member, which is what the <em>Check</em> button is for.</p>
+    <p class="ssf-note">What an <strong>empty</strong> subject list means is
+    <code>default_subjects</code> in the metadata: with <code>ALL</code> the
+    stream is about everybody and adding a subject narrows nothing; with
+    <code>NONE</code> it is about nobody until one is added. Guessing wrong gets
+    you every event in the estate or none, and both look like a broken
+    transmitter.</p>
+  </details>
   <div class="ssf-row">
     <label class="ssf-label" for="ssf_subject_format">Format</label>
     <select class="ssf-field" id="ssf_subject_format"
@@ -367,18 +497,465 @@ read as a broken page.</p>
   </div>
   <p class="ssf-status" id="ssf_subject_status"></p>
   <div id="ssf_subject_findings"></div>
-</fieldset>
+  </fieldset>
+</div>
+
+<!-- ===================== CAEP session ===================== -->
+<div class="ssf-pane dbg-pane ssf-hidden" id="pane_caep">
+  <legend class="dbg-legend"
+          id="caep_expand_button">CAEP session &mdash; the thing these events
+are about</legend>
+  <fieldset name="caep_fieldset" id="caep_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why a CAEP event names a session and not a person</summary>
+    <p class="ssf-note"><strong>CAEP</strong> (OpenID Continuous Access
+    Evaluation Profile 1.0, final 2 September 2025) is the enterprise
+    <em>session</em> vocabulary. Its eight event types all say something about
+    one session, and the subject each of them carries is normally SSF&rsquo;s
+    <strong>complex</strong> subject &mdash; because <strong>the person is not
+    revoked, one session of theirs is</strong>. A subject naming only the
+    person asks a receiver to end every session that person has, which is a
+    much larger instruction than the one that was meant and looks perfectly
+    reasonable in a log.</p>
+    <p class="ssf-note">This pane holds a <strong>simulated</strong> session,
+    seeded from whatever the OAuth2 / OIDC workflow handed over. It is a model
+    and not a session anybody holds: what makes an event about a <em>real</em>
+    session is the <code>sid</code> claim, and where the ID Token carried none
+    the identifier below was generated here and says so. Every field is
+    editable, so a real one can be pasted in.</p>
+    <p class="ssf-note"><strong>Every simulate button below builds a whole
+    event, signs it and pushes it</strong> through the <em>Transmitting
+    events</em> pane &mdash; which is left visible on purpose, so that what
+    goes out can be read before and after. The session state and the counts
+    move with what was actually sent.</p>
+  </details>
+
+  <!-- ===================================================================
+       WHICH SIGN-IN THIS SESSION CAME FROM.
+
+       CAEP is a vocabulary about SESSIONS and says nothing about the
+       protocol that minted one — which is why the mock emits for every
+       browser sign-in it has, through one funnel. This pane read an ID
+       Token and nothing else until 2026-09-03, which made the whole
+       workflow look like an OAuth2 / OIDC feature it never was.
+
+       The options are built from `session_handoff.js`'s own table so a
+       sixth protocol is a row there rather than an edit here.
+       =================================================================== -->
+  <div class="ssf-row">
+    <label class="ssf-label" for="caep_signin_protocol">Sign-in
+      protocol</label>
+    <select id="caep_signin_protocol"
+            onchange="return ssf.caepProtocolChanged();"
+            title="Which browser sign-in seeds this session. Three of the five carry no session identifier at all, and the note below says so rather than reporting a missing ID Token claim.">
+    </select>
+    <input type="button" class="ssf-btn" id="btn_caep_signin"
+           value="Sign in over this protocol"
+           onclick="return ssf.startSessionHandoff();"
+           title="Runs that protocol's own workflow and brings the session back here. Nothing is stored: the session crosses in sessionStorage for one page load and is collected once.">
+  </div>
+  <p class="ssf-note" id="caep_protocol_note"></p>
+
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_caep_seed"
+           value="Fill from the ID Token"
+           onclick="return ssf.caepFillFromToken();"
+           title="Takes iss, sub, sid, acr and amr from the ID Token the OAuth2 / OIDC hand-off produced. A grant with no ID Token leaves the fields to you and says so.">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_caep_add_subject"
+           value="Add this subject to the stream"
+           onclick="return ssf.caepAddSubject();"
+           title="Adds the complex subject below to the stream, so the transmitter will deliver events about this session to it.">
+    <input type="button" class="ssf-btn ssf-btn-danger" id="btn_caep_reset"
+           value="Reset this session only"
+           onclick="return ssf.resetCaepSession();"
+           title="Clears the state, the counters and what has been said, and keeps the identity. Nothing at the transmitter is touched.">
+  </div>
+  <p class="ssf-status" id="caep_seed_note"></p>
+
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="caep_iss">iss</label>
+      <input class="ssf-field" type="text" id="caep_iss"
+             placeholder="https://sts.example.com"
+             title="The issuer the receiver already knows this person by. It is what an ID Token's `iss` said.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_sub">sub</label>
+      <input class="ssf-field" type="text" id="caep_sub"
+             placeholder="the subject identifier"
+             title="The person. With `iss` above it makes the RFC 9493 issuer_subject_id a receiver already holds.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_sid">sid &mdash; the session</label>
+      <input class="ssf-field ssf-mono" type="text" id="caep_sid"
+             placeholder="filled from the ID Token, or generated here"
+             title="OpenID Connect's `sid` claim. An event naming a session identifier this page invented is about nothing at the far end, which is why the source is drawn beside it.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_device">device</label>
+      <input class="ssf-field ssf-mono" type="text" id="caep_device"
+             placeholder="an opaque device identifier"
+             title="Named in the subject only when the box below is ticked. A device-compliance-change about a person on two devices is meaningless without it.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_tenant">tenant</label>
+      <input class="ssf-field" type="text" id="caep_tenant"
+             placeholder="optional"
+             title="Named in the subject only when the box below is ticked.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_acr">acr / amr</label>
+      <input class="ssf-field ssf-narrow" type="text" id="caep_acr"
+             placeholder="acr"
+             title="The authentication context class the session was established at.">
+      <input class="ssf-field ssf-narrow" type="text" id="caep_amr"
+             placeholder="amr, space separated"
+             title="The authentication methods. It crosses the wire as an ARRAY — a bare string is refused, because a session authenticated two ways has two values.">
+    </div>
+  </div>
+
+  <div class="ssf-row">
+    <label class="ssf-radio"><input type="checkbox" id="caep_subject_user"
+           checked
+           title="The person, as an RFC 9493 issuer_subject_id.">
+           user</label>
+    <label class="ssf-radio"><input type="checkbox" id="caep_subject_session"
+           checked
+           title="The session, as an opaque identifier. Clearing this is how to see what a receiver does with an event that names only the person.">
+           session</label>
+    <label class="ssf-radio"><input type="checkbox" id="caep_subject_device"
+           title="The device. Needed for device-compliance-change to mean anything.">
+           device</label>
+    <label class="ssf-radio"><input type="checkbox" id="caep_subject_tenant"
+           title="The tenant.">
+           tenant</label>
+  </div>
+  <label class="ssf-label" for="caep_subject_json">sub_id &mdash; the complex
+  subject this page will send</label>
+  <textarea class="ssf-field ssf-mono" id="caep_subject_json" rows="6" readonly
+            title="Built from the fields above through the same RFC 9493 grammar the Subjects pane uses. Checked against it, and the findings are drawn below."></textarea>
+  <div id="caep_subject_findings"></div>
+
+  <details class="ssf-more">
+    <summary>The four claims CAEP gives every one of its events</summary>
+    <p class="ssf-note">All four are <strong>optional</strong> (CAEP section
+    2), which surprises people about the first: a receiver deciding whether to
+    end a session wants <code>event_timestamp</code> more than anything else in
+    the payload, and a conforming transmitter need not send one. Leaving it out
+    here is how a receiver that assumes it is present gets to fail in a test.
+    <code>reason_admin</code> and <code>reason_user</code> are
+    <strong>objects keyed by a language tag</strong> and not strings &mdash;
+    the commonest mistake in the whole profile, and the one with no symptom,
+    because a receiver indexing by language reads nothing from a string and
+    reports no error.</p>
+  </details>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="caep_initiating">initiating_entity</label>
+      <select class="ssf-field" id="caep_initiating"
+              title="It is the member that lets a receiver tell 'an administrator revoked this' from 'a risk engine did'.">
+        <option value="">(omit it)</option>
+        <option value="admin">admin</option>
+        <option value="user">user</option>
+        <option value="policy" selected>policy</option>
+        <option value="system">system</option>
+      </select>
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_timestamp">event_timestamp</label>
+      <select class="ssf-field" id="caep_timestamp"
+              title="A NUMBER of seconds since the epoch. It is not the SET's `toe` and it is not `iat`.">
+        <option value="now">now</option>
+        <option value="hour">an hour ago &mdash; the token is minted now
+        </option>
+        <option value="omit">omit it &mdash; legal, and what breaks receivers
+        </option>
+      </select>
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_language">language tag</label>
+      <input class="ssf-field ssf-narrow" type="text" id="caep_language"
+             value="en"
+             title="The BCP 47 tag the two reason members are keyed under.">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_reason_admin">reason_admin</label>
+      <input class="ssf-field" type="text" id="caep_reason_admin"
+             placeholder="why, for a log and an auditor">
+    </div>
+    <div>
+      <label class="ssf-label" for="caep_reason_user">reason_user</label>
+      <input class="ssf-field" type="text" id="caep_reason_user"
+             placeholder="why, in words meant for the person">
+    </div>
+  </div>
+
+  <details class="ssf-more">
+    <summary>What each button sends, and which of them a real transmitter
+      sends on its own</summary>
+    <p class="ssf-note">Three of the eight describe things a transmitter can
+    actually observe &mdash; a session starting, being presented and ending
+    &mdash; and this stack&rsquo;s mock sends those <strong>by itself</strong>
+    when you sign in, sign in again and sign out. The other five describe
+    things nothing observes for you: no device reports compliance to a mock and
+    no risk engine talks to one. Every button here builds the event this page
+    would send as the <em>transmitter</em>, whichever half you are testing.</p>
+  </details>
+  <div class="ssf-buttons" id="caep_simulate"></div>
+  <p class="ssf-status" id="caep_simulate_status"></p>
+
+  <div id="caep_state"></div>
+  <div id="caep_counts"></div>
+  <div id="caep_log"></div>
+  </fieldset>
+</div>
+
+<!-- ===================== RISC account ===================== -->
+<div class="ssf-pane dbg-pane ssf-hidden" id="pane_risc">
+  <legend class="dbg-legend"
+          id="risc_expand_button">RISC account &mdash; the thing these events
+are about</legend>
+  <fieldset name="risc_fieldset" id="risc_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why a RISC event names a person and a CAEP event names a
+      session</summary>
+    <p class="ssf-note"><strong>RISC</strong> (OpenID RISC Profile
+    Specification 1.0, published 29 August 2025 and final on 2 September 2025)
+    is the <em>account</em> vocabulary. <a href="ssf.html">CAEP</a> says
+    <em>this session is no longer trustworthy</em>; RISC says <em>this account
+    is no longer trustworthy</em>, and the second is the larger sentence by
+    orders of magnitude &mdash; a revoked session is one sign-in at one
+    relying party, and a purged account is every session that person has
+    anywhere, for ever. CAEP is aimed within an enterprise and RISC
+    <strong>across providers</strong>: its origin is a consumer provider
+    noticing that an account has been taken over and telling every site that
+    account signs in to.</p>
+    <p class="ssf-note"><strong>The subject is a PLAIN one, and that is the
+    whole difference said in one line of JSON.</strong> SSF&rsquo;s complex
+    subject exists because a CAEP event is about one session of one person, so
+    <code>{user, session, device}</code> is how <em>that person, on that
+    device, in that session</em> is expressible at all. A RISC event is about
+    the account: the person <em>is</em> the subject, there is nothing to
+    narrow, and a complex subject here would say <em>this account was
+    disabled, on this device</em>, which is a sentence with no meaning.</p>
+    <p class="ssf-note"><strong>Eleven of the fourteen carry no payload
+    members at all</strong>, so for those the subject <em>is</em> the entire
+    message &mdash; <code>account-purged</code> says nothing but its own type
+    and who it is about. A subject naming the wrong person is therefore not a
+    partly wrong event; it is a wholly wrong one, with nothing else in it to
+    notice by. That is what makes the format selector below the consequential
+    control on this pane.</p>
+    <p class="ssf-note"><strong>Every simulate button builds a whole event,
+    signs it and pushes it</strong> through the <em>Transmitting events</em>
+    pane, which is left visible on purpose. The account&rsquo;s three states
+    and the counts move with what was actually sent.</p>
+  </details>
+
+  <!-- ===================================================================
+       WHICH SIGN-IN THIS ACCOUNT CAME FROM.
+
+       The same five as the CAEP pane, through the same session_handoff.js
+       table — and RISC needs LESS of what crosses. A RISC subject names a
+       PERSON and every one of the five carries one; the session identifier
+       three of them cannot supply is simply not what these fourteen events
+       are about. What RISC needs and CAEP does not is an ADDRESS, for two
+       of the fourteen, and whether anybody said it was verified.
+       =================================================================== -->
+  <div class="ssf-row">
+    <label class="ssf-label" for="risc_signin_protocol">Sign-in
+      protocol</label>
+    <select id="risc_signin_protocol"
+            onchange="return ssf.riscProtocolChanged();"
+            title="Which browser sign-in names the account. Unlike CAEP, all five carry what RISC needs — a person. What only OpenID Connect carries is whether an email address was verified.">
+    </select>
+    <input type="button" class="ssf-btn" id="btn_risc_signin"
+           value="Sign in over this protocol"
+           onclick="return ssf.startRiscHandoff();"
+           title="Runs that protocol's own workflow and brings the identity back here. Nothing is stored: it crosses in sessionStorage for one page load and is collected once.">
+  </div>
+  <p class="ssf-note" id="risc_protocol_note"></p>
+
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_risc_seed"
+           value="Fill from the ID Token"
+           onclick="return ssf.riscFillFromToken();"
+           title="Takes iss, sub, email and phone_number from the ID Token the OAuth2 / OIDC hand-off produced — and email_verified, which is the claim that decides whether this workflow may honestly send an identifier event.">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_risc_add_subject"
+           value="Add this subject to the stream"
+           onclick="return ssf.riscAddSubject();"
+           title="Adds the subject below to the stream, so the transmitter will deliver events about this account to it.">
+    <input type="button" class="ssf-btn ssf-btn-danger" id="btn_risc_reset"
+           value="Reset this account only"
+           onclick="return ssf.resetRiscAccount();"
+           title="Clears the three states, the counters and what has been said, and keeps the identity. Nothing at the transmitter is touched — and nothing is deleted, because deleting the row is what account-purged MEANS.">
+  </div>
+  <p class="ssf-status" id="risc_seed_note"></p>
+
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="risc_iss">iss</label>
+      <input class="ssf-field" type="text" id="risc_iss"
+             placeholder="https://sts.example.com"
+             title="The issuer the receiver already knows this person by. It is what an ID Token's `iss` said.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_sub">sub</label>
+      <input class="ssf-field" type="text" id="risc_sub"
+             placeholder="the subject identifier"
+             title="The person. With `iss` above it makes the RFC 9493 issuer_subject_id a receiver already holds — the identifier eleven of the fourteen event types name.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_email">email</label>
+      <input class="ssf-field" type="text" id="risc_email"
+             placeholder="the address identifier-changed is about"
+             title="The subject of identifier-changed and identifier-recycled, which MUST be an address or a number and carries the OLD value. An address this page invented makes those two events about nothing.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_phone">phone_number</label>
+      <input class="ssf-field" type="text" id="risc_phone"
+             placeholder="+12065550100"
+             title="The other identifier RISC's two identifier events accept. RFC 9493 spells the format `phone_number`; the RISC text says 'phone', which is the older RISC subject type name and not what SSF 1.0 uses.">
+    </div>
+  </div>
+
+  <div class="ssf-row">
+    <label class="ssf-label" for="risc_subject_format">subject format</label>
+    <select class="ssf-field" id="risc_subject_format"
+            onchange="return ssf.renderRiscFromEvent();"
+            title="THE CONSEQUENTIAL CONTROL ON THIS PANE, because eleven of the fourteen event types carry no payload at all and the subject is the whole message. The two identifier events override it and use email regardless.">
+      <option value="issuer_subject_id" selected>issuer_subject_id &mdash;
+        what a receiver already holds</option>
+      <option value="email">email &mdash; and identifier-recycled exists
+        because that key is unsafe</option>
+      <option value="phone_number">phone_number</option>
+      <option value="opaque">opaque</option>
+      <option value="account">account &mdash; an acct: URI</option>
+    </select>
+    <label class="ssf-radio"><input type="checkbox" id="risc_honour_optout"
+           checked
+           title="RISC section 2.8 says an opted-out account is not participating in event exchange. Clearing this is how a receiver that IGNORES an opt-out gets to be shown doing it — the four opt-out events are never gated either way.">
+           honour the opt-out state</label>
+  </div>
+  <label class="ssf-label" for="risc_subject_json">sub_id &mdash; the subject
+  this page will send</label>
+  <textarea class="ssf-field ssf-mono" id="risc_subject_json" rows="5" readonly
+            title="Built from the fields above through the same RFC 9493 grammar the Subjects pane uses. Checked against it, and against the per-event-type format rule, with the findings below."></textarea>
+  <div id="risc_subject_findings"></div>
+
+  <details class="ssf-more">
+    <summary>The three claims RISC gives to ONE of its fourteen events</summary>
+    <p class="ssf-note">CAEP section 2 gives <code>event_timestamp</code>,
+    <code>initiating_entity</code>, <code>reason_admin</code> and
+    <code>reason_user</code> to <em>every one</em> of its eight events. RISC
+    gives <strong>three</strong> of them &mdash; there is no
+    <code>initiating_entity</code> &mdash; and gives them to <strong>exactly
+    one</strong> of its fourteen, <code>credential-compromise</code>. On any
+    other type the fields below are composed and dropped, rather than sent as
+    members the specification does not define.</p>
+    <p class="ssf-note"><code>event_timestamp</code> means something different
+    here too: RISC section 2.7 words it as when the transmitter
+    <strong>discovered</strong> the compromise rather than when it happened. A
+    credential found in a breach corpus was compromised long before anybody
+    noticed, so a receiver reading it as an occurrence time dates the incident
+    from the wrong end.</p>
+    <p class="ssf-note">RISC does not repeat CAEP&rsquo;s requirement that the
+    two reason members be <strong>language maps</strong> rather than strings,
+    which makes a bare string arguably conforming to RISC and certainly
+    unreadable to a receiver built against CAEP. This page sends the map,
+    because that is the reading that is right under both.</p>
+  </details>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="risc_credential_type">credential_type
+      </label>
+      <input class="ssf-field" type="text" id="risc_credential_type"
+             value="password"
+             title="REQUIRED on credential-compromise, and the only required member in the whole vocabulary. RISC defines it BY REFERENCE to CAEP's credential-change, so the two lists are one list; an unlisted value is carried with a warning.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_timestamp">event_timestamp</label>
+      <select class="ssf-field" id="risc_timestamp"
+              title="A NUMBER of seconds since the epoch, and only credential-compromise defines it.">
+        <option value="now">now</option>
+        <option value="hour">an hour ago &mdash; the token is minted now
+        </option>
+        <option value="omit">omit it &mdash; legal, and what breaks receivers
+        </option>
+      </select>
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_language">language tag</label>
+      <input class="ssf-field ssf-narrow" type="text" id="risc_language"
+             value="en"
+             title="The BCP 47 tag the two reason members are keyed under.">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_reason_admin">reason_admin</label>
+      <input class="ssf-field" type="text" id="risc_reason_admin"
+             placeholder="why, for a log and an auditor">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_reason_user">reason_user</label>
+      <input class="ssf-field" type="text" id="risc_reason_user"
+             placeholder="why, in words meant for the person">
+    </div>
+    <div>
+      <label class="ssf-label" for="risc_new_value">new-value</label>
+      <input class="ssf-field" type="text" id="risc_new_value"
+             placeholder="what the identifier became"
+             title="identifier-changed's only member, and THE ONLY HYPHENATED MEMBER NAME IN ANY OF THE THREE VOCABULARIES. `new_value` typed from habit produces an event that validates, delivers and tells the receiver nothing — this page names that near miss rather than silently correcting it.">
+    </div>
+  </div>
+
+  <details class="ssf-more">
+    <summary>What each button sends, and the two that are not what they
+      look like</summary>
+    <p class="ssf-note">Four of the fourteen describe things a transmitter can
+    actually observe in its own directory &mdash; a person deleted, an account
+    marked inactive or active again, an identifier moving &mdash; and this
+    stack&rsquo;s mock sends those <strong>by itself</strong> when the
+    directory changes over SCIM, over LDAP or from its console. That is a
+    <em>different</em> observer from CAEP&rsquo;s, watching the provisioning
+    layer rather than the authentication one.</p>
+    <p class="ssf-note"><strong>The four opt-out buttons ARE state
+    transitions</strong>, not reports of one: RISC section 2.8 words each as
+    <em>the account is in this state</em>, so pressing one moves the account
+    here. And <code>sessions-revoked</code> is <strong>deprecated by RISC
+    itself</strong> in favour of CAEP&rsquo;s <code>session-revoked</code> —
+    plural against singular, one letter apart, every session this person has
+    against the one the subject names. It is offered because a debugger that
+    could not build a deprecated event could not find out what a receiver does
+    with one.</p>
+  </details>
+  <div class="ssf-buttons" id="risc_simulate"></div>
+  <p class="ssf-status" id="risc_simulate_status"></p>
+
+  <div id="risc_state"></div>
+  <div id="risc_counts"></div>
+  <div id="risc_log"></div>
+  </fieldset>
+</div>
 
 <!-- ===================== Receiving ===================== -->
-<fieldset class="ssf-pane" id="pane_receive">
-  <legend>Receiving events</legend>
-  <p class="ssf-note"><strong>Poll delivery works in this browser and push
-  delivery cannot</strong>, and that is a property of the two specifications
-  rather than of this tool. RFC 8936 has the receiver come to the transmitter,
-  which a page can do; RFC 8935 has the transmitter POST to the receiver, and a
-  page is not an HTTP server. So the api layer hosts an endpoint on this
-  page&rsquo;s behalf &mdash; and on a deployment with no api there is nothing
-  to host, which is exactly what the hosted static sites are.</p>
+<div class="ssf-pane dbg-pane" id="pane_receive">
+  <legend class="dbg-legend"
+          id="receive_expand_button">Receiving events</legend>
+  <fieldset name="receive_fieldset" id="receive_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why poll delivery works in this browser and push delivery does
+      not</summary>
+    <p class="ssf-note"><strong>Poll delivery works in this browser and push
+    delivery cannot</strong>, and that is a property of the two specifications
+    rather than of this tool. RFC 8936 has the receiver come to the transmitter,
+    which a page can do; RFC 8935 has the transmitter POST to the receiver, and
+    a
+    page is not an HTTP server. So the api layer hosts an endpoint on this
+    page&rsquo;s behalf &mdash; and on a deployment with no api there is nothing
+    to host, which is exactly what the hosted static sites are.</p>
+  </details>
   <div class="ssf-row">
     <input type="button" class="ssf-btn" id="btn_ssf_poll" value="Poll once"
            onclick="return ssf.pollOnce();"
@@ -404,10 +981,15 @@ read as a broken page.</p>
            value="Delete the inbox" onclick="return ssf.deleteReceiver();">
   </div>
   <p class="ssf-status" id="ssf_inbox_status"></p>
-  <p class="ssf-note">Anything that arrives is decoded and <strong>every check
-  is reported by name</strong>. A single &ldquo;valid&rdquo; over a token whose
-  audience is somebody else is the most dangerous thing this page could
-  say.</p>
+  <details class="ssf-more">
+    <summary>What is checked on an arriving token, and why each check is
+      named</summary>
+    <p class="ssf-note">Anything that arrives is decoded and <strong>every check
+    is reported by name</strong>. A single &ldquo;valid&rdquo; over a token
+    whose
+    audience is somebody else is the most dangerous thing this page could
+    say.</p>
+  </details>
   <div class="ssf-grid">
     <div>
       <label class="ssf-label" for="ssf_verify_key">Verification key</label>
@@ -417,9 +999,12 @@ read as a broken page.</p>
     <div>
       <label class="ssf-label" for="ssf_verify_alg">Algorithm</label>
       <select class="ssf-field" id="ssf_verify_alg"></select>
-      <p class="ssf-note">The <em>verifier</em> chooses the algorithm, never
-      the token (RFC 8725 section 3.1). A mismatch with the header is
-      reported rather than accommodated.</p>
+      <details class="ssf-more">
+        <summary>Why the verifier chooses the algorithm</summary>
+        <p class="ssf-note">The <em>verifier</em> chooses the algorithm, never
+        the token (RFC 8725 section 3.1). A mismatch with the header is
+        reported rather than accommodated.</p>
+      </details>
       <input type="button" class="ssf-btn ssf-btn-quiet"
              id="btn_ssf_fetch_jwks" value="Fetch the transmitter's JWKS"
              onclick="return ssf.fetchJwks();"
@@ -434,18 +1019,28 @@ read as a broken page.</p>
     <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_decode_set"
            value="Decode and check" onclick="return ssf.decodePastedSet();">
   </div>
-</fieldset>
+  </fieldset>
+</div>
 
 <!-- ===================== Transmitting ===================== -->
-<fieldset class="ssf-pane" id="pane_transmit">
-  <legend>Transmitting events &mdash; this page as the transmitter</legend>
-  <p class="ssf-note">The other half of the protocol, and the one a receiver
-  under test needs: build any event SSF defines, sign it, and push it to
-  somebody&rsquo;s RFC 8935 endpoint. <strong>The media type is the thing that
-  is silently wrong everywhere</strong> &mdash; RFC 8417 section 2.3 gives a SET
-  <code>application/secevent+jwt</code>, and a receiver that dispatches on the
-  type drops one sent as <code>application/jwt</code> with no error anybody
-  sees. This page can send either, on purpose.</p>
+<div class="ssf-pane dbg-pane" id="pane_transmit">
+  <legend class="dbg-legend"
+          id="transmit_expand_button">
+Transmitting events &mdash; this page as the transmitter</legend>
+  <fieldset name="transmit_fieldset" id="transmit_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>What this pane sends, and the media type that is silently wrong
+      everywhere</summary>
+    <p class="ssf-note">The other half of the protocol, and the one a receiver
+    under test needs: build any event SSF defines, sign it, and push it to
+    somebody&rsquo;s RFC 8935 endpoint. <strong>The media type is the thing that
+    is silently wrong everywhere</strong> &mdash; RFC 8417 section 2.3 gives a
+    SET
+    <code>application/secevent+jwt</code>, and a receiver that dispatches on the
+    type drops one sent as <code>application/jwt</code> with no error anybody
+    sees. This page can send either, on purpose.</p>
+  </details>
   <div class="ssf-grid">
     <div>
       <label class="ssf-label" for="ssf_tx_type">Event type</label>
@@ -456,12 +1051,16 @@ read as a broken page.</p>
     <div>
       <label class="ssf-label" for="ssf_tx_alg">Signing algorithm</label>
       <select class="ssf-field" id="ssf_tx_alg"></select>
-      <p class="ssf-note"><strong>A SET is the document here most worth
-      signing post-quantum.</strong> It records that something HAPPENED, RFC
-      8417 section 4.1.4 forbids it to expire, and it is therefore read long
-      after it was written &mdash; which is the case a
-      harvest-now-decrypt-later argument is actually about. ML-DSA, SLH-DSA
-      and the six composite ML-DSA + traditional algorithms are all here.</p>
+      <details class="ssf-more">
+        <summary>Why a SET is the document here most worth signing
+          post-quantum</summary>
+        <p class="ssf-note"><strong>A SET is the document here most worth
+        signing post-quantum.</strong> It records that something HAPPENED, RFC
+        8417 section 4.1.4 forbids it to expire, and it is therefore read long
+        after it was written &mdash; which is the case a
+        harvest-now-decrypt-later argument is actually about. ML-DSA, SLH-DSA
+        and the six composite ML-DSA + traditional algorithms are all here.</p>
+      </details>
     </div>
   </div>
   <div class="ssf-row">
@@ -548,18 +1147,27 @@ read as a broken page.</p>
   </textarea>
   <div id="ssf_tx_decoded"></div>
   <div id="ssf_families"></div>
-</fieldset>
+  </fieldset>
+</div>
 
 <!-- ===================== Event messages ===================== -->
-<fieldset class="ssf-pane" id="pane_messages">
-  <legend>Event message history</legend>
-  <p class="ssf-note">Every Security Event Token this page sent or received,
-  whole, with what it decoded to and what every check said. The tokens are kept
-  because a SET is <strong>evidence rather than a credential</strong> &mdash;
-  holding one grants nothing and presenting one achieves nothing &mdash; and
-  evidence is what a debugger most needs to survive a navigation. What is
-  stripped is the <code>Authorization</code> header of the exchange that
-  carried it, which <em>is</em> a credential.</p>
+<div class="ssf-pane dbg-pane" id="pane_messages">
+  <legend class="dbg-legend"
+          id="messages_expand_button">Event message history</legend>
+  <fieldset name="messages_fieldset" id="messages_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>Why the tokens are kept and the Authorization header is
+      not</summary>
+    <p class="ssf-note">Every Security Event Token this page sent or received,
+    whole, with what it decoded to and what every check said. The tokens are
+    kept
+    because a SET is <strong>evidence rather than a credential</strong> &mdash;
+    holding one grants nothing and presenting one achieves nothing &mdash; and
+    evidence is what a debugger most needs to survive a navigation. What is
+    stripped is the <code>Authorization</code> header of the exchange that
+    carried it, which <em>is</em> a credential.</p>
+  </details>
   <div class="ssf-row">
     <input type="button" class="ssf-btn ssf-btn-quiet"
            id="btn_ssf_clear_messages" value="Clear the message history"
@@ -568,34 +1176,50 @@ read as a broken page.</p>
   <div id="ssf_messages">
     <p class="ssf-note">No events yet.</p>
   </div>
-</fieldset>
+  </fieldset>
+</div>
 
 <!-- ===================== Exchange ===================== -->
-<fieldset class="ssf-pane" id="pane_exchange">
-  <legend>The last exchange</legend>
-  <p class="ssf-note">What went out and what came back. On the
-  <strong>browser</strong> call path this is what the page can see, which is
-  less than the whole: a browser withholds the headers it adds and CORS
-  withholds most of those that come back. The <strong>api</strong> path is made
-  by the backend and can therefore be reported in full, which is one of the
-  three reasons that path exists.</p>
+<div class="ssf-pane dbg-pane" id="pane_exchange">
+  <legend class="dbg-legend"
+          id="exchange_expand_button">The last exchange</legend>
+  <fieldset name="exchange_fieldset" id="exchange_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>What the browser call path can and cannot show</summary>
+    <p class="ssf-note">What went out and what came back. On the
+    <strong>browser</strong> call path this is what the page can see, which is
+    less than the whole: a browser withholds the headers it adds and CORS
+    withholds most of those that come back. The <strong>api</strong> path is
+    made
+    by the backend and can therefore be reported in full, which is one of the
+    three reasons that path exists.</p>
+  </details>
   <label class="ssf-label" for="ssf_exchange">Exchange</label>
   <textarea class="ssf-field ssf-mono" id="ssf_exchange" rows="14" readonly>
   </textarea>
-</fieldset>
+  </fieldset>
+</div>
 
 <!-- ===================== Operations history ===================== -->
-<fieldset class="ssf-pane" id="pane_history">
-  <legend>Operations History</legend>
-  <p class="ssf-note">One row per call, newest first. <strong>Sent</strong> is
-  not a success: it means the call left this page and nothing came back to
-  resolve it.</p>
+<div class="ssf-pane dbg-pane" id="pane_history">
+  <legend class="dbg-legend"
+          id="history_expand_button">Operations History</legend>
+  <fieldset name="history_fieldset" id="history_fieldset"
+            style="display: block;">
+  <details class="ssf-more">
+    <summary>What <strong>Sent</strong> means in this table</summary>
+    <p class="ssf-note">One row per call, newest first. <strong>Sent</strong> is
+    not a success: it means the call left this page and nothing came back to
+    resolve it.</p>
+  </details>
   <div class="ssf-row">
     <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_clear_ops"
            value="Clear" onclick="return ssf.clearOperations();">
   </div>
   <div id="ssf_history"></div>
-</fieldset>
+  </fieldset>
+</div>
 
     </div>
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
@@ -606,7 +1230,8 @@ read as a broken page.</p>
 <link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
 <link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
-<link rel="icon" type="image/png" sizes="192x192"  href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="192x192" 
+href="/android-icon-192x192.png">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
 <link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">

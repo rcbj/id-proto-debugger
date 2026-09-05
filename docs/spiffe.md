@@ -722,6 +722,31 @@ same question asked of a deployment — "does this target have an api at all")
 but its **own** variable, because a target could perfectly well be api-backed
 with a directory reachable and no SPIRE server.
 
+**And each of the three additionally requires the mock to have BOUND the ports
+it is about to dial, which is a different question from whether SPIFFE is
+enabled.** These two listeners are optional to that service: it logs `spiffe:
+could not bind 0.0.0.0:8181 ... EADDRINUSE` at level 50 and carries on, where
+the HTTP port everything else uses would take the process down with it. So on
+2026-09-01 a stranger held 8092 and 8181 through a whole run — the stack was
+healthy, every HTTP-backed job passed, and these three drove somebody else's
+SPIRE server. The two failures named neither the port nor each other:
+`spiffe_protocol.js` wrote `spiffe.adminIds` to **this** mock over 8081 and
+exercised it against **another** over 8181, so the refusal it reported was the
+far end's own authorization rule; `spiffe_page.js` presented an SVID from this
+trust domain to a server holding a different authority, which the api reported
+as `self-signed certificate in certificate chain`. `api_spiffe.js` **passed**,
+because a status-code contract is true of any instance of the same mock.
+
+A probe cannot settle it — it cannot tell our listener from somebody else's —
+so the fact is taken from the service, which publishes `listening` and the bind
+error for every listener at `GET /spiffe?format=json`.
+`tests/spiffe_listeners.js` reads that in each of the three gates, and
+`requireStsSpiffeListeners()` in `common/common.sh` reads it once in the
+launcher, fatally, so a run stops in one line instead of forty-five minutes
+later in three places. A listener the mock says it did **not** bind fails the
+job rather than skipping it: something is answering there, and a skip would
+leave a green run in which the workflow was never exercised.
+
 ---
 
 ## Where everything is
@@ -736,4 +761,5 @@ with a directory reachable and no SPIRE server.
 | the CSR builder | `client/src/x509.js`'s `certificationRequest()` |
 | the api's settings | `api/env/*.js`: `spiffeAllowedPorts`, `spiffeAllowedSocketPaths`, `spiffeMaxStreamMessages`, `spiffeStreamTimeout` |
 | the page's defaults | `client/src/env/*.js`: `spiffeTrustDomainDefault`, `spiffeWorkloadAddressDefault`, `spiffeServerAddressDefault`, `spiffeBundleUrlDefault` — read by `init()`'s `seed()`, which fills a field only when storage left it empty. **They were declared and read by nothing at all until this build**, so a deployment that set one got an empty box and no complaint from anywhere. `local.js` sets the server address to `http://localhost:8081`, which `parseAddress()` **refuses**: a gRPC address is `host:port`, `tcp://host:port` or `unix:///path`, and an unrecognised scheme is refused rather than defaulted because grpc-js would dial a host called `http`. The refusal names the scheme, and the field's tooltip says so before the call |
+| the tests | `tests/spiffe_engine.js`, `tests/spiffe_protocol.js`, `tests/api_spiffe.js`, `tests/spiffe_page.js`, and `tests/spiffe_listeners.js` — the gate the three networked ones share, which asks the mock whether it bound the ports they are about to dial |
 | the mock | `sts/spiffe/` — and its own `spiffe/CLAUDE.md`, which is the authority on what that service does and does not check |

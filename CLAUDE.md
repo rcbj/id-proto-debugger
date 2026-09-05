@@ -19,7 +19,9 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | **SPNEGO** — Kerberos over HTTP: `spnego.html`, `krb5_spnego.js`, `POST /krb5/spnego`, the mock's protected page | `docs/spnego.md` |
 | **LDAP** — `ldap.html`, `api/ldap_client.js`, the eight `POST /ldap/*` endpoints, the mock's embedded directory, the `node-ldapjs` submodules | `docs/ldap.md` |
 | **SCIM** — the SCIM 2.0 provisioning page, its scenario harness, `client/src/scim*.js`, `api/scim_proxy.js` and `POST /scim` | `docs/scim.md` |
-| **SSF** — the Shared Signals page, `client/src/ssf*.js`, `api/ssf_proxy.js`, the api's push receiver, and the mock's transmitter. **Part one of three**: SSF is the PIPE and CAEP and RISC are the vocabularies over it, neither implemented yet | `docs/ssf.md` |
+| **SSF** — the Shared Signals page, `client/src/ssf*.js`, `api/ssf_proxy.js`, the api's push receiver, and the mock's transmitter. **Part one of three**: SSF is the PIPE and CAEP and RISC are the vocabularies over it | `docs/ssf.md` |
+| **CAEP** — the session vocabulary over that pipe: the Profile selector and the CAEP Session pane on `ssf.html`, `client/src/caep_session.js`, the eight event types in `ssf_events.js`, and the mock's `/admin/caep` and `/admin/caep-sessions`. **Part two of three**, and the one place in this tree where the far end SENDS SOMETHING NOBODY ASKED FOR — a sign-in, a single sign-on and a sign-out each put a Security Event Token on every stream that agreed to be told | `docs/caep.md` |
+| **RISC** — the account vocabulary over that pipe: the Profile selector's third option and the RISC Account pane on `ssf.html`, `client/src/risc_account.js`, the fourteen event types in `ssf_events.js`, and the mock's `/admin/risc` and `/admin/risc-accounts`. **Part three of three, and the last.** CAEP says *this session is no longer trustworthy* and RISC says *this account is no longer trustworthy* — a revoked session is one sign-in at one relying party, and a purged account is every session that person has anywhere, for ever. **Eleven of the fourteen carry no payload members at all**, so the SUBJECT is the entire message, which is the exact inversion of CAEP; and the mock emits these when its own DIRECTORY changes rather than when a session does | `docs/risc.md` |
 | **SPIFFE** — the SPIFFE / SPIRE page, `api/spiffe_client.js`, the vendored `api/protos/`, `common/spiffe/`, and all forty-nine methods | `docs/spiffe.md` |
 | **PKI** — the certificate authority page, `x509.js`, `key_material.js`, `pqc_x509.js`, the keystore formats, the **three ways a certificate here carries post-quantum cryptography** (pure, composite, hybrid) and the api's TLS / mutual-TLS test | `docs/pki.md` |
 | **encryption** — the Encryption / Decryption page, its nine panes, and the DOM-free engines behind them (`symmetric_crypto.js`, `pk_encryption.js`, `crypto_bytes.js`) | `docs/encryption.md` |
@@ -27,6 +29,7 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | **post-quantum XML Signature** — the sixteen ML-DSA / SLH-DSA / HSS-LMS `SignatureMethod` identifiers `common/xmldsig.js` took from `draft-eastlake-rfc9231bis-xmlsec-uris-09`, why every label says *draft*, why the cryptography is injected rather than bundled, and why the ENCRYPTION half (ML-KEM, FrodoKEM) is a separate piece of work | `docs/xmldsig-pqc.md` |
 | **stateful hash-based signatures** — the LMS/HSS and XMSS/XMSS^MT pane on the Digital Signature page, `hbs.js`, and the state that makes them different from every other signature here | `docs/hbs.md` |
 | the mock STS — **a submodule**, so its notes cannot live under `sts/` | `docs/mock-sts.md` |
+| **what to implement next in OAuth 2.0 / OpenID Connect** — the ecosystem's sixty-five specifications crossed against this tree, and the argued order for the thirty-seven that are missing. **A proposal and not a record**: every "should" in it is unbuilt, and a landed item's paragraph moves into that workflow's own notes and is deleted from there, because a roadmap still listing finished work is worse than none. Two things in it are worth knowing before planning anything: coverage is graded **at each end separately**, and the cheapest work in the list is the handful of documents where the mock already implements the server half and the debugger implements nothing — `private_key_jwt`, RFC 8705 and Front-Channel Logout are all that shape. And **OpenID Federation 1.0 is not what `--federation-only` and the mock's `federation/` do** — those are pairwise relationships configured by hand; that is entity statements, trust chains and trust marks, and nothing here parses one | `docs/spec-roadmap.md` |
 
 ## Overview
 
@@ -48,7 +51,7 @@ inside `sts/`, which is somebody else's checkout. The working copy
 itself is still nested under a directory of the old name. Nothing about
 the code, the layout or the commands changed with the name.
 
-id-proto-debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust, WS-Federation, SD-JWT VC (issuance and presentation), WebAuthn and **Kerberos v5** flows against real identity providers, issuers, verifiers, key distribution centers and security keys. It **provisions** the identities those protocols then authenticate, over **SCIM 2.0** — one endpoint at a time, or as scenario batches that create, modify and deprovision populations of users and groups and check every step against what the plan said would happen. It hands those workloads the identities they authenticate WITH, over **SPIFFE** — an X509-SVID or a JWT-SVID from a Workload API that authenticates nobody, then all forty-two SPIRE Server API methods as whoever that credential makes you. **And since 2026-08-31 it is the far end of the one protocol here that runs the other way round.** Every other family in this tree asks a question about somebody who is already there; the **Shared Signals Framework** (OpenID SSF 1.0, final September 2025) has the identity provider TELL a relying party when something changed — because SAML and OpenID Connect authenticate at one instant and the session that follows stays good for hours whatever happens next. The workflow agrees a stream, names who it is about in any of RFC 9493's eight subject identifier formats, and sends or receives RFC 8417 Security Event Tokens by RFC 8935 push or RFC 8936 poll. **SSF is the PIPE and not the vocabulary**: it defines two events of its own, both about the pipe, and CAEP (what happened to a session) and RISC (what happened to an account) are the two vocabularies spoken over it — parts two and three of this work, and the whole design is arranged so that adding one is rows in `client/src/ssf_events.js`'s table and nothing else. See `docs/ssf.md`.
+id-proto-debugger — a two-service web application for testing and debugging OAuth2, OIDC, SAML, WS-Trust, WS-Federation, SD-JWT VC (issuance and presentation), WebAuthn and **Kerberos v5** flows against real identity providers, issuers, verifiers, key distribution centers and security keys. It **provisions** the identities those protocols then authenticate, over **SCIM 2.0** — one endpoint at a time, or as scenario batches that create, modify and deprovision populations of users and groups and check every step against what the plan said would happen. It hands those workloads the identities they authenticate WITH, over **SPIFFE** — an X509-SVID or a JWT-SVID from a Workload API that authenticates nobody, then all forty-two SPIRE Server API methods as whoever that credential makes you. **And since 2026-08-31 it is the far end of the one protocol here that runs the other way round.** Every other family in this tree asks a question about somebody who is already there; the **Shared Signals Framework** (OpenID SSF 1.0, final September 2025) has the identity provider TELL a relying party when something changed — because SAML and OpenID Connect authenticate at one instant and the session that follows stays good for hours whatever happens next. The workflow agrees a stream, names who it is about in any of RFC 9493's eight subject identifier formats, and sends or receives RFC 8417 Security Event Tokens by RFC 8935 push or RFC 8936 poll. **SSF is the PIPE and not the vocabulary**: it defines two events of its own, both about the pipe, and CAEP (what happened to a session) and RISC (what happened to an account) are the two vocabularies spoken over it. **CAEP arrived on 2026-09-03 and RISC on 2026-09-04, so the family is complete** — eight session event types and fourteen account ones, a Profile selector that reconfigures the workflow around the chosen vocabulary, and a simulated session and a simulated account to drive them from. **The design held twice, and the second time is the one that proves it**: CAEP cost four value types in the catalogue's `checkMember()`; RISC cost NONE. Adding either was rows in `client/src/ssf_events.js`'s table, plus one model of what those rows are ABOUT — `caep_session.js` and `risc_account.js`, which are siblings rather than one generalized thing, because a session begins, is used and ends and one person has many, while an account IS the person and outlives every session on it. **It also changed what the mock STS is, in two different layers**: with `caep.autoEmit` on, a sign-in, a single sign-on and a sign-out each send a Security Event Token with nobody having asked; with `risc.autoEmit` on, a person deleted from its directory, an account marked inactive and a mail address moving do the same — two observers, on the authentication layer and the provisioning layer, and they are the only places in this tree where an endpoint is not what starts the work. See `docs/ssf.md`, `docs/caep.md` and `docs/risc.md`.
 
 It also builds the **X.509** certificate authorities those protocols run on — a Root, an Intermediate and an Issuing CA, with full X.509v3 extension control — and makes real **TLS and mutual-TLS** connections with what it issues. Supports Authorization Code, Implicit, Client Credentials, Resource Owner Password, and Refresh grants, plus all three OIDC authentication flows (Authorization Code, Implicit, Hybrid).
 
@@ -135,7 +138,7 @@ The project is split into two independent Node.js services:
 - **`/client/src/crypto_bytes.js`, `/client/src/symmetric_crypto.js` and `/client/src/pk_encryption.js`** — the **encryption** engines, and the second place in this tree where cryptography was pulled *out* of a page rather than written for one. `crypto_bytes.js` is the bytes/base64/base64url/hex/PEM set that `jose_jwe.js`, `digital_signature.js` and `key_material.js` each had a copy of; `symmetric_crypto.js` is the block and stream ciphers plus the MAC constructions the Digital Signature page's three MAC panes were built on — Poly1305 forced that move, because ChaCha20-Poly1305 needs the same RFC 8439 section 2.5 implementation and two readings of it can agree with each other and be wrong together; `pk_encryption.js` is RSA, ECIES, ML-KEM and the finite-field family. **None of the three has a DOM**, which is what lets `tests/crypto_engines.js` drive every one of them in node against the RFCs' own vectors and against OpenSSL — the only kind of check that catches an AEAD tag which is self-consistent and interoperates with nothing. The DOM half is `client/src/tool_panes.js`, shared with the Digital Signature page. See `docs/encryption.md`.
 - **`/client/src/hash_tools.js`** — **the** hash registry, the third engine pulled out of a page rather than written for one, and the one that is here because of what a browser CANNOT do: `crypto.subtle` has no SHA-3 in any browser — not one of FIPS 202's six functions, and none of SP 800-185's four — so the Hashing / Encoding Tools page could compute the SHA-2 family and nothing that any of the three post-quantum standards is actually built from. It now holds all of them (FIPS 180-4, FIPS 202, SP 800-185, plus the pre-FIPS Keccak padding that is not SHA-3 and is constantly mistaken for it) together with the security and post-quantum ROLE of each, which is the half a `sha3sum` alias does not give you: SHA3-256 is ML-KEM's H, SHAKE256 is the whole of SLH-DSA-SHAKE, and only one of those two names appears in FIPS 203. Moving off Web Crypto also ended a silent defect rather than only enabling a feature — `crypto.subtle` does not exist outside a secure context, so on the containerized test origin that pane had no cryptography at all and the suite passed a flag to conceal it. **No DOM**, so `tests/hash_engine.js` drives every function in node against OpenSSL, against `openssl mac`'s KMAC and against SP 800-185's own sample values. See `docs/hashing.md`.
 - **`/client/src/hbs.js`** — **LMS/HSS (RFC 8554, RFC 9858) and XMSS/XMSS^MT (RFC 8391, SP 800-208)**, the two STATEFUL hash-based signature schemes NIST approves, and the only signature implementation in this tree written FROM THE SPECIFICATIONS rather than taken from a library — there is no LMS or XMSS in `@noble`, in Web Crypto or in node. That is a different class of risk from every other algorithm here, because a hash-based signature is simple to implement and unforgiving to get wrong: a dropped domain separator, a chain address written into the word the LEAF index lives in (which happened here, and only the reference vectors caught it), or SP 800-208's four-byte padding for the 192-bit parameter sets each produce a scheme that signs and verifies against ITSELF perfectly and interoperates with nothing. So `tests/hbs_signatures.js` asserts against RFC 8554's and RFC 9858's own test cases, one verification vector for each of the 21 XMSS parameter sets, the XMSS reference implementation's key generation vectors and eight signatures that must not verify. **The private key changes every time it is used**, which nothing else on that page does: spending one one-time key twice hands an attacker the material to forge a third message, so the pane keeps the index in the private key box, rewrites it on every Sign, and has a button that does the forbidden thing on purpose. **No DOM.** See `docs/hbs.md`.
-- **`/client/src/ssf_client.js`, `/client/src/ssf_events.js` and `/client/src/ssf_history.js`** — the **Shared Signals** engines, and the fourth place in this tree where the interesting half of a workflow was kept out of the page on purpose. `ssf_client.js` is the PIPE: RFC 9493's eight subject identifier formats with their CLOSED member sets, SSF's complex subject, the RFC 8417 SET envelope, stream configurations, and both deliveries. `ssf_events.js` is the VOCABULARY and is **the one file CAEP and RISC will change** — if a function in `ssf_client.js` ever grows a branch naming an event type, that separation has gone wrong. `ssf_history.js` is the two histories. **None has a DOM**, which is what lets `tests/ssf_engine.js` drive the whole of it in node — and the defects that matter in this protocol are never crashes: a subject identifier with an extra member (which every conforming receiver MUST reject and which looks perfectly fine in a log), an `exp` on a SET (RFC 8417 section 4.1.4 forbids one), `events_requested` read back as `events_delivered` so a receiver waits for types nothing will send, a delivery method spelt `push` rather than `urn:ietf:rfc:8935`. **The subject grammar is deliberately NOT shared with the mock**, which has its own: a grammar is a READING, and if both ends read one implementation a misunderstanding they share is one neither can see. Every signature goes through `jws.js`, so the post-quantum algorithms are there for nothing — and a SET is the document in this application most worth signing that way, because it records that something HAPPENED and is read long after it was written. See `docs/ssf.md`.
+- **`/client/src/ssf_client.js`, `/client/src/ssf_events.js` and `/client/src/ssf_history.js`** — the **Shared Signals** engines, and the fourth place in this tree where the interesting half of a workflow was kept out of the page on purpose. `ssf_client.js` is the PIPE: RFC 9493's eight subject identifier formats with their CLOSED member sets, SSF's complex subject, the RFC 8417 SET envelope, stream configurations, and both deliveries. `ssf_events.js` is the VOCABULARY and is **the one file CAEP and RISC changed** — twenty-two rows later, `ssf_client.js` still names no event type anywhere, and if a function in it ever grows a branch naming one that separation has gone wrong. `ssf_history.js` is the two histories. Beside them, `caep_session.js` and `risc_account.js` are what the two vocabularies' rows are ABOUT — a session and an account — which is not vocabulary and cannot be derived from a catalogue. **None has a DOM**, which is what lets `tests/ssf_engine.js` drive the whole of it in node — and the defects that matter in this protocol are never crashes: a subject identifier with an extra member (which every conforming receiver MUST reject and which looks perfectly fine in a log), an `exp` on a SET (RFC 8417 section 4.1.4 forbids one), `events_requested` read back as `events_delivered` so a receiver waits for types nothing will send, a delivery method spelt `push` rather than `urn:ietf:rfc:8935`. **The subject grammar is deliberately NOT shared with the mock**, which has its own: a grammar is a READING, and if both ends read one implementation a misunderstanding they share is one neither can see. Every signature goes through `jws.js`, so the post-quantum algorithms are there for nothing — and a SET is the document in this application most worth signing that way, because it records that something HAPPENED and is read long after it was written. See `docs/ssf.md`.
 - **`/client/src/scim_client.js` and `/client/src/scim_scenarios.js`** — the **SCIM 2.0** engines, and the third place in this tree where the interesting half of a workflow was kept OUT of the page on purpose. `scim_client.js` composes every request RFC 7644 defines, applies the seven authentication schemes, and generates a User carrying every optional attribute RFC 7643 section 4.1 has; `scim_scenarios.js` turns "create ten users, put them in a group, change five and delete the lot" into a list of steps each carrying its own EXPECTATION, which is what makes a 409 on a duplicate `userName` a **pass**. **Neither has a DOM**, which is what lets `tests/scim_engine.js` drive the whole of it in node against the RFCs' own text — the only kind of check that catches a double-encoded id (a 404 that reads exactly like a deleted user) or a wrong Digest hash (a 401 that reads exactly like a wrong password). Digest is implemented here for all three registered algorithms and NONE of them is Web Crypto, which has neither MD5 nor SHA-512/256. See `docs/scim.md`.
 - **`/common/spiffe/` and `/api/protos/`** — the **SPIFFE** halves that are not
   a page. `spiffe_id.js` is the ID grammar and `spiffe_bundle.js` reads a trust
@@ -202,10 +205,85 @@ startup naming the file they could not read — deliberately, because a service
 that invented a key pair of its own would be up and serving something nothing
 else in the stack trusts.
 
-Access the app at `https://localhost:3000`. The certificate is **self-signed**,
-so a browser shows an interstitial the first time; `./generate-tls-cert.sh`
-prints the SHA-256 fingerprint if you want to check it against what you are
-being shown.
+**It is a THREE-CERTIFICATE HIERARCHY, and which file you trust is the point.**
+A Root CA, an Issuing CA beneath it, and the leaf the two services present —
+from `client/src/x509.js`'s own `root-ca`, `issuing-ca` and `tls-server`
+profiles, which are three of the fourteen the PKI page offers, used unwrapped.
+It was one self-signed leaf until 2026-09-01.
+
+| File | What it is |
+|---|---|
+| `./generated-tls-ca/stack-tls-root.pem` | the Root CA. **Trust this one.** |
+| `./generated-tls-ca/stack-tls-issuing.pem` | the Issuing CA under it |
+| `./generated-tls/stack-tls-cert.pem` | leaf + issuing + root, as served |
+
+**The CA is REUSED between runs and the leaf is not, which is the whole
+reason it exists.** A trust decision names a KEY — an accepted interstitial, an
+imported anchor, a pinned SPKI — so while the only key was the leaf, every one
+of them was void the next time the script ran. Re-running now issues a fresh
+leaf from the same root, so a root already in your browser or OS store keeps
+working and there is nothing to accept again. `./generate-tls-cert.sh
+--rotate-ca` throws the CA away and starts over, invalidating that trust on
+purpose.
+
+The CA lives OUTSIDE `./generated-tls` because compose bind-mounts that
+directory into the api and the client, and the root's private key — the one a
+developer has told a browser to trust, which can mint a certificate for any
+name at all — has no business in a container that never signs anything. It is
+`0600`, host-only, and `.gitignore` covers `generated-tls-ca/` as well.
+
+**The mock STS serves that same leaf, which is what makes it ONE warning rather
+than two.** It issued its own self-signed certificate at every start and
+published it from `GET /tls/server-certificate` for a caller to fetch and trust
+— which works, and costs a second anchor on a third origin, replaced on every
+restart. The leaf's subjectAltNames now carry that service's own
+`tls.hostnames` defaults (`sts`, `sts-mock`, `sts.example.com`) beside
+`localhost`, `client` and `api`, and the three compose files mount the pair and
+set `STS_TLS_CERT_FILE` / `STS_TLS_KEY_FILE`. One supplied pair reaches all
+FOUR of that process's TLS sockets, because they share one: 8081 under
+`global.https`, the two TLS/mutual-TLS listeners on 8443 and 9443, and the
+directory's LDAPS listener on 636. The submodule half is `tls.certificateFile`
+/ `tls.keyFile` in `sts/tls/tls_server.js`, which falls back to the self-signed
+certificate when they are unset — so a bare `docker run` of that image is
+unchanged. `api/sts_truststore.sh`'s `STS_CERT_URL` fetch is now redundant on
+this stack (the api verifies the mock from the shared root alone, which was
+checked) and is left in place, because it is still the right bootstrap for a
+mock that generates its own.
+
+**Nothing downstream had to change**, because `stack-tls-cert.pem` is a
+*bundle*: a server sends it as the chain, and a truststore consumer finds the
+root inside it. So `STACK_TLS_CA_FILE` is still that same file,
+`NODE_EXTRA_CA_CERTS` still names it in both compose files, and the SPKI pin is
+still the leaf's — everything that reads a certificate out of that file takes
+the first one.
+
+Access the app at `https://localhost:3000`. Until the root is trusted a browser
+shows an interstitial; `./generate-tls-cert.sh` prints both fingerprints, the
+root's first.
+
+**Or accept it on BOTH ports, and the second one is the trap.** Trusting the
+root once is the way out of this paragraph; what follows is what happens when
+you have not. The api is a different ORIGIN, and a certificate exception is per
+scheme, host AND port — so clicking through the interstitial on
+`https://localhost:3000` does nothing for `https://localhost:4000`, which you
+are never shown an interstitial for because no tab ever navigates there. Every
+call the page makes to the api then dies in the TLS handshake, and a preflight
+that got no response is reported by the browser as **a CORS error**: "Response
+to preflight request doesn't pass access control check", or a bare
+`TypeError: Failed to fetch`. The api's CORS is not
+involved and is very likely correct — `resolveAllowedOrigins()` in
+`api/server.js` builds the allow-list from `uiUrl`, and `curl -k -X OPTIONS`
+against the endpoint with an `Origin:` header will show the right
+`Access-Control-Allow-Origin` while the browser still refuses. Visit
+`https://localhost:4000/claimdescription` once and accept it there too; it
+answers 200, so a clean load is the confirmation. **Regenerating the pair voids
+both exceptions**, and the UI's is re-granted the moment you load the page while
+the api's is not — which is why this arrives as a CORS failure that started on
+its own, naming a header nobody changed. Since the leaf is issued from a root
+that outlives it, trusting that root ends this failure mode rather than
+postponing it, and it is the only route that works for **Firefox**, which
+carries its own NSS store on every platform and has no equivalent of Chrome's
+`--ignore-certificate-errors-spki-list`.
 
 **One pair for both services, and the reason is the mock STS.** It PUSHES to
 the api — RFC 8935 Shared Signals delivery — so that container is handed the

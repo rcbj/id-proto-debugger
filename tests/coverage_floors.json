@@ -1,0 +1,16 @@
+{
+  "comment": "Coverage floors, checked by tests/coverage_merge.js --check (run by ./run-coverage.sh). Falling below any of these fails the run. Each is what a run achieved less a margin of 1 of a point, because a job skipped for want of a service takes its lines with it; --write-floors applies that margin. Raise them deliberately when coverage improves; never lower one without saying in the commit message what stopped being tested.",
+  "updated": "2026-09-01",
+  "achieved": {
+    "frontend": 74.1,
+    "api": 70.8,
+    "node": 84.2,
+    "union": 84.7
+  },
+  "floors": {
+    "frontend": 73.1,
+    "api": 69.8,
+    "node": 83.2,
+    "union": 83.7
+  }
+}

@@ -37,6 +37,12 @@ const crypto = require("crypto");
 const { Command, Option } = require('commander');
 const { usernameFor } = require("./random_username.js");
 const registry = require("./sts_applications.js");
+// The mock's consent screen, which stands between a signed-in person and an
+// authorization response since 2026-09-01. A SHARED MODULE for the reason
+// sts_applications.js is one: every job in this suite that signs somebody in
+// meets the same hop, and a hand-written copy of it per job is a chance per job
+// to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -59,6 +65,32 @@ var CLIENT_ID = "sts-endpoint-test-client";
 // name shared with every other test makes its users page and audit log
 // unreadable. The prefix names this file.
 var RO_USER = process.env.STS_RO_USER || usernameFor("oauth2-sts-endpoints");
+
+// ---------------------------------------------------------------------------
+// THE OTHER END OF THE TOKEN EXCHANGE, WHICH USED TO BE A URL AND NOTHING ELSE.
+//
+// testOtherGrants() performs an RFC 8693 exchange for `audience:
+// https://api.example.com` — a token this client asks for and is not itself
+// the audience of, which is the whole definition of a delegation. Until now
+// nothing in the registry answered to that URI, so the act was filed against a
+// string: the delegation map drew a box labelled with a URL, and no
+// configuration anywhere said the exchange was allowed to happen.
+//
+// So the API is an application, like the three tiers in
+// `oauth2_delegation_chain.js`, and this client is GRANTED `read` and `write`
+// on it before the exchange is sent. Two consequences, both wanted: the act
+// resolves back to an application (`applications.forAudience()` is an exact
+// match on `oauthAudience`, which is why the entry registers the URI in the
+// spelling the request uses AND the normalised one the permissions hang off),
+// and the request is backed by a grant for the day
+// `oauth2.delegatedPermissionsEnforced` goes on.
+//
+// **NOTHING THIS FILE SENDS CHANGES.** The exchange still names the URI in
+// `audience` and RFC 8693 section 2.1's parameter still wins the `aud`, so the
+// assertion below it is untouched. The grant is configuration, not a request.
+// ---------------------------------------------------------------------------
+var EXCHANGE_AUDIENCE = "https://api.example.com";
+var EXCHANGE_RESOURCE = "sts-endpoint-test-api";
 
 // ---------------------------------------------------------------------------
 // helpers
@@ -186,8 +218,20 @@ async function authorize(meta, params, options) {
   const first = r.headers.get("location");
   if (first.indexOf("/authn/") !== 0 &&
       first.indexOf(meta.issuer + "/authn/") !== 0) {
-    const out = parseRedirect(first);
+    // THE SESSION STOOD, WHICH IS NOT THE SAME AS THE RESPONSE BEING READY.
+    // A person whose session skipped the sign-in screen can still be asked for
+    // consent — that question is about the SCOPE and the CLIENT, not about who
+    // they are — so the hops that stay on this service are walked before the
+    // Location is read as the client redirect_uri. Without this the parse below
+    // is handed "/oauth2/consent?consent=..." , which is not a URL, and the job
+    // dies inside parseRedirect() naming nothing.
+    const settledFirst = await consentScreen.settleAuthorization({
+      base: meta.issuer, location: first, cookie: options.cookie,
+      decision: options.consent
+    });
+    const out = parseRedirect(settledFirst.location || first);
     out.prompted = false;
+    out.consented = settledFirst.screens;
     out.cookie = options.cookie;
     log.debug("Leaving authorize().");
     return out;
@@ -247,8 +291,21 @@ async function authorize(meta, params, options) {
   assert.strictEqual(r.status, 302,
     "the authorization endpoint should answer after the login, got HTTP " +
         r.status + ".");
-  const out = parseRedirect(r.headers.get("location"));
+  // AND THE CONSENT SCREEN, which is the hop between signing in and being
+  // issued anything. It is PASSED rather than asserted: a scope this username
+  // has already agreed to in this run, or one carried on the application entry
+  // as a global consent, draws no screen at all, and a helper that insisted on
+  // one would make this job also a test of the consent feature. The mock
+  // repository own sts_consent.js is what asserts the screen appears and what
+  // is on it.
+  const settled = await consentScreen.settleAuthorization({
+    base: meta.issuer, location: r.headers.get("location"), cookie: cookie,
+    decision: options.consent
+  });
+  const out = parseRedirect(settled.location || r.headers.get("location"));
   out.prompted = true;
+  out.consented = settled.screens;
+  out.consentPage = settled.page;
   out.cookie = cookie;
   out.username = username;
   out.page = page;
@@ -807,14 +864,14 @@ async function testOtherGrants(meta, verify, codeTokens) {
     grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
     subject_token: refreshed.body.access_token,
     subject_token_type: "urn:ietf:params:oauth:token-type:access_token",
-    audience: "https://api.example.com", client_id: CLIENT_ID
+    audience: EXCHANGE_AUDIENCE, client_id: CLIENT_ID
   });
   assert.strictEqual(tx.status, 200, "the token exchange failed: " + tx.raw);
   assert.strictEqual(tx.body.issued_token_type,
                      "urn:ietf:params:oauth:token-type:access_token",
     "RFC 8693: the response must say what kind of token was issued.");
   const txClaims = verify(tx.body.access_token, "the exchanged access token");
-  assert.strictEqual(txClaims.aud, "https://api.example.com",
+  assert.strictEqual(txClaims.aud, EXCHANGE_AUDIENCE,
     "the exchanged token should be for the requested audience.");
   assert.strictEqual(txClaims.sub, claimsOf(refreshed.body.access_token).sub,
     "the exchanged token should keep the subject of the token it was " +
@@ -1016,6 +1073,31 @@ async function test() {
       oauthConfidential: "FALSE"
     },
     why: "the one client this file drives every advertised endpoint with"
+  });
+
+  // The API the exchange above aims at, and the grant that says this client
+  // may aim at it. See the note beside EXCHANGE_AUDIENCE — both spellings of
+  // the URI are registered, because an audience is matched exactly and a
+  // permission base is normalised.
+  await registry.provision(registry.baseOf(stsBase), {
+    identifier: EXCHANGE_RESOURCE,
+    name: EXCHANGE_RESOURCE + " (the API the token exchange aims at)",
+    protocols: ["oauth2"],
+    fields: {
+      oauthClientId: EXCHANGE_RESOURCE,
+      oauthAudience: [EXCHANGE_AUDIENCE]
+    },
+    why: "the resource server this file's RFC 8693 exchange asks for a " +
+         "token for. It answers no request here — nothing in this suite is a " +
+         "resource server — so it registers an audience and an API and no " +
+         "grant type at all"
+  });
+  await registry.delegate(registry.baseOf(stsBase), {
+    client: CLIENT_ID,
+    resource: EXCHANGE_RESOURCE,
+    baseUri: EXCHANGE_AUDIENCE,
+    why: "the token exchange in testOtherGrants() asks for a token aimed at " +
+         "this API"
   });
 
   await testEveryAdvertisedEndpointAnswers(meta);

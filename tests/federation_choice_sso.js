@@ -110,7 +110,8 @@
 //
 // `WSTRUST_STS_URL` locates the mock. The job SKIPS with a reason when there is
 // none, and with a DIFFERENT reason when the mock predates the feature — read
-// off `GET /ldap/applications?format=json`, where `appFederationRelationship`
+// off `GET /admin-api/ldap/applications`, where
+// `appFederationRelationship`
 // must publish `kind: "multi"`. That is the feature's own schema signal: while
 // the attribute held one value there was nothing to choose between, and a
 // version string would not have said so.
@@ -130,6 +131,7 @@ const browserFlags = require("./browser_flags.js");
 const { clearSessionsAt } = require("./session_reset.js");
 const { loadPage } = require("./page_load.js");
 const { usernameFor } = require("./random_username.js");
+const { declineToRun, mustBeAbleTo } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -150,6 +152,12 @@ const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
 
 // The management API helpers, shared with the other three federation jobs.
 const admin = require("./federation_admin.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 admin.configure({ log: log });
 const { adminGet, must, tidy } = admin;
 
@@ -758,6 +766,19 @@ async function chooseAndSignIn(driver, which, user) {
     await passwords[0].sendKeys("no password is checked here");
   }
   await driver.findElement(By.id("kc-login")).click();
+  // AND THE CONSENT SCREENS, if there are any. They are PASSED rather than
+  // asserted: a scope already agreed to in this run, or one carried as a global
+  // consent on the application's entry, draws no screen at all. What asserts
+  // the screen itself is the mock's own tests/vendored/sts_consent.js.
+  //
+  // ALL of them, not the first, and the two partners here differ in how many
+  // there are. A sign-in through "choice-oidc" is TWO authorization requests —
+  // federation-choice-2 asks whether federation-choice-1 may act for this
+  // person, and then federation-choice-1 asks whether webapp-sso-1 may — where
+  // a sign-in through "choice-saml2" meets only the second. Answering the first
+  // and walking away leaves the browser on the second, which is reported by
+  // signInThrough() as a flow that never came back.
+  await consentScreen.passAllInBrowser(driver, By);
   log.debug("Leaving chooseAndSignIn().");
 }
 
@@ -1002,7 +1023,7 @@ async function bareChooserIsRefused(spBase) {
 // rather than a proxy for it.
 async function mockCanOfferAChoice(stsBase) {
   log.debug("Entering mockCanOfferAChoice().");
-  const response = await fetch(stsBase + "/ldap/applications?format=json",
+  const response = await fetch(stsBase + "/admin-api/ldap/applications",
                                { headers: { Accept: "application/json" } });
   if (response.status !== 200) {
     log.debug("Leaving mockCanOfferAChoice(). " + response.status);
@@ -1029,21 +1050,22 @@ async function test() {
   log.debug("Entering test().");
   const stsUrl = process.env.WSTRUST_STS_URL || "";
   if (!stsUrl) {
-    log.info("SKIPPED: WSTRUST_STS_URL is not set, so there is no mock STS to " +
-             "build two trust realms in. This test needs that service and " +
-             "nothing else.");
+    // ABSENT, so a skip. The capability check below is a FAILURE instead —
+    // see tests/expectation.js.
+    declineToRun(log, "WSTRUST_STS_URL is not set, so there is no mock STS " +
+                 "to build two trust realms in. This test needs that " +
+                 "service and nothing else.");
     log.debug("Leaving test(). Skipped.");
     return;
   }
   const stsBase = stsUrl.replace(/\/sts\/?$/, "");
-  if (!(await mockCanOfferAChoice(stsBase))) {
-    log.info("SKIPPED: the mock STS at " + stsBase + " publishes " +
-             "appFederationRelationship as a single-valued attribute, so an " +
-             "application cannot name two federation partners and there is " +
-             "nothing to choose between. Bump the sts/ submodule.");
-    log.debug("Leaving test(). Skipped, the mock is too old.");
-    return;
-  }
+  mustBeAbleTo(await mockCanOfferAChoice(stsBase),
+    "The mock STS at " + stsBase + " is reachable, but",
+    "appFederationRelationship is not published as kind \"multi\" in the " +
+    "schema at GET /admin-api/ldap/applications, so an application cannot " +
+    "name two federation partners and there is nothing to choose between. " +
+    "Either the sts/ submodule predates the multi-valued attribute (bump " +
+    "it) or that endpoint has moved again.");
   const spBase = stsBase + "/realm/" + SP_REALM;
   const idpBase = stsBase + "/realm/" + IDP_REALM;
   const callbackUri = baseUrl + "/callback";
@@ -1133,7 +1155,7 @@ async function test() {
 
     const options = new chrome.Options();
     if (headless) {
-      // "=new", never bare --headless: the tests image pins Chrome 121, where
+      // "=new", never bare --headless: the tests image pinned Chrome 121, where
       // plain --headless selects the old implementation and
       // --unsafely-treat-insecure-origin-as-secure has no effect in it.
       options.addArguments("--headless=new");

@@ -130,7 +130,7 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    // "=new", never bare --headless: the image pins Chrome 121, where the old
+    // "=new", never bare --headless: the image pinned Chrome 121, where the old
     // headless implementation ignores
     // --unsafely-treat-insecure-origin-as-secure and so leaves this page with
     // no navigator.credentials at all.

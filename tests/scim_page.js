@@ -73,6 +73,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeAbleTo } = require("./expectation.js");
 const { waitForPageBundle } = require("./wait_for.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -3034,11 +3035,16 @@ async function test() {
   try {
     await openPage(driver);
     const present = await theServerIsThere(driver);
-    if (!present.present) {
-      log.warn("SKIPPED: " + present.why);
-      log.info("Test completed successfully (skipped).");
-      return;
-    }
+    // A FAILURE rather than a skip since 2026-09-02. This job is deliberately
+    // NOT gated on LDAP_AVAILABLE — the browser call path exists on a static
+    // target too, which is what separates it from scim_protocol.js — but
+    // every launcher here starts the mock STS, so a SCIM server that is not
+    // there means the stack is down rather than that this target has no SCIM.
+    // The throw is inside the try, so the finally still quits the driver.
+    // See tests/expectation.js.
+    mustBeAbleTo(present.present, "The SCIM server this page was pointed at",
+      "cannot be used: " + present.why + ". Either the sts/ submodule " +
+      "predates /scim/v2 (bump it), or the stack is not up.");
     await useRunCredential(driver, 'for the sections that send');
     await everyEndpointComposes(driver);
     await theBrowserCreatesAndDeletes(driver);

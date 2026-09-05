@@ -66,6 +66,7 @@ const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
+const { mustBeReady } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -245,12 +246,12 @@ async function preconditions() {
       return { ok: false, why: "the api at " + apiUrl + " answered " +
         limits.status + " for GET /ldap/limits" };
     }
-    const directory = await fetch(stsUrl + "/ldap?format=json");
+    const directory = await fetch(stsUrl + "/admin-api/ldap/service");
     if (!directory.ok) {
       log.debug("Leaving preconditions(). The mock has no directory.");
       return { ok: false, why: "the mock STS has no embedded LDAP directory " +
-        "(" + stsUrl + "/ldap answered " + directory.status + ") — the sts/ " +
-        "gitlink probably predates it" };
+        "(" + stsUrl + "/admin-api/ldap/service answered " +
+        directory.status + ") — the sts/ gitlink probably predates it" };
     }
     const described = await directory.json();
     if (described.listening === false) {
@@ -1005,12 +1006,12 @@ async function theConsoleIsClean(driver) {
 async function test() {
   log.debug("Entering test().");
   const ready = await preconditions();
-  if (!ready.ok) {
-    log.warn("SKIP: " + ready.why);
-    log.info("Test skipped.");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip, for api_ldap.js's reason exactly: this job
+  // is gated on LDAP_AVAILABLE, so reaching this line means the launcher
+  // expected the page, the api and the directory to be there.
+  mustBeReady(ready, "the client (for ldap.html), the api (for its /ldap/* " +
+              "endpoints) and the mock STS with its embedded directory " +
+              "listening on 389.");
   log.info("driving " + baseUrl + "/ldap.html against the api at " + apiUrl +
            ", which will open " + ldapUrl + " (base " + baseDn + "). This " +
            "run's names are " + userDn + " and " + groupDn);

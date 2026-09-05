@@ -109,8 +109,93 @@ CONFIG_FILE=./env/docker-tests.js \
 docker compose -f docker-compose-run-tests.yml -f docker-compose-coverage.yml down
 ```
 
+## The fourth report, which is the one to read
+
+The three above do not reconcile, and until 2026-09-01 nothing tried to. That
+was fine for a total and useless for a **work list**: ranking the files by what
+any one report calls uncovered points at the wrong work — the same failure this
+document describes for the third domain, fixed there for the TOTAL and never for
+the FILE LIST.
+
+`tests/coverage_merge.js` merges the three into one number and one ranked list.
+`./run-coverage.sh` runs it at the end, on the HOST — the three `lcov.info`
+files are on the bind mount by then and the containers that could read them have
+been torn down. It takes no dependency (a checkout need not have installed
+`tests/node_modules` to have run the launcher) and can be run on its own against
+an existing `./coverage`:
+
+```bash
+node tests/coverage_merge.js            # merge and rank
+node tests/coverage_merge.js --top 40
+node tests/coverage_merge.js --check    # the ratchet
+node tests/coverage_merge.js --write-floors
+```
+
+**What it changes, measured on the 2026-08-29 run.** `common/xmldsig.js` was
+the **#1 entry of the frontend report** (594 uncovered lines, 45.4%) *and* the
+**#1 entry of the api report** (1,475, 33.7%) — and is **86.8%** covered once
+the three are merged. So is `client/src/krb5_pac.js` (45.2% → 86.8%), and
+`client/src/x509.js` is 58.9% → 90.4%. Anyone writing tests off the top of
+either list would have written tests that already existed. The union came to
+**83.9%** against the 70.4 / 66.6 / 80.2 the three reports published — most of
+that from the merge, the rest from the exclusions above.
+
+**It resolves paths rather than basenames, and that is not fussiness.** The
+obvious merge — key on the file name — is wrong here invisibly: `api/server.js`
+and `api/node-ldapjs/lib/server.js` are both `server.js`, so a basename merge
+adds 685 lines of a vendored library's uncovered code to the api's own row under
+a name that is not theirs. 47 basenames in the three reports resolve to more
+than one path. Two rules do the resolving and both were written against real
+failures found while writing it:
+
+* **A path git TRACKS beats one it does not.** Several modules exist twice in a
+  working tree because a Docker build cannot COPY from outside its context and
+  the build stages them — `common/xmldsig.js` becomes `api/xmldsig.js` and
+  `client/src/xmldsig.js`, `common/data.js` likewise — and the reports name the
+  staged copies, because that is what the container had. Resolving to one of
+  those splits a module's coverage across two rows and understates both.
+* **A path inside a SUBMODULE is believed.** git tracks a submodule as one
+  entry and not as its contents, so `api/node-ldapjs/lib/server.js` is
+  "untracked" like any staged copy — and the rule above, applied alone,
+  resolved it to `api/server.js`. That is the exact failure the resolver exists
+  to prevent, arriving through the rule written to prevent it.
+
+Anything it cannot place is counted under an `(unresolved)` name and **warned
+about** rather than dropped: a merge that quietly loses a file is a coverage
+number that improves for no reason, which is the one direction it must never
+move by itself.
+
+## The ratchet
+
+Nothing read any of these numbers before. `.github/workflows/tests.yml` uploads
+`./coverage` as an artifact and stops, so coverage could fall ten points between
+two green runs and nothing would say so.
+
+`tests/coverage_floors.json` holds a floor per domain and one for the union.
+`./run-coverage.sh` runs `--check` after the reports are rendered and **fails
+the run** on a drop — but only when the tests themselves passed, because a
+coverage regression reported in place of a red test is a report about the wrong
+thing.
+
+Each floor is what a run achieved **less one point**, and the margin is spent
+when the floor is WRITTEN rather than when it is checked. A merged number is not
+exactly reproducible — a job skipped for want of a service takes its lines with
+it, and the pool decides which process records a module first — so a floor set
+at exactly what one run achieved is a coin toss for the next. Forgiving a drop
+at check time would have put the same slack somewhere nobody reading that file
+can see it; here the number in the file is the number that must be met.
+
+`--write-floors` is how they move, deliberately, in a commit somebody reviewed.
+Nothing raises them automatically: one lucky run would become a threshold nobody
+chose, and the next honest run would be red for it. **Never lower one without
+saying in the commit message what stopped being tested.**
+
 ## Output
 
+- `./coverage/merged/summary.json` — the merged totals and the ranked file list
+- `./coverage/merged/lcov.info` — the union, with repo-relative paths, so
+  anything that reads an lcov (genhtml, a coverage service, an editor's gutter)
+  can render it
 - `./coverage/frontend/report/index.html` — frontend/browser coverage
 - `./coverage/api/index.html` — API/Node coverage
 - `./coverage/node/index.html` — in-process/Node coverage
@@ -134,19 +219,23 @@ docker compose -f docker-compose-run-tests.yml -f docker-compose-coverage.yml do
   `tests/scim_engine.js` — is recorded by the frontend build as
   `/usr/src/app/src/scim_client.js` and by the in-process run as
   `/usr/src/app/scim_client.js`, because the tests image copies it flat. The two
-  do not merge, and neither number alone is the module's real coverage: read
-  both. Nothing here tries to reconcile them, since the flat copy is what makes
-  the tests image work at all.
+  do not merge **in the three rendered reports**, and neither number alone is
+  the module's real coverage. The fourth report below reconciles them; the flat
+  copy is what makes the tests image work at all, so it is not going away.
 - **A job that is killed writes nothing.** `NODE_V8_COVERAGE` is flushed by
   node on exit, `process.exit()` included, but not on `SIGKILL`. A test the
   runner or compose kills contributes no in-process coverage; it still appears
   in `report.html` as a failure, which is the louder signal anyway.
-- **Unified report:** frontend (Istanbul) and backend (c8/V8) are reported
-  separately to avoid source-path collisions between the two containers (both use
-  `/usr/src/app`). To merge them into one report, point
-  [`monocart-coverage-reports`](https://github.com/cenfun/monocart-coverage-reports)
-  at both `./coverage/frontend/.nyc_output` (Istanbul) and the API's raw V8
-  output.
+- **Vendored and generated code is out of the denominator, in two places.**
+  `api/node-ldapjs` is a fork of ldapjs used UNMODIFIED, pinned at upstream's
+  final commit because upstream is decommissioned; `client/version.js`, which
+  `api/Dockerfile` stages into the api image, is a build script. Both are
+  excluded at COLLECTION time by the api's `c8` invocation
+  (`docker-compose-coverage.yml`) and again by the merge below, so the two
+  numbers agree. The in-process domain already excluded them
+  (`coverageExcludes()` in `tests/run-report.js`). Excluding node-ldapjs alone
+  moved the api report from 66.6% to 69.8% with no test written, and removed
+  what had been its **#2 and #4** entries.
 - **Vendored libraries** (`jquery`, `dompurify`, …) are not instrumented:
   `babel-plugin-istanbul`/`babelify` skip `node_modules` by default.
 - **A bundle missing from the coverage loop reports nothing, silently — and

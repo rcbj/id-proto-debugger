@@ -32,6 +32,11 @@
 const assert = require("assert");
 const crypto = require("crypto");
 const registry = require("./sts_applications.js");
+const { mustBeAbleTo } = require("./expectation.js");
+// The mock consent screen, which stands between a signed-in person and an
+// authorization response. A SHARED MODULE for sts_applications.js reason: every
+// job here that signs somebody in meets the same hop.
+const consentScreen = require("./consent_screen.js");
 const { Command, Option } = require("commander");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -909,6 +914,17 @@ async function authorizationCodeCanBeBoundToTheKey() {
     var r = await fetch(authorize, { headers: { Cookie: cookie },
         redirect: "manual" });
     var location = r.headers.get("location") || "";
+    // AND THE CONSENT SCREEN, which since 2026-09-01 stands between a
+    // signed-in person and an authorization response the first time a given
+    // username, client_id and scope meet. It is passed rather than asserted —
+    // the SECOND call here draws no screen at all, because the answer to the
+    // first one is on the person entry — which is exactly why it is a helper
+    // and not four lines inlined: a copy that assumed the screen would be
+    // there would fail on every call but the first.
+    var settled = await consentScreen.settleAuthorization({
+      base: stsBase, location: location, cookie: cookie
+    });
+    location = settled.location || location;
     assert.ok(/[?&]code=/.test(location),
       "no code for " + what + ". status=" + r.status + " location=" +
           location.slice(0, 200));
@@ -991,13 +1007,14 @@ async function test() {
       "/.well-known/oauth-authorization-server")
     .then(function (r) { return r.ok; })
     .catch(function () { return false; });
-  if (!reachable) {
-    log.warn("SKIPPED — no STS mock at " + stsBase +
-             ". Set WSTRUST_STS_URL or " +
-             "OID4VCI_ISSUER_URL, or start the sts service.");
-    log.debug("Leaving test().");
-    return;
-  }
+  // A FAILURE rather than a skip since 2026-09-02: stsBase falls back to
+  // this suite\'s own mock, so it always resolves to an address, and nothing
+  // answering there means the stack is down rather than that this target has
+  // no STS. See tests/expectation.js.
+  mustBeAbleTo(reachable, "The mock STS this job was pointed at,", stsBase +
+    ", did not answer GET /.well-known/oauth-authorization-server. Start " +
+    "the sts service, or set WSTRUST_STS_URL / OID4VCI_ISSUER_URL to one " +
+    "that answers.");
   // The client, in the registry, before any proof is made. This file writes its
   // OWN DPoP client rather than importing the wallet's — so that a shared
   // misunderstanding between the two ends cannot pass unnoticed — and the

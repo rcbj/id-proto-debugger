@@ -320,6 +320,17 @@ services:
       # The mount is the same read-only one the api and the client get.
       # ---------------------------------------------------------------------
       - NODE_EXTRA_CA_CERTS=/etc/idptools/tls/stack-tls-cert.pem
+      # ---------------------------------------------------------------------
+      # THE SAME LEAF THE API AND THE CLIENT SERVE. Left alone this service
+      # issues its own self-signed certificate at every start; the stack's
+      # leaf is issued from a Root CA that outlives it and its
+      # subjectAltNames already carry this service's own tls.hostnames
+      # defaults, so one trusted root covers all three processes. It reaches
+      # all four TLS sockets here — 8081, 8443, 9443 and LDAPS on 636 — since
+      # they share one pair.
+      # ---------------------------------------------------------------------
+      - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
     volumes:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:

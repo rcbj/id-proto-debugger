@@ -47,6 +47,12 @@
         <div class="jt-field">
           <label class="jt-has-copy" title="The compact-serialized token. Editable: paste a JWT here to decode its header & payload into the fields on the left (and populate the Sign pane if it is signed).">Encoded JWT <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('jwt_tools_encoded');" title="Copy to clipboard">Copy</button></label>
           <textarea rows="16" id="jwt_tools_encoded" name="jwt_tools_encoded" oninput="return jwt_tools.onEncodedInput();"></textarea>
+          <div class="jt-file-load">
+            <label class="jt-inline-check" title="Load the Encoded JWT from a file instead of pasting it. Meant for very large tokens — a multi-megabyte JWT is slow to paste and some browsers truncate it.">
+              <input type="checkbox" id="jwt_tools_load_from_file" onchange="return jwt_tools.toggleEncodedFileLoad();" /> Load from file
+            </label>
+            <input type="file" id="jwt_tools_encoded_file" name="jwt_tools_encoded_file" accept=".jwt,.txt,.json,.b64,text/plain" hidden onchange="return jwt_tools.onEncodedFileChange(event);" title="The file replaces the Encoded JWT field. Maximum 15 MB." />
+          </div>
         </div>
       </div>
     </div>
@@ -180,12 +186,21 @@
         <input type="submit" value="Verify" onclick="return jwt_tools.verifyJWT();" />
       </div>
       <div class="jt-field">
-        <label title="For HMAC, a base64url secret.">Verification Key / URL</label>
+        <label title="For HMAC, a base64url secret. Filled with the signer certificate when the JWT header carries an x5c.">Verification Key / URL</label>
         <textarea rows="3" id="jwt_verification_key" name="jwt_verification_key"></textarea>
+      </div>
+      <div class="jt-row">
+        <label class="jt-inline-check" title="Check the signer certificate up to a trust anchor before believing the signature. A signature that verifies against a certificate the token supplied about itself has established nothing. The signer certificate and the CA Trust Chain are checked as one chain, and each certificate's X.509v3 KeyUsage has to permit what it is being used for — digitalSignature for the signer, keyCertSign for its issuers.">
+          <input type="checkbox" id="verify_chain_enabled" onchange="return jwt_tools.toggleTrustChain();" /> Validate the full certificate trust chain
+        </label>
+      </div>
+      <div class="jt-field" id="verify_chain_field" hidden>
+        <label class="jt-has-copy" title="The issuing chain ABOVE the signer certificate — intermediates and the root, in any order. PEM only. Filled from the JWT header's x5c when the token carries one. It is concatenated with the Verification Key field for the check, so a chain pasted whole into that box — signer first — works too.">CA Trust Chain (PEM) <button type="button" class="jt-copy" onclick="return jwt_tools.copyField('verify_chain_pem');" title="Copy to clipboard">Copy</button></label>
+        <textarea rows="5" id="verify_chain_pem" name="verify_chain_pem" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
       </div>
       <div class="jt-field">
         <label>Verification Output</label>
-        <textarea rows="2" id="jwt_verification_output" name="jwt_verification_output" readonly></textarea>
+        <textarea rows="6" id="jwt_verification_output" name="jwt_verification_output" readonly></textarea>
       </div>
     </div>
   </fieldset>

@@ -91,6 +91,28 @@ services:
       # belongs on this side. `oid4vp.walletUrl` is DERIVED from this one (see
       # sts/common/config.js), so the verifier's hand-back follows.
       - OID4VCI_WALLET_URL=https://localhost:3000
+      # ---------------------------------------------------------------------
+      # THE SAME LEAF THE API AND THE CLIENT SERVE, WHICH IS ONE TRUST
+      # DECISION INSTEAD OF THREE.
+      #
+      # Left alone this service issues its own self-signed certificate at
+      # every start and publishes it from GET /tls/server-certificate for a
+      # caller to trust. That works and it costs a SECOND anchor, on a THIRD
+      # origin, replaced on every restart. ./generate-tls-cert.sh now issues
+      # the stack's leaf from a Root CA that outlives it, and the leaf's
+      # subjectAltNames already carry this service's own tls.hostnames
+      # defaults (sts, sts-mock, sts.example.com) beside localhost, client and
+      # api — so handing it the same files makes ONE trusted root cover the
+      # UI, the api and the mock at once.
+      #
+      # It covers all four of this process's TLS sockets, because they share
+      # one pair: 8081 (the main port under global.https), 8443, 9443 and the
+      # directory's LDAPS listener on 636.
+      # ---------------------------------------------------------------------
+      - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     container_name: sts
     image: rcbj/sts
     # ROOT, and the only container here that is. It binds 88 (TCP and UDP),

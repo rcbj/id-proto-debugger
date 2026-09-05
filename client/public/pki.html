@@ -91,6 +91,52 @@
           </div>
         </div>
 
+        <!-- THE THREE WAYS A CERTIFICATE HERE CAN CARRY POST-QUANTUM
+             CRYPTOGRAPHY, AND WHY THE CHOICE IS A CONTROL RATHER THAN A
+             DEFAULT.
+
+             They are not variations on one idea; they are three different
+             answers to "what do I do about a validator that has never heard
+             of ML-DSA", and which one is right depends on who has to read
+             the certificate:
+
+               * PURE is the standards-track answer (RFC 9881, 9909, 9935).
+                 One key, one signature, one OID. Anything that does not
+                 know the algorithm rejects the certificate outright.
+               * COMPOSITE is one OID naming TWO keys and two signatures at
+                 once (draft-ietf-lamps-pq-composite-sigs-19), so a verifier
+                 either checks both or understands neither. Still a draft.
+               * HYBRID puts the second key and signature in non-critical
+                 EXTENSIONS (X.509 2019 clause 9.8), so an old validator
+                 sees an ordinary classical certificate and ignores them.
+
+             The selector filters the Key Algorithm list in the Key Pair
+             column beside this one and, for hybrid, reveals the second key
+             pair there. It is on THIS side of the pane rather than over the
+             list it filters because the approach is a property of the
+             CERTIFICATE and not of the key: it narrows the Signature
+             Algorithm below it as well, and it is what the Profile and the
+             issuer above it are already deciding. Balance made the case
+             concrete — the key-pair column carries the two key textareas,
+             the CSR and the Export row, and with this block on it as well
+             that column ran half again as tall as the one beside it, which
+             a grid row pays for in dead space at the foot of the short one.
+             tests/pki_page.js measures the three columns and fails when the
+             shortest drops below 60% of the tallest. -->
+        <div class="saml-row">
+          <div class="saml-grow">
+            <label for="pki_pq_mode" title="Which of the three ways this certificate carries post-quantum cryptography. It filters the Key Algorithm list in the Key Pair column beside this one, and it narrows the Signature Algorithm below; Hybrid additionally reveals a second key pair, which goes into the X.509 (2019) alternative-signature extensions.">Cryptographic Approach</label>
+            <select class="stored" id="pki_pq_mode" name="pki_pq_mode" onchange="return pki.onPqModeChange();">
+              <option value="any" selected="selected">Any &mdash; show every algorithm</option>
+              <option value="classical">Classical only (RSA, ECDSA, EdDSA)</option>
+              <option value="pure">Pure post-quantum (ML-DSA, SLH-DSA, ML-KEM)</option>
+              <option value="composite">Composite (one OID, two signatures)</option>
+              <option value="hybrid">Hybrid (alternative-signature extensions)</option>
+            </select>
+          </div>
+        </div>
+        <p class="saml-note" id="pki_pq_note"></p>
+
         <div class="saml-row">
           <div class="saml-grow">
             <label for="pki_sig_alg" title="The algorithm the ISSUER signs with. The list is filtered to what the signing key can actually produce: an RSA key cannot make an ECDSA signature, and offering it produces a Web Crypto error that names neither.">Signature Algorithm</label>
@@ -153,41 +199,6 @@
              below that the row stays a single flex line and the two checkbox
              LABELS wrap instead, which costs a line of text rather than a
              row of layout. -->
-        <!-- THE THREE WAYS A CERTIFICATE HERE CAN CARRY POST-QUANTUM
-             CRYPTOGRAPHY, AND WHY THE CHOICE IS A CONTROL RATHER THAN A
-             DEFAULT.
-
-             They are not variations on one idea; they are three different
-             answers to "what do I do about a validator that has never heard
-             of ML-DSA", and which one is right depends on who has to read
-             the certificate:
-
-               * PURE is the standards-track answer (RFC 9881, 9909, 9935).
-                 One key, one signature, one OID. Anything that does not
-                 know the algorithm rejects the certificate outright.
-               * COMPOSITE is one OID naming TWO keys and two signatures at
-                 once (draft-ietf-lamps-pq-composite-sigs-19), so a verifier
-                 either checks both or understands neither. Still a draft.
-               * HYBRID puts the second key and signature in non-critical
-                 EXTENSIONS (X.509 2019 clause 9.8), so an old validator
-                 sees an ordinary classical certificate and ignores them.
-
-             The selector filters the Key Algorithm list below and, for
-             hybrid, reveals the second key pair. -->
-        <div class="saml-row">
-          <div class="saml-grow">
-            <label for="pki_pq_mode" title="Which of the three ways this certificate carries post-quantum cryptography. It filters the Key Algorithm list below; Hybrid additionally reveals a second key pair, which goes into the X.509 (2019) alternative-signature extensions.">Cryptographic Approach</label>
-            <select class="stored" id="pki_pq_mode" name="pki_pq_mode" onchange="return pki.onPqModeChange();">
-              <option value="any" selected="selected">Any &mdash; show every algorithm</option>
-              <option value="classical">Classical only (RSA, ECDSA, EdDSA)</option>
-              <option value="pure">Pure post-quantum (ML-DSA, SLH-DSA, ML-KEM)</option>
-              <option value="composite">Composite (one OID, two signatures)</option>
-              <option value="hybrid">Hybrid (alternative-signature extensions)</option>
-            </select>
-          </div>
-        </div>
-        <p class="saml-note" id="pki_pq_note"></p>
-
         <div class="saml-row pki-actions">
           <div class="pki-narrow pki-narrow-alg">
             <label for="pki_key_alg" title="The algorithm and parameters of the key pair. RSA sizes are the modulus; the EC entries are the NIST curves; Ed25519 is Web Crypto's only Edwards curve (Ed448 is defined by RFC 8032 and available in no browser).">Key Algorithm</label>
@@ -200,11 +211,59 @@
 
         <div class="saml-field">
           <label class="saml-has-copy" for="pki_private_key" title="The private key, PKCS#8 PEM (or JWK). It signs, and for a CA it goes on signing long after this certificate was issued.">Private Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_private_key');">Copy</button></label>
-          <textarea class="stored" rows="5" id="pki_private_key" name="pki_private_key"></textarea>
+          <textarea class="stored" rows="3" id="pki_private_key" name="pki_private_key"></textarea>
         </div>
         <div class="saml-field">
           <label class="saml-has-copy" for="pki_public_key" title="The public key, SubjectPublicKeyInfo PEM (or JWK). This is what the certificate certifies.">Public Key <button type="button" class="saml-copy" onclick="return pki.copyField('pki_public_key');">Copy</button></label>
-          <textarea class="stored" rows="4" id="pki_public_key" name="pki_public_key"></textarea>
+          <textarea class="stored" rows="3" id="pki_public_key" name="pki_public_key"></textarea>
+        </div>
+        <!-- The checkbox is HERE rather than in the action row above,
+             beside the button it takes effect on, and that is a layout
+             constraint rather than a preference: `.pki-actions` is
+             `flex-wrap: nowrap` above 1330px (css/pki.css) and its four
+             controls — the algorithm select, the JWK toggle, the button and
+             the reuse checkbox — only fit a ~533px column at 1366px because
+             the two checkbox LABELS wrap inside it. A fifth control has
+             nothing left to give: it is drawn 39px OUTSIDE the column, over
+             the one beside it, with no scrollbar and nothing clipped, which
+             is the overflow tests/pki_page.js's spill check exists to catch.
+             Beside the field it fills, it costs one line and reads better
+             anyway — the switch is next to what it switches on. And with the
+             field hidden until it is ticked, this label is the only thing
+             that says the field EXISTS, so it cannot be anywhere else. -->
+        <div class="saml-row">
+          <label class="pki-flag" title="Also build the PKCS#10 certification request this key pair and subject would have sent to an external authority. It is FOR REFERENCE: this page signs the certificate itself, so nothing here consumes the CSR &mdash; it is what you would paste into a CA that will not take a certificate you made yourself. The signature on it is by the private key above, which is the proof of possession that lets an authority certify a key it has never seen."><input type="checkbox" class="stored" id="pki_gen_csr" name="pki_gen_csr" onchange="return pki.onGenCsrChange();" /> Generate a CSR when the certificate is issued</label>
+        </div>
+        <!-- The CSR, which this page does not consume: it signs the
+             certificate itself. It is here because a certification request is
+             the thing you send to an authority that will NOT take a
+             certificate you made yourself, and having the exact bytes beside
+             the key that signed them is the point.
+
+             HIDDEN until the box above is ticked, and rewritten on every
+             issue. It is display:none in the markup rather than only in
+             script, so it is not drawn for the instant before onload() runs;
+             onGenCsrChange() is what shows it, and onload() calls that
+             function itself so a ticked box survives a reload.
+
+             Three rows, like the two above it — 5 + 4 became 3 + 3 + 3, which
+             costs this column about 50px when it is showing rather than the
+             130 a fourth full-height field would have. It does NOT make the
+             column the height it was: it was the tallest of the three
+             already, and this field plus its checkbox took it from 453px to
+             505px beside a 274px column, i.e. under the 60% floor
+             tests/pki_page.js measures. What paid for it was moving the
+             Cryptographic Approach selector to the certificate column, where
+             it belongs anyway. A grid ROW is as tall as its tallest item, so
+             a field added to the tall column is charged twice: once here and
+             once as dead space at the foot of both the others — which is why
+             hiding it is worth doing and is NOT what makes the layout legal.
+             The test measures the page as it loads, with the box clear; the
+             columns have to balance with the field SHOWN as well, and they
+             do. -->
+        <div class="saml-field" id="pki_csr_field" style="display:none;">
+          <label class="saml-has-copy" for="pki_csr" title="The PKCS#10 certification request for the key pair and subject above, PEM. Generated only when the box above it is ticked, and for reference only — this page issues the certificate itself. It carries the PUBLIC key and is signed by the private one; that signature is the proof of possession an authority checks before certifying a key it has never seen.">CSR (PKCS#10) <button type="button" class="saml-copy" onclick="return pki.copyField('pki_csr');">Copy</button></label>
+          <textarea class="stored" rows="3" id="pki_csr" name="pki_csr"></textarea>
         </div>
 
         <!-- The ALTERNATIVE key pair, which exists only in hybrid mode.

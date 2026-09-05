@@ -667,6 +667,16 @@ startDocker()
   # answering plain http on 8081 is somebody else's mock.
   requireStsReachable https https://localhost:8081/healthcheck sts
   check_return_code $?
+  # ANSWERING ON 8081 IS NOT THE WHOLE ANSWER, because that process binds three
+  # more ports and only the first one is fatal to it. The SPIFFE gRPC listeners
+  # are optional to that service: it logs EADDRINUSE at level 50 and carries
+  # on, so a stranger on 8092 or 8181 leaves a stack that is healthy by every
+  # check above and three SPIFFE jobs that spend the run driving somebody
+  # else's SPIRE server. That is what happened on 2026-09-01 — two red tests
+  # naming an authorization rule and a TLS chain, and a third green against the
+  # stranger. This asks the mock which of its listeners bound.
+  requireStsSpiffeListeners https://localhost:8081 sts
+  check_return_code $?
 
   # ------------------------------------------------------------------------
   # THE CERTIFICATE, AND THEN THE RFC 9700 REALM. Both need the service to be

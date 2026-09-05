@@ -141,7 +141,7 @@
 // `WSTRUST_STS_URL` locates the mock, as it does for every other STS-backed job
 // here, and the job SKIPS with a reason when there is none. It skips with a
 // DIFFERENT reason when the mock is too old for the two attributes this whole
-// grid turns on, which is read off `GET /ldap/applications` and
+// grid turns on, which is read off `GET /admin-api/ldap/applications` and
 // `GET /admin-api/federation/schema` — the schemas that service publishes —
 // rather than guessed from a version.
 //
@@ -167,6 +167,7 @@ const browserFlags = require("./browser_flags.js");
 const { clearSessionsAt } = require("./session_reset.js");
 const { loadPage } = require("./page_load.js");
 const { usernameFor } = require("./random_username.js");
+const { declineToRun, mustBeAbleTo } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -183,6 +184,12 @@ waitForModule.configure({ log: log, waitTime: waitTime });
 const { waitForPageBundle, waitForFocus } = waitForModule;
 
 const admin = require("./federation_admin.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 admin.configure({ log: log });
 const { adminGet, must, tidy } = admin;
 
@@ -1323,9 +1330,29 @@ async function signInAtIdp(driver, user, idpBase) {
   }
   await driver.findElement(By.id("kc-login")).click();
 
+  // THE SECOND FACTOR BEFORE THE CONSENT SCREEN, because that is the order the
+  // service asks in: the ceremony is part of AUTHENTICATING and the screen is
+  // drawn by the authorization endpoint once somebody is authenticated. Passing
+  // the screen first — which this did until 2026-09-02 — spends its window on
+  // the ceremony page, finds no button, and leaves every consent screen in the
+  // flow unanswered. It fails as "the flow never came back to the debugger",
+  // four functions away, with the consent screen's own words in the message.
   if (MECHANISM === "webauthn") {
     await runTheCeremony(driver, user);
   }
+
+  // AND THE CONSENT SCREENS, if there are any. They are PASSED rather than
+  // asserted: a scope already agreed to in this run, or one carried as a global
+  // consent on the application's entry, draws no screen at all. What asserts
+  // the screen itself is the mock's own tests/vendored/sts_consent.js.
+  //
+  // ALL of them, not the first: a federated sign-in is TWO authorization
+  // requests, so realm 2 asks whether realm 1 may act for this person and then
+  // realm 1 asks whether the application may. Which of the two is drawn depends
+  // on the point of the grid — the far one when the federation protocol is
+  // OAuth 2.0 or OIDC, the near one when the application protocol is — and the
+  // twenty points where both are draw both.
+  await consentScreen.passAllInBrowser(driver, By);
   log.debug("Leaving signInAtIdp().");
 }
 
@@ -1737,11 +1764,11 @@ async function clearingTheTieRestoresTheLocalScreen(driver, spBase,
 // ---------------------------------------------------------------------------
 async function mockKnowsTheAttributes(stsBase) {
   log.debug("Entering mockKnowsTheAttributes().");
-  const response = await fetch(stsBase + "/ldap/applications",
+  const response = await fetch(stsBase + "/admin-api/ldap/applications",
                                { headers: { Accept: "application/json" } });
   if (response.status !== 200) {
     log.debug("Leaving mockKnowsTheAttributes(). " + response.status);
-    return { ok: false, why: "GET /ldap/applications answered " +
+    return { ok: false, why: "GET /admin-api/ldap/applications answered " +
                              response.status };
   }
   const text = await response.text();
@@ -1758,7 +1785,7 @@ async function mockKnowsTheAttributes(stsBase) {
     // fetch answers both questions. A mock that has the tie and not the
     // mechanism is the 2026-08-26 checkout, on which the twenty-five WebAuthn
     // points would silently sign in with a password.
-    const register = await fetch(stsBase + "/ldap/federations",
+    const register = await fetch(stsBase + "/admin-api/ldap/federations",
                                  { headers: { Accept: "application/json" } });
     const registerText = register.status === 200 ? await register.text() : "";
     if (registerText.indexOf("fedAuthnMechanism") === -1) {
@@ -1819,35 +1846,32 @@ async function test() {
   log.debug("Entering test().");
   const stsUrl = process.env.WSTRUST_STS_URL || "";
   if (!stsUrl) {
-    log.info("SKIPPED: WSTRUST_STS_URL is not set, so there is no mock " +
-             "STS to " +
-             "build two trust realms in. This test needs that service, the " +
-             "client and the api, and nothing else.");
+    // ABSENT, so a skip. Both capability checks below are FAILURES instead —
+    // see tests/expectation.js. Forty-nine of this file's points went silent
+    // over a moved URL on 2026-09-01, which is the reason for the split.
+    declineToRun(log, "WSTRUST_STS_URL is not set, so there is no mock STS " +
+                 "to build two trust realms in. This test needs that " +
+                 "service, the client and the api, and nothing else.");
     log.debug("Leaving test(). Skipped.");
     return;
   }
   const stsBase = stsUrl.replace(/\/sts\/?$/, "");
   const known = await mockKnowsTheAttributes(stsBase);
-  if (!known.ok) {
-    log.info("SKIPPED: the mock STS at " + stsBase + " — " + known.why +
-             ". Bump the sts/ submodule.");
-    log.debug("Leaving test(). Skipped, the mock is too old.");
-    return;
-  }
-  if (!(await mockRoutesWsFedThroughTheFunnel(stsBase))) {
-    log.info("SKIPPED: the mock STS at " + stsBase + " still answers a " +
-             "wsignin1.0 with a sign-in screen of its own rather than " +
-             "routing it through authn.js. This point has WS-Federation " +
-             (APP_PROTOCOL === "wsfed"
-              ? "as its application tier, which cannot be federated there — " +
-                "it would sign in at realm 1 and look like a pass"
-              : "as its federation protocol, so realm 2 would honour no " +
-                "fedAuthnMechanism and sign the person in with a password " +
-                "whatever the relationship configured") +
-             ". Bump the sts/ submodule.");
-    log.debug("Leaving test(). Skipped, wsfed does not federate there.");
-    return;
-  }
+  mustBeAbleTo(known.ok,
+    "The mock STS at " + stsBase + " is reachable, but",
+    known.why + ". Either the sts/ submodule predates the attribute (bump " +
+    "it) or the schema endpoint has moved again.");
+  mustBeAbleTo(await mockRoutesWsFedThroughTheFunnel(stsBase),
+    "The mock STS at " + stsBase + " is reachable, but",
+    "it still answers a wsignin1.0 with a sign-in screen of its own rather " +
+    "than routing it through authn.js. This point has WS-Federation " +
+    (APP_PROTOCOL === "wsfed"
+     ? "as its application tier, which cannot be federated there — it " +
+       "would sign in at realm 1 and look like a pass"
+     : "as its federation protocol, so realm 2 would honour no " +
+       "fedAuthnMechanism and sign the person in with a password whatever " +
+       "the relationship configured") +
+    ". Bump the sts/ submodule.");
 
   const spBase = stsBase + "/realm/" + SP_REALM;
   const idpBase = stsBase + "/realm/" + IDP_REALM;
@@ -1891,7 +1915,7 @@ async function test() {
 
   const options = new chrome.Options();
   if (headless) {
-    // "=new", never bare --headless: the tests image pins Chrome 121, where
+    // "=new", never bare --headless: the tests image pinned Chrome 121, where
     // plain --headless selects the old implementation and
     // --unsafely-treat-insecure-origin-as-secure has no effect in it.
     options.addArguments("--headless=new");

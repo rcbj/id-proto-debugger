@@ -133,6 +133,132 @@ async function exchangeTokenViaUI(driver, audience_client_id, client_id,
   return parsed;
 }
 
+// The three tabs on the Token Exchange Results pane: what came back, the
+// exchange that carried it, and the tokens it issued.
+//
+// Worth asserting rather than assuming for the reason `token_http_exchange.js`
+// gives at length about the pane above this one: the interesting half of this
+// exchange CANNOT BE OBSERVED BY THE PAGE. This pane's default is to have the
+// **api** call the token endpoint, so the request that matters is made by
+// another process, and the browser can only show it because the api hands back
+// what it saw under `http_exchange` (`buildHttpTrace()` in `api/server.js`,
+// switched on per call by `http_trace: true` — which POST /tokenexchange did
+// not support at all until this pane grew a tab to show it). Every link in
+// that chain fails SILENTLY: the pane goes on rendering and shows the
+// browser's own call to the api instead, which is a perfectly plausible HTTP
+// exchange with the wrong URL in it. So the URL is asserted to be the token
+// ENDPOINT, read off the page's own field rather than written out here, and
+// the note is asserted to name the end that actually made the call — which is
+// read off the page too, since a static deployment has no api at all
+// (`backendAvailable: false` disables the Back radio) and the browser makes
+// the call itself.
+//
+// The Tokens tab is asserted against the response the Result tab was parsed
+// out of, so a panel that drew the PREVIOUS exchange's token — the failure a
+// pane rebuilt on every call invites — fails here rather than being read as a
+// successful exchange.
+async function verifyTokenExchangeTabs(driver, exchange) {
+  log.debug("Entering verifyTokenExchangeTabs().");
+  log.info("Checking the Token Exchange Results pane's three tabs.");
+  const strips = await driver.findElements(
+      By.css("#tokenexchange_endpoint_result .dbg-tabs"));
+  assert.strictEqual(strips.length, 1,
+    "The Token Exchange Results pane should carry exactly one tab strip. " +
+    "It is rebuilt on every call and attachHttpTab() is idempotent for that " +
+    "reason; " + strips.length + " strips means two sets of buttons driving " +
+    "one set of panels.");
+
+  const labels = [];
+  for (const which of ["result", "http", "tokens"]) {
+    const tab = await driver.findElement(
+        By.id("tokenexchange_result_tab_" + which));
+    labels.push(await tab.getText());
+  }
+  log.info("Tabs: " + labels.join(" | "));
+  assert.strictEqual(labels[0], "Result",
+    "The first tab should be Result, and it should stay first: it is what " +
+    "was in this pane before there were any tabs at all.");
+  assert.ok(labels[1].indexOf("HTTP") === 0,
+    "The second tab should be the HTTP one. It reads \"" + labels[1] + "\".");
+  assert.ok(labels[1].indexOf("200") >= 0,
+    "The HTTP tab's own LABEL carries the status, so that a collapsed pane " +
+    "still says what came back. It reads \"" + labels[1] + "\".");
+  assert.strictEqual(labels[2], "Tokens",
+    "The third tab should be Tokens. It reads \"" + labels[2] + "\".");
+
+  // Which end made the call, off the page rather than assumed: a static
+  // deployment has no api and the Back radio is disabled there.
+  const proxied = await driver.findElement(
+      By.id("tokenexchange_initiateFromBackEnd")).isSelected();
+  const tokenEndpoint = await driver.findElement(
+      By.id("tokenexchange_token_endpoint")).getAttribute("value");
+  assert.ok(tokenEndpoint,
+    "The pane has no token endpoint in it, so nothing below can mean " +
+    "anything.");
+
+  await driver.findElement(By.id("tokenexchange_result_tab_http")).click();
+  const httpPanel = await driver.findElement(
+      By.id("tokenexchange_result_tabpanel_http"));
+  await driver.wait(until.elementIsVisible(httpPanel), waitTime);
+  const httpText = await httpPanel.getText();
+  assert.ok(httpText.indexOf(tokenEndpoint) >= 0,
+    "The HTTP tab should show the exchange with the TOKEN ENDPOINT (" +
+    tokenEndpoint + "). Showing the browser's own call to the api instead " +
+    "is what a missing http_exchange looks like, and it looks perfectly " +
+    "plausible. The panel reads: " + httpText.slice(0, 600));
+  assert.ok(httpText.indexOf("HTTP 200") >= 0,
+    "The HTTP tab should carry the response as well as the request. It " +
+    "reads: " + httpText.slice(0, 600));
+  if (proxied) {
+    assert.ok(httpText.indexOf("Sent by the api") >= 0,
+      "This exchange was proxied, so the note must say so — a fallback to " +
+      "the browser's own call that did not name itself would be a debugger " +
+      "showing the wrong URL with a straight face. It reads: " +
+      httpText.slice(0, 600));
+  } else {
+    assert.ok(httpText.indexOf("Sent by this browser") >= 0,
+      "This exchange was made from the browser, so the note must say so. " +
+      "It reads: " + httpText.slice(0, 600));
+  }
+  log.info("The HTTP tab names the token endpoint and the end that called " +
+           "it.");
+
+  await driver.findElement(By.id("tokenexchange_result_tab_tokens")).click();
+  const tokensPanel = await driver.findElement(
+      By.id("tokenexchange_result_tabpanel_tokens"));
+  await driver.wait(until.elementIsVisible(tokensPanel), waitTime);
+  const issued = await driver.findElement(By.id("tokenexchange_access_token"))
+      .getAttribute("value");
+  assert.strictEqual(issued, exchange.access_token,
+    "The Tokens tab should show the token THIS exchange issued. The pane is " +
+    "rebuilt on every call, so a stale one here reads as a successful " +
+    "exchange and is not one.");
+  const issuedType = await tokensPanel.findElement(
+      By.css('[data-token-field="issued_token_type"]')).getAttribute("value");
+  assert.strictEqual(issuedType, exchange.issued_token_type,
+    "RFC 8693 section 2.2.1 puts the issued token in `access_token` whatever " +
+    "type it is, so `issued_token_type` is the only thing that says which. " +
+    "The pane shows \"" + issuedType + "\" and the response said \"" +
+    exchange.issued_token_type + "\".");
+
+  // The storage the Issued Token / Introspect Token / Revoke Token controls
+  // beside it resolve through. Those pages take a TYPE and read a key; a row
+  // whose links act on a token other than the one above it is worse than one
+  // with no links at all.
+  const stored = await driver.executeScript(
+      "return localStorage.getItem('tokenexchange_access_token');");
+  assert.strictEqual(stored, exchange.access_token,
+    "The issued token should be in localStorage under " +
+    "tokenexchange_access_token, which is what token_detail.html, " +
+    "introspection.html and the Revoke button resolve " +
+    "?type=tokenexchange_access to.");
+
+  await driver.findElement(By.id("tokenexchange_result_tab_result")).click();
+  log.info("The Tokens tab shows this exchange's token, and the pages beside " +
+           "it can find it.");
+  log.debug("Leaving verifyTokenExchangeTabs().");
+}
+
 // Introspects an arbitrary token value via the Introspection page, using the
 // confidential client that is permitted to call the Introspection Endpoint.
 async function introspectTokenValue(driver, token, client_id, client_secret) {
@@ -203,7 +329,7 @@ async function test() {
     // "=new", not bare --headless. This page fetches the discovery document
     // itself, from a Keycloak that is http://keycloak:8080 on the
     // containerized stack while the page is now https — and the OLD headless
-    // implementation in the Chrome 121 this image pins IGNORES
+    // implementation in the Chrome 121 this image pinned IGNORES
     // --allow-running-insecure-content, so that XHR is blocked with
     // readyState 4 / status 0 and no console entry naming mixed content.
     // What the test then reports is a missing Populate button. See section 1
@@ -293,6 +419,9 @@ async function test() {
     // Exchange the subject token (RFC 8693) for a token aimed at the audience.
     const exchange = await exchangeTokenViaUI(driver, audience_client_id,
         client_id, client_secret);
+    // Before navigating anywhere: the pane is rebuilt on every call and the
+    // introspection step below leaves this page entirely.
+    await verifyTokenExchangeTabs(driver, exchange);
     const exchanged_access_token = exchange.access_token;
     assert.notStrictEqual(jwt.decode(exchanged_access_token,
                           { complete: true }), null,

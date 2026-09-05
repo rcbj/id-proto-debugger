@@ -886,7 +886,51 @@ function dbgSetAllPanes(expand) {
 <!-- Every token the Authorization Endpoint itself returned, in one pane. The
      id_token used to have a second container of its own below this one, which
      is why an OIDC Implicit Flow showed two panes with the same title. -->
-<div class="authorization_endpoint_result" id="authorization_endpoint_result">&nbsp;
+<!-- THE PLACEHOLDER PANE, AND WHY THESE FIVE CONTAINERS HAVE ONE.
+     ============================================================
+     This div and the four below it are EMPTY in the markup: the pane inside
+     each is built as a string by oauth2_oidc_2.js when a call comes back, and
+     dropped in with .html(). So before the first call there is nothing here at
+     all — an empty flex child, which does not leave a gap but does leave a
+     column, so the page showed a row with one pane in it and two blanks where
+     panes should be.
+
+     collapsePane() was already being called on them and could not help: it
+     shows the container and hides the first fieldset INSIDE it, and a
+     container with no pane inside has no fieldset and no legend, so it
+     collapses to nothing. That is the difference between COLLAPSED and
+     INVISIBLE, and it is the whole of this fix — the panes now have something
+     to collapse.
+
+     The placeholder is the same shape the runtime builds (.dbg-pane, a
+     .dbg-legend carrying data-target, a fieldset) so it collapses, expands and
+     draws its triangle through exactly the same code — the delegated
+     `.dbg-legend[data-target]` handler in this page's bundle needs no special
+     case for it. It ships COLLAPSED, marked data-pane-collapsed="1" so the
+     mark and the CSS triangle agree from the first paint.
+
+     Its fieldset id ends `_placeholder` rather than matching the runtime
+     pane's, because the two never coexist and a shared id would be a trap for
+     whoever changes one of them.
+
+     RESTORING IT IS THE JS's JOB, and it does it by SNAPSHOTTING this markup
+     at load rather than carrying a second copy: `capturePlaceholderPanes()`
+     records each container's initial contents and `clearResultPane()` puts it
+     back, so the four places that used to `.html("")` a pane away no longer
+     leave a hole. A copy in the bundle would be a second spelling of five
+     titles that drift. -->
+<div class="authorization_endpoint_result" id="authorization_endpoint_result">
+  <div class="dbg-pane" data-pane-collapsed="1" data-pane-placeholder="1">
+    <legend class="dbg-legend"
+            data-target="authz_result_placeholder">Authorization Endpoint
+      Results</legend>
+    <fieldset id="authz_result_placeholder" style="display: none;">
+      <p><em>Nothing yet.</em> Tokens returned by the Authorization Endpoint
+      itself &mdash; which is where an Implicit or Hybrid flow's tokens
+      arrive, and only there &mdash; appear here once a flow that uses it has
+      run.</p>
+    </fieldset>
+  </div>
 </div>
 
 <!-- Token Endpoint Results, Refresh Token Results, and Currently Viewing side by side -->
@@ -895,18 +939,49 @@ function dbgSetAllPanes(expand) {
     <div class="display_token_error_class" id="display_token_error_class">&nbsp;
     </div>
     <div class="rfc9700_report" id="rfc9700_token_report"></div>
-    <div class="token_endpoint_result" id="token_endpoint_result">&nbsp;
+    <div class="token_endpoint_result" id="token_endpoint_result">
+      <div class="dbg-pane" data-pane-collapsed="1" data-pane-placeholder="1">
+        <legend class="dbg-legend"
+                data-target="token_result_placeholder">Token Endpoint
+          Results:</legend>
+        <fieldset id="token_result_placeholder" style="display: none;">
+          <p><em>Nothing yet.</em> The most recent result of the OAuth2 grant
+          or OIDC authentication flow appears here, with the HTTP exchange
+          that produced it on a tab of its own.</p>
+        </fieldset>
+      </div>
     </div>
   </div>
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
     <div class="display_refresh_error_class" id="display_refresh_error_class">&nbsp;
     </div>
     <div class="rfc9700_report" id="rfc9700_refresh_report"></div>
-    <div class="refresh_endpoint_result" id="refresh_endpoint_result">&nbsp;
+    <div class="refresh_endpoint_result" id="refresh_endpoint_result">
+      <div class="dbg-pane" data-pane-collapsed="1" data-pane-placeholder="1">
+        <legend class="dbg-legend"
+                data-target="refresh_result_placeholder">Token Endpoint
+          Results for Refresh Token Call:</legend>
+        <fieldset id="refresh_result_placeholder" style="display: none;">
+          <p><em>Nothing yet.</em> What the token endpoint returned for a
+          Refresh Token grant appears here. It is a pane of its own rather
+          than a second use of the one beside it, because comparing the two is
+          most of what a refresh is debugged for.</p>
+        </fieldset>
+      </div>
     </div>
   </div>
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
-    <div id="currently-viewing-panel" style="display:none;">
+    <div id="currently-viewing-panel">
+      <div class="dbg-pane" data-pane-collapsed="1" data-pane-placeholder="1">
+        <legend class="dbg-legend"
+                data-target="currently_viewing_placeholder">Currently
+          Viewing</legend>
+        <fieldset id="currently_viewing_placeholder" style="display: none;">
+          <p><em>Nothing selected.</em> Choosing a set from Token History
+          shows it here, with the HTTP exchange that produced it where one was
+          kept.</p>
+        </fieldset>
+      </div>
     </div>
   </div>
 </div>
@@ -1016,7 +1091,17 @@ function dbgSetAllPanes(expand) {
     </div>
   </div>
   <div class="side-by-side-col" style="flex:1 1 0; min-width:0;">
-    <div id="token-history-panel" style="display:none;">
+    <div id="token-history-panel">
+      <div class="dbg-pane" data-pane-collapsed="1" data-pane-placeholder="1">
+        <legend class="dbg-legend"
+                data-target="token_history_placeholder">Token
+          History</legend>
+        <fieldset id="token_history_placeholder" style="display: none;">
+          <p><em>No tokens yet.</em> Every set this page obtains is kept here
+          for as long as this browser holds it, grouped by session id, with
+          the exchange that produced each one.</p>
+        </fieldset>
+      </div>
     </div>
   </div>
 </div>
