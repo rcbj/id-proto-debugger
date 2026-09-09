@@ -610,6 +610,33 @@ COPY sts/common/crypto.js ./sts/common/
 COPY sts/common/pq_jose.js sts/common/worker.js sts/common/worker_pool.js ./sts/common/
 COPY sts/common/vendored/xmldsig.js ./sts/common/vendored/
 COPY sts/common/realms.js sts/common/delegation.js ./sts/common/
+# ---------------------------------------------------------------------------
+# THE SIXTH recomputation, on the 2026-09-09 bump, and it is the biggest so far
+# because that bump added two whole subsystems to the mock — a MODE
+# (development / product, which replaced four `*.authRequired` settings), a
+# ROLE model, XACML, key material at rest and a persistence layer — and every
+# one of them is required by a file this image already carries.
+#
+# The closure walk in tests/jwk_pem_encoding.js named the first level of it:
+# issuance_gate.js under krb5_kdc.js, mode.js under krb5_principals.js,
+# validation.js and request_pool.js under app.js, keystore.js under helpers.js,
+# roles.js and persistence_replication.js under admin_stats.js. The rest are
+# what those pulled in behind them, which is why this block is a dozen lines
+# and the message that produced it named seven files.
+#
+# `common/validation.js` is the one with a cost OUTSIDE this file: it requires
+# `zod`, a package rather than a relative path, so the closure walk cannot see
+# it and `tests/package.json` carries it now. That is the shape to watch for on
+# the next bump — a new npm dependency inside the mock is invisible to the
+# check that catches everything else here.
+# ---------------------------------------------------------------------------
+COPY sts/common/mode.js sts/common/roles.js ./sts/common/
+COPY sts/common/validation.js sts/common/request_pool.js ./sts/common/
+COPY sts/common/keystore.js sts/common/issuance_gate.js ./sts/common/
+COPY sts/persistence/persistence_replication.js sts/persistence/persistence.js ./sts/persistence/
+COPY sts/common/secrets.js ./sts/common/
+COPY sts/persistence/persistence_ldif.js sts/persistence/persistence_minted.js ./sts/persistence/
+COPY sts/persistence/persistence_postgres.js ./sts/persistence/
 COPY sts/federation/federation.js ./sts/federation/
 COPY sts/kerberos/krb5_primitives.js sts/kerberos/krb5_asn1.js sts/kerberos/krb5_crypto.js sts/kerberos/krb5_messages.js sts/kerberos/krb5_gss.js ./sts/kerberos/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
@@ -1000,6 +1027,21 @@ COPY common/tests.js /usr/src/common/tests.js
 COPY common/sp_keypair.js /usr/src/common/sp_keypair.js
 # Centralized test config (waitTime, etc.); selected via CONFIG_FILE.
 COPY tests/env ./env
+# ---------------------------------------------------------------------------
+# tests/tools — NOT test scripts, and a DIRECTORY rather than a flat copy.
+#
+# run-report.js requires tools/admin-api-token.js to mint the mock STS's
+# management API token before the pool starts, and preloads
+# tools/attach-admin-token.js into every job it spawns. Both are addressed as
+# `tools/<name>` from run-report.js, so they have to keep that directory here;
+# and `tools/` is what keeps them out of the reach of the three jobs that read
+# every `.js` BESIDE them (browser_tests_headless.js, driver_quit_reachable.js,
+# download_dir_pinned.js) and hold it to rules written for a Selenium test.
+#
+# Omit this and nothing fails at build time: the run dies at the first job that
+# configures the mock, with a 401 that names a credential rather than a COPY.
+# ---------------------------------------------------------------------------
+COPY tests/tools ./tools
 
 # ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers

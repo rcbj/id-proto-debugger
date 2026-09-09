@@ -17,7 +17,11 @@
 // Since 2026-08-24 the mock ships `admin.authRequired` ON, so every console
 // page and every console form needs a browser session and a role, and a caller
 // posting JSON is answered 401 rather than redirected. `/admin-api` is
-// deliberately not gated and is the surface that exists for a program.
+// the surface that exists for a program, and since 2026-09-09 it wants a
+// credential of its own — an OAuth 2.0 access token rather than the console's
+// session. Nothing in this file mints or presents one: run-report.js preloads
+// tools/attach-admin-token.js into every job, which puts the run's token on
+// these calls and on nothing else. See tests/CLAUDE.md.
 //
 // The one difference from driving the console's forms is that the ACTION IS IN
 // THE PATH here rather than in the body: `/applications/create`,

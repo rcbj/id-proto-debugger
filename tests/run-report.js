@@ -5284,7 +5284,14 @@ function runJob(job, index, live, again) {
     if (nodeCoverageOn) {
       childEnv.NODE_V8_COVERAGE = NODE_COVERAGE_TMP;
     }
-    const child = spawn("node", [path.join(TESTS_DIR, job.script), "--url",
+    // `--require` PUTS THE MANAGEMENT API'S TOKEN ON EVERY JOB'S REQUESTS.
+    // The mock STS gates /admin-api since 2026-09-09 and about fifteen jobs
+    // configure it through that API, each with an HTTP helper of its own. The
+    // shim is a no-op when STS_ADMIN_API_TOKEN is unset, which is every run
+    // against a service that is not gated. See tools/attach-admin-token.js.
+    const child = spawn("node", ["--require",
+        path.join(TESTS_DIR, "tools", "attach-admin-token.js"),
+        path.join(TESTS_DIR, job.script), "--url",
         BASE_URL], {
       env: childEnv,
       // A process group of this job's own, so its whole tree can be killed as
@@ -6058,6 +6065,78 @@ function reportJobsThatDidNotRun(results) {
   log.debug("Leaving reportJobsThatDidNotRun(). " + missed.length + ".");
 }
 
+// ---------------------------------------------------------------------------
+// THE ACCESS TOKEN EVERY JOB DRIVES THE MOCK STS'S `/admin-api` WITH.
+//
+// That API required no credential at all until the 2026-09-09 submodule bump;
+// it now takes an OAuth 2.0 access token audienced to itself and carrying
+// `admin:read` / `admin:write`. About fifteen jobs here configure the mock
+// through it, so this is minted ONCE, before the pool starts, and reaches
+// every job through the environment and tools/attach-admin-token.js.
+//
+// WHETHER ONE IS NEEDED IS ASKED OF THE SERVICE RATHER THAN ASSUMED.
+// `adminApi.authRequired` is settable while the mock is running and per trust
+// realm, and ./remote-run-tests.sh drives a mock this repository did not
+// configure — so the probe is a call, and a service that answers anything but
+// 401 leaves the jobs exactly as they were before this existed.
+//
+// A FAILURE HERE IS FATAL rather than a warning. Without a token every job
+// that touches that API fails with 401, and the run would report fifteen
+// broken tests instead of one credential nobody pinned.
+// ---------------------------------------------------------------------------
+async function ensureAdminApiToken() {
+  log.debug("Entering ensureAdminApiToken().");
+  if (env.STS_ADMIN_API_TOKEN) {
+    log.debug("Leaving ensureAdminApiToken(). One was handed to this run.");
+    return;
+  }
+  // The ROOT of the mock. WSTRUST_STS_URL is a WS-Trust endpoint carrying a
+  // `/sts` path and /admin-api is served at the root, which is the same
+  // distinction ssf_protocol.js and caep_protocol.js record.
+  const base = env.STS_URL ||
+      (env.WSTRUST_STS_URL || "").replace(/\/sts\/?$/, "");
+  if (!base) {
+    log.debug("Leaving ensureAdminApiToken(). No mock STS in this run.");
+    return;
+  }
+  const tokens = require(path.join(TESTS_DIR, "tools", "admin-api-token.js"));
+  let gated = false;
+  try {
+    gated = await tokens.isGated(base);
+  } catch (e) {
+    // Unreachable is not this function's failure to report: every job that
+    // needs that service is about to say so far more usefully.
+    log.warn("Could not ask " + base + " whether /admin-api is gated (" +
+             e.message + "). Carrying on without a token.");
+    log.debug("Leaving ensureAdminApiToken(). Unreachable.");
+    return;
+  }
+  if (!gated) {
+    log.info("The mock STS at " + base + " leaves /admin-api open " +
+             "(adminApi.authRequired is off); no token is needed.");
+    log.debug("Leaving ensureAdminApiToken(). Not gated.");
+    return;
+  }
+  let token = "";
+  try {
+    token = await tokens.tokenFor(base);
+  } catch (e) {
+    log.error("Could not obtain an access token for " + base +
+              "/admin-api: " + e.message);
+    log.error("Every job that configures the mock STS needs one. The " +
+              "launchers pin ADMIN_API_CLIENT_SECRET on that container and " +
+              "pass the same value here as STS_ADMIN_API_CLIENT_SECRET; " +
+              "adminApi.authRequired=false is the way back to the open API.");
+    log.debug("Leaving ensureAdminApiToken(). Could not mint one.");
+    process.exit(1);
+  }
+  // Into this process's environment, which is what every job inherits.
+  env.STS_ADMIN_API_TOKEN = token;
+  log.info("Minted an /admin-api access token for " + base +
+           " (admin:read admin:write).");
+  log.debug("Leaving ensureAdminApiToken().");
+}
+
 async function main() {
   log.debug("Entering main().");
   const demo = process.argv.includes("--demo");
@@ -6071,6 +6150,7 @@ async function main() {
     // Filled BY INDEX rather than pushed: with a pool the jobs finish out of
     // order, and the report is written in the order they were built.
     results = new Array(jobs.length);
+    await ensureAdminApiToken();
     prepareNodeCoverage();
     log.info(`Running ${jobs.length} test(s) against ${BASE_URL}, ` +
         `${CONCURRENCY} at a time.`);

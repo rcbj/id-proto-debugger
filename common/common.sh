@@ -81,6 +81,39 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STACK_TLS_SPKI_PIN"
 # NOTHING, silently, which is the whole failure mode that test exists to catch.
 # It caught exactly this on the first run after the variables were added.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_CONFIG_FILE TESTS_CONFIG_FILE"
+# THE MOCK STS'S MANAGEMENT API CREDENTIAL (2026-09-09). The submodule bump of
+# that date closed /admin-api: it takes an OAuth 2.0 access token now, minted by
+# the seeded `sts-management-api` client with client_credentials. That client's
+# secret is generated at every start of the mock and is readable only THROUGH
+# the API it unlocks — a bootstrap hole — so `adminApi.clientSecret` exists to
+# pin it, and this is the value the compose files hand that container as
+# ADMIN_API_CLIENT_SECRET and the tests container as
+# STS_ADMIN_API_CLIENT_SECRET. See the block below, where it is generated.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} ADMIN_API_CLIENT_SECRET"
+
+
+# ---------------------------------------------------------------------------
+# THE MANAGEMENT API'S CLIENT SECRET, PINNED FOR THIS RUN.
+#
+# One value per launcher run, generated here because every launcher sources
+# this file and both ends of the arrangement need the same string: the mock STS
+# is given it as `adminApi.clientSecret` and whoever mints a token — the tests
+# container's run-report.js, or mintAdminApiToken() below — is given it as
+# STS_ADMIN_API_CLIENT_SECRET.
+#
+# A FRESH SECRET PER RUN rather than a constant in this file: it lives as long
+# as one stack, it never reaches a repository, and two runs on one machine
+# cannot lend each other a token. An outer value is respected, which is how a
+# caller drives a mock it started itself.
+# ---------------------------------------------------------------------------
+if [ -z "${ADMIN_API_CLIENT_SECRET:-}" ];
+then
+  ADMIN_API_CLIENT_SECRET="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' \
+                             | head -c 24)"
+fi
+export ADMIN_API_CLIENT_SECRET
+STS_ADMIN_API_CLIENT_SECRET="${ADMIN_API_CLIENT_SECRET}"
+export STS_ADMIN_API_CLIENT_SECRET
 
 # Does docker on this machine need sudo? Answered by RUNNING it rather than by
 # looking for a group in `id -nG`, which is neither necessary (a rootless
@@ -1751,6 +1784,81 @@ trustStsCertificate()
 # so the caller can leave RFC9700_STS_URL unset and let run-report.js skip the
 # five jobs with a reason.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE ACCESS TOKEN THIS RUN DRIVES THE MOCK STS'S /admin-api WITH.
+#
+# WHY A LAUNCHER MINTS ONE AT ALL. The mock closed that API on 2026-09-09: it
+# takes an OAuth 2.0 access token audienced to itself and carrying `admin:read`
+# / `admin:write`. The full suite gets its token from run-report.js, which
+# mints one before the pool starts; this function is for everything that does
+# NOT go through the runner — configureStsRfc9700Realm() and
+# declareStsLogoutService() below, which are curl, and the `--*-only` modes in
+# local-run-tests.sh, which spawn a test script directly.
+#
+# It exports two things and both are load-bearing:
+#
+#   * STS_ADMIN_API_TOKEN, which the curls above read directly.
+#   * NODE_OPTIONS carrying tests/tools/attach-admin-token.js, which puts that
+#     token on the /admin-api calls the test scripts make. Those scripts each
+#     have an HTTP helper of their own — fifteen of them, sharing nothing — so
+#     one preload is the alternative to fifteen identical edits.
+#
+# WHETHER A TOKEN IS NEEDED IS ASKED OF THE SERVICE. `adminApi.authRequired` is
+# settable while the mock is running, and remote-run-tests.sh drives one this
+# repository did not configure — so the tool probes, prints nothing when the
+# API is open, and this leaves the environment untouched in that case.
+#
+# A REAL FAILURE STOPS THE RUN. Without a token every job that configures the
+# mock fails with 401, and the run would report fifteen broken tests instead of
+# one credential nobody pinned.
+# ---------------------------------------------------------------------------
+mintAdminApiToken()
+{
+  echo "Entering mintAdminApiToken(). url=${1}"
+  local base="${1%/}"
+  local token
+  if [ -z "${base}" ];
+  then
+    echo "ERROR: mintAdminApiToken() needs the STS base URL." >&2
+    echo "Leaving mintAdminApiToken(). No URL."
+    return 1
+  fi
+  if [ ! -f "${CURRENT_DIR}/tests/tools/admin-api-token.js" ];
+  then
+    echo "Leaving mintAdminApiToken(). No tools/admin-api-token.js."
+    return 0
+  fi
+  if ! token="$(node "${CURRENT_DIR}/tests/tools/admin-api-token.js" \
+                     "${base}")";
+  then
+    echo "ERROR: could not obtain an access token for ${base}/admin-api." >&2
+    echo "  Everything that configures the mock STS needs one. This run" >&2
+    echo "  pinned ADMIN_API_CLIENT_SECRET on that container; a mock" >&2
+    echo "  started" >&2
+    echo "  outside this launcher has a secret of its own, and" >&2
+    echo "  adminApi.authRequired=false is the way back to the open API." >&2
+    echo "Leaving mintAdminApiToken(). Not minted."
+    exit 1
+  fi
+  if [ -z "${token}" ];
+  then
+    echo "Leaving mintAdminApiToken(). ${base}/admin-api is open."
+    return 0
+  fi
+  STS_ADMIN_API_TOKEN="${token}"
+  export STS_ADMIN_API_TOKEN
+  case " ${NODE_OPTIONS:-} " in
+    *"attach-admin-token.js"*)
+      ;;
+    *)
+      NODE_OPTIONS="--require ${CURRENT_DIR}/tests/tools/\
+attach-admin-token.js ${NODE_OPTIONS:-}"
+      export NODE_OPTIONS
+      ;;
+  esac
+  echo "Leaving mintAdminApiToken(). Minted for ${base}/admin-api."
+}
+
 configureStsRfc9700Realm()
 {
   echo "Entering configureStsRfc9700Realm(). url=${1}"
@@ -1774,6 +1882,8 @@ configureStsRfc9700Realm()
   local body code
   body="$(curl -sk -m 20 -X POST "${base}/admin-api/realms/create" \
             -H 'Content-Type: application/json' \
+            ${STS_ADMIN_API_TOKEN:+-H \
+              "Authorization: Bearer ${STS_ADMIN_API_TOKEN}"} \
             -d "{\"id\":\"${realm}\",\"name\":\"RFC 9700 mode\",\"description\":\"The OAuth 2.0 Security Best Current Practice enforced. Created by configureStsRfc9700Realm() in common/common.sh for the five rfc9700_flows.js jobs.\",\"overrides\":{\"oauth2.rfc9700\":true}}" \
             -w '\n%{http_code}' || true)"
   code="$(printf '%s' "${body}" | tail -n 1)"
@@ -1792,6 +1902,8 @@ configureStsRfc9700Realm()
 
   body="$(curl -sk -m 20 -X POST "${base}/admin-api/realms/set" \
             -H 'Content-Type: application/json' \
+            ${STS_ADMIN_API_TOKEN:+-H \
+              "Authorization: Bearer ${STS_ADMIN_API_TOKEN}"} \
             -d "{\"id\":\"${realm}\",\"key\":\"oauth2.rfc9700\",\"value\":true}" \
             -w '\n%{http_code}' || true)"
   code="$(printf '%s' "${body}" | tail -n 1)"

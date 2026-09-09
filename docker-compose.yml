@@ -111,6 +111,20 @@ services:
       # ---------------------------------------------------------------------
       - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
       - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+      # ---------------------------------------------------------------------
+      # THE MANAGEMENT API'S CLIENT SECRET, PINNED FOR THIS RUN.
+      #
+      # `/admin-api` takes an OAuth 2.0 access token since the 2026-09-09
+      # submodule bump, minted by the seeded `sts-management-api` client with
+      # client_credentials. That client's secret is generated at every start
+      # of this service and is readable only THROUGH the API it unlocks — a
+      # bootstrap hole — so `adminApi.clientSecret` exists to pin it.
+      # common/common.sh generates one per launcher run and forwards it; a
+      # bare `docker-compose up` leaves it empty, which is this service's own
+      # default and means a `/admin-api` nothing here can reach. Set it, or
+      # set ADMIN_API_AUTH_REQUIRED=false, if you want in from a shell.
+      # ---------------------------------------------------------------------
+      - ADMIN_API_CLIENT_SECRET=${ADMIN_API_CLIENT_SECRET:-}
     volumes:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     container_name: sts

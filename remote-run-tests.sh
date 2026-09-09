@@ -582,6 +582,10 @@ startSideCars()
   if [ -n "${WSTRUST_STS_URL:-}" ];
   then
     trustStsCertificate https://localhost:8081 || true
+    # The mock's /admin-api takes an access token since the 2026-09-09
+    # submodule bump. Minted here, before anything configures that
+    # service, and reaches the test scripts through NODE_OPTIONS.
+    mintAdminApiToken https://localhost:8081
     if configureStsRfc9700Realm https://localhost:8081;
     then
       RFC9700_STS_URL="${RFC9700_STS_URL:-https://localhost:8081/realm/rfc9700}"

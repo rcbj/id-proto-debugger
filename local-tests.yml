@@ -240,6 +240,23 @@ services:
     # unprivileged user; see the block at the foot of each Dockerfile.
     network_mode: "host"
     environment:
+      # ---------------------------------------------------------------------
+      # THE MANAGEMENT API'S CLIENT SECRET, PINNED FOR THIS RUN.
+      #
+      # `/admin-api` takes an OAuth 2.0 access token since the 2026-09-09
+      # submodule bump, minted by the seeded `sts-management-api` client with
+      # client_credentials. That client's secret is generated at every start
+      # of this service and is readable only THROUGH the API it unlocks — a
+      # bootstrap hole — so `adminApi.clientSecret` exists to pin it, and
+      # common/common.sh generates one per launcher run. The tests container
+      # is handed the same value as STS_ADMIN_API_CLIENT_SECRET, which is
+      # what run-report.js mints with before the pool starts.
+      #
+      # NOT the bare form STS_LOG_LEVEL uses: empty is this setting's own
+      # default over there and means "mint one per start", so it is harmless
+      # here rather than a value that stops the container.
+      # ---------------------------------------------------------------------
+      - ADMIN_API_CLIENT_SECRET=${ADMIN_API_CLIENT_SECRET:-}
       # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
       # rather than given a value here.
       #
