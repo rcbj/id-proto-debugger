@@ -5,6 +5,7 @@ const chrome = require("selenium-webdriver/chrome");
 const jwt = require("jsonwebtoken");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -295,7 +296,7 @@ async function test() {
     // Load the debugger, populate IdP metadata from discovery, and run the
     // OIDC Authorization Code flow to obtain an access token and refresh token.
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
     log.info("Calling getAccessToken().");

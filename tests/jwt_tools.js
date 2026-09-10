@@ -8,6 +8,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 // The certificate authority, the key material and the JWS signer this test
@@ -152,7 +153,7 @@ async function addCustomClaim(driver, name, value, type) {
 async function jwtToolsActivities(driver) {
   log.debug("Entering jwtToolsActivities().");
   log.info("Navigate back to oauth2_oidc_1.html.");
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
 
   log.info("Expand the Tools pane.");
   await click(driver, By.id("tools_expand_button"));
@@ -504,7 +505,7 @@ async function jwtToolsActivities(driver) {
 async function idTokenDecodeActivities(driver, id_token) {
   log.debug("Entering idTokenDecodeActivities().");
   log.info("Navigate to jwt_tools.html to paste the ID Token.");
-  await driver.get(baseUrl + "/jwt_tools.html");
+  await loadUrl(driver, baseUrl + "/jwt_tools.html");
 
   // Wait for the page's own onload to populate the default payload first.
   await waitForValue(driver, By.id("jwt_tools_payload"),
@@ -552,7 +553,7 @@ async function encodedFileLoadActivities(driver) {
       "idptools-jwt-upload-"));
   try {
     log.info("Navigate to jwt_tools.html for the file-load pane.");
-    await driver.get(baseUrl + "/jwt_tools.html");
+    await loadUrl(driver, baseUrl + "/jwt_tools.html");
     await waitForValue(driver, By.id("jwt_tools_payload"),
       function (v) { return v.indexOf("garbage") !== -1; },
       "JWT Tools default payload did not load.");
@@ -787,7 +788,7 @@ async function x5cTrustChainActivities(driver) {
   log.info("Build a Root CA, an Issuing CA, a signer and an x5c token.");
   var fixture = await buildX5cFixture();
 
-  await driver.get(baseUrl + "/jwt_tools.html");
+  await loadUrl(driver, baseUrl + "/jwt_tools.html");
   await waitForValue(driver, By.id("jwt_tools_payload"),
     function (v) { return v.indexOf("garbage") !== -1; },
     "JWT Tools default payload did not load.");
@@ -1217,7 +1218,7 @@ async function deepTrustChainActivities(driver) {
   log.info("Build a four-tier hierarchy and the tokens that hang off it.");
   var fixture = await buildDeepChainFixture();
 
-  await driver.get(baseUrl + "/jwt_tools.html");
+  await loadUrl(driver, baseUrl + "/jwt_tools.html");
   await waitForValue(driver, By.id("jwt_tools_payload"),
     function (v) { return v.indexOf("garbage") !== -1; },
     "JWT Tools default payload did not load.");
@@ -1465,7 +1466,7 @@ async function test() {
     log.info("Clear all cookies.");
     await driver.manage().deleteAllCookies();
     log.info("Load the debugger and run the OIDC Authorization Code flow.");
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     await populateMetadata(driver, discovery_endpoint);
     let access_token = await getAccessTokenAuthCode(driver, client_id,
         client_secret, scope, pkce_enabled, { baseUrl });

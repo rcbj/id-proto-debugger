@@ -3,6 +3,7 @@ const browserFlags = require("./browser_flags.js");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require('commander');
 const assert = require("assert");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -209,7 +210,7 @@ async function landingFitsOnOneScreen(driver) {
   log.info("Entering landingFitsOnOneScreen().");
   var was = await driver.manage().window().getRect();
   await driver.manage().window().setRect({ width: 1366, height: 768 });
-  await driver.get(baseUrl);
+  await loadUrl(driver, baseUrl);
   await waitVisible(driver, CHOICES);
   await driver.sleep(300);
 
@@ -294,7 +295,7 @@ async function navigationActivities(driver) {
   log.debug("Entering navigationActivities().");
   // 1. Hit the base URL -> the landing page (site root serves index.html).
   log.info("Load the base URL (landing page).");
-  await driver.get(baseUrl);
+  await loadUrl(driver, baseUrl);
   await waitVisible(driver, CHOICES);
   log.info("Landing page loaded (protocol choices present).");
   await checkFooterVersion(driver, "landing page");

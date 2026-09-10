@@ -37,6 +37,7 @@ const browserFlags = require("./browser_flags.js");
 const { mustBeReady } = require("./expectation.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -391,7 +392,7 @@ async function theTicketPaneShowsWhatIsInsideTheTicket(driver) {
   // Fed from STORAGE rather than from the exchange, so a reload — and equally a
   // ticket made active from the history — shows the same thing. This is the
   // case a version built off the live reply gets wrong.
-  await driver.get(baseUrl + "/kerberos.html");
+  await loadUrl(driver, baseUrl + "/kerberos.html");
   await driver.wait(until.elementLocated(By.id("krb_cache_pane")), 15000);
   const reloaded = await waitForText(driver, "krb_cache_pane",
       /EncTicketPart|No ticket held/, 20000,
@@ -463,7 +464,7 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
   const BUDGET = 640;
   const was = await driver.manage().window().getRect();
   await driver.manage().window().setRect({ width: 1366, height: 768 });
-  await driver.get(baseUrl + "/kerberos.html");
+  await loadUrl(driver, baseUrl + "/kerberos.html");
   await driver.wait(until.elementLocated(By.id("krb_preauth_button")), 15000);
 
   const m = await driver.executeScript(
@@ -608,7 +609,7 @@ async function test() {
   const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
 
   try {
-    await driver.get(baseUrl + "/kerberos.html");
+    await loadUrl(driver, baseUrl + "/kerberos.html");
     await driver.wait(until.elementLocated(By.id("krb_noreauth_button")),
         20000);
     await theConfigurationAndBothControlsFitOnOneScreen(driver);

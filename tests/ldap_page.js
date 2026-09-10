@@ -67,6 +67,7 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
 const { mustBeReady } = require("./expectation.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -285,7 +286,7 @@ async function preconditions() {
 async function theConnectionPaneBindsAndForgetsThePassword(driver) {
   log.debug("Entering theConnectionPaneBindsAndForgetsThePassword().");
   log.info("=== Connection & Bind ===");
-  await driver.get(baseUrl + "/ldap.html");
+  await loadUrl(driver, baseUrl + "/ldap.html");
   await driver.wait(until.elementLocated(By.id("btn_ldap_bind")), 20000);
 
   // The limits line is filled from GET /ldap/limits before anything is

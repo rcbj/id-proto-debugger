@@ -107,6 +107,7 @@ const { usernameFor } = require("./random_username.js");
 const browserFlags = require("./browser_flags.js");
 const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -459,7 +460,7 @@ async function theApplicationNamesKerberosAsItsMechanism() {
 async function theDoorChallengesBeforeAnyTicket(driver) {
   log.debug("Entering theDoorChallengesBeforeAnyTicket().");
   log.info("=== The unauthenticated request to the sign-in door ===");
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_probe_button")), 20000);
 
   await setUrlField(driver, signInUrl);
@@ -511,7 +512,7 @@ async function theDoorChallengesBeforeAnyTicket(driver) {
 async function theDebuggerBuildsTheCredential(driver) {
   log.debug("Entering theDebuggerBuildsTheCredential().");
   log.info("=== The AS exchange: a TGT for " + principal + " ===");
-  await driver.get(baseUrl + "/kerberos.html?return=spnego");
+  await loadUrl(driver, baseUrl + "/kerberos.html?return=spnego");
   await driver.wait(until.elementLocated(By.id("krb_noreauth_button")), 20000);
 
   await setField(driver, "krb_realm", realm);
@@ -544,7 +545,7 @@ async function theDebuggerBuildsTheCredential(driver) {
   log.info("the debugger holds a TGT for " + principal + "@" + realm);
 
   log.info("=== The TGS exchange: a service ticket for " + spn + " ===");
-  await driver.get(baseUrl + "/kerberos_tgs.html?return=spnego&spn=" +
+  await loadUrl(driver, baseUrl + "/kerberos_tgs.html?return=spnego&spn=" +
       encodeURIComponent(spn));
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
   const filled = await driver.findElement(By.id("krb_spn"))
@@ -577,7 +578,7 @@ async function theDebuggerBuildsTheCredential(driver) {
 async function theTicketSignsThePersonIn(driver) {
   log.debug("Entering theTicketSignsThePersonIn().");
   log.info("=== The sign-in ===");
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_authenticate_button")),
       20000);
   await setUrlField(driver, signInUrl);

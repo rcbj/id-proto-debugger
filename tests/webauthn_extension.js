@@ -51,6 +51,7 @@ const { waitForFocus } = require("./wait_for.js");
 // reason: every job here that signs somebody in meets the same hop, and a
 // hand-written copy per job is a chance per job to write the wait wrong.
 const consentScreen = require("./consent_screen.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -345,7 +346,7 @@ async function test() {
 
     await section("the extension is actually loaded and ARMED for the " +
                   "third-party origin", async () => {
-      await driver.get(baseUrl + "/webauthn_analyzer.html");
+      await loadUrl(driver, baseUrl + "/webauthn_analyzer.html");
       await driver.wait(until.elementLocated(By.id("wa_input")), waitTime * 4);
       const marker = await driver.executeScript(
         "return document.documentElement.getAttribute('data-idptools-webauthn-observer');");
@@ -401,7 +402,7 @@ async function test() {
       assert.ok(result.code, "the sign-in should have completed");
 
       // The captures live on the debugger's origin, reached through the bridge.
-      await driver.get(baseUrl + "/webauthn_analyzer.html");
+      await loadUrl(driver, baseUrl + "/webauthn_analyzer.html");
       await driver.wait(until.elementLocated(By.id("wa_input")), waitTime * 4);
       let answer = null;
       await driver.wait(async function () {
@@ -472,7 +473,7 @@ async function test() {
 
     await section("the Analyzer's capture inbox lists it and loads it with " +
                   "one click", async () => {
-      await driver.get(baseUrl + "/webauthn_analyzer.html");
+      await loadUrl(driver, baseUrl + "/webauthn_analyzer.html");
       await driver.wait(until.elementLocated(By.id("wa_ext_body")),
                         waitTime * 4);
       // The pane populates itself on load; Refresh is for after a new ceremony.

@@ -44,6 +44,7 @@ const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { mustBeReady } = require("./expectation.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -164,7 +165,7 @@ async function waitForText(driver, id, what) {
 
 async function openPage(driver) {
   log.debug("Entering openPage().");
-  await driver.get(baseUrl + "/ssf.html");
+  await loadUrl(driver, baseUrl + "/ssf.html");
   await driver.wait(until.elementLocated(By.id("pane_profile")), WAIT,
       baseUrl + "/ssf.html has no Profile pane — either the page 404'd or " +
       "the CAEP markup is not in this build.");

@@ -225,6 +225,7 @@ const common = require("./jwt_vc_json_common.js");
 // copy of `delegate()` here would be exactly the fourth hand-written copy that
 // module exists to stop.
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1047,14 +1048,14 @@ async function assertTheChoosersSearch(session) {
 async function startNewWorkflow(driver, discoveryEndpoint, who, previous) {
   log.debug("Entering startNewWorkflow(). who=" + who);
   log.info("=== Starting a new debugger workflow as " + who + " ===");
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await waitFor.waitForPageBundle(driver,
       "oauth2_oidc_1.html's bundle (before clearing the workflow)");
   // Cleared from the page rather than by deleting cookies: this is
   // localStorage, it is per-origin, and the debugger keeps every field of the
   // workflow in it.
   await driver.executeScript("window.localStorage.clear();");
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await waitFor.waitForPageBundle(driver, "oauth2_oidc_1.html's bundle");
 
   // THE CLEAR IS ASSERTED, and it is asserted through the page's own re-seed
@@ -1252,7 +1253,7 @@ async function exchangeAs(driver, hop) {
   log.debug("Entering exchangeAs(). client=" + hop.clientId);
   log.info("=== " + hop.clientId + ": RFC 8693 exchange for " + hop.audience +
            ", scope \"" + hop.scope + "\" ===");
-  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
   await waitFor.waitForPageBundle(driver, "oauth2_oidc_2.html's bundle");
 
   const fieldset = By.id("tokenexchange_fieldset");

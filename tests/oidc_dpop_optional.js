@@ -37,6 +37,7 @@ const assert = require("assert");
 const { Command, Option } = require('commander');
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -119,7 +120,7 @@ async function storage(driver, key) {
 
 async function openDebugger2(driver) {
   log.debug("Entering openDebugger2().");
-  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
   await driver.wait(until.elementLocated(By.id("dpop_enabled")), waitTime * 3);
   log.debug("Leaving openDebugger2().");
 }
@@ -153,7 +154,7 @@ async function runAuthorizationCodeFlow(driver, { expectJkt }) {
   log.debug("Entering runAuthorizationCodeFlow().");
   log.info("Entering runAuthorizationCodeFlow(). expectJkt=" + (expectJkt ||
            "(none)"));
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await driver.wait(until.elementLocated(By.id("authorization_grant_type")),
                     waitTime * 3);
   await new Select(await driver.findElement(By.id("authorization_grant_type")))
@@ -330,9 +331,9 @@ async function test() {
     });
 
     await driver.manage().deleteAllCookies();
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     await driver.executeScript("window.localStorage.clear();");
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     await populateMetadata(driver, discovery);
 
     // --- 1. the default -----------------------------------------------------

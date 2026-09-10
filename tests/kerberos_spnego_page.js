@@ -50,6 +50,7 @@ const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -252,7 +253,7 @@ async function preconditions() {
 async function theAsPageOffersTheWayBack(driver) {
   log.debug("Entering theAsPageOffersTheWayBack().");
   log.info("=== The AS page, arrived at from SPNEGO ===");
-  await driver.get(baseUrl + "/kerberos.html?return=spnego");
+  await loadUrl(driver, baseUrl + "/kerberos.html?return=spnego");
   await driver.wait(until.elementLocated(By.id("krb_noreauth_button")), 20000);
 
   // The banner has to be there BEFORE a ticket exists — that is the case it is
@@ -307,7 +308,7 @@ async function theAsPageOffersTheWayBack(driver) {
 async function theTgsPageTakesTheSpnAndOffersTheWayBack(driver) {
   log.debug("Entering theTgsPageTakesTheSpnAndOffersTheWayBack().");
   log.info("=== The TGS page, with the SPN carried through ===");
-  await driver.get(baseUrl + "/kerberos_tgs.html?return=spnego&spn=" +
+  await loadUrl(driver, baseUrl + "/kerberos_tgs.html?return=spnego&spn=" +
       encodeURIComponent(spn));
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
 
@@ -641,7 +642,7 @@ async function aNegotiationWithNothingInCommonIsRefused(driver) {
   log.info("=== NEGATIVE: no mechanism in common ===");
 
   // The acceptor's side: ?mech=none makes the mock support nothing at all.
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_spnego_url")), 20000);
   await setField(driver, "krb_spnego_url", protectedUrl + "?mech=none");
   await driver.findElement(By.id("krb_spnego_url")).sendKeys("\t");
@@ -662,7 +663,7 @@ async function aNegotiationWithNothingInCommonIsRefused(driver) {
     "password, and that fact is the finding: " + refused);
 
   // The initiator's side: offer only a mechanism this build cannot perform.
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_spnego_url")), 20000);
   await setField(driver, "krb_spnego_url", protectedUrl);
   await driver.findElement(By.id("krb_spnego_url")).sendKeys("\t");
@@ -690,7 +691,7 @@ async function aNegotiationWithNothingInCommonIsRefused(driver) {
 async function withoutAnApRepNothingProvesTheServer(driver) {
   log.debug("Entering withoutAnApRepNothingProvesTheServer().");
   log.info("=== NEGATIVE: no proof of the server's identity ===");
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_spnego_url")), 20000);
   await setField(driver, "krb_spnego_url", protectedUrl + "?mutual=off");
   await driver.findElement(By.id("krb_spnego_url")).sendKeys("\t");

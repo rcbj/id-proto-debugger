@@ -8,6 +8,7 @@ const { Command, Option } = require('commander');
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const { addBrowserAccessFlags } = require("./browser_flags");
 const { assertEdgeLandingContract } = require("./edge_landing_contract");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -77,7 +78,7 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user,
   log.debug("Entering encryptedSsoActivities().");
   var loginWait = Math.max(waitTime, 15000);
   log.info("Load the SAML Test Tools page (encrypted SP, POST binding).");
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
   await loadIdpMetadata(driver, metadataUrl, metadataFile);
 
   // Use the ENCRYPTED SP client's entityID and this run's SP key pair (its cert

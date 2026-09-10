@@ -3,6 +3,7 @@ const browserFlags = require("./browser_flags.js");
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -169,7 +170,7 @@ async function test() {
     // Open the debugger and seed the Dynamic Client Registration pane from the
     // provider's discovery metadata, then expand the pane for editing.
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
 
     log.info("Populating metadata from discovery.");
     await populateMetadata(driver, discovery_endpoint);

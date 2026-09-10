@@ -37,6 +37,7 @@ const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -207,7 +208,7 @@ async function issueFromWaltid(driver) {
   log.info("=== Phase 1: walt.id issues the credential (through our own " +
            "pages) ===");
   await signOutOfKeycloak(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
@@ -439,8 +440,8 @@ async function presentToWaltid(driver, session, opts) {
            (byReference ? "request by reference" : "request by value") +
            (withhold ? ", withholding " + withhold : "") + ") ===");
 
-  await driver.get(baseUrl + "/vc-presentation-1.html?" + requestQuery(session,
-                   byReference));
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" +
+      requestQuery(session, byReference));
   await driver.wait(until.elementLocated(By.id("vp_request_status")), waitTime);
   var requestStatus = await waitForStatus(driver, "vp_request_status",
     function (s) { return /Request read|cannot be answered|Could not/.test(

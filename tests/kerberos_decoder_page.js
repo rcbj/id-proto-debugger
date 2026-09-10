@@ -39,6 +39,7 @@ const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const paths = require("./module_paths.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -440,7 +441,7 @@ async function test() {
   const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
 
   try {
-    await driver.get(baseUrl + "/kerberos_decoder.html");
+    await loadUrl(driver, baseUrl + "/kerberos_decoder.html");
     await driver.wait(until.elementLocated(By.id("krb_decode_button")), 20000);
     await theBundleLoadedAndTheButtonsWork(driver);
     await decodesAPreauthErrorAndReadsOutTheSalt(driver);

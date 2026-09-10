@@ -56,6 +56,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -144,7 +145,7 @@ function everyPaneIsCollapsedRatherThanGone(seen, grant) {
 
 async function everyGrantArrivesWithItsPanes(driver) {
   log.debug("Entering everyGrantArrivesWithItsPanes().");
-  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
   await driver.wait(until.elementLocated(By.id("authorization_grant_type")),
       WAIT, "oauth2_oidc_2.html did not load");
   const grants = await driver.executeScript(GRANTS_PROBE);

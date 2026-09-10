@@ -38,6 +38,7 @@ const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -224,7 +225,7 @@ var WRONG_ISSUER = "http://localhost:1/not-the-offering-issuer";
 
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
@@ -571,7 +572,7 @@ async function checkCredential(driver, what, opts) {
 async function walletInitiated(driver) {
   log.debug("Entering walletInitiated().");
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-0.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-0.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_usecase_wallet-initiated")),
                     waitTime);
@@ -647,8 +648,8 @@ async function issuerInitiated(driver) {
 
   // Hand it to the wallet the way the openid-credential-offer link does.
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html?credential_offer=" +
-                   encodeURIComponent(offerParam));
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html?credential_offer=" +
+                        encodeURIComponent(offerParam));
   await driver.wait(until.elementLocated(By.id("pane_offer")), fetchWait,
     "the wallet should show the Credential Offer it was handed.");
   // WAIT FOR THE WRONG VALUE TO GO, not for the field to be non-empty.
@@ -785,7 +786,7 @@ async function crossDeviceOffer(driver) {
 
   // ---- the wallet takes what the QR code carried --------------------------
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
@@ -897,7 +898,7 @@ async function deferredNotSupportedHere(driver) {
   // endpoint — a wallet that guesses <issuer>/deferred_credential would send a
   // Deferred Credential Request into a 404 the moment an issuer took its time.
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
@@ -985,7 +986,7 @@ async function optionalFeaturesAbsentHere(driver) {
 
   // ---- the wallet's configuration pane says so ---------------------------
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
@@ -1059,7 +1060,7 @@ async function optionalFeaturesAbsentHere(driver) {
   }
 
   await signOutOfKeycloak(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("start_issuance_button")),
                     waitTime);

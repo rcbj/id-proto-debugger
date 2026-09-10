@@ -38,6 +38,7 @@ const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { waitForFocus } = require("./wait_for.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -149,7 +150,7 @@ async function test() {
 
   let authenticatorId = null;
   try {
-    await driver.get(baseUrl + "/webauthn.html");
+    await loadUrl(driver, baseUrl + "/webauthn.html");
     await driver.wait(until.elementLocated(By.id("wl_create_button")),
                       waitTime * 4);
     await driver.executeScript("localStorage.clear();");

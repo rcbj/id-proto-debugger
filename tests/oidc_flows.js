@@ -82,6 +82,7 @@ const assert = require("assert");
 const { Command, Option } = require('commander');
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -444,7 +445,7 @@ async function prepareAuthorizationRequest(driver, flow, { clientId, scope }) {
 async function enableDpop(driver) {
   log.debug("Entering enableDpop().");
   log.info("Entering enableDpop().");
-  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
   const box = By.id("dpop_enabled");
   await driver.wait(until.elementLocated(box), waitTime * 3);
   if (!(await driver.findElement(box).isSelected())) {
@@ -1010,12 +1011,12 @@ async function test() {
     log.info("Running the " + flow.label + " flow against " + metadata.issuer +
              ", DPoP " + dpopSetting + ", signing in as " + user.login + ".");
     await driver.manage().deleteAllCookies();
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     // A previous flow's state in localStorage would otherwise decide which
     // panes oauth2_oidc_2.html draws, which is exactly what this test is
     // reading.
     await driver.executeScript("window.localStorage.clear();");
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
 
     await populateMetadata(driver, discovery_endpoint);
 
@@ -1028,7 +1029,7 @@ async function test() {
     if (dpopOn) {
       dpopJkt = await enableDpop(driver);
       // Back to the page that builds the authorization request.
-      await driver.get(baseUrl + "/oauth2_oidc_1.html");
+      await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     }
     const sent = await prepareAuthorizationRequest(driver, flow,
         { clientId: clientId, scope: scope });

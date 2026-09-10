@@ -48,6 +48,7 @@ const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -232,7 +233,7 @@ async function preconditions() {
 // ---------------------------------------------------------------------------
 async function getATgtOnTheAsPage(driver) {
   log.debug("Entering getATgtOnTheAsPage().");
-  await driver.get(baseUrl + "/kerberos.html");
+  await loadUrl(driver, baseUrl + "/kerberos.html");
   await driver.wait(until.elementLocated(By.id("krb_noreauth_button")), 20000);
   await setField(driver, "krb_realm", realm);
   await setField(driver, "krb_principal", principal);
@@ -269,7 +270,7 @@ async function getATgtOnTheAsPage(driver) {
 
 async function theTgsPageRefusesWithNoTgt(driver) {
   log.debug("Entering theTgsPageRefusesWithNoTgt().");
-  await driver.get(baseUrl + "/kerberos_tgs.html");
+  await loadUrl(driver, baseUrl + "/kerberos_tgs.html");
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
   // Clear the cache and reload: the page must refuse up front rather than when
   // the button is pressed. A user with no TGT should not be able to send a
@@ -294,7 +295,7 @@ async function theTgsPageRefusesWithNoTgt(driver) {
 
 async function theTgsPageSpendsTheTgt(driver) {
   log.debug("Entering theTgsPageSpendsTheTgt().");
-  await driver.get(baseUrl + "/kerberos_tgs.html");
+  await loadUrl(driver, baseUrl + "/kerberos_tgs.html");
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
   const tgtPane = await driver.findElement(By.id("krb_tgt_pane")).getText();
   assert.ok(/krbtgt/.test(tgtPane),
@@ -394,7 +395,7 @@ async function theTgsPageSpendsTheTgt(driver) {
 
 async function theApPagePresentsItAndChecksTheEcho(driver) {
   log.debug("Entering theApPagePresentsItAndChecksTheEcho().");
-  await driver.get(baseUrl + "/kerberos_ap.html");
+  await loadUrl(driver, baseUrl + "/kerberos_ap.html");
   await driver.wait(until.elementLocated(By.id("krb_present_button")), 20000);
 
   const environment = await waitForText(driver, "krb_environment_note",
@@ -513,7 +514,7 @@ async function perMessageTokensWorkAndRejectTampering(driver) {
 // between authenticating a client and authenticating a connection.
 async function withoutMutualNothingProvesTheService(driver) {
   log.debug("Entering withoutMutualNothingProvesTheService().");
-  await driver.get(baseUrl + "/kerberos_ap.html");
+  await loadUrl(driver, baseUrl + "/kerberos_ap.html");
   await driver.wait(until.elementLocated(By.id("krb_present_button")), 20000);
   await setField(driver, "krb_service_host", serviceHost);
   await setField(driver, "krb_service_port", servicePort);

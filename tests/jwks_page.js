@@ -43,6 +43,7 @@ const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { waitForPageBundle, waitFor } = require("./wait_for.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -112,7 +113,7 @@ function renderFixture(driver, jwks) {
 
 async function openPage(driver) {
   log.debug("Entering openPage().");
-  await driver.get(baseUrl + "/jwks.html");
+  await loadUrl(driver, baseUrl + "/jwks.html");
   // The inline onclick handlers call the browserify --standalone global, and a
   // click before that global exists is a SILENT NO-OP.
   await waitForPageBundle(driver, "the JWKS page");

@@ -44,6 +44,7 @@ const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { mustBeReady } = require("./expectation.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -142,7 +143,7 @@ async function waitForText(driver, id, what) {
 async function thePageLoadsAndTheBundleRan(driver) {
   log.debug("Entering thePageLoadsAndTheBundleRan().");
   log.info("=== The page and its bundle ===");
-  await driver.get(baseUrl + "/ssf.html");
+  await loadUrl(driver, baseUrl + "/ssf.html");
   await driver.wait(until.elementLocated(By.id("pane_metadata")), WAIT,
       "ssf.html did not load");
   // The bundle's global. A page whose <script> 404s renders perfectly and
@@ -1058,7 +1059,7 @@ async function theConsoleIsClean(driver) {
 async function theHandoffAsksForTheScopesTheEndpointsNeed(driver) {
   log.debug("Entering theHandoffAsksForTheScopesTheEndpointsNeed().");
   log.info("=== The hand-off's scope request ===");
-  await driver.get(baseUrl + "/ssf.html");
+  await loadUrl(driver, baseUrl + "/ssf.html");
   await driver.wait(until.elementLocated(By.id("pane_tokens")), WAIT,
       "ssf.html did not come back for the scope check");
 
@@ -1125,7 +1126,7 @@ async function theHandoffAsksForTheScopesTheEndpointsNeed(driver) {
 
   // The OTHER field, on the OTHER page. Client credentials and resource
   // owner password never pass through the page above.
-  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
   await driver.wait(until.elementLocated(By.id("token_scope")), WAIT,
       "oauth2_oidc_2.html did not load");
   await driver.wait(async function () {

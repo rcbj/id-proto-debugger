@@ -32,6 +32,7 @@ const assert = require("assert");
 const { Command, Option } = require("commander");
 const path = require("path");
 const paths = require("./module_paths.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -890,7 +891,7 @@ async function populateRunsTheCheck() {
   try {
     var plant = async function (vci, as) {
       log.debug("Entering plant().");
-      await driver.get(baseUrl + "/vc-issuance-1.html");
+      await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
       await pageBundleReady(driver);
       await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                         waitTime);

@@ -5,6 +5,7 @@ const chrome = require("selenium-webdriver/chrome");
 const jwt = require("jsonwebtoken");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -80,7 +81,7 @@ async function test() {
     // Load the debugger, populate IdP metadata, then request and validate the
     // access token
     log.info("Starting driver.get() run.");
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     log.info("Completed driver.get() run.");
     log.info("Starting populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);

@@ -22,6 +22,7 @@ const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -121,7 +122,7 @@ const SUCCESS_RESPONSE_B64 = b64(RESP_OPEN +
 
 async function openPage(driver) {
   log.debug("Entering openPage().");
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
   await driver.wait(until.elementLocated(By.id('pane_history')), waitTime);
   log.debug("Leaving openPage().");
 }
@@ -260,8 +261,8 @@ async function operationHistoryActivities(driver) {
   // A non-Success StatusCode must turn the dispatch into a Failure — this is
   // the case a "the request was sent" log gets wrong.
   log.info("=== Resolving a dispatch from the IdP's answer ===");
-  await driver.get(baseUrl + '/saml_response.html?SAMLResponse=' +
-                   encodeURIComponent(DENIED_RESPONSE_B64));
+  await loadUrl(driver, baseUrl + '/saml_response.html?SAMLResponse=' +
+                        encodeURIComponent(DENIED_RESPONSE_B64));
   await driver.wait(until.elementLocated(By.id('saml_resp_status')), waitTime);
   await driver.sleep(400);
   await openPage(driver);
@@ -288,8 +289,8 @@ async function operationHistoryActivities(driver) {
   await click(driver, btn('callIdp'));
   await driver.wait(until.urlContains('SAMLRequest='), cryptoWait,
                     "the second dispatch did not leave.");
-  await driver.get(baseUrl + '/saml_response.html?SAMLResponse=' +
-                   encodeURIComponent(SUCCESS_RESPONSE_B64));
+  await loadUrl(driver, baseUrl + '/saml_response.html?SAMLResponse=' +
+                        encodeURIComponent(SUCCESS_RESPONSE_B64));
   await driver.wait(until.elementLocated(By.id('saml_resp_status')), waitTime);
   await driver.sleep(400);
   await openPage(driver);
@@ -318,7 +319,7 @@ async function operationHistoryActivities(driver) {
 
   // ---- The same pane on the SAML Response page ---------------------------
   log.info("=== Operations History on the SAML Response page ===");
-  await driver.get(baseUrl + '/saml_response.html');
+  await loadUrl(driver, baseUrl + '/saml_response.html');
   await driver.wait(until.elementLocated(By.id('pane_history')), waitTime);
   var respRows = await waitForRows(driver, 5,
       "the response page does not show the shared log.");

@@ -2141,6 +2141,87 @@ function everyDockerfileStaysUnderTheLayerLimit() {
   log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
 }
 
+// ---------------------------------------------------------------------------
+// EVERY NAVIGATION TO THE TARGET UNDER TEST GOES THROUGH tests/page_load.js.
+//
+// `driver.get()` does not report the failure that matters against a deployed
+// site: a connection that is established and then DROPPED resolves normally,
+// the tab holds Chromium's network-error page, and the test then spends its
+// whole budget waiting for a field that was never there — failing with the
+// name of one of OUR ids for somebody else's socket. That is three remote runs
+// on record (`WS-Trust 1.2 — Issue` 2026-08-15, `WS-Trust 1.4 — Validate`
+// 2026-08-20, `DID Tools page` 2026-09-10), each the single red job of an
+// otherwise green run against a page that loaded by hand seconds later.
+//
+// `loadPage()` / `loadUrl()` retry exactly that document and nothing else. The
+// sweep of 2026-09-10 put ~180 navigations through them, and this check is what
+// keeps the next test written from starting the cycle again — the rule was in
+// tests/CLAUDE.md for three weeks and the file that went red had been written
+// after it.
+//
+// WHAT IS AND IS NOT MATCHED. Only a navigation to the TARGET: an expression
+// beginning `baseUrl`, `BASE` or `opts.baseUrl`, which is how every test here
+// names the debugger it was pointed at. A `driver.get()` to Keycloak, to the
+// mock STS or to a socket the test opened itself is left alone deliberately —
+// those are services this suite starts, on loopback, and the CDN edge this
+// exists for is not in front of any of them.
+//
+// It reads a STATEMENT and not a line: the source has its whitespace collapsed
+// before matching, so wrapping the call at 80 columns cannot silence the check.
+// See the note in tests/CLAUDE.md about source-inspection tests that a
+// reformat can quietly turn off.
+//
+// Node only, no browser, no network: never skipped.
+// ---------------------------------------------------------------------------
+function everyTargetNavigationGoesThroughPageLoad() {
+  log.debug("Entering everyTargetNavigationGoesThroughPageLoad().");
+  // page_load.js writes the only `driver.get()` that is allowed to be one, and
+  // its USAGE block quotes the calls this check is about.
+  const EXEMPT = ["page_load.js"];
+  // The whole point is the first token of the argument: `baseUrl` and its two
+  // spellings are what a test calls the deployment it was given with --url.
+  const RAW = /driver\.get\(\s*(baseUrl|BASE|opts\.baseUrl)\b/g;
+  const offenders = [];
+  var checked = 0;
+  var through = 0;
+  fs.readdirSync(__dirname).filter(function (name) {
+    return name.endsWith(".js") && EXEMPT.indexOf(name) === -1;
+  }).sort().forEach(function (name) {
+    const src = fs.readFileSync(path.join(__dirname, name), "utf8");
+    if (src.indexOf("driver") === -1) {
+      return;
+    }
+    checked++;
+    if (/\bloadUrl\(|\bloadPage\(/.test(src)) {
+      through++;
+    }
+    // Collapsed, so a call wrapped after its open paren still matches.
+    const flat = src.replace(/\s+/g, " ");
+    RAW.lastIndex = 0;
+    var found = 0;
+    while (RAW.exec(flat) !== null) {
+      found++;
+    }
+    if (found) {
+      offenders.push(name + " (" + found + ")");
+    }
+  });
+  assert.deepStrictEqual(offenders, [],
+    "These files navigate to the target under test with a bare " +
+    "`driver.get()`, which cannot tell a page from Chromium's network-error " +
+    "page — so a dropped connection is reported as one of our own ids " +
+    "timing out, on a page that never arrived: " + offenders.join(", ") +
+    ".\nUse tests/page_load.js instead:\n" +
+    '  const { loadUrl } = require("./page_load.js");\n' +
+    "  await loadUrl(driver, baseUrl + \"/some_page.html\");\n" +
+    "or loadPage(driver, url, readyId, { timeout }) where the caller has an " +
+    "id the page must hold.");
+  log.info("[page load] OK — " + checked + " file(s) drive a browser, " +
+    through + " of them navigate through page_load.js, and none reaches the " +
+    "target under test with a bare driver.get().");
+  log.debug("Leaving everyTargetNavigationGoesThroughPageLoad().");
+}
+
 async function test() {
   log.debug("Entering test().");
   rsaKeys();
@@ -2161,6 +2242,7 @@ async function test() {
   everyJobDeclaresTheUrlOption();
   transientLoadErrorsAreFilteredNotSwallowed();
   rendererWedgeIsRetriedNotSwallowed();
+  everyTargetNavigationGoesThroughPageLoad();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

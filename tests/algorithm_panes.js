@@ -29,6 +29,7 @@ const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -71,7 +72,7 @@ function assertNothingDisabled(options, id) {
 
 async function everyJwtToolsSignatureWorks(driver) {
   log.debug("Entering everyJwtToolsSignatureWorks().");
-  await driver.get(baseUrl + "/jwt_tools.html");
+  await loadUrl(driver, baseUrl + "/jwt_tools.html");
   await driver.wait(until.elementLocated(By.id("sign_alg")), 20000);
   var options = await optionsOf(driver, "sign_alg");
   assertNothingDisabled(options, "sign_alg");
@@ -121,7 +122,7 @@ async function everyJwtToolsSignatureWorks(driver) {
 
 async function everyEncryptionPaneCombinationWorks(driver) {
   log.debug("Entering everyEncryptionPaneCombinationWorks().");
-  await driver.get(baseUrl + "/encryption_tools.html");
+  await loadUrl(driver, baseUrl + "/encryption_tools.html");
   await driver.wait(until.elementLocated(By.id("enc_jwe_enc")), 20000);
   // The capability probe is asynchronous, and reading the menu before it has
   // settled would assert on a page that has not finished deciding.

@@ -37,6 +37,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -104,7 +105,7 @@ const PROBE =
 // ---------------------------------------------------------------------------
 async function thePageFitsOnOneScreen(driver, spec) {
   log.debug("Entering thePageFitsOnOneScreen(). " + spec.page);
-  await driver.get(baseUrl + "/" + spec.page);
+  await loadUrl(driver, baseUrl + "/" + spec.page);
   await driver.wait(until.elementLocated(By.id(spec.controls[0])), 20000);
   const m = await driver.executeScript(PROBE, spec.controls);
   const limit = Math.min(BUDGET, m.viewport);

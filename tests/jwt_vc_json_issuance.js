@@ -39,6 +39,7 @@ const crypto = require("crypto");
 const browserFlags = require("./browser_flags.js");
 const common = require("./jwt_vc_json_common.js");
 const { Command, Option } = require("commander");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -170,7 +171,7 @@ async function theWalletPagesReadIt(driver, held) {
   });
 
   // Issuance step 3 — the credential in hand.
-  await driver.get(baseUrl + "/vc-issuance-3.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-3.html");
   await driver.wait(until.elementLocated(By.id("vc_credential_raw")), waitTime);
   await driver.sleep(700);
   const raw = await text(driver, "vc_credential_raw");
@@ -180,7 +181,7 @@ async function theWalletPagesReadIt(driver, held) {
 
   // The presentation workflow's entry point is where the format's one real
   // consequence has to be stated, so this is asserted rather than eyeballed.
-  await driver.get(baseUrl + "/vc-presentation-0.html");
+  await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
   await driver.wait(until.elementLocated(By.id("vp_credential_state")),
                     waitTime);
   const state = await waitForStatus(driver, "vp_credential_state",

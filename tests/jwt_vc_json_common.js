@@ -55,6 +55,7 @@ const WALLET_CLIENT_ID = process.env.OID4VCI_WALLET_CLIENT_ID ||
 // job makes into it. See tests/sts_applications.js for why the wallet is put
 // there before it collects anything.
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 
 // "The page's bundle has run", which is a different question from "the page's
 // markup is there" and the one that matters before pressing anything: every
@@ -455,7 +456,7 @@ async function plantIntoWallet(driver, opts) {
   log.debug("Entering plantIntoWallet().");
   const By = opts.By;
   const until = opts.until;
-  await driver.get(opts.baseUrl + "/vc-presentation-0.html");
+  await loadUrl(driver, opts.baseUrl + "/vc-presentation-0.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), opts.waitTime);
   await driver.executeScript(

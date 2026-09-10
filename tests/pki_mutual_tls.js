@@ -48,6 +48,7 @@ const { Command, Option } = require("commander");
 const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
 const { declineToRun, mustBeAbleTo } = require("./expectation.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -116,7 +117,7 @@ var PKI_CARD = By.css('a.landing-card[href="' + PAGE + '"]');
 
 async function openThePageFromTheLandingCard(driver) {
   log.debug("Entering openThePageFromTheLandingCard().");
-  await driver.get(baseUrl);
+  await loadUrl(driver, baseUrl);
   await waitVisible(driver, LANDING_CHOICES);
   const card = await waitVisible(driver, PKI_CARD);
   await driver.executeScript("arguments[0].scrollIntoView({ block: " +

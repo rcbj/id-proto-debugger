@@ -46,6 +46,7 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { mustBeReady } = require("./expectation.js");
 const { usernameFor } = require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -212,7 +213,7 @@ async function relayReachable() {
 // ---------------------------------------------------------------------------
 async function theServiceAuthenticatesAsItself(driver) {
   log.debug("Entering theServiceAuthenticatesAsItself().");
-  await driver.get(baseUrl + "/kerberos.html");
+  await loadUrl(driver, baseUrl + "/kerberos.html");
   await setField(driver, "krb_realm", realm);
   await setField(driver, "krb_principal", frontend);
   await setField(driver, "krb_password", frontendPassword);
@@ -254,7 +255,7 @@ async function theServiceAuthenticatesAsItself(driver) {
 // ---------------------------------------------------------------------------
 async function s4u2SelfObtainsEvidenceForSomebodyElse(driver) {
   log.debug("Entering s4u2SelfObtainsEvidenceForSomebodyElse().");
-  await driver.get(baseUrl + "/kerberos_delegation.html");
+  await loadUrl(driver, baseUrl + "/kerberos_delegation.html");
 
   // The held TGT must be recognised, and the page must say whose it needs to
   // be.
@@ -526,7 +527,7 @@ async function theEvidenceTicketIsCoveredByTheStorageOptOut(driver) {
   // that a key which was never in localStorage is not in localStorage.
   await driver.executeScript("window.localStorage.setItem('krb_save_ccache', " +
       "'1');");
-  await driver.get(baseUrl + "/kerberos_delegation.html");
+  await loadUrl(driver, baseUrl + "/kerberos_delegation.html");
   await waitForText(driver, "krb_held_pane", /krbtgt|No ticket-granting/, 20000,
     "the held-TGT pane after turning saving on");
   await click(driver, "krb_renew_button");
@@ -555,7 +556,7 @@ async function theEvidenceTicketIsCoveredByTheStorageOptOut(driver) {
   // too.
   await driver.executeScript("window.localStorage.setItem('krb_save_ccache', " +
       "'0');");
-  await driver.get(baseUrl + "/kerberos_delegation.html");
+  await loadUrl(driver, baseUrl + "/kerberos_delegation.html");
   await waitForText(driver, "krb_held_pane",
       /No ticket-granting ticket is held|krbtgt/, 20000,
     "the held-TGT pane after the opt-out");

@@ -3,6 +3,7 @@ const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1885,7 +1886,7 @@ async function testHbs(driver) {
 async function digitalSignatureActivities(driver) {
   log.debug("Entering digitalSignatureActivities().");
   log.info("Load the Digital Signature page.");
-  await driver.get(baseUrl + "/digital_signature.html");
+  await loadUrl(driver, baseUrl + "/digital_signature.html");
   await waitForValue(driver, By.id("ds_value"),
                      function (v) { return v.length > 0; },
     "Digital Signature page did not load / defaults not populated.");

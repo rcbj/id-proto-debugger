@@ -8,6 +8,7 @@ const { Command, Option } = require('commander');
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -175,7 +176,7 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Load the SAML Test Tools page (binding=" + binding + ").");
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
 
   // Load + parse the IdP metadata (URL fetch, or file upload when metadataFile
   // set).

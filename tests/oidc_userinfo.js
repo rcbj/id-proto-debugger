@@ -57,6 +57,7 @@ const registry = require("./sts_applications.js");
 // reason: every job here that signs somebody in meets the same hop, and a
 // hand-written copy per job is a chance per job to write the wait wrong.
 const consentScreen = require("./consent_screen.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -510,9 +511,9 @@ async function test() {
              metadata.userinfo_endpoint + ".");
 
     await driver.manage().deleteAllCookies();
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     await driver.executeScript("window.localStorage.clear();");
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     await populateMetadata(driver, discovery);
 
     const originalAccessToken = await obtainTokens(driver, { clientId: clientId,
