@@ -283,43 +283,65 @@ mkdir -p coverage/frontend/.nyc_output coverage/api coverage/node \
 chmod -R 0777 coverage tests/report || true
 
 # ---------------------------------------------------------------------------
-# RAW COVERAGE OLDER THAN A WEEK IS DELETED, and it is deleted because nyc
+# RAW COVERAGE FROM EARLIER RUNS IS DELETED, and it is deleted because nyc
 # MERGES whatever it finds rather than reporting on this run.
 #
 # The browser half of this report is not written by a process that finishes —
 # each instrumented page POSTs its window.__coverage__ to the client server on
 # a one-second interval, and the server writes every POST as its own file
 # under coverage/frontend/.nyc_output, named with a timestamp AND a random
-# suffix so no two collide. Nothing has ever removed one. `npx nyc report`
-# at the end of the run then reads the WHOLE directory, so the number printed
-# for this run is the union of this run and every run since the directory was
-# created — and the merged ratchet in tests/coverage_merge.js reads that same
-# lcov.
+# suffix so no two collide. Nothing removed one until 2026-09-03. `npx nyc
+# report` at the end of the run then reads the WHOLE directory, so the number
+# printed for this run is the union of this run and every run whose files are
+# still there — and the merged ratchet in tests/coverage_merge.js reads that
+# same lcov.
 #
 # Measured on 2026-09-03: 21,086 files and 14 GB going back to 2026-08-27,
 # six runs' worth, and about six minutes of the wall clock spent rendering
 # them. A line covered only by a test that was DELETED a week ago still
-# counted, which is the part that matters: a floor that a current run cannot
-# meet on its own stays green until the old data ages out, and then breaks in
-# a run that changed nothing.
+# counted, which is the part that matters.
 #
-# A WEEK rather than "this run only", deliberately. Several of the launchers
-# and the GitHub job write into the same directory, and a developer who runs
-# ./docker-run-tests.sh between two coverage runs would otherwise lose the
-# earlier one's browser data with nothing to say so. A week keeps a handful of
-# recent runs — enough that a flaky job's gap is filled by its neighbours —
-# and bounds the directory instead of letting it grow without limit.
+# THIS RUN ONLY, and a week's retention was the wrong answer — this is the
+# 2026-09-10 correction. What that kept was not a safety net but a second set
+# of books: the floors in tests/coverage_floors.json are WRITTEN from a local
+# run, which merged up to six runs' browser data, and CHECKED in GitHub
+# Actions, where the runner is new and the directory holds exactly one run. So
+# the frontend floor was recorded at 74.1% and no clean run has ever reached
+# it — the PR of 2026-09-10 measured 70.1 in CI against 72.3 on a developer's
+# machine, for the same tree, and the 2.2 points between them were 2,818
+# snapshots left by a run of a DIFFERENT tree a week earlier. A number a run
+# cannot reproduce on its own is not a floor.
 #
-# -mtime +7 is "last modified more than 7*24 hours ago", so a run started
-# yesterday is kept whole. Best-effort for the same reason the chmod above is:
-# a file left by a container running as another uid is not worth aborting a
-# suite over, and `find` reports the ones it could not remove.
+# The rationale for keeping a week does not survive being checked either: it
+# said other launchers write into this directory, and none does. The
+# instrumented bundles and the beacon exist only under the coverage overlay
+# (docker-compose-coverage.yml, COVERAGE=true), so ./docker-run-tests.sh and
+# ./local-run-tests.sh ship no browser coverage at all and have nothing to
+# lose here. The other two domains were already per-run — c8 writes
+# coverage/node/tmp and coverage/api/tmp fresh — which is why frontend was the
+# one domain whose local and CI numbers disagreed.
+#
+# COVERAGE_RETENTION_DAYS is still honoured for somebody who wants the old
+# behaviour for an afternoon (a flaky job's gap filled by its neighbours):
+# set it and files younger than that many days are kept. Unset, or 0, means
+# this run only. Best-effort for the reason the chmod above is: a file left by
+# a container running as another uid is not worth aborting a suite over.
 # ---------------------------------------------------------------------------
-COVERAGE_RETENTION_DAYS="${COVERAGE_RETENTION_DAYS:-7}"
-echo "Pruning raw coverage older than ${COVERAGE_RETENTION_DAYS} day(s)."
-find coverage/frontend/.nyc_output coverage/node/tmp coverage/api/tmp \
-    -type f -mtime "+${COVERAGE_RETENTION_DAYS}" -print -delete 2>/dev/null \
-    | wc -l | xargs echo "Pruned raw coverage file(s):" || true
+COVERAGE_RETENTION_DAYS="${COVERAGE_RETENTION_DAYS:-0}"
+if [ "${COVERAGE_RETENTION_DAYS}" = "0" ];
+then
+  echo "Removing raw coverage from earlier runs (this run only)."
+  find coverage/frontend/.nyc_output coverage/node/tmp coverage/api/tmp \
+      -type f -print -delete 2>/dev/null \
+      | wc -l | xargs echo "Removed raw coverage file(s):" || true
+else
+  echo "Pruning raw coverage older than ${COVERAGE_RETENTION_DAYS} day(s)." \
+       "The report will be the UNION of this run and every kept one, which" \
+       "is not what tests/coverage_floors.json is calibrated against."
+  find coverage/frontend/.nyc_output coverage/node/tmp coverage/api/tmp \
+      -type f -mtime "+${COVERAGE_RETENTION_DAYS}" -print -delete 2>/dev/null \
+      | wc -l | xargs echo "Pruned raw coverage file(s):" || true
+fi
 
 # Tear the stack down on ANY exit, including the early ones the checks below can
 # take. The normal path downs the stack itself after rendering the report and

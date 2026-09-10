@@ -1784,6 +1784,39 @@ trustStsCertificate()
 # so the caller can leave RFC9700_STS_URL unset and let run-report.js skip the
 # five jobs with a reason.
 # ---------------------------------------------------------------------------
+# WHERE tests/tools/ IS, and it is two places because common.sh is copied.
+#
+# In a CHECKOUT, CURRENT_DIR is the repo root and the tools are under
+# `tests/tools/`. In the TESTS IMAGE they are not: tests/Dockerfile copies
+# common.sh next to run-tests-in-container.sh in /usr/src/app and the tools
+# into /usr/src/app/tools (`COPY tests/tools ./tools`), because run-report.js
+# addresses them as `tools/<name>`. So a single hard-coded `tests/tools` path
+# resolves in one of the two and not the other.
+#
+# The cost of getting this wrong was SILENCE, which is why it is a function
+# now: mintAdminApiToken() returns 0 when it cannot find the tool — the right
+# answer for a checkout that has none — so in the container it minted nothing,
+# said "No tools/admin-api-token.js", and configureStsRfc9700Realm() then met
+# 401 twice and reported the mock STS as too old. Five rfc9700_flows jobs were
+# skipped on every containerized run from the 2026-09-09 bump to this fix, and
+# the only trace was ~230 frontend lines that stopped being covered.
+#
+# Prints the directory; empty and non-zero when neither exists.
+adminApiToolsDir()
+{
+  if [ -f "${CURRENT_DIR}/tests/tools/admin-api-token.js" ];
+  then
+    printf '%s' "${CURRENT_DIR}/tests/tools"
+    return 0
+  fi
+  if [ -f "${CURRENT_DIR}/tools/admin-api-token.js" ];
+  then
+    printf '%s' "${CURRENT_DIR}/tools"
+    return 0
+  fi
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # THE ACCESS TOKEN THIS RUN DRIVES THE MOCK STS'S /admin-api WITH.
 #
@@ -1817,18 +1850,19 @@ mintAdminApiToken()
   echo "Entering mintAdminApiToken(). url=${1}"
   local base="${1%/}"
   local token
+  local tools
   if [ -z "${base}" ];
   then
     echo "ERROR: mintAdminApiToken() needs the STS base URL." >&2
     echo "Leaving mintAdminApiToken(). No URL."
     return 1
   fi
-  if [ ! -f "${CURRENT_DIR}/tests/tools/admin-api-token.js" ];
+  if ! tools="$(adminApiToolsDir)";
   then
     echo "Leaving mintAdminApiToken(). No tools/admin-api-token.js."
     return 0
   fi
-  if ! token="$(node "${CURRENT_DIR}/tests/tools/admin-api-token.js" \
+  if ! token="$(node "${tools}/admin-api-token.js" \
                      "${base}")";
   then
     echo "ERROR: could not obtain an access token for ${base}/admin-api." >&2
@@ -1851,7 +1885,7 @@ mintAdminApiToken()
     *"attach-admin-token.js"*)
       ;;
     *)
-      NODE_OPTIONS="--require ${CURRENT_DIR}/tests/tools/\
+      NODE_OPTIONS="--require ${tools}/\
 attach-admin-token.js ${NODE_OPTIONS:-}"
       export NODE_OPTIONS
       ;;

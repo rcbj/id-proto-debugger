@@ -47,6 +47,15 @@ is instrumented unless you explicitly enable it.
   `COVERAGE_DIR` (default `/coverage/frontend/.nyc_output`).
 - `nyc report` later renders those files. It runs **inside the client image** so
   the source paths Istanbul recorded (`/usr/src/app/src/*.js`) resolve.
+- **It reports on THIS RUN.** Nothing about that directory is per-run — the
+  server appends to it and `nyc report` reads all of it — so `./run-coverage.sh`
+  empties it before the stack comes up. It kept a week's files until
+  2026-09-10, and that is how the frontend floor came to be a number no clean
+  run reaches: floors are written from a developer's machine, where the
+  directory held up to six runs, and checked on a GitHub runner, where it holds
+  one. Same tree, 72.3% here and 70.1% there. `COVERAGE_RETENTION_DAYS=7`
+  restores the old union for an afternoon; the floors are not calibrated
+  against it.
 
 ### In-process — `NODE_V8_COVERAGE` + c8
 - `tests/run-report.js` sets **`NODE_V8_COVERAGE`** on every job it spawns when
@@ -189,6 +198,14 @@ can see it; here the number in the file is the number that must be met.
 Nothing raises them automatically: one lucky run would become a threshold nobody
 chose, and the next honest run would be red for it. **Never lower one without
 saying in the commit message what stopped being tested.**
+
+**Write them from a run that measured one tree.** The check runs on a GitHub
+runner that has never seen another run, so a floor written from anything else is
+a threshold this project cannot meet — which is what the frontend floor was
+between 2026-09-01 and 2026-09-10, recorded at 74.1% off a local `.nyc_output`
+holding six runs' browser data. `./run-coverage.sh` now empties that directory
+first, so the two agree; `COVERAGE_RETENTION_DAYS` is the way to opt out of
+that and the way to make `--write-floors` wrong again.
 
 ## Output
 
