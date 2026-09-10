@@ -974,6 +974,94 @@ function testsImageHasNoCollidingFilenames() {
 // names below are kept as PATHS relative to the mock's root and resolved the
 // way node resolves them.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// EVERY `require("./x")` IN ONE OF THE MOCK'S MODULES, AND WHETHER IT IS ONE
+// THE IMAGE HAS TO SATISFY.
+//
+// A require at the top of a file runs when the file is LOADED, which is the
+// failure stsModuleClosureIsCopied() exists to catch: an in-process mock-KDC
+// job dies at require time with "Cannot find module" naming a file this image
+// HAS. A require INSIDE A FUNCTION runs only if that function is called, and
+// the mock has one that no job here ever calls — see LAZY_STS_REQUIRES below.
+//
+// **THE DISTINCTION IS TAKEN FROM A PARSE AND NOT FROM AN INDENT**, so a
+// require that MOVES to the top of its file stops being exempt on the same
+// day, with no list to remember. `acorn-walk`'s ancestor walk gives the
+// enclosing nodes; any function among them makes the call lazy.
+//
+// A file that will not parse is reported as all-top-level, which is the
+// conservative direction: the check then asks for a COPY that may not be
+// needed rather than missing one that is.
+// ---------------------------------------------------------------------------
+function stsRequiresIn(file, source) {
+  log.debug("Entering stsRequiresIn().");
+  const acorn = require("acorn");
+  const walk = require("acorn-walk");
+  const found = [];
+  let tree = null;
+  try {
+    tree = acorn.parse(source, { ecmaVersion: "latest",
+                                 sourceType: "script",
+                                 allowReturnOutsideFunction: true });
+  } catch (e) {
+    log.warn("[sts-closure] " + file + " did not parse (" + e.message +
+             "); treating every require in it as load-time.");
+    const re = /require\((['"])(\.\.?\/[A-Za-z0-9_.\/-]+)\)/g;
+    let m;
+    while ((m = re.exec(source)) !== null) {
+      found.push({ spec: m[2], lazy: false });
+    }
+    log.debug("Leaving stsRequiresIn(). " + found.length + " (unparsed).");
+    return found;
+  }
+  const FUNCTIONS = { FunctionDeclaration: true, FunctionExpression: true,
+                      ArrowFunctionExpression: true };
+  walk.ancestor(tree, {
+    CallExpression: function (node, state, ancestors) {
+      if (!node.callee || node.callee.name !== "require") {
+        return;
+      }
+      const arg = node.arguments && node.arguments[0];
+      if (!arg || arg.type !== "Literal" ||
+          typeof arg.value !== "string" || arg.value.charAt(0) !== ".") {
+        return;
+      }
+      const lazy = ancestors.some(function (one) {
+        return FUNCTIONS[one.type] === true;
+      });
+      found.push({ spec: arg.value, lazy: lazy });
+    }
+  });
+  log.debug("Leaving stsRequiresIn(). " + found.length + ".");
+  return found;
+}
+
+// ---------------------------------------------------------------------------
+// THE LAZY REQUIRES THIS IMAGE DELIBERATELY DOES NOT SATISFY.
+//
+// One entry today, and it is the reason this exemption exists at all. On the
+// 2026-09-10 gitlink move `common/request_pool.js` grew
+// `require('../ldap/ldap_server')` — INSIDE a function, and the mock's own
+// comment above it says the laziness is a rule rather than an accident.
+//
+// **COPYING IT IS NOT AN OPTION RATHER THAN A CHORE.** That module pulls in 23
+// more — the whole admin UI, XACML's store, PIP and PEP register, the SCIM
+// map, the SPIFFE registry, the TLS server, federation, persistence — and then
+// `ldapjs`, which reaches this repository only as the mock's own `file:`
+// submodule dependency and is in no image built here. Satisfying it would mean
+// carrying most of the mock and a package tree with it, to reach a function
+// the four in-process mock-KDC jobs never call. Verified by running all four
+// against this gitlink: each passes with the module absent.
+//
+// A NEW ENTRY IS A DECISION AND NOT A FORMALITY. Add one only when the same
+// two things are true — the require is lazy by the parse above, and nothing
+// here calls the path that reaches it — and write down which jobs were run to
+// show the second. Everything else belongs in a COPY line.
+// ---------------------------------------------------------------------------
+const LAZY_STS_REQUIRES = {
+  "common/request_pool.js": { "ldap/ldap_server.js": true },
+};
+
 function stsModuleClosureIsCopied(dockerfile) {
   log.debug("Entering stsModuleClosureIsCopied().");
   const stsDir = path.join(__dirname, "..", "sts");
@@ -1019,24 +1107,21 @@ function stsModuleClosureIsCopied(dockerfile) {
       missing.push(name + " (copied, but absent from the sts/ checkout)");
       continue;
     }
-    // COMMENT LINES ARE DROPPED, for the reason the banned-require scan above
-    // gives about the files it reads: the mock's comments discuss requires on
-    // purpose. `common/worker_pool.js` explains how to reproduce a hang with
-    // `node -e "require('./common/crypto')"`, and read as code that is a
-    // dependency on `common/common/crypto.js`, which exists nowhere and which
-    // no COPY could satisfy.
-    const src = fs.readFileSync(file, "utf8").split("\n")
-      .filter(function (line) {
-        return !/^\s*(\/\/|\*|\/\*)/.test(line);
-      }).join("\n");
+    // A PARSE RATHER THAN A REGEX, and the first reason is the one the old
+    // comment here gave: the mock's own comments discuss requires on purpose —
+    // `common/worker_pool.js` explains how to reproduce a hang with
+    // `node -e "require('./common/crypto')"`, which read as code is a
+    // dependency on `common/common/crypto.js` that exists nowhere and that no
+    // COPY could satisfy. Stripping comment lines dealt with that; a parse
+    // deals with it and with the second reason too, which is knowing whether a
+    // require runs at LOAD or only when somebody calls the function it is in.
+    const src = fs.readFileSync(file, "utf8");
     // Both `./x` and `../dir/x`, resolved against the requiring file's own
     // directory and normalised back to a path relative to the mock's root —
     // which is the form the COPY sources above are in.
-    const re = /require\((['"])(\.\.?\/[A-Za-z0-9_.\/-]+)\1\)/g;
-    let m;
-    while ((m = re.exec(src)) !== null) {
+    stsRequiresIn(name, src).forEach(function (one) {
       let dep = path.posix.normalize(
-        path.posix.join(path.posix.dirname(name), m[2]));
+        path.posix.join(path.posix.dirname(name), one.spec));
       if (!/\.js$/.test(dep)) {
         dep = dep + ".js";
       }
@@ -1046,16 +1131,26 @@ function stsModuleClosureIsCopied(dockerfile) {
         // silently normalised away.
         missing.push(dep + " (required by sts/" + name + ", and it points " +
           "outside the mock's own tree)");
-        continue;
+        return;
       }
       if (!copied[dep]) {
-        missing.push(dep + " (required by sts/" + name + ")");
-        continue;
+        const allowed = LAZY_STS_REQUIRES[name] || {};
+        if (one.lazy && allowed[dep] === true) {
+          log.info("[sts-closure] " + dep + " is required LAZILY by sts/" +
+            name + " and is deliberately not in the image; see " +
+            "LAZY_STS_REQUIRES.");
+          return;
+        }
+        missing.push(dep + " (required by sts/" + name +
+          (one.lazy ? ", inside a function — so it is a run-time failure " +
+                      "rather than a load-time one, and belongs in a COPY " +
+                      "line unless nothing here can reach it" : "") + ")");
+        return;
       }
       if (!seen[dep]) {
         queue.push(dep);
       }
-    }
+    });
   }
   const unique = missing.filter(function (v, i) {
     return missing.indexOf(v) === i;
