@@ -34,8 +34,10 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -390,7 +392,7 @@ async function theTicketPaneShowsWhatIsInsideTheTicket(driver) {
   // Fed from STORAGE rather than from the exchange, so a reload — and equally a
   // ticket made active from the history — shows the same thing. This is the
   // case a version built off the live reply gets wrong.
-  await driver.get(baseUrl + "/kerberos.html");
+  await loadUrl(driver, baseUrl + "/kerberos.html");
   await driver.wait(until.elementLocated(By.id("krb_cache_pane")), 15000);
   const reloaded = await waitForText(driver, "krb_cache_pane",
       /EncTicketPart|No ticket held/, 20000,
@@ -462,7 +464,7 @@ async function theConfigurationAndBothControlsFitOnOneScreen(driver) {
   const BUDGET = 640;
   const was = await driver.manage().window().getRect();
   await driver.manage().window().setRect({ width: 1366, height: 768 });
-  await driver.get(baseUrl + "/kerberos.html");
+  await loadUrl(driver, baseUrl + "/kerberos.html");
   await driver.wait(until.elementLocated(By.id("krb_preauth_button")), 15000);
 
   const m = await driver.executeScript(
@@ -579,17 +581,13 @@ async function test() {
   log.info("Starting Test run. The Kerberos AS exchange page at " + baseUrl +
       ".");
   const reachable = await kdcIsReachable();
-  if (!reachable.ok) {
-    // Named, not silent. An absent service is an environment fact; a test that
-    // reported "OK" here would be one that quietly did nothing.
-    log.warn("SKIPPED: " + reachable.why + ". This test needs the client, " +
-        "the api and the mock STS " +
-      "(which carries the KDC on port " + kdcPort + "). Start the stack, or " +
-          "run " +
-      "./local-run-tests.sh which does.");
-    log.info("Test completed successfully.");
-    return;
-  }
+  // A FAILURE rather than a skip, and it used to log "Test completed
+  // successfully" on its way out. run-report.js gates every Kerberos job on
+  // KERBEROS_AVAILABLE, so reaching this line means the launcher expected
+  // this stack to be up. See tests/expectation.js.
+  mustBeReady(reachable, "the client, the api and the mock STS (which " +
+              "carries the KDC on port " + kdcPort + "). Start the stack, " +
+              "or run ./local-run-tests.sh which does.");
   if (reachable.kdcPort && reachable.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + reachable.kdcPort +
         " but this test was told " +
@@ -598,7 +596,8 @@ async function test() {
   }
 
   const options = new chrome.Options();
-  // --headless=new, never bare --headless: in the image's Chrome 121 the old
+  // --headless=new, never bare --headless: in the Chrome 121 pinned then,
+  // the old
   // mode ignores --unsafely-treat-insecure-origin-as-secure, so crypto.subtle
   // stays undefined and the key derivation on this page silently has no crypto.
   options.addArguments("--headless=new", "--no-sandbox",
@@ -610,7 +609,7 @@ async function test() {
   const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
 
   try {
-    await driver.get(baseUrl + "/kerberos.html");
+    await loadUrl(driver, baseUrl + "/kerberos.html");
     await driver.wait(until.elementLocated(By.id("krb_noreauth_button")),
         20000);
     await theConfigurationAndBothControlsFitOnOneScreen(driver);

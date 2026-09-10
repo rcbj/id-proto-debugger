@@ -67,9 +67,16 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
 const { usernameFor } = require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 var log = bunyan.createLogger({ name: "rfc9700_flows",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
@@ -675,6 +682,11 @@ async function signIn(driver, user) {
     await password[0].sendKeys(user);
   }
   await driver.findElement(By.id("kc-login")).click();
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
   log.info("Leaving signIn().");
   log.debug("Leaving signIn().");
 }
@@ -724,7 +736,7 @@ async function runFlow(driver, flowKey, stsUrl, landing) {
   const flow = FLOWS[flowKey];
   assert.ok(flow, "Unknown RFC9700_FLOW: " + flowKey);
 
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await enableComplianceMode(driver);
   await populateMetadata(driver,
                          stsUrl + "/.well-known/openid-configuration");
@@ -750,7 +762,7 @@ async function runFlow(driver, flowKey, stsUrl, landing) {
     // and, importantly, RFC 9700 mode must not invent findings about their
     // absence. That is the whole of what this branch checks.
     log.info("Client Credentials: no authorization request to make.");
-    await driver.get(baseUrl + "/oauth2_oidc_2.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
     const response = await reportText(driver, "rfc9700_response_report");
     assert.strictEqual(response, "",
       "RFC 9700 mode drew an authorization-response report for a grant that " +
@@ -910,7 +922,7 @@ async function runRefusals(driver, stsUrl) {
   log.debug("Entering runRefusals().");
   log.info("Entering runRefusals().");
 
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
 
   // Before the mode is on, NOTHING is disabled. This is the mode-off contract
   // seen from the browser, and it is the assertion that would catch the day a
@@ -918,7 +930,7 @@ async function runRefusals(driver, stsUrl) {
   // refuse to talk to most of the identity providers it exists for.
   await driver.executeScript(
     "window.localStorage.setItem('rfc9700_mode', 'false');");
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   const beforeMode = await disabledGrants(driver);
   assert.deepStrictEqual(beforeMode, [],
     "With the RFC 9700 checkbox CLEAR, the grant selector has options " +

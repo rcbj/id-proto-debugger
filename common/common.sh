@@ -81,6 +81,39 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STACK_TLS_SPKI_PIN"
 # NOTHING, silently, which is the whole failure mode that test exists to catch.
 # It caught exactly this on the first run after the variables were added.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_CONFIG_FILE TESTS_CONFIG_FILE"
+# THE MOCK STS'S MANAGEMENT API CREDENTIAL (2026-09-09). The submodule bump of
+# that date closed /admin-api: it takes an OAuth 2.0 access token now, minted by
+# the seeded `sts-management-api` client with client_credentials. That client's
+# secret is generated at every start of the mock and is readable only THROUGH
+# the API it unlocks — a bootstrap hole — so `adminApi.clientSecret` exists to
+# pin it, and this is the value the compose files hand that container as
+# ADMIN_API_CLIENT_SECRET and the tests container as
+# STS_ADMIN_API_CLIENT_SECRET. See the block below, where it is generated.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} ADMIN_API_CLIENT_SECRET"
+
+
+# ---------------------------------------------------------------------------
+# THE MANAGEMENT API'S CLIENT SECRET, PINNED FOR THIS RUN.
+#
+# One value per launcher run, generated here because every launcher sources
+# this file and both ends of the arrangement need the same string: the mock STS
+# is given it as `adminApi.clientSecret` and whoever mints a token — the tests
+# container's run-report.js, or mintAdminApiToken() below — is given it as
+# STS_ADMIN_API_CLIENT_SECRET.
+#
+# A FRESH SECRET PER RUN rather than a constant in this file: it lives as long
+# as one stack, it never reaches a repository, and two runs on one machine
+# cannot lend each other a token. An outer value is respected, which is how a
+# caller drives a mock it started itself.
+# ---------------------------------------------------------------------------
+if [ -z "${ADMIN_API_CLIENT_SECRET:-}" ];
+then
+  ADMIN_API_CLIENT_SECRET="$(head -c 24 /dev/urandom | base64 | tr -d '/+=' \
+                             | head -c 24)"
+fi
+export ADMIN_API_CLIENT_SECRET
+STS_ADMIN_API_CLIENT_SECRET="${ADMIN_API_CLIENT_SECRET}"
+export STS_ADMIN_API_CLIENT_SECRET
 
 # Does docker on this machine need sudo? Answered by RUNNING it rather than by
 # looking for a group in `id -nG`, which is neither necessary (a rootless
@@ -312,7 +345,16 @@ buildBrowserExtension()
 # Exports STACK_TLS_DIR, STACK_TLS_CERT_FILE, STACK_TLS_KEY_FILE and
 # STACK_TLS_SPKI_PIN. The certificate is self-signed, so it is its own anchor:
 # STACK_TLS_CA_FILE is the same file under the name a truststore consumer wants
-# it by.
+# it by — which still holds now that there is a hierarchy above the leaf,
+# because stack-tls-cert.pem is a BUNDLE: leaf, issuing CA and root, in that
+# order. A server sends it as the chain; a truststore consumer finds the root
+# inside it. What a person imports into a browser is the root ALONE, which
+# ./generate-tls-cert.sh writes separately and names on the way out.
+#
+# STACK_TLS_CA_DIR, if set, is where the CA is kept and REUSED between runs.
+# Unset, the generator puts it under ${STACK_TLS_DIR} and it dies with the
+# run — which is what every launcher wants, and what ./generate-tls-cert.sh
+# deliberately does not.
 #
 # $1 optional extra subjectAltName DNS name (a deployed hostname, say). The
 # stack's own names — localhost, client, api and the loopback literals — are
@@ -408,14 +450,28 @@ generateStackTlsCertificate()
   mkdir -p "${STACK_TLS_DIR}"
   chmod 0755 "${STACK_TLS_DIR}"
 
+  # THE CERTIFICATE AUTHORITY'S DIRECTORY IS THE ONE THING THAT OUTLIVES A
+  # RUN, AND ONLY WHEN IT IS ASKED TO. Unset — which is every launcher — the
+  # generator puts the CA in ${STACK_TLS_DIR}/ca, so it is thrown away with
+  # the rest of the throwaway directory and each run gets a hierarchy of its
+  # own. ./generate-tls-cert.sh sets it to a fixed path instead, because that
+  # is the path a PERSON uses: the root is what they import into a browser,
+  # and reusing it is what makes that a one-time act rather than a chore
+  # repeated after every regeneration.
+  # Always passed, so there is no empty-array expansion to get wrong under
+  # `set -u` — which the launchers run with and which bash before 4.4 treats
+  # as an unbound variable.
+  local ca_dir="${STACK_TLS_CA_DIR:-${STACK_TLS_DIR}/ca}"
+
   local generated=""
   if [ -n "${extra_name}" ];
   then
     generated=$(node "${repo_root}/common/generate_tls_cert.js" \
-                  --out-dir "${STACK_TLS_DIR}" --name "${extra_name}")
+                  --out-dir "${STACK_TLS_DIR}" --ca-dir "${ca_dir}" \
+                  --name "${extra_name}")
   else
     generated=$(node "${repo_root}/common/generate_tls_cert.js" \
-                  --out-dir "${STACK_TLS_DIR}")
+                  --out-dir "${STACK_TLS_DIR}" --ca-dir "${ca_dir}")
   fi
   if [ -z "${generated}" ];
   then
@@ -1389,6 +1445,121 @@ requireStsReachable()
 }
 
 # ---------------------------------------------------------------------------
+# Require that the mock STS BOUND its two SPIFFE gRPC ports, and fail with the
+# port when it did not.
+#
+# requireStsReachable() above asks that question of the HTTP port, and the mock
+# answers it by dying: that listen has no error handler, so a stranger holding
+# 8081 leaves no container to check. THE SPIFFE LISTENERS ARE DIFFERENT AND
+# THAT IS THE HAZARD. They are optional to that service — it logs `spiffe:
+# could not bind 0.0.0.0:8181 ... EADDRINUSE` at level 50 and CARRIES ON — so
+# the stack comes up healthy, every HTTP-backed job passes, and the three
+# SPIFFE jobs spend the run talking to whatever holds those ports. That is not
+# hypothetical: it cost the 2026-09-01 run two red tests whose messages named
+# an authorization rule and a TLS chain, and a third that passed against the
+# stranger because the stranger was another instance of the same mock.
+#
+# The fact is the mock's own: GET /spiffe?format=json publishes every listener
+# with `listening` and the bind error beside it. So this asks, rather than
+# probing the ports — a probe cannot tell our listener from somebody else's,
+# which is the entire problem.
+#
+# FATAL, like requireStsReachable(). A stranger on those ports does not make
+# the SPIFFE workflow absent; it makes three jobs' results untrue, and one of
+# them writes `spiffe.adminIds` to this mock and exercises it on the other.
+#
+# node rather than jq: this reads one document with two nested arrays, every
+# launcher already runs node, and the parse belongs where the shape is known.
+#
+# $1 the mock's base URL, $2 the service name, for the message.
+# ---------------------------------------------------------------------------
+requireStsSpiffeListeners()
+{
+  echo "Entering requireStsSpiffeListeners(). url=${1}"
+  local url="${1%/}"
+  local service="${2:-sts}"
+  if [ -z "${url}" ];
+  then
+    echo "ERROR: requireStsSpiffeListeners() needs the mock's base URL." >&2
+    echo "Leaving requireStsSpiffeListeners(). No URL."
+    return 1
+  fi
+
+  local xtrace_was_on=""
+  case "$-" in
+    *x*) xtrace_was_on="yes"; set +x ;;
+  esac
+
+  local document unbound
+  # --insecure for requireStsReachable()'s own reason: this is asking what the
+  # service says about itself, not whether its certificate is trusted yet.
+  document=$(curl -s -k -m 10 "${url}/spiffe?format=json" 2>/dev/null || true)
+  if [ -z "${document}" ];
+  then
+    # No document is not a failure here. A deployment with no SPIFFE service at
+    # all is one the three jobs skip by themselves, with a reason, and inventing
+    # a stack failure from a missing endpoint would break every target that has
+    # none.
+    [ -n "${xtrace_was_on}" ] && set -x
+    echo "Leaving requireStsSpiffeListeners(). Nothing described."
+    return 0
+  fi
+
+  unbound=$(printf '%s' "${document}" | node -e '
+    let raw = "";
+    process.stdin.on("data", function (chunk) { raw += chunk; });
+    process.stdin.on("end", function () {
+      let doc = null;
+      try {
+        doc = JSON.parse(raw);
+      } catch (e) {
+        process.exit(0);
+      }
+      if (!doc || !doc.enabled) {
+        process.exit(0);
+      }
+      const surfaces = [["workloadApi", "the Workload API"],
+                        ["serverApi", "the SPIRE Server API"]];
+      surfaces.forEach(function (pair) {
+        const one = doc[pair[0]] || {};
+        (one.listeners || []).forEach(function (listener) {
+          if (listener.socket === true || listener.listening === true) {
+            return;
+          }
+          console.log(pair[1] + " on " + listener.address + ": " +
+                      (listener.error || "no reason given"));
+        });
+      });
+    });
+  ' 2>/dev/null || true)
+
+  if [ -n "${unbound}" ];
+  then
+    echo "ERROR: ${service} has SPIFFE enabled but did NOT bind:" >&2
+    # sed rather than printf's own padding: `unbound` is one line per listener
+    # and a format string indents only the first of them.
+    printf '%s\n' "${unbound}" | sed 's/^/       /' >&2
+    echo "       Under host networking that port is this machine's, so" \
+         "whoever bound it first is what answers there —" >&2
+    echo "       and it is not this mock. The SPIFFE jobs would write a" \
+         "setting to this process over HTTP and then" >&2
+    echo "       exercise it against another one over gRPC, which reads as" \
+         "an authorization bug and a TLS chain" >&2
+    echo "       failure rather than as a port. Find it BY PID, never by" \
+         "pattern:" >&2
+    echo "         ss -ltnp | grep -E ':(8092|8181)'   # then: kill <pid>" >&2
+    reportContainerLog "local-tests.yml" "${service}" 2>/dev/null || true
+    [ -n "${xtrace_was_on}" ] && set -x
+    echo "Leaving requireStsSpiffeListeners(). A port is held by somebody else."
+    return 1
+  fi
+
+  [ -n "${xtrace_was_on}" ] && set -x
+  echo "Leaving requireStsSpiffeListeners(). Every SPIFFE listener is bound."
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # INSTALL THE MOCK STS'S CERTIFICATE, FOR NODE AND FOR CHROME.
 #
 # The mock serves its main port over TLS in every stack here (STS_HTTPS=true in
@@ -1613,6 +1784,115 @@ trustStsCertificate()
 # so the caller can leave RFC9700_STS_URL unset and let run-report.js skip the
 # five jobs with a reason.
 # ---------------------------------------------------------------------------
+# WHERE tests/tools/ IS, and it is two places because common.sh is copied.
+#
+# In a CHECKOUT, CURRENT_DIR is the repo root and the tools are under
+# `tests/tools/`. In the TESTS IMAGE they are not: tests/Dockerfile copies
+# common.sh next to run-tests-in-container.sh in /usr/src/app and the tools
+# into /usr/src/app/tools (`COPY tests/tools ./tools`), because run-report.js
+# addresses them as `tools/<name>`. So a single hard-coded `tests/tools` path
+# resolves in one of the two and not the other.
+#
+# The cost of getting this wrong was SILENCE, which is why it is a function
+# now: mintAdminApiToken() returns 0 when it cannot find the tool — the right
+# answer for a checkout that has none — so in the container it minted nothing,
+# said "No tools/admin-api-token.js", and configureStsRfc9700Realm() then met
+# 401 twice and reported the mock STS as too old. Five rfc9700_flows jobs were
+# skipped on every containerized run from the 2026-09-09 bump to this fix, and
+# the only trace was ~230 frontend lines that stopped being covered.
+#
+# Prints the directory; empty and non-zero when neither exists.
+adminApiToolsDir()
+{
+  if [ -f "${CURRENT_DIR}/tests/tools/admin-api-token.js" ];
+  then
+    printf '%s' "${CURRENT_DIR}/tests/tools"
+    return 0
+  fi
+  if [ -f "${CURRENT_DIR}/tools/admin-api-token.js" ];
+  then
+    printf '%s' "${CURRENT_DIR}/tools"
+    return 0
+  fi
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# THE ACCESS TOKEN THIS RUN DRIVES THE MOCK STS'S /admin-api WITH.
+#
+# WHY A LAUNCHER MINTS ONE AT ALL. The mock closed that API on 2026-09-09: it
+# takes an OAuth 2.0 access token audienced to itself and carrying `admin:read`
+# / `admin:write`. The full suite gets its token from run-report.js, which
+# mints one before the pool starts; this function is for everything that does
+# NOT go through the runner — configureStsRfc9700Realm() and
+# declareStsLogoutService() below, which are curl, and the `--*-only` modes in
+# local-run-tests.sh, which spawn a test script directly.
+#
+# It exports two things and both are load-bearing:
+#
+#   * STS_ADMIN_API_TOKEN, which the curls above read directly.
+#   * NODE_OPTIONS carrying tests/tools/attach-admin-token.js, which puts that
+#     token on the /admin-api calls the test scripts make. Those scripts each
+#     have an HTTP helper of their own — fifteen of them, sharing nothing — so
+#     one preload is the alternative to fifteen identical edits.
+#
+# WHETHER A TOKEN IS NEEDED IS ASKED OF THE SERVICE. `adminApi.authRequired` is
+# settable while the mock is running, and remote-run-tests.sh drives one this
+# repository did not configure — so the tool probes, prints nothing when the
+# API is open, and this leaves the environment untouched in that case.
+#
+# A REAL FAILURE STOPS THE RUN. Without a token every job that configures the
+# mock fails with 401, and the run would report fifteen broken tests instead of
+# one credential nobody pinned.
+# ---------------------------------------------------------------------------
+mintAdminApiToken()
+{
+  echo "Entering mintAdminApiToken(). url=${1}"
+  local base="${1%/}"
+  local token
+  local tools
+  if [ -z "${base}" ];
+  then
+    echo "ERROR: mintAdminApiToken() needs the STS base URL." >&2
+    echo "Leaving mintAdminApiToken(). No URL."
+    return 1
+  fi
+  if ! tools="$(adminApiToolsDir)";
+  then
+    echo "Leaving mintAdminApiToken(). No tools/admin-api-token.js."
+    return 0
+  fi
+  if ! token="$(node "${tools}/admin-api-token.js" \
+                     "${base}")";
+  then
+    echo "ERROR: could not obtain an access token for ${base}/admin-api." >&2
+    echo "  Everything that configures the mock STS needs one. This run" >&2
+    echo "  pinned ADMIN_API_CLIENT_SECRET on that container; a mock" >&2
+    echo "  started" >&2
+    echo "  outside this launcher has a secret of its own, and" >&2
+    echo "  adminApi.authRequired=false is the way back to the open API." >&2
+    echo "Leaving mintAdminApiToken(). Not minted."
+    exit 1
+  fi
+  if [ -z "${token}" ];
+  then
+    echo "Leaving mintAdminApiToken(). ${base}/admin-api is open."
+    return 0
+  fi
+  STS_ADMIN_API_TOKEN="${token}"
+  export STS_ADMIN_API_TOKEN
+  case " ${NODE_OPTIONS:-} " in
+    *"attach-admin-token.js"*)
+      ;;
+    *)
+      NODE_OPTIONS="--require ${tools}/\
+attach-admin-token.js ${NODE_OPTIONS:-}"
+      export NODE_OPTIONS
+      ;;
+  esac
+  echo "Leaving mintAdminApiToken(). Minted for ${base}/admin-api."
+}
+
 configureStsRfc9700Realm()
 {
   echo "Entering configureStsRfc9700Realm(). url=${1}"
@@ -1636,6 +1916,8 @@ configureStsRfc9700Realm()
   local body code
   body="$(curl -sk -m 20 -X POST "${base}/admin-api/realms/create" \
             -H 'Content-Type: application/json' \
+            ${STS_ADMIN_API_TOKEN:+-H \
+              "Authorization: Bearer ${STS_ADMIN_API_TOKEN}"} \
             -d "{\"id\":\"${realm}\",\"name\":\"RFC 9700 mode\",\"description\":\"The OAuth 2.0 Security Best Current Practice enforced. Created by configureStsRfc9700Realm() in common/common.sh for the five rfc9700_flows.js jobs.\",\"overrides\":{\"oauth2.rfc9700\":true}}" \
             -w '\n%{http_code}' || true)"
   code="$(printf '%s' "${body}" | tail -n 1)"
@@ -1654,6 +1936,8 @@ configureStsRfc9700Realm()
 
   body="$(curl -sk -m 20 -X POST "${base}/admin-api/realms/set" \
             -H 'Content-Type: application/json' \
+            ${STS_ADMIN_API_TOKEN:+-H \
+              "Authorization: Bearer ${STS_ADMIN_API_TOKEN}"} \
             -d "{\"id\":\"${realm}\",\"key\":\"oauth2.rfc9700\",\"value\":true}" \
             -w '\n%{http_code}' || true)"
   code="$(printf '%s' "${body}" | tail -n 1)"
@@ -2671,6 +2955,24 @@ configureKeycloakWsfed()
     return 0
   fi
 
+  # THE REALM IS DELETED FIRST, for resetKeycloakRealm()'s two reasons and a
+  # third this side-car has of its own. The stack is LEFT RUNNING for fast
+  # re-runs, so a second run meets the realm the first one made: the client
+  # then keeps the PREVIOUS target's redirectUris and webOrigins (local ->
+  # test -> prod is exactly the switch this launcher is for), and every POST
+  # below answers 409. Two of those 409s are discarded and harmless; the one
+  # on the USER is not, because its id is read out of a Location header a 409
+  # does not carry — so provisioning "failed", every WS-Federation job was
+  # skipped, and the suite reported 0 failures with 21 fewer tests run than
+  # the run before it. A skip that is invisible in a green report is worse
+  # than a failure. Deleting the realm makes the whole function idempotent
+  # rather than patching each POST.
+  #
+  # 404 if it is not there yet — harmless, and the ordinary first run.
+  curl -s -o /dev/null -X DELETE \
+    "${KC_WSFED}/admin/realms/${WSFED_REALM_NAME}" \
+    -H "Authorization: Bearer ${KC_WSFED_TOKEN}"
+
   # Realm (a 409 if it already exists is harmless).
   curl -s -X POST "${KC_WSFED}/admin/realms" \
     -H "Authorization: Bearer ${KC_WSFED_TOKEN}" -H "Content-Type: application/json" \
@@ -2719,6 +3021,20 @@ configureKeycloakWsfed()
     -d '{ "username": "wsfed", "firstName": "wsfed", "lastName": "wsfed",
           "email": "wsfed@iyasec.io", "enabled": true, "emailVerified": true }' \
     -i | grep -i '^Location:' | rev | cut -d '/' -f 1 | rev | tr -d ' \n\r')
+  # NO LOCATION HEADER IS NOT NECESSARILY NO USER. The realm delete above
+  # means the create normally succeeds, but a 409 still says the user is
+  # THERE — and that is a provisioned side-car, not a broken one. Ask for it
+  # by name rather than reporting a failure the reset was meant to end.
+  # `username=` is an infix search on 8.0.1 (no `exact` parameter until much
+  # later), so the exact match is made here.
+  if [ -z "${WSFED_USER_ID}" ];
+  then
+    WSFED_USER_ID=$(curl -s -G --data-urlencode "username=wsfed" \
+      "${KC_WSFED}/admin/realms/${WSFED_REALM_NAME}/users" \
+      -H "Authorization: Bearer ${KC_WSFED_TOKEN}" \
+      | jq -r '[.[] | select(.username == "wsfed")][0].id // empty' \
+        2>/dev/null)
+  fi
   if [ -z "${WSFED_USER_ID}" ];
   then
     echo "WARNING: could not create the WS-Fed test user — WS-Federation test will be skipped."

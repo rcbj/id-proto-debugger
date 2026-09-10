@@ -54,7 +54,7 @@ Four rules make read-only true rather than intended, and they are in `extension/
 
 **The containerized origin is not a secure context**, and WebAuthn does not degrade there — `PublicKeyCredential` is undefined. `browser_flags.js` already relaxes it, and that is enough: a full ceremony succeeds afterwards, single-label RP ID (`client`) included.
 
-**`PublicKeyCredential.toJSON()` is absent from Chrome 121** (present on 151), so the Level 3 JSON form is produced by our own code, unconditionally, rather than depended on — a browser-dependent path would mean CI exercising something users do not.
+**`PublicKeyCredential.toJSON()` is absent from Chrome 121** (present on 151), so the Level 3 JSON form is produced by our own code, unconditionally, rather than depended on — a browser-dependent path would mean CI exercising something users do not. The image's pin moved to 152.0.7977.75 on 2026-09-03 and that browser HAS `toJSON()`, which changes nothing here and is the point: the shim is used unconditionally, so CI exercises the same code path a user on any browser gets, and the day it became available is not a day this behaviour changed.
 
 ## Manual verification — the part CI cannot do
 

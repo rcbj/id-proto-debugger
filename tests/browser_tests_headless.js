@@ -158,16 +158,30 @@ function everyBrowserTestIsHeadless(files) {
     if (!flags.some(function (line) {
       return /--headless=new/.test(line.text);
     })) {
-      // Not a failure: sixteen of the older tests here use bare --headless and
-      // are headless, which is what this check is about. It IS worth counting,
-      // because in the image's pinned Chrome 121 the bare spelling selects the
-      // old implementation, where
-      // --unsafely-treat-insecure-origin-as-secure has no effect and
-      // crypto.subtle stays undefined on http://client:3000. See
+      // Not a failure: sixteen of the older tests here use bare --headless
+      // and are headless, which is what this check is about. It is still
+      // counted, and the 2026-09-03 pin move is the reason to keep counting
+      // rather than a reason to stop. Until then the image pinned Chrome 121,
+      // where the bare spelling selects the OLD headless implementation, in
+      // which --unsafely-treat-insecure-origin-as-secure has no effect and
+      // crypto.subtle stays undefined on http://client:3000. From Chrome 132
+      // the old mode is gone and the two spellings are the same thing.
+      //
+      // SO MOVING THE PIN FLIPPED THESE FILES FROM OLD HEADLESS TO NEW, and
+      // two of them turned out to have been LIVING on the old behaviour: the
+      // old mode does not draw Chrome's "Form is not secure" interstitial, so
+      // saml_sso.js and saml_encrypted_sso.js had been POSTing an https page's
+      // form to Keycloak's http endpoint for as long as they existed, and both
+      // went red on the first run after the move. Neither was a browser bug —
+      // both were missing --unsafely-treat-insecure-origin-as-secure for the
+      // IdP's origin, and both are fixed there rather than here.
+      //
+      // That is the value of this count: it is the list of files whose
+      // headless mode CHANGES when the pin does, in either direction. See
       // tests/CLAUDE.md.
       legacyMode += 1;
-      log.debug("[headless] " + name + " uses bare --headless (old mode " +
-          "in Chrome 121).");
+      log.debug("[headless] " + name + " uses bare --headless (the old mode " +
+          "before Chrome 132).");
     }
   });
   assert.ok(browserTests.length >= MIN_BROWSER_TESTS,
@@ -183,7 +197,8 @@ function everyBrowserTestIsHeadless(files) {
     offences.join("\n  "));
   log.info("[headless] OK — all " + browserTests.length +
       " driver-building tests pass --headless (" + legacyMode +
-      " with the bare spelling, which is the old mode in Chrome 121).");
+      " with the bare spelling, which was the old mode before Chrome 132 " +
+      "and is the same mode on the pinned browser now).");
   log.debug("Leaving everyBrowserTestIsHeadless().");
   return browserTests;
 }

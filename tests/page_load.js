@@ -52,22 +52,40 @@
 // not loaded). Only `location.href` inside the document says
 // `chrome-error://chromewebdata/`, and it is simpler to ask the DOM what it is.
 //
-// USAGE
+// USAGE — TWO ENTRY POINTS, AND THE DIFFERENCE IS WHAT THE CALLER ALREADY KNOWS
 //
-//   const { loadPage, describeLoad } = require("./page_load");
+//   const { loadPage, loadUrl, describeLoad } = require("./page_load");
 //   await loadPage(driver, baseUrl + "/wstrust_tools.html", "wst_sts_url",
 //                  { timeout: waitTime });
+//   await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
 //
-// It returns { attempts, url } — how many navigations it took. Callers ignore
+// `loadPage()` is the fuller one and is what to reach for in new code: it takes
+// a `readyId`, an element that is in the page's own HTML from the moment it
+// parses — the same id the caller would have waited for itself. That is what
+// distinguishes "our page" from "a page" (see wait_for.js for why a field being
+// PRESENT still says nothing about it being FILLED), and it is what lets the
+// helper tell a network failure from a product one and fail FAST on the second.
+//
+// `loadUrl()` makes no claim about the content and takes no id. It navigates,
+// and it retries the one thing `driver.get()` will not report — the tab holding
+// Chromium's network-error page — reporting the error CODE when the target
+// really is down. **Use it where the caller's own next line is the readiness
+// check**, which is the shape of nearly every browser test here: a `driver.get`
+// followed by `waitForPageBundle()`, an `elementLocated`, or one of
+// wait_for.js's content waits. That is what the sweep of 2026-09-10 converted
+// ~180 navigations to, after `DID Tools page` went red against idptools.com on
+// a dropped connection — it is the retry without a per-call-site id to
+// remember, and an id somebody has to remember is an id somebody forgets.
+//
+// Property C below holds for it trivially rather than by care: it only ever
+// retries a document that IS Chromium's error page, which a page of ours cannot
+// be, so no product failure can be retried through this door either.
+//
+// Both return { attempts, url } — how many navigations it took. Callers ignore
 // it; page_load_retry.js asserts on it, because "did it retry?" cannot be
 // answered from the outside: Chrome re-sends a GET of its own accord when a
 // connection is dropped before any response byte arrives, so the target seeing
 // two requests says nothing about whether THIS function tried twice.
-//
-// `readyId` is an element that is in the page's own HTML from the moment it
-// parses — the same id the caller would have waited for itself. It is what
-// distinguishes "our page" from "a page"; see wait_for.js for why a field being
-// PRESENT still says nothing about it being FILLED.
 // ---------------------------------------------------------------------------
 
 const { By, until } = require("selenium-webdriver");
@@ -137,15 +155,17 @@ function describeToString(state, url) {
       (state.code || "(no error code in the page)");
 }
 
-// Navigate to `url` and return { attempts, url } once an element with id
-// `readyId` is there.
+// Navigate to `url` and return { attempts, url }.
+//
+// `readyId` names an element the page must hold before this returns; pass null
+// and nothing is asserted about the content, which is `loadUrl()` below.
 //
 // Retries only a navigation that landed on Chrome's network-error page. Any
-// other failure — including the page being ours and the element missing — is
-// raised on the first attempt, with what the tab actually held appended to the
-// message.
-async function loadPage(driver, url, readyId, opts) {
-  log.debug("Entering loadPage().");
+// other failure — including the page being ours and a named element missing —
+// is raised on the first attempt, with what the tab actually held appended to
+// the message.
+async function navigateWithRetries(driver, url, readyId, opts) {
+  log.debug("Entering navigateWithRetries().");
   opts = opts || {};
   var attempts = opts.attempts || defaultAttempts;
   var timeout = opts.timeout || defaultTimeout;
@@ -172,10 +192,16 @@ async function loadPage(driver, url, readyId, opts) {
       state = await describeLoad(driver);
       if (state.errorPage) {
         failure = new Error("The navigation landed on Chrome's error page.");
+      } else if (!readyId) {
+        // No claim was made about the content, so the document being
+        // something other than Chromium's error page is the whole contract.
+        // The caller's own next line is the readiness check.
+        log.debug("Leaving navigateWithRetries(). No readyId to wait for.");
+        return { attempts: attempt, url: url };
       } else {
         try {
           await driver.wait(until.elementLocated(By.id(readyId)), timeout);
-          log.debug("Leaving loadPage().");
+          log.debug("Leaving navigateWithRetries().");
           return { attempts: attempt, url: url };
         } catch (e) {
           // The page was ours when it arrived and the element never came.
@@ -193,7 +219,7 @@ async function loadPage(driver, url, readyId, opts) {
       // That is a real failure and retrying it only delays the report.
       failure.message = failure.message + " — " +
           describeToString(lastState, url);
-      log.debug("Leaving loadPage(). The page loaded; #" + readyId +
+      log.debug("Leaving navigateWithRetries(). The page loaded; #" + readyId +
                 " is not in it.");
       throw failure;
     }
@@ -211,12 +237,34 @@ async function loadPage(driver, url, readyId, opts) {
       " attempts: " + describeToString(lastState || { errorPage: true }, url) +
       ". The neighbouring cases load the same page, so this is the target or " +
       "the network rather than the page.");
-  log.debug("Leaving loadPage(). Every attempt hit the network-error page.");
+  log.debug("Leaving navigateWithRetries(). Every attempt hit the " +
+            "network-error page.");
   throw error;
+}
+
+// Navigate to `url` and return { attempts, url } once an element with id
+// `readyId` is there. See the USAGE block at the top for which of the two to
+// call.
+async function loadPage(driver, url, readyId, opts) {
+  log.debug("Entering loadPage().");
+  var result = await navigateWithRetries(driver, url, readyId, opts);
+  log.debug("Leaving loadPage().");
+  return result;
+}
+
+// Navigate to `url` and return { attempts, url } once the tab holds something
+// that is not Chromium's network-error page. The readiness check is the
+// caller's own next line; this is only the retry.
+async function loadUrl(driver, url, opts) {
+  log.debug("Entering loadUrl().");
+  var result = await navigateWithRetries(driver, url, null, opts);
+  log.debug("Leaving loadUrl().");
+  return result;
 }
 
 module.exports = {
   describeLoad: describeLoad,
   describeToString: describeToString,
-  loadPage: loadPage
+  loadPage: loadPage,
+  loadUrl: loadUrl
 };

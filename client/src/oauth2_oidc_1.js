@@ -1298,13 +1298,26 @@ function onload() {
 // to send a token somewhere else must say where, before the reader runs a
 // grant on it.
 //
-// NOTHING IS STARTED AND NOTHING IS PRE-FILLED, which is the difference from
-// the SD-JWT VC handoff above. That one arrives with an authorization endpoint
-// and a client id that its own step 1 has just written; this one arrives from
-// a page that knows a SCIM service root and nothing whatever about an
-// authorization server. So the reader configures this page as they always do
-// and runs whichever grant that server accepts — every one of them ends in an
-// access token, and any of them will do.
+// NOTHING IS STARTED, which is the difference from the SD-JWT VC handoff
+// above. That one arrives with an authorization endpoint and a client id that
+// its own step 1 has just written; this one arrives from a page that knows a
+// service root and nothing whatever about an authorization server. So the
+// reader configures this page as they always do and runs whichever grant that
+// server accepts.
+//
+// ONE THING IS PRE-FILLED, and only when the waiting workflow asked for it:
+// THE SCOPE. It is the one part of the request that workflow does know —
+// its own endpoints refuse a token that does not carry the right permission,
+// and no amount of knowledge about this authorization server would tell the
+// reader which one that is. Without it the round trip completes, the token
+// comes back, and the far page is refused with a 403 naming a scope nobody
+// mentioned; the fault is three pages away from where it is reported.
+//
+// It is MERGED into the field rather than written over it (see
+// token_handoff.js's mergeScope), so "openid profile" stays and the workflow's
+// own names are added after it — and it stays editable, because these names
+// are the waiting workflow's best guess at what its transmitter wants rather
+// than anything a specification fixes.
 //
 // The flag is read from the handoff itself rather than from the query
 // parameter, so the banner survives the reader's editing this page, following
@@ -1319,15 +1332,39 @@ function maybeShowTokenHandoffBanner() {
   // The label crosses a page load in session storage, so it is put in as TEXT
   // and never concatenated into markup — the same rule the token panes on
   // oauth2_oidc_2.html follow for a value that came from somewhere else.
+  // The scope FIRST, so the banner can report what the field actually holds
+  // rather than what was asked for — they differ whenever the reader already
+  // had a scope of their own, which is the interesting case.
+  var wanted = tokenHandoff.requestedScope();
+  var filled = "";
+  if (wanted) {
+    filled = tokenHandoff.mergeScope($("#scope").val(), wanted);
+    $("#scope").val(filled);
+    // Written through immediately: the next thing this reader does may be to
+    // press the authorization button, which navigates away, and a value set
+    // in script fires no change event to save it.
+    writeValuesToLocalStorage();
+  }
   var banner = $("<div class='vc-handoff-banner' id='token_handoff_banner'>" +
       "<strong>An access token was asked for by <span " +
       "id='token_handoff_who'></span></strong> — run any grant on this page " +
-      "and the access token it returns is carried back there. Nothing here " +
-      "has been filled in for you: that workflow knows nothing about this " +
-      "authorization server. <a href='#' id='token_handoff_cancel'>Cancel " +
+      "and the access token it returns is carried back there. " +
+      "<span id='token_handoff_scope_note'></span>" +
+      "<a href='#' id='token_handoff_cancel'>Cancel " +
       "the handoff</a>.</div>");
   $(".container").prepend(banner);
   $("#token_handoff_who").text(tokenHandoff.label());
+  // TEXT and never markup: both the label and the scope crossed a page load
+  // in session storage, which is the same rule the token panes on
+  // oauth2_oidc_2.html follow for a value that came from somewhere else.
+  $("#token_handoff_scope_note").text(wanted
+      ? "That workflow needs the scope \u201c" + wanted + "\u201d, so the " +
+        "Scope field now reads \u201c" + filled + "\u201d — edit it if " +
+        "this authorization server names those permissions differently. " +
+        "Nothing else has been filled in for you: that workflow knows " +
+        "nothing about this authorization server. "
+      : "Nothing here has been filled in for you: that workflow knows " +
+        "nothing about this authorization server. ");
   $("#token_handoff_cancel").on("click", function (event) {
     event.preventDefault();
     tokenHandoff.cancel();

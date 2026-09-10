@@ -8,6 +8,7 @@ const { Command, Option } = require('commander');
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -654,7 +655,7 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
 
   log.info("Load the SAML Test Tools page (SAML 1.1, binding=" + binding +
            ").");
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
 
   await loadIdpMetadata(driver, metadataUrl, metadataFile);
   await assertVersionCameFromMetadata(driver);

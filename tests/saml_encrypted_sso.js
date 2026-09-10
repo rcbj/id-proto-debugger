@@ -8,6 +8,7 @@ const { Command, Option } = require('commander');
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const { addBrowserAccessFlags } = require("./browser_flags");
 const { assertEdgeLandingContract } = require("./edge_landing_contract");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -77,7 +78,7 @@ async function encryptedSsoActivities(driver, metadataUrl, spEntityId, user,
   log.debug("Entering encryptedSsoActivities().");
   var loginWait = Math.max(waitTime, 15000);
   log.info("Load the SAML Test Tools page (encrypted SP, POST binding).");
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
   await loadIdpMetadata(driver, metadataUrl, metadataFile);
 
   // Use the ENCRYPTED SP client's entityID and this run's SP key pair (its cert
@@ -238,7 +239,17 @@ async function test() {
   options.addArguments("--disable-dev-shm-usage");
   // Private Network Access (Keycloak is on this host's loopback while the page
   // may be a deployed https site) AND secure context. See browser_flags.js.
-  addBrowserAccessFlags(options, baseUrl);
+  //
+  // THE THIRD ARGUMENT IS THE IDENTITY PROVIDER and it is not optional here.
+  // The base URL covers the debugger and apiOrigins() covers the api; neither
+  // is Keycloak, which serves http while this page serves https. Without it
+  // the HTTP-POST binding's form is one Chrome will not submit — "Form is not
+  // secure" — and the failure reads as an IdP that never drew its sign-in
+  // screen. It went unnoticed while this file asked for bare `--headless`,
+  // the OLD headless mode up to Chrome 131, which does not draw that
+  // interstitial; the 2026-09-03 pin move to Chrome 152 ended that. See
+  // tests/CLAUDE.md and the same note in saml_sso.js.
+  addBrowserAccessFlags(options, baseUrl, [process.env.SAML_METADATA_URL]);
 
   const loggingPrefs = new logging.Preferences();
   loggingPrefs.setLevel(logging.Type.BROWSER, logging.Level.ALL);

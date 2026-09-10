@@ -74,6 +74,11 @@ var bunyan = require("bunyan");
 var xd = require("./xmldsig");
 var sm = require("./saml_message"); // the wire-format reader, shared
 var edge = require("./edge_landing"); // the static landings' hand-off contract
+// The SESSION hand-off to the Shared Signals workflow. It is not the same
+// thing as `edge` above, which is how a POST reaches a static site; this is
+// how the session a sign-in produced reaches a page that needs to know what
+// one IS. See `session_handoff.js`.
+var sessionHandoff = require("./session_handoff");
 var log = bunyan.createLogger({ name: 'saml_response',
     level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -298,6 +303,7 @@ function render(responseXml, isFresh) {
 
   buildAttributesTable(assertion);
   saveSubjectForLogout(assertion);
+  handSessionToSharedSignals(assertion);
   if (isSaml1(version)) {
     // Not a warning and not an omission: SAML 1.1 has no Single Logout, so
     // there is nothing on the request page for a saved subject to drive. Said
@@ -342,6 +348,66 @@ function saveSubjectForLogout(assertion) {
   if (authn) localStorage.setItem('saml_last_session_index',
       authn.getAttribute('SessionIndex') || '');
   log.debug("Leaving saveSubjectForLogout().");
+}
+
+// ---------------------------------------------------------------------------
+// HAND THE SESSION TO THE SHARED SIGNALS WORKFLOW, IF IT ASKED FOR ONE.
+//
+// **CAEP is a vocabulary about SESSIONS and not about OAuth**, so a SAML
+// sign-in produces one exactly as an OIDC sign-in does — and the mock proves
+// it from the other end, emitting `session-established` for this sign-in
+// through the same funnel it uses for a token flow.
+//
+// **THE SESSION INDEX IS THE WHOLE POINT, AND ONLY SAML 2.0 HAS ONE.** A
+// `<saml:AuthnStatement SessionIndex="…">` is this protocol's exact analogue
+// of an ID Token's `sid`: the identifier the identity provider will recognise
+// when somebody says "revoke that session". SAML 1.1 has none — not an
+// omission here, the protocol has no session index at all — so this reports
+// `sidFromTheWire: false` and the far page marks the identifier as invented
+// rather than printing it as though a receiver could match it.
+//
+// It delivers only when a handoff is ACTIVE, which is `deliver()`'s own rule
+// and the reason an ordinary sign-in here writes nothing anywhere.
+// ---------------------------------------------------------------------------
+function handSessionToSharedSignals(assertion) {
+  log.debug("Entering handSessionToSharedSignals().");
+  if (!assertion || !sessionHandoff.isActive()) {
+    log.debug("Leaving handSessionToSharedSignals(). Nobody is waiting.");
+    return false;
+  }
+  var isOne = isSaml1(samlVersionOf(assertion));
+  var subj = tags(assertion, 'Subject')[0];
+  // SAML 1.1 spells it <saml:NameIdentifier> and 2.0 <saml:NameID>. Reading
+  // only one of them would hand over a session with no subject on whichever
+  // version this reader was not written for — see `docs/saml11.md`.
+  var nameId = subj
+    ? (tags(subj, 'NameID')[0] || tags(subj, 'NameIdentifier')[0])
+    : null;
+  var issuer = tags(assertion, 'Issuer')[0];
+  var authn = tags(assertion, 'AuthnStatement')[0] ||
+      tags(assertion, 'AuthenticationStatement')[0];
+  var sessionIndex = authn ? (authn.getAttribute('SessionIndex') || '') : '';
+  // The authentication context, in each version's own spelling: 2.0 puts a
+  // <saml:AuthnContextClassRef> inside the statement, 1.1 an
+  // AuthenticationMethod ATTRIBUTE on it.
+  var accr = tags(assertion, 'AuthnContextClassRef')[0];
+  var method = authn ? (authn.getAttribute('AuthenticationMethod') || '') : '';
+  var acr = accr ? (accr.textContent || '').trim() : method;
+  var delivered = sessionHandoff.deliver({
+    protocol: isOne ? 'saml11' : 'saml2',
+    iss: issuer ? (issuer.textContent || '').trim() : '',
+    sub: nameId ? (nameId.textContent || '').trim() : '',
+    sid: sessionIndex,
+    // Believed only when this reader actually found one. An empty
+    // SessionIndex attribute and a protocol that has none are the same
+    // absence to a receiver, and neither is a session it can match.
+    sidFromTheWire: !isOne && sessionIndex !== '',
+    acr: acr,
+    amr: acr ? [acr] : [],
+    name: nameId ? (nameId.textContent || '').trim() : ''
+  }, isOne ? 'the SAML 1.1 workflow' : 'the SAML 2.0 workflow');
+  log.debug("Leaving handSessionToSharedSignals(). " + delivered);
+  return delivered;
 }
 
 function row(cells) {
@@ -791,6 +857,7 @@ function decryptAssertion() {
     var a = tags(adoc, 'Assertion')[0] || null;
     buildAttributesTable(a);
     saveSubjectForLogout(a);
+    handSessionToSharedSignals(a);
   } catch (e) {
     log.error('decrypt render: ' + e.message);
   }

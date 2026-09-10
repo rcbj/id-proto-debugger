@@ -934,6 +934,7 @@ function testsImageHasNoCollidingFilenames() {
   log.info("[collisions] OK — " + total + " files are copied flat into the tests image, every " +
     "one has a unique name, and every script run-report schedules is among them.");
   stsModuleClosureIsCopied(dockerfile);
+  testsImageCopiesTheRequireClosure(dockerfile);
   flatCopiedModulesHaveTheirPackages(dockerfile);
   log.debug("Leaving testsImageHasNoCollidingFilenames().");
 }
@@ -974,6 +975,94 @@ function testsImageHasNoCollidingFilenames() {
 // names below are kept as PATHS relative to the mock's root and resolved the
 // way node resolves them.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// EVERY `require("./x")` IN ONE OF THE MOCK'S MODULES, AND WHETHER IT IS ONE
+// THE IMAGE HAS TO SATISFY.
+//
+// A require at the top of a file runs when the file is LOADED, which is the
+// failure stsModuleClosureIsCopied() exists to catch: an in-process mock-KDC
+// job dies at require time with "Cannot find module" naming a file this image
+// HAS. A require INSIDE A FUNCTION runs only if that function is called, and
+// the mock has one that no job here ever calls — see LAZY_STS_REQUIRES below.
+//
+// **THE DISTINCTION IS TAKEN FROM A PARSE AND NOT FROM AN INDENT**, so a
+// require that MOVES to the top of its file stops being exempt on the same
+// day, with no list to remember. `acorn-walk`'s ancestor walk gives the
+// enclosing nodes; any function among them makes the call lazy.
+//
+// A file that will not parse is reported as all-top-level, which is the
+// conservative direction: the check then asks for a COPY that may not be
+// needed rather than missing one that is.
+// ---------------------------------------------------------------------------
+function stsRequiresIn(file, source) {
+  log.debug("Entering stsRequiresIn().");
+  const acorn = require("acorn");
+  const walk = require("acorn-walk");
+  const found = [];
+  let tree = null;
+  try {
+    tree = acorn.parse(source, { ecmaVersion: "latest",
+                                 sourceType: "script",
+                                 allowReturnOutsideFunction: true });
+  } catch (e) {
+    log.warn("[closure] " + file + " did not parse (" + e.message +
+             "); treating every require in it as load-time.");
+    const re = /require\((['"])(\.\.?\/[A-Za-z0-9_.\/-]+)\)/g;
+    let m;
+    while ((m = re.exec(source)) !== null) {
+      found.push({ spec: m[2], lazy: false });
+    }
+    log.debug("Leaving stsRequiresIn(). " + found.length + " (unparsed).");
+    return found;
+  }
+  const FUNCTIONS = { FunctionDeclaration: true, FunctionExpression: true,
+                      ArrowFunctionExpression: true };
+  walk.ancestor(tree, {
+    CallExpression: function (node, state, ancestors) {
+      if (!node.callee || node.callee.name !== "require") {
+        return;
+      }
+      const arg = node.arguments && node.arguments[0];
+      if (!arg || arg.type !== "Literal" ||
+          typeof arg.value !== "string" || arg.value.charAt(0) !== ".") {
+        return;
+      }
+      const lazy = ancestors.some(function (one) {
+        return FUNCTIONS[one.type] === true;
+      });
+      found.push({ spec: arg.value, lazy: lazy });
+    }
+  });
+  log.debug("Leaving stsRequiresIn(). " + found.length + ".");
+  return found;
+}
+
+// ---------------------------------------------------------------------------
+// THE LAZY REQUIRES THIS IMAGE DELIBERATELY DOES NOT SATISFY.
+//
+// One entry today, and it is the reason this exemption exists at all. On the
+// 2026-09-10 gitlink move `common/request_pool.js` grew
+// `require('../ldap/ldap_server')` — INSIDE a function, and the mock's own
+// comment above it says the laziness is a rule rather than an accident.
+//
+// **COPYING IT IS NOT AN OPTION RATHER THAN A CHORE.** That module pulls in 23
+// more — the whole admin UI, XACML's store, PIP and PEP register, the SCIM
+// map, the SPIFFE registry, the TLS server, federation, persistence — and then
+// `ldapjs`, which reaches this repository only as the mock's own `file:`
+// submodule dependency and is in no image built here. Satisfying it would mean
+// carrying most of the mock and a package tree with it, to reach a function
+// the four in-process mock-KDC jobs never call. Verified by running all four
+// against this gitlink: each passes with the module absent.
+//
+// A NEW ENTRY IS A DECISION AND NOT A FORMALITY. Add one only when the same
+// two things are true — the require is lazy by the parse above, and nothing
+// here calls the path that reaches it — and write down which jobs were run to
+// show the second. Everything else belongs in a COPY line.
+// ---------------------------------------------------------------------------
+const LAZY_STS_REQUIRES = {
+  "common/request_pool.js": { "ldap/ldap_server.js": true },
+};
+
 function stsModuleClosureIsCopied(dockerfile) {
   log.debug("Entering stsModuleClosureIsCopied().");
   const stsDir = path.join(__dirname, "..", "sts");
@@ -1019,24 +1108,21 @@ function stsModuleClosureIsCopied(dockerfile) {
       missing.push(name + " (copied, but absent from the sts/ checkout)");
       continue;
     }
-    // COMMENT LINES ARE DROPPED, for the reason the banned-require scan above
-    // gives about the files it reads: the mock's comments discuss requires on
-    // purpose. `common/worker_pool.js` explains how to reproduce a hang with
-    // `node -e "require('./common/crypto')"`, and read as code that is a
-    // dependency on `common/common/crypto.js`, which exists nowhere and which
-    // no COPY could satisfy.
-    const src = fs.readFileSync(file, "utf8").split("\n")
-      .filter(function (line) {
-        return !/^\s*(\/\/|\*|\/\*)/.test(line);
-      }).join("\n");
+    // A PARSE RATHER THAN A REGEX, and the first reason is the one the old
+    // comment here gave: the mock's own comments discuss requires on purpose —
+    // `common/worker_pool.js` explains how to reproduce a hang with
+    // `node -e "require('./common/crypto')"`, which read as code is a
+    // dependency on `common/common/crypto.js` that exists nowhere and that no
+    // COPY could satisfy. Stripping comment lines dealt with that; a parse
+    // deals with it and with the second reason too, which is knowing whether a
+    // require runs at LOAD or only when somebody calls the function it is in.
+    const src = fs.readFileSync(file, "utf8");
     // Both `./x` and `../dir/x`, resolved against the requiring file's own
     // directory and normalised back to a path relative to the mock's root —
     // which is the form the COPY sources above are in.
-    const re = /require\((['"])(\.\.?\/[A-Za-z0-9_.\/-]+)\1\)/g;
-    let m;
-    while ((m = re.exec(src)) !== null) {
+    stsRequiresIn(name, src).forEach(function (one) {
       let dep = path.posix.normalize(
-        path.posix.join(path.posix.dirname(name), m[2]));
+        path.posix.join(path.posix.dirname(name), one.spec));
       if (!/\.js$/.test(dep)) {
         dep = dep + ".js";
       }
@@ -1046,16 +1132,26 @@ function stsModuleClosureIsCopied(dockerfile) {
         // silently normalised away.
         missing.push(dep + " (required by sts/" + name + ", and it points " +
           "outside the mock's own tree)");
-        continue;
+        return;
       }
       if (!copied[dep]) {
-        missing.push(dep + " (required by sts/" + name + ")");
-        continue;
+        const allowed = LAZY_STS_REQUIRES[name] || {};
+        if (one.lazy && allowed[dep] === true) {
+          log.info("[sts-closure] " + dep + " is required LAZILY by sts/" +
+            name + " and is deliberately not in the image; see " +
+            "LAZY_STS_REQUIRES.");
+          return;
+        }
+        missing.push(dep + " (required by sts/" + name +
+          (one.lazy ? ", inside a function — so it is a run-time failure " +
+                      "rather than a load-time one, and belongs in a COPY " +
+                      "line unless nothing here can reach it" : "") + ")");
+        return;
       }
       if (!seen[dep]) {
         queue.push(dep);
       }
-    }
+    });
   }
   const unique = missing.filter(function (v, i) {
     return missing.indexOf(v) === i;
@@ -1072,6 +1168,184 @@ function stsModuleClosureIsCopied(dockerfile) {
     "modules are copied and every relative require among them resolves " +
     "inside the image.");
   log.debug("Leaving stsModuleClosureIsCopied().");
+}
+
+// ---------------------------------------------------------------------------
+// AND THE SAME WALK OVER THIS SUITE'S OWN MODULES, WHICH IS THE HALF THAT WAS
+// MISSING UNTIL 2026-09-10.
+//
+// The cross-check above asks whether every script run-report SCHEDULES reaches
+// the image. Nothing asked the same question about a module one of those
+// scripts REQUIRES — and the answer is needed for exactly the same reason,
+// because this directory is copied file by file and a shared module is
+// scheduled by nobody. `tests/Dockerfile` says so in eight comments
+// (random_username.js, expectation.js, renderer_wedge.js, sts_applications.js,
+// consent_screen.js, console_signin.js, federation_admin.js, paths) and each
+// of them is a line somebody had to remember.
+//
+// `console_signin.js` is the one that was not remembered. It landed on
+// 2026-09-10, carrying the /admin sign-in walk that the two delegation-chain
+// jobs had had a copy of each, with no COPY line of its own — so both of those
+// jobs plus the third case one of them schedules died in 0.2s with
+//
+//   Error: Cannot find module './console_signin.js'
+//   Require stack:
+//   - /usr/src/app/oauth2_delegation_chain.js
+//
+// three red jobs naming a file rather than a build, while every host run was
+// green because a checkout has the whole directory. That is the failure
+// stsModuleClosureIsCopied() exists to catch, one tree over, and the fix is
+// the same walk: seed with what run-report schedules, follow each relative
+// require, and require the result to be something the image carries.
+//
+// TWO THINGS IT DELIBERATELY DOES NOT DO. It follows only requires that land
+// inside `tests/` — a borrowed module out of `client/src`, `common/` or `sts/`
+// is staged elsewhere and is flatCopiedModulesHaveTheirPackages()'s and
+// stsModuleClosureIsCopied()'s business, and the mirror hazards those carry
+// are their own. And it does not exempt a LAZY require the way the sts walk
+// does: nothing here is the size of the mock's admin tree, so a module this
+// suite requires inside a function is a module this suite can be asked for at
+// run time, and a COPY line is cheaper than the argument.
+//
+// Runs in a checkout, where tests/Dockerfile is readable; the caller skips it
+// in the image, where it is not.
+// ---------------------------------------------------------------------------
+function testsImageCopiesTheRequireClosure(dockerfile) {
+  log.debug("Entering testsImageCopiesTheRequireClosure().");
+  const report = path.join(__dirname, "run-report.js");
+  if (!fs.existsSync(report)) {
+    log.info("[tests-closure] skipped: no run-report.js beside this file, so " +
+      "there is no job list to seed the walk with.");
+    log.debug("Leaving testsImageCopiesTheRequireClosure().");
+    return;
+  }
+  // WHAT THE IMAGE HAS, KEYED BY THE PATH A REQUIRE WOULD USE. The WORKDIR is
+  // /usr/src/app and most of this directory lands in it flat, so a file
+  // copied from tests/x.js is `x.js` there whatever it was called here; a
+  // DIRECTORY copy (tests/tools) keeps its shape, so a require of
+  // ./tools/attach-admin-token.js is satisfied by that one line.
+  const available = {};
+  const globs = [];
+  const copyLine = /^COPY\s+([^\n]+)/gm;
+  fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
+    const parts = rest.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      return _;
+    }
+    const dest = parts[parts.length - 1].replace(/\/$/, "")
+      .replace(/^\.\//, "");
+    parts.slice(0, -1).forEach(function (src) {
+      if (src.indexOf("tests/") !== 0) {
+        return;
+      }
+      const rel = src.slice("tests/".length);
+      if (rel.indexOf("*") !== -1) {
+        // A glob, expanded the way docker does it: by prefix, and flat.
+        globs.push(rel.replace("*", ""));
+        return;
+      }
+      const here = path.join(__dirname, rel);
+      if (fs.existsSync(here) && fs.statSync(here).isDirectory()) {
+        // A directory copy carries everything beneath it, under the
+        // destination's own name.
+        const under = function (dir, prefix) {
+          fs.readdirSync(dir, { withFileTypes: true }).forEach(function (e) {
+            const name = prefix === "" ? e.name : prefix + "/" + e.name;
+            if (e.isDirectory()) {
+              under(path.join(dir, e.name), name);
+              return;
+            }
+            available[dest === "" ? name : dest + "/" + name] = true;
+          });
+        };
+        under(here, "");
+        return;
+      }
+      const base = rel.split("/").pop();
+      available[dest === "" || dest === "." ? base : dest + "/" + base] = true;
+    });
+    return _;
+  });
+
+  const scripts = [];
+  fs.readFileSync(report, "utf8").replace(/script:\s*"([^"]+)"/g,
+    function (_, name) {
+      if (scripts.indexOf(name) === -1) {
+        scripts.push(name);
+      }
+      return _;
+    });
+  // run-report.js itself is the other root: it requires renderer_wedge.js and
+  // the admin-token tools at load, so a missing COPY there takes the whole
+  // run rather than one job.
+  const queue = ["run-report.js"].concat(scripts);
+  const seen = {};
+  const missing = [];
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen[name]) {
+      continue;
+    }
+    seen[name] = true;
+    const file = path.join(__dirname, name);
+    if (!fs.existsSync(file)) {
+      // A script run-report names and this directory has not got. The
+      // cross-check above reports the Dockerfile half of that; this walk has
+      // nothing to follow and says so rather than reporting a missing COPY.
+      log.warn("[tests-closure] " + name + " is scheduled and is not in " +
+        __dirname + ", so there is nothing to walk.");
+      continue;
+    }
+    stsRequiresIn(name, fs.readFileSync(file, "utf8")).forEach(function (one) {
+      let dep = path.posix.normalize(
+        path.posix.join(path.posix.dirname(name), one.spec));
+      if (!/\.js(on)?$/.test(dep)) {
+        dep = dep + ".js";
+      }
+      if (dep.indexOf("..") === 0) {
+        // A borrowed module out of client/src, common/ or sts/. Staged by its
+        // own COPY lines and checked by the two walks beside this one.
+        return;
+      }
+      if (!fs.existsSync(path.join(__dirname, dep))) {
+        // Not a file of this suite's at all — requireSharedModule() passes
+        // candidate names that only resolve in the image, which is the one
+        // place this check is not running.
+        return;
+      }
+      if (!available[dep] &&
+          !globs.some(function (prefix) {
+            return dep.indexOf(prefix) === 0 && dep.indexOf("/") === -1;
+          })) {
+        missing.push(dep + " (required by tests/" + name + ")");
+        return;
+      }
+      if (!/\.js$/.test(dep)) {
+        // A data file — bbs_vectors.json, xwing_vectors.json. It has to be
+        // copied and there is nothing in it to follow, and handing one to
+        // acorn is a parse warning on every run.
+        return;
+      }
+      if (!seen[dep]) {
+        queue.push(dep);
+      }
+    });
+  }
+  const unique = missing.filter(function (v, i) {
+    return missing.indexOf(v) === i;
+  });
+  assert.deepStrictEqual(unique, [],
+    "tests/Dockerfile never copies these modules, and a job that requires " +
+    "one dies in the image with MODULE_NOT_FOUND in a tenth of a second — " +
+    "naming a file rather than a build, while every host run stays green " +
+    "because a checkout has the whole directory: " + unique.join(", ") +
+    ". Nothing schedules a shared module, so the run-report cross-check " +
+    "above cannot see it; add a COPY tests/<name> ./ line in the files1 or " +
+    "files2 staging stage, beside the one for consent_screen.js.");
+  log.info("[tests-closure] OK — " + Object.keys(seen).length + " scheduled " +
+    "scripts and modules walked, and every relative require among them is " +
+    "carried into the tests image.");
+  log.debug("Leaving testsImageCopiesTheRequireClosure().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1615,6 +1889,113 @@ function transientLoadErrorsAreFilteredNotSwallowed() {
 }
 
 // ---------------------------------------------------------------------------
+// THE RUNNER'S ONE RETRY IS SCOPED TO ONE MESSAGE, AND IS STILL WIRED IN.
+//
+// run-report.js runs a job a second time when Chrome's renderer stops
+// answering — the wedge tests/renderer_wedge.js describes, which no test can
+// recover from because the tab is gone for the life of that browser. That is
+// the only failure it retries, and both halves of that sentence are things a
+// later edit can quietly break in opposite directions:
+//
+//   * WIDEN the predicate, and the suite starts running failing tests twice.
+//     A retried failure still fails, so nothing goes green — it simply takes
+//     twice as long to report every genuine breakage, and the report says a
+//     browser had to be replaced when none did.
+//   * UNWIRE it, and nothing fails at all: the pool goes back to calling
+//     runJob() directly, every job still runs, and the only symptom is the
+//     wedge coming back as a red test naming whatever page it was loading.
+//
+// So this asserts the predicate's edges and that the pool still goes through
+// the wrapper. It reads run-report.js as STATEMENTS rather than as lines, for
+// the reason the top of this file's other source sweeps do: the 80-column
+// sweep wrapped a call and silenced two checks that were anchored to a line.
+// ---------------------------------------------------------------------------
+function rendererWedgeIsRetriedNotSwallowed() {
+  log.debug("Entering rendererWedgeIsRetriedNotSwallowed().");
+  const rendererWedge = require("./renderer_wedge.js");
+
+  // (A) What it matches, and — the half that matters — what it does not.
+  const RETRIED = [
+    "TimeoutError: timeout: Timed out receiving message from renderer: " +
+        "299.995\n  (Session info: chrome=121.0.6167.85)",
+    "timeout: Timed out receiving message from renderer: 59.994"
+  ];
+  const KEPT = [
+    // A wait that expired. The page was there and the field was not.
+    "TimeoutError: the wallet should discover walt.id and its authorization " +
+        "server from the offer alone. Wait timed out after 10080ms",
+    // A page that never loaded. page_load.js is what retries this one.
+    "unknown error: net::ERR_CONNECTION_REFUSED",
+    // A browser that died rather than one that stopped answering. A retry
+    // would hide a container that is out of memory.
+    "unknown error: session deleted because of page crash",
+    // The thing this suite exists to report.
+    "AssertionError [ERR_ASSERTION]: the offered credential should be the " +
+        "one selected."
+  ];
+  RETRIED.forEach(function (output) {
+    assert.strictEqual(rendererWedge.isRendererWedge(output), true,
+      "renderer_wedge.isRendererWedge() must recognise the wedge, and did " +
+      "not for:\n  " + output.split("\n")[0]);
+  });
+  KEPT.forEach(function (output) {
+    assert.strictEqual(rendererWedge.isRendererWedge(output), false,
+      "renderer_wedge.isRendererWedge() must NOT match an ordinary failure — " +
+      "a suite that runs its red tests twice takes twice as long to report " +
+      "them. It matched:\n  " + output.split("\n")[0]);
+  });
+  assert.strictEqual(rendererWedge.isRendererWedge(""), false);
+  assert.strictEqual(rendererWedge.isRendererWedge(null), false);
+  assert.ok(rendererWedge.wedgeNote("a job").indexOf(
+      rendererWedge.SIGNATURE) !== -1,
+    "the note the log and the report carry must quote the message it is " +
+    "about, or a reader cannot tell which fault was retried.");
+
+  // (B) The pool still goes through the wrapper, and the wrapper still asks
+  // the predicate. Read as statements: a line-anchored regex over this file
+  // stops matching the moment somebody wraps the call.
+  const runner = path.join(__dirname, "run-report.js");
+  if (!fs.existsSync(runner)) {
+    log.info("[renderer wedge] partial — run-report.js is not beside this " +
+             "test, so only the predicate was checked.");
+    log.debug("Leaving rendererWedgeIsRetriedNotSwallowed().");
+    return;
+  }
+  const statements = fs.readFileSync(runner, "utf8")
+    .replace(/\s*\n\s*/g, " ");
+  assert.ok(/runJobAllowingOneRendererWedge\(job, i, CONCURRENCY === 1\)/
+      .test(statements),
+    "run-report.js's pool no longer calls runJobAllowingOneRendererWedge(), " +
+    "so a wedged renderer is a red test again. See tests/renderer_wedge.js.");
+  assert.ok(/results\[i\] = await runJobAllowingOneRendererWedge\(job, i, true\)/
+      .test(statements),
+    "run-report.js's EXCLUSIVE pass no longer calls " +
+    "runJobAllowingOneRendererWedge(), so a wedged renderer is a red test " +
+    "again there. See tests/renderer_wedge.js.");
+  assert.ok(/rendererWedge\.isRendererWedge\(first\.output\)/
+      .test(statements),
+    "run-report.js no longer decides on renderer_wedge.isRendererWedge(), so " +
+    "whatever it retries now is not what this check describes.");
+
+  // (C) And the module reaches the image, which nothing else can notice: it
+  // is not a job, so testsImageHasNoCollidingFilenames() never looks for it,
+  // and run-report.js requires it at LOAD — so a missing COPY line does not
+  // fail one job, it exits the tests container before the first one starts.
+  const dockerfile = path.join(__dirname, "Dockerfile");
+  if (fs.existsSync(dockerfile)) {
+    assert.ok(/COPY\s+tests\/renderer_wedge\.js/
+        .test(fs.readFileSync(dockerfile, "utf8")),
+      "tests/Dockerfile does not COPY tests/renderer_wedge.js, which " +
+      "run-report.js requires at load — so the containerized suite would " +
+      "exit with MODULE_NOT_FOUND before spawning a single job.");
+  }
+  log.info("[renderer wedge] OK — " + RETRIED.length + " wedge message(s) " +
+    "are retried, " + KEPT.length + " ordinary failures are not, and the " +
+    "runner still routes both of its job passes through the wrapper.");
+  log.debug("Leaving rendererWedgeIsRetriedNotSwallowed().");
+}
+
+// ---------------------------------------------------------------------------
 // NO DOCKERFILE STAGE MAY OUTGROW DOCKER'S LAYER LIMIT.
 //
 // Docker's layer store refuses a chain deeper than 125 layers (`maxDepth` in
@@ -1760,6 +2141,87 @@ function everyDockerfileStaysUnderTheLayerLimit() {
   log.debug("Leaving everyDockerfileStaysUnderTheLayerLimit().");
 }
 
+// ---------------------------------------------------------------------------
+// EVERY NAVIGATION TO THE TARGET UNDER TEST GOES THROUGH tests/page_load.js.
+//
+// `driver.get()` does not report the failure that matters against a deployed
+// site: a connection that is established and then DROPPED resolves normally,
+// the tab holds Chromium's network-error page, and the test then spends its
+// whole budget waiting for a field that was never there — failing with the
+// name of one of OUR ids for somebody else's socket. That is three remote runs
+// on record (`WS-Trust 1.2 — Issue` 2026-08-15, `WS-Trust 1.4 — Validate`
+// 2026-08-20, `DID Tools page` 2026-09-10), each the single red job of an
+// otherwise green run against a page that loaded by hand seconds later.
+//
+// `loadPage()` / `loadUrl()` retry exactly that document and nothing else. The
+// sweep of 2026-09-10 put ~180 navigations through them, and this check is what
+// keeps the next test written from starting the cycle again — the rule was in
+// tests/CLAUDE.md for three weeks and the file that went red had been written
+// after it.
+//
+// WHAT IS AND IS NOT MATCHED. Only a navigation to the TARGET: an expression
+// beginning `baseUrl`, `BASE` or `opts.baseUrl`, which is how every test here
+// names the debugger it was pointed at. A `driver.get()` to Keycloak, to the
+// mock STS or to a socket the test opened itself is left alone deliberately —
+// those are services this suite starts, on loopback, and the CDN edge this
+// exists for is not in front of any of them.
+//
+// It reads a STATEMENT and not a line: the source has its whitespace collapsed
+// before matching, so wrapping the call at 80 columns cannot silence the check.
+// See the note in tests/CLAUDE.md about source-inspection tests that a
+// reformat can quietly turn off.
+//
+// Node only, no browser, no network: never skipped.
+// ---------------------------------------------------------------------------
+function everyTargetNavigationGoesThroughPageLoad() {
+  log.debug("Entering everyTargetNavigationGoesThroughPageLoad().");
+  // page_load.js writes the only `driver.get()` that is allowed to be one, and
+  // its USAGE block quotes the calls this check is about.
+  const EXEMPT = ["page_load.js"];
+  // The whole point is the first token of the argument: `baseUrl` and its two
+  // spellings are what a test calls the deployment it was given with --url.
+  const RAW = /driver\.get\(\s*(baseUrl|BASE|opts\.baseUrl)\b/g;
+  const offenders = [];
+  var checked = 0;
+  var through = 0;
+  fs.readdirSync(__dirname).filter(function (name) {
+    return name.endsWith(".js") && EXEMPT.indexOf(name) === -1;
+  }).sort().forEach(function (name) {
+    const src = fs.readFileSync(path.join(__dirname, name), "utf8");
+    if (src.indexOf("driver") === -1) {
+      return;
+    }
+    checked++;
+    if (/\bloadUrl\(|\bloadPage\(/.test(src)) {
+      through++;
+    }
+    // Collapsed, so a call wrapped after its open paren still matches.
+    const flat = src.replace(/\s+/g, " ");
+    RAW.lastIndex = 0;
+    var found = 0;
+    while (RAW.exec(flat) !== null) {
+      found++;
+    }
+    if (found) {
+      offenders.push(name + " (" + found + ")");
+    }
+  });
+  assert.deepStrictEqual(offenders, [],
+    "These files navigate to the target under test with a bare " +
+    "`driver.get()`, which cannot tell a page from Chromium's network-error " +
+    "page — so a dropped connection is reported as one of our own ids " +
+    "timing out, on a page that never arrived: " + offenders.join(", ") +
+    ".\nUse tests/page_load.js instead:\n" +
+    '  const { loadUrl } = require("./page_load.js");\n' +
+    "  await loadUrl(driver, baseUrl + \"/some_page.html\");\n" +
+    "or loadPage(driver, url, readyId, { timeout }) where the caller has an " +
+    "id the page must hold.");
+  log.info("[page load] OK — " + checked + " file(s) drive a browser, " +
+    through + " of them navigate through page_load.js, and none reaches the " +
+    "target under test with a bare driver.get().");
+  log.debug("Leaving everyTargetNavigationGoesThroughPageLoad().");
+}
+
 async function test() {
   log.debug("Entering test().");
   rsaKeys();
@@ -1779,6 +2241,8 @@ async function test() {
   stagedSharedModuleListsAreComplete();
   everyJobDeclaresTheUrlOption();
   transientLoadErrorsAreFilteredNotSwallowed();
+  rendererWedgeIsRetriedNotSwallowed();
+  everyTargetNavigationGoesThroughPageLoad();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

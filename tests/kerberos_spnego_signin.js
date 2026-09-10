@@ -105,10 +105,16 @@ const assert = require("assert");
 const { Command, Option } = require("commander");
 const { usernameFor } = require("./random_username.js");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+// THE MOCK STS'S CONSENT SCREEN. A Kerberos session is still a session, and
+// the authorization endpoint asks about a scope nobody has agreed to whatever
+// authenticated the person holding it.
+const consentScreen = require("./consent_screen.js");
 var log = bunyan.createLogger({ name: "kerberos_spnego_signin",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
@@ -454,7 +460,7 @@ async function theApplicationNamesKerberosAsItsMechanism() {
 async function theDoorChallengesBeforeAnyTicket(driver) {
   log.debug("Entering theDoorChallengesBeforeAnyTicket().");
   log.info("=== The unauthenticated request to the sign-in door ===");
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_probe_button")), 20000);
 
   await setUrlField(driver, signInUrl);
@@ -506,7 +512,7 @@ async function theDoorChallengesBeforeAnyTicket(driver) {
 async function theDebuggerBuildsTheCredential(driver) {
   log.debug("Entering theDebuggerBuildsTheCredential().");
   log.info("=== The AS exchange: a TGT for " + principal + " ===");
-  await driver.get(baseUrl + "/kerberos.html?return=spnego");
+  await loadUrl(driver, baseUrl + "/kerberos.html?return=spnego");
   await driver.wait(until.elementLocated(By.id("krb_noreauth_button")), 20000);
 
   await setField(driver, "krb_realm", realm);
@@ -539,7 +545,7 @@ async function theDebuggerBuildsTheCredential(driver) {
   log.info("the debugger holds a TGT for " + principal + "@" + realm);
 
   log.info("=== The TGS exchange: a service ticket for " + spn + " ===");
-  await driver.get(baseUrl + "/kerberos_tgs.html?return=spnego&spn=" +
+  await loadUrl(driver, baseUrl + "/kerberos_tgs.html?return=spnego&spn=" +
       encodeURIComponent(spn));
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
   const filled = await driver.findElement(By.id("krb_spn"))
@@ -572,7 +578,7 @@ async function theDebuggerBuildsTheCredential(driver) {
 async function theTicketSignsThePersonIn(driver) {
   log.debug("Entering theTicketSignsThePersonIn().");
   log.info("=== The sign-in ===");
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_authenticate_button")),
       20000);
   await setUrlField(driver, signInUrl);
@@ -701,6 +707,14 @@ async function theSessionSatisfiesAnApplication(driver, cookie) {
       "&scope=" + encodeURIComponent("openid profile email") +
       "&state=krb-signed-in&nonce=krb-nonce-2";
   await driver.get(authorize);
+  // AND THE CONSENT SCREEN, if there is one. The session came from a Kerberos
+  // ticket and consent is about the SCOPE and the CLIENT rather than about how
+  // somebody authenticated, so a person who never typed a password is still
+  // asked the first time this application requests these three scopes. The
+  // assertion below is unaffected and is why this hop is passed rather than
+  // asserted: what it forbids is the SIGN-IN screen, which is a different page
+  // and would mean the ticket bought nothing.
+  await consentScreen.passInBrowser(driver, By);
   // WAIT ON THE CODE, NOT ON `/callback`. That path is a HOP rather than a
   // destination: the debugger's callback forwards to oauth2_oidc_2.html
   // carrying the response, so a wait for "/callback" in the URL is a race
@@ -919,16 +933,10 @@ async function test() {
   log.info("Starting Test run. debugger=" + baseUrl + ", api=" + apiUrl +
       ", sts=" + stsUrl);
   const ready = await preconditions();
-  if (!ready.ok) {
-    // Named, never silent. A skip that did not say which precondition failed
-    // would be indistinguishable from a pass.
-    log.warn("SKIPPED: " + ready.why + ". This test needs the client, the " +
-        "api (for POST /krb5/spnego) and the mock STS with its KDC and its " +
-        "SPNEGO sign-in door.");
-    log.info("Test completed successfully (skipped).");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip, and it used to log "Test completed
+  // successfully (skipped)" on its way out. See tests/expectation.js.
+  mustBeReady(ready, "the client, the api (for POST /krb5/spnego) and the " +
+              "mock STS with its KDC and its SPNEGO sign-in door.");
   if (ready.kdcPort && ready.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + ready.kdcPort +
         "; using that.");

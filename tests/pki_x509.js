@@ -629,6 +629,40 @@ async function aRootIntermediateIssuingChainVerifies() {
   assert.strictEqual(links[0].selfSigned, false,
     "the leaf must not be self-signed");
 
+  // Every link also reports the X.509v3 KeyUsage extension of its own
+  // certificate, which is what a caller checking a chain has to consult
+  // before believing a signature made with the key inside it: pkijs verifies
+  // the SIGNATURES and says nothing at all about what the keys are allowed
+  // to do, so a leaf issued only for encipherment verifies here exactly as a
+  // signing one does unless somebody reads this.
+  assert.ok(links[0].keyUsage.present,
+    "the leaf's KeyUsage extension was not reported by verifyChain()");
+  assert.ok(links[0].keyUsage.usages.indexOf("digitalSignature") !== -1,
+    "a tls-server leaf asserts digitalSignature; verifyChain() reported " +
+    links[0].keyUsage.usages.join(", "));
+  assert.ok(x509.keyUsagePermits(links[0].keyUsage, "digitalSignature"),
+    "keyUsagePermits() refused digitalSignature to a certificate that " +
+    "asserts it");
+  assert.ok(!x509.keyUsagePermits(links[0].keyUsage, "keyCertSign"),
+    "keyUsagePermits() let a leaf issue certificates — the whole point of " +
+    "the check is that a signing certificate is not a CA");
+  [1, 2, 3].forEach(function (index) {
+    assert.ok(x509.keyUsagePermits(links[index].keyUsage, "keyCertSign"),
+      "the CA at link " + index + " (" + links[index].subject + ") may not " +
+      "sign certificates according to its own KeyUsage: " +
+      links[index].keyUsage.usages.join(", "));
+  });
+  // RFC 5280 section 4.2.1.3: a certificate with no KeyUsage extension is
+  // unrestricted, which is NOT the same as one whose extension asserts
+  // nothing. A check that conflated the two would refuse every certificate
+  // that omits the extension, which most non-CA certificates once did.
+  assert.ok(x509.keyUsagePermits({ present: false, usages: [] },
+                                 "digitalSignature"),
+    "an absent KeyUsage extension must permit every use");
+  assert.ok(!x509.keyUsagePermits({ present: true, usages: [] },
+                                  "digitalSignature"),
+    "a KeyUsage extension asserting nothing must permit nothing");
+
   // AND the negative: the leaf must NOT verify without the intermediates. A
   // chain test that only ever passes is a chain test that would pass against a
   // validator that checks nothing.

@@ -8,6 +8,7 @@ const { Command, Option } = require('commander');
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -154,7 +155,7 @@ async function ssoLogin(driver, metadataUrl, spEntityId, user, binding,
                         loginWait, metadataFile) {
   log.debug("Entering ssoLogin().");
   log.info("SLO test — step 1: SSO login (binding=" + binding + ").");
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
 
   // Load + parse the IdP metadata (URL fetch, or file upload when metadataFile
   // set).
@@ -246,7 +247,7 @@ async function samlLogout(driver, metadataUrl, spEntityId, user, binding,
   // ---- step 2: Single Logout ----
   log.info("SLO test — step 2: return to SAML Test Tools and trigger " +
            "Single Logout.");
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
   await driver.wait(until.elementLocated(By.id("saml_binding")), waitTime);
   await driver.executeScript(
     "var s=document.getElementById('saml_binding'); if(s){ s.value = " +

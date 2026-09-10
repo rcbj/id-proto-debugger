@@ -21,7 +21,34 @@ services:
     # Run the API under c8 so HTTP calls made by the Selenium tests are covered.
     # The server installs a SIGTERM/SIGINT handler (COVERAGE=true) so it exits
     # cleanly and c8 can flush coverage when the container is stopped.
-    command: ["c8", "--reporter=html", "--reporter=lcov", "--reporter=text-summary", "--reports-dir=/coverage/api", "node", "server.js"]
+    #
+    # THE TWO --exclude PATTERNS ARE NOT TIDYING. This report counted code the
+    # api neither owns nor runs, and both entries headed its work list:
+    #
+    #   node-ldapjs   a fork of ldapjs, vendored and used UNMODIFIED, pinned at
+    #                 upstream's final commit because upstream is decommissioned
+    #                 (see the repo-root CLAUDE.md). 3,742 lines at 56.1%, and
+    #                 it supplied the #2 and #4 entries of this report —
+    #                 lib/server.js at 685 uncovered lines and
+    #                 lib/client/client.js at 430. Dropping it moves the api
+    #                 from 66.6% to 69.8% with no test written, and the
+    #                 in-process domain already excluded it
+    #                 (coverageExcludes() in tests/run-report.js).
+    #   version.js    api/Dockerfile stages client/version.js here, and it is a
+    #                 BUILD script: what this report measured was whatever ran
+    #                 at require time in a container that never calls it —
+    #                 36.6%, a fact about the api's startup rather than about
+    #                 that file.
+    #
+    # Both are `**/`-prefixed, and that is load-bearing rather than decorative:
+    # a bare pattern matches NOTHING, silently, because c8 resolves paths
+    # against a common ancestor rather than against cwd. The same trap is
+    # documented at coverageExcludes() in tests/run-report.js, where it was
+    # found.
+    #
+    # tests/coverage_merge.js applies the same set when it merges the three
+    # domains, so the published api number and the merged one agree.
+    command: ["c8", "--reporter=html", "--reporter=lcov", "--reporter=text-summary", "--reports-dir=/coverage/api", "--exclude=**/node-ldapjs/**", "--exclude=**/version.js", "node", "server.js"]
     stop_grace_period: 30s
     volumes:
       - ./coverage:/coverage

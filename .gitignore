@@ -52,3 +52,12 @@ crash.log
 # The per-run TLS pair the api and the client serve (./generate-tls-cert.sh).
 # Regenerated on demand and never committed — see common/generate_tls_cert.js.
 generated-tls/
+
+# The local certificate authority that pair is issued from: a Root CA and an
+# Issuing CA, from client/src/x509.js's own profiles. Kept OUT of
+# generated-tls/ because compose bind-mounts that into both containers and the
+# root's private key — the one a developer imports into their own browser and
+# OS trust store — has no business inside one. It PERSISTS between runs on
+# purpose, which is what makes trusting the root a one-time act; that also
+# makes it the one key here worth keeping off a git remote.
+generated-tls-ca/

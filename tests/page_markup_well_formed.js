@@ -39,6 +39,7 @@
 // not up.
 // ---------------------------------------------------------------------------
 const assert = require("assert");
+const { declineToRun } = require("./expectation.js");
 const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
@@ -205,8 +206,12 @@ function everyEncryptionPaneHasItsFields() {
 async function test() {
   log.debug("Entering test().");
   if (!isCheckout()) {
-    log.info("SKIPPED — there is no client/public in this layout, so this " +
-      "is the tests image rather than a checkout; this check reads the " +
+    // A genuine ABSENCE and so a skip — but a RECORDED one since 2026-09-02.
+    // It used to return 0, which the runner counted as a pass, so this check
+    // could stop running in the image and nothing would say so. See
+    // tests/expectation.js.
+    declineToRun(log, "there is no client/public in this layout, so this is " +
+      "the tests image rather than a checkout; this check reads the " +
       "authored pages, which are only present in a checkout.");
     log.debug("Leaving test(). Not a checkout.");
     return;

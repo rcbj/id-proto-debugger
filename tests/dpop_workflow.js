@@ -36,6 +36,7 @@ const assert = require("assert");
 const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -123,7 +124,7 @@ async function paneBeforeAnythingIsSent(driver) {
   log.info("=== The DPoP pane, before anything is sent ===");
   // Configured the way step 1 would configure it, so this file is about DPoP
   // rather than about discovery.
-  await driver.get(BASE + "/vc-issuance-2.html");
+  await loadUrl(driver, BASE + "/vc-issuance-2.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_dpop_enabled")), 20000,
     "vc-issuance-2.html has no DPoP pane");
@@ -246,7 +247,7 @@ async function boundTokenThroughTheOfferFlow(driver) {
   check("...and a Transaction Code", /^[0-9]{4,8}$/.test(screen.txCode),
         screen.txCode);
 
-  await driver.get(BASE + "/vc-issuance-1.html");
+  await loadUrl(driver, BASE + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), 20000);
   await driver.executeScript(
@@ -387,7 +388,7 @@ async function credentialIsBoundToTheDpopKey(driver) {
 async function presentationSideKnowsWhichKey(driver) {
   log.debug("Entering presentationSideKnowsWhichKey().");
   log.info("=== The presentation side, where OpenID4VP has no DPoP ===");
-  await driver.get(BASE + "/vc-presentation-2.html");
+  await loadUrl(driver, BASE + "/vc-presentation-2.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("pane_dpop_note")), 20000,
     "presentation step 2 has no Key Binding and DPoP pane");
@@ -406,7 +407,7 @@ async function presentationSideKnowsWhichKey(driver) {
 async function turningItOffDiscardsTheKey(driver) {
   log.debug("Entering turningItOffDiscardsTheKey().");
   log.info("=== Turning DPoP off ===");
-  await driver.get(BASE + "/vc-issuance-2.html");
+  await loadUrl(driver, BASE + "/vc-issuance-2.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_dpop_enabled")), 20000);
   await driver.sleep(1200);

@@ -73,7 +73,9 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeAbleTo } = require("./expectation.js");
 const { waitForPageBundle } = require("./wait_for.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -330,7 +332,7 @@ async function scrollCuesAt(driver, where) {
 
 async function openPage(driver) {
   log.debug("Entering openPage().");
-  await driver.get(baseUrl + "/scim.html");
+  await loadUrl(driver, baseUrl + "/scim.html");
   // The inline onclick handlers call the browserify --standalone global, and a
   // click before that global exists is a SILENT NO-OP. See
   // tests/inline_onclick and the note in tests/CLAUDE.md.
@@ -2946,7 +2948,7 @@ async function theTokenComesBackFromTheOauthWorkflow(driver) {
   log.debug("Entering theTokenComesBackFromTheOauthWorkflow().");
   log.info("8f. The access token handoff.");
   const handed = 'handed-back-token-' + checks;
-  await driver.get(baseUrl + "/scim.html");
+  await loadUrl(driver, baseUrl + "/scim.html");
   await waitForPageBundle(driver, "the SCIM page");
   await setCheckbox(driver, "scim_save_token", false);
   await setField(driver, "scim_auth_token", "");
@@ -2978,7 +2980,7 @@ async function theTokenComesBackFromTheOauthWorkflow(driver) {
   });
   // The page that receives tokens. Opened directly and handed one, which is
   // what its token endpoint handler does with the response it got.
-  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
   await waitForPageBundle(driver, "the OAuth2 / OIDC results page");
   const delivered = await driver.executeScript(
       "return window.oauth2_oidc_2.offerTokenToHandoff(arguments[0], " +
@@ -3034,11 +3036,16 @@ async function test() {
   try {
     await openPage(driver);
     const present = await theServerIsThere(driver);
-    if (!present.present) {
-      log.warn("SKIPPED: " + present.why);
-      log.info("Test completed successfully (skipped).");
-      return;
-    }
+    // A FAILURE rather than a skip since 2026-09-02. This job is deliberately
+    // NOT gated on LDAP_AVAILABLE — the browser call path exists on a static
+    // target too, which is what separates it from scim_protocol.js — but
+    // every launcher here starts the mock STS, so a SCIM server that is not
+    // there means the stack is down rather than that this target has no SCIM.
+    // The throw is inside the try, so the finally still quits the driver.
+    // See tests/expectation.js.
+    mustBeAbleTo(present.present, "The SCIM server this page was pointed at",
+      "cannot be used: " + present.why + ". Either the sts/ submodule " +
+      "predates /scim/v2 (bump it), or the stack is not up.");
     await useRunCredential(driver, 'for the sections that send');
     await everyEndpointComposes(driver);
     await theBrowserCreatesAndDeletes(driver);

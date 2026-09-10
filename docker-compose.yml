@@ -91,6 +91,42 @@ services:
       # belongs on this side. `oid4vp.walletUrl` is DERIVED from this one (see
       # sts/common/config.js), so the verifier's hand-back follows.
       - OID4VCI_WALLET_URL=https://localhost:3000
+      # ---------------------------------------------------------------------
+      # THE SAME LEAF THE API AND THE CLIENT SERVE, WHICH IS ONE TRUST
+      # DECISION INSTEAD OF THREE.
+      #
+      # Left alone this service issues its own self-signed certificate at
+      # every start and publishes it from GET /tls/server-certificate for a
+      # caller to trust. That works and it costs a SECOND anchor, on a THIRD
+      # origin, replaced on every restart. ./generate-tls-cert.sh now issues
+      # the stack's leaf from a Root CA that outlives it, and the leaf's
+      # subjectAltNames already carry this service's own tls.hostnames
+      # defaults (sts, sts-mock, sts.example.com) beside localhost, client and
+      # api — so handing it the same files makes ONE trusted root cover the
+      # UI, the api and the mock at once.
+      #
+      # It covers all four of this process's TLS sockets, because they share
+      # one pair: 8081 (the main port under global.https), 8443, 9443 and the
+      # directory's LDAPS listener on 636.
+      # ---------------------------------------------------------------------
+      - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+      # ---------------------------------------------------------------------
+      # THE MANAGEMENT API'S CLIENT SECRET, PINNED FOR THIS RUN.
+      #
+      # `/admin-api` takes an OAuth 2.0 access token since the 2026-09-09
+      # submodule bump, minted by the seeded `sts-management-api` client with
+      # client_credentials. That client's secret is generated at every start
+      # of this service and is readable only THROUGH the API it unlocks — a
+      # bootstrap hole — so `adminApi.clientSecret` exists to pin it.
+      # common/common.sh generates one per launcher run and forwards it; a
+      # bare `docker-compose up` leaves it empty, which is this service's own
+      # default and means a `/admin-api` nothing here can reach. Set it, or
+      # set ADMIN_API_AUTH_REQUIRED=false, if you want in from a shell.
+      # ---------------------------------------------------------------------
+      - ADMIN_API_CLIENT_SECRET=${ADMIN_API_CLIENT_SECRET:-}
+    volumes:
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     container_name: sts
     image: rcbj/sts
     # ROOT, and the only container here that is. It binds 88 (TCP and UDP),

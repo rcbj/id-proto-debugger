@@ -77,7 +77,28 @@ var KEYS = {
   // It is `sessionStorage` like everything else here and it is dropped by
   // the same `cancel()`, so nothing about the lifetime changes.
   // ---------------------------------------------------------------------
-  SET: "token_handoff_set"
+  SET: "token_handoff_set",
+  // ---------------------------------------------------------------------
+  // THE SCOPES THE WAITING WORKFLOW NEEDS, as a space-delimited string.
+  //
+  // The handoff's original claim was that the consuming page "knows nothing
+  // whatever about an authorization server", and for the SCIM page that is
+  // exactly true. It is NOT true of the scopes: a workflow knows perfectly
+  // well what permission its own endpoints ask for, and it is the only
+  // thing in the transaction that does. A reader who runs a grant with the
+  // scope this page happens to be carrying gets a token, comes back, and is
+  // refused by the transmitter with a 403 naming a scope they were never
+  // told to ask for — which reads as a broken handoff and is a missing
+  // word in a text field.
+  //
+  // OPTIONAL, and empty for a caller that does not pass one, so the SCIM
+  // page's handoff is byte-for-byte what it was. It is ADVICE and not a
+  // setting: the OAuth2 / OIDC pages merge it into the scope field they
+  // already have and the reader can edit or delete it, because these names
+  // are not standardized (see ssf.js) and the next transmitter will use
+  // different ones.
+  // ---------------------------------------------------------------------
+  SCOPE: "token_handoff_scope"
 };
 
 // How long a delivered token stays collectable, in milliseconds. The gap this
@@ -153,12 +174,63 @@ function drop(key) {
 }
 
 // ---------------------------------------------------------------------------
+// Scopes, as strings. Both functions are here rather than on either page
+// because BOTH OAuth2 / OIDC pages need them — oauth2_oidc_1.js for the
+// authorization request and oauth2_oidc_2.js for the token request — and a
+// scope string parsed two ways is two chances to disagree about what the
+// reader is asking the authorization server for.
+// ---------------------------------------------------------------------------
+
+// A scope string reduced to single-space-delimited tokens with no duplicates.
+// RFC 6749 section 3.3 makes a scope a space-delimited list, but a reader
+// typing into a text field produces tabs, newlines and runs of spaces, and an
+// empty token in the middle of one is a request an authorization server is
+// entitled to refuse.
+function normalizeScope(value) {
+  log.debug("Entering normalizeScope().");
+  var seen = {};
+  var out = [];
+  String(value == null ? "" : value).split(/\s+/).forEach(function (token) {
+    if (!token || seen[token]) {
+      return;
+    }
+    seen[token] = true;
+    out.push(token);
+  });
+  log.debug("Leaving normalizeScope(). " + out.length + " token(s).");
+  return out.join(" ");
+}
+
+// What a field should hold once a workflow has asked for `requested`, given
+// that it already holds `existing`.
+//
+// A MERGE and not a replacement, and the order is what the reader already had
+// followed by what is new. Three reasons, all of them things that would
+// otherwise be lost silently:
+//
+//   * `openid` is how an ID Token is asked for, and a workflow that names the
+//     user needs one. Replacing a field holding "openid profile" with a
+//     workflow's own scopes takes the identity away from the page that asked.
+//   * a reader who typed a scope of their own typed it for a reason, and a
+//     handoff arriving from another page is a poor moment to discard it.
+//   * running the handoff twice must not append the same tokens twice, which
+//     is what makes this idempotent rather than additive.
+function mergeScope(existing, requested) {
+  log.debug("Entering mergeScope().");
+  var merged = normalizeScope(normalizeScope(existing) + " " +
+      normalizeScope(requested));
+  log.debug("Leaving mergeScope(). " + merged);
+  return merged;
+}
+
+// ---------------------------------------------------------------------------
 // The caller's side.
 // ---------------------------------------------------------------------------
 
 // Mark a workflow as waiting for a token. `returnUrl` is where the OAuth2 /
-// OIDC pages offer to send the browser back to, and `label` is what they call
-// the workflow on the banner.
+// OIDC pages offer to send the browser back to, `label` is what they call the
+// workflow on the banner, and `scope` — optional — is what its own endpoints
+// need a token to carry.
 //
 // Any token left in the slot is dropped here rather than in take(): starting a
 // new handoff must not hand back the one an abandoned handoff delivered.
@@ -167,6 +239,7 @@ function start(options) {
   var settings = options || {};
   var returnUrl = String(settings.returnUrl || "");
   var label = String(settings.label || "the workflow that asked for it");
+  var scope = normalizeScope(settings.scope);
   if (!returnUrl) {
     log.warn("a token handoff was started with no return url, so there " +
         "would be nowhere to come back to");
@@ -176,8 +249,17 @@ function start(options) {
   drop(KEYS.TOKEN);
   drop(KEYS.META);
   drop(KEYS.SET);
+  // Dropped rather than left, so a workflow that asks for no scope does not
+  // inherit the last one's — the OAuth2 pages would then prefill a field with
+  // permissions nothing in this transaction is going to use.
+  drop(KEYS.SCOPE);
   var ok = put(KEYS.ACTIVE, "1") && put(KEYS.RETURN, returnUrl) &&
       put(KEYS.LABEL, label);
+  if (scope) {
+    // NOT part of `ok`: a scope that could not be written costs a prefilled
+    // field, and a handoff that works without one must not be refused for it.
+    put(KEYS.SCOPE, scope);
+  }
   if (!ok) {
     log.warn("a token handoff could not be recorded — this browser has no " +
         "session storage for this origin, so the token cannot be carried " +
@@ -210,11 +292,20 @@ function label() {
   return text;
 }
 
+// The scopes the waiting workflow asked for, or "" where it asked for none.
+function requestedScope() {
+  log.debug("Entering requestedScope().");
+  var scope = normalizeScope(get(KEYS.SCOPE));
+  log.debug("Leaving requestedScope(). " + (scope || "(none)"));
+  return scope;
+}
+
 // Give the whole thing up: no token is waiting for anybody. Called when the
 // reader dismisses the banner, and when the consuming page has collected.
 function cancel() {
   log.debug("Entering cancel().");
-  [KEYS.ACTIVE, KEYS.RETURN, KEYS.LABEL, KEYS.TOKEN, KEYS.META, KEYS.SET]
+  [KEYS.ACTIVE, KEYS.RETURN, KEYS.LABEL, KEYS.TOKEN, KEYS.META, KEYS.SET,
+   KEYS.SCOPE]
     .forEach(function (key) {
       drop(key);
     });
@@ -340,6 +431,9 @@ module.exports = {
   returnUrl: returnUrl,
   label: label,
   cancel: cancel,
+  requestedScope: requestedScope,
+  normalizeScope: normalizeScope,
+  mergeScope: mergeScope,
   deliver: deliver,
   isDelivered: isDelivered,
   take: take

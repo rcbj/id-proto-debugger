@@ -44,6 +44,7 @@ const assert = require("assert");
 const crypto = require("crypto");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -378,7 +379,7 @@ async function test() {
   var driver = await new Builder().forBrowser("chrome")
     .setChromeOptions(options).build();
   try {
-    await driver.get(baseUrl + "/userinfo.html");
+    await loadUrl(driver, baseUrl + "/userinfo.html");
     await driver.wait(until.elementLocated(By.id("userinfo_output")), 20000);
     await eachShapeIsReadAndReported(driver);
 

@@ -23,10 +23,11 @@
 //
 //    **--allow-running-insecure-content IS IGNORED BY THE OLD HEADLESS
 //    IMPLEMENTATION, so a test carrying it is not necessarily covered by it.**
-//    A test that asks for bare `--headless` rather than `--headless=new` gets
-//    headless_shell, and in the Chrome 121 this image pins that binary blocks
-//    the mixed-content fetch anyway: the XHR completes with `readyState 4,
-//    status 0` and no console entry naming mixed content. Measured directly on
+//    A test that asks for bare `--headless` rather than `--headless=new` got
+//    headless_shell, and in Chrome 121 — which this image pinned until
+//    2026-09-03 — that binary blocks the mixed-content fetch anyway: the XHR
+//    completes with `readyState 4, status 0` and no console entry naming mixed
+//    content. Measured directly on
 //    121.0.6167.85 through this suite's own chromedriver — an https page
 //    fetching an http origin, both flags identical, the ONLY difference being
 //    the headless mode: `--headless` fails, `--headless=new` returns 200.
@@ -73,8 +74,9 @@
 //    with an Ed25519 key through `crypto.subtle`, which in this tree is the PKI
 //    page and nothing else (client/src/digital_signature.js reaches Ed25519
 //    through @noble, and is unaffected). Chrome shipped Ed25519 in the Web
-//    Cryptography API on by default in **Chrome 137**; the tests image pins
-//    **Chrome 121**, where it exists but is off, so every call naming it throws
+//    Cryptography API on by default in **Chrome 137**; the tests image pinned
+//    **Chrome 121** until 2026-09-03, and there it exists but is off, so every
+//    call naming it threw
 //
 //        Failed to execute 'generateKey' on 'SubtleCrypto':
 //        Algorithm: Unrecognized name
@@ -226,6 +228,12 @@ function addBrowserAccessFlags(options, baseUrl, extraOrigins) {
     log.info("Treating " + insecure.join(", ") + " as secure origin(s).");
   }
 
+  // (6) A throwaway download directory, so a Download button in a test does
+  // not write into the developer's home directory. Idempotent, and applied
+  // from addStsTrustFlags() as well because tests call one door or the other
+  // and both must cover it. See the section at the foot of this file.
+  addDownloadDirFlags(options);
+
   // (4) The mock STS's key, when a run has one. See addStsTrustFlags() below
   // for why it is a pin rather than --ignore-certificate-errors, and why it
   // adds nothing at all when STS_SPKI_PIN is unset.
@@ -293,6 +301,12 @@ function addBrowserAccessFlags(options, baseUrl, extraOrigins) {
 // which Chrome would read as a pin that matches no key.
 function addStsTrustFlags(options) {
   log.debug("Entering addStsTrustFlags().");
+  // (6) WHERE A DOWNLOAD LANDS, from here because this and
+  // addBrowserAccessFlags() are the two functions every browser test in this
+  // suite calls, and one of them is called by tests that call neither the
+  // other nor anything else in this module. Idempotent, so the tests that
+  // call both get it once. See the section at the foot of this file.
+  addDownloadDirFlags(options);
   var pins = [process.env.STS_SPKI_PIN, process.env.STACK_TLS_SPKI_PIN]
     .map(function (one) {
       return String(one || "").trim();
@@ -398,9 +412,10 @@ function withoutTransientLoadErrors(messages) {
 // (3) Ed25519 in Web Crypto, for the browser that has it and does not offer it.
 //
 // Chrome enabled Ed25519 in the Web Cryptography API by default in Chrome 137.
-// The tests image pins Chrome 121 (see tests/Dockerfile), where the
-// implementation is present but gated behind its Blink runtime flag, so
-// generateKey/importKey/sign naming { name: 'Ed25519' } all reject with
+// The tests image pinned Chrome 121 until 2026-09-03 (see tests/Dockerfile),
+// and there the implementation is present but gated behind its Blink runtime
+// flag, so generateKey/importKey/sign naming { name: 'Ed25519' } all reject
+// with
 //
 //   Failed to execute 'generateKey' on 'SubtleCrypto':
 //       Algorithm: Unrecognized name
@@ -408,9 +423,12 @@ function withoutTransientLoadErrors(messages) {
 // The narrow --enable-blink-features=WebCryptoCurve25519 is used rather than
 // --enable-experimental-web-platform-features, which also works: this turns on
 // ONE feature, where the broader flag turns on every unshipped web platform
-// feature Chrome 121 carries and changes far more of the page than the test is
-// about. A browser that already has Ed25519 ignores an already-enabled feature
-// name, so this is a no-op from Chrome 137 on and on a host run.
+// feature the browser carries and changes far more of the page than the test
+// is about. A browser that already has Ed25519 ignores an already-enabled
+// feature name, so this is a no-op from Chrome 137 on — which since the pin
+// moved to 152.0.7977.75 includes the image itself, as it always did a host
+// run. It is kept because a pin moved BACKWARDS needs it again, and because a
+// no-op flag costs a browser start nothing.
 //
 // The failure it prevents does not name Ed25519 or the missing flag, and it
 // does not name generateKey either. On the PKI page the key pair and the
@@ -432,11 +450,124 @@ function addWebCryptoEd25519Flags(options) {
   return options;
 }
 
+// ---------------------------------------------------------------------------
+// (6) WHERE A DOWNLOAD LANDS.
+//
+// A test that clicks a Download button is a test that writes a file, and the
+// place Chrome writes it to when nobody says otherwise is the DEVELOPER'S HOME
+// DIRECTORY — ~/Downloads on a host run of ./local-run-tests.sh or
+// ./remote-run-tests.sh, where the browser is the real Chrome on the real
+// machine rather than one inside a container. Nothing fails when that happens.
+// The status line the test asserts on says "Downloaded ..." either way, so the
+// run is green and the only evidence is a home directory that fills up: on
+// 2026-09-03 this one held 71 copies each of `ml-kem-keys (N).pem` and
+// `ecies-keys.jwk (N).json`, one pair per run since 2026-08-27, plus the
+// keystore matrices that predate the first fix.
+//
+// IT HAS BEEN FIXED ONCE BEFORE, PER TEST, AND THAT IS WHY IT CAME BACK.
+// jwt_tools.js and digital_signature.js each grew their own temp directory,
+// their own four preferences and their own CDP call; encryption_tools.js
+// arrived on 2026-08-27 with a key-download section of its own — the SAME
+// keystore matrix, from the same key_material.js — and no reason for anybody
+// writing it to know that two other files had four lines it needed. A rule
+// that lives in the tests that remembered it protects only those tests.
+//
+// So it lives here, and it is reached from BOTH of the two functions every
+// browser test in this suite already calls — addBrowserAccessFlags() and
+// addStsTrustFlags() — which between them cover every one of them. That is
+// not this module's usual subject (a download directory is not a flag a page
+// needs to reach a service), and it is here anyway for the reason those two
+// functions are: they are the doors everything goes through, and a new test
+// gets this without knowing it exists. tests/download_dir_pinned.js fails the
+// run when a test builds a Chrome driver without passing through one of them.
+//
+// ONE DIRECTORY PER PROCESS, REMOVED WHEN THE PROCESS ENDS. The removal is an
+// `exit` handler rather than a finally in each test's test(), because a test
+// here reports failure with process.exit(1), which SKIPS a finally — the same
+// trap CLAUDE.md records for driver.quit() — and `exit` runs on both paths.
+//
+// THE PREFERENCE AND THE CDP CALL SAY THE SAME THING TWICE, deliberately. The
+// preference is what chromedriver writes into the profile it prepares, and it
+// was measured on 2026-09-03 (Chrome 152.0.7977.75, this suite's own
+// selenium-webdriver 4.38) to survive a caller-supplied --user-data-dir, which
+// eleven tests here set. Browser.setDownloadBehavior is the same instruction
+// to the running browser, it costs one round trip, and it is what still holds
+// if a Chrome or a chromedriver ever reads the profile differently. A driver
+// too old for the command is not an error: the preference already applies.
+var throwawayDownloads = null;
+
+function downloadDir() {
+  log.debug("Entering downloadDir().");
+  if (throwawayDownloads) {
+    log.debug("Leaving downloadDir(). Already made.");
+    return throwawayDownloads;
+  }
+  throwawayDownloads = fs.mkdtempSync(path.join(os.tmpdir(),
+      "idptools-selenium-dl-"));
+  process.on("exit", function () {
+    try {
+      fs.rmSync(throwawayDownloads, { recursive: true, force: true });
+    } catch (e) {
+      /* a directory that is already gone is the outcome asked for */
+    }
+  });
+  log.debug("Leaving downloadDir(). " + throwawayDownloads);
+  return throwawayDownloads;
+}
+
+// Points this browser's downloads at that directory. `extraPrefs` is optional
+// and is for a test that needs a Chrome user preference of its own: this is
+// the ONE call site of setUserPreferences() in the suite, because that setter
+// REPLACES the preference map rather than merging into it, so a second caller
+// would silently drop the download directory. Call it AFTER
+// addBrowserAccessFlags() or addStsTrustFlags(), which apply this themselves
+// and would otherwise replace whatever was added. Returns the options so it
+// can be used inline.
+function addDownloadDirFlags(options, extraPrefs) {
+  log.debug("Entering addDownloadDirFlags().");
+  var prefs = {
+    "download.default_directory": downloadDir(),
+    "download.prompt_for_download": false,
+    "download.directory_upgrade": true,
+    "safebrowsing.enabled": true
+  };
+  Object.keys(extraPrefs || {}).forEach(function (one) {
+    prefs[one] = extraPrefs[one];
+  });
+  options.setUserPreferences(prefs);
+  log.debug("Leaving addDownloadDirFlags().");
+  return options;
+}
+
+// The same instruction to the browser that is already running. Called after
+// the driver is built by the tests that actually click a Download button; it
+// is a no-op on a driver that does not know the command, since the preference
+// above has already been applied.
+async function pinDownloadDir(driver) {
+  log.debug("Entering pinDownloadDir().");
+  try {
+    await driver.sendDevToolsCommand("Browser.setDownloadBehavior", {
+      behavior: "allow",
+      downloadPath: downloadDir(),
+      eventsEnabled: false
+    });
+  } catch (e) {
+    log.info("Browser.setDownloadBehavior was refused (" +
+             (e && e.message ? e.message.slice(0, 120) : e) + "). The " +
+             "download directory preference still applies.");
+  }
+  log.debug("Leaving pinDownloadDir().");
+  return driver;
+}
+
 module.exports = {
   addBrowserAccessFlags: addBrowserAccessFlags,
   isTransientLoadError: isTransientLoadError,
   withoutTransientLoadErrors: withoutTransientLoadErrors,
   addWebCryptoEd25519Flags: addWebCryptoEd25519Flags,
   addStsTrustFlags: addStsTrustFlags,
+  addDownloadDirFlags: addDownloadDirFlags,
+  pinDownloadDir: pinDownloadDir,
+  downloadDir: downloadDir,
   originOf: originOf
 };

@@ -219,6 +219,23 @@ services:
     # walked end to end without a second identity provider. Set
     # OID4VCI_AUTHORIZATION_SERVER to point it at a real one instead.
     environment:
+      # ---------------------------------------------------------------------
+      # THE MANAGEMENT API'S CLIENT SECRET, PINNED FOR THIS RUN.
+      #
+      # `/admin-api` takes an OAuth 2.0 access token since the 2026-09-09
+      # submodule bump, minted by the seeded `sts-management-api` client with
+      # client_credentials. That client's secret is generated at every start
+      # of this service and is readable only THROUGH the API it unlocks — a
+      # bootstrap hole — so `adminApi.clientSecret` exists to pin it, and
+      # common/common.sh generates one per launcher run. The tests service
+      # below is handed the same value as STS_ADMIN_API_CLIENT_SECRET, which
+      # is what run-report.js mints with before the pool starts.
+      #
+      # NOT the bare form STS_LOG_LEVEL uses: empty is this setting's own
+      # default over there and means "mint one per start", so it is harmless
+      # here rather than a value that stops the container.
+      # ---------------------------------------------------------------------
+      - ADMIN_API_CLIENT_SECRET=${ADMIN_API_CLIENT_SECRET:-}
       # Log level, chosen the same way as for api and client.
       # ---------------------------------------------------------------
       # THE INFO FILE, AND A KNOB OF ITS OWN SO THE LAUNCHER CANNOT CLOBBER IT.
@@ -328,6 +345,17 @@ services:
       # the api, and without the anchor the push fails the handshake and reads
       # as a transmitter that sent nothing.
       - NODE_EXTRA_CA_CERTS=/etc/idptools/tls/stack-tls-cert.pem
+      # ---------------------------------------------------------------------
+      # THE SAME LEAF THE API AND THE CLIENT SERVE. Left alone this service
+      # issues its own self-signed certificate at every start; the stack's
+      # leaf is issued from a Root CA that outlives it and its
+      # subjectAltNames already carry this service's own tls.hostnames
+      # defaults, so one trusted root covers all three processes. It reaches
+      # all four TLS sockets here — 8081, 8443, 9443 and LDAPS on 636 — since
+      # they share one pair.
+      # ---------------------------------------------------------------------
+      - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
     volumes:
       # Shared with the tests container so `spiffe_protocol.js` can dial it.
       # A socket is a rendezvous point rather than a file — it holds no bytes,
@@ -543,6 +571,14 @@ services:
       # container contributed. `./env/test.js` resolves to `sts/env/test.js`
       # on that same rule, which is the info twin.
       CONFIG_FILE: ${TESTS_CONFIG_FILE:-./env/test.js}
+      # THE MOCK'S MANAGEMENT API CREDENTIAL, WHICH THIS CONTAINER MINTS WITH.
+      #
+      # The same value the sts service above is given as its
+      # `adminApi.clientSecret`. run-report.js asks that service whether
+      # /admin-api is gated, mints one token when it is, and hands it to every
+      # job with tools/attach-admin-token.js. Empty means it will not be able
+      # to, which is the right answer for a stack whose mock was left open.
+      STS_ADMIN_API_CLIENT_SECRET: ${ADMIN_API_CLIENT_SECRET:-}
       KEYCLOAK_WSFED_BASE_URL: http://keycloak-wsfed:8080
       KEYCLOAK_WSFED_LOCALHOST_BASE_URL: http://keycloak-wsfed:8080
       # How many jobs run at once. Passed THROUGH from the host so

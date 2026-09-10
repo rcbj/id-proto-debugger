@@ -50,12 +50,21 @@
 // ---------------------------------------------------------------------------
 // USAGE
 //
-//   node common/generate_tls_cert.js --out-dir <dir> [--name <extra-san>]...
+//   node common/generate_tls_cert.js --out-dir <dir> [--ca-dir <dir>]
+//                                    [--rotate-ca] [--name <extra-san>]...
 //
-// Writes <dir>/stack-tls-key.pem and <dir>/stack-tls-cert.pem, and prints the
-// two paths and the base64 SHA-256 of the SubjectPublicKeyInfo — the SPKI pin
-// Chrome's --ignore-certificate-errors-spki-list takes — one `KEY=value` per
-// line, so a shell can eval it.
+// Writes <out-dir>/stack-tls-key.pem and <out-dir>/stack-tls-cert.pem — the
+// latter being the leaf, the issuing CA and the root as one PEM bundle — and
+// prints the two paths and the base64 SHA-256 of the LEAF's
+// SubjectPublicKeyInfo (the SPKI pin Chrome's
+// --ignore-certificate-errors-spki-list takes), one `KEY=value` per line.
+//
+// The certificate authority lives in --ca-dir, which defaults to <out-dir>/ca
+// and is REUSED whenever it is already there: that is what lets a person
+// trust the root once instead of once per run. --rotate-ca throws it away and
+// starts a new one, which invalidates that trust deliberately. The three
+// printed lines are unchanged by any of this, because common/common.sh reads
+// them by name.
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -97,7 +106,20 @@ var log = {
 // The names every certificate this stack uses has to answer to. THE ONE COPY:
 // common/tls_listener.js reads a certificate rather than making one, so it has
 // no business holding a second list that could drift from this.
-const DNS_NAMES = ['localhost', 'client', 'api'];
+//
+// THE LAST THREE ARE THE MOCK STS's, and they are here so that ONE leaf serves
+// all three processes rather than two of them plus a stranger. That service
+// used to issue its own self-signed certificate at every start and publish it
+// from `GET /tls/server-certificate` for a caller to trust — which works, and
+// costs a SECOND trust decision, on a THIRD origin, renewed every restart.
+// Since the leaf now chains to a root that outlives it, handing the mock the
+// same file makes one trusted root cover the UI, the api and the mock at once.
+// They are the mock's own `tls.hostnames` default (localhost, sts, sts-mock,
+// sts.example.com), so its certificate answers to exactly the names its
+// callers already use; `sts` is the compose service name and the other two are
+// what a host run and its documentation reach it by.
+const DNS_NAMES = ['localhost', 'client', 'api',
+                   'sts', 'sts-mock', 'sts.example.com'];
 const IP_NAMES = ['127.0.0.1', '::1'];
 
 // ---------------------------------------------------------------------------
@@ -137,11 +159,16 @@ const x509 = require('../client/src/x509.js');
 
 function parseArgs(argv) {
   log.debug('Entering parseArgs().');
-  const out = { outDir: '', extraNames: [] };
+  const out = { outDir: '', caDir: '', rotateCa: false, extraNames: [] };
   for (var at = 0; at < argv.length; at++) {
     if (argv[at] === '--out-dir' && argv[at + 1]) {
       out.outDir = argv[at + 1];
       at++;
+    } else if (argv[at] === '--ca-dir' && argv[at + 1]) {
+      out.caDir = argv[at + 1];
+      at++;
+    } else if (argv[at] === '--rotate-ca') {
+      out.rotateCa = true;
     } else if (argv[at] === '--name' && argv[at + 1]) {
       out.extraNames.push(argv[at + 1]);
       at++;
@@ -189,19 +216,190 @@ function spkiPin(certPem) {
   return pin;
 }
 
-// A self-signed `tls-server` certificate. SELF-SIGNED rather than issued from
-// a throwaway root, and that is a deliberate simplification: the consumers
-// trust it as an exact key (Chrome's SPKI pin) or as an anchor
-// (NODE_EXTRA_CA_CERTS), and both of those take the leaf directly. A root
-// would add a second file for every consumer to carry and would verify
-// nothing that the pin does not already verify.
+// ---------------------------------------------------------------------------
+// THE HIERARCHY: A ROOT CA, AN ISSUING CA UNDER IT, AND THE LEAF THE STACK
+// SERVES — ALL THREE FROM client/src/x509.js's OWN PROFILES.
 //
-// ec-p256, matching what tests/api_tls_probe.js's own listeners use: every TLS
-// implementation in reach negotiates it, and it generates in a millisecond
-// where RSA-2048 is about a hundred.
-async function generate(outDir, extraNames) {
+// This was ONE self-signed leaf until 2026-09-01, and what ended that is what
+// a browser actually trusts. A trust decision names a KEY: clicking through an
+// interstitial, importing an anchor, pinning an SPKI — every one of them is
+// about the exact certificate in front of you, so every one of them is VOID
+// the next time this script runs.
+//
+// That is not a theoretical cost. The api is a SECOND ORIGIN
+// (https://localhost:4000) which no tab ever navigates to, so its exception is
+// the one nobody re-grants by hand — and its absence reaches the browser as a
+// CORS error naming a header nobody changed. See the note under "Running the
+// App" in the repo-root CLAUDE.md.
+//
+// A root that OUTLIVES the leaf turns that into a single act: trust the root
+// once, and every certificate issued here afterwards is trusted with no
+// further clicks. That matters most for the browsers a pin cannot reach —
+// Firefox carries its OWN NSS store on every platform, and Chrome's
+// --ignore-certificate-errors-spki-list has no Firefox equivalent.
+//
+// THE PROFILES ARE THE PKI PAGE'S, UNWRAPPED. `root-ca`, `issuing-ca` and
+// `tls-server` are three of the fourteen in x509.js, used exactly as the page
+// uses them. This file gains no certificate profile of its own, for the same
+// reason it has never had an encoder of its own.
+//
+// WHY AN ISSUING CA RATHER THAN A ROOT THAT SIGNS LEAVES. A root that signs
+// directly cannot be kept back, cannot be rotated without re-trusting, and
+// models nothing anybody deploys — on a stack whose entire subject is what
+// real PKI does. `issuing-ca` carries pathLen 0, so this chain is exactly
+// three certificates deep and provably cannot grow.
+//
+// ec-p256 throughout, matching what tests/api_tls_probe.js's own listeners
+// use: every TLS implementation in reach negotiates it, and it generates in a
+// millisecond where RSA-2048 is about a hundred.
+// ---------------------------------------------------------------------------
+const KEY_ALG = 'ec-p256';
+const SIG_ALG = 'sha256-ecdsa';
+
+// The four files that ARE the certificate authority. They are deliberately
+// not in the output directory: compose bind-mounts that into the api and the
+// client (see docker-compose.yml), and the root private key is the one piece
+// of material here that a person has told their browser to trust. It has no
+// business inside a container that never signs anything.
+const CA_FILES = {
+  rootKey: 'stack-tls-root-key.pem',
+  rootCert: 'stack-tls-root.pem',
+  issuingKey: 'stack-tls-issuing-key.pem',
+  issuingCert: 'stack-tls-issuing.pem'
+};
+
+function caPaths(caDir) {
+  log.debug('Entering caPaths().');
+  const out = {};
+  Object.keys(CA_FILES).forEach(function (name) {
+    out[name] = path.join(caDir, CA_FILES[name]);
+  });
+  log.debug('Leaving caPaths().');
+  return out;
+}
+
+// The CA already on disk, or null. NULL RATHER THAN A THROW for a missing
+// file, because "there is no CA yet" is the ordinary first run; a file that
+// exists and cannot be read or parsed is a different thing and says so.
+function readCa(caDir) {
+  log.debug('Entering readCa().');
+  const at = caPaths(caDir);
+  const missing = Object.keys(at).filter(function (name) {
+    return !fs.existsSync(at[name]);
+  });
+  if (missing.length) {
+    log.debug('Leaving readCa(). ' + missing.length + ' file(s) absent.');
+    return null;
+  }
+  const read = {};
+  Object.keys(at).forEach(function (name) {
+    read[name] = fs.readFileSync(at[name], 'utf8');
+  });
+  // An EXPIRED anchor is worth catching here rather than at a handshake: the
+  // browser reports it against the leaf, which is freshly issued and looks
+  // perfectly good, and says nothing about the root twenty years above it.
+  const rootEnd = new crypto.X509Certificate(read.rootCert).validTo;
+  if (new Date(rootEnd).getTime() <= Date.now()) {
+    log.warn('The root CA in ' + caDir + ' expired on ' + rootEnd + '. ' +
+             'Issuing a new one — it has to be trusted again.');
+    log.debug('Leaving readCa(). Root expired.');
+    return null;
+  }
+  const issuingEnd =
+    new crypto.X509Certificate(read.issuingCert).validTo;
+  if (new Date(issuingEnd).getTime() <= Date.now()) {
+    log.warn('The issuing CA in ' + caDir + ' expired on ' + issuingEnd +
+             '. Issuing a new one under the SAME root, so nothing has to ' +
+             'be trusted again.');
+    log.debug('Leaving readCa(). Issuing CA expired.');
+    return { root: { pem: read.rootCert, privatePem: read.rootKey },
+             issuing: null };
+  }
+  log.debug('Leaving readCa(). Reused.');
+  return {
+    root: { pem: read.rootCert, privatePem: read.rootKey },
+    issuing: { pem: read.issuingCert, privatePem: read.issuingKey }
+  };
+}
+
+async function makeRootCa() {
+  log.debug('Entering makeRootCa().');
+  const key = await keys.generateKeyPair(KEY_ALG);
+  const cert = await x509.issueCertificate({
+    profile: 'root-ca',
+    subject: 'CN=id-proto-debugger Local Root CA,O=idptools',
+    subjectPublicKey: key.publicPem,
+    issuerPrivateKey: key.privatePem,
+    signatureAlg: SIG_ALG,
+    extensions: x509.defaultExtensions('root-ca')
+  });
+  log.debug('Leaving makeRootCa().');
+  return { pem: cert.pem, privatePem: key.privatePem };
+}
+
+async function makeIssuingCa(root) {
+  log.debug('Entering makeIssuingCa().');
+  const key = await keys.generateKeyPair(KEY_ALG);
+  const cert = await x509.issueCertificate({
+    profile: 'issuing-ca',
+    subject: 'CN=id-proto-debugger Issuing CA,O=idptools',
+    subjectPublicKey: key.publicPem,
+    issuer: { certificatePem: root.pem, privateKeyPem: root.privatePem,
+              keyAlg: KEY_ALG },
+    signatureAlg: SIG_ALG,
+    extensions: x509.defaultExtensions('issuing-ca')
+  });
+  log.debug('Leaving makeIssuingCa().');
+  return { pem: cert.pem, privatePem: key.privatePem };
+}
+
+// The CA to issue this run's leaf from: whatever is on disk, or a new one.
+// REUSE IS THE ENTIRE POINT — a root regenerated per run would be exactly the
+// self-signed leaf this replaced, with two more files to carry.
+async function loadOrMakeCa(caDir, rotate) {
+  log.debug('Entering loadOrMakeCa(). rotate=' + !!rotate);
+  const existing = rotate ? null : readCa(caDir);
+  const root = (existing && existing.root) || await makeRootCa();
+  const issuing = (existing && existing.issuing) || await makeIssuingCa(root);
+  const fresh = !existing || !existing.issuing;
+  if (fresh) {
+    const at = caPaths(caDir);
+    fs.mkdirSync(caDir, { recursive: true });
+    // 0600 on both private keys, and this one is NOT the trade
+    // common/common.sh makes for the leaf. That key is throwaway and has to
+    // be read by a container running as another uid; these never leave the
+    // host, and the root's is the key a browser has been told to trust — it
+    // can mint a certificate for any name at all.
+    fs.writeFileSync(at.rootKey, root.privatePem, { mode: 0o600 });
+    fs.writeFileSync(at.rootCert, root.pem, { mode: 0o644 });
+    fs.writeFileSync(at.issuingKey, issuing.privatePem, { mode: 0o600 });
+    fs.writeFileSync(at.issuingCert, issuing.pem, { mode: 0o644 });
+  }
+  log.debug('Leaving loadOrMakeCa(). ' +
+            (fresh ? 'Wrote a new CA.' : 'Reused the CA on disk.'));
+  return { root: root, issuing: issuing, fresh: fresh,
+           rootFile: caPaths(caDir).rootCert };
+}
+
+// The leaf, plus the chain a client needs to build a path to the root.
+//
+// WHAT stack-tls-cert.pem HOLDS, AND WHY THE ROOT IS IN IT. Node takes a PEM
+// BUNDLE for `cert` and sends every certificate in it, so leaf-then-issuing is
+// what a handshake requires. The root is appended for a reason that is not
+// about TLS at all: common/common.sh points STACK_TLS_CA_FILE at this same
+// file and the compose files hand it to node as NODE_EXTRA_CA_CERTS, so with
+// the root inside it every existing consumer keeps working with no path
+// changed anywhere. A client that already trusts the root ignores the extra
+// copy. Anything reading this file for the SERVER's certificate — the SPKI
+// pin here, `openssl x509 -in`, node's X509Certificate — takes the FIRST one,
+// which is the leaf.
+async function generate(outDir, extraNames, opts) {
   log.debug('Entering generate().');
-  const key = await keys.generateKeyPair('ec-p256');
+  const options = opts || {};
+  const caDir = options.caDir || path.join(outDir, 'ca');
+  const ca = await loadOrMakeCa(caDir, options.rotateCa);
+
+  const key = await keys.generateKeyPair(KEY_ALG);
   const extensions = x509.defaultExtensions('tls-server');
   extensions.subjectAltName = { present: true, critical: false,
                                 names: altNames(extraNames) };
@@ -209,18 +407,22 @@ async function generate(outDir, extraNames) {
     profile: 'tls-server',
     subject: 'CN=id-proto-debugger,O=idptools',
     subjectPublicKey: key.publicPem,
-    issuerPrivateKey: key.privatePem,
-    signatureAlg: 'sha256-ecdsa',
+    issuer: { certificatePem: ca.issuing.pem,
+              privateKeyPem: ca.issuing.privatePem,
+              keyAlg: KEY_ALG },
+    signatureAlg: SIG_ALG,
     extensions: extensions
   });
 
   fs.mkdirSync(outDir, { recursive: true });
   const keyFile = path.join(outDir, 'stack-tls-key.pem');
   const certFile = path.join(outDir, 'stack-tls-cert.pem');
+  const chain = [cert.pem, ca.issuing.pem, ca.root.pem].join('');
   fs.writeFileSync(keyFile, key.privatePem, { mode: 0o600 });
-  fs.writeFileSync(certFile, cert.pem, { mode: 0o644 });
+  fs.writeFileSync(certFile, chain, { mode: 0o644 });
   const out = { keyFile: keyFile, certFile: certFile,
-                pin: spkiPin(cert.pem) };
+                rootFile: ca.rootFile, caDir: caDir, freshCa: ca.fresh,
+                pin: spkiPin(chain) };
   log.debug('Leaving generate().');
   return out;
 }
@@ -234,7 +436,8 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  const made = await generate(args.outDir, args.extraNames);
+  const made = await generate(args.outDir, args.extraNames,
+    { caDir: args.caDir, rotateCa: args.rotateCa });
   // One KEY=value per line, through the saved reference rather than through
   // process.stdout.write — which by now goes to stderr, so that these three
   // lines are the ONLY thing on the channel common/common.sh parses. See the

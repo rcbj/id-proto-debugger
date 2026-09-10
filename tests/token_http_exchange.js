@@ -71,6 +71,7 @@ const chrome = require("selenium-webdriver/chrome");
 const jwt = require("jsonwebtoken");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -308,7 +309,7 @@ async function test() {
     // "=new", not bare --headless. This page fetches the discovery document
     // itself, from a Keycloak that is http://keycloak:8080 on the
     // containerized stack while the page is now https — and the OLD headless
-    // implementation in the Chrome 121 this image pins IGNORES
+    // implementation in the Chrome 121 this image pinned IGNORES
     // --allow-running-insecure-content, so that XHR is blocked with
     // readyState 4 / status 0 and no console entry naming mixed content.
     // What the test then reports is a missing Populate button. See section 1
@@ -340,7 +341,7 @@ async function test() {
     assert(client_secret, "CLIENT_SECRET environment variable is not set.");
     assert(scope, "SCOPE environment variable is not set.");
 
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     await populateMetadata(driver, discovery_endpoint);
 
     // Selecting the grant lands on oauth2_oidc_2.html with the exchange pane
@@ -861,7 +862,7 @@ async function test() {
     // working, and "nothing has been sent yet" would be a lie about a page
     // that plainly has tokens on it.
     // ---------------------------------------------------------------------
-    await driver.get(baseUrl +
+    await loadUrl(driver, baseUrl +
         "/oauth2_oidc_2.html?redirectFromTokenDetail=true");
     await driver.wait(until.elementLocated(By.id("token_result_tab_http")),
                       waitTime);

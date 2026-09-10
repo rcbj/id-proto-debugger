@@ -39,6 +39,7 @@ const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const paths = require("./module_paths.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -426,7 +427,8 @@ async function test() {
   log.info("Starting Test run. Verifying the Kerberos Decoder page at " +
       baseUrl + ".");
   const options = new chrome.Options();
-  // --headless=new, never bare --headless: in the image's Chrome 121 the old
+  // --headless=new, never bare --headless: in the Chrome 121 pinned then,
+  // the old
   // headless mode ignores --unsafely-treat-insecure-origin-as-secure, so
   // crypto.subtle stays undefined however carefully the flags were set. See
   // tests/CLAUDE.md.
@@ -439,7 +441,7 @@ async function test() {
   const driver = await new Builder().forBrowser("chrome").setChromeOptions(options).build();
 
   try {
-    await driver.get(baseUrl + "/kerberos_decoder.html");
+    await loadUrl(driver, baseUrl + "/kerberos_decoder.html");
     await driver.wait(until.elementLocated(By.id("krb_decode_button")), 20000);
     await theBundleLoadedAndTheButtonsWork(driver);
     await decodesAPreauthErrorAndReadsOutTheSalt(driver);

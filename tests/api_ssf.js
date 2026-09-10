@@ -37,6 +37,7 @@
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
+const { mustBeAbleTo } = require("./expectation.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -509,13 +510,14 @@ async function test() {
   }).catch(function () {
     return false;
   });
-  if (!reachable) {
-    log.warn("SKIPPED — no api answered at " + apiUrl +
-        "/ssf/limits. Set API_URL to one that does.");
-    log.info("Test completed successfully (skipped).");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip, and it used to log "Test completed
+  // successfully (skipped)" on its way out. run-report.js gates this job
+  // itself and passes API_URL, so reaching this line means the launcher
+  // expected an api at that address. See tests/expectation.js.
+  mustBeAbleTo(reachable, "The api this job was pointed at,", apiUrl +
+    ", did not answer GET /ssf/limits. Start the stack, or set API_URL to " +
+    "one that does — and note that inside the tests container the api is " +
+    "https://api:4000 rather than localhost.");
   try {
     await theLimitsDocumentIsPublished();
     await theProxyRefusesBeforeTheNetwork();

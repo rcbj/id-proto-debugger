@@ -57,7 +57,9 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
+const listeners = require("./spiffe_listeners.js");
 const waitFor = require("./wait_for.js");
 const { loadPage } = require("./page_load.js");
 
@@ -1218,6 +1220,24 @@ async function preconditions() {
       "so neither of SPIFFE's gRPC surfaces exists here — which is the known " +
       "state of a static site rather than something to go looking for." };
   }
+  // THE TWO PORTS THE API WILL DIAL BELONG TO THE MOCK THIS PAGE READS ITS
+  // TRUST BUNDLE FROM. They are separate facts: the bundle comes over HTTP on
+  // 8081 and the SVID hand-off happens over gRPC on 8092 and 8181, so a
+  // listener that lost its port to another process leaves this job presenting
+  // an SVID from one authority to a server that holds another — which the api
+  // reports as `self-signed certificate in certificate chain`, a message about
+  // TLS three services from the cause. See tests/spiffe_listeners.js.
+  const verdict = await listeners.verify(stsUrl, [
+    { surface: "workloadApi", address: workloadAddress,
+      what: "the Workload API" },
+    { surface: "serverApi", address: serverAddress,
+      what: "the SPIRE Server API" }
+  ]);
+  if (!verdict.ok) {
+    log.debug("Leaving preconditions(). " +
+      (verdict.stranger ? "A stranger holds the port." : "Not over TCP."));
+    return { ok: false, fatal: !!verdict.stranger, why: verdict.why };
+  }
   log.debug("Leaving preconditions(). Ready.");
   return { ok: true };
 }
@@ -1225,12 +1245,19 @@ async function preconditions() {
 async function test() {
   log.debug("Entering test().");
   const ready = await preconditions();
-  if (!ready.ok) {
-    log.warn("SKIP: " + ready.why);
-    log.info("Test skipped.");
-    log.debug("Leaving test(). Skipped.");
-    return;
+  if (!ready.ok && ready.fatal) {
+    // Not a skip: something IS answering on that port and this job would
+    // drive it. A run that reported that as an absent capability would be
+    // green about a workflow it never exercised.
+    log.debug("Leaving test(). A stranger holds the port.");
+    throw new Error(ready.why);
   }
+  // A FAILURE rather than a skip: run-report.js gates this job on
+  // SPIFFE_AVAILABLE, so reaching this line means the launcher expected the
+  // api and a SPIRE server to be there. See tests/expectation.js.
+  mustBeReady(ready, "the client (for spiffe.html) and the api with its " +
+              "/spiffe/* endpoints, pointed at a Workload API and a SPIRE " +
+              "Server API.");
   log.info("driving " + baseUrl + "/spiffe.html against the api at " + apiUrl +
     ", which will dial " + workloadAddress + " and " + serverAddress);
 

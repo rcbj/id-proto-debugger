@@ -31,6 +31,22 @@
 //      genuine breakage takes to report — and a retried product failure reads
 //      as a slow test rather than as a wrong one.
 //
+// AND SINCE 2026-09-10 THERE IS A SECOND ENTRY POINT TO HOLD, `loadUrl()`,
+// which is the one nearly every browser test in this suite now navigates
+// through: the same retry with no `readyId`, for a caller whose own next line
+// is the readiness check. Three more checks, and the middle one is the reason
+// it is safe to have swept ~180 call sites onto it:
+//
+//   E. It retries a dropped connection with no id to wait for, and the load
+//      succeeds — the id was never what made the retry work.
+//   F. A page that is NOT ours is handed straight back, on the first attempt
+//      and without spending a timeout. `loadUrl()` makes no claim about the
+//      content, so there is nothing here for it to judge; what must not happen
+//      is the retry (which would treble a product failure's reporting time,
+//      property C's argument) or the wait (which would put a whole element
+//      budget in front of every navigation in the suite).
+//   G. A target that keeps dropping still fails naming the CODE.
+//
 // The targets are sockets this test opens on loopback and closes again, so it
 // needs no api, no client, no STS and no network: it is never skipped, and it
 // runs the same in a checkout and in the tests image. The one thing it does
@@ -42,7 +58,7 @@ const net = require("net");
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
-const { loadPage } = require("./page_load.js");
+const { loadPage, loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -290,6 +306,77 @@ async function handlesAConnectionThatIsNeverEstablished(driver) {
   log.debug("Leaving handlesAConnectionThatIsNeverEstablished().");
 }
 
+// E. `loadUrl()` over the same dropped connections. No id is passed and none
+// is needed: what made the retry work was reading the DOCUMENT, and the id
+// only ever decided how long to wait afterwards.
+async function loadUrlRecoversFromADroppedConnection(driver) {
+  log.debug("Entering loadUrlRecoversFromADroppedConnection().");
+  log.info("E: loadUrl() over dropped connections followed by a page.");
+  await withTarget(DROPS_BEFORE_THE_PAGE, NO_FIELD, async function (url, srv) {
+    var result = await loadUrl(driver, url, { timeout: TIMEOUT,
+                                              retryDelay: RETRY_DELAY });
+    assert.ok(result && result.attempts > 1,
+        "loadUrl() must have navigated more than once — a target that drops " +
+        DROPS_BEFORE_THE_PAGE + " connections outlasts Chrome's own retries. " +
+        "Got: " + JSON.stringify(result));
+    log.info("E: recovered on attempt " + result.attempts + " of " +
+             "loadUrl()'s own, after " + srv.requestsForThePage() +
+             " request(s) at the target.");
+  });
+  log.debug("Leaving loadUrlRecoversFromADroppedConnection().");
+}
+
+// F. A page that loads and is not ours. `loadUrl()` judges no content, so this
+// must RETURN — on the first attempt, and without spending a timeout on the
+// way. Both halves matter: a retry here would be property C lost through the
+// other door, and a wait here would be an element budget added to every
+// navigation in the suite.
+async function loadUrlDoesNotJudgeTheContent(driver) {
+  log.debug("Entering loadUrlDoesNotJudgeTheContent().");
+  log.info("F: loadUrl() on a page that loads and is not ours.");
+  await withTarget(0, NO_FIELD, async function (url, srv) {
+    var startedAt = Date.now();
+    var result = await loadUrl(driver, url, { timeout: TIMEOUT,
+                                              retryDelay: RETRY_DELAY });
+    var elapsed = Date.now() - startedAt;
+    assert.strictEqual(result.attempts, 1,
+        "A page that loaded must be handed back on the first attempt; " +
+        "loadUrl() reported " + result.attempts + ".");
+    assert.strictEqual(srv.requestsForThePage(), 1,
+        "The target should have been asked exactly once; it saw " +
+        srv.requestsForThePage() + " request(s).");
+    assert.ok(elapsed < TIMEOUT,
+        "loadUrl() must not spend an element budget on a page it makes no " +
+        "claim about; this took " + elapsed + "ms of a " + TIMEOUT +
+        "ms timeout.");
+    log.info("F: returned in " + elapsed + "ms after one request, judging " +
+             "nothing about the document.");
+  });
+  log.debug("Leaving loadUrlDoesNotJudgeTheContent().");
+}
+
+// G. Every connection dropped, through the second door. The code is what the
+// reader needs here for exactly the reason it is needed above.
+async function loadUrlReportsTheErrorCode(driver) {
+  log.debug("Entering loadUrlReportsTheErrorCode().");
+  log.info("G: loadUrl() on a target that drops every connection.");
+  await withTarget(Number.MAX_SAFE_INTEGER, PAGE, async function (url) {
+    var raised = null;
+    try {
+      await loadUrl(driver, url, { timeout: TIMEOUT,
+                                   retryDelay: RETRY_DELAY });
+    } catch (e) {
+      raised = e;
+    }
+    assert.ok(raised, "loadUrl() returned for a target that never served " +
+              "the page.");
+    assert.ok(/ERR_[A-Z_]+/.test(raised.message),
+        "The failure must name Chrome's error code. Got: " + raised.message);
+    log.info("G: failed naming the code: " + raised.message);
+  });
+  log.debug("Leaving loadUrlReportsTheErrorCode().");
+}
+
 async function test() {
   log.debug("Entering test().");
   var options = new chrome.Options();
@@ -305,6 +392,9 @@ async function test() {
     await reportsTheErrorCodeWhenEveryAttemptFails(driver);
     await doesNotRetryAPageThatLoaded(driver);
     await handlesAConnectionThatIsNeverEstablished(driver);
+    await loadUrlRecoversFromADroppedConnection(driver);
+    await loadUrlDoesNotJudgeTheContent(driver);
+    await loadUrlReportsTheErrorCode(driver);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);

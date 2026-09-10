@@ -60,6 +60,7 @@ const x509 = paths.requireSharedModule(
   [path.join(__dirname, "..", "client", "src", "x509.js"),
    path.join(__dirname, "x509.js")],
   "client/src/x509.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -117,7 +118,7 @@ var PKI_CARD = By.css('a.landing-card[href="' + PAGE + '"]');
 
 async function openThePageFromTheLandingCard(driver) {
   log.debug("Entering openThePageFromTheLandingCard().");
-  await driver.get(baseUrl);
+  await loadUrl(driver, baseUrl);
   await waitVisible(driver, LANDING_CHOICES);
   const card = await waitVisible(driver, PKI_CARD);
   await driver.executeScript("arguments[0].scrollIntoView({ block: " +
@@ -1821,7 +1822,7 @@ async function test() {
   log.info("Starting Test run. Verifying " + baseUrl + PAGE);
 
   const options = new chrome.Options();
-  // --headless=new, NOT plain --headless. The tests image pins Chrome 121,
+  // --headless=new, NOT plain --headless. The tests image pinned Chrome 121,
   // where plain --headless selects the OLD headless implementation — and in
   // that one --unsafely-treat-insecure-origin-as-secure has no effect, so on
   // the containerized suite's http://client:3000 origin window.crypto.subtle

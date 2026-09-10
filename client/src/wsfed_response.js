@@ -34,6 +34,10 @@ var bunyan = require("bunyan");
 var xd = require("./xmldsig");
 var edge = require("./edge_landing"); // the static landings' hand-off contract
 var history = require("./wsfed_history");
+// The SESSION hand-off to the Shared Signals workflow — a different thing
+// from `edge` above, which is how a POST reaches a static site. See
+// `session_handoff.js`.
+var sessionHandoff = require("./session_handoff");
 var log = bunyan.createLogger({ name: 'wsfed_response',
     level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -367,6 +371,61 @@ function clearOperationHistory() {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// HAND THE SESSION TO THE SHARED SIGNALS WORKFLOW, IF IT ASKED FOR ONE.
+//
+// **CAEP is a vocabulary about SESSIONS**, so a WS-Federation sign-in produces
+// one exactly as an OIDC sign-in does, and the mock emits for it through the
+// same funnel.
+//
+// **THIS PROFILE IS THE ONE THAT GOES EITHER WAY, and that is the whole
+// difficulty.** Section 13 lets the identity provider return whichever token
+// type it likes: a SAML 2.0 assertion carries a
+// `<saml:AuthnStatement SessionIndex="…">`, which is a session identifier a
+// receiver can match, and a SAML 1.1 one carries no session index at all
+// because that protocol has none. So the SAME workflow against the SAME
+// identity provider can hand over a real session identifier one run and
+// nothing the next, depending on a setting at the far end — which is why
+// `sidFromTheWire` is computed from what was FOUND here rather than from the
+// profile's name. Reporting the protocol's default either way would be wrong
+// half the time, and wrong in the direction that matters: an invented
+// identifier presented as real.
+// ---------------------------------------------------------------------------
+function handSessionToSharedSignals(tokenEl) {
+  log.debug("Entering handSessionToSharedSignals().");
+  if (!tokenEl || !sessionHandoff.isActive()) {
+    log.debug("Leaving handSessionToSharedSignals(). Nobody is waiting.");
+    return false;
+  }
+  var subj = tags(tokenEl, 'Subject')[0];
+  var nameId = subj
+    ? (tags(subj, 'NameID')[0] || tags(subj, 'NameIdentifier')[0])
+    : null;
+  var issuer = tags(tokenEl, 'Issuer')[0];
+  // 2.0 spells the statement AuthnStatement and 1.1 AuthenticationStatement,
+  // and only the first can carry a SessionIndex.
+  var authn = tags(tokenEl, 'AuthnStatement')[0];
+  var sessionIndex = authn ? (authn.getAttribute('SessionIndex') || '') : '';
+  var accr = tags(tokenEl, 'AuthnContextClassRef')[0];
+  var oneStmt = tags(tokenEl, 'AuthenticationStatement')[0];
+  var acr = accr
+    ? (accr.textContent || '').trim()
+    : (oneStmt ? (oneStmt.getAttribute('AuthenticationMethod') || '') : '');
+  var subject = nameId ? (nameId.textContent || '').trim() : '';
+  var delivered = sessionHandoff.deliver({
+    protocol: 'wsfed',
+    iss: issuer ? (issuer.textContent || '').trim() : '',
+    sub: subject,
+    name: subject,
+    sid: sessionIndex,
+    sidFromTheWire: sessionIndex !== '',
+    acr: acr,
+    amr: acr ? [acr] : []
+  }, 'the WS-Federation workflow');
+  log.debug("Leaving handSessionToSharedSignals(). " + delivered);
+  return delivered;
+}
+
 function render(wresultXml, context) {
   log.debug("Entering render().");
   setVal('wsfed_response_xml', formatXml(wresultXml));
@@ -401,6 +460,7 @@ function render(wresultXml, context) {
     lastTokenXml = serialize(tokenEl);
     setVal('wsfed_token_xml', formatXml(lastTokenXml));
     buildTokenDetails(tokenEl);
+    handSessionToSharedSignals(tokenEl);
   } else {
     lastTokenXml = '';
     var note =

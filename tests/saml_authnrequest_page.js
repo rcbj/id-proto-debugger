@@ -51,6 +51,7 @@ const assert = require("assert");
 const path = require("path");
 const zlib = require("zlib");
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -234,7 +235,7 @@ async function paneVisible(driver, id) {
 
 async function openPage(driver) {
   log.debug("Entering openPage().");
-  await driver.get(baseUrl + "/saml_authnrequest.html");
+  await loadUrl(driver, baseUrl + "/saml_authnrequest.html");
   await driver.wait(until.elementLocated(By.id("sar_input")), waitTime);
   // The inline handlers are the browserify --standalone global, which does not
   // exist until the bundle has run — a click before then is a silent no-op.
@@ -638,7 +639,7 @@ async function reachableFromToolsPanes(driver) {
   var pages = ["saml_request.html", "saml_response.html",
                "wsfed_response.html"];
   for (var i = 0; i < pages.length; i++) {
-    await driver.get(baseUrl + "/" + pages[i]);
+    await loadUrl(driver, baseUrl + "/" + pages[i]);
     await driver.wait(until.elementLocated(By.id("pane_tools")), waitTime);
     var href = await driver.executeScript(
       "var a = document.querySelector('#pane_tools a[href*=" +
@@ -647,7 +648,7 @@ async function reachableFromToolsPanes(driver) {
     assert.ok(href, "the Tools pane on " + pages[i] +
       " has no link to the SAML Request Decoder.");
     // Follow it: a link to a page that 404s is the failure this catches.
-    await driver.get(baseUrl + href.replace(/^\//, "/"));
+    await loadUrl(driver, baseUrl + href.replace(/^\//, "/"));
     await driver.wait(until.elementLocated(By.id("sar_input")), waitTime,
       "the link from " + pages[i] + " did not reach the decoder.");
     var back = await driver.findElement(By.id("return_link")).getText();

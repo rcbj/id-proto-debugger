@@ -46,6 +46,7 @@ const common = require("./jwt_vc_json_common.js");
 const paths = require("./module_paths.js");
 const browserFlags = require("./browser_flags.js");
 const waitForContent = require("./wait_for.js");
+const { loadPage } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -185,11 +186,24 @@ async function plantCredential(driver, credential) {
 
 async function openPage(driver) {
   log.debug("Entering openPage().");
-  await driver.get(baseUrl + "/did-tools.html");
-  await driver.wait(async function () {
-    return await driver.executeScript(
-        "return !!document.getElementById('did_identifier');");
-  }, waitTime * 4, "did-tools.html did not load its DID pane");
+  // THROUGH loadPage() RATHER THAN driver.get(), BECAUSE THIS TEST NAVIGATES
+  // TO A TARGET THE SUITE DID NOT START — the deployed site, under
+  // ./remote-run-tests.sh — AND IT DOES SO TWELVE TIMES PER RUN, which is more
+  // openings of a remote page than any other job here makes. A connection that
+  // is established and then DROPPED (ERR_EMPTY_RESPONSE,
+  // ERR_CONNECTION_RESET, ERR_HTTP2_PROTOCOL_ERROR — the shapes a CDN edge
+  // produces once in a few hundred requests) is not reported by `driver.get()`
+  // at all: it resolves, the tab holds Chromium's error page, and the wait for
+  // #did_identifier then spends its whole budget on a document that was never
+  // ours before failing with the name of one of OUR ids. That is this job on
+  // 2026-09-10T18-36-09 against https://idptools.com — "did-tools.html did not
+  // load its DID pane", 40s, the single red job of 301, with the three runs
+  // before it green against the same pages and the page loading by hand in
+  // 0.6s minutes later. loadPage() retries THAT and nothing else, and names
+  // the error CODE when the target really is down. See tests/page_load.js and
+  // tests/page_load_retry.js.
+  await loadPage(driver, baseUrl + "/did-tools.html", "did_identifier",
+                 { timeout: waitTime * 4 });
   // The pane above is static markup and is there as soon as the page parses.
   // Every control on it is wired INLINE — `onclick="didtools.resolveDid()"` —
   // so it is the bundle behind that name, not the element, that has to have

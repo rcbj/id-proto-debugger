@@ -39,6 +39,7 @@ const { Command, Option } = require('commander');
 const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
 const waitForContent = require("./wait_for.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -188,10 +189,10 @@ async function keyPairOptOut(driver, spec) {
   // until it is turned on. Waiting for the checkbox before doing that is how
   // the first version of this test failed.
   var opener = spec.signCheckbox || spec.checkbox;
-  await driver.get(baseUrl + spec.page);
+  await loadUrl(driver, baseUrl + spec.page);
   await waitVisible(driver, By.id(opener));
   await driver.executeScript("window.localStorage.clear();");
-  await driver.get(baseUrl + spec.page);
+  await loadUrl(driver, baseUrl + spec.page);
   await waitVisible(driver, By.id(opener));
   if (spec.signCheckbox) await setCheckbox(driver, spec.signCheckbox, true);
   await waitVisible(driver, By.id(spec.checkbox));
@@ -286,7 +287,7 @@ async function keyPairOptOut(driver, spec) {
 
   // The hand-off: the response page has nothing to prefill from, and should say
   // so rather than leave its standing "Prefilled from…" claim on screen.
-  await driver.get(baseUrl + spec.responsePage);
+  await loadUrl(driver, baseUrl + spec.responsePage);
   await waitVisible(driver, By.id(spec.responseKeyField));
   var dec = (await driver.findElement(By.id(spec.responseKeyField))
       .getAttribute("value")) || "";
@@ -304,7 +305,7 @@ async function keyPairOptOut(driver, spec) {
 
   // 1 (again): re-enabling restores the original behaviour, so the opt-out is a
   // toggle and not a one-way door.
-  await driver.get(baseUrl + spec.page);
+  await loadUrl(driver, baseUrl + spec.page);
   await waitVisible(driver, By.id(opener));
   if (spec.signCheckbox) await setCheckbox(driver, spec.signCheckbox, true);
   await waitVisible(driver, By.id(spec.checkbox));
@@ -384,7 +385,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // needs a secure context — see browser_flags.js and the --headless=new note
   // in test(). Failing here names the cause; failing later names a missing
   // element.
-  await driver.get(baseUrl + "/vc-issuance-2.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-2.html");
   await pageBundleReady(driver);
   var ctx = await read("return { secure: window.isSecureContext," +
                        "         subtle: typeof (window.crypto && " +
@@ -400,7 +401,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
     "that flag is ignored by Chrome's OLD headless mode — this test must run " +
         "with --headless=new.");
 
-  await driver.get(baseUrl + "/vc-issuance-2.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-2.html");
   await pageBundleReady(driver);
   await waitVisible(driver, By.id("vc_save_holder_key"));
 
@@ -538,7 +539,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
                           cnf: { jwk: HOLDER_PUBLIC } }) + ".sig~";
   var continueDisabled = async function (optedOut) {
     log.debug("Entering continueDisabled().");
-    await driver.get(baseUrl + "/vc-presentation-1.html");
+    await loadUrl(driver, baseUrl + "/vc-presentation-1.html");
     await pageBundleReady(driver);
     await driver.executeScript(
       "localStorage.clear();" +
@@ -567,7 +568,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
 
   // The way back: the presentation page must offer somewhere to paste the key,
   // and accept the file Download Key Pair produces.
-  await driver.get(baseUrl + "/vc-presentation-2.html");
+  await loadUrl(driver, baseUrl + "/vc-presentation-2.html");
   await pageBundleReady(driver);
   await waitVisible(driver, By.id("vp_holder_key_row"));
   var rowShown = await read(
@@ -600,7 +601,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   var credential = b64u({ alg: "ES256", typ: "dc+sd-jwt" }) + "." +
                    b64u({ vct: "demo", iss: "http://issuer",
                         cnf: { jwk: HOLDER_PUBLIC } }) + ".sig~";
-  await driver.get(baseUrl + "/vc-issuance-4.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-4.html");
   await pageBundleReady(driver);
   await driver.executeScript(
     "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
@@ -644,7 +645,7 @@ async function sdJwtVcHolderKeyOptOut(driver) {
   // explicitly rather than inheriting it: the checks above clear storage as
   // they go, and a toggle test that assumes which way the box is currently
   // pointing will flip the wrong way the moment anything is inserted before it.
-  await driver.get(baseUrl + "/vc-issuance-2.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-2.html");
   await pageBundleReady(driver);
   await waitVisible(driver, By.id("vc_save_holder_key"));
   await driver.executeScript(

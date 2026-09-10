@@ -24,6 +24,7 @@ const assert = require("assert");
 const { Command, Option } = require('commander');
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -110,7 +111,7 @@ async function waitForResult(driver, index, prefix, what) {
 
 async function openTools(driver) {
   log.debug("Entering openTools().");
-  await driver.get(baseUrl + "/wstrust_tools.html");
+  await loadUrl(driver, baseUrl + "/wstrust_tools.html");
   await driver.wait(until.elementLocated(By.id('pane_history')), waitTime);
   log.debug("Leaving openTools().");
 }

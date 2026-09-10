@@ -44,7 +44,9 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const { usernameFor } = require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -211,7 +213,7 @@ async function relayReachable() {
 // ---------------------------------------------------------------------------
 async function theServiceAuthenticatesAsItself(driver) {
   log.debug("Entering theServiceAuthenticatesAsItself().");
-  await driver.get(baseUrl + "/kerberos.html");
+  await loadUrl(driver, baseUrl + "/kerberos.html");
   await setField(driver, "krb_realm", realm);
   await setField(driver, "krb_principal", frontend);
   await setField(driver, "krb_password", frontendPassword);
@@ -253,7 +255,7 @@ async function theServiceAuthenticatesAsItself(driver) {
 // ---------------------------------------------------------------------------
 async function s4u2SelfObtainsEvidenceForSomebodyElse(driver) {
   log.debug("Entering s4u2SelfObtainsEvidenceForSomebodyElse().");
-  await driver.get(baseUrl + "/kerberos_delegation.html");
+  await loadUrl(driver, baseUrl + "/kerberos_delegation.html");
 
   // The held TGT must be recognised, and the page must say whose it needs to
   // be.
@@ -525,7 +527,7 @@ async function theEvidenceTicketIsCoveredByTheStorageOptOut(driver) {
   // that a key which was never in localStorage is not in localStorage.
   await driver.executeScript("window.localStorage.setItem('krb_save_ccache', " +
       "'1');");
-  await driver.get(baseUrl + "/kerberos_delegation.html");
+  await loadUrl(driver, baseUrl + "/kerberos_delegation.html");
   await waitForText(driver, "krb_held_pane", /krbtgt|No ticket-granting/, 20000,
     "the held-TGT pane after turning saving on");
   await click(driver, "krb_renew_button");
@@ -554,7 +556,7 @@ async function theEvidenceTicketIsCoveredByTheStorageOptOut(driver) {
   // too.
   await driver.executeScript("window.localStorage.setItem('krb_save_ccache', " +
       "'0');");
-  await driver.get(baseUrl + "/kerberos_delegation.html");
+  await loadUrl(driver, baseUrl + "/kerberos_delegation.html");
   await waitForText(driver, "krb_held_pane",
       /No ticket-granting ticket is held|krbtgt/, 20000,
     "the held-TGT pane after the opt-out");
@@ -1021,20 +1023,17 @@ async function test() {
     "forwarding and renewal.");
 
   const reachable = await relayReachable();
-  if (!reachable.ok) {
-    // An environment capability is not a defect. Named, so nobody hunts for a
-    // bug.
-    log.warn("SKIPPING: " + reachable.why + ". This test needs the api's " +
-        "Kerberos relay and the " +
-      "mock KDC — start the stack (CONFIG_FILE=./env/local.js docker-compose " +
-          "up) and make sure " +
-      "the api's krb5AllowedPorts includes " + kdcPort + ".");
-    log.info("Test completed successfully.");
-    return;
-  }
+  // A FAILURE rather than a skip: this job is gated on KERBEROS_AVAILABLE,
+  // so reaching this line means the launcher expected the relay and the KDC
+  // to be there. See tests/expectation.js.
+  mustBeReady(reachable, "the api\'s Kerberos relay and the mock KDC. " +
+              "Start the stack (CONFIG_FILE=./env/local.js docker-compose " +
+              "up) and make sure the api\'s krb5AllowedPorts includes " +
+              kdcPort + ".");
 
   const options = new chrome.Options();
-  // --headless=new, never bare --headless: the image's Chrome 121 ignores
+  // --headless=new, never bare --headless: the Chrome 121 the image
+  // pinned ignores
   // --unsafely-treat-insecure-origin-as-secure in the old mode, and this page
   // derives keys with Web Crypto. Headless is not optional here either — a
   // test that opens a visible window steals focus on a developer's desktop

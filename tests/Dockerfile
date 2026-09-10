@@ -72,6 +72,26 @@ COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js
 # demands.
 COPY tests/random_username.js ./
 
+# THE SKIP / FAILURE RULE, required by every job that has a gate in front of it
+# — the four federation ones, both LDAP, both SCIM, the five Kerberos page
+# jobs, SPIFFE, SSF, DPoP, PKI mutual TLS and the two source sweeps. A SHARED
+# MODULE rather than a test, exactly like random_username.js above, and with
+# the same failure mode when this line is missing: a job that requires it dies
+# with MODULE_NOT_FOUND in a tenth of a second, naming this file rather than a
+# build, and nothing schedules it so the run-report cross-check in
+# jwk_pem_encoding.js cannot notice. Worse than the usual case, because the
+# jobs that require it are precisely the ones whose whole purpose here is not
+# to fail quietly.
+COPY tests/expectation.js ./
+
+# THE ONE CHROME FAULT THE RUNNER RECOVERS FROM, required by run-report.js
+# itself and by the check in jwk_pem_encoding.js. A SHARED MODULE, like the two
+# above, with the same failure mode when this line is missing — except that the
+# module missing here takes the WHOLE RUN rather than one job: run-report.js
+# requires it at load, so the tests container would exit with MODULE_NOT_FOUND
+# before a single test was spawned. See tests/renderer_wedge.js.
+COPY tests/renderer_wedge.js ./
+
 # THE APPLICATIONS REGISTRY CLIENT, required by every job that presents an
 # identifier to the mock STS — which since 2026-08-27 is most of them: the OAuth
 # and OIDC jobs, the OID4VC family, WS-Trust, WS-Federation, both SAML profiles,
@@ -83,6 +103,33 @@ COPY tests/random_username.js ./
 # under client/src or sts/, which is what this flat directory demands.
 COPY tests/sts_applications.js ./
 
+# THE CONSENT SCREEN CLIENT, required by every job that signs a person in to the
+# mock STS and then expects an authorization response — which since 2026-09-01
+# is every OAuth 2.0 and OpenID Connect job here, the OID4VC family and the
+# federation grid. That service asks before it issues the first time a given
+# username, client_id and scope meet (oauth2.consentRequired, on by default), so
+# the flow has one more hop in it than it had the day before. A SHARED MODULE
+# rather than a test, exactly like sts_applications.js above, and with the same
+# failure mode when this line is missing: a job that requires it dies with
+# MODULE_NOT_FOUND in a tenth of a second, naming this file rather than a build,
+# and nothing schedules it so no cross-check notices it gone.
+COPY tests/consent_screen.js ./
+
+# THE /admin CONSOLE SIGN-IN WALK, required by both delegation-chain jobs —
+# which read the delegation MAPS off that console, the only place those
+# pictures exist, because the mock's register is in memory and dies with the
+# container. A SHARED MODULE rather than a test, exactly like consent_screen.js
+# above, and with the same failure mode when this line is missing: a job that
+# requires it dies with MODULE_NOT_FOUND in a tenth of a second, naming this
+# file rather than a build, and nothing schedules it so the run-report
+# cross-check in jwk_pem_encoding.js cannot notice. **THAT IS NOT A
+# HYPOTHETICAL HERE** — the module landed on 2026-09-10 without this line and
+# took all three delegation jobs red in 0.2s each while every host run stayed
+# green. The closure walk in jwk_pem_encoding.js
+# (testsImageCopiesTheRequireClosure) was written for that run and now covers
+# every module a scheduled script requires, this one included.
+COPY tests/console_signin.js ./
+
 # THE FEDERATION GRID — one parameterised script that run-report schedules
 # forty-nine times, once per combination of application protocol, federation
 # protocol and authentication mechanism — and the management-API client it and
@@ -90,8 +137,10 @@ COPY tests/sts_applications.js ./
 # federation_matrix_sso.js, so without this line that job fails in the image
 # with MODULE_NOT_FOUND in 0.0s while passing on every host run, forty-nine
 # times over. tests/jwk_pem_encoding.js asserts the script itself reaches the
-# image; the module beside it is caught by the same closure walk that catches a
-# missing sts/ dependency.
+# image; the module beside it is caught by the closure walk over this suite's
+# own requires (testsImageCopiesTheRequireClosure), which was written on
+# 2026-09-10 — so until then this sentence described a check that did not
+# exist.
 COPY tests/federation_matrix_sso.js tests/federation_admin.js ./
 
 # ONE APPLICATION, TWO FEDERATION PARTNERS, AND THE PERSON PICKS. The job that
@@ -146,6 +195,16 @@ COPY docker-compose.yml ./
 COPY local-tests.yml ./
 COPY keycloak-tests.yml ./
 
+# Where a downloaded file lands. Several pages here have a Download button, and
+# the browser's default directory on a host run is the developer's ~/Downloads
+# — which no assertion anywhere can see, since the status line those tests read
+# says "Downloaded ..." whatever directory it went to. The rule lives in
+# browser_flags.js section (6); this reads every test script beside it (they
+# are all in this flat directory already, so it needs no COPY of its own
+# beyond this line) and fails when one builds a Chrome driver without going
+# through it.
+COPY tests/download_dir_pinned.js ./
+
 # The certificate the api, the client and the mock STS all bind on crosses ONE
 # channel — three `KEY=value` lines from common/generate_tls_cert.js into
 # common/common.sh's generateStackTlsCertificate() — and that channel is also
@@ -176,6 +235,11 @@ COPY client/src/wstrust_msg.js client/src/jose_jwe.js client/src/edge_landing.js
 # replace it. The module keeps its own name because saml_response.js and
 # saml_authnrequest.js both require ./saml_message.
 COPY client/src/saml_message.js ./
+# The node-only test of that module. It is called saml_message_engine.js and
+# NOT saml_message.js for the reason the paragraph above gives — this directory
+# is flat and the last COPY wins, so a test of that name would replace the
+# module it drives, silently.
+COPY tests/saml_message_engine.js ./
 # The JWK -> SPKI PEM encoder, tested the same way (tests/jwk_pem_encoding.js
 # requires it directly). Note that in this image there is no client/src tree, so
 # that test's scan for requires which would pull `elliptic` back into a bundle
@@ -248,6 +312,12 @@ COPY client/src/contexts ./contexts
 # directly — they are what these two require at load time, and a missing one is
 # a MODULE_NOT_FOUND at require, i.e. a hard failure rather than a silent skip.
 COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
+# The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
+# and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
+# directory is flat and the last COPY wins, so a test of that name would
+# silently replace the module it drives. It needs its own line because the
+# `tests/sd_jwt_vc_*` files above are named individually rather than globbed.
+COPY tests/sd_jwt_vc_engine.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires
@@ -557,6 +627,33 @@ COPY sts/common/crypto.js ./sts/common/
 COPY sts/common/pq_jose.js sts/common/worker.js sts/common/worker_pool.js ./sts/common/
 COPY sts/common/vendored/xmldsig.js ./sts/common/vendored/
 COPY sts/common/realms.js sts/common/delegation.js ./sts/common/
+# ---------------------------------------------------------------------------
+# THE SIXTH recomputation, on the 2026-09-09 bump, and it is the biggest so far
+# because that bump added two whole subsystems to the mock — a MODE
+# (development / product, which replaced four `*.authRequired` settings), a
+# ROLE model, XACML, key material at rest and a persistence layer — and every
+# one of them is required by a file this image already carries.
+#
+# The closure walk in tests/jwk_pem_encoding.js named the first level of it:
+# issuance_gate.js under krb5_kdc.js, mode.js under krb5_principals.js,
+# validation.js and request_pool.js under app.js, keystore.js under helpers.js,
+# roles.js and persistence_replication.js under admin_stats.js. The rest are
+# what those pulled in behind them, which is why this block is a dozen lines
+# and the message that produced it named seven files.
+#
+# `common/validation.js` is the one with a cost OUTSIDE this file: it requires
+# `zod`, a package rather than a relative path, so the closure walk cannot see
+# it and `tests/package.json` carries it now. That is the shape to watch for on
+# the next bump — a new npm dependency inside the mock is invisible to the
+# check that catches everything else here.
+# ---------------------------------------------------------------------------
+COPY sts/common/mode.js sts/common/roles.js ./sts/common/
+COPY sts/common/validation.js sts/common/request_pool.js ./sts/common/
+COPY sts/common/keystore.js sts/common/issuance_gate.js ./sts/common/
+COPY sts/persistence/persistence_replication.js sts/persistence/persistence.js ./sts/persistence/
+COPY sts/common/secrets.js ./sts/common/
+COPY sts/persistence/persistence_ldif.js sts/persistence/persistence_minted.js ./sts/persistence/
+COPY sts/persistence/persistence_postgres.js ./sts/persistence/
 COPY sts/federation/federation.js ./sts/federation/
 COPY sts/kerberos/krb5_primitives.js sts/kerberos/krb5_asn1.js sts/kerberos/krb5_crypto.js sts/kerberos/krb5_messages.js sts/kerberos/krb5_gss.js ./sts/kerberos/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
@@ -843,12 +940,14 @@ COPY client/src/scim_client.js client/src/scim_scenarios.js ./
 COPY api/scim_proxy.js ./
 COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 # ---------------------------------------------------------------------------
-# SHARED SIGNALS (SSF 1.0).
+# SHARED SIGNALS (SSF 1.0), CAEP 1.0 AND RISC 1.0.
 #
-# Four test scripts and the five modules they load directly, FLAT beside the
-# tests — which is why every one of these scripts is named `ssf_<something>`
-# or `api_ssf.js` and none of them is called `ssf_client.js`, `ssf_events.js`,
-# `ssf_history.js`, `ssf_proxy.js` or `ssf_receiver.js`. Two files of one name
+# Eight test scripts and the seven modules they load directly, FLAT beside the
+# tests — which is why every one of these scripts is named `ssf_<something>`,
+# `caep_<something>`, `risc_<something>` or `api_ssf.js` and none of them is
+# called `ssf_client.js`, `ssf_events.js`, `ssf_history.js`,
+# `caep_session.js`, `risc_account.js`, `ssf_proxy.js` or
+# `ssf_receiver.js`. Two files of one name
 # copied here means whichever COPY ran last wins, silently, and the test would
 # end up loading itself. Same trap the SCIM block above records.
 #
@@ -864,10 +963,28 @@ COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 # All three of the client modules are ALSO browser bundle source, so a rename
 # on either side has to be made here too.
 COPY client/src/ssf_client.js client/src/ssf_events.js ./
-COPY client/src/ssf_history.js ./
+COPY client/src/ssf_history.js client/src/caep_session.js ./
+COPY client/src/risc_account.js ./
 COPY api/ssf_proxy.js api/ssf_receiver.js ./
 COPY tests/ssf_engine.js tests/ssf_protocol.js ./
 COPY tests/api_ssf.js tests/ssf_page.js ./
+# CAEP is a VOCABULARY over SSF rather than a family of its own, so it adds one
+# module — `caep_session.js`, which is what the eight event types are ABOUT —
+# and three scripts, and reuses everything above.
+COPY tests/caep_engine.js tests/caep_protocol.js tests/caep_page.js ./
+# The event-type x sign-in-protocol matrix, scheduled five times with
+# CAEP_SIGNIN_PROTOCOL naming the sign-in. Its own COPY line rather
+# than a continuation of the one above: testsImageHasNoCollidingFilenames()
+# in jwk_pem_encoding.js reads this file A LINE AT A TIME, so a backslash
+# continuation makes every script on the joined line invisible to it --
+# which is how adding this file first reported all FOUR CAEP jobs as
+# uncopied.
+COPY tests/caep_session_protocols.js ./
+# RISC is the SECOND vocabulary over SSF and adds exactly what CAEP added: one
+# module — `risc_account.js`, which is what the fourteen event types are ABOUT
+# — and its own scripts, reusing everything above. Its own COPY line for the
+# reason the line above has one.
+COPY tests/risc_engine.js ./
 # ---------------------------------------------------------------------------
 # SPIFFE.
 #
@@ -902,6 +1019,12 @@ COPY api/spiffe_client.js ./
 COPY api/protos/ ./protos/
 COPY tests/spiffe_engine.js tests/spiffe_protocol.js ./
 COPY tests/api_spiffe.js tests/spiffe_page.js ./
+# And the listener check the three networked ones gate on. Nothing schedules
+# it, so no cross-check notices it missing: without this line those three die
+# with MODULE_NOT_FOUND in a tenth of a second here while passing on every
+# host run — the trap `tests/random_username.js` and `tests/sts_applications.js`
+# each record above.
+COPY tests/spiffe_listeners.js ./
 # ---------------------------------------------------------------------------
 # The JWKS page. Named jwks_PAGE.js for the same reason as the three above:
 # client/src/jwks.js is bundle source and could one day be copied here, and two
@@ -921,6 +1044,21 @@ COPY common/tests.js /usr/src/common/tests.js
 COPY common/sp_keypair.js /usr/src/common/sp_keypair.js
 # Centralized test config (waitTime, etc.); selected via CONFIG_FILE.
 COPY tests/env ./env
+# ---------------------------------------------------------------------------
+# tests/tools — NOT test scripts, and a DIRECTORY rather than a flat copy.
+#
+# run-report.js requires tools/admin-api-token.js to mint the mock STS's
+# management API token before the pool starts, and preloads
+# tools/attach-admin-token.js into every job it spawns. Both are addressed as
+# `tools/<name>` from run-report.js, so they have to keep that directory here;
+# and `tools/` is what keeps them out of the reach of the three jobs that read
+# every `.js` BESIDE them (browser_tests_headless.js, driver_quit_reachable.js,
+# download_dir_pinned.js) and hold it to rules written for a Selenium test.
+#
+# Omit this and nothing fails at build time: the run dies at the first job that
+# configures the mock, with a 401 that names a credential rather than a COPY.
+# ---------------------------------------------------------------------------
+COPY tests/tools ./tools
 
 # ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers
@@ -1035,21 +1173,51 @@ ENV PATH $NVM_DIR/versions/node/v$NODE_VERSION/bin:$PATH
 RUN node -v
 RUN npm -v
 
-# Chrome and chromedriver, pinned to 121.0.6167.85 and installed BEFORE the
-# staged files rather than after them. Nothing in this step reads anything
+# Chrome and chromedriver, pinned TOGETHER at one version and installed BEFORE
+# the staged files rather than after them. Nothing in this step reads anything
 # copied out of the staging stages, and putting it above them is what keeps
 # ~200 MB of download out of every rebuild: a layer's cache key includes its
 # parent, so while this sat below the COPYs, editing one test script
 # re-downloaded the browser.
-RUN wget -q -O chrome-linux64.zip https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/121.0.6167.85/linux64/chrome-linux64.zip && \
+#
+# ONE ARG FOR BOTH DOWNLOADS, and that is the load-bearing part. A Chrome for
+# Testing driven by a chromedriver from another release fails at session
+# creation on a version check, which reads as a broken image rather than as two
+# halves of different releases — the same trap run-report.js's browser probe
+# documents when it passes CHROMEDRIVER_BIN beside CHROME_BIN. Two literals
+# here is one edit away from that; one variable cannot drift.
+#
+# 152.0.7977.75 SINCE 2026-09-03, and the move was a REPAIR rather than
+# housekeeping. It was 121.0.6167.85 (January 2024), and under a pool of four
+# browser jobs that pair — Chrome 121 and `--headless=new` — wedged a renderer
+# in about a third of the sessions: the tab stopped answering for good while
+# the browser and the server stayed demonstrably healthy, and the run reported
+# a five-minute page-load timeout against whatever page the job happened to be
+# navigating to. tests/renderer_wedge.js carries the whole diagnosis and the
+# retry that still stands behind this as a guard.
+#
+# TWO WORKAROUNDS IN THIS SUITE BECAME NO-OPS with this move and are kept
+# anyway, both documented where they live: `--headless=new` (bare `--headless`
+# selected the OLD headless implementation up to Chrome 131, and that mode
+# ignored --unsafely-treat-insecure-origin-as-secure) and
+# addWebCryptoEd25519Flags() (Web Crypto Ed25519 was gated until Chrome 137).
+# Neither costs anything on a browser that no longer needs it, and both are
+# what a future pin BACKWARDS would need again.
+ARG CHROME_VERSION=152.0.7977.75
+RUN CFT=https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing && \
+    wget -q -O chrome-linux64.zip \
+        "${CFT}/${CHROME_VERSION}/linux64/chrome-linux64.zip" && \
     unzip chrome-linux64.zip && \
     rm chrome-linux64.zip && \
     mv chrome-linux64 /opt/chrome/ && \
     ln -s /opt/chrome/chrome /usr/local/bin/ && \
-    wget -q -O chromedriver-linux64.zip https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/121.0.6167.85/linux64/chromedriver-linux64.zip && \
+    wget -q -O chromedriver-linux64.zip \
+        "${CFT}/${CHROME_VERSION}/linux64/chromedriver-linux64.zip" && \
     unzip -j chromedriver-linux64.zip chromedriver-linux64/chromedriver && \
     rm chromedriver-linux64.zip && \
-    mv chromedriver /usr/local/bin/
+    mv chromedriver /usr/local/bin/ && \
+    /usr/local/bin/chrome --version && \
+    /usr/local/bin/chromedriver --version
 
 # Everything the two staging stages assembled, in their original order so that
 # a later COPY still overwrites an earlier one (see the header). /usr/src is

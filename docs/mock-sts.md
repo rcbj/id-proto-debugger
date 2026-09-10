@@ -66,6 +66,35 @@ That is the direction of difference that hides a bug rather than causing one. A 
 
 **One place the mock still differs from Windows on purpose.** A service ticket's PAC here carries `PAC_ATTRIBUTES_INFO` (17) and `PAC_REQUESTOR` (18); the captured Windows service ticket carries neither, and its seven buffers are 1, 6, 7, 10, 12, 16, 19. That divergence is left alone rather than "fixed": `tests/krb5_tgs_ap.js` uses `PAC_ATTRIBUTES_INFO` to tell apart the three PAC-request states, which is a real property worth testing, and the Windows side of it is a single observation of one service ticket. `tests/krb5_windows_vectors.js` pins what Windows actually sent, so if the two ever need reconciling the evidence is on file.
 
+## The consent screen, and why every OAuth job in this suite grew a hop
+
+Since 2026-09-01 that service **asks before it issues**. The first time a given
+username signs in to a given `client_id` for a given scope, `/oauth2/consent` is
+drawn listing the scopes that are new; nothing is issued until somebody presses
+Allow, and Deny returns `access_denied` to the client. `oauth2.consentRequired`
+governs it and is **ON by default**, which is the only policy in that service
+that is — the argument being that consent is not a refusal but the screen every
+real authorization server draws on a first sign-in, and a client that has never
+met one has never run the code that survives it.
+
+For this suite that means one more hop between the sign-in screen and the
+authorization response, in the middle of a redirect chain several jobs walk by
+hand. `tests/consent_screen.js` is the shared module that passes it —
+`settleAuthorization()` for the jobs that follow redirects with
+`redirect: "manual"`, `passInBrowser(driver, By)` for the Selenium ones — and
+`docs/test-suite-map.md` carries the whole note, including why neither of them
+asserts that the screen appeared and which two jobs are deliberately not part of
+the sweep.
+
+Two things about the feature are worth knowing when reading a failure. The
+answer is recorded **per (person, application, scope)** on the person's own entry
+under `ou=users`, so the second sign-in in a run is silent and the first is not —
+a job whose usernames are minted per run meets the screen every time, and one
+that reuses a name meets it once. And `oauthGlobalConsent` on an application's
+entry consents a scope for **everybody** who signs in to it without writing
+anything about anybody, which is what `krb5_mit_client.js` registers its
+application with rather than teaching `curl` to press a button.
+
 ## The authentication service is its own endpoint
 
 Until 2026-08-19 the sign-in screen was rendered *inside* `GET /oauth2/authorize`: no session meant a 200 with the login form in the body, at the authorization endpoint's own URL. It is now `/authn/login` — its own endpoint, in its own module (`authn.js`), which owns the session store, the screen and the WebAuthn second factor beside it. The protocol endpoint redirects:
@@ -125,7 +154,15 @@ Two details worth knowing before changing the test. **A 404 is ambiguous and the
 
 **It is the mock's own explorer rather than Swagger UI**, weighed rather than skipped: `swagger-ui-dist` is 11.7 MB with an install-time telemetry dependency, in a service that is deliberately dependency-light and whose image builds in containers with no network beyond the registry — against a familiar look for an API with no authentication, no OAuth flows and nobody generating a client from it. `admin_api_explorer.js` is ~250 lines, has no dependency, and shows the equivalent `curl` line beside each operation, which is what an operator of a mock actually copies. It is the one file in that repository that is not a node module: `admin_api_docs.js` reads it off disk and serves it verbatim, so it carries no `require` and no `process` — the same trap `client/src/coverage_beacon.js` fell into here, and the mock's own `admin_api.js` checks for it the same way.
 
-**It is not protected, and since 2026-08-24 the console next door IS**, so that is a difference to argue rather than a symmetry to state. `admin.authRequired` ships **on**: every `/admin` page and form needs a browser sign-on session from `/authn/login` and one of two console roles, and a caller asking for `?format=json` is refused **401 `login_required`** rather than redirected. `/admin-api` is deliberately outside that gate — a test drives it with no browser and no cookie jar, and it is the way back in for somebody who has locked themselves out of the console (`POST /admin-api/rbac/grant`, or `POST /admin-api/config/set` with `admin.authRequired=false`). **So a test configures this mock through `/admin-api`, never through an `/admin` form**; two here were doing the latter and both failed in under a second on the bump that turned the gate on, naming a credential rather than a gate. See `tests/CLAUDE.md`. The API's own openness has the same reason it always had: this service checks no password anywhere, so an authenticated management API would be the only authenticated surface in a service whose premise is that it authenticates nobody, and the only one a test would have to hold a secret for. Anyone who can reach the port can revoke every token it has issued and change what the next one contains — already true of `/oauth2/token`, which mints a token for any username asked of it. Do not put this service on a public address.
+**IT WAS NOT PROTECTED AND SINCE 2026-09-09 IT IS**, which reverses what this paragraph said for as long as it existed — the argument it made for the API being open survives as the argument for the OFF SWITCH, so read both halves. **What it is now**: every call presents an OAuth 2.0 access token this service issued, audienced to this API, carrying `admin:read` for a read and `admin:write` for anything that changes state, verified against the DEFAULT realm's key wherever it is reached (a per-realm signing key would let anybody who can create a realm mint that realm's administrator credential). One middleware on the base path, so the 232 operations are covered by construction rather than by 232 remembered checks. The API explorer moved with it, from `/admin-api/docs` to `/admin/api-explorer` — a page of the console behind its session and roles, because a browser navigating to a URL carries no token, so the one page written to be opened in a browser had become the one page a browser could not open.
+
+**The console next door has been gated since 2026-08-24** and the two credentials are different on purpose: a console session is not an API credential and a token is not a console session. `admin.authRequired` ships **on** — every `/admin` page and form needs a browser sign-on session from `/authn/login` and one of two console roles, and a caller asking for `?format=json` is refused **401 `login_required`** rather than redirected. **So a test configures this mock through `/admin-api`, never through an `/admin` form**; two here were doing the latter and both failed in under a second on the bump that turned that gate on, naming a credential rather than a gate.
+
+**THE THREE REASONS IT WAS OPEN SURVIVE, AND TWO OF THEM INTACT.** A test still drives it — `tests/tools/admin-api-token.js` mints one token per run in this repository and `tests/tools/attach-admin-token.js` puts it on the fifteen jobs that need it, so no job holds a secret. It is still the way back in, through `adminApi.authRequired`, which restores the open API exactly. What is no longer true is the third: anybody who can reach the port can no longer grant themselves both roles here.
+
+**AND IT ACQUIRED A BOOTSTRAP HOLE THAT CONFIGURATION HAS TO CLOSE.** The seeded `sts-management-api` client's secret is minted at every start and is readable only THROUGH the API it unlocks, so a service that has restarted is a service nobody can get a token for. `adminApi.clientSecret` pins it; `common/common.sh` here generates one per launcher run as `ADMIN_API_CLIENT_SECRET` and hands it to that container, and a deployment that does not set it has an administrative surface it cannot reach.
+
+None of this makes the service safe to expose. No password is checked anywhere in it and `/oauth2/token` will still mint a token for any username asked of it. Do not put this service on a public address.
 
 **One thing to know before writing a test that uses it.** The mock's admin state survives between jobs, so anything changed through this API — a custom claim, the credential claim set, the verifier's request, a revoked token — changes what every later job sees. The mock's own `admin_api.js` reads every setting it touches first and puts it back at the end, including the tokens its bulk revocations touched, which it restores one `jti` at a time because `revoke-all` has no opposite.
 
@@ -138,6 +175,8 @@ Two details worth knowing before changing the test. **A 404 is ambiguous and the
 **And an act records what it was delegated WITH.** `/admin/tokens/credential` walks a lineage by joining what one act produced to what the next consumed, on the identifier and nothing else. A WS-Trust act named only the requester's WS-Security credential, which that service never issued and cannot name, so every one of those trails stopped a generation in at a wall; it now also records the `ID` of the assertion inside `<wst:OnBehalfOf>` / `<wst14:ActAs>`, which is what lets a chain of assertion-for-assertion hops be followed back to the browser sign-in it rests on. The wall is still recorded beside it — *"it began somewhere this register cannot name"* and *"this is where it began"* are different answers.
 
 `tests/oauth2_delegation_chain.js` and `tests/wstrust_delegation_chain.js` are what hold both up, and each fails by NAME against a mock STS older than the change it needs rather than three screens later as a picture with a URL in it. See `docs/test-suite-map.md`.
+
+**And since 2026-09-01 there is a SECOND register beside it, which is the CONFIGURED one, and this suite now populates it.** `/admin/delegation` draws both: the acts above are evidence — one row per thing that happened — and a delegated PERMISSION is intent, typed before anybody asks for anything. The model is Microsoft Entra ID's by name: a resource application exposes an API (`oauthPermissionBaseUri` + `oauthPermission`, Entra's Application ID URI and `oauth2PermissionScopes`), a client application is granted some of them (`oauthDelegatedPermission`, Entra's `requiredResourceAccess`), a permission is identified by the two joined — `https://apigw1.example.com/` and `read` make `https://apigw1.example.com/read` — and a client asks for it as an ordinary OAuth `scope`, getting back a token AUDIENCED to the base carrying the bare name on its `scope` claim. `tests/sts_applications.js`'s `delegate()` is where this suite configures it, `read` and `write` by default, wherever an OAuth 2.0 or OIDC job asks for a token whose audience is not its own `client_id`. **The bare-`client_id`-as-a-scope spelling that every job here still sends is unaffected and is the DEFAULT permission — the whole API, unnamed.** None of it refuses anything yet: `oauth2.delegatedPermissionsEnforced` is off by default, so an ungranted permission is honoured and recorded as ungranted, which is exactly why the grants are made now rather than when the flag goes on — a suite that only ever ran against the permissive default cannot tell a service that consulted the register from one that has no register. Kerberos and WS-Trust delegate too and are deliberately not wired to it: a delegated permission is an OAuth scope, and those two families have none.
 
 ## UserInfo answers in four layers, and two of them arrived on 2026-08-27
 

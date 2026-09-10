@@ -37,10 +37,17 @@ const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
 const waitForContent = require("./wait_for.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 var log = bunyan.createLogger({ name: 'sd_jwt_vc_presentation_waltid',
                                 level: appconfig.LOG_LEVEL || 'info' });
 log.info("Log initialized. logLevel=" + log.level());
@@ -201,7 +208,7 @@ async function issueFromWaltid(driver) {
   log.info("=== Phase 1: walt.id issues the credential (through our own " +
            "pages) ===");
   await signOutOfKeycloak(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
@@ -286,6 +293,11 @@ async function issueFromWaltid(driver) {
   await driver.findElement(By.id("username")).sendKeys(clientId);
   await driver.findElement(By.id("password")).sendKeys(clientId);
   await click(driver, By.id("kc-login"));
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
   await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "the code should have been exchanged and the workflow returned to step 2.");
 
@@ -428,8 +440,8 @@ async function presentToWaltid(driver, session, opts) {
            (byReference ? "request by reference" : "request by value") +
            (withhold ? ", withholding " + withhold : "") + ") ===");
 
-  await driver.get(baseUrl + "/vc-presentation-1.html?" + requestQuery(session,
-                   byReference));
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" +
+      requestQuery(session, byReference));
   await driver.wait(until.elementLocated(By.id("vp_request_status")), waitTime);
   var requestStatus = await waitForStatus(driver, "vp_request_status",
     function (s) { return /Request read|cannot be answered|Could not/.test(

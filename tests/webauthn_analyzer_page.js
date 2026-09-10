@@ -29,6 +29,7 @@ const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -151,7 +152,7 @@ async function test() {
     .setChromeOptions(options).setLoggingPrefs(prefs).build();
 
   try {
-    await driver.get(baseUrl + "/webauthn_analyzer.html");
+    await loadUrl(driver, baseUrl + "/webauthn_analyzer.html");
     await driver.wait(until.elementLocated(By.id("wa_input")), waitTime * 4);
     await driver.executeScript("localStorage.clear();");
     await driver.navigate().refresh();

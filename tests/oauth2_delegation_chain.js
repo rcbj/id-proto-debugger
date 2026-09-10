@@ -196,11 +196,12 @@
 // torn down. So the SVGs are fetched and written to DELEGATION_ARTIFACT_DIR
 // (the run's own report directory, when run-report.js spawns this): the whole
 // map, this user's acts alone, and one document per chain. The console is gated
-// (`admin.authRequired`), so this signs in the way a browser does — three steps
-// through /authn/login, exactly as the mock's own console tests do it, and for
-// the
-// same reason: `?format=svg` is refused rather than redirected to a sign-in
-// screen a program cannot read. If the roster has been narrowed by some other
+// (`admin.authRequired`), so this signs in the way a browser does — the walk
+// in `console_signin.js`, shared with the WS-Trust chain because both jobs
+// need it and a second copy is a second thing to forget when it changes. The
+// reason it has to happen at all: `?format=svg` is refused rather than
+// redirected to a sign-in screen a program cannot read. If the roster has been
+// narrowed by some other
 // job the drawings are SKIPPED with a message naming the gate; the assertions
 // above do not depend on them, because they read `/admin-api/delegation`, which
 // is not behind it.
@@ -216,9 +217,25 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const waitFor = require("./wait_for.js");
 const common = require("./jwt_vc_json_common.js");
+// THE SHARED REGISTRY MODULE, FOR THE PERMISSION HALF ONLY. The four
+// applications above are still created by this file's own code — the note at
+// provisionApplication() says why, and the reason has not changed: the
+// assertion that matters most here is an ABSENCE, and `provision()` checks
+// containment. A DELEGATED PERMISSION has no such wrinkle, so writing a second
+// copy of `delegate()` here would be exactly the fourth hand-written copy that
+// module exists to stop.
+const registry = require("./sts_applications.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
+const consoleSignin = require("./console_signin.js");
 var log = bunyan.createLogger({ name: "oauth2_delegation_chain",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
@@ -520,60 +537,110 @@ async function provisionApplications() {
   for (let i = 0; i < APPLICATIONS.length; i++) {
     entries.push(await provisionApplication(APPLICATIONS[i]));
   }
+  await provisionDelegatedPermissions();
   log.debug("Leaving provisionApplications(). " + entries.length + ".");
   return entries;
 }
 
 // ---------------------------------------------------------------------------
-// A browser sign-on session for the CONSOLE, which only the drawings need. The
-// three-step dance is the one a browser does and is copied from the mock's own
-// `admin_api.js`, which explains it at length (readable here as
-// sts/tests/vendored/admin_api.js).
+// AND THE THREE RELATIONSHIPS BETWEEN THEM, WHICH THE FOUR ENTRIES ABOVE DO
+// NOT STATE.
 //
-// Returns the cookie, or null when the gate is off (a legitimate state — the
-// setting is switchable — reported rather than treated as a pass) or when the
-// roster has been narrowed by some other job and this user holds nothing.
+// The entries say what each tier IS. They say nothing about who may reach
+// whom — and that is the whole subject of this file, so leaving it to the
+// service's permissiveness was leaving the interesting half unconfigured. Each
+// resource now exposes an API (`read` and `write`, the suite-wide default) and
+// each tier is GRANTED those permissions on the tier it forwards to:
+//
+//   webapp1 -> apigw1     https://apigw1.example.com/{read,write}
+//   apigw1  -> esb1       https://esb1.example.com/{read,write}
+//   esb1    -> sp1        https://sp1.example.com/{read,write}
+//
+// **IT CHANGES NOTHING ABOUT WHAT THIS TEST SENDS, AND THAT IS DELIBERATE.**
+// The three hops still name the next tier's BARE client_id in `scope` and the
+// two exchanges still send its URI in `audience`, exactly as the header at the
+// top of this file describes, because that is the shape the deployment being
+// copied has. A scope naming a client_id is the DEFAULT permission — the whole
+// API, unnamed — and it is not going away. What the grants add is a register
+// that agrees with the chain instead of one that has never heard of it, and
+// the ability to turn `oauth2.delegatedPermissionsEnforced` on without
+// re-provisioning anything.
+//
+// **THE BASE URI IS THE AUDIENCE EACH TIER ALREADY REGISTERED**, which is what
+// keeps the two configurations from describing two different APIs: the second
+// hop asks for `https://esb1.example.com`, so the permissions esb1 exposes
+// have to hang off that and not off a URI invented for them. `delegate()`
+// normalises it — a permission identifier is a plain concatenation, so the
+// separator has to be there — and registers the normalised spelling as an
+// audience beside the one already on the entry, so a token addressed to either
+// resolves back to the application rather than to a URL.
+//
+// webapp1 exposes NOTHING, and that is the same assertion the entries make
+// about its audience: a browser application is what a token is issued to and
+// never what one is addressed to, so an API on it would be one nobody can
+// reach. It appears here only as a client.
+// ---------------------------------------------------------------------------
+const DELEGATIONS = [
+  { client: WEBAPP, resource: GATEWAY,
+    why: "the browser application presents its token to the gateway" },
+  { client: GATEWAY, resource: ESB,
+    why: "the gateway forwards to the service bus" },
+  { client: ESB, resource: PROVIDER,
+    why: "the service bus forwards to the service at the far end" }
+];
+
+async function provisionDelegatedPermissions() {
+  log.debug("Entering provisionDelegatedPermissions().");
+  log.info("=== Granting the three delegated permission pairs ===");
+  for (let i = 0; i < DELEGATIONS.length; i++) {
+    const pair = DELEGATIONS[i];
+    await registry.delegate(stsBase(), {
+      client: pair.client,
+      resource: pair.resource,
+      // Read from the same table the hops read, so the API the permissions
+      // hang off and the audience the exchange asks for cannot drift apart.
+      baseUri: audienceOf(pair.resource),
+      why: pair.why
+    });
+  }
+  // WEBAPP1 EXPOSES NOTHING, asserted rather than assumed — `delegate()`
+  // checks containment, and an application that acquired an API would pass
+  // every check above while being the one arrangement this cast is built to
+  // exclude. The same reasoning as the empty-audience assertion on its entry.
+  const register = await registry.permissionsRegister(stsBase());
+  const exposed = (register.permissions || []).filter(function (one) {
+    return one.resource === WEBAPP;
+  });
+  assert.strictEqual(exposed.length, 0,
+    WEBAPP + " is a browser application and should expose no API, and the " +
+    "permission register says it exposes [" +
+    exposed.map(function (one) { return one.id || one.name; }).join(", ") +
+    "]. It is issued tokens and is never the audience of one, so a " +
+    "permission on it is one no client could ever be granted for a reason " +
+    "anybody would want.");
+  log.info("[permissions] " + DELEGATIONS.length + " pair(s) granted, and " +
+           WEBAPP + " exposes nothing.");
+  log.debug("Leaving provisionDelegatedPermissions().");
+}
+
+// ---------------------------------------------------------------------------
+// A browser sign-on session for the CONSOLE, which only the drawings and the
+// lineage need. The walk itself is `console_signin.js` — five hops and two
+// cookies since the mock made `/admin` a relying party of its own
+// authorization server — and it is shared with `wstrust_delegation_chain.js`
+// because both jobs read pages off that console and neither should carry a
+// copy of somebody else's sign-in flow.
+//
+// Returns the Cookie header, or null when the gate is off (a legitimate state
+// — the setting is switchable — reported rather than treated as a pass) or
+// when the walk did not complete.
 // ---------------------------------------------------------------------------
 async function signInToTheConsole() {
   log.debug("Entering signInToTheConsole().");
-  const base = stsBase();
-  const gated = await fetch(base + "/admin/delegation", { redirect: "manual" });
-  if (gated.status !== 302) {
-    log.info("[console] admin.authRequired is off (GET /admin/delegation " +
-             "answered " + gated.status + " with no redirect), so the " +
-             "drawings need no session.");
-    log.debug("Leaving signInToTheConsole(). The gate is off.");
-    return null;
-  }
-  const where = gated.headers.get("location") || "";
-  const authn = (where.match(/[?&]authn=([^&]+)/) || [])[1];
-  if (!authn) {
-    log.warn("[console] a gated GET was sent to \"" + where + "\", which " +
-             "carries no authn id, so there is nothing to sign in FOR. The " +
-             "drawings are skipped; the assertions do not need them.");
-    log.debug("Leaving signInToTheConsole(). No authn id.");
-    return null;
-  }
-  const body = "authn_id=" + encodeURIComponent(authn) +
-      "&username=" + encodeURIComponent(CONSOLE_USER) +
-      "&password=" + encodeURIComponent(CONSOLE_USER);
-  const signedIn = await fetch(base + "/authn/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body,
-    redirect: "manual",
-  });
-  const setCookie = signedIn.headers.get("set-cookie") || "";
-  const session = (setCookie.match(/(sts_mock_session=[^;]+)/) || [])[1];
-  if (!session) {
-    log.warn("[console] signing in at /authn/login answered " +
-             signedIn.status + " and set no session cookie (\"" + setCookie +
-             "\"). The drawings are skipped.");
-    log.debug("Leaving signInToTheConsole(). No cookie.");
-    return null;
-  }
-  log.info("[console] signed in as " + CONSOLE_USER + " for the drawings.");
-  log.debug("Leaving signInToTheConsole(). Holding a session.");
+  const session = await consoleSignin.signInToTheConsole(stsBase(),
+      CONSOLE_USER, log);
+  log.debug("Leaving signInToTheConsole(). " +
+      (session ? "Holding a session." : "No session."));
   return session;
 }
 
@@ -743,9 +810,25 @@ async function assertTheLineage(session, expected) {
 // THE LINK ITSELF, which is what makes the page reachable. Asserted against the
 // tokens page's own MARKUP rather than against its JSON: the requirement is
 // that the identifier in that table is a link, and JSON has no links in it.
+//
+// ONE ROW IS ONE ISSUANCE AND NOT ONE CREDENTIAL, which is what makes this two
+// steps rather than one. The mock's tokens table groups the credentials that
+// came back in a single reply — an access token, a refresh token and an ID
+// Token are one row saying so — and a grouped row's identifier column names
+// the SET, with the members and their own lineage links one click away on the
+// set page. A token exchange here answers with two credentials, so this
+// chain's final token is always in a grouped row: looking for its jti in the
+// table alone finds nothing and says the console has stopped linking
+// lineages, which is a sentence about a page that is working.
+//
+// It is also PAGED, at a hundred issuances by default and three hundred at
+// most, over a register that has held every credential this whole suite
+// issued. So the row is located through `?format=json` — the same document the
+// table is rendered from, published beside it for exactly this — and the
+// MARKUP is what is then asserted.
 async function assertTheTokensPageLinksIt(session, jti) {
   log.debug("Entering assertTheTokensPageLinksIt().");
-  const url = stsBase() + "/admin/tokens?per=100";
+  const url = stsBase() + "/admin/tokens?per=300";
   const r = await common.httpJson(url,
       session ? { headers: { Cookie: session } } : undefined);
   if (r.status === 401 || r.status === 403) {
@@ -759,11 +842,51 @@ async function assertTheTokensPageLinksIt(session, jti) {
   const html = String(r.raw);
   assert.ok(html.indexOf("/admin/tokens/credential") >= 0,
     "no identifier on the tokens page links to a credential's lineage.");
-  assert.ok(html.indexOf("id=" + jti) >= 0,
-    "the tokens page does not link the token this test just obtained (" + jti +
-    ") to its lineage. Its identifier column is where that link lives.");
-  log.info("[console] the tokens page links " + jti + " to its lineage.");
-  log.debug("Leaving assertTheTokensPageLinksIt().");
+
+  // Straight into the table when the issuance produced one credential.
+  if (html.indexOf("id=" + jti) >= 0) {
+    log.info("[console] the tokens page links " + jti + " to its lineage.");
+    log.debug("Leaving assertTheTokensPageLinksIt(). Ungrouped.");
+    return;
+  }
+
+  const view = await consoleJson(session, "/admin/tokens?per=300&format=json",
+      "the tokens table's own document, to find the row this token is in");
+  if (!view) {
+    log.debug("Leaving assertTheTokensPageLinksIt(). The console refused.");
+    return;
+  }
+  const set = (view.sets || []).filter(function (one) {
+    return (one.members || []).some(function (member) {
+      return member.jti === jti;
+    });
+  })[0];
+  assert.ok(set,
+    "the token this test just obtained (" + jti + ") is in no row of the " +
+    "tokens table's first page, which holds " + (view.sets || []).length +
+    " of " + view.matched + " issuance(s). Newest is first there, so a token " +
+    "minted seconds ago being off it is the register having stopped " +
+    "recording rather than the page being long.");
+  const setKey = set.setKey || ("set:" + set.setId);
+  assert.ok(html.indexOf(encodeURIComponent(setKey)) >= 0,
+    "the tokens page does not carry the issuance this test's token came " +
+    "back in (" + setKey + "). A grouped row's identifier column is the " +
+    "link to it.");
+
+  const setUrl = stsBase() + "/admin/tokens/set?id=" +
+      encodeURIComponent(setKey);
+  const onSet = await common.httpJson(setUrl,
+      session ? { headers: { Cookie: session } } : undefined);
+  assert.strictEqual(onSet.status, 200,
+    "GET " + setUrl + " should answer 200 and answered " + onSet.status + ".");
+  assert.ok(String(onSet.raw).indexOf("id=" + jti) >= 0,
+    "the set page for the issuance this test's token came back in does not " +
+    "link that token (" + jti + ") to its lineage. That page is where a " +
+    "grouped row's members and their identifiers live, so the link is " +
+    "either there or nowhere.");
+  log.info("[console] the tokens page links the issuance " + setKey +
+           ", and that page links " + jti + " to its lineage.");
+  log.debug("Leaving assertTheTokensPageLinksIt(). Through the set.");
 }
 
 // ---------------------------------------------------------------------------
@@ -925,14 +1048,14 @@ async function assertTheChoosersSearch(session) {
 async function startNewWorkflow(driver, discoveryEndpoint, who, previous) {
   log.debug("Entering startNewWorkflow(). who=" + who);
   log.info("=== Starting a new debugger workflow as " + who + " ===");
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await waitFor.waitForPageBundle(driver,
       "oauth2_oidc_1.html's bundle (before clearing the workflow)");
   // Cleared from the page rather than by deleting cookies: this is
   // localStorage, it is per-origin, and the debugger keeps every field of the
   // workflow in it.
   await driver.executeScript("window.localStorage.clear();");
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await waitFor.waitForPageBundle(driver, "oauth2_oidc_1.html's bundle");
 
   // THE CLEAR IS ASSERTED, and it is asserted through the page's own re-seed
@@ -985,6 +1108,11 @@ async function signIn(driver, user) {
     await passwordFields[0].sendKeys(user);
   }
   await driver.findElement(By.id("kc-login")).click();
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
   log.debug("Leaving signIn().");
 }
 
@@ -1125,7 +1253,7 @@ async function exchangeAs(driver, hop) {
   log.debug("Entering exchangeAs(). client=" + hop.clientId);
   log.info("=== " + hop.clientId + ": RFC 8693 exchange for " + hop.audience +
            ", scope \"" + hop.scope + "\" ===");
-  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
   await waitFor.waitForPageBundle(driver, "oauth2_oidc_2.html's bundle");
 
   const fieldset = By.id("tokenexchange_fieldset");
@@ -1531,7 +1659,7 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    // "=new", not bare --headless: the tests image pins Chrome 121, where the
+    // "=new", not bare --headless: the tests image pinned Chrome 121, where the
     // old headless implementation ignores
     // --unsafely-treat-insecure-origin-as-secure. See tests/browser_flags.js.
     options.addArguments("--headless=new");

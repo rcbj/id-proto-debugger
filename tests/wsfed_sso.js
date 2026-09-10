@@ -5,6 +5,7 @@ const { Command, Option } = require('commander');
 const { addBrowserAccessFlags } = require("./browser_flags");
 const registry = require("./sts_applications.js");
 const { assertEdgeLandingContract } = require("./edge_landing_contract");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -426,7 +427,7 @@ async function wsfedActivities(driver, metadataUrl, realm, user, combo) {
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Load the WS-Federation Test Tools page.");
-  await driver.get(baseUrl + "/wsfed_request.html");
+  await loadUrl(driver, baseUrl + "/wsfed_request.html");
 
   // Load + parse the IdP metadata (best-effort: it populates the sign-in
   // endpoint + signer cert; we don't hard-fail on descriptor-format quirks).
@@ -660,7 +661,7 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   var loginWait = Math.max(waitTime, 15000);
 
   log.info("Return to the WS-Federation Test Tools page to sign out.");
-  await driver.get(baseUrl + "/wsfed_request.html");
+  await loadUrl(driver, baseUrl + "/wsfed_request.html");
   await driver.wait(until.elementLocated(By.id("wsfed_metadata_url")),
                     waitTime);
 
@@ -756,7 +757,7 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
   // re-authenticate. If the SSO cookie survived, this navigation goes straight
   // back to the response page with a fresh token and never shows a login form.
   log.info("Sign in again — the IdP must now ask for credentials.");
-  await driver.get(baseUrl + "/wsfed_request.html");
+  await loadUrl(driver, baseUrl + "/wsfed_request.html");
   await driver.wait(until.elementLocated(By.id("wsfed_signin_endpoint")),
                     waitTime);
   // callIdp() refuses to navigate with an empty endpoint or wtrealm — it only
@@ -795,7 +796,8 @@ async function wsfedSignOutActivities(driver, metadataUrl, realm) {
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
-  // `=new`, never bare `--headless`: on the tests image's pinned Chrome 121 the
+  // `=new`, never bare `--headless`: on the Chrome 121 the tests image
+  // pinned the
   // bare flag selects the OLD headless implementation, and there
   // --unsafely-treat-insecure-origin-as-secure (added by
   // addBrowserAccessFlags() below) has no effect — so on the containerized

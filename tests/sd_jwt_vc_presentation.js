@@ -48,6 +48,7 @@ const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
 const crypto = require("crypto");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -257,7 +258,7 @@ async function mintCredential(label) {
 // issuance workflow writes.
 async function planCredentialIntoWallet(driver, held) {
   log.debug("Entering planCredentialIntoWallet().");
-  await driver.get(baseUrl + "/vc-presentation-0.html");
+  await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vp_usecases")), waitTime);
   await driver.executeScript(
@@ -928,7 +929,7 @@ async function withholdARequestedClaim(driver, held) {
   var request = await freshRequest();
   // Straight to step 1 with the request, the way the verifier's redirect
   // arrives.
-  await driver.get(baseUrl + "/vc-presentation-1.html?" +
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" +
     request.location.slice(request.location.indexOf("?") + 1));
   await driver.wait(until.elementLocated(By.id("vp_request_status")), waitTime);
   await waitForStatus(driver, "vp_request_status",
@@ -1103,7 +1104,7 @@ async function panesContainTheirContent(driver) {
   var pages = ["vc-presentation-0.html", "vc-presentation-1.html",
                "vc-presentation-2.html", "vc-presentation-3.html"];
   for (var i = 0; i < pages.length; i++) {
-    await driver.get(baseUrl + "/" + pages[i]);
+    await loadUrl(driver, baseUrl + "/" + pages[i]);
     await driver.wait(until.elementLocated(By.id("vp_steps")), waitTime);
     await driver.sleep(500);
     var result = await driver.executeScript(
@@ -1171,7 +1172,7 @@ async function refusingIsAnAnswer(driver, held) {
   log.info("=== The holder refuses ===");
   await planCredentialIntoWallet(driver, held);
   var request = await freshRequest();
-  await driver.get(baseUrl + "/vc-presentation-1.html?" +
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" +
     request.location.slice(request.location.indexOf("?") + 1));
   await driver.wait(until.elementLocated(By.id("vp_continue_button")),
                     waitTime);

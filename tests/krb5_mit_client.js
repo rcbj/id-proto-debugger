@@ -99,6 +99,7 @@ const { spawnSync } = require("child_process");
 const { Command, Option } = require("commander");
 const { usernameFor } = require("./random_username.js");
 const registry = require("./sts_applications.js");
+const { declineToRun, mustBeReady } = require("./expectation.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -492,7 +493,8 @@ async function preconditions() {
   }
   if (missing.length) {
     log.debug("Leaving preconditions(). No MIT tools.");
-    return { ok: false, why: "MIT Kerberos is not installed here (missing: " +
+    return { ok: false, absent: true,
+      why: "MIT Kerberos is not installed here (missing: " +
       missing.join(", ") + "). This job drives the mock KDC with the REAL " +
       "client rather than with the one this project wrote, which is the only " +
       "way an interoperability defect can be found at all — install " +
@@ -505,7 +507,8 @@ async function preconditions() {
   tools.curl = String(curlPath.stdout || "").trim();
   if (!tools.curl) {
     log.debug("Leaving preconditions(). No curl.");
-    return { ok: false, why: "curl is not installed here, and sections 8 to " +
+    return { ok: false, absent: true,
+      why: "curl is not installed here, and sections 8 to " +
       "14 use it as the GSSAPI HTTP client" };
   }
   // BUILT WITH GSS-API, which is a different question from "curl exists". A
@@ -516,7 +519,8 @@ async function preconditions() {
   const banner = String(features.stdout || "");
   if (!/GSS-API/.test(banner) || !/SPNEGO/.test(banner)) {
     log.debug("Leaving preconditions(). curl without GSS-API.");
-    return { ok: false, why: "this curl was built without GSS-API/SPNEGO " +
+    return { ok: false, absent: true,
+      why: "this curl was built without GSS-API/SPNEGO " +
       "(its features line reads: " +
       (banner.split("\n").filter(function (line) {
         return /^Features:/.test(line); })[0] || "(none reported)") +
@@ -970,7 +974,22 @@ async function theSessionSatisfiesAnApplication(session) {
       oauthGrantType: ["authorization_code"],
       oauthScope: ["openid"],
       oauthTokenEndpointAuthMethod: "none",
-      oauthConfidential: "FALSE"
+      oauthConfidential: "FALSE",
+      // GLOBAL CONSENT FOR `openid` ON THIS APPLICATION, so that the flow
+      // below is a redirect to the client and not a redirect to a consent
+      // screen. Since 2026-09-01 that service asks the first time a given
+      // username, client_id and scope meet — and this section is driven with
+      // `curl` rather than a browser, because what it is reading is one
+      // Location header out of a Kerberos-authenticated session.
+      //
+      // It is CONFIGURATION rather than a workaround, and it is the shape the
+      // override exists for: an application whose people must never be
+      // interrupted has its scopes consented once, on its own entry, by
+      // whoever registered it. The thing this section is about — that a
+      // Kerberos session satisfies an OAuth flow with no screen drawn — is
+      // asserted more strongly this way, because the only screen that could
+      // now appear is the sign-in screen it forbids.
+      oauthGlobalConsent: ["openid"]
     },
     why: "the application a Kerberos-authenticated session completes a flow for"
   });
@@ -1163,14 +1182,22 @@ async function test() {
   log.info("Starting Test run. sts=" + stsUrl + ", kdc=" + kdcHost + ":" +
       kdcPort + ", realm=" + realm);
   const ready = await preconditions();
-  if (!ready.ok) {
-    // Named, never silent. A skip that did not say which precondition failed
-    // would be indistinguishable from a pass.
-    log.warn("SKIPPED: " + ready.why);
-    log.info("Test completed successfully (skipped).");
-    log.debug("Leaving test(). Skipped.");
+  // THE ONE FILE HERE WHOSE PRECONDITIONS ARE OF BOTH KINDS, so it is the one
+  // that has to tell them apart. `absent` means this MACHINE was never given
+  // the thing — MIT Kerberos, curl, a curl built with GSS-API — which is a
+  // fact about the host and the reason this job exists at all (it drives the
+  // mock KDC with somebody else's client). Everything else preconditions()
+  // reports is the mock STS: unreachable, serving the wrong realm, answering
+  // wrongly for /krb5/principals. Those are the stack being wrong, and the
+  // launcher had already decided it was up. See tests/expectation.js.
+  if (!ready.ok && ready.absent) {
+    declineToRun(log, ready.why);
+    log.debug("Leaving test(). Skipped, nothing installed to drive it with.");
     return;
   }
+  mustBeReady(ready, "the mock STS with its KDC reachable at " +
+              kdcHost + ":" + kdcPort + ", serving the realm this job " +
+              "expects. Start the stack, or run ./local-run-tests.sh.");
   if (ready.kdcPort && ready.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + ready.kdcPort +
         "; using that.");

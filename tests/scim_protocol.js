@@ -103,6 +103,7 @@ const { Command, Option } = require("commander");
 const registry = require('./sts_applications.js');
 const { usernameFor, runStamp } = require("./random_username.js");
 const paths = require("./module_paths.js");
+const { mustBeAbleTo } = require("./expectation.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -977,6 +978,103 @@ async function listingAndFiltering() {
         'for the whole directory.');
   });
 
+  // -------------------------------------------------------------------
+  // EVERY USER A FILTER MATCHES, ACROSS EVERY PAGE — and the reason this is
+  // not simply a bigger `count`.
+  //
+  // Ten of the fourteen operators below cannot be scoped to this run: a
+  // presence filter is `userName pr`, and `meta.created gt "2000-01-01…"`,
+  // `not (userName eq "nobody-at-all")` and `emails[type eq "work"]` are the
+  // same shape. Each of those matches THE WHOLE DIRECTORY. Every call used to
+  // ask for `count: '50'` and assert the subject was among what came back,
+  // which is a bet that this run's user lands in the first fifty of a
+  // directory every other job in the suite is also writing to — and by
+  // 2026-09-02 it was losing on a stack that had been up for a while, with
+  // `matched 50 user(s)` and a message about the operator.
+  //
+  // A LARGER COUNT IS THE SAME BET WITH A BIGGER NUMBER. The directory grows
+  // for as long as the stack is up: `api_ldap.js` alone leaves a group
+  // holding every user it ever made, the SCIM page job creates its own, and
+  // nothing prunes. Any constant here has a date on which it starts failing.
+  //
+  // AND THE NEGATIVE CASE IS THE ONE THAT WAS ACTUALLY BROKEN. `ne` asserts
+  // the subject is ABSENT, and absence from the first page is not absence —
+  // so a server that evaluated `ne` wrongly and returned the subject on page
+  // 2 passed this check, silently, for as long as the directory was big
+  // enough. That is a test that had stopped asserting rather than one that
+  // was about to fail, which is the worse half of tests/CLAUDE.md's "assert
+  // on your own litter".
+  //
+  // WHAT IS NOT THE FIX: ANDing the run's prefix into every filter
+  // (`userName pr and userName sw "<prefix>page."`). It bounds the result set
+  // and it destroys the test — a server that silently dropped the term under
+  // test would still return the subject through the `sw` half, so the
+  // operator would stop being evaluated while the assertion went on passing.
+  // The filter string goes to the server exactly as written.
+  //
+  // So the whole result set is enumerated instead. Two things it leans on,
+  // both established a few checks above rather than assumed: paging is
+  // 1-INDEXED and the pages do not overlap, and `sortBy` / `sortOrder` are
+  // honoured — a page walk over a set with no total order can skip a
+  // resource between requests, so the sort is what makes this sound rather
+  // than tidy. Every page is asserted, because a page that errored half way
+  // through would otherwise read as a filter that matched less.
+  // -------------------------------------------------------------------
+  const FILTER_PAGE = 200;
+  const FILTER_MAX_PAGES = 50;
+  async function everyMatchOf(filter) {
+    log.debug("Entering everyMatchOf(). " + filter);
+    const names = [];
+    let first = null;
+    let startIndex = 1;
+    let pages = 0;
+    while (pages < FILTER_MAX_PAGES) {
+      const answer = await scimCall({ operation: 'listUsers',
+          query: { filter: filter, startIndex: String(startIndex),
+                   count: String(FILTER_PAGE), sortBy: 'userName',
+                   sortOrder: 'ascending' } });
+      pages++;
+      if (!first) {
+        first = answer;
+        // A refusal is the caller's to assert, with the operator in the
+        // message. Handing back one page rather than throwing here keeps
+        // "this server cannot evaluate `ew`" reading as that rather than as
+        // a paging fault.
+        if (answer.transport !== 200 || answer.status !== 200) {
+          log.debug("Leaving everyMatchOf(). Refused.");
+          return { first: first, names: names, pages: pages };
+        }
+      }
+      assertAnswered(answer, 'filter page ' + pages + ' of `' + filter + '`');
+      assert.strictEqual(answer.status, 200,
+          'Page ' + pages + ' of `' + filter + '` (startIndex ' + startIndex +
+          ') answered ' + answer.status + ' ' + answer.scimType + ': ' +
+          answer.detail + ', where page 1 answered 200. A filter that ' +
+          'errors part way through an enumeration would otherwise read as ' +
+          'a filter that matched fewer users.');
+      const rows = answer.body.Resources || [];
+      rows.forEach(function (row) {
+        names.push(row.userName);
+      });
+      if (rows.length < FILTER_PAGE) {
+        log.debug("Leaving everyMatchOf(). " + names.length + " in " +
+            pages + " page(s).");
+        return { first: first, names: names, pages: pages };
+      }
+      startIndex += rows.length;
+    }
+    // Loudly, rather than asserting on a truncated set: an enumeration that
+    // gave up is not a smaller answer, it is no answer. See
+    // tests/expectation.js for why this file no longer has a quiet way out.
+    throw new Error('Enumerating `' + filter + '` did not finish within ' +
+        FILTER_MAX_PAGES + ' pages of ' + FILTER_PAGE + ' (' +
+        names.length + ' user(s) so far, totalResults ' +
+        ((first && first.body && first.body.totalResults) || '?') + '). ' +
+        'Either this directory has grown past anything this suite should be ' +
+        'walking — restart the stack — or the server is not advancing ' +
+        'startIndex, which would make every page identical.');
+  }
+
   // Every operator, against a user known to match.
   const subject = page[0];
   const tail = subject.userName.slice(subject.userName.lastIndexOf('.') + 1);
@@ -1002,26 +1100,26 @@ async function listingAndFiltering() {
   ];
   for (i = 0; i < OPERATORS.length; i++) {
     const row = OPERATORS[i];
-    const answer = await scimCall({ operation: 'listUsers',
-        query: { filter: row.filter, count: '50' } });
+    const found = await everyMatchOf(row.filter);
     check('filter operator ' + row.op + ' is evaluated', function () {
-      assertAnswered(answer, 'filter ' + row.op);
-      assert.strictEqual(answer.status, 200,
-          'The filter `' + row.filter + '` answered ' + answer.status + ' ' +
-          answer.scimType + ': ' + answer.detail + '. A server advertises ' +
-          'filtering as ONE boolean, so an operator it cannot evaluate is ' +
-          'only discoverable by sending it.');
-      const names = (answer.body.Resources || []).map(function (found) {
-        return found.userName;
-      });
+      assertAnswered(found.first, 'filter ' + row.op);
+      assert.strictEqual(found.first.status, 200,
+          'The filter `' + row.filter + '` answered ' + found.first.status +
+          ' ' + found.first.scimType + ': ' + found.first.detail + '. A ' +
+          'server advertises filtering as ONE boolean, so an operator it ' +
+          'cannot evaluate is only discoverable by sending it.');
       if (row.match) {
-        assert.ok(names.indexOf(subject.userName) >= 0,
+        assert.ok(found.names.indexOf(subject.userName) >= 0,
             'The filter `' + row.filter + '` was expected to match ' +
-            subject.userName + ' and matched ' + names.length + ' user(s).');
+            subject.userName + ' and did not. It matched ' +
+            found.names.length + ' user(s) across ' + found.pages +
+            ' page(s), which is the WHOLE result set and not the first ' +
+            'page of it — so this is the operator, not the paging.');
       } else {
-        assert.ok(names.indexOf(subject.userName) < 0,
+        assert.ok(found.names.indexOf(subject.userName) < 0,
             'The filter `' + row.filter + '` was expected NOT to match ' +
-            subject.userName + ' and did.');
+            subject.userName + ' and did, among ' + found.names.length +
+            ' user(s) across ' + found.pages + ' page(s).');
       }
     });
   }
@@ -2208,12 +2306,14 @@ function shortId(id) {
 async function test() {
   log.debug("Entering test().");
   const present = await theMockHasScim();
-  if (!present.present) {
-    log.warn("SKIPPED: " + present.why);
-    log.info("Test completed successfully (skipped).");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip, and it used to log "Test completed
+  // successfully (skipped)" on its way out. run-report.js gates this job on
+  // LDAP_AVAILABLE — the same question, "does this target have an api at
+  // all" — so reaching this line means the launcher expected the api and a
+  // SCIM server behind it. See tests/expectation.js.
+  mustBeAbleTo(present.present, "The SCIM server this job was pointed at",
+    "cannot be used: " + present.why + ". Either the sts/ submodule " +
+    "predates /scim/v2 (bump it), or the stack is not up.");
   // ---------------------------------------------------------------------
   // THE SCIM CLIENT, IN THE REGISTRY, BEFORE THE FIRST CREDENTIAL IS SENT.
   //

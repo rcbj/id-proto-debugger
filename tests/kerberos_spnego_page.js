@@ -46,9 +46,11 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -251,7 +253,7 @@ async function preconditions() {
 async function theAsPageOffersTheWayBack(driver) {
   log.debug("Entering theAsPageOffersTheWayBack().");
   log.info("=== The AS page, arrived at from SPNEGO ===");
-  await driver.get(baseUrl + "/kerberos.html?return=spnego");
+  await loadUrl(driver, baseUrl + "/kerberos.html?return=spnego");
   await driver.wait(until.elementLocated(By.id("krb_noreauth_button")), 20000);
 
   // The banner has to be there BEFORE a ticket exists — that is the case it is
@@ -306,7 +308,7 @@ async function theAsPageOffersTheWayBack(driver) {
 async function theTgsPageTakesTheSpnAndOffersTheWayBack(driver) {
   log.debug("Entering theTgsPageTakesTheSpnAndOffersTheWayBack().");
   log.info("=== The TGS page, with the SPN carried through ===");
-  await driver.get(baseUrl + "/kerberos_tgs.html?return=spnego&spn=" +
+  await loadUrl(driver, baseUrl + "/kerberos_tgs.html?return=spnego&spn=" +
       encodeURIComponent(spn));
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
 
@@ -640,7 +642,7 @@ async function aNegotiationWithNothingInCommonIsRefused(driver) {
   log.info("=== NEGATIVE: no mechanism in common ===");
 
   // The acceptor's side: ?mech=none makes the mock support nothing at all.
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_spnego_url")), 20000);
   await setField(driver, "krb_spnego_url", protectedUrl + "?mech=none");
   await driver.findElement(By.id("krb_spnego_url")).sendKeys("\t");
@@ -661,7 +663,7 @@ async function aNegotiationWithNothingInCommonIsRefused(driver) {
     "password, and that fact is the finding: " + refused);
 
   // The initiator's side: offer only a mechanism this build cannot perform.
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_spnego_url")), 20000);
   await setField(driver, "krb_spnego_url", protectedUrl);
   await driver.findElement(By.id("krb_spnego_url")).sendKeys("\t");
@@ -689,7 +691,7 @@ async function aNegotiationWithNothingInCommonIsRefused(driver) {
 async function withoutAnApRepNothingProvesTheServer(driver) {
   log.debug("Entering withoutAnApRepNothingProvesTheServer().");
   log.info("=== NEGATIVE: no proof of the server's identity ===");
-  await driver.get(baseUrl + "/spnego.html");
+  await loadUrl(driver, baseUrl + "/spnego.html");
   await driver.wait(until.elementLocated(By.id("krb_spnego_url")), 20000);
   await setField(driver, "krb_spnego_url", protectedUrl + "?mutual=off");
   await driver.findElement(By.id("krb_spnego_url")).sendKeys("\t");
@@ -722,13 +724,9 @@ async function test() {
   log.info("Starting Test run. The SPNEGO page, and the routing that feeds " +
       "it.");
   const ready = await preconditions();
-  if (!ready.ok) {
-    log.warn("SKIPPED: " + ready.why + ". This test needs the client, the " +
-        "api and the mock STS (its KDC and its SPNEGO-protected page).");
-    log.info("Test completed successfully.");
-    log.debug("Leaving test(). Skipped.");
-    return;
-  }
+  // A FAILURE rather than a skip. See tests/expectation.js.
+  mustBeReady(ready, "the client, the api and the mock STS (its KDC and " +
+              "its SPNEGO-protected page).");
   if (ready.kdcPort && ready.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + ready.kdcPort +
         "; using that.");
@@ -787,7 +785,8 @@ async function test() {
   });
 
   const options = new chrome.Options();
-  // --headless=new, never bare --headless: the image's Chrome 121 ignores
+  // --headless=new, never bare --headless: the Chrome 121 the image
+  // pinned ignores
   // --unsafely-treat-insecure-origin-as-secure in the old mode, and this page
   // derives keys and computes MICs with Web Crypto.
   options.addArguments("--headless=new", "--no-sandbox",

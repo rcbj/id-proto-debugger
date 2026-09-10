@@ -44,9 +44,11 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
 const { usernameFor, requireKnownOrCreatable } =
     require("./random_username.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -91,10 +93,54 @@ async function waitForText(driver, id, pattern, timeoutMs, what) {
   return last;
 }
 
+// Set a field and CHECK IT TOOK, because on these pages a clear() can be
+// undone between the clear and the typing.
+//
+// Every navigation in this file waits for an ELEMENT and then types into it,
+// and the markup carrying that element is in the HTML from the moment the page
+// parses — so the wait is satisfied long before the bundle has run, and the
+// bundle's own load handler restores each field from storage when it does. Type
+// into that gap and the restore lands between `clear()` and `sendKeys()`: the
+// field holds the restored value, the caret is at position 0, and what is
+// actually submitted is THIS value with the old one still glued to the end of
+// it.
+//
+// It cost the Chrome 152 upgrade run of 2026-09-03. `krb_service_host` was
+// submitted as `web.example.comsts` — the host this section wants, followed by
+// the `sts` the previous section left in storage — and the page reported
+// exactly what it was given: `Could not resolve web.example.comsts
+// (ENOTFOUND) [EKRB5DNS]`, a DNS error naming a hostname nobody typed. The
+// race is not new and is not the browser's: Chrome 121 simply won it every
+// time, which is the whole hazard with a timing bug that a dependency's speed
+// decides.
+//
+// So the value is read back and the set repeated. A restore fires once, so one
+// retry is enough in practice and the loop is bounded rather than trusting
+// that; a field that will not hold a value is a page fault and says so with
+// what it held instead, which is the sentence that would have named this in a
+// tenth of the time.
 async function setField(driver, id, value) {
-  const field = await driver.findElement(By.id(id));
-  await field.clear();
-  await field.sendKeys(value);
+  log.debug("Entering setField().");
+  var last = null;
+  for (var attempt = 0; attempt < 5; attempt++) {
+    const field = await driver.findElement(By.id(id));
+    await field.clear();
+    await field.sendKeys(value);
+    last = await field.getAttribute("value");
+    if (last === String(value)) {
+      log.debug("Leaving setField(). " + id + " holds it.");
+      return;
+    }
+    log.debug("setField(): #" + id + " came back as " + JSON.stringify(last) +
+        " rather than " + JSON.stringify(String(value)) + "; retrying.");
+    await driver.sleep(200);
+  }
+  log.debug("Leaving setField(). Gave up.");
+  throw new Error("#" + id + " would not hold " +
+      JSON.stringify(String(value)) + " — it reads " + JSON.stringify(last) +
+      " after 5 attempts. The page is overwriting the field after it is " +
+      "typed into (its load handler restores saved values), so whatever this " +
+      "test submits is not what it asked for.");
 }
 
 // What has to be true before any of this means anything. Each answer is a
@@ -187,7 +233,7 @@ async function preconditions() {
 // ---------------------------------------------------------------------------
 async function getATgtOnTheAsPage(driver) {
   log.debug("Entering getATgtOnTheAsPage().");
-  await driver.get(baseUrl + "/kerberos.html");
+  await loadUrl(driver, baseUrl + "/kerberos.html");
   await driver.wait(until.elementLocated(By.id("krb_noreauth_button")), 20000);
   await setField(driver, "krb_realm", realm);
   await setField(driver, "krb_principal", principal);
@@ -224,7 +270,7 @@ async function getATgtOnTheAsPage(driver) {
 
 async function theTgsPageRefusesWithNoTgt(driver) {
   log.debug("Entering theTgsPageRefusesWithNoTgt().");
-  await driver.get(baseUrl + "/kerberos_tgs.html");
+  await loadUrl(driver, baseUrl + "/kerberos_tgs.html");
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
   // Clear the cache and reload: the page must refuse up front rather than when
   // the button is pressed. A user with no TGT should not be able to send a
@@ -249,7 +295,7 @@ async function theTgsPageRefusesWithNoTgt(driver) {
 
 async function theTgsPageSpendsTheTgt(driver) {
   log.debug("Entering theTgsPageSpendsTheTgt().");
-  await driver.get(baseUrl + "/kerberos_tgs.html");
+  await loadUrl(driver, baseUrl + "/kerberos_tgs.html");
   await driver.wait(until.elementLocated(By.id("krb_tgs_button")), 20000);
   const tgtPane = await driver.findElement(By.id("krb_tgt_pane")).getText();
   assert.ok(/krbtgt/.test(tgtPane),
@@ -349,7 +395,7 @@ async function theTgsPageSpendsTheTgt(driver) {
 
 async function theApPagePresentsItAndChecksTheEcho(driver) {
   log.debug("Entering theApPagePresentsItAndChecksTheEcho().");
-  await driver.get(baseUrl + "/kerberos_ap.html");
+  await loadUrl(driver, baseUrl + "/kerberos_ap.html");
   await driver.wait(until.elementLocated(By.id("krb_present_button")), 20000);
 
   const environment = await waitForText(driver, "krb_environment_note",
@@ -468,7 +514,7 @@ async function perMessageTokensWorkAndRejectTampering(driver) {
 // between authenticating a client and authenticating a connection.
 async function withoutMutualNothingProvesTheService(driver) {
   log.debug("Entering withoutMutualNothingProvesTheService().");
-  await driver.get(baseUrl + "/kerberos_ap.html");
+  await loadUrl(driver, baseUrl + "/kerberos_ap.html");
   await driver.wait(until.elementLocated(By.id("krb_present_button")), 20000);
   await setField(driver, "krb_service_host", serviceHost);
   await setField(driver, "krb_service_port", servicePort);
@@ -489,16 +535,10 @@ async function test() {
   log.info("Starting Test run. The TGS and AP exchange pages at " + baseUrl +
       ".");
   const ready = await preconditions();
-  if (!ready.ok) {
-    // Named, never silent. A skip that did not say which precondition failed
-    // would be indistinguishable from a pass.
-    log.warn("SKIPPED: " + ready.why + ". This test needs the client, the " +
-        "api and the mock STS " +
-      "(KDC and ticket-protected service), and the api's krb5ServicePorts " +
-          "set.");
-    log.info("Test completed successfully.");
-    return;
-  }
+  // A FAILURE rather than a skip. See tests/expectation.js.
+  mustBeReady(ready, "the client, the api and the mock STS (KDC and " +
+              "ticket-protected service), and the api\'s krb5ServicePorts " +
+              "set.");
   if (ready.kdcPort && ready.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + ready.kdcPort +
         "; using that.");
@@ -535,7 +575,8 @@ async function test() {
   });
 
   const options = new chrome.Options();
-  // --headless=new, never bare --headless: the image's Chrome 121 ignores
+  // --headless=new, never bare --headless: the Chrome 121 the image
+  // pinned ignores
   // --unsafely-treat-insecure-origin-as-secure in the old mode, and these pages
   // derive keys with Web Crypto.
   options.addArguments("--headless=new", "--no-sandbox",

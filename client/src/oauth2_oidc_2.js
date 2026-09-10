@@ -4,6 +4,11 @@ const appconfig = require(process.env.CONFIG_FILE);
 const opMetadata = require("./op_metadata");
 const sdJwtVc = require("./sd_jwt_vc");
 const tokenHandoff = require("./token_handoff");
+// The SESSION hand-off. A sibling of the one above rather than a
+// generalization: four of the five sign-in protocols the Shared Signals
+// workflow can seed from produce no token at all. See
+// `session_handoff.js`.
+const sessionHandoff = require("./session_handoff");
 // DPoP for THIS workflow (RFC 9449), kept apart from the VC workflow's copy —
 // see oauth_dpop.js for why the two are separate state.
 const oauthDpop = require("./oauth_dpop");
@@ -749,6 +754,19 @@ var HTTP_CHANNELS = {
             "by navigating the browser, not by making a request it can " +
             "trace — or it was issued before this build began keeping them." }
     ]
+  },
+  // The Token Exchange (RFC 8693) pane. ONE host rather than two, because
+  // this workflow has no request pane of its own to compose the exchange on:
+  // the form is a fieldset in the page and the result is a pane the bundle
+  // builds, so the exchange is only ever met on the result.
+  tokenexchange: {
+    tabs: ["tokenexchange_result_tab_http"],
+    panes: [
+      { host: "tokenexchange_result_http_exchange",
+        empty: "No Token Exchange request has been sent. Send one with " +
+            "Exchange Token and the whole exchange — the request, the " +
+            "response, and how long the far end took — appears here." }
+    ]
   }
 };
 
@@ -764,7 +782,8 @@ var HTTP_CHANNELS = {
 var httpChannelState = {
   token: { sent: null, view: null, label: null },
   refresh: { sent: null, view: null, label: null },
-  viewing: { sent: null, view: null, label: null }
+  viewing: { sent: null, view: null, label: null },
+  tokenexchange: { sent: null, view: null, label: null }
 };
 
 // The state record for one channel, created on demand so that a typo in a
@@ -857,6 +876,19 @@ function selectCurrentlyViewingTab(name) {
   return picked;
 }
 
+// THREE tabs rather than two, and the order is the order a reader meets them:
+// the response as it was reported, then the exchange that carried it, then
+// the tokens it issued. `result` stays the default for the same reason
+// `tokens` is the default on the panes above — it is what the caller came
+// for, and it is what was there before there were any tabs at all.
+function selectTokenExchangeResultTab(name) {
+  log.debug("Entering selectTokenExchangeResultTab(). name=" + name);
+  var picked = selectPaneTab("tokenexchange_result",
+                             ["result", "http", "tokens"], name);
+  log.debug("Leaving selectTokenExchangeResultTab().");
+  return picked;
+}
+
 // Turn one tab of a strip on and every other one off. Shared by all four
 // panes: the class names and the aria attributes are the contract the
 // stylesheet and a screen reader each read, and one pane having its own copy
@@ -922,6 +954,15 @@ function paneTabButton(prefix, which, label, on, onSelect) {
 // `channel` names which exchange the second panel shows, and `paneIndex` which
 // of that channel's hosts this pane is — which is what decides the id the host
 // is given and the sentence an empty one carries.
+//
+// `extraTabs` is optional and is how a pane gets a THIRD tab: each entry is
+// `{name, label, node}` and becomes a button after the HTTP one and a panel
+// after the HTTP one, off. It is a list rather than a second attach function
+// because the ids, the classes and the aria attributes a tab needs are the
+// contract `selectPaneTab()` and the stylesheet read, and a pane that built
+// its own strip is a pane where that contract is spelled twice. The caller
+// supplies a NODE, so nothing it puts there passes through `.html()` on the
+// way.
 function attachHttpTab(options) {
   log.debug("Entering attachHttpTab(). container=" + options.container);
   var container = document.getElementById(options.container);
@@ -956,6 +997,14 @@ function attachHttpTab(options) {
   fieldset.appendChild(strip);
   fieldset.appendChild(first);
   fieldset.appendChild(panel);
+  (options.extraTabs || []).forEach(function (extra) {
+    strip.appendChild(paneTabButton(options.prefix, extra.name, extra.label,
+                                    false, options.onSelect));
+    var more = httpNode("div", "dbg-tabpanel dbg-tabpanel-off");
+    more.id = options.prefix + "_tabpanel_" + extra.name;
+    more.appendChild(extra.node);
+    fieldset.appendChild(more);
+  });
   // The exchange was drawn before this pane existed, and the label was set
   // before this button did, so both are put back here from what was kept.
   var state = httpChannelStateFor(options.channel);
@@ -1010,6 +1059,160 @@ function attachHttpTabToCurrentlyViewing() {
     label: "Currently viewing",
     onSelect: selectCurrentlyViewingTab });
   log.debug("Leaving attachHttpTabToCurrentlyViewing().");
+}
+
+// The Token Exchange Results pane's HTTP and Tokens tabs.
+//
+// `tokens` is the token endpoint's response object, or null when the call
+// never got that far — a missing endpoint, a missing subject token, a
+// refusal. The Tokens panel is attached either way: a tab that appears only
+// on success is a tab a reader stops trusting, and the sentence an empty one
+// carries says which of the two happened.
+function attachTabsToTokenExchangeResults(tokens) {
+  log.debug("Entering attachTabsToTokenExchangeResults().");
+  attachHttpTab({
+    container: "tokenexchange_endpoint_result",
+    prefix: "tokenexchange_result",
+    channel: "tokenexchange",
+    paneIndex: 0,
+    firstTab: "result",
+    firstTabLabel: "Result",
+    label: "Token exchange results",
+    onSelect: selectTokenExchangeResultTab,
+    extraTabs: [
+      { name: "tokens", label: "Tokens",
+        node: tokenExchangeTokensPanel(tokens) } ] });
+  log.debug("Leaving attachTabsToTokenExchangeResults().");
+}
+
+// The Tokens panel: the same rows the Token Endpoint Results pane draws, for
+// the tokens THIS call issued.
+//
+// Two things about it are RFC 8693 rather than layout. The issued token
+// arrives in `access_token` whatever it actually is (section 2.2.1), and
+// `issued_token_type` is the only thing that says which — so the row is
+// labelled by what came back rather than by the member it came in, and that
+// type is shown beside it rather than left for the reader to infer from a
+// token they would have to decode first. And an exchange need not return a
+// refresh token at all (section 2.2.1 lists it as optional and most
+// authorization servers decline to issue one for a delegated token), so its
+// row is drawn only when there is one, exactly as the results pane above
+// draws its own.
+//
+// Nothing caller-supplied is concatenated into this markup: the tokens go in
+// afterwards, by value, through fillGeneratedFields(). See the note on
+// js/xss-through-dom at the top of this file.
+function tokenExchangeTokensPanel(tokens) {
+  log.debug("Entering tokenExchangeTokensPanel().");
+  var node = httpNode("div", null);
+  if (!tokens || !tokens.access_token) {
+    node.appendChild(httpNode("div", "dbg-http-note",
+        "No tokens. This exchange either has not been made yet, or it was " +
+        "refused — the Result tab has what came back, and the HTTP tab has " +
+        "the bytes it came back in."));
+    log.debug("Leaving tokenExchangeTokensPanel(). Nothing issued.");
+    return node;
+  }
+  var html = "<p><em>The tokens this Token Exchange (RFC 8693) call " +
+                 "issued.</em></p>" +
+             "<table>" +
+               "<tr>" +
+                 "<td>" +
+                   '<P><a href="/token_detail.html' +
+                       '?type=tokenexchange_access" ' +
+                       'onclick="oauth2_oidc_2.clickLink()">Issued ' +
+                       'Token</a></P>' +
+                   '<P style="font-size:50%;"><a href="/introspection.html' +
+                       '?type=tokenexchange_access" ' +
+                       'onclick="oauth2_oidc_2.clickLink()">Introspect ' +
+                       'Token</a></P>' +
+                   '<P><input class="btn2 revoke_token_btn" type="button" ' +
+                       'value="Revoke Token" ' +
+                       'data-revoke-type="tokenexchange_access" /></P>' +
+                   '<P><form><input class="btn2" type="submit" ' +
+                       'value="Copy Token" onclick="return ' +
+                       'oauth2_oidc_2.onClickCopyToken' +
+                       "('#tokenexchange_access_token');" + '"/></form></P>' +
+                 "</td>" +
+                 "<td><textarea rows=5 cols=60 readonly " +
+                     "name=tokenexchange_access_token " +
+                     "id=tokenexchange_access_token " +
+                     'data-token-field="access"></textarea></td>' +
+               "</tr>";
+  if (tokens.refresh_token) {
+    html +=      "<tr>" +
+                   "<td>" +
+                     '<P><a href="/token_detail.html' +
+                         '?type=tokenexchange_refresh" ' +
+                         'onclick="oauth2_oidc_2.clickLink()">Refresh ' +
+                         'Token</a></P>' +
+                     '<P style="font-size:50%;"><a href="/introspection.html' +
+                         '?type=tokenexchange_refresh" ' +
+                         'onclick="oauth2_oidc_2.clickLink()">Introspect ' +
+                         'Token</a></P>' +
+                     '<P><input class="btn2 revoke_token_btn" type="button" ' +
+                         'value="Revoke Token" ' +
+                         'data-revoke-type="tokenexchange_refresh" /></P>' +
+                     '<P><form><input class="btn2" type="submit" ' +
+                         'value="Copy Token" onclick="return ' +
+                         'oauth2_oidc_2.onClickCopyToken' +
+                         "('#tokenexchange_refresh_token');" +
+                         '"/></form></P>' +
+                   "</td>" +
+                   "<td><textarea rows=5 cols=60 readonly " +
+                       "name=tokenexchange_refresh_token " +
+                       "id=tokenexchange_refresh_token " +
+                       'data-token-field="refresh"></textarea></td>' +
+                 "</tr>";
+  }
+  if (tokens.id_token) {
+    html +=      "<tr>" +
+                   "<td>" +
+                     '<P><a href="/token_detail.html?type=tokenexchange_id" ' +
+                         'onclick="oauth2_oidc_2.clickLink()">ID ' +
+                         'Token</a></P>' +
+                     '<P style="font-size:50%;">Get <a href="/userinfo.html' +
+                         '?type=tokenexchange_access" ' +
+                         'onclick="oauth2_oidc_2.clickLink()">UserInfo ' +
+                         'Data</a></P>' +
+                     '<P><form><input class="btn2" type="submit" ' +
+                         'value="Copy Token" onclick="return ' +
+                         'oauth2_oidc_2.onClickCopyToken' +
+                         "('#tokenexchange_id_token');" + '"/></form></P>' +
+                   "</td>" +
+                   "<td><textarea rows=5 cols=60 readonly " +
+                       "name=tokenexchange_id_token " +
+                       "id=tokenexchange_id_token " +
+                       'data-token-field="id"></textarea></td>' +
+                 "</tr>";
+  }
+  html +=      "<tr>" +
+                 "<td><strong>Issued Token Type:</strong></td>" +
+                 '<td><input type="text" readonly ' +
+                     'data-token-field="issued_token_type" ' +
+                     'style="width:100%;" /></td>' +
+               "</tr>" +
+               "<tr>" +
+                 "<td><strong>Token Type:</strong></td>" +
+                 '<td><input type="text" readonly ' +
+                     'data-token-field="token_type" ' +
+                     'style="width:100%;" /></td>' +
+               "</tr>" +
+               "<tr>" +
+                 "<td><strong>Expires In:</strong></td>" +
+                 '<td><input type="text" readonly ' +
+                     'data-token-field="expires_in" ' +
+                     'style="width:100%;" /></td>' +
+               "</tr>" +
+               "<tr>" +
+                 "<td><strong>Scope:</strong></td>" +
+                 '<td><input type="text" readonly data-token-field="scope" ' +
+                     'style="width:100%;" /></td>' +
+               "</tr>" +
+             "</table>";
+  node.innerHTML = html;
+  log.debug("Leaving tokenExchangeTokensPanel().");
+  return node;
 }
 
 // Record what is about to go out on a channel, and show it while it is in
@@ -1094,7 +1297,8 @@ function tokenErrorWithoutTrace(jqXHR) {
 var HTTP_CHANNEL_REQUEST_NAME = {
   token: "Token Request",
   refresh: "Refresh Request",
-  viewing: "request"
+  viewing: "request",
+  tokenexchange: "Token Exchange Request"
 };
 
 // Assemble and draw the finished exchange on a channel. Called from both ajax
@@ -2202,7 +2406,7 @@ function resetUI(value)
       recalculateTokenRequestDescription();
       recalculateRefreshRequestDescription();
       $("#h2_title_2").innerHTML = "Obtain Access Token";
-      $("#token_endpoint_result").html("");
+      clearResultPane("#token_endpoint_result");
       $("#display_token_request").show();
       $("#usePKCE-yes").prop("checked", false);
       $("#usePKCE-no").prop("checked", true);
@@ -2231,8 +2435,8 @@ function resetUI(value)
       recalculateTokenRequestDescription();
       recalculateRefreshRequestDescription();
       $("#h2_title_2").html("Obtain Access Token");
-      $("#authorization_endpoint_result").html("");
-      $("#token_endpoint_result").html("");
+      clearResultPane("#authorization_endpoint_result");
+      clearResultPane("#token_endpoint_result");
       $("#display_authz_request_class").hide();
       $("#display_token_request").show();
       displayOpenIDConnectArtifacts = false;
@@ -2289,7 +2493,7 @@ function resetUI(value)
       $("#token_grant_type")
         .val("urn:ietf:params:oauth:grant-type:device_code");
       $("#h2_title_2").html("Exchange Device Code for Access Token");
-      $("#authorization_endpoint_result").html("");
+      clearResultPane("#authorization_endpoint_result");
       $("#display_token_request").show();
       recalculateTokenRequestDescription();
       recalculateRefreshRequestDescription();
@@ -3364,6 +3568,13 @@ function collapseFirstPaneRow() {
 $(document).ready(function() {
   log.debug("Entering document.ready() function.");
 
+  // FIRST, before anything renders into one of them. These five containers
+  // hold a collapsed placeholder pane in the markup so the page has no empty
+  // columns before its first call; this records that markup so a reset can put
+  // it back. Taken here rather than at the point of use because by then one of
+  // them may already hold a result. See PLACEHOLDER_PANES.
+  capturePlaceholderPanes();
+
   if (!appconfig) {
     log.debug('Failed to load appconfig.');
   }
@@ -3870,8 +4081,88 @@ function maybeContinueSdJwtVcFlow() {
 // reports WHO the authenticated user is, and neither is answerable from an
 // access token this service issued: they are opaque to a client, and the
 // identity is in the ID Token.
+// ---------------------------------------------------------------------------
+// HAND THE SESSION TO A WORKFLOW THAT ASKED FOR ONE.
+//
+// **CAEP is a vocabulary about SESSIONS**, and the Shared Signals workflow can
+// now seed one from any of five browser sign-ins rather than from an ID Token
+// alone. This is the OIDC producer, and the only one of the five that also
+// hands over a token set.
+//
+// **THE `sid` CLAIM IS WHAT DECIDES WHETHER THE SESSION IS NAMEABLE.** OpenID
+// Connect Session Management puts the OP's own session identifier there; an OP
+// that issues none leaves a receiver nothing to match, so `sidFromTheWire`
+// follows the claim and not the protocol. Two of the six supported grants
+// issue no ID Token at all, which is not an error path — it is the ordinary
+// case for client credentials and resource owner password — and it arrives
+// here as no claims and is reported as such at the far end.
+// ---------------------------------------------------------------------------
+function offerSessionToHandoff(set) {
+  log.debug("Entering offerSessionToHandoff().");
+  if (!sessionHandoff.isActive()) {
+    log.debug("Leaving offerSessionToHandoff(). Nobody is waiting.");
+    return false;
+  }
+  var idToken = (set && set.idToken) || "";
+  var claims = idToken ? decodeJwtClaims(idToken) : null;
+  if (!claims) {
+    // Delivered ANYWAY, with nothing in it but the protocol. The far page has
+    // a sentence for exactly this and it is a useful one — a grant that
+    // issues no ID Token produced a real session at the OP all the same, and
+    // silence here would read as a hand-off that failed.
+    var bare = sessionHandoff.deliver({ protocol: "oidc" },
+        "the OAuth2 / OIDC workflow");
+    log.debug("Leaving offerSessionToHandoff(). No ID Token. " + bare);
+    return bare;
+  }
+  var delivered = sessionHandoff.deliver({
+    protocol: "oidc",
+    iss: claims.iss || "",
+    sub: claims.sub || "",
+    name: claims.name || claims.preferred_username || claims.email || "",
+    sid: claims.sid || "",
+    sidFromTheWire: !!claims.sid,
+    acr: claims.acr || "",
+    amr: claims.amr,
+    tenant: claims.tid || claims.tenant || ""
+  }, "the OAuth2 / OIDC workflow");
+  log.debug("Leaving offerSessionToHandoff(). " + delivered);
+  return delivered;
+}
+
+// A JWT's claims, WITHOUT verifying anything. This page issued the request
+// that produced the token and is handing its own result on; verifying here
+// would answer a question nothing in this hand-off asks, and the JWT Tools
+// page is where it is asked properly.
+function decodeJwtClaims(token) {
+  log.debug("Entering decodeJwtClaims().");
+  var parts = String(token || "").split(".");
+  if (parts.length < 2) {
+    log.debug("Leaving decodeJwtClaims(). Not a JWT.");
+    return null;
+  }
+  try {
+    var padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    while (padded.length % 4 !== 0) {
+      padded += "=";
+    }
+    var claims = JSON.parse(atob(padded));
+    log.debug("Leaving decodeJwtClaims(). Read.");
+    return claims;
+  } catch (e) {
+    log.debug("Leaving decodeJwtClaims(). " + e.message);
+    return null;
+  }
+}
+
 function offerTokenToHandoff(token, source, set) {
   log.debug("Entering offerTokenToHandoff(). source=" + source);
+  // THE SESSION GOES WITH IT, and it is a separate hand-off because it is a
+  // separate thing: the Shared Signals workflow needs to know what a SESSION
+  // is, which no access token answers. OIDC is the only protocol here whose
+  // sign-in produces both, so this is the one call site that offers both —
+  // and each refuses independently when nothing is waiting on it.
+  offerSessionToHandoff(set);
   if (!tokenHandoff.deliver(token, source, set)) {
     log.debug("Leaving offerTokenToHandoff(). Not delivered.");
     return false;
@@ -3903,6 +4194,27 @@ function offerTokenToHandoff(token, source, set) {
 // The banner itself, put up on load so that a page which is about to send a
 // token somewhere else says so BEFORE the reader runs a grant on it, and
 // reused by offerTokenToHandoff() once there is one to send.
+//
+// It also fills in the SCOPE the waiting workflow asked for, the way
+// oauth2_oidc_1.js does and for the same reason — the field here is a
+// different one and the grants that read it are different, which is the whole
+// reason both pages have to do this:
+//
+//   * `#scope` on page 1 is the AUTHORIZATION request's scope, which is what
+//     the authorization code and the three OIDC flows ask with.
+//   * `#token_scope` here is the TOKEN request's, which is what client
+//     credentials and resource owner password ask with — grants that never
+//     touch page 1 at all, since onload() there sends them straight here.
+//
+// A reader running client credentials would otherwise reach a filled-in
+// banner on a page whose scope field the handoff had never seen.
+//
+// `#refresh_scope` and `#tokenexchange_scope` are deliberately NOT filled.
+// A refresh must ask for the scope of the original grant or a subset of it
+// (RFC 6749 section 6) and empty is how "the same as before" is spelled, so
+// writing the workflow's scopes there could only narrow what a token already
+// carries; and a token exchange is a request for a DIFFERENT token, whose
+// scope is a question about the exchange rather than about the handoff.
 function maybeShowTokenHandoffBanner() {
   log.debug("Entering maybeShowTokenHandoffBanner().");
   if (!tokenHandoff.isActive()) {
@@ -3913,11 +4225,32 @@ function maybeShowTokenHandoffBanner() {
     log.debug("Leaving maybeShowTokenHandoffBanner(). Already shown.");
     return true;
   }
+  var wanted = tokenHandoff.requestedScope();
+  var filled = "";
+  if (wanted && $("#token_scope").length) {
+    filled = tokenHandoff.mergeScope($("#token_scope").val(), wanted);
+    $("#token_scope").val(filled);
+    // A value set in script fires no change event, and the next thing this
+    // reader does is press a button that posts to the token endpoint.
+    writeValuesToLocalStorage();
+  }
   $(".container").prepend("<div class='vc-handoff-banner' " +
       "id='token_handoff_banner'><strong>An access token was asked for by " +
       "<span id='token_handoff_who'></span></strong> — whichever grant " +
-      "returns one first, it is carried back there.</div>");
+      "returns one first, it is carried back there. " +
+      "<span id='token_handoff_scope_note'></span></div>");
   $("#token_handoff_who").text(tokenHandoff.label());
+  // TEXT rather than markup: both of these crossed a page load in session
+  // storage. The note is empty when no scope was asked for, which is every
+  // handoff before the Shared Signals workflow.
+  $("#token_handoff_scope_note").text(wanted
+      ? "It needs the scope \u201c" + wanted + "\u201d" + (filled
+          ? ", so the token request's Scope field now reads \u201c" +
+            filled + "\u201d"
+          : "") + ". Edit it if this authorization server names those " +
+        "permissions differently. If the token came back from an " +
+        "authorization request, the scope that counts is the one page 1 sent."
+      : "");
   log.debug("Leaving maybeShowTokenHandoffBanner(). " +
       tokenHandoff.label());
   return true;
@@ -4678,8 +5011,14 @@ function renderTokenHistory() {
     // Absent or unreadable storage: keep the default.
   }
   if (history.length === 0) {
-    collapsePane("#token-history-panel");
-    log.debug("Leaving renderTokenHistory().");
+    // NOT collapsePane() on its own, which is what this was and why the panel
+    // was invisible rather than collapsed: with no history there is no pane
+    // inside this container to collapse, so hiding "the first fieldset" hides
+    // nothing and the column renders empty. Restoring the placeholder gives it
+    // a titled pane again — which also says, in one line, what will appear
+    // there.
+    clearResultPane("#token-history-panel");
+    log.debug("Leaving renderTokenHistory(). No history.");
     return;
   }
   var activeIndex =
@@ -5009,6 +5348,76 @@ function generateCustomParametersListUI()
 // result panels before their first call — has no fieldset and nothing to
 // collapse, which is not a failure: an empty container occupies its column
 // and shows nothing, which is exactly the state wanted.
+// ---------------------------------------------------------------------------
+// THE FIVE RESULT PANES THAT DO NOT EXIST UNTIL SOMETHING HAS BEEN CALLED.
+//
+// Each of these containers is filled at runtime with a pane BUILT AS A STRING
+// — the Authorization Endpoint's tokens, the token endpoint's, the refresh
+// call's, the set selected out of Token History, and the history itself. Until
+// then the container is empty, and an empty flex child is not a gap: it is a
+// COLUMN with nothing in it, so the page showed a row of three panes with two
+// blanks in it.
+//
+// `collapsePane()` was already being called on all five and could not help.
+// It shows the container and hides the first fieldset INSIDE it — and a
+// container with no pane inside has no fieldset and no legend, so it collapses
+// to nothing at all. That is the difference between COLLAPSED and INVISIBLE,
+// and the fix is not in this function: each container now carries a collapsed
+// PLACEHOLDER pane in oauth2_oidc_2.html, so there is something to collapse.
+//
+// WHAT IS LEFT FOR THE BUNDLE IS PUTTING IT BACK. Four places used to
+// `.html("")` one of these panes away when the grant type changed, which
+// re-opened the same hole a moment after the page had been laid out
+// correctly — and that is why fixing this in the markup alone did not hold.
+// The placeholder is SNAPSHOTTED here at load rather than written out a second
+// time in this file: five titles spelled in two places are five titles that
+// drift, and the markup is the copy a reader can see.
+//
+// Three notes on the snapshot. It is taken BEFORE anything renders, so it
+// captures the placeholder rather than a result. A container that is absent
+// (the page is shared with no one, but a build could drop one) is skipped
+// rather than throwing. And restoring is a no-op when the snapshot is missing,
+// so `clearResultPane()` is always at least as good as the `.html("")` it
+// replaced.
+// ---------------------------------------------------------------------------
+var PLACEHOLDER_PANES = ["#authorization_endpoint_result",
+  "#token_endpoint_result", "#refresh_endpoint_result",
+  "#currently-viewing-panel", "#token-history-panel"];
+
+var placeholderMarkup = {};
+
+function capturePlaceholderPanes() {
+  log.debug("Entering capturePlaceholderPanes().");
+  PLACEHOLDER_PANES.forEach(function (selector) {
+    var host = $(selector);
+    if (host.length === 0) {
+      log.warn("capturePlaceholderPanes(): no " + selector + " on this page, " +
+        "so a reset will leave an empty column where that pane should be.");
+      return;
+    }
+    placeholderMarkup[selector] = host.html();
+  });
+  log.debug("Leaving capturePlaceholderPanes(). " +
+    Object.keys(placeholderMarkup).length + " captured.");
+}
+
+// Empty a result pane back to its placeholder. This is what the four
+// `.html("")` calls became: emptying the container outright is what put the
+// hole back.
+function clearResultPane(selector) {
+  log.debug("Entering clearResultPane(). selector=" + selector);
+  if (placeholderMarkup[selector] === undefined) {
+    // Nothing captured — the page loaded without that container, or this ran
+    // before onload. Emptying is what the old code did, so this is no worse.
+    $(selector).html("");
+    log.debug("Leaving clearResultPane(). No placeholder captured.");
+    return;
+  }
+  $(selector).html(placeholderMarkup[selector]);
+  collapsePane(selector);
+  log.debug("Leaving clearResultPane().");
+}
+
 function paneFieldset(selector) {
   log.debug("Entering paneFieldset(). selector=" + selector);
   var found = $(selector).find("fieldset").first();
@@ -5460,6 +5869,17 @@ function loadTokenForRevocation(type, generation) {
   } else if (type == "refresh_refresh") {
     token = localStorage.getItem("refresh_refresh_token");
     hint = "refresh_token";
+  } else if (type == "tokenexchange_access") {
+    // RFC 8693 section 2.2.1: the issued token arrives in `access_token`
+    // whatever it is, so `access_token` is the hint whatever
+    // `issued_token_type` said. RFC 7009 section 2.1 makes the hint advisory
+    // in any case — a server that does not recognise it must go on and search
+    // the other types.
+    token = localStorage.getItem("tokenexchange_access_token");
+    hint = "access_token";
+  } else if (type == "tokenexchange_refresh") {
+    token = localStorage.getItem("tokenexchange_refresh_token");
+    hint = "refresh_token";
   } else if (type == "history_access" || type == "history_refresh") {
     var history = [];
     try {
@@ -5876,31 +6296,51 @@ function appendFormParam(body, key, value) {
   return (body ? body + "&" : "") + key + "=" + encodeURIComponent(value);
 }
 
+// What the Result tab says between the click and the answer. A constant
+// because two branches write it and the pane is asserted on its text.
+var TOKEN_EXCHANGE_IN_FLIGHT = "Token Exchange request sent. Waiting for a " +
+    "response — the HTTP tab has the request as it went.";
+
+// A refusal made HERE, before anything was sent.
+//
+// The channel is cleared with it, and that is the whole reason this is not
+// three calls to displayTokenExchangeResult(): the previous exchange is still
+// on the channel, so leaving it there would put a 200 under the HTTP tab —
+// and `HTTP · 200` on the tab's own LABEL, which is what a reader sees first
+// — beside a message saying the call was not made at all.
+function refuseTokenExchange(message) {
+  log.debug("Entering refuseTokenExchange().");
+  httpChannelStateFor("tokenexchange").sent = null;
+  renderHttpExchange("tokenexchange", null);
+  setHttpTabLabel("tokenexchange", null);
+  displayTokenExchangeResult(message, true, null);
+  log.debug("Leaving refuseTokenExchange().");
+}
+
 function tokenExchangeButtonClick() {
   log.debug("Entering tokenExchangeButtonClick().");
   writeValuesToLocalStorage();
   recalculateTokenExchangeRequestDescription();
   var formData = buildInternalTokenExchangeRequestMessage();
   if (!formData.token_endpoint) {
-    displayTokenExchangeResult("No token endpoint configured. Populate it " +
-                               "from the discovery document " +
-                               "on the previous page, or enter it manually.",
-                                   true);
+    refuseTokenExchange("No token endpoint configured. Populate it from " +
+                        "the discovery document on the previous page, or " +
+                        "enter it manually.");
     log.debug("Leaving tokenExchangeButtonClick().");
     return false;
   }
   if (!formData.subject_token) {
-    displayTokenExchangeResult("No subject token specified. The subject " +
-                               "token defaults to the most recent " +
-                               "access token; obtain a token first, or paste " +
-                                   "one into the Subject Token field.", true);
+    refuseTokenExchange("No subject token specified. The subject token " +
+                        "defaults to the most recent access token; obtain a " +
+                        "token first, or paste one into the Subject Token " +
+                        "field.");
     log.debug("Leaving tokenExchangeButtonClick().");
     return false;
   }
   if ($("#tokenexchange_delegation").is(":checked") && !formData.actor_token) {
-    displayTokenExchangeResult("Delegation is selected but no actor token " +
-                               "was provided. Enter an actor token, " +
-                               "or switch to Impersonation.", true);
+    refuseTokenExchange("Delegation is selected but no actor token was " +
+                        "provided. Enter an actor token, or switch to " +
+                        "Impersonation.");
     log.debug("Leaving tokenExchangeButtonClick().");
     return false;
   }
@@ -5937,6 +6377,22 @@ function tokenExchangeButtonClick() {
             formData.client_id);
       }
     }
+    // Recorded for the HTTP tab before the request goes, so that a call which
+    // never comes back still shows what left. The headers are the ones this
+    // page CHOSE: the browser adds Origin, Referer and User-Agent itself,
+    // after script has stopped being able to look, and the pane says so
+    // rather than implying this is all of them.
+    noteHttpRequestSent("tokenexchange", {
+      via: "browser",
+      method: "POST",
+      url: formData.token_endpoint,
+      headers: headers,
+      body: bodyParams,
+      bodyNote: "The browser adds Origin, Referer, User-Agent and the rest " +
+          "of its own headers to this request and does not disclose them to " +
+          "script, so they are not listed above.",
+      note: null });
+    displayTokenExchangeResult(TOKEN_EXCHANGE_IN_FLIGHT, false, null);
     $.ajax({
       type: "POST",
       url: formData.token_endpoint,
@@ -5948,12 +6404,31 @@ function tokenExchangeButtonClick() {
     });
   } else {
     log.debug("Using backend to call Token Endpoint for token exchange.");
+    // http_trace asks the api to hand back what it saw of ITS call to the
+    // token endpoint (api/server.js, buildHttpTrace()) — the only way this
+    // page can show a proxied exchange, since the browser is not party to it.
+    // It is a flag for the api and goes no further: that handler builds the
+    // outbound form body out of named parameters, so nothing here reaches the
+    // authorization server.
+    var proxiedBody = JSON.stringify($.extend({}, formData, {
+      http_trace: true }));
+    noteHttpRequestSent("tokenexchange", {
+      via: "api",
+      method: "POST",
+      url: appconfig.apiUrl + "/tokenexchange",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8" },
+      body: proxiedBody,
+      bodyNote: null,
+      note: "Waiting for the api, which is making the Token Exchange " +
+          "request." });
+    displayTokenExchangeResult(TOKEN_EXCHANGE_IN_FLIGHT, false, null);
     $.ajax({
       type: "POST",
       url: appconfig.apiUrl + "/tokenexchange",
       crossDomain: true,
       contentType: "application/json; charset=utf-8",
-      data: JSON.stringify(formData),
+      data: proxiedBody,
       success: successfulTokenExchangeAPICall,
       error: errorTokenExchangeAPICall
     });
@@ -5962,23 +6437,47 @@ function tokenExchangeButtonClick() {
   return false;
 }
 
+// The response with the api's trace taken back OUT of it.
+//
+// The Result tab prints the body verbatim, and on a proxied call that body now
+// carries the whole HTTP trace — up to sixteen kilobytes of it, in a
+// twelve-row textarea, in front of the token the reader came for. The trace
+// has a tab of its own one along, so this hands the Result tab the response
+// without it. It is a re-serialization either way: the api parsed and rebuilt
+// the token endpoint's JSON before the browser ever saw it, and the bytes as
+// they actually arrived are what the HTTP tab draws.
+function tokenExchangeBodyWithoutTrace(data) {
+  log.debug("Entering tokenExchangeBodyWithoutTrace().");
+  if (!data || typeof data !== "object" || Array.isArray(data) ||
+      !data.http_exchange) {
+    log.debug("Leaving tokenExchangeBodyWithoutTrace(). No trace in it.");
+    return data;
+  }
+  var without = $.extend({}, data);
+  delete without.http_exchange;
+  log.debug("Leaving tokenExchangeBodyWithoutTrace(). Trace removed.");
+  return without;
+}
+
 function successfulTokenExchangeAPICall(data, textStatus, jqXHR) {
   log.debug("Entering successfulTokenExchangeAPICall(): data=" +
             JSON.stringify(data) + ", textStatus=" + textStatus);
+  showHttpExchange("tokenexchange", jqXHR, apiHttpExchange(jqXHR, data));
+  var response = tokenExchangeBodyWithoutTrace(data);
   var status = (jqXHR && jqXHR.status) ? jqXHR.status : 200;
   var statusText = (jqXHR && jqXHR.statusText) ? jqXHR.statusText : "";
   var bodyText = "";
   try {
-    bodyText = (typeof data === "string") ? data : JSON.stringify(data, null,
-        2);
+    bodyText = (typeof response === "string") ? response :
+        JSON.stringify(response, null, 2);
   } catch (e) {
-    bodyText = String(data);
+    bodyText = String(response);
   }
   var message = "Token exchange request succeeded.\n" +
                 "HTTP Status: " + status + " " + statusText + "\n" +
                 "Response Body:\n" + (bodyText && bodyText !== "{}" ?
                     bodyText : "(empty)");
-  displayTokenExchangeResult(message, false);
+  displayTokenExchangeResult(message, false, response);
   saveOperationToHistory('Token Exchange', {
     client_id: $("#tokenexchange_client_id").val(),
     detail: $("#tokenexchange_delegation").is(":checked") ?
@@ -5992,7 +6491,11 @@ function errorTokenExchangeAPICall(jqXHR, status, error) {
   log.error("An error occurred calling the token endpoint for token exchange.");
   log.error("status: " + JSON.stringify(status));
   log.error("error: " + JSON.stringify(error));
-  var responseText = (jqXHR && jqXHR.responseText) ? jqXHR.responseText : "";
+  showHttpExchange("tokenexchange", jqXHR, apiHttpExchange(jqXHR, null));
+  // The same removal the success path makes, and it matters more here: a
+  // refusal is the case where the reader is reading the body word by word,
+  // and the api's own trace of the call is what would be in front of it.
+  var responseText = tokenErrorWithoutTrace(jqXHR).responseText;
   var responseObject = {};
   try {
     responseObject = JSON.parse(responseText);
@@ -6006,7 +6509,7 @@ function errorTokenExchangeAPICall(jqXHR, status, error) {
                 "error_description: " + (responseObject.error_description ||
                     "") + "\n" +
                 "Response Body: " + responseText;
-  displayTokenExchangeResult(message, true);
+  displayTokenExchangeResult(message, true, null);
   saveOperationToHistory('Token Exchange', {
     client_id: $("#tokenexchange_client_id").val(),
     detail: ($("#tokenexchange_delegation").is(":checked") ?
@@ -6015,28 +6518,92 @@ function errorTokenExchangeAPICall(jqXHR, status, error) {
   log.debug("Leaving errorTokenExchangeAPICall().");
 }
 
-function displayTokenExchangeResult(message, isError) {
+// Keep the tokens this exchange issued where the pages that act on a token can
+// find them.
+//
+// The three keys are what `token_detail.html`, `introspection.html`,
+// `userinfo.html` and this page's own Revoke button read behind the
+// `tokenexchange_*` types — those pages take a TYPE and resolve it to storage,
+// which is how every other token row on this page works and the only reason
+// its links do anything.
+//
+// It CLEARS as readily as it writes, and that half is the point: an exchange
+// that was refused, or one that has not been made yet, must not leave the
+// previous exchange's token behind a Revoke button on a pane that says the
+// call failed. The token endpoint's own slots are untouched — the subject
+// token this exchange was made WITH is somebody else's row.
+function rememberTokenExchangeTokens(tokens) {
+  log.debug("Entering rememberTokenExchangeTokens().");
+  var issued = (tokens && typeof tokens === "object") ? tokens : {};
+  var fields = {
+    tokenexchange_access_token: issued.access_token,
+    tokenexchange_refresh_token: issued.refresh_token,
+    tokenexchange_id_token: issued.id_token };
+  Object.keys(fields).forEach(function (key) {
+    if (fields[key]) {
+      localStorage.setItem(key, DOMPurify.sanitize(String(fields[key])));
+    } else {
+      localStorage.removeItem(key);
+    }
+  });
+  log.debug("Leaving rememberTokenExchangeTokens().");
+}
+
+// The Token Exchange Results pane: the reported result, the exchange that
+// carried it, and the tokens it issued.
+//
+// `tokens` is the response object when the call reached the authorization
+// server and was answered, and null otherwise — a refusal, or one of the three
+// checks this page makes before sending anything. It decides what the Tokens
+// tab draws and what is kept in storage, and passing it here rather than
+// reading it back off the pane is what keeps those two in step: there is one
+// call site per outcome and none of them can set one without the other.
+//
+// The pane is a `.dbg-pane` with a `data-target` legend like every other
+// generated pane on this page, so the delegated legend handler collapses it
+// with no special case. It was a bare `<fieldset>` with a plain `<legend>`
+// until the tabs arrived, which is why it was the one result pane here that
+// could not be collapsed.
+function displayTokenExchangeResult(message, isError, tokens) {
   log.debug("Entering displayTokenExchangeResult(). isError=" + isError);
   var legend = isError ? "Token Exchange Error" : "Token Exchange Results";
-  var html = "<fieldset>" +
-               "<legend>" + legend + "</legend>" +
-               "<p><em>Most recent result of the Token Exchange (RFC 8693) " +
-                   "call.</em></p>" +
-               "<table>" +
-                 "<tr>" +
-                   "<td>" +
-                     "<textarea rows='12' cols='80' readonly " +
-                         "id='tokenexchange_result_textarea' " +
-                         "name='tokenexchange_result_textarea'></textarea>" +
-                   "</td>" +
-                 "</tr>" +
-               "</table>" +
-             "</fieldset>";
+  var html = '<div class="dbg-pane">' +
+               '<legend class="dbg-legend" ' +
+                   'data-target="tokenexchange_result_fieldset">' + legend +
+                   '</legend>' +
+               '<fieldset id="tokenexchange_result_fieldset">' +
+                 "<p><em>Most recent result of the Token Exchange (RFC 8693) " +
+                     "call.</em></p>" +
+                 "<table>" +
+                   "<tr>" +
+                     "<td>" +
+                       "<textarea rows='12' cols='80' readonly " +
+                           "id='tokenexchange_result_textarea' " +
+                           "name='tokenexchange_result_textarea'></textarea>" +
+                     "</td>" +
+                   "</tr>" +
+                 "</table>" +
+               "</fieldset>" +
+             "</div>";
   $("#tokenexchange_endpoint_result").html(DOMPurify.sanitize(html));
-  // Set the value separately so the (untrusted) token text is never interpreted
-  // as markup.
+  // The pane was just built, so its tabs have to be put on it — with the
+  // exchange showHttpExchange() drew a moment ago, before this pane existed to
+  // draw it in.
+  attachTabsToTokenExchangeResults(tokens);
+  // Set the values separately so the (untrusted) token text is never
+  // interpreted as markup. See fillGeneratedFields() at the top of this file.
   $("#tokenexchange_result_textarea").val(message);
-  $("#tokenexchange_endpoint_result").show();
+  var issued = (tokens && typeof tokens === "object") ? tokens : {};
+  fillGeneratedFields("#tokenexchange_endpoint_result", {
+    access: issued.access_token,
+    refresh: issued.refresh_token,
+    id: issued.id_token,
+    issued_token_type: issued.issued_token_type,
+    token_type: issued.token_type,
+    expires_in: issued.expires_in,
+    scope: issued.scope });
+  rememberTokenExchangeTokens(tokens);
+  expandPane("#tokenexchange_endpoint_result");
   log.debug("Leaving displayTokenExchangeResult().");
 }
 
@@ -6333,6 +6900,7 @@ module.exports = {
   selectRefreshTab,
   selectRefreshResultTab,
   selectCurrentlyViewingTab,
+  selectTokenExchangeResultTab,
   usePKCERFC,
   setPostAuthStyleCheckToken,
   setHeaderAuthStyleCheckToken,

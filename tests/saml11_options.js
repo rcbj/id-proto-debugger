@@ -67,6 +67,7 @@ const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -496,7 +497,7 @@ async function optionActivities(driver) {
   var acs = 'http://localhost:4000/samlacs';
   var sp = 'http://localhost:3000/saml/sp';
 
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
   await waitForBundle(driver);
   // A clean slate: this page persists every field, and a previous job's stored
   // state would otherwise decide half of what is asserted here.

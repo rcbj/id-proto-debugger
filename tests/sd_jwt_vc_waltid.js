@@ -38,6 +38,7 @@ const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
 const browserFlags = require("./browser_flags.js");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -76,6 +77,12 @@ var PRE_AUTHORIZED_GRANT =
     "urn:ietf:params:oauth:grant-type:pre-authorized_code";
 
 const waitForContent = require("./wait_for.js");
+// THE MOCK STS'S CONSENT SCREEN, which since 2026-09-01 stands between a
+// signed-in person and an authorization response the first time a given
+// username, client_id and scope meet. A SHARED MODULE for sts_applications.js's
+// reason: every job here that signs somebody in meets the same hop, and a
+// hand-written copy per job is a chance per job to write the wait wrong.
+const consentScreen = require("./consent_screen.js");
 
 // "The page's bundle has run", which is a different question from "the page's
 // markup is there" and the one that matters before pressing anything: every
@@ -218,7 +225,7 @@ var WRONG_ISSUER = "http://localhost:1/not-the-offering-issuer";
 
 async function misconfigureTheWallet(driver) {
   log.debug("Entering misconfigureTheWallet().");
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
@@ -395,6 +402,11 @@ async function authorizeAtWaltid(driver) {
   await driver.findElement(By.id("username")).sendKeys(clientId);
   await driver.findElement(By.id("password")).sendKeys(clientId);
   await click(driver, By.id("kc-login"));
+  // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
+  // a scope already agreed to in this run, or one carried as a global consent
+  // on the application's entry, draws no screen at all. What asserts the screen
+  // itself is the mock repository's own tests/vendored/sts_consent.js.
+  await consentScreen.passInBrowser(driver, By);
 
   await driver.wait(until.urlContains("vc-issuance-2.html"), fetchWait,
     "after authenticating, the workflow should come back to step 2 " +
@@ -560,7 +572,7 @@ async function checkCredential(driver, what, opts) {
 async function walletInitiated(driver) {
   log.debug("Entering walletInitiated().");
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-0.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-0.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vc_usecase_wallet-initiated")),
                     waitTime);
@@ -636,14 +648,47 @@ async function issuerInitiated(driver) {
 
   // Hand it to the wallet the way the openid-credential-offer link does.
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html?credential_offer=" +
-                   encodeURIComponent(offerParam));
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html?credential_offer=" +
+                        encodeURIComponent(offerParam));
   await driver.wait(until.elementLocated(By.id("pane_offer")), fetchWait,
     "the wallet should show the Credential Offer it was handed.");
-  await driver.wait(async function () {
-    return !!(await value(driver, "authorization_endpoint"));
-  }, fetchWait, "the wallet should discover walt.id and its authorization " +
-      "server from the offer alone.");
+  // WAIT FOR THE WRONG VALUE TO GO, not for the field to be non-empty.
+  //
+  // misconfigureTheWallet() has just PUT a value in this field — that is the
+  // whole point of WRONG_ISSUER above — so `!!value(...)` is satisfied on the
+  // first poll by the value the wait exists to see replaced, and every
+  // assertion below then grades whatever the page happened to have reached.
+  // The three fields do not arrive together: the metadata URL and the
+  // configuration id come straight off the offer, and the authorization
+  // endpoint is two fetches further on, so the vacuous wait passed here for
+  // months and failed on the coverage run of 2026-09-03T03-03 with
+  // `http://localhost:1/not-the-offering-issuer/authorize` — the planted
+  // value, reported as the wallet's answer.
+  //
+  // Waiting for discovery to have MOVED each of them off WRONG_ISSUER keeps
+  // the assertions exactly as strong (they still compare the whole URL) and
+  // makes the wait mean what its message says. waitFor() reports what the
+  // field last held, so a wallet that genuinely never discovers still says so.
+  var DISCOVERED = ["vci_metadata_endpoint", "vci_credential_configuration_id",
+                    "authorization_endpoint"];
+  await waitFor(driver,
+    async function () {
+      var seen = {};
+      for (var i = 0; i < DISCOVERED.length; i++) {
+        seen[DISCOVERED[i]] = await value(driver, DISCOVERED[i]);
+      }
+      return seen;
+    },
+    function (seen) {
+      return DISCOVERED.every(function (id) {
+        return seen[id] && String(seen[id]).indexOf(WRONG_ISSUER) !== 0 &&
+            seen[id] !== "NotTheOfferedCredential";
+      });
+    },
+    "the wallet should discover walt.id and its authorization server from " +
+        "the offer alone, replacing every value this section deliberately " +
+        "misconfigured",
+    fetchWait);
 
   assert.strictEqual(await value(driver, "vci_metadata_endpoint"), metadataUrl,
     "the offer names only the issuer identifier, so the wallet has to derive " +
@@ -741,7 +786,7 @@ async function crossDeviceOffer(driver) {
 
   // ---- the wallet takes what the QR code carried --------------------------
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), waitTime);
   await driver.executeScript(
@@ -853,7 +898,7 @@ async function deferredNotSupportedHere(driver) {
   // endpoint — a wallet that guesses <issuer>/deferred_credential would send a
   // Deferred Credential Request into a 404 the moment an issuer took its time.
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
@@ -941,7 +986,7 @@ async function optionalFeaturesAbsentHere(driver) {
 
   // ---- the wallet's configuration pane says so ---------------------------
   await misconfigureTheWallet(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("vci_metadata_endpoint")),
                     waitTime);
@@ -1015,7 +1060,7 @@ async function optionalFeaturesAbsentHere(driver) {
   }
 
   await signOutOfKeycloak(driver);
-  await driver.get(baseUrl + "/vc-issuance-1.html");
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
   await pageBundleReady(driver);
   await driver.wait(until.elementLocated(By.id("start_issuance_button")),
                     waitTime);

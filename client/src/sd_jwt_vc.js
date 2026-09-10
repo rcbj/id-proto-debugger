@@ -565,21 +565,45 @@ function readHolderPrivateJwk(inputId) {
   log.debug("Entering readHolderPrivateJwk().");
   var stored = getJson(KEYS.HOLDER_PRIVATE_JWK);
   if (stored) {
-    log.debug("Leaving readHolderPrivateJwk().");
+    log.debug("Leaving readHolderPrivateJwk(). From storage.");
     return { jwk: stored, source: "storage", problem: null };
   }
+  log.debug("Leaving readHolderPrivateJwk(). Nothing stored; reading the " +
+            "field.");
+  return pastedHolderPrivateJwk(inputId);
+}
+
+// ONLY what was typed into the field, never what is in storage.
+//
+// This is the half of readHolderPrivateJwk() above that reads the page, split
+// out because `boundPrivateJwk()` needs to ask a different question. That
+// function has ALREADY tested everything in storage against the credential's
+// `cnf`; when it goes on to look at the field it wants the pasted key and
+// nothing else, and a storage-first read there was a defect with two halves:
+//
+//   * a stored holder key that did not match the cnf came back instead of the
+//     field, so a user who pasted the RIGHT key had it ignored and was told
+//     "the pasted key is not the key this credential is bound to" about a key
+//     they had not pasted and which was, in fact, the right one;
+//   * and the branch below that reports what storage holds became unreachable
+//     whenever a holder key was stored, which is the ordinary case.
+//
+// Returns the same shape: { jwk, source, problem }, with source "none" when
+// the field is empty or absent and "pasted" otherwise.
+function pastedHolderPrivateJwk(inputId) {
+  log.debug("Entering pastedHolderPrivateJwk().");
   var e = (typeof document !== "undefined" && inputId) ?
       document.getElementById(inputId) : null;
   var raw = (e && e.value) ? e.value.trim() : "";
   if (!raw) {
-    log.debug("Leaving readHolderPrivateJwk().");
+    log.debug("Leaving pastedHolderPrivateJwk(). The field is empty.");
     return { jwk: null, source: "none", problem: null };
   }
   var parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    log.debug("Leaving readHolderPrivateJwk().");
+    log.debug("Leaving pastedHolderPrivateJwk(). Not JSON.");
     return { jwk: null, source: "pasted",
             problem: "the pasted holder key is not JSON: " + err.message };
   }
@@ -588,12 +612,12 @@ function readHolderPrivateJwk(inputId) {
   // obvious thing to try.
   if (parsed && parsed.privateJwk) parsed = parsed.privateJwk;
   if (!parsed || !parsed.kty || !parsed.d) {
-    log.debug("Leaving readHolderPrivateJwk().");
+    log.debug("Leaving pastedHolderPrivateJwk(). Not a private JWK.");
     return { jwk: null, source: "pasted",
              problem: "that JSON is not a private JWK — it needs at least " +
                  "kty and d" };
   }
-  log.debug("Leaving readHolderPrivateJwk().");
+  log.debug("Leaving pastedHolderPrivateJwk().");
   return { jwk: parsed, source: "pasted", problem: null };
 }
 
@@ -888,12 +912,28 @@ function boundPrivateJwk(cnfJwk, inputId) {
   // Nothing in storage matches. A pasted key may — and it is checked against
   // the cnf too, because a pasted key that is not the bound one produces
   // exactly the same unhelpful verifier complaint.
-  var pasted = readHolderPrivateJwk(inputId);
+  //
+  // pastedHolderPrivateJwk() and NOT readHolderPrivateJwk(): the latter
+  // prefers STORAGE, and every key in storage has just been tested against
+  // this cnf in the loop above. Asking it here handed back the stored key
+  // again — so a user who pasted the right one had it ignored and was told
+  // the key they pasted was wrong, and the "this browser holds N key(s)"
+  // branch below could never be reached while any holder key was stored.
+  var pasted = pastedHolderPrivateJwk(inputId);
   if (pasted.jwk && samePublicKey(publicHalfOf(pasted.jwk), cnfJwk)) {
     log.debug("Leaving boundPrivateJwk(). A pasted key matched the " +
               "credential's cnf.");
     return { jwk: pasted.jwk, source: "pasted", boundTo: "the pasted key",
             problem: null };
+  }
+  // An unreadable paste is reported AS a paste problem rather than falling
+  // through to the storage message below: "that JSON is not a private JWK" is
+  // something the reader can act on, and "this browser holds 1 key(s)" said
+  // over a typo in the field is not.
+  if (pasted.problem) {
+    log.debug("Leaving boundPrivateJwk(). The paste could not be read.");
+    return { jwk: null, source: "pasted", boundTo: "",
+             problem: pasted.problem };
   }
   if (pasted.jwk) {
     log.debug("Leaving boundPrivateJwk().");

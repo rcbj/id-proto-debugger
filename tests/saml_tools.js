@@ -40,6 +40,7 @@ const { Command, Option } = require('commander');
 // Only for its console-noise filter: this file builds its Chrome options by
 // hand (see the secure-origin block in test()) and adds no flags from here.
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1286,7 +1287,7 @@ async function testNoConsoleErrors(driver) {
 async function testToolsPane(driver) {
   log.debug("Entering testToolsPane().");
   log.info("=== SAML Test Tools — Tools pane ===");
-  await driver.get(baseUrl + "/saml_request.html");
+  await loadUrl(driver, baseUrl + "/saml_request.html");
   await driver.wait(until.elementLocated(By.id('pane_tools')), waitTime);
   var link = driver.findElement(By.css('#pane_tools_body ' +
       'a[href^="/saml_tools.html"]'));
@@ -1333,7 +1334,7 @@ async function testToolsPane(driver) {
 async function testResponseToolsPane(driver) {
   log.debug("Entering testResponseToolsPane().");
   log.info("=== SAML Response — Tools pane ===");
-  await driver.get(baseUrl + "/saml_response.html");
+  await loadUrl(driver, baseUrl + "/saml_response.html");
   await driver.wait(until.elementLocated(By.id('pane_tools')), waitTime);
   var link = driver.findElement(By.css('#pane_tools_body ' +
       'a[href^="/saml_tools.html"]'));
@@ -1356,11 +1357,11 @@ async function testResponseToolsPane(driver) {
 // ===========================================================================
 async function samlAssertionActivities(driver) {
   log.debug("Entering samlAssertionActivities().");
-  await driver.get(baseUrl + "/saml_tools.html");
+  await loadUrl(driver, baseUrl + "/saml_tools.html");
   // The page persists everything to localStorage; start from a clean slate so a
   // previous run's attributes or toggles cannot skew the assertions below.
   await driver.executeScript("window.localStorage.clear();");
-  await driver.get(baseUrl + "/saml_tools.html");
+  await loadUrl(driver, baseUrl + "/saml_tools.html");
   await driver.wait(until.elementLocated(By.id('sa_assertion')), waitTime);
 
   await testDefaults(driver);

@@ -31,6 +31,7 @@ const https = require("https");
 const jwt = require("jsonwebtoken");
 const { Command, Option } = require('commander');
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -298,7 +299,7 @@ async function structuredValuesActivities(driver) {
   // the page itself (Populate Meta Data, then the shared storage
   // oauth2_oidc_2.html reads), so this covers the formatting and not just the
   // field type.
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await driver.wait(until.elementLocated(By.id("issuer")), waitTime);
   await driver.executeScript(
     "window.localStorage.clear();" +
@@ -348,7 +349,7 @@ async function structuredValuesActivities(driver) {
   await driver.sleep(500);
   for (const page of ["oauth2_oidc_1.html", "oauth2_oidc_2.html"]) {
     if (page !== "oauth2_oidc_1.html") {
-      await driver.get(baseUrl + "/" + page);
+      await loadUrl(driver, baseUrl + "/" + page);
       await driver.wait(until.elementLocated(By.id("claims_supported")),
                         waitTime);
       await driver.sleep(700);
@@ -462,7 +463,7 @@ async function validateSignature(driver) {
 
 async function openDebugger(driver) {
   log.debug("Entering openDebugger().");
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await driver.wait(until.elementLocated(By.id('metadata_source_rfc8414')),
                     waitTime);
   await driver.sleep(600);
@@ -788,7 +789,7 @@ async function metadataSourceActivities(driver, doc) {
   // ------------------------------------ Both debugger pages carry the
   // identical Configuration Parameters pane over the same storage, so what was
   // populated here must be there too.
-  await driver.get(baseUrl + "/oauth2_oidc_2.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
   await driver.wait(until.elementLocated(By.id("issuer")), waitTime);
   await driver.sleep(700);
   var onTwo = await fieldValues(driver, ["issuer"].concat(RFC8414_ONLY_FIELDS));

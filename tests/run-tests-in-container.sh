@@ -330,16 +330,33 @@ init()
   case "${DEBUGGER_BASE_URL}" in
     https://client:*|http://client:*)
       trustStsCertificate https://sts:8081 || true
+      # THE MANAGEMENT API TOKEN, BEFORE ANYTHING CONFIGURES THE MOCK.
+      #
+      # configureStsRfc9700Realm() below is curl, and the mock closed
+      # /admin-api on 2026-09-09 — so without this it meets 401 twice, reports
+      # the mock as too old to have the realm, and the five rfc9700_flows jobs
+      # are skipped. run-report.js mints one of its own, but it runs after this
+      # and cannot help these two calls; it takes the one exported here when
+      # there is one ("One was handed to this run"), so this is also one mint
+      # rather than two. compose passes the pinned secret to this container as
+      # STS_ADMIN_API_CLIENT_SECRET, which is what admin-api-token.js reads.
+      #
+      # Not fatal on its own account: the function exits the run when a token
+      # is needed and cannot be had, and says nothing at all when the API is
+      # open (adminApi.authRequired=false), which is a stack this repository
+      # did not configure.
+      mintAdminApiToken https://sts:8081
       if configureStsRfc9700Realm https://sts:8081;
       then
         RFC9700_STS_URL="${RFC9700_STS_URL:-https://sts:8081/realm/rfc9700}"
         export RFC9700_STS_URL
       else
         echo "The mock STS has no RFC 9700 trust realm, so the five RFC 9700"
-        echo "flow jobs will be SKIPPED. The likeliest cause is an sts/"
+        echo "flow jobs will be SKIPPED. The likeliest causes are an sts/"
         echo "submodule older than \`realmRuntime\` on oauth2.rfc9700 — before"
         echo "that the mode could only be given to a whole process, which is"
-        echo "what the deleted sts-rfc9700 container was for. See"
+        echo "what the deleted sts-rfc9700 container was for — and a 401,"
+        echo "which is mintAdminApiToken() above having minted nothing. See"
         echo "docs/rfc9700.md. (tests/rfc9700_client.js is unaffected — it"
         echo "needs no service at all and runs either way.)"
       fi

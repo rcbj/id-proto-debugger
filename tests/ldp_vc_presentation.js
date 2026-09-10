@@ -27,6 +27,7 @@ const path = require("path");
 const browserFlags = require("./browser_flags.js");
 const common = require("./jwt_vc_json_common.js");
 const { Command, Option } = require("commander");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -142,14 +143,14 @@ async function startsFromTheWalletsOwnPages(driver, held) {
   log.debug("Entering startsFromTheWalletsOwnPages().");
   log.info("=== Starting a presentation from the wallet's pages, not a " +
            "hand-built URL ===");
-  await driver.get(baseUrl + "/vc-presentation-0.html");
+  await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
   await pageBundleReady(driver);
   await driver.executeScript(
     "window.localStorage.clear();" +
     "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
     "localStorage.setItem('sdjwtvp_verifier_base_url', arguments[1]);",
     JSON.stringify(held.credential), verifierBase);
-  await driver.get(baseUrl + "/vc-presentation-0.html");
+  await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
   await pageBundleReady(driver);
   await driver.sleep(900);
 
@@ -159,7 +160,7 @@ async function startsFromTheWalletsOwnPages(driver, held) {
   // buttons happens to work with the credential they hold.
   var flows = ["same-device", "same-device-signed", "cross-device"];
   for (var i = 0; i < flows.length; i++) {
-    await driver.get(baseUrl + "/vc-presentation-0.html");
+    await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
     await pageBundleReady(driver);
     await driver.sleep(700);
     var buttonId = "vp_usecase_" + flows[i];
@@ -210,7 +211,7 @@ async function startsFromTheWalletsOwnPages(driver, held) {
   // Take the same-device one all the way, and let the verifier's own page
   // decide what to put in the request. Nothing below is constructed by this
   // test.
-  await driver.get(baseUrl + "/vc-presentation-0.html");
+  await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
   await pageBundleReady(driver);
   await driver.sleep(700);
   await driver.executeScript(
@@ -291,14 +292,14 @@ async function refusesAFormatItCannotAnswer(driver) {
         "NOT ldp_vc.");
   const request = await freshRequest();
 
-  await driver.get(baseUrl + "/vc-presentation-1.html");
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html");
   await pageBundleReady(driver);
   await driver.executeScript(
     "window.localStorage.clear();" +
     "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
     "localStorage.setItem('sdjwtvp_verifier_base_url', arguments[1]);",
     sdJwt.credential, verifierBase);
-  await driver.get(baseUrl + "/vc-presentation-1.html?" + request.query);
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" + request.query);
   await driver.sleep(1200);
 
   var state = await driver.executeScript(
@@ -352,14 +353,14 @@ async function test() {
   var driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
   try {
-    await driver.get(baseUrl + "/vc-presentation-1.html");
+    await loadUrl(driver, baseUrl + "/vc-presentation-1.html");
     await pageBundleReady(driver);
     await driver.executeScript(
       "window.localStorage.clear();" +
       "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
       "localStorage.setItem('sdjwtvp_verifier_base_url', arguments[1]);",
       JSON.stringify(held.credential), verifierBase);
-    await driver.get(baseUrl + "/vc-presentation-1.html?" + request.query);
+    await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" + request.query);
     await waitForStatus(driver, "vp_request_status",
                         function (s) { return /Request read/.test(s); },
       "step 1 should read an ldp_vc request", stepWait);
@@ -369,7 +370,7 @@ async function test() {
     await driver.sleep(800);
 
     log.info("=== Step 2: selection is over canonical statements ===");
-    await driver.get(baseUrl + "/vc-presentation-2.html");
+    await loadUrl(driver, baseUrl + "/vc-presentation-2.html");
     await pageBundleReady(driver);
     await driver.wait(until.elementLocated(By.id("vp_presentation")), stepWait);
     const envelope = await waitForValue(driver, "vp_presentation",
@@ -432,7 +433,7 @@ async function test() {
     // A second presentation of the SAME credential must produce different
     // bytes.
     const second = await freshRequest();
-    await driver.get(baseUrl + "/vc-presentation-1.html?" + second.query);
+    await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" + second.query);
     await waitForStatus(driver, "vp_request_status",
                         function (s) { return /Request read/.test(s); },
       "step 1 should read the second request", stepWait);
@@ -440,7 +441,7 @@ async function test() {
         "var b=document.getElementById('vp_continue_button'); if (b) " +
         "b.click();");
     await driver.sleep(800);
-    await driver.get(baseUrl + "/vc-presentation-2.html");
+    await loadUrl(driver, baseUrl + "/vc-presentation-2.html");
     await pageBundleReady(driver);
     await driver.wait(until.elementLocated(By.id("vp_presentation")), stepWait);
     const envelope2 = await waitForValue(driver, "vp_presentation",

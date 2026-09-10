@@ -2,10 +2,8 @@ const { Builder, By, until } = require("selenium-webdriver");
 const { Select } = require('selenium-webdriver/lib/select');
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -1888,7 +1886,7 @@ async function testHbs(driver) {
 async function digitalSignatureActivities(driver) {
   log.debug("Entering digitalSignatureActivities().");
   log.info("Load the Digital Signature page.");
-  await driver.get(baseUrl + "/digital_signature.html");
+  await loadUrl(driver, baseUrl + "/digital_signature.html");
   await waitForValue(driver, By.id("ds_value"),
                      function (v) { return v.length > 0; },
     "Digital Signature page did not load / defaults not populated.");
@@ -1918,20 +1916,12 @@ async function digitalSignatureActivities(driver) {
 async function test() {
   log.debug("Entering test().");
   // This test clicks keystore-download buttons. On host runs (local/remote) the
-  // browser is the user's real Chrome, whose default download dir is
-  // ~/Downloads. Point downloads at a throwaway temp dir (removed below) so
-  // nothing lands in the home directory; the test only asserts on the in-page
-  // status, never the downloaded file, so the location is irrelevant to the
-  // checks.
-  const downloadDir = fs.mkdtempSync(path.join(os.tmpdir(),
-      "idptools-selenium-dl-"));
+  // browser is the user's real Chrome, whose default download directory is
+  // ~/Downloads, so without this the run writes key pairs into the developer's
+  // home directory. addStsTrustFlags() below points them at a throwaway
+  // directory instead — see section (6) of browser_flags.js — and the test
+  // only asserts on the in-page status, never on the downloaded file.
   const options = new chrome.Options();
-  options.setUserPreferences({
-    "download.default_directory": downloadDir,
-    "download.prompt_for_download": false,
-    "download.directory_upgrade": true,
-    "safebrowsing.enabled": true,
-  });
   if (headless) options.addArguments("--headless=new");
   options.addArguments("--no-sandbox");
   // Use /tmp instead of the container's tiny (64MB) /dev/shm, which otherwise
@@ -1966,15 +1956,9 @@ async function test() {
   const driver = await new Builder().forBrowser("chrome")
       .setChromeOptions(options).build();
 
-  // Belt-and-suspenders: also pin the download dir via CDP (independent of the
-  // profile prefs, which a custom --user-data-dir can bypass), so downloads
-  // never fall back to ~/Downloads.
-  try {
-    await driver.sendDevToolsCommand("Browser.setDownloadBehavior",
-      { behavior: "allow", downloadPath: downloadDir, eventsEnabled: false });
-  } catch (e) {
-    /* older Chrome/driver — the user-preferences download dir applies */
-  }
+  // Belt-and-suspenders: say the same thing to the browser that is already
+  // running, independent of the profile preference.
+  await browserFlags.pinDownloadDir(driver);
 
   // process.exit() is synchronous termination, so it would skip the finally
   // below and orphan the browser — and one headless Chrome is ~15 processes,
@@ -1991,11 +1975,6 @@ async function test() {
     testFailed = true;
   } finally {
     await driver.quit();
-    try {
-      fs.rmSync(downloadDir, { recursive: true, force: true });
-    } catch (e) {
-      /* ignore */
-    }
   }
   if (testFailed) {
     log.debug("Leaving test(). Failed.");

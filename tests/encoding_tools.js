@@ -5,6 +5,7 @@ const chrome = require("selenium-webdriver/chrome");
 const crypto = require("crypto");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -532,7 +533,7 @@ async function encodingToolsActivities(driver) {
   log.debug("Entering encodingToolsActivities().");
   log.info("Open the Encoding / Hashing Tools page via the debugger " +
            "Tools pane.");
-  await driver.get(baseUrl + "/oauth2_oidc_1.html");
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
   await click(driver, By.id("tools_expand_button"));
   var link = By.css('a[href="/encoding_tools.html?from=oauth2_oidc_1.html"]');
   await driver.wait(until.elementLocated(link), waitTime);

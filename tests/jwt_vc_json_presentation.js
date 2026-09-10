@@ -34,6 +34,7 @@ const crypto = require("crypto");
 const browserFlags = require("./browser_flags.js");
 const common = require("./jwt_vc_json_common.js");
 const { Command, Option } = require("commander");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -123,8 +124,8 @@ async function presentThroughThePages(driver, held) {
         "them. Got: " +
     JSON.stringify(dcql.credentials[0].claims[0].path));
 
-  await driver.get(baseUrl + "/vc-presentation-1.html?" +
-                   request.location.split("?")[1]);
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" +
+                        request.location.split("?")[1]);
   await waitForStatus(driver, "vp_request_status",
                       function (s) { return /Request read/.test(s); },
     "step 1 should read a jwt_vc_json request", stepWait);

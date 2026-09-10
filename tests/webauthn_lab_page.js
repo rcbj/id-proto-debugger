@@ -38,6 +38,7 @@ const assert = require("assert");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { waitForFocus } = require("./wait_for.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -130,7 +131,7 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    // "=new", never bare --headless: the image pins Chrome 121, where the old
+    // "=new", never bare --headless: the image pinned Chrome 121, where the old
     // headless implementation ignores
     // --unsafely-treat-insecure-origin-as-secure and so leaves this page with
     // no navigator.credentials at all.
@@ -149,7 +150,7 @@ async function test() {
 
   let authenticatorId = null;
   try {
-    await driver.get(baseUrl + "/webauthn.html");
+    await loadUrl(driver, baseUrl + "/webauthn.html");
     await driver.wait(until.elementLocated(By.id("wl_create_button")),
                       waitTime * 4);
     await driver.executeScript("localStorage.clear();");

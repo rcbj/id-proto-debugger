@@ -5,6 +5,7 @@ const chrome = require("selenium-webdriver/chrome");
 const jwt = require("jsonwebtoken");
 const assert = require("assert");
 const { Command, Option } = require('commander');
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -175,7 +176,7 @@ async function test() {
     // "=new", not bare --headless. This page fetches the discovery document
     // itself, from a Keycloak that is http://keycloak:8080 on the
     // containerized stack while the page is now https — and the OLD headless
-    // implementation in the Chrome 121 this image pins IGNORES
+    // implementation in the Chrome 121 this image pinned IGNORES
     // --allow-running-insecure-content, so that XHR is blocked with
     // readyState 4 / status 0 and no console entry naming mixed content.
     // What the test then reports is a missing Populate button. See section 1
@@ -228,7 +229,7 @@ async function test() {
     // Load the debugger, populate IdP metadata from discovery, and initiate the
     // device authorization request.
     log.info("Kicking off test.");
-    await driver.get(baseUrl + "/oauth2_oidc_1.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_1.html");
     log.info("Calling populateMetadata().");
     await populateMetadata(driver, discovery_endpoint);
 
@@ -260,7 +261,7 @@ async function test() {
     // Return to the debugger (device_code persists in local storage) and poll
     // the token endpoint for the access token.
     log.info("Returning to the debugger to obtain the access token.");
-    await driver.get(baseUrl + "/oauth2_oidc_2.html");
+    await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
     const token_btn = By.className("token_btn");
     await driver.wait(until.elementLocated(By.id("device_code")), waitTime);
     await driver.wait(async () => {

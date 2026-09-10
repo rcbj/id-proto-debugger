@@ -64,16 +64,58 @@ window.onload = function()
   log.debug("Leaving onload().");
 }
 
+// THE `claims` PANE IS A TEXTAREA AND THE WIRE IS NOT.
+//
+// OIDC Core section 5.5 makes `claims` a JSON object carried as a request
+// PARAMETER, and the default this page seeds is pretty-printed so that a
+// person can read and edit it. Whitespace is not part of a JSON document, and
+// the newlines and indentation are exactly what must not go on the wire: a
+// newline in a query parameter's value is a CONTROL CHARACTER in the request
+// line, which is how a value becomes a second header, a second log line or a
+// second directory query — so a hardened authorization server refuses the
+// whole request rather than the parameter, and answers 400 naming `claims`
+// while everything about the token and the endpoint is perfectly correct.
+// (The mock STS began refusing exactly that on 2026-09-09, which is how this
+// was found.)
+//
+// So the document is re-serialized COMPACT for the request and the pane is
+// left alone. Text that is not JSON at all is sent as it was typed, minus any
+// control character — somebody deliberately testing what a server does with a
+// malformed `claims` is a thing this page is FOR, and only the characters that
+// would make it a different request are taken out.
+function compactClaims(text)
+{
+  log.debug("Entering compactClaims().");
+  var raw = String(text || "");
+  try {
+    var parsed = JSON.parse(raw);
+    log.debug("Leaving compactClaims(). Re-serialized.");
+    return JSON.stringify(parsed);
+  } catch (e) {
+    log.debug("Leaving compactClaims(). Not JSON; sent as typed.");
+    return raw.replace(/[\u0000-\u001F\u007F]/g, "");
+  }
+}
+
+// EVERY VALUE IS ENCODED ON ITS OWN, with encodeURIComponent() rather than
+// encodeURI() over the assembled string. encodeURI() leaves `&`, `=`, `+`,
+// `?` and `#` alone by design — it is for a whole URL — so a claims document
+// or a scope containing any of them silently became extra parameters.
+//
+// `query_string` is also rebuilt from empty every time. It is module state and
+// was only ASSIGNED when a scope was set, so with no scope a second call
+// appended a second `claims` to the first.
 function recalculateUserInfoURL()
 {
   log.debug("Entering recalculateUserInfoURL() function.");
+  var parts = [];
   if(!!userinfo_scope) {
-    query_string = 'scope=' + userinfo_scope;
+    parts.push('scope=' + encodeURIComponent(userinfo_scope));
   }
   if(!!userinfo_claims) {
-    query_string += '&claims=' + userinfo_claims;
+    parts.push('claims=' + encodeURIComponent(compactClaims(userinfo_claims)));
   }
-  query_string = encodeURI(query_string);
+  query_string = parts.join('&');
   log.debug("Leaving recalculateUserInfoURL(): query_string=" + query_string);
 }
 
@@ -583,6 +625,11 @@ function loadValuesFromLocalStorage()
       }
     } else if (type === 'refresh_access_token') {
       token_access_token = localStorage.getItem('refresh_access_token');
+    } else if (type === 'tokenexchange_access') {
+      // The token a Token Exchange (RFC 8693) call issued, which is the one
+      // whose UserInfo answer is worth reading: an impersonated token names a
+      // different subject from the one that was exchanged for it.
+      token_access_token = localStorage.getItem('tokenexchange_access_token');
     } else {
       token_access_token = localStorage.getItem("token_access_token");
     }

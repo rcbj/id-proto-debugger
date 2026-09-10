@@ -1986,6 +1986,7 @@ app.post('/revoke', (req, res) => {
  * @property {string} client_id - The OAuth2 client identifier
  * @property {string} client_secret - The client secret for a confidential client
  * @property {boolean} sslValidate - Validate the token endpoint SSL/TLS certificate
+ * @property {boolean} http_trace - Also return the HTTP exchange with the token endpoint, for display
  */
 
 /**
@@ -2043,6 +2044,24 @@ app.post('/tokenexchange', (req, res) => {
     const parameterString = parameters.join('&');
     var tokenEndpoint = body.token_endpoint;
     var sslValidate = body.sslValidate;
+    // The HTTP trace this call is to be shown with, if the caller asked for
+    // one. Opt-in per call, exactly as POST /token's is and for the same
+    // reason: the trace repeats the request verbatim, Authorization header
+    // and all. See buildHttpTrace().
+    const wantsTrace = body.http_trace === true || body.http_trace === 'true';
+    // Filled in by the transform below, on the way past axios's JSON parse.
+    // Per call, so two exchanges in flight cannot see each other's bodies.
+    var received = {
+      raw: null };
+    const sentHeaders = withUserAgent(headers);
+    const sentRequest = {
+      method: 'POST',
+      url: tokenEndpoint,
+      // What actually goes out, including the User-Agent this service adds
+      // and the Authorization header it may have built.
+      headers: sentHeaders,
+      body: parameterString };
+    const startedAt = Date.now();
     log.debug("Making Token Exchange call to Token Endpoint.");
     log.debug("POST " + tokenEndpoint);
     log.debug("Headers: " + JSON.stringify(headers));
@@ -2050,11 +2069,12 @@ app.post('/tokenexchange', (req, res) => {
     axios({
       method: 'post',
       url: tokenEndpoint,
-      headers: withUserAgent(headers),
+      headers: sentHeaders,
       data: parameterString,
       timeout: CALL_TIMEOUT,
       maxContentLength: MAX_CONTENT_LENGTH,
       maxRedirects: MAX_REDIRECTS,
+      transformResponse: [captureRawBody(received)],
       httpAgent: outboundHttpAgent(),
       httpsAgent: outboundHttpsAgent(sslValidate)
     })
@@ -2062,7 +2082,10 @@ app.post('/tokenexchange', (req, res) => {
       log.debug('Response from OAuth2 Token Endpoint (token exchange): ' +
                 JSON.stringify(response.data));
       res.status(response.status);
-      res.json(response.data);
+      res.json(withHttpTrace(response.data,
+                             buildHttpTrace(sentRequest, response,
+                                            received.raw, startedAt, null),
+                             wantsTrace));
     })
     .catch(function (error) {
       log.error('Error from OAuth2 Token Endpoint (token exchange): ' + error);
@@ -2075,11 +2098,25 @@ app.post('/tokenexchange', (req, res) => {
                     JSON.stringify(error.response.data));
         }
         res.status(error.response.status);
-        res.json(error.response.data);
+        // A refusal is an exchange like any other, and RFC 8693 section 2.2.2
+        // makes it the one most worth reading: an exchange is refused for
+        // what the SUBJECT token is, and the reason is in the body.
+        res.json(withHttpTrace(error.response.data,
+                               buildHttpTrace(sentRequest, error.response,
+                                              received.raw, startedAt, null),
+                               wantsTrace));
       } else {
+        // No response at all: a timeout, a refused connection, a body past
+        // maxContentLength, a blocked address. There is nothing to trace and
+        // that IS the trace — the request that went out, why nothing came
+        // back, and how long it took to fail.
         res.status(STATUS_500);
-        res.json({
-          error: error.message });
+        res.json(withHttpTrace({
+          error: error.message },
+          buildHttpTrace(sentRequest, null, null, startedAt,
+                         (error && error.message) ? error.message :
+                             String(error)),
+          wantsTrace));
       }
     });
   } catch (e) {

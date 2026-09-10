@@ -83,6 +83,47 @@
   .jt-compose-top { flex-direction: column; }
 }
 
+/* "Load from file" under the Encoded JWT. One compact line: the checkbox and
+   its label, with the file chooser appearing beside them only when ticked. */
+.jt-file-load {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+/* A checkbox that reads as one line of its own: "Load from file" here, and
+   "Validate the full certificate trust chain" in the Sign pane. Both reveal a
+   control that is hidden until asked for. */
+.jt-inline-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  font-size: 0.72em;
+  font-weight: 600;
+  color: #333;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.jt-inline-check input[type="checkbox"] {
+  margin: 0;
+  vertical-align: middle;
+}
+.jt-file-load input[type="file"] {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  font-size: 0.72em;
+}
+/* Said out loud rather than left to the UA stylesheet: the rules here are
+   author rules, and a later one that gave these elements a display would beat
+   [hidden] and leave the control on screen with its box unticked. */
+.jt-file-load input[type="file"][hidden],
+.jt-field[hidden] {
+  display: none;
+}
+
 .jt-field { margin: 0 0 8px; }
 .jt-field > label {
   display: block;

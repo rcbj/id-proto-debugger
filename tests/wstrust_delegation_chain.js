@@ -202,6 +202,7 @@ const assert = require("assert");
 const { DOMParser } = require("@xmldom/xmldom");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const consoleSignin = require("./console_signin.js");
 const waitFor = require("./wait_for.js");
 const { loadPage } = require("./page_load.js");
 const common = require("./jwt_vc_json_common.js");
@@ -1188,54 +1189,22 @@ function assertGraphIsAChain(graph) {
 
 // ---------------------------------------------------------------------------
 // A browser sign-on session for the CONSOLE, which only the drawings and the
-// lineage need. The three-step dance is the one a browser does and is copied
-// from the mock's own `admin_api.js`, which explains it at length (readable
-// here as sts/tests/vendored/admin_api.js).
+// lineage need. The walk itself is `console_signin.js` — five hops and two
+// cookies since the mock made `/admin` a relying party of its own
+// authorization server — and it is shared with `oauth2_delegation_chain.js`
+// because both jobs read pages off that console and neither should carry a
+// copy of somebody else's sign-in flow.
 //
-// Returns the cookie, or null when the gate is off (a legitimate state — the
-// setting is switchable — reported rather than treated as a pass) or when the
-// roster has been narrowed by some other job and this user holds nothing.
+// Returns the Cookie header, or null when the gate is off (a legitimate state
+// — the setting is switchable — reported rather than treated as a pass) or
+// when the walk did not complete.
 // ---------------------------------------------------------------------------
 async function signInToTheConsole() {
   log.debug("Entering signInToTheConsole().");
-  const base = stsBase();
-  const gated = await fetch(base + "/admin/delegation", { redirect: "manual" });
-  if (gated.status !== 302) {
-    log.info("[console] admin.authRequired is off (GET /admin/delegation " +
-             "answered " + gated.status + " with no redirect), so the " +
-             "drawings need no session.");
-    log.debug("Leaving signInToTheConsole(). The gate is off.");
-    return null;
-  }
-  const where = gated.headers.get("location") || "";
-  const authn = (where.match(/[?&]authn=([^&]+)/) || [])[1];
-  if (!authn) {
-    log.warn("[console] a gated GET was sent to \"" + where + "\", which " +
-             "carries no authn id, so there is nothing to sign in FOR. The " +
-             "drawings are skipped; the assertions do not need them.");
-    log.debug("Leaving signInToTheConsole(). No authn id.");
-    return null;
-  }
-  const body = "authn_id=" + encodeURIComponent(authn) +
-      "&username=" + encodeURIComponent(CONSOLE_USER) +
-      "&password=" + encodeURIComponent(CONSOLE_USER);
-  const signedIn = await fetch(base + "/authn/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body,
-    redirect: "manual",
-  });
-  const setCookie = signedIn.headers.get("set-cookie") || "";
-  const session = (setCookie.match(/(sts_mock_session=[^;]+)/) || [])[1];
-  if (!session) {
-    log.warn("[console] signing in at /authn/login answered " +
-             signedIn.status + " and set no session cookie (\"" + setCookie +
-             "\"). The drawings are skipped.");
-    log.debug("Leaving signInToTheConsole(). No cookie.");
-    return null;
-  }
-  log.info("[console] signed in as " + CONSOLE_USER + " for the drawings.");
-  log.debug("Leaving signInToTheConsole(). Holding a session.");
+  const session = await consoleSignin.signInToTheConsole(stsBase(),
+      CONSOLE_USER, log);
+  log.debug("Leaving signInToTheConsole(). " +
+      (session ? "Holding a session." : "No session."));
   return session;
 }
 
@@ -1344,7 +1313,7 @@ async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
   if (headless) {
-    // "=new", not bare --headless: the tests image pins Chrome 121, where the
+    // "=new", not bare --headless: the tests image pinned Chrome 121, where the
     // old headless implementation ignores
     // --unsafely-treat-insecure-origin-as-secure. See tests/browser_flags.js.
     options.addArguments("--headless=new");

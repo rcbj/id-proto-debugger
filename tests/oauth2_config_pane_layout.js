@@ -43,6 +43,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
+const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -218,7 +219,7 @@ async function thePaneHoldsItsFields(driver, page) {
   log.debug("Entering thePaneHoldsItsFields(). " + page);
   for (const width of WIDTHS) {
     await driver.manage().window().setRect({ width: width, height: 900 });
-    await driver.get(baseUrl + "/" + page);
+    await loadUrl(driver, baseUrl + "/" + page);
     // Wait on the field itself rather than on the fieldset: the pane is
     // collapsed on arrival on page 2, and a collapsed pane still contains
     // everything. See tests/CLAUDE.md on waiting for content.

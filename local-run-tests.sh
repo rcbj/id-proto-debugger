@@ -667,6 +667,16 @@ startDocker()
   # answering plain http on 8081 is somebody else's mock.
   requireStsReachable https https://localhost:8081/healthcheck sts
   check_return_code $?
+  # ANSWERING ON 8081 IS NOT THE WHOLE ANSWER, because that process binds three
+  # more ports and only the first one is fatal to it. The SPIFFE gRPC listeners
+  # are optional to that service: it logs EADDRINUSE at level 50 and carries
+  # on, so a stranger on 8092 or 8181 leaves a stack that is healthy by every
+  # check above and three SPIFFE jobs that spend the run driving somebody
+  # else's SPIRE server. That is what happened on 2026-09-01 — two red tests
+  # naming an authorization rule and a TLS chain, and a third green against the
+  # stranger. This asks the mock which of its listeners bound.
+  requireStsSpiffeListeners https://localhost:8081 sts
+  check_return_code $?
 
   # ------------------------------------------------------------------------
   # THE CERTIFICATE, AND THEN THE RFC 9700 REALM. Both need the service to be
@@ -688,6 +698,10 @@ startDocker()
   # server by name, so a realm that half-worked cannot pass quietly.
   # ------------------------------------------------------------------------
   trustStsCertificate https://localhost:8081 || true
+  # The mock's /admin-api takes an access token since the 2026-09-09
+  # submodule bump. Minted here, before anything configures that
+  # service, and reaches the test scripts through NODE_OPTIONS.
+  mintAdminApiToken https://localhost:8081
   if configureStsRfc9700Realm https://localhost:8081;
   then
     RFC9700_STS_URL=https://localhost:8081/realm/rfc9700
@@ -913,6 +927,10 @@ runSamlOnly()
     # fatal: a job that meets an untrusted certificate says so itself, and its
     # message names the certificate.
     trustStsCertificate https://localhost:8081 || true
+  # The mock's /admin-api takes an access token since the 2026-09-09
+  # submodule bump. Minted here, before anything configures that
+  # service, and reaches the test scripts through NODE_OPTIONS.
+  mintAdminApiToken https://localhost:8081
   fi
   if [ "${SAML_ONLY_IDP}" != "sts" ];
   then
@@ -984,7 +1002,8 @@ runSamlOnly()
 # Declaring it makes the run exercise the DECLARED path, which is the one a real
 # deployment uses; leaving it undeclared would mean the fallback is what is
 # tested and nothing would say so. It goes through /admin-api, which is the
-# management API and is deliberately NOT behind that console's gate.
+# management API and takes an access token of its own rather than the console's
+# session — mintAdminApiToken() has one by the time this runs.
 #
 # Failures here are reported and NOT fatal: the fallback is correct for this
 # stack, so a mock started without the API reachable should still run the test
@@ -996,11 +1015,15 @@ declareStsLogoutService()
   local slo="${SAML_STS_SLO_URL:-https://localhost:4000/samlslo}"
   curl -sS -o /dev/null -X POST "${api}/register" \
     -H 'Content-Type: application/json' \
+    ${STS_ADMIN_API_TOKEN:+-H \
+      "Authorization: Bearer ${STS_ADMIN_API_TOKEN}"} \
     -d "{\"sp\":\"${SAML_SP_ENTITY_ID}\"}" \
     || echo "NOTE: could not register the service provider on the mock STS; it" \
             "will be created by the first AuthnRequest anyway." >&2
   curl -sS -o /dev/null -X POST "${api}/set-logout-service" \
     -H 'Content-Type: application/json' \
+    ${STS_ADMIN_API_TOKEN:+-H \
+      "Authorization: Bearer ${STS_ADMIN_API_TOKEN}"} \
     -d "{\"sp\":\"${SAML_SP_ENTITY_ID}\",\"value\":\"${slo}\"}" \
     || echo "NOTE: could not declare the SingleLogoutService on the mock STS." \
             "The LogoutResponse will go to the assertion consumer service URL" \
@@ -1058,6 +1081,10 @@ runDelegationOnly()
   # happen before the test runs. Not fatal: the test says so itself, and its
   # message names the certificate.
   trustStsCertificate https://localhost:8081 || true
+  # The mock's /admin-api takes an access token since the 2026-09-09
+  # submodule bump. Minted here, before anything configures that
+  # service, and reaches the test scripts through NODE_OPTIONS.
+  mintAdminApiToken https://localhost:8081
 
   # Where the drawings go. Named here rather than left to the test's default so
   # that the path printed below and the path written to are the same string.
@@ -1247,6 +1274,10 @@ runFederationOnly()
   # screens and the browser-direct Token Request), so both anchors have to be in
   # place before it runs. Not fatal: the test says so itself.
   trustStsCertificate https://localhost:8081 || true
+  # The mock's /admin-api takes an access token since the 2026-09-09
+  # submodule bump. Minted here, before anything configures that
+  # service, and reaches the test scripts through NODE_OPTIONS.
+  mintAdminApiToken https://localhost:8081
 
   export DEBUGGER_BASE_URL CONFIG_FILE WSTRUST_STS_URL
   local rc=0
@@ -1397,6 +1428,10 @@ runWsfedOnly()
     # fatal: a job that meets an untrusted certificate says so itself, and its
     # message names the certificate.
     trustStsCertificate https://localhost:8081 || true
+  # The mock's /admin-api takes an access token since the 2026-09-09
+  # submodule bump. Minted here, before anything configures that
+  # service, and reaches the test scripts through NODE_OPTIONS.
+  mintAdminApiToken https://localhost:8081
   fi
 
   export DEBUGGER_BASE_URL CONFIG_FILE KEYCLOAK_BASE_URL

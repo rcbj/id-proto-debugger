@@ -82,6 +82,39 @@
 // on ITS OWN arithmetic wants it — tests/CLAUDE.md's "assert on your own
 // litter" — and only for an identifier no other job shares, because forgetting
 // one out from under a job running concurrently deletes that job's evidence.
+//
+// ---------------------------------------------------------------------------
+// AND SINCE 2026-09-01, THE SECOND HALF: WHAT ONE APPLICATION MAY REACH ON
+// ANOTHER.
+//
+// Everything above is about ONE entry. `delegate()` — down at the bottom of
+// this file, behind a header of its own — is about a PAIR, and it is the step
+// this suite was not taking at all: wherever a job asks for an access token
+// whose audience is anything other than its own client_id, the target
+// application exposes an API (a base URI and, by default, `read` and `write`)
+// and the asking application is GRANTED those permissions, before the browser
+// starts.
+//
+// The old spelling still works and is not going anywhere: a scope naming the
+// TARGET'S BARE client_id becomes that token's audience, which is what
+// `oauth2_delegation_chain.js` sends and what the deployments this suite
+// copies actually do. Read it as the DEFAULT permissions — the whole API,
+// unnamed. What is new beside it is a permission that has a name, so that
+// `https://apigw1.example.com/read` and `https://apigw1.example.com/write` are
+// two different asks and a register can tell them apart.
+//
+// It is pre-registration for a refusal that does not exist yet.
+// `oauth2.delegatedPermissionsEnforced` is off in the mock, so today every one
+// of these grants changes nothing about what is issued — which is precisely
+// why they have to be made now rather than when the flag goes on: a suite that
+// only ever ran against the permissive default cannot tell a service that
+// consulted the register from one that has no register.
+//
+// **OAuth 2.0 and OIDC ONLY, deliberately.** Kerberos and WS-Trust delegate
+// too — S4U2Proxy off `msDS-AllowedToDelegateTo`, `OnBehalfOf`/`ActAs` off
+// nothing at all — and neither is wired to this register. Their turn is a
+// later change and the model will not be this one, because a delegated
+// permission is an OAuth scope and those two families have no scopes.
 // ---------------------------------------------------------------------------
 
 // The log level comes from the same configuration everything else here reads. A
@@ -570,6 +603,428 @@ function assertMatches(entry, identifier, protocols, fields) {
   log.debug("Leaving assertMatches().");
 }
 
+// ---------------------------------------------------------------------------
+// DELEGATED PERMISSIONS: WHAT ONE APPLICATION MAY REACH ON ANOTHER, GRANTED
+// BEFORE ANYTHING ASKS FOR IT.
+//
+// Everything above puts ONE application in the registry. This half is about a
+// PAIR of them, and it is the second thing a deployment configures and the
+// first thing this suite was not configuring at all.
+//
+// WHAT IT IS, IN THE MOCK'S OWN MODEL (which is Microsoft Entra ID's, by name).
+// A RESOURCE application exposes an API: a base URI
+// (`oauthPermissionBaseUri`, Entra's Application ID URI) and a list of
+// permission names (`oauthPermission`, Entra's `oauth2PermissionScopes`). A
+// CLIENT application is granted some of them
+// (`oauthDelegatedPermission`, Entra's `requiredResourceAccess`). A permission
+// is identified by the two joined — `https://apigw1.example.com/` and `read`
+// make `https://apigw1.example.com/read` — and a client asks for it by putting
+// that whole string in an ordinary OAuth `scope`. The token that comes back is
+// AUDIENCED to the base and carries the bare name on its `scope` claim, which
+// is what lets a resource server check `aud` once and then read permission
+// names.
+//
+// ---------------------------------------------------------------------------
+// FIVE THINGS TO KNOW BEFORE CALLING ANY OF THIS.
+//
+// **READ AND WRITE, UNLESS SOMEBODY SAID OTHERWISE.** `DEFAULT_PERMISSIONS` is
+// the answer to "which permissions?" everywhere in this suite that does not
+// have a reason of its own. Two rather than one, because a single permission
+// cannot show the difference between a grant that was CONSULTED and a grant
+// that was assumed — a client holding `read` and asking for `write` is the
+// case an enforcing service has to get right, and it does not exist on a
+// resource that exposes one permission.
+//
+// **THE ORDERING IS NOT NEGOTIABLE AND IT IS THE SERVICE'S RULE, NOT THIS
+// FILE'S.** A permission must be DEFINED on the resource before it can be
+// GRANTED to a client: `applications.updateApplication()` refuses an
+// `oauthDelegatedPermission` naming a permission no entry defines, and it says
+// so by name. `delegate()` therefore does both halves in one call and in that
+// order — which is why it exists at all, rather than callers making two.
+//
+// **DEFINING IS NOT IDEMPOTENT AND GRANTING IS.** Adding a value already on an
+// entry answers `ok` with `changed: false` everywhere in this registry — that
+// is what makes `provision()` safe to repeat and safe to race. `define-
+// permission` is the ONE exception: a second permission of the same NAME is
+// REFUSED rather than merged, because a permission has one description and two
+// rows under one name would leave the second unreachable. So a re-run, a
+// second job, or a stack that has not restarted meets that refusal every time
+// and it means "it is already there" — it is reconciled here exactly the way
+// `create` refusing a known identifier is, and every OTHER refusal still fails
+// the job.
+//
+// **THE NORMALISED BASE IS REGISTERED AS AN AUDIENCE TOO, and that is the
+// non-obvious line in `expose()`.** `oauthPermissionBaseUri` and
+// `oauthAudience` are two different attributes read by two different lookups —
+// `forPermission()` resolves a scope, `forAudience()` resolves the `aud` of an
+// act when the delegation register files it — and the mock matches an audience
+// EXACTLY. A permission base is normalised (a trailing separator is added
+// where there is none) and an `oauthAudience` is not, so a resource registered
+// as `https://apigw1.example.com` and exposing permissions under
+// `https://apigw1.example.com/` would have every permission-scoped token filed
+// against a URL that no application answers to — a box in the delegation map
+// with a URL for a label, next to the box for the application it IS. Adding
+// the normalised base to `oauthAudience` closes that, and it is additive: the
+// spelling the resource already registered stays exactly where it was.
+//
+// **THE GRANT REFUSES NOTHING YET, AND PRE-REGISTERING IT IS THE POINT.**
+// `oauth2.delegatedPermissionsEnforced` is OFF by default in the mock, so an
+// ungranted permission is honoured, recorded as ungranted and drawn as such.
+// A suite that only ever ran against the default therefore cannot tell a
+// service that consulted the register from one that has no register — which is
+// the same argument the header at the top of this file makes about
+// registration itself, one attribute further on. The flag is coming; the
+// grants are made now so that turning it on is a setting rather than a
+// migration.
+// ---------------------------------------------------------------------------
+
+// The permissions a delegation gets when the caller names none. See the note
+// above about why it is two.
+var DEFAULT_PERMISSIONS = ["read", "write"];
+
+// The mock's own normalisation, and it must stay the mock's: a permission
+// identifier is a plain concatenation, so `https://example.com` + `read` would
+// otherwise read as one word. `/`, `#` and `:` all already separate, which is
+// what lets `api://<guid>:` — Entra's spelling — through unchanged.
+function permissionBaseOf(value) {
+  log.debug("Entering permissionBaseOf(). value=" + value);
+  var text = String(value === undefined || value === null ? "" : value).trim();
+  if (!text) {
+    log.debug("Leaving permissionBaseOf(). Nothing.");
+    return "";
+  }
+  var base = /[/#:]$/.test(text) ? text : text + "/";
+  log.debug("Leaving permissionBaseOf(). " + base);
+  return base;
+}
+
+// The whole identifier a client puts in a `scope`, and the whole identifier a
+// grant names. One function, because the two must not be spelled twice.
+function permissionIdOf(baseUri, name) {
+  log.debug("Entering permissionIdOf(). name=" + name);
+  var base = permissionBaseOf(baseUri);
+  var leaf = String(name === undefined || name === null ? "" : name).trim();
+  var id = (base && leaf) ? base + leaf : "";
+  log.debug("Leaving permissionIdOf(). " + id);
+  return id;
+}
+
+// The configured register, both directions, as the service holds it:
+// `resources`, `permissions`, `grants`, `counts` and the graph the console
+// draws. There is no per-application query on this endpoint, so it is read
+// whole and filtered here.
+async function permissionsRegister(base) {
+  log.debug("Entering permissionsRegister(). base=" + base);
+  var register = await adminGet(base, "/permissions");
+  log.debug("Leaving permissionsRegister(). " +
+            ((register.grants || []).length) + " grant(s).");
+  return register;
+}
+
+// One of the five actions, with the sentence a caller needs when it is
+// refused. `tolerate` is a regular expression for the ONE refusal that means
+// "somebody already did this" — see the note above about `define-permission`
+// being the exception to idempotence.
+async function permissionsAction(base, action, body, what, tolerate) {
+  log.debug("Entering permissionsAction(). action=" + action);
+  var result = await adminPost(base, "/permissions/" + action, body);
+  if (result.ok) {
+    log.debug("Leaving permissionsAction(). ok.");
+    return result;
+  }
+  var errors = result.errors || [JSON.stringify(result)];
+  var already = tolerate && errors.some(function (one) {
+    return tolerate.test(String(one));
+  });
+  assert.ok(already,
+    "POST " + base + "/admin-api/permissions/" + action + " refused " + what +
+    ": " + JSON.stringify(errors) + ". A refusal naming the ACTION rather " +
+    "than the application means this mock STS predates delegated permissions " +
+    "(added 2026-09-01) and the sts/ submodule needs bumping; a refusal " +
+    "naming the ordering means the permission was granted before it was " +
+    "defined, which delegate() exists to make impossible.");
+  log.debug("Leaving permissionsAction(). Already done.");
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// THE RESOURCE HALF: this application exposes an API.
+//
+//   await registry.expose(stsBase, {
+//     resource: "apigw1",
+//     baseUri: "https://apigw1.example.com",
+//     why: "the API the browser application's token is presented to"
+//   });
+//
+// `permissions` defaults to read and write. What comes back is what a client
+// will have to ask for — the normalised base and one `{ name, id }` per
+// permission — so a caller composing a scope has it without spelling the
+// concatenation again.
+// ---------------------------------------------------------------------------
+async function expose(base, spec) {
+  log.debug("Entering expose(). resource=" + (spec && spec.resource));
+  if (!base) {
+    log.debug("Leaving expose(). No mock STS base; nothing to expose.");
+    return null;
+  }
+  assert.ok(spec && spec.resource,
+    "expose() needs a resource — the identifier of the application that " +
+    "EXPOSES the API, not the one that will ask for it.");
+  var resource = String(spec.resource);
+  var baseUri = permissionBaseOf(spec.baseUri);
+  assert.ok(baseUri,
+    "expose() needs a baseUri for \"" + resource + "\". It becomes the `aud` " +
+    "of every access token asking for one of its permissions, so it has to " +
+    "be absolute — a relative one is an audience nothing can compare " +
+    "against, and the service refuses it by name.");
+  var names = (spec.permissions && spec.permissions.length)
+      ? spec.permissions.map(String) : DEFAULT_PERMISSIONS.slice(0);
+  var describe = spec.descriptions || {};
+
+  if (!(await registryAvailable(base))) {
+    log.warn("[permissions] the mock STS at " + base + " publishes no " +
+             "applications registry, so \"" + resource + "\" is NOT being " +
+             "given permissions and this job runs the way it did before " +
+             "delegated permissions existed. Bump the sts/ submodule to " +
+             "close this.");
+    log.debug("Leaving expose(). No registry.");
+    return null;
+  }
+
+  await permissionsAction(base, "set-permission-base",
+    { resource: resource, baseUri: baseUri },
+    "the base URI " + baseUri + " on \"" + resource + "\"", null);
+
+  var exposed = [];
+  for (var i = 0; i < names.length; i++) {
+    await permissionsAction(base, "define-permission",
+      { resource: resource, name: names[i],
+        description: describe[names[i]] || defaultDescription(names[i],
+                                                              resource) },
+      "the permission \"" + names[i] + "\" on \"" + resource + "\"",
+      /already defines a permission called/i);
+    exposed.push({ name: names[i], id: permissionIdOf(baseUri, names[i]) });
+  }
+
+  // THE AUDIENCE, so that a token addressed to this API resolves back to this
+  // APPLICATION rather than to a URL. See the fourth note in the header above
+  // — this is the line that is not obvious, and it is additive.
+  var registered = await adminPost(base, "/applications/add", {
+    application: resource, attribute: "oauthAudience", value: baseUri
+  });
+  assert.ok(registered.ok,
+    "registering the audience " + baseUri + " on \"" + resource + "\" was " +
+    "refused: " + JSON.stringify(registered.errors || registered) + ". " +
+    "Without it a token audienced to this API is filed in the delegation " +
+    "register against the URI instead of against the application, and the " +
+    "map draws a box for a URL beside the box for the application it is.");
+
+  log.info("[permissions] \"" + resource + "\" exposes " +
+           exposed.map(function (one) { return one.id; }).join(", ") +
+           (spec.why ? " — " + spec.why : "") + ".");
+  log.debug("Leaving expose(). " + exposed.length + " permission(s).");
+  return { resource: resource, baseUri: baseUri, permissions: exposed };
+}
+
+// The prose a permission carries when the caller wrote none. It is read by a
+// person looking at /admin/delegation, so it says which application and which
+// verb rather than repeating the identifier that is already in the column
+// beside it.
+function defaultDescription(name, resource) {
+  log.debug("Entering defaultDescription(). name=" + name);
+  var what = name === "read" ? "Read" : (name === "write" ? "Change" : name);
+  var description = what + " what \"" + resource + "\" holds, on behalf of " +
+      "the signed-in user";
+  log.debug("Leaving defaultDescription().");
+  return description;
+}
+
+// ---------------------------------------------------------------------------
+// THE CLIENT HALF: this application holds those permissions.
+//
+// It lands on the CLIENT's entry, because the client is the party that will
+// name the permission in a `scope` — so the entry that answers "may this
+// request be honoured" is the entry the request identifies.
+// ---------------------------------------------------------------------------
+async function grantPermissions(base, spec) {
+  log.debug("Entering grantPermissions(). client=" + (spec && spec.client));
+  if (!base) {
+    log.debug("Leaving grantPermissions(). No mock STS base.");
+    return null;
+  }
+  assert.ok(spec && spec.client,
+    "grantPermissions() needs a client — the application whose client_id " +
+    "will be on the token request, not the one exposing the API.");
+  var client = String(spec.client);
+  var ids = (spec.permissionIds || []).map(String);
+  if (!ids.length) {
+    var baseUri = permissionBaseOf(spec.baseUri);
+    var names = (spec.permissions && spec.permissions.length)
+        ? spec.permissions.map(String) : DEFAULT_PERMISSIONS.slice(0);
+    ids = names.map(function (one) {
+      return permissionIdOf(baseUri, one);
+    });
+  }
+  assert.ok(ids.length && ids.every(Boolean),
+    "grantPermissions() was given nothing to grant \"" + client + "\". Pass " +
+    "permissionIds, or a baseUri the names hang off.");
+
+  for (var i = 0; i < ids.length; i++) {
+    await permissionsAction(base, "grant-permission",
+      { client: client, permission: ids[i] },
+      "the grant of \"" + ids[i] + "\" to \"" + client + "\"", null);
+  }
+  log.info("[permissions] \"" + client + "\" is granted " + ids.join(", ") +
+           ".");
+  log.debug("Leaving grantPermissions(). " + ids.length + " grant(s).");
+  return ids;
+}
+
+// ---------------------------------------------------------------------------
+// BOTH HALVES, IN THE ONE ORDER THAT WORKS, AND READ BACK.
+//
+//   await registry.delegate(stsBase, {
+//     client: "webapp1",
+//     resource: "apigw1",
+//     baseUri: "https://apigw1.example.com",
+//     why: "the browser application presents its token to the gateway"
+//   });
+//
+// `baseUri` may be omitted, and then it is READ OFF THE RESOURCE'S OWN ENTRY —
+// the first `oauthAudience` it registered, which is what a token aimed at it
+// is already addressed to. A resource that has registered none is a failure
+// with the sentence that says so, rather than a base invented from its name:
+// an invented one would produce permissions nothing in the run ever asks for
+// and a register that looks configured.
+// ---------------------------------------------------------------------------
+async function delegate(base, spec) {
+  log.debug("Entering delegate(). client=" + (spec && spec.client) +
+            ", resource=" + (spec && spec.resource));
+  if (!base) {
+    log.debug("Leaving delegate(). No mock STS base; nothing to delegate.");
+    return null;
+  }
+  assert.ok(spec && spec.client && spec.resource,
+    "delegate() needs a client and a resource — who is asking, and whose API " +
+    "they are asking for. They are deliberately two names rather than one " +
+    "pair, because a body naming the wrong one still succeeds and writes the " +
+    "grant onto the API instead of onto its caller.");
+  var client = String(spec.client);
+  var resource = String(spec.resource);
+  assert.notStrictEqual(client, resource,
+    "\"" + client + "\" cannot be granted its own permission: the token " +
+    "would be addressed to itself, which is what an ID Token already is. The " +
+    "service refuses it, and a suite that asked for it is describing a " +
+    "delegation that has no second party.");
+
+  var baseUri = permissionBaseOf(spec.baseUri || await audienceOf(base,
+                                                                  resource));
+  assert.ok(baseUri,
+    "delegate() has no base URI for \"" + resource + "\" and its entry " +
+    "registers no `oauthAudience` to take one from. Pass `baseUri` — it " +
+    "becomes the `aud` of every token asking for one of its permissions, so " +
+    "it is the deployment's own statement about where that API answers and " +
+    "not something this module may invent from an identifier.");
+  var names = (spec.permissions && spec.permissions.length)
+      ? spec.permissions.map(String) : DEFAULT_PERMISSIONS.slice(0);
+
+  var exposed = await expose(base, {
+    resource: resource, baseUri: baseUri, permissions: names,
+    descriptions: spec.descriptions, why: spec.why
+  });
+  if (!exposed) {
+    log.debug("Leaving delegate(). Nothing exposed, so nothing granted.");
+    return null;
+  }
+  var ids = await grantPermissions(base, {
+    client: client, permissionIds: exposed.permissions.map(function (one) {
+      return one.id;
+    })
+  });
+
+  await assertDelegated(base, client, resource, ids);
+  log.info("[permissions] \"" + client + "\" may reach \"" + resource +
+           "\" as " + ids.join(", ") +
+           (spec.why ? " — " + spec.why : "") + ".");
+  log.debug("Leaving delegate().");
+  return { client: client, resource: resource, baseUri: exposed.baseUri,
+           permissionIds: ids };
+}
+
+// The first audience a resource has registered, for a caller that named none.
+// Read off the entry rather than off the permission register, because a
+// resource that exposes nothing yet is not in that register at all — which is
+// exactly the state the first call to delegate() meets.
+async function audienceOf(base, resource) {
+  log.debug("Entering audienceOf(). resource=" + resource);
+  var entry = await entryOf(base, resource);
+  var registered = valuesOf(entry && entry.fields &&
+                            entry.fields.oauthAudience);
+  log.debug("Leaving audienceOf(). " + registered.length + " audience(s).");
+  return registered.length ? registered[0] : "";
+}
+
+// ---------------------------------------------------------------------------
+// WHAT THE REGISTER MUST NOW SAY, asserted against the service's own answer
+// rather than against the writes'.
+//
+// CONTAINMENT again, and for the reason the header at the top of this file
+// gives: a resource reconciled from an earlier run legitimately exposes more
+// than this job asked for, and another client legitimately holds the same
+// permissions. What must be true is that every permission this job is about to
+// rely on is DEFINED by the resource it named and HELD by the client that will
+// ask — and that no grant of it is `dangling`, which is the state a grant
+// reaches when its permission was removed from under it and the one state that
+// looks configured on the client's own entry and resolves to nothing.
+// ---------------------------------------------------------------------------
+async function assertDelegated(base, client, resource, ids) {
+  log.debug("Entering assertDelegated(). client=" + client);
+  var register = await permissionsRegister(base);
+  var defined = (register.permissions || []).filter(function (one) {
+    return one.resource === resource;
+  });
+  var held = (register.grants || []).filter(function (one) {
+    return one.client === client;
+  });
+  ids.forEach(function (id) {
+    assert.ok(defined.some(function (one) { return one.id === id; }),
+      "\"" + resource + "\" should expose the permission " + id + " and the " +
+      "register says it exposes [" +
+      defined.map(function (one) { return one.id || "(no identifier)"; })
+        .join(", ") + "]. A permission with no identifier is one whose base " +
+      "URI was removed from under it, and no client can ask for it.");
+    var grant = held.filter(function (one) {
+      return one.permissionId === id;
+    })[0];
+    assert.ok(grant,
+      "\"" + client + "\" should hold " + id + " and the register says it " +
+      "holds [" + held.map(function (one) { return one.permissionId; })
+        .join(", ") + "]. This is the grant the run is about to rely on, so " +
+      "an entry without it is an entry describing a different client.");
+    assert.ok(!grant.dangling,
+      "\"" + client + "\" holds " + id + " and the register calls it " +
+      "DANGLING, which means no application defines it — the resource's " +
+      "permission or its base URI went away after the grant was made. The " +
+      "grant is on the entry and resolves to nothing, which is the one shape " +
+      "of this configuration that reads as correct and is not.");
+  });
+  log.debug("Leaving assertDelegated(). " + ids.length + " checked.");
+}
+
+// Several delegations, in order and for `provisionAll()`'s reason. The order
+// matters more here than it does there: two of them may name the same resource,
+// and `expose()` writing the base URI twice is a no-op only because the writes
+// do not overlap.
+async function delegateAll(base, specs) {
+  log.debug("Entering delegateAll(). " + (specs || []).length + " spec(s).");
+  var made = [];
+  for (var i = 0; i < (specs || []).length; i++) {
+    made.push(await delegate(base, specs[i]));
+  }
+  log.debug("Leaving delegateAll().");
+  return made;
+}
+
 // Several applications, in order. Sequential rather than concurrent on purpose:
 // they are three or four sub-second calls each, and a Promise.all here would
 // interleave writes to one registry for no gain that anybody would notice.
@@ -592,5 +1047,17 @@ module.exports = {
   provisionAll: provisionAll,
   entryOf: entryOf,
   forget: forget,
-  valuesOf: valuesOf
+  valuesOf: valuesOf,
+  // The delegated permission half. `delegate()` is the one every caller
+  // wants; the other four are here for a job that needs one side of it alone
+  // — a resource nobody has been granted anything on yet, or a grant of a
+  // permission some other job defined.
+  DEFAULT_PERMISSIONS: DEFAULT_PERMISSIONS,
+  permissionBaseOf: permissionBaseOf,
+  permissionIdOf: permissionIdOf,
+  permissionsRegister: permissionsRegister,
+  expose: expose,
+  grantPermissions: grantPermissions,
+  delegate: delegate,
+  delegateAll: delegateAll
 };

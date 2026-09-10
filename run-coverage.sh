@@ -282,6 +282,67 @@ mkdir -p coverage/frontend/.nyc_output coverage/api coverage/node \
     tests/report || true
 chmod -R 0777 coverage tests/report || true
 
+# ---------------------------------------------------------------------------
+# RAW COVERAGE FROM EARLIER RUNS IS DELETED, and it is deleted because nyc
+# MERGES whatever it finds rather than reporting on this run.
+#
+# The browser half of this report is not written by a process that finishes —
+# each instrumented page POSTs its window.__coverage__ to the client server on
+# a one-second interval, and the server writes every POST as its own file
+# under coverage/frontend/.nyc_output, named with a timestamp AND a random
+# suffix so no two collide. Nothing removed one until 2026-09-03. `npx nyc
+# report` at the end of the run then reads the WHOLE directory, so the number
+# printed for this run is the union of this run and every run whose files are
+# still there — and the merged ratchet in tests/coverage_merge.js reads that
+# same lcov.
+#
+# Measured on 2026-09-03: 21,086 files and 14 GB going back to 2026-08-27,
+# six runs' worth, and about six minutes of the wall clock spent rendering
+# them. A line covered only by a test that was DELETED a week ago still
+# counted, which is the part that matters.
+#
+# THIS RUN ONLY, and a week's retention was the wrong answer — this is the
+# 2026-09-10 correction. What that kept was not a safety net but a second set
+# of books: the floors in tests/coverage_floors.json are WRITTEN from a local
+# run, which merged up to six runs' browser data, and CHECKED in GitHub
+# Actions, where the runner is new and the directory holds exactly one run. So
+# the frontend floor was recorded at 74.1% and no clean run has ever reached
+# it — the PR of 2026-09-10 measured 70.1 in CI against 72.3 on a developer's
+# machine, for the same tree, and the 2.2 points between them were 2,818
+# snapshots left by a run of a DIFFERENT tree a week earlier. A number a run
+# cannot reproduce on its own is not a floor.
+#
+# The rationale for keeping a week does not survive being checked either: it
+# said other launchers write into this directory, and none does. The
+# instrumented bundles and the beacon exist only under the coverage overlay
+# (docker-compose-coverage.yml, COVERAGE=true), so ./docker-run-tests.sh and
+# ./local-run-tests.sh ship no browser coverage at all and have nothing to
+# lose here. The other two domains were already per-run — c8 writes
+# coverage/node/tmp and coverage/api/tmp fresh — which is why frontend was the
+# one domain whose local and CI numbers disagreed.
+#
+# COVERAGE_RETENTION_DAYS is still honoured for somebody who wants the old
+# behaviour for an afternoon (a flaky job's gap filled by its neighbours):
+# set it and files younger than that many days are kept. Unset, or 0, means
+# this run only. Best-effort for the reason the chmod above is: a file left by
+# a container running as another uid is not worth aborting a suite over.
+# ---------------------------------------------------------------------------
+COVERAGE_RETENTION_DAYS="${COVERAGE_RETENTION_DAYS:-0}"
+if [ "${COVERAGE_RETENTION_DAYS}" = "0" ];
+then
+  echo "Removing raw coverage from earlier runs (this run only)."
+  find coverage/frontend/.nyc_output coverage/node/tmp coverage/api/tmp \
+      -type f -print -delete 2>/dev/null \
+      | wc -l | xargs echo "Removed raw coverage file(s):" || true
+else
+  echo "Pruning raw coverage older than ${COVERAGE_RETENTION_DAYS} day(s)." \
+       "The report will be the UNION of this run and every kept one, which" \
+       "is not what tests/coverage_floors.json is calibrated against."
+  find coverage/frontend/.nyc_output coverage/node/tmp coverage/api/tmp \
+      -type f -mtime "+${COVERAGE_RETENTION_DAYS}" -print -delete 2>/dev/null \
+      | wc -l | xargs echo "Pruned raw coverage file(s):" || true
+fi
+
 # Tear the stack down on ANY exit, including the early ones the checks below can
 # take. The normal path downs the stack itself after rendering the report and
 # clears this flag, so it is not done twice.
@@ -364,10 +425,50 @@ echo "API (Node) coverage:         ./coverage/api/index.html"
 # the paths the modules were loaded from and only that filesystem has them.
 echo "Node (in-process) coverage:  ./coverage/node/index.html"
 
+# ---------------------------------------------------------------------------
+# THE FOURTH THING, AND IT IS THE ONE TO READ: the three domains merged into one
+# number and one ranked list, plus the ratchet.
+#
+# Those three reports do not reconcile, and until this ran, ranking the files by
+# what any one of them called uncovered pointed at the wrong work — the failure
+# COVERAGE.md documents for the third domain, fixed there for the TOTAL and
+# never for the FILE LIST. On the 2026-08-29 run `common/xmldsig.js` headed BOTH
+# the frontend list (594 uncovered, 45.4%) and the api list (1,475, 33.7%) and
+# was 86.8% covered once the three were merged: whoever wrote tests off either
+# list would have written tests that already existed. See tests/coverage_merge.js.
+#
+# ON THE HOST, and it can only be here. The three lcov files land on this bind
+# mount and the containers that could read them are gone by now — the stack was
+# torn down two commands ago, deliberately, because ./coverage/api is not
+# written until c8 flushes on the api container's clean stop. The script takes
+# no dependency for the same reason: a checkout need not have installed
+# tests/node_modules to have run this launcher.
+#
+# --check IS A GATE and its exit code is kept, but it must not overwrite a
+# failing suite's: a coverage regression reported in place of a red test is a
+# report about the wrong thing, and the tests are the stronger signal. So it
+# only decides the exit code of a run whose tests all passed.
+# ---------------------------------------------------------------------------
+COVERAGE_RC=0
+if command -v node >/dev/null 2>&1;
+then
+  node "${CURRENT_DIR}/tests/coverage_merge.js" --check
+  COVERAGE_RC=$?
+  echo "Merged coverage:             ./coverage/merged/summary.json"
+else
+  echo "WARNING: node is not on the PATH, so the three reports were not" \
+       "merged and the coverage floors were not checked. Every number" \
+       "printed above is one domain's view; see COVERAGE.md."
+fi
+
 # Propagate the suite result as this script's exit code.
 if [ "${TEST_RC}" -ne 0 ]; then
   echo "Test suite FAILED (exit ${TEST_RC})."
-else
-  echo "Test suite passed."
+  exit ${TEST_RC}
 fi
-exit ${TEST_RC}
+echo "Test suite passed."
+if [ "${COVERAGE_RC}" -ne 0 ]; then
+  echo "Coverage is below a floor in tests/coverage_floors.json."
+  exit ${COVERAGE_RC}
+fi
+exit 0
