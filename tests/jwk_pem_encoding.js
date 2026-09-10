@@ -934,6 +934,7 @@ function testsImageHasNoCollidingFilenames() {
   log.info("[collisions] OK — " + total + " files are copied flat into the tests image, every " +
     "one has a unique name, and every script run-report schedules is among them.");
   stsModuleClosureIsCopied(dockerfile);
+  testsImageCopiesTheRequireClosure(dockerfile);
   flatCopiedModulesHaveTheirPackages(dockerfile);
   log.debug("Leaving testsImageHasNoCollidingFilenames().");
 }
@@ -1004,7 +1005,7 @@ function stsRequiresIn(file, source) {
                                  sourceType: "script",
                                  allowReturnOutsideFunction: true });
   } catch (e) {
-    log.warn("[sts-closure] " + file + " did not parse (" + e.message +
+    log.warn("[closure] " + file + " did not parse (" + e.message +
              "); treating every require in it as load-time.");
     const re = /require\((['"])(\.\.?\/[A-Za-z0-9_.\/-]+)\)/g;
     let m;
@@ -1167,6 +1168,184 @@ function stsModuleClosureIsCopied(dockerfile) {
     "modules are copied and every relative require among them resolves " +
     "inside the image.");
   log.debug("Leaving stsModuleClosureIsCopied().");
+}
+
+// ---------------------------------------------------------------------------
+// AND THE SAME WALK OVER THIS SUITE'S OWN MODULES, WHICH IS THE HALF THAT WAS
+// MISSING UNTIL 2026-09-10.
+//
+// The cross-check above asks whether every script run-report SCHEDULES reaches
+// the image. Nothing asked the same question about a module one of those
+// scripts REQUIRES — and the answer is needed for exactly the same reason,
+// because this directory is copied file by file and a shared module is
+// scheduled by nobody. `tests/Dockerfile` says so in eight comments
+// (random_username.js, expectation.js, renderer_wedge.js, sts_applications.js,
+// consent_screen.js, console_signin.js, federation_admin.js, paths) and each
+// of them is a line somebody had to remember.
+//
+// `console_signin.js` is the one that was not remembered. It landed on
+// 2026-09-10, carrying the /admin sign-in walk that the two delegation-chain
+// jobs had had a copy of each, with no COPY line of its own — so both of those
+// jobs plus the third case one of them schedules died in 0.2s with
+//
+//   Error: Cannot find module './console_signin.js'
+//   Require stack:
+//   - /usr/src/app/oauth2_delegation_chain.js
+//
+// three red jobs naming a file rather than a build, while every host run was
+// green because a checkout has the whole directory. That is the failure
+// stsModuleClosureIsCopied() exists to catch, one tree over, and the fix is
+// the same walk: seed with what run-report schedules, follow each relative
+// require, and require the result to be something the image carries.
+//
+// TWO THINGS IT DELIBERATELY DOES NOT DO. It follows only requires that land
+// inside `tests/` — a borrowed module out of `client/src`, `common/` or `sts/`
+// is staged elsewhere and is flatCopiedModulesHaveTheirPackages()'s and
+// stsModuleClosureIsCopied()'s business, and the mirror hazards those carry
+// are their own. And it does not exempt a LAZY require the way the sts walk
+// does: nothing here is the size of the mock's admin tree, so a module this
+// suite requires inside a function is a module this suite can be asked for at
+// run time, and a COPY line is cheaper than the argument.
+//
+// Runs in a checkout, where tests/Dockerfile is readable; the caller skips it
+// in the image, where it is not.
+// ---------------------------------------------------------------------------
+function testsImageCopiesTheRequireClosure(dockerfile) {
+  log.debug("Entering testsImageCopiesTheRequireClosure().");
+  const report = path.join(__dirname, "run-report.js");
+  if (!fs.existsSync(report)) {
+    log.info("[tests-closure] skipped: no run-report.js beside this file, so " +
+      "there is no job list to seed the walk with.");
+    log.debug("Leaving testsImageCopiesTheRequireClosure().");
+    return;
+  }
+  // WHAT THE IMAGE HAS, KEYED BY THE PATH A REQUIRE WOULD USE. The WORKDIR is
+  // /usr/src/app and most of this directory lands in it flat, so a file
+  // copied from tests/x.js is `x.js` there whatever it was called here; a
+  // DIRECTORY copy (tests/tools) keeps its shape, so a require of
+  // ./tools/attach-admin-token.js is satisfied by that one line.
+  const available = {};
+  const globs = [];
+  const copyLine = /^COPY\s+([^\n]+)/gm;
+  fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
+    const parts = rest.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+      return _;
+    }
+    const dest = parts[parts.length - 1].replace(/\/$/, "")
+      .replace(/^\.\//, "");
+    parts.slice(0, -1).forEach(function (src) {
+      if (src.indexOf("tests/") !== 0) {
+        return;
+      }
+      const rel = src.slice("tests/".length);
+      if (rel.indexOf("*") !== -1) {
+        // A glob, expanded the way docker does it: by prefix, and flat.
+        globs.push(rel.replace("*", ""));
+        return;
+      }
+      const here = path.join(__dirname, rel);
+      if (fs.existsSync(here) && fs.statSync(here).isDirectory()) {
+        // A directory copy carries everything beneath it, under the
+        // destination's own name.
+        const under = function (dir, prefix) {
+          fs.readdirSync(dir, { withFileTypes: true }).forEach(function (e) {
+            const name = prefix === "" ? e.name : prefix + "/" + e.name;
+            if (e.isDirectory()) {
+              under(path.join(dir, e.name), name);
+              return;
+            }
+            available[dest === "" ? name : dest + "/" + name] = true;
+          });
+        };
+        under(here, "");
+        return;
+      }
+      const base = rel.split("/").pop();
+      available[dest === "" || dest === "." ? base : dest + "/" + base] = true;
+    });
+    return _;
+  });
+
+  const scripts = [];
+  fs.readFileSync(report, "utf8").replace(/script:\s*"([^"]+)"/g,
+    function (_, name) {
+      if (scripts.indexOf(name) === -1) {
+        scripts.push(name);
+      }
+      return _;
+    });
+  // run-report.js itself is the other root: it requires renderer_wedge.js and
+  // the admin-token tools at load, so a missing COPY there takes the whole
+  // run rather than one job.
+  const queue = ["run-report.js"].concat(scripts);
+  const seen = {};
+  const missing = [];
+  while (queue.length) {
+    const name = queue.shift();
+    if (seen[name]) {
+      continue;
+    }
+    seen[name] = true;
+    const file = path.join(__dirname, name);
+    if (!fs.existsSync(file)) {
+      // A script run-report names and this directory has not got. The
+      // cross-check above reports the Dockerfile half of that; this walk has
+      // nothing to follow and says so rather than reporting a missing COPY.
+      log.warn("[tests-closure] " + name + " is scheduled and is not in " +
+        __dirname + ", so there is nothing to walk.");
+      continue;
+    }
+    stsRequiresIn(name, fs.readFileSync(file, "utf8")).forEach(function (one) {
+      let dep = path.posix.normalize(
+        path.posix.join(path.posix.dirname(name), one.spec));
+      if (!/\.js(on)?$/.test(dep)) {
+        dep = dep + ".js";
+      }
+      if (dep.indexOf("..") === 0) {
+        // A borrowed module out of client/src, common/ or sts/. Staged by its
+        // own COPY lines and checked by the two walks beside this one.
+        return;
+      }
+      if (!fs.existsSync(path.join(__dirname, dep))) {
+        // Not a file of this suite's at all — requireSharedModule() passes
+        // candidate names that only resolve in the image, which is the one
+        // place this check is not running.
+        return;
+      }
+      if (!available[dep] &&
+          !globs.some(function (prefix) {
+            return dep.indexOf(prefix) === 0 && dep.indexOf("/") === -1;
+          })) {
+        missing.push(dep + " (required by tests/" + name + ")");
+        return;
+      }
+      if (!/\.js$/.test(dep)) {
+        // A data file — bbs_vectors.json, xwing_vectors.json. It has to be
+        // copied and there is nothing in it to follow, and handing one to
+        // acorn is a parse warning on every run.
+        return;
+      }
+      if (!seen[dep]) {
+        queue.push(dep);
+      }
+    });
+  }
+  const unique = missing.filter(function (v, i) {
+    return missing.indexOf(v) === i;
+  });
+  assert.deepStrictEqual(unique, [],
+    "tests/Dockerfile never copies these modules, and a job that requires " +
+    "one dies in the image with MODULE_NOT_FOUND in a tenth of a second — " +
+    "naming a file rather than a build, while every host run stays green " +
+    "because a checkout has the whole directory: " + unique.join(", ") +
+    ". Nothing schedules a shared module, so the run-report cross-check " +
+    "above cannot see it; add a COPY tests/<name> ./ line in the files1 or " +
+    "files2 staging stage, beside the one for consent_screen.js.");
+  log.info("[tests-closure] OK — " + Object.keys(seen).length + " scheduled " +
+    "scripts and modules walked, and every relative require among them is " +
+    "carried into the tests image.");
+  log.debug("Leaving testsImageCopiesTheRequireClosure().");
 }
 
 // ---------------------------------------------------------------------------

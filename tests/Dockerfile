@@ -115,6 +115,21 @@ COPY tests/sts_applications.js ./
 # and nothing schedules it so no cross-check notices it gone.
 COPY tests/consent_screen.js ./
 
+# THE /admin CONSOLE SIGN-IN WALK, required by both delegation-chain jobs —
+# which read the delegation MAPS off that console, the only place those
+# pictures exist, because the mock's register is in memory and dies with the
+# container. A SHARED MODULE rather than a test, exactly like consent_screen.js
+# above, and with the same failure mode when this line is missing: a job that
+# requires it dies with MODULE_NOT_FOUND in a tenth of a second, naming this
+# file rather than a build, and nothing schedules it so the run-report
+# cross-check in jwk_pem_encoding.js cannot notice. **THAT IS NOT A
+# HYPOTHETICAL HERE** — the module landed on 2026-09-10 without this line and
+# took all three delegation jobs red in 0.2s each while every host run stayed
+# green. The closure walk in jwk_pem_encoding.js
+# (testsImageCopiesTheRequireClosure) was written for that run and now covers
+# every module a scheduled script requires, this one included.
+COPY tests/console_signin.js ./
+
 # THE FEDERATION GRID — one parameterised script that run-report schedules
 # forty-nine times, once per combination of application protocol, federation
 # protocol and authentication mechanism — and the management-API client it and
@@ -122,8 +137,10 @@ COPY tests/consent_screen.js ./
 # federation_matrix_sso.js, so without this line that job fails in the image
 # with MODULE_NOT_FOUND in 0.0s while passing on every host run, forty-nine
 # times over. tests/jwk_pem_encoding.js asserts the script itself reaches the
-# image; the module beside it is caught by the same closure walk that catches a
-# missing sts/ dependency.
+# image; the module beside it is caught by the closure walk over this suite's
+# own requires (testsImageCopiesTheRequireClosure), which was written on
+# 2026-09-10 — so until then this sentence described a check that did not
+# exist.
 COPY tests/federation_matrix_sso.js tests/federation_admin.js ./
 
 # ONE APPLICATION, TWO FEDERATION PARTNERS, AND THE PERSON PICKS. The job that
