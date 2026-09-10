@@ -2955,6 +2955,24 @@ configureKeycloakWsfed()
     return 0
   fi
 
+  # THE REALM IS DELETED FIRST, for resetKeycloakRealm()'s two reasons and a
+  # third this side-car has of its own. The stack is LEFT RUNNING for fast
+  # re-runs, so a second run meets the realm the first one made: the client
+  # then keeps the PREVIOUS target's redirectUris and webOrigins (local ->
+  # test -> prod is exactly the switch this launcher is for), and every POST
+  # below answers 409. Two of those 409s are discarded and harmless; the one
+  # on the USER is not, because its id is read out of a Location header a 409
+  # does not carry — so provisioning "failed", every WS-Federation job was
+  # skipped, and the suite reported 0 failures with 21 fewer tests run than
+  # the run before it. A skip that is invisible in a green report is worse
+  # than a failure. Deleting the realm makes the whole function idempotent
+  # rather than patching each POST.
+  #
+  # 404 if it is not there yet — harmless, and the ordinary first run.
+  curl -s -o /dev/null -X DELETE \
+    "${KC_WSFED}/admin/realms/${WSFED_REALM_NAME}" \
+    -H "Authorization: Bearer ${KC_WSFED_TOKEN}"
+
   # Realm (a 409 if it already exists is harmless).
   curl -s -X POST "${KC_WSFED}/admin/realms" \
     -H "Authorization: Bearer ${KC_WSFED_TOKEN}" -H "Content-Type: application/json" \
@@ -3003,6 +3021,20 @@ configureKeycloakWsfed()
     -d '{ "username": "wsfed", "firstName": "wsfed", "lastName": "wsfed",
           "email": "wsfed@iyasec.io", "enabled": true, "emailVerified": true }' \
     -i | grep -i '^Location:' | rev | cut -d '/' -f 1 | rev | tr -d ' \n\r')
+  # NO LOCATION HEADER IS NOT NECESSARILY NO USER. The realm delete above
+  # means the create normally succeeds, but a 409 still says the user is
+  # THERE — and that is a provisioned side-car, not a broken one. Ask for it
+  # by name rather than reporting a failure the reset was meant to end.
+  # `username=` is an infix search on 8.0.1 (no `exact` parameter until much
+  # later), so the exact match is made here.
+  if [ -z "${WSFED_USER_ID}" ];
+  then
+    WSFED_USER_ID=$(curl -s -G --data-urlencode "username=wsfed" \
+      "${KC_WSFED}/admin/realms/${WSFED_REALM_NAME}/users" \
+      -H "Authorization: Bearer ${KC_WSFED_TOKEN}" \
+      | jq -r '[.[] | select(.username == "wsfed")][0].id // empty' \
+        2>/dev/null)
+  fi
   if [ -z "${WSFED_USER_ID}" ];
   then
     echo "WARNING: could not create the WS-Fed test user — WS-Federation test will be skipped."
