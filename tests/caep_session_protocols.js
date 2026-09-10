@@ -484,9 +484,15 @@ function specimenFor(short) {
 
 async function emitByHand(sessionId, short) {
   log.debug("Entering emitByHand(). " + short);
+  // `payload` is a STRING of JSON and not an object: the management API
+  // mirrors the console's form, where it is a textarea, and since the
+  // 2026-09-09 submodule bump the body is validated against that schema —
+  // an object is refused with `"payload" must be string.`, a 400 that names
+  // the member rather than the event type, on all five of the types that are
+  // only ever produced this way. `caep_protocol.js` has always stringified.
   const sent = await call('POST', stsUrl + '/admin-api/caep/emit', {
     session_id: sessionId, type: short, initiating_entity: 'admin',
-    payload: specimenFor(short)
+    payload: JSON.stringify(specimenFor(short))
   });
   log.debug("Leaving emitByHand(). " + sent.status);
   return sent;

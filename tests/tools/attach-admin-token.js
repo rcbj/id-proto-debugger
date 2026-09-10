@@ -42,14 +42,48 @@
 
 const TOKEN = process.env.STS_ADMIN_API_TOKEN || "";
 
+// `/admin-api` in any trust realm: the mock leaves the `/realm/<id>` prefix
+// on the URL a client sends, and the federation jobs configure realms
+// through exactly that shape, so both have to match.
+const WANTED = /^(?:\/realm\/[^/]+)?\/admin-api(?:\/|$|\?)/;
+
+// ---------------------------------------------------------------------------
+// WHAT COUNTS AS THE MANAGEMENT API, DEFINED ONCE AND EXPORTED.
+//
+// Two jobs need this answer for themselves rather than through the shim, and
+// both for the same reason: `caep_protocol.js` and `ssf_protocol.js` put a
+// BASIC credential on every call by default — it is the only scheme the
+// mock's SSF endpoints take that needs nothing but a header a test process
+// can compute — and the interceptors below deliberately never REPLACE an
+// Authorization header a job set itself. So a blanket default is what stops
+// the token being attached, and the two files have to leave the management
+// API's calls bare.
+//
+// It is exported rather than copied because a copy that drifted would produce
+// a 401 those jobs read as "this mock has no transmitter", which is how
+// `caep_protocol.js` came to report PASS while running none of its
+// thirty-odd checks. It is defined OUTSIDE the `if (TOKEN)` below so that it
+// answers the same on an ungated service, where the shim itself does nothing.
+//
+// It takes a whole URL or a bare path; a job's helper has whichever it has.
+// ---------------------------------------------------------------------------
+function isManagementApi(url) {
+  let where = String(url || "");
+  try {
+    where = new URL(where).pathname + (new URL(where).search || "");
+  } catch (e) {
+    // Not absolute. The path is then the whole of it, which WANTED reads the
+    // same way.
+    where = String(url || "");
+  }
+  return WANTED.test(where);
+}
+
+module.exports = { isManagementApi: isManagementApi };
+
 if (TOKEN) {
   const http = require("http");
   const https = require("https");
-
-  // `/admin-api` in any trust realm: the mock leaves the `/realm/<id>` prefix
-  // on the URL a client sends, and the federation jobs configure realms
-  // through exactly that shape, so both have to match.
-  const WANTED = /^(?:\/realm\/[^/]+)?\/admin-api(?:\/|$|\?)/;
 
   const wants = function (pathname) {
     return WANTED.test(String(pathname || ""));

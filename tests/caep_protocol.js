@@ -79,6 +79,23 @@ const P = "https://schemas.openid.net/secevent/caep/event-type/";
 const BASIC = 'Basic ' + Buffer.from('caep-protocol-runner:pw')
     .toString('base64');
 
+// THE MANAGEMENT API IS NOT ONE OF THE PLACES THAT CREDENTIAL WORKS, and
+// since the 2026-09-09 submodule bump it refuses it. `/admin-api` takes an
+// OAuth 2.0 access token audienced to itself, and
+// `tests/tools/attach-admin-token.js` is preloaded into every job to put the
+// run's token on exactly those calls — but it never REPLACES an Authorization
+// header a job set itself, so the blanket Basic default above is what stops
+// it. Those calls are therefore left BARE and the preload dresses them; the
+// predicate comes from that file rather than being spelt again here, because
+// a second copy of it that drifted would produce a 401 this job reads as
+// "there is no transmitter on this service".
+//
+// THAT IS THE FAILURE THIS FIXES, and it was a SILENT one. With Basic on it,
+// `GET /admin-api/caep` answered 401, `caep_protocol.js` read that as "no
+// CAEP transmitter here", and it SKIPPED and reported PASS — thirty-odd
+// checks not run, green, on every run since the bump.
+const adminApiToken = require("./tools/attach-admin-token.js");
+
 // Somebody nobody else in this suite signs in as, so that a session this file
 // creates cannot be confused with one another job left behind.
 const WHO = 'caep-protocol-' + Math.random().toString(16).slice(2, 8);
@@ -112,7 +129,8 @@ async function call(method, url, body, options) {
   log.debug("Entering call(). " + method + " " + url);
   const settings = options || {};
   const headers = Object.assign({ Accept: 'application/json' },
-      settings.anonymous ? {} : { Authorization: BASIC },
+      (settings.anonymous || adminApiToken.isManagementApi(url))
+        ? {} : { Authorization: BASIC },
       settings.headers || {});
   const init = { method: method, headers: headers,
     redirect: settings.redirect || 'follow' };
@@ -840,8 +858,14 @@ async function theRefusals() {
   log.info("[refusals] The two this profile adds, and both are refusals a " +
       "permissive transmitter would not make.");
 
+  // `payload` is an OBJECT here and a STRING at /admin-api/caep/emit, which
+  // is not a slip in either place: this operation mirrors a form that posts
+  // JSON and that one mirrors a console TEXTAREA. The mock validates both
+  // since the 2026-09-09 bump, so a string here is refused with `"payload"
+  // must be object.` — a 400 that arrives where a 400 was expected and says
+  // nothing about the subject, which is what this check is actually about.
   const noSubject = await call('POST', adminUrl + '/ssf/transmit',
-      { stream_id: streamId, type: P + 'session-revoked', payload: '{}' }, {});
+      { stream_id: streamId, type: P + 'session-revoked', payload: {} }, {});
   check('a CAEP event with NO SUBJECT is refused, and the refusal says why',
       function () {
     assert.strictEqual(noSubject.status, 400,

@@ -96,6 +96,23 @@ var adminUrl = stsUrl + '/admin-api';
 const BASIC = 'Basic ' + Buffer.from('ssf-protocol-runner:pw')
     .toString('base64');
 
+// THE MANAGEMENT API IS NOT ONE OF THE PLACES THAT CREDENTIAL WORKS, and
+// since the 2026-09-09 submodule bump it refuses it. `/admin-api` takes an
+// OAuth 2.0 access token audienced to itself, and
+// `tests/tools/attach-admin-token.js` is preloaded into every job to put the
+// run's token on exactly those calls — but it never REPLACES an Authorization
+// header a job set itself, so the blanket Basic default above is what stops
+// it. Those calls are therefore left BARE and the preload dresses them; the
+// predicate comes from that file rather than being spelt again here, because
+// a second copy of it that drifted would produce a 401 this job reads as
+// "there is no transmitter on this service".
+//
+// THAT IS THE FAILURE THIS FIXES, and it was a SILENT one. With Basic on it,
+// `GET /admin-api/caep` answered 401, `caep_protocol.js` read that as "no
+// CAEP transmitter here", and it SKIPPED and reported PASS — thirty-odd
+// checks not run, green, on every run since the bump.
+const adminApiToken = require("./tools/attach-admin-token.js");
+
 let checks = 0;
 let skips = [];
 // Everything this run created, so section 8 can leave the mock as it found it.
@@ -131,8 +148,8 @@ async function call(method, url, body, options) {
   log.debug("Entering call(). " + method + " " + url);
   const settings = options || {};
   const headers = Object.assign({ Accept: 'application/json' },
-      settings.anonymous ? {} : { Authorization: settings.authorization ||
-        BASIC },
+      (settings.anonymous || adminApiToken.isManagementApi(url)) ? {}
+        : { Authorization: settings.authorization || BASIC },
       settings.headers || {});
   const init = { method: method, headers: headers };
   if (body !== undefined && body !== null) {

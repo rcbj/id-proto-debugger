@@ -3720,7 +3720,8 @@ function buildJobs() {
   {
     jobs.push({
       name: "STS persistence (postgres) — what survives a restart, what must " +
-          "not, that two processes do not see each other, that the " +
+          "not, that two processes against one store coordinate through its " +
+          "change log and do not when that is turned off, that the " +
           "connection is TLS by postgres's own account, and that a missing " +
           "database is not fatal",
       script: "sts_persistence_postgres.js",

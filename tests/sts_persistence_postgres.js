@@ -332,7 +332,11 @@ async function startPostgres() {
 // binder and the default path is shared, so moving them would need a directory
 // as well.
 // ---------------------------------------------------------------------------
-async function startMock(root, databaseUrl, label) {
+// `extraEnv` is how a section starts an instance configured differently from
+// the run's own — the coordination section starts one with
+// STS_PERSISTENCE_COORDINATE off, which is a setting the mock marks
+// `runtime: false`, so it cannot be reached through /admin-api/config/set.
+async function startMock(root, databaseUrl, label, extraEnv) {
   log.debug("Entering startMock(). label=" + label);
   const httpPort = await freePort();
   const env = Object.assign({}, process.env, await portEnv(httpPort), {
@@ -345,11 +349,24 @@ async function startMock(root, databaseUrl, label) {
     // correct behaviour and looks like a broken database.
     STS_DATABASE_URL: databaseUrl,
     STS_LOG_LEVEL: "warn",
+    // THIS INSTANCE'S /admin-api IS OPEN, and it is the one place in this
+    // suite where that is right rather than a shortcut. The mock began
+    // requiring an access token on that surface on 2026-09-09, audienced to
+    // ITSELF: the run's `STS_ADMIN_API_TOKEN` names the SHARED mock and is
+    // refused here, and minting one for a throwaway service on a random port
+    // would mean a token endpoint round trip before every restart in a job
+    // whose subject is what a restart KEEPS.
+    //
+    // It also made the readiness probe below unreachable, which is how this
+    // was found: `GET /admin-api/status` answered 401 for forty-five seconds
+    // and the job failed saying the service had not started, on a service
+    // that had been listening the whole time.
+    ADMIN_API_AUTH_REQUIRED: "false",
     // The mock resolves CONFIG_FILE against ITS OWN root, and this suite's
     // copy of that variable names a file under tests/. See
     // tests/module_paths.js, which exists for this exact collision.
     CONFIG_FILE: path.join(root, "env", "local.js")
-  });
+  }, extraEnv || {});
 
   const child = spawn("node", ["server.js"], {
     cwd: root, env: env, stdio: ["ignore", "pipe", "pipe"]
@@ -727,13 +744,29 @@ async function theStoreOpened(instance, databaseUrl) {
       JSON.stringify(seen.database));
   }
 
-  assert.strictEqual(seen.coordinates, false,
-    "and it must say that it does NOT coordinate — see the section below, " +
-    "which is the evidence for that claim rather than a repetition of it.");
-  assert.ok(/not coordination/i.test(String(seen.note || "")),
-    "and the note beside it should say so in a sentence an operator reads, " +
-    "since that is what somebody deploys against; it says " +
-    JSON.stringify(seen.note));
+  // AND IT MUST SAY WHETHER IT COORDINATES, in the same breath as saying it
+  // persists — because those are different promises and the second is the one
+  // somebody deploys against. `persistence.coordinate` is ON by default on a
+  // postgres store since 2026-09-09; it was absent before, and this assertion
+  // read `false` as the only correct answer. Both configurations are real and
+  // the section below drives both, so what is checked here is that the flag
+  // and the NOTE agree — a report that said one thing in a boolean and the
+  // other in the sentence beside it is worse than either.
+  assert.strictEqual(typeof seen.coordinates, "boolean",
+    "the status must SAY whether processes against this store coordinate; " +
+    "it says " + JSON.stringify(seen.coordinates));
+  if (seen.coordinates) {
+    assert.ok(/coordinate/i.test(String(seen.note || "")) &&
+        !/not coordination/i.test(String(seen.note || "")),
+      "and the note beside it should say so in a sentence an operator reads, " +
+      "since that is what somebody deploys against; it says " +
+      JSON.stringify(seen.note));
+  } else {
+    assert.ok(/not coordination/i.test(String(seen.note || "")),
+      "and the note beside it should say so in a sentence an operator reads, " +
+      "since that is what somebody deploys against; it says " +
+      JSON.stringify(seen.note));
+  }
   log.info("[store] OK — postgres, healthy, all three things persisting, " +
            "talking to " + seen.database.user + "@" + seen.database.host +
            ":" + seen.database.port + "/" + seen.database.database +
@@ -1007,24 +1040,70 @@ async function nothingThatWasMintedComesBack(instance, held) {
 }
 
 // ---------------------------------------------------------------------------
-// PERSISTENCE IS NOT COORDINATION, AND THIS IS THE EVIDENCE RATHER THAN THE
-// CLAIM.
+// PERSISTENCE AND COORDINATION ARE DIFFERENT PROMISES, AND THIS IS THE
+// EVIDENCE FOR BOTH RATHER THAN THE CLAIM.
 //
-// `status.coordinates` is `false` and the note beside it says what that means:
-// two processes pointed at one database each hold their own copy of the
-// directory in memory and will not see each other's writes until they restart.
-// That sentence is the one somebody deploys against — it is the difference
-// between "persistence" and "clustering" — so it is worth demonstrating rather
-// than reading back.
+// THIS SECTION ASSERTED THE OPPOSITE UNTIL 2026-09-10, and the reversal is the
+// reason it is worth reading rather than skimming. It used to demonstrate that
+// two processes pointed at one database each held their own copy of the
+// directory and never saw each other's writes — and it said, in the assertion
+// message, that if it ever started passing the other way it would be because
+// somebody had made the store a live one, "which would be a good feature and a
+// DIFFERENT one", and that `coordinates`, the note beside it and
+// persistence/CLAUDE.md would have to change in the same commit.
 //
-// The demonstration has to be careful about WHEN. A second instance reads the
-// store at startup, so anything written BEFORE it started is legitimately
-// there. What must not appear is a write made AFTER it started, which is why
-// the order below is: start the second, then write in the first, then look.
+// That is exactly what happened. The mock grew `persistence.coordinate` —
+// every change written to a monotonic log INSIDE the transaction that made it,
+// each process applying what the others committed, with a LISTEN/NOTIFY nudge
+// that only makes the read prompt — and it is ON by default on a postgres
+// store. So the sentence to demonstrate is no longer one sentence:
+//
+//   coordinate ON   a write in one process ARRIVES in the other, without
+//                   either restarting. That is the default and is what
+//                   somebody deploying several copies now gets.
+//   coordinate OFF  the old behaviour, still offered and still correct: each
+//                   process alone with its own copy, reading the store once,
+//                   at startup.
+//
+// Both are driven here, out of one setting, because a job that covered only
+// the default would leave the recovery configuration untested and a job that
+// covered only the old one would be asserting a service nobody runs.
+//
+// THE DEMONSTRATION HAS TO BE CAREFUL ABOUT WHEN, and in both directions. A
+// second instance reads the store at startup, so anything written BEFORE it
+// started is legitimately there and proves nothing either way — which is why
+// the order is: start the second, then write in the first, then look. And the
+// arrival is a POLL rather than a read: the log is the contract and the
+// notification only makes it prompt, so "did not arrive yet" and "will never
+// arrive" are told apart by waiting, not by one look.
 // ---------------------------------------------------------------------------
-async function twoProcessesDoNotSeeEachOther(first, root, databaseUrl) {
-  log.debug("Entering twoProcessesDoNotSeeEachOther().");
-  log.info("=== Two processes, one database ===");
+const COORDINATION_WAIT_MS = 15000;
+
+// Wait for a username to become known to an instance. Answers whether it did,
+// so the caller can assert either way — a bare `await` here would make the
+// negative case a timeout, which reads as a hung test rather than as the
+// answer it is.
+async function knownWithin(instance, username, howLong) {
+  log.debug("Entering knownWithin(). " + username);
+  const until = Date.now() + howLong;
+  for (;;) {
+    const seen = await get(instance,
+        "/admin-api/users?user=" + encodeURIComponent(username));
+    if (seen.known === true) {
+      log.debug("Leaving knownWithin(). Known.");
+      return true;
+    }
+    if (Date.now() >= until) {
+      log.debug("Leaving knownWithin(). Not known.");
+      return false;
+    }
+    await pause(300);
+  }
+}
+
+async function twoProcessesAndTheChangeLog(first, root, databaseUrl) {
+  log.debug("Entering twoProcessesAndTheChangeLog().");
+  log.info("=== Two processes, one database, coordination ON ===");
   const second = await startMock(root, databaseUrl, "the second instance");
   try {
     const seen = await status(second);
@@ -1032,10 +1111,15 @@ async function twoProcessesDoNotSeeEachOther(first, root, databaseUrl) {
       "the second instance should have opened the same store; it is in " +
       seen.mode + " (" + seen.lastError + ")");
     assert.ok(seen.restored.entries > 0,
-      "AND IT SHOULD HAVE READ WHAT THE FIRST ONE WROTE — everything written " +
-      "before it started is legitimately there, and that is what makes the " +
-      "negative below mean something. It restored " +
+      "AND IT SHOULD HAVE READ WHAT THE FIRST ONE WROTE — everything " +
+      "written before it started is legitimately there, whatever " +
+      "coordination does afterwards. It restored " +
       JSON.stringify(seen.restored));
+    assert.strictEqual(seen.coordinates, true,
+      "and it should be coordinating: persistence.coordinate is on by " +
+      "default on a postgres store. It says " +
+      JSON.stringify(seen.coordinates) + ", note " +
+      JSON.stringify(seen.note));
 
     // Now a write in the FIRST instance, after the second is up.
     const late = names.usernameFor("pgtest-late");
@@ -1045,26 +1129,63 @@ async function twoProcessesDoNotSeeEachOther(first, root, databaseUrl) {
         "/admin-api/users?user=" + encodeURIComponent(late))).known, true,
       "the first instance should of course see its own write.");
 
-    const inSecond = await get(second,
-        "/admin-api/users?user=" + encodeURIComponent(late));
-    assert.strictEqual(inSecond.known, false,
-      "AND THE SECOND INSTANCE MUST NOT SEE IT. Persistence here is not " +
-      "coordination: each process holds its own copy of the directory in " +
-      "memory and reads the store once, at startup. If this ever starts " +
-      "passing it is because somebody made the store a live one — which " +
-      "would be a good feature and a DIFFERENT one, and `coordinates` and " +
-      "the note beside it would have to change in the same commit, along " +
-      "with persistence/CLAUDE.md, which says running several copies " +
-      "against one store is not yet a way to scale this service.");
-    assert.strictEqual(seen.coordinates, false,
-      "and the second instance must say so about itself too.");
-    log.info("[coordination] OK — the second instance read what was already " +
-             "in the store and did not see a write the first made after it " +
-             "started, exactly as `coordinates: false` promises.");
+    assert.strictEqual(await knownWithin(second, late,
+        COORDINATION_WAIT_MS), true,
+      "AND THE SECOND INSTANCE MUST SEE IT, within " +
+      COORDINATION_WAIT_MS + "ms and without restarting. That is what " +
+      "`coordinates: true` promises: the change went into a monotonic log " +
+      "inside the transaction that created the person, and this process " +
+      "applies what the other committed. A failure here is either the log " +
+      "not being written or nothing reading it — the LISTEN/NOTIFY nudge is " +
+      "not it, because a missed notification costs latency and never a " +
+      "change.");
+    log.info("[coordination] OK — the second instance saw a write the first " +
+             "made after it had started, exactly as `coordinates: true` " +
+             "promises.");
   } finally {
     await stopMock(second, "the coordination check is done");
   }
-  log.debug("Leaving twoProcessesDoNotSeeEachOther().");
+
+  // ---------------------------------------------------------------------
+  // AND THE OTHER CONFIGURATION, which is what this service did before the
+  // change log existed and is still the honest description of a deployment
+  // with `persistence.coordinate` off. It is a RESTART-ONLY setting on the
+  // mock's own account, so it is given at startup and cannot be reached
+  // through /admin-api/config/set.
+  // ---------------------------------------------------------------------
+  log.info("=== Two processes, one database, coordination OFF ===");
+  const alone = await startMock(root, databaseUrl, "the lone instance",
+      { STS_PERSISTENCE_COORDINATE: "false" });
+  try {
+    const seen = await status(alone);
+    assert.strictEqual(seen.coordinates, false,
+      "an instance started with STS_PERSISTENCE_COORDINATE=false must say " +
+      "so about itself; it says " + JSON.stringify(seen.coordinates));
+    assert.ok(/not coordination/i.test(String(seen.note || "")),
+      "and the note beside it should say what that means in a sentence an " +
+      "operator reads, since that is what somebody deploys against; it says " +
+      JSON.stringify(seen.note));
+    assert.ok(seen.restored.entries > 0,
+      "it should still have READ the store at startup — persistence is not " +
+      "what was turned off. It restored " + JSON.stringify(seen.restored));
+
+    const later = names.usernameFor("pgtest-uncoordinated");
+    await post(first, "/admin-api/users/create", { username: later });
+    await settled(first);
+    assert.strictEqual(await knownWithin(alone, later,
+        COORDINATION_WAIT_MS), false,
+      "AND IT MUST NOT SEE a write the first instance made after it " +
+      "started. With coordination off each process holds its own copy of " +
+      "the directory and reads the store once, at startup — which is the " +
+      "difference between persistence and clustering, and is the sentence " +
+      "the note above promises an operator.");
+    log.info("[coordination] OK — an instance with coordination off read " +
+             "what was already in the store and did not see a later write, " +
+             "exactly as `coordinates: false` promises.");
+  } finally {
+    await stopMock(alone, "the uncoordinated check is done");
+  }
+  log.debug("Leaving twoProcessesAndTheChangeLog().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,7 +1416,8 @@ async function test() {
                "about TLS was still checked against the connection string.");
     }
 
-    await twoProcessesDoNotSeeEachOther(instance, ready.root, databaseUrl);
+    await twoProcessesAndTheChangeLog(instance, ready.root,
+        databaseUrl);
 
     log.info("=== Restarting the mock STS ===");
     await stopMock(instance, "so that the restart can be asserted");
@@ -1320,8 +1442,9 @@ const program = new Command();
 program
   .name("sts_persistence_postgres")
   .description("Start a Postgres and a mock STS against it, restart the mock, " +
-      "and assert what survived, what did not, that two processes do not see " +
-      "each other, and that a missing database is not fatal.")
+      "and assert what survived, what did not, that two processes against " +
+      "one store coordinate through its change log and do not when that is " +
+      "turned off, and that a missing database is not fatal.")
   // Accepted and ignored: run-report.js passes --url to every job, and
   // tests/jwk_pem_encoding.js fails the suite if a job does not declare it.
   .addOption(new Option("-u, --url <url>",

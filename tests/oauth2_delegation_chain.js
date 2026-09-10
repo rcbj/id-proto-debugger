@@ -196,11 +196,12 @@
 // torn down. So the SVGs are fetched and written to DELEGATION_ARTIFACT_DIR
 // (the run's own report directory, when run-report.js spawns this): the whole
 // map, this user's acts alone, and one document per chain. The console is gated
-// (`admin.authRequired`), so this signs in the way a browser does — three steps
-// through /authn/login, exactly as the mock's own console tests do it, and for
-// the
-// same reason: `?format=svg` is refused rather than redirected to a sign-in
-// screen a program cannot read. If the roster has been narrowed by some other
+// (`admin.authRequired`), so this signs in the way a browser does — the walk
+// in `console_signin.js`, shared with the WS-Trust chain because both jobs
+// need it and a second copy is a second thing to forget when it changes. The
+// reason it has to happen at all: `?format=svg` is refused rather than
+// redirected to a sign-in screen a program cannot read. If the roster has been
+// narrowed by some other
 // job the drawings are SKIPPED with a message naming the gate; the assertions
 // above do not depend on them, because they read `/admin-api/delegation`, which
 // is not behind it.
@@ -233,6 +234,7 @@ var bunyan = require("bunyan");
 // reason: every job here that signs somebody in meets the same hop, and a
 // hand-written copy per job is a chance per job to write the wait wrong.
 const consentScreen = require("./consent_screen.js");
+const consoleSignin = require("./console_signin.js");
 var log = bunyan.createLogger({ name: "oauth2_delegation_chain",
                                 level: appconfig.LOG_LEVEL || "info" });
 log.info("Log initialized. logLevel=" + log.level());
@@ -621,55 +623,23 @@ async function provisionDelegatedPermissions() {
 }
 
 // ---------------------------------------------------------------------------
-// A browser sign-on session for the CONSOLE, which only the drawings need. The
-// three-step dance is the one a browser does and is copied from the mock's own
-// `admin_api.js`, which explains it at length (readable here as
-// sts/tests/vendored/admin_api.js).
+// A browser sign-on session for the CONSOLE, which only the drawings and the
+// lineage need. The walk itself is `console_signin.js` — five hops and two
+// cookies since the mock made `/admin` a relying party of its own
+// authorization server — and it is shared with `wstrust_delegation_chain.js`
+// because both jobs read pages off that console and neither should carry a
+// copy of somebody else's sign-in flow.
 //
-// Returns the cookie, or null when the gate is off (a legitimate state — the
-// setting is switchable — reported rather than treated as a pass) or when the
-// roster has been narrowed by some other job and this user holds nothing.
+// Returns the Cookie header, or null when the gate is off (a legitimate state
+// — the setting is switchable — reported rather than treated as a pass) or
+// when the walk did not complete.
 // ---------------------------------------------------------------------------
 async function signInToTheConsole() {
   log.debug("Entering signInToTheConsole().");
-  const base = stsBase();
-  const gated = await fetch(base + "/admin/delegation", { redirect: "manual" });
-  if (gated.status !== 302) {
-    log.info("[console] admin.authRequired is off (GET /admin/delegation " +
-             "answered " + gated.status + " with no redirect), so the " +
-             "drawings need no session.");
-    log.debug("Leaving signInToTheConsole(). The gate is off.");
-    return null;
-  }
-  const where = gated.headers.get("location") || "";
-  const authn = (where.match(/[?&]authn=([^&]+)/) || [])[1];
-  if (!authn) {
-    log.warn("[console] a gated GET was sent to \"" + where + "\", which " +
-             "carries no authn id, so there is nothing to sign in FOR. The " +
-             "drawings are skipped; the assertions do not need them.");
-    log.debug("Leaving signInToTheConsole(). No authn id.");
-    return null;
-  }
-  const body = "authn_id=" + encodeURIComponent(authn) +
-      "&username=" + encodeURIComponent(CONSOLE_USER) +
-      "&password=" + encodeURIComponent(CONSOLE_USER);
-  const signedIn = await fetch(base + "/authn/login", {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body,
-    redirect: "manual",
-  });
-  const setCookie = signedIn.headers.get("set-cookie") || "";
-  const session = (setCookie.match(/(sts_mock_session=[^;]+)/) || [])[1];
-  if (!session) {
-    log.warn("[console] signing in at /authn/login answered " +
-             signedIn.status + " and set no session cookie (\"" + setCookie +
-             "\"). The drawings are skipped.");
-    log.debug("Leaving signInToTheConsole(). No cookie.");
-    return null;
-  }
-  log.info("[console] signed in as " + CONSOLE_USER + " for the drawings.");
-  log.debug("Leaving signInToTheConsole(). Holding a session.");
+  const session = await consoleSignin.signInToTheConsole(stsBase(),
+      CONSOLE_USER, log);
+  log.debug("Leaving signInToTheConsole(). " +
+      (session ? "Holding a session." : "No session."));
   return session;
 }
 
@@ -839,9 +809,25 @@ async function assertTheLineage(session, expected) {
 // THE LINK ITSELF, which is what makes the page reachable. Asserted against the
 // tokens page's own MARKUP rather than against its JSON: the requirement is
 // that the identifier in that table is a link, and JSON has no links in it.
+//
+// ONE ROW IS ONE ISSUANCE AND NOT ONE CREDENTIAL, which is what makes this two
+// steps rather than one. The mock's tokens table groups the credentials that
+// came back in a single reply — an access token, a refresh token and an ID
+// Token are one row saying so — and a grouped row's identifier column names
+// the SET, with the members and their own lineage links one click away on the
+// set page. A token exchange here answers with two credentials, so this
+// chain's final token is always in a grouped row: looking for its jti in the
+// table alone finds nothing and says the console has stopped linking
+// lineages, which is a sentence about a page that is working.
+//
+// It is also PAGED, at a hundred issuances by default and three hundred at
+// most, over a register that has held every credential this whole suite
+// issued. So the row is located through `?format=json` — the same document the
+// table is rendered from, published beside it for exactly this — and the
+// MARKUP is what is then asserted.
 async function assertTheTokensPageLinksIt(session, jti) {
   log.debug("Entering assertTheTokensPageLinksIt().");
-  const url = stsBase() + "/admin/tokens?per=100";
+  const url = stsBase() + "/admin/tokens?per=300";
   const r = await common.httpJson(url,
       session ? { headers: { Cookie: session } } : undefined);
   if (r.status === 401 || r.status === 403) {
@@ -855,11 +841,51 @@ async function assertTheTokensPageLinksIt(session, jti) {
   const html = String(r.raw);
   assert.ok(html.indexOf("/admin/tokens/credential") >= 0,
     "no identifier on the tokens page links to a credential's lineage.");
-  assert.ok(html.indexOf("id=" + jti) >= 0,
-    "the tokens page does not link the token this test just obtained (" + jti +
-    ") to its lineage. Its identifier column is where that link lives.");
-  log.info("[console] the tokens page links " + jti + " to its lineage.");
-  log.debug("Leaving assertTheTokensPageLinksIt().");
+
+  // Straight into the table when the issuance produced one credential.
+  if (html.indexOf("id=" + jti) >= 0) {
+    log.info("[console] the tokens page links " + jti + " to its lineage.");
+    log.debug("Leaving assertTheTokensPageLinksIt(). Ungrouped.");
+    return;
+  }
+
+  const view = await consoleJson(session, "/admin/tokens?per=300&format=json",
+      "the tokens table's own document, to find the row this token is in");
+  if (!view) {
+    log.debug("Leaving assertTheTokensPageLinksIt(). The console refused.");
+    return;
+  }
+  const set = (view.sets || []).filter(function (one) {
+    return (one.members || []).some(function (member) {
+      return member.jti === jti;
+    });
+  })[0];
+  assert.ok(set,
+    "the token this test just obtained (" + jti + ") is in no row of the " +
+    "tokens table's first page, which holds " + (view.sets || []).length +
+    " of " + view.matched + " issuance(s). Newest is first there, so a token " +
+    "minted seconds ago being off it is the register having stopped " +
+    "recording rather than the page being long.");
+  const setKey = set.setKey || ("set:" + set.setId);
+  assert.ok(html.indexOf(encodeURIComponent(setKey)) >= 0,
+    "the tokens page does not carry the issuance this test's token came " +
+    "back in (" + setKey + "). A grouped row's identifier column is the " +
+    "link to it.");
+
+  const setUrl = stsBase() + "/admin/tokens/set?id=" +
+      encodeURIComponent(setKey);
+  const onSet = await common.httpJson(setUrl,
+      session ? { headers: { Cookie: session } } : undefined);
+  assert.strictEqual(onSet.status, 200,
+    "GET " + setUrl + " should answer 200 and answered " + onSet.status + ".");
+  assert.ok(String(onSet.raw).indexOf("id=" + jti) >= 0,
+    "the set page for the issuance this test's token came back in does not " +
+    "link that token (" + jti + ") to its lineage. That page is where a " +
+    "grouped row's members and their identifiers live, so the link is " +
+    "either there or nowhere.");
+  log.info("[console] the tokens page links the issuance " + setKey +
+           ", and that page links " + jti + " to its lineage.");
+  log.debug("Leaving assertTheTokensPageLinksIt(). Through the set.");
 }
 
 // ---------------------------------------------------------------------------
