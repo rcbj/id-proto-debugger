@@ -12,6 +12,9 @@ deployed sites keep their own names (`idptools.com`, `test.idptools.com`).
 
 This is a simple OAuth2 and OpenID Connect (OIDC) debugger (test tool) that I created as part of a Red Hat SSO blog post I wrote in November, 2017.  Since then, I have expanded support to include several major Identity Providers (see the complete list below). The blog post uses this debugger for testing the OpenID Connect setup.  So, checkout the blog for usage examples. This project builds a docker container that runs the debugger application.
 
+New to this kind of tool? [**What a protocol debugger is**](docs/what-is-a-protocol-debugger.md) explains what a protocol debugger does, how it differs from a packet
+sniffer or a client library, and why identity protocols in particular need one.
+
 # Supported Specs & Features
 This project currently supports the following specs & features:
 * [OAuth2 - RFC 6749](https://tools.ietf.org/html/rfc6749)
