@@ -1,0 +1,97 @@
+name: Kick off Pages build
+
+# MANUAL TRIGGER FOR GITHUB PAGES.
+#
+# The build that publishes https://rcbj.github.io/id-proto-debugger/ is
+# `pages-build-deployment`, which GitHub GENERATES — the repository's Pages
+# source is the legacy one (branch `master`, path `/`), so that workflow has no
+# file here, cannot be edited, and cannot be given a `workflow_dispatch` of its
+# own. It runs on a push to `master` and on nothing else.
+#
+# This workflow is the manual kick-off in its place: it asks the Pages API to
+# start a build of the CONFIGURED source, which is exactly what a push to
+# `master` would have done. It does not choose a branch and it does not build
+# anything itself — change the Pages source in the repository settings if the
+# published branch is what you want to change.
+#
+# NOTE: GitHub only shows the "Run workflow" button for a workflow present on
+# the DEFAULT branch, so this has to reach `master` before the button appears.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  # The only permission the Pages build API needs.
+  pages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request a Pages build
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Note what the PREVIOUS build was before asking for a new one. The
+          # POST hands back `pages/builds/latest` rather than an id of its own,
+          # and until the new build is recorded that URL still describes the
+          # old one — which is already `built`, so a wait on it alone could
+          # pass instantly and report somebody else's commit. The timestamp is
+          # what tells the two apart.
+          PREV="$(gh api "repos/${REPO}/pages/builds/latest" \
+            --jq '.created_at // ""' || echo "")"
+          echo "previous=${PREV}" >> "$GITHUB_OUTPUT"
+          # The call only ASKS: it returns as soon as the build is queued.
+          URL="$(gh api --method POST "repos/${REPO}/pages/builds" --jq .url)"
+          echo "Queued a Pages build of the configured source: ${URL}"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for it to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_URL: ${{ steps.request.outputs.url }}
+          PREV_CREATED: ${{ steps.request.outputs.previous }}
+        run: |
+          set -euo pipefail
+          # Give up after ten minutes: a Pages build of this repository takes
+          # about a minute, so anything near the deadline is a failure that has
+          # not been reported as one yet.
+          DEADLINE=$(( SECONDS + 600 ))
+          while true; do
+            BUILD="$(gh api "${BUILD_URL}")"
+            STATUS="$(jq -r .status <<<"$BUILD")"
+            CREATED="$(jq -r '.created_at // ""' <<<"$BUILD")"
+            echo "status: ${STATUS}"
+            # Still the build that was there before the POST: the new one has
+            # not been recorded yet, so whatever this says is not about us.
+            if [ -n "$PREV_CREATED" ] && [ "$CREATED" = "$PREV_CREATED" ]; then
+              echo "  (still the previous build; waiting for ours)"
+            elif [ "$STATUS" != "queued" ] && [ "$STATUS" != "building" ]; then
+              break
+            fi
+            if [ "$SECONDS" -ge "$DEADLINE" ]; then
+              echo "::error::Pages build still ${STATUS} after 10 minutes"
+              exit 1
+            fi
+            sleep 10
+          done
+          ERROR="$(jq -r '.error.message // ""' <<<"$BUILD")"
+          COMMIT="$(jq -r '.commit // ""' <<<"$BUILD")"
+          DURATION="$(jq -r '.duration // 0' <<<"$BUILD")"
+          {
+            echo "### Pages build \`${STATUS}\`"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Status | \`${STATUS}\` |"
+            echo "| Commit | \`${COMMIT}\` |"
+            echo "| Duration | ${DURATION} ms |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$STATUS" != "built" ]; then
+            echo "::error::Pages build ${STATUS}: ${ERROR}"
+            exit 1
+          fi
+          echo "Pages build succeeded for ${COMMIT}."
