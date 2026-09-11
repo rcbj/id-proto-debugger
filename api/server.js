@@ -794,7 +794,16 @@ var corsOptions = {
   optionsSuccessStatus: STATUS_204
 };
 // app.use(expressLogging(logger));
-app.options("*", cors(corsOptions));
+// "/*splat" and not "*". Express 5 (here since the 2026-09-11 bump of
+// express 4.22.2 -> 5.2.1, which came in to carry a qs advisory) resolves
+// paths with path-to-regexp 8, where a wildcard MUST be named and a bare
+// "*" is not a path at all. It throws at REGISTRATION rather than on a
+// request -- `PathError: Missing parameter name at index 1: *` -- so the
+// api exits before it listens and every call from the page dies in the
+// handshake, which a browser reports as a CORS failure naming a header
+// nobody changed. The name is a formality: nothing reads req.params.splat
+// here, the route exists only so a preflight to any path gets the headers.
+app.options("/*splat", cors(corsOptions));
 app.use(cors(corsOptions));
 
 /**
