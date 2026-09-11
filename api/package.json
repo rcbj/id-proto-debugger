@@ -15,7 +15,7 @@
     "body-parser": "^2.2.2",
     "bunyan": "latest",
     "cors": "latest",
-    "express": "^4.22.2",
+    "express": "^5.2.1",
     "express-logging": "latest",
     "express-swagger-generator": "^1.1.17",
     "ldapjs": "file:node-ldapjs",
