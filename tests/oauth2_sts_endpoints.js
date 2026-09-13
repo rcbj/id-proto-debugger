@@ -634,7 +634,25 @@ async function testAuthorizationCode(meta, verify) {
 
   const at = verify(set.access_token, "the access token");
   const it = verify(set.id_token, "the ID token");
-  const rt = verify(set.refresh_token, "the refresh token");
+  // THE REFRESH TOKEN IS OPAQUE (RFC 6749 section 1.5), and since 2026-09-12
+  // the mock makes it so: a signed JWT ENCRYPTED to its own realm as a compact
+  // JWE with cty "JWT" (RFC 7519 section 11.2). It is therefore NOT verified
+  // against jwks_uri here — no client can, and none should try. What a client
+  // may rely on is checked instead: it is a compact JWE, and the authorization
+  // server itself says what it is, at introspection below.
+  const rtParts = String(set.refresh_token || "").split(".");
+  assert.strictEqual(rtParts.length, 5,
+    "the refresh token should be a compact JWE (five parts), got " +
+        rtParts.length + " part(s).");
+  const rtHeader = JSON.parse(Buffer.from(rtParts[0], "base64url").toString("utf8"));
+  assert.strictEqual(String(rtHeader.cty || "").toUpperCase(), "JWT",
+    "the refresh token's JWE should carry cty JWT (a nested JWT). Got: " +
+        JSON.stringify(rtHeader));
+  assert.ok(rtHeader.alg && rtHeader.enc,
+    "the refresh token's JWE header should name alg and enc. Got: " +
+        JSON.stringify(rtHeader));
+  const rtIns = await postForm(meta.introspection_endpoint,
+      { token: set.refresh_token });
   assert.strictEqual(at.iss, meta.issuer,
                      "the access token's iss should be the issuer.");
   assert.strictEqual(at.client_id, CLIENT_ID,
@@ -652,10 +670,15 @@ async function testAuthorizationCode(meta, verify) {
         "access token.");
   assert.strictEqual(it.sub, at.sub,
       "the ID token and access token should describe the same subject.");
-  assert.strictEqual(rt.typ, "Refresh",
-                     "the refresh token should say what it is.");
-  log.info("[code] OK — access / ID / refresh tokens all verify against " +
-           "jwks_uri, with matching claims.");
+  assert.strictEqual(rtIns.body.active, true,
+                     "the refresh token should introspect as active.");
+  assert.strictEqual(rtIns.body.token_type, "refresh_token",
+                     "the refresh token should say what it is, at introspection.");
+  assert.strictEqual(rtIns.body.sub, at.sub,
+      "the refresh token and access token should describe the same subject.");
+  log.info("[code] OK — access / ID tokens verify against jwks_uri with " +
+           "matching claims, and the refresh token is an encrypted, opaque " +
+           "JWE that introspects as a refresh_token for the same subject.");
 
   // Single use, NON-SPEC-ally relaxed to idempotent for the rest of the code's
   // own lifetime: the identical Token Request gets the identical token set

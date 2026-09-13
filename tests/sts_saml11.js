@@ -814,9 +814,18 @@ async function main() {
   check('a query about somebody who never signed in is ANSWERED, not refused',
         !!byLocal(doc, 'Assertion'));
 
+  // ABOUT SOMEBODY WHO REALLY SIGNED IN — the artifact profile's user, earlier
+  // in this file. It asked about `dave`, who never had, and that was right
+  // while the responder answered an AuthenticationQuery for anybody with a
+  // password AuthenticationStatement at the instant of the query. Since
+  // 2026-09-12 the mock answers it from a session that EXISTS — a signed
+  // statement that somebody just typed a password, about somebody who was never
+  // there, is a falsehood no mode should sign — so `dave` now gets Success with
+  // no assertion. Asking about a real session keeps this check true of the
+  // pinned mock and of the current one alike.
   res = await request('POST', '/saml11/responder', samlRequest(
     '<samlp:AuthenticationQuery><saml:Subject>' +
-    '<saml:NameIdentifier>dave</saml:NameIdentifier></saml:Subject>' +
+    '<saml:NameIdentifier>' + USER_ARTIFACT + '</saml:NameIdentifier></saml:Subject>' +
     '</samlp:AuthenticationQuery>', '_r5'), XML);
   doc = parse(res.body);
   check('an AuthenticationQuery is answered', statusOf(doc) === 'samlp:Success', statusOf(doc));

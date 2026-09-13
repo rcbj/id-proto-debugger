@@ -693,7 +693,19 @@ async function refreshTokenCarriesTheBinding() {
                      issued.text.slice(0, 200));
   assert.ok(issued.body.refresh_token,
             "this grant should have issued a refresh token.");
-  var refreshClaims = claimsOf(issued.body.refresh_token);
+  // THE REFRESH TOKEN IS OPAQUE — since 2026-09-12 the mock encrypts it to its
+  // own realm as a compact JWE — so its binding is read the way a resource
+  // server or an auditor reads it: from the authorization server, at
+  // introspection, which returns `cnf` (RFC 9449 section 6.1 / RFC 7662).
+  // Decoding it here would be this test asserting a format no client may
+  // depend on.
+  var refreshIntrospected = await post(stsBase + "/oauth2/introspect", {
+    form: { token: issued.body.refresh_token }
+  });
+  var refreshClaims = refreshIntrospected.body || {};
+  assert.strictEqual(refreshClaims.active, true,
+    "the refresh token should introspect as active. Got: " +
+        refreshIntrospected.text.slice(0, 200));
   assert.ok(refreshClaims.cnf && refreshClaims.cnf.jkt === jkt(key),
     "a refresh token issued alongside a bound access token must itself be " +
         "bound: a wallet is a " +
@@ -702,7 +714,8 @@ async function refreshTokenCarriesTheBinding() {
     "access tokens for whoever holds it — worse than not binding, because " +
         "token_type would " +
     "claim a guarantee nothing checked.");
-  log.info("[refresh] OK — the refresh token carries the same cnf.jkt.");
+  log.info("[refresh] OK — the refresh token carries the same cnf.jkt " +
+           "(read at introspection; the token itself is opaque).");
 
   // Redeeming it needs the key.
   var withoutProof = await post(TOKEN_ENDPOINT, {
