@@ -3505,6 +3505,21 @@ function buildJobs() {
     env: {},
   });
 
+  // This repository's half of the debugger EMBEDDED in the mock STS
+  // (embedded/CLAUDE.md): the api's unix-socket listener in
+  // common/tls_listener.js (plain HTTP, 0600, the IPC message a forking
+  // parent waits for), the two embedded configurations and what they derive
+  // from the page's origin and DEBUGGER_UI_URL, and client/build.js refusing
+  // a DEPLOYMENT it does not know. Each fails over in the mock STS as a proxy
+  // 502 or an identity provider posting to the wrong path, naming nothing
+  // here. Node only — no browser, no services — so it never skips.
+  jobs.push({
+    name: "Embedded in the mock STS (socket listener, embedded configs, " +
+        "DEPLOYMENT)",
+    script: "embedded_deployment.js",
+    env: {},
+  });
+
   // The api's outbound limits: api/connect_timeout.js plus callTimeout,
   // connectionTimeout, maxContentLength and maxRedirects in api/env/*.js. axios
   // defaults to no timeout, no size cap and 21 redirects, so without these a

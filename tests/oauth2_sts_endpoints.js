@@ -391,9 +391,18 @@ async function testLoginScreen(meta, verify) {
   const it = verify(set.id_token, "the ID token");
   assert.strictEqual(at.username, username,
     "the access token should name the user who signed in. Got: " + at.username);
-  assert.ok(at.sub.indexOf(username) !== -1,
-    "the subject should be derived from the username signed in with. Got: " +
-        at.sub);
+  // The mock STS's `sub` was `urn:sts:user:<username>` and is
+  // `urn:uuid:<entryUUID>` since 2026-09-14 — the directory entry's
+  // identifier, which a rename does not change and a re-created account does
+  // not inherit. Either form is accepted, because this suite runs against the
+  // pinned `sts/` gitlink and the vendored copy against the current tree; what
+  // holds for both is that the access token and the ID Token name ONE subject.
+  assert.ok(at.sub.indexOf(username) !== -1 ||
+            /^urn:uuid:[0-9a-f-]{36}$/.test(String(at.sub)),
+    "the subject should be derived from the username signed in with, or be " +
+        "the directory entry's urn:uuid: identifier. Got: " + at.sub);
+  assert.strictEqual(it.sub, at.sub,
+    "the ID Token and the access token should name the same subject.");
   assert.strictEqual(it.preferred_username, username,
                      "the ID token should name that user too.");
   assert.strictEqual(it.given_name, username,
@@ -869,9 +878,16 @@ async function testOtherGrants(meta, verify, codeTokens) {
   assert.strictEqual(ro.status, 200, "the password grant failed: " + ro.raw);
   const roClaims = verify(ro.body.access_token,
       "the password grant access token");
-  assert.ok(roClaims.sub.indexOf(RO_USER) !== -1,
+  // `sub` is the directory entry's `urn:uuid:` identifier on a mock STS from
+  // 2026-09-14 and `urn:sts:user:<name>` before it (see the sign-in section
+  // above), so the NAME is asserted on `username`, which both carry.
+  assert.strictEqual(roClaims.username, RO_USER,
             "the password grant should describe the user who authenticated (" +
-            RO_USER + "), not " + roClaims.sub + ".");
+            RO_USER + "), not " + roClaims.username + ".");
+  assert.ok(roClaims.sub.indexOf(RO_USER) !== -1 ||
+            /^urn:uuid:[0-9a-f-]{36}$/.test(String(roClaims.sub)),
+            "the password grant's subject should be derived from " + RO_USER +
+            " or be a urn:uuid: identifier, not " + roClaims.sub + ".");
   verify(ro.body.id_token, "the password grant ID token");
 
   const roBad = await postForm(meta.token_endpoint, {
@@ -1046,6 +1062,159 @@ async function testRegistration(meta) {
 }
 
 // ---------------------------------------------------------------------------
+// NATIVE APPLICATIONS' REDIRECTS, WHAT A REGISTRATION MAY STORE, AND A REFRESH
+// THAT NARROWS (2026-09-13). All three are true of the mock IN EVERY MODE since
+// that date, so they are asserted here, against the default realm, rather than
+// in the mock repository's own OAuth 2.1 job:
+//
+//   * A PRIVATE-USE redirect URI (RFC 8252 section 7.1, OAuth 2.1 section
+//     8.4.3) is answered, where it used to be refused for not being http(s). A
+//     scheme with no period in it is refused — `myapp:` is not named for a
+//     domain, and `localhost:3000/cb` typed without http:// parses as the
+//     scheme `localhost:` — and `response_mode=form_post` to a private-use URI
+//     is refused on the server, because a protocol handler is handed a URL and
+//     never a request body.
+//   * A REGISTRATION MAY NOT STORE AN UNUSABLE ADDRESS, through POST or PUT,
+//     and the RFC 7592 read and update carry the client_secret, so they are
+//     `no-store`.
+//   * A REFRESH THAT NARROWS ITS SCOPE LEAVES THE ROTATED REFRESH TOKEN WITH
+//     THE WHOLE GRANT (RFC 6749 section 6). The refresh token is opaque, so it
+//     is shown the only way a client can see it: a SECOND refresh, naming no
+//     scope, is issued the original scope rather than the narrowed one.
+// ---------------------------------------------------------------------------
+async function testNativeRedirectsRegistrationAndRefreshScope(meta) {
+  log.debug("Entering testNativeRedirectsRegistrationAndRefreshScope().");
+  log.info("=== Native redirects, registration addresses, refresh scope ===");
+  const native = "com.example.oauth2stsendpoints:/callback";
+  const nativeClient = CLIENT_ID + "-native";
+  await registry.provision(registry.baseOf(stsBase), {
+    identifier: nativeClient,
+    name: "OAuth2 STS endpoints (native application)",
+    protocols: ["oauth2", "oidc"],
+    fields: {
+      oauthClientId: nativeClient,
+      oauthRedirectUri: [native],
+      oauthResponseType: ["code"],
+      oauthGrantType: ["authorization_code", "refresh_token"],
+      oauthScope: ["openid", "profile", "email"],
+      oauthTokenEndpointAuthMethod: "none",
+      oauthConfidential: "FALSE"
+    },
+    why: "the native application whose private-use redirect URI this " +
+         "section drives"
+  });
+  const verifier = b64u(crypto.randomBytes(32));
+  const challenge = b64u(crypto.createHash("sha256").update(verifier,
+      "ascii").digest());
+
+  const answered = await authorize(meta, {
+    response_type: "code", client_id: nativeClient, redirect_uri: native,
+    scope: "openid profile email", state: "native", nonce: "native-nonce",
+    code_challenge: challenge, code_challenge_method: "S256"
+  });
+  assert.ok(answered.location.indexOf(native + "?") === 0,
+    "a private-use redirect URI should be answered at itself; the " +
+    "authorization response went to " + answered.location);
+  const code = answered.params.get("code");
+  assert.ok(code, "no authorization code came back to the native redirect.");
+  log.info("[native] OK — a private-use redirect URI is answered.");
+
+  const formPost = await get(meta.authorization_endpoint + "?" + form({
+    response_type: "code", client_id: nativeClient, redirect_uri: native,
+    response_mode: "form_post", code_challenge: challenge,
+    code_challenge_method: "S256"
+  }));
+  assert.strictEqual(formPost.status, 400,
+    "response_mode=form_post to a private-use redirect URI must be refused " +
+    "on the server, got HTTP " + formPost.status);
+  assert.strictEqual(formPost.headers.get("location"), null,
+    "and nothing may be redirected.");
+  for (const bad of ["myapp:/callback", "localhost:3000/callback"]) {
+    const refused = await get(meta.authorization_endpoint + "?" + form({
+      response_type: "code", client_id: nativeClient, redirect_uri: bad }));
+    assert.strictEqual(refused.status, 400,
+      "a redirect_uri of " + bad + " must be refused on the server, got HTTP " +
+      refused.status);
+  }
+  log.info("[native] OK — form_post to one, and a scheme with no period, are " +
+           "refused.");
+
+  const tokens = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: code, client_id: nativeClient,
+    redirect_uri: native, code_verifier: verifier
+  });
+  assert.strictEqual(tokens.status, 200, "the native code exchange failed: " +
+                     tokens.raw);
+  assert.ok(tokens.body.refresh_token, "no refresh token came back.");
+  const narrowed = await postForm(meta.token_endpoint, {
+    grant_type: "refresh_token", refresh_token: tokens.body.refresh_token,
+    client_id: nativeClient, scope: "openid"
+  });
+  assert.strictEqual(narrowed.status, 200, "the narrowing refresh failed: " +
+                     narrowed.raw);
+  assert.strictEqual(narrowed.body.scope, "openid",
+    "a refresh asking for less narrows the ACCESS token it issues.");
+  const renewed = await postForm(meta.token_endpoint, {
+    grant_type: "refresh_token",
+    refresh_token: narrowed.body.refresh_token || tokens.body.refresh_token,
+    client_id: nativeClient
+  });
+  assert.strictEqual(renewed.status, 200, "the second refresh failed: " +
+                     renewed.raw);
+  assert.deepStrictEqual(String(renewed.body.scope || "").split(" ").sort(),
+    ["email", "openid", "profile"],
+    "RFC 6749 section 6: the refresh token a narrowing refresh hands back " +
+    "carries the scope of the one presented, so a refresh naming no scope " +
+    "is issued the whole grant. Got: " + renewed.body.scope);
+  log.info("[refresh] OK — narrowing once does not shrink the grant.");
+
+  const javascript = await fetch(meta.registration_endpoint, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ redirect_uris: ["javascript:alert(1)"],
+                           token_endpoint_auth_method: "none" })
+  });
+  assert.strictEqual(javascript.status, 400,
+    "a registration naming javascript: as a redirect URI must be refused, " +
+    "got HTTP " + javascript.status);
+  assert.strictEqual((await javascript.json()).error, "invalid_redirect_uri",
+    "and the error is RFC 7591's invalid_redirect_uri.");
+
+  const reg = await (await fetch(meta.registration_endpoint, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ client_name: "Native registration",
+                           redirect_uris: [native],
+                           token_endpoint_auth_method: "none" })
+  })).json();
+  assert.ok(reg.client_id, "a private-use redirect URI should register.");
+  const authed = { Authorization: "Bearer " + reg.registration_access_token };
+  const read = await fetch(reg.registration_client_uri, { headers: authed });
+  assert.strictEqual(read.status, 200, "reading the registration failed.");
+  assert.ok(/no-store/.test(read.headers.get("cache-control") || ""),
+    "the RFC 7592 read carries the client_secret, so it must be no-store.");
+  const framed = await fetch(reg.registration_client_uri, {
+    method: "PUT",
+    headers: Object.assign({ "Content-Type": "application/json" }, authed),
+    body: JSON.stringify({ redirect_uris: [native],
+                           frontchannel_logout_uri: "javascript:alert(1)" })
+  });
+  assert.strictEqual(framed.status, 400,
+    "an RFC 7592 update may not store an unusable frontchannel_logout_uri " +
+    "either — the update runs the checks registration runs. Got HTTP " +
+    framed.status);
+  await fetch(reg.registration_client_uri, { method: "DELETE",
+                                             headers: authed });
+  log.info("[register] OK — unusable addresses are refused through POST and " +
+           "PUT, and the read is no-store.");
+
+  const logout = await get(stsBase + "/oauth2/logout?" + form({
+    post_logout_redirect_uri: "com.example.oauth2stsendpoints:/signed-out" }));
+  assert.strictEqual(logout.headers.get("location"), null,
+    "with RFC 9700 mode off, a private-use post_logout_redirect_uri is not " +
+    "followed — sign-out names no client there, and nobody vouches for it.");
+  log.debug("Leaving testNativeRedirectsRegistrationAndRefreshScope().");
+}
+
+// ---------------------------------------------------------------------------
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. metadata=" + metadataUrl);
@@ -1131,6 +1300,7 @@ async function test() {
   await testOtherGrants(meta, verify, codeTokens);
   await testIntrospectionAndRevocation(meta, verify);
   await testRegistration(meta);
+  await testNativeRedirectsRegistrationAndRefreshScope(meta);
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

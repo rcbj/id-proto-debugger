@@ -292,6 +292,26 @@ sudo docker run -p 4000:4000 -e CONFIG_FILE=./env/local.js -d rcbj/debugger-api
 ```
 On other systems, the commands needed to start the debugger in a local docker container will be similar. The docker Sinatra/Ruby runtime will have to be able to establish connections to remote IdP endpoint (whether locally in other docker containers, on the host VM, or over the network/internet).  On the test system, it was necessary to add "--net=host" to the "docker run" args. The network connectivity details for docker may vary from platform-to-platform.
 
+## Embedded in the mock STS
+
+The debugger has a third deployment shape besides the containers above and the
+static idptools.com build: **embedded inside the
+[mock STS](https://github.com/rcbj/mock-sts)**, which serves the UI from a
+listener of its own behind an OIDC sign-in and runs the api as a child process
+on a unix socket behind its own proxy. This repository builds the tree that
+service consumes:
+
+```bash
+git submodule update --init --recursive
+embedded/build.sh --out /path/to/tree          # without docker
+docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:dev \
+  --build-arg GIT_COMMIT=$(git rev-parse --short=12 HEAD) .
+```
+
+Nothing about the standalone debugger changes. The contract — the tree, the
+`DEBUGGER_*` environment the api child reads, and the address allow-list it
+enforces — is in `embedded/CLAUDE.md`.
+
 # Additional Feature Information
 ## RFC 9700 compliance mode
 

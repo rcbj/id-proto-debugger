@@ -759,6 +759,79 @@ var cachedClaimDescriptions = true;
 const app = express();
 const expressSwagger = require('express-swagger-generator')(app);
 
+// ---------------------------------------------------------------------------
+// EMBEDDED IN THE MOCK STS: a unix socket, and one trusted peer in front of it.
+//
+// DEBUGGER_LISTEN_SOCKET is set only when the mock STS forks this service as
+// its embedded debugger (embedded/CLAUDE.md). The listener is then a unix
+// socket — common/tls_listener.js decides that, as it decides TLS — and the
+// ONLY thing that can connect to it is that service's reverse proxy, which
+// terminates TLS on the debugger's public origin and strips `/api` from the
+// path. So `trust proxy` is on in that mode and in no other: the proxy's
+// X-Forwarded-Proto and X-Forwarded-Host are the truth about the URL a
+// browser used, and without them every absolute URL built from a request
+// here would say `http://` and whatever Host a unix socket was given.
+// Standalone, nothing sets the variable and nothing below changes.
+// ---------------------------------------------------------------------------
+const LISTEN_SOCKET = tlsListener.socketPathFor({});
+if (LISTEN_SOCKET) {
+  app.set('trust proxy', true);
+  log.info('Listening on a unix socket behind the mock STS: trust proxy on.');
+}
+
+/**
+ * The prefix the embedding proxy stripped, from X-Forwarded-Prefix, or ''.
+ *
+ * Honoured ONLY on the socket listener, whose one peer is that proxy; on a
+ * TCP listener anybody could send the header, and a URL this service hands
+ * back must not be steerable by its caller. It must be a plain absolute path
+ * (`/api`) — no scheme, no `//`, no query — and anything else is ignored
+ * rather than repaired, so a malformed header yields the unprefixed URL.
+ *
+ * @param {object} req - the Express request.
+ * @returns {string} e.g. "/api", or "".
+ */
+function forwardedPrefix(req) {
+  log.debug("Entering forwardedPrefix().");
+  if (!LISTEN_SOCKET) {
+    log.debug("Leaving forwardedPrefix(). Not behind the embedding proxy.");
+    return '';
+  }
+  var raw = String(req.get('X-Forwarded-Prefix') || '').trim();
+  if (!/^(\/[A-Za-z0-9._~-]+)+\/?$/.test(raw)) {
+    log.debug("Leaving forwardedPrefix(). Absent or not a plain path.");
+    return '';
+  }
+  log.debug("Leaving forwardedPrefix(). " + raw.replace(/\/$/, ''));
+  return raw.replace(/\/$/, '');
+}
+
+/**
+ * This service's own base URL AS THE CALLER REACHED IT, for a URL handed back
+ * to a browser or a transmitter.
+ *
+ * Standalone it is exactly the expression the SSF receiver always used —
+ * `req.protocol + '://' + req.get('host')`. Behind the embedding proxy it
+ * reads the forwarded host (`req.host` honours X-Forwarded-Host once trust
+ * proxy is on; `req.get('host')` never does) and puts back the prefix the
+ * proxy stripped, because a path that works on the socket is one segment
+ * short on the public origin.
+ *
+ * @param {object} req - the Express request.
+ * @returns {string} e.g. "https://localhost:8444/api".
+ */
+function publicBaseUrl(req) {
+  log.debug("Entering publicBaseUrl().");
+  if (!LISTEN_SOCKET) {
+    log.debug("Leaving publicBaseUrl(). Standalone.");
+    return req.protocol + '://' + req.get('host');
+  }
+  var base = req.protocol + '://' + (req.host || req.get('host')) +
+      forwardedPrefix(req);
+  log.debug("Leaving publicBaseUrl(). " + base);
+  return base;
+}
+
 app.use(bodyParser.json());
 // SAML ACS receives application/x-www-form-urlencoded POSTs (SAMLResponse,
 // RelayState, SAMLart) from the IdP; enable urlencoded parsing for those.
@@ -2480,6 +2553,22 @@ let options = {
     basedir: __dirname, //app absolute path
     files: ['server.js'] //Path to the API handle folder
 };
+// Embedded behind the mock STS the document's "try it" calls have to go to the
+// debugger's public origin under `/api` — `localhost:4000` is a port nothing
+// listens on there. Taken from uiUrl, which api/env/embedded.js derives from
+// DEBUGGER_UI_URL, rather than from a request: this document is built once.
+if (LISTEN_SOCKET && uiUrl) {
+  try {
+    var embeddedOrigin = new URL(uiUrl);
+    options.swaggerDefinition.host = embeddedOrigin.host;
+    options.swaggerDefinition.basePath = '/api';
+    options.swaggerDefinition.schemes = [embeddedOrigin.protocol
+        .replace(/:$/, '')];
+  } catch (e) {
+    log.warn('uiUrl is not a URL (' + ((e && e.message) || e) + '); the ' +
+             'API document keeps its standalone host.');
+  }
+}
 /**
  * Relay a Kerberos v5 message to a KDC and return its reply.
  * @route POST /krb5/kdc
@@ -3395,8 +3484,10 @@ app.post('/ssf/receiver', function (req, res) {
   // address as the caller reached it — not a configured one. A page on
   // localhost and a page on a compose network see different hosts for the same
   // api, and a stream created with the wrong one delivers nothing with no
-  // error anybody sees until the first push.
-  var base = req.protocol + '://' + req.get('host');
+  // error anybody sees until the first push. Behind the mock STS's embedding
+  // proxy that address carries the `/api` the proxy stripped — see
+  // publicBaseUrl().
+  var base = publicBaseUrl(req);
   log.debug('Leaving POST /ssf/receiver. ' + made.id);
   return res.status(STATUS_200).json({
     ok: true,
@@ -3729,7 +3820,8 @@ app.get('/tls/server-certificate', function (req, res) {
   return res.status(STATUS_200).send(pem);
 });
 
-tlsListener.listen(app, appconfig, { name: 'api', port: PORT, host: HOST });
+const server = tlsListener.listen(app, appconfig,
+    { name: 'api', port: PORT, host: HOST, socketPath: LISTEN_SOCKET });
 
 // When running under coverage (c8), exit cleanly on container stop so the V8
 // coverage is flushed to NODE_V8_COVERAGE before the process is terminated.
@@ -3739,5 +3831,48 @@ if (process.env.COVERAGE === 'true') {
       log.info('Received ' + signal + '; exiting to flush coverage.');
       process.exit(0);
     });
+  });
+} else if (LISTEN_SOCKET) {
+  // EMBEDDED: the mock STS is this process's parent and decides its lifetime.
+  // Node's default for SIGTERM is to die without closing the listener, which
+  // leaves the socket file behind; closing first unlinks it, and the stale
+  // unlink in tls_listener.js covers the SIGKILL case. The proxy holds
+  // keep-alive connections open, so they are closed outright rather than
+  // waited for, and a timer that does not keep the loop alive is the backstop
+  // should close() still not call back.
+  ['SIGTERM', 'SIGINT'].forEach(function (signal) {
+    process.on(signal, function () {
+      log.info('Received ' + signal + ' from the embedding service; closing ' +
+               'the socket listener and exiting.');
+      setTimeout(function () {
+        process.exit(0);
+      }, 2000).unref();
+      server.close(function () {
+        process.exit(0);
+      });
+      if (typeof server.closeAllConnections === 'function') {
+        server.closeAllConnections();
+      }
+    });
+  });
+}
+
+// An ORPHANED embedded api must not outlive the mock STS. A child forked with
+// an IPC channel sees `disconnect` when its parent exits for any reason —
+// including SIGKILL, which sends this process no signal at all — so that is
+// the one event that is certain to arrive. Gated on the socket too, so a
+// standalone api started under some IPC-speaking supervisor is unchanged.
+if (LISTEN_SOCKET && typeof process.send === 'function') {
+  process.on('disconnect', function () {
+    log.info('The embedding service closed the IPC channel; exiting.');
+    setTimeout(function () {
+      process.exit(0);
+    }, 2000).unref();
+    server.close(function () {
+      process.exit(0);
+    });
+    if (typeof server.closeAllConnections === 'function') {
+      server.closeAllConnections();
+    }
   });
 }
