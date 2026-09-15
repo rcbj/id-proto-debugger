@@ -141,14 +141,99 @@ function rpKeys() {
 // consumed the entire window, so the retry loop never got a second go and the
 // number in the message was measuring the wrong thing.
 //
-// So the window is five minutes. It is not a licence for a slow mock — the
+// So the window was five minutes (ten since 2026-09-15; see below). It is not
+// a licence for a slow mock — the
 // per-job watchdog is still what catches a hung one, and this stays well
 // inside it — it is an acknowledgement that ONE post-quantum signature can
 // legitimately take minutes when the process computing it is instrumented.
 //
 // `STS_BUSY_WINDOW_MS` overrides it, so a stack that knows it is slower (or a
 // developer who knows it is not) can say so without another vendor sync.
-const BUSY_WINDOW_MS = Number(process.env.STS_BUSY_WINDOW_MS || 300000);
+// ---------------------------------------------------------------------------
+// TEN MINUTES, AND NOT THROUGH `fetch`, SINCE 2026-09-15 — BECAUSE FIVE
+// MINUTES WAS NEVER THE WINDOW.
+//
+// mock-sts's coverage job went on failing on this line after the raise above,
+// on two runs of a tree that passed twice the same day, with the same tell:
+// `in 300s of trying (fetch failed, 1 attempt(s))`. The service log put
+// numbers on it. A SLH-DSA-SHAKE-128s UserInfo response took 193s on the run
+// that passed, and the one that failed sent its request at 12:51:42.9 and gave
+// up at 12:56:44.6 — 301.7s, on a runner about 1.5x slower.
+//
+// **node's `fetch` is undici, and undici waits 300 seconds for response
+// headers and then throws** (`headersTimeout`, 300,000ms by default), so ONE
+// ATTEMPT COULD NEVER OUTLAST FIVE MINUTES whatever the window said. Raising
+// the window alone cannot help either: every retry asks for a fresh signature
+// and meets the same limit. Changing undici's limit means a `dispatcher`, which
+// means requiring the `undici` package — a dependency neither tests directory
+// declares, and one whose Agent is not guaranteed to plug into the undici a
+// given node release bundles.
+//
+// So a request here is made with node's `https` module, which has no limit of
+// its own, and is given THE REST OF THE WINDOW as its idle timeout: one attempt
+// may now take the whole window, which is what the comment above always meant.
+// It hands back a standard `Response`, so no caller changed. A CONNECTION
+// failure is still retried exactly as before.
+//
+// The window is ten minutes, for the same measurement: 301.7s was already past
+// five on the slower runner.
+const http = require("http");
+const https = require("https");
+
+const BUSY_WINDOW_MS = Number(process.env.STS_BUSY_WINDOW_MS || 600000);
+
+// One request, answered as a WHATWG `Response`. `remainingMs` is how long it
+// may sit waiting for a byte before it is abandoned, and it is the rest of
+// stsFetch()'s window rather than any fixed figure.
+function requestOnce(url, options, remainingMs) {
+  log.debug("Entering requestOnce(). url=" + url);
+  const opts = options || {};
+  const target = new URL(url);
+  const client = target.protocol === "http:" ? http : https;
+  const headers = Object.assign({}, opts.headers || {});
+  const body = opts.body === undefined || opts.body === null
+    ? null : String(opts.body);
+  if (body !== null) {
+    headers["Content-Length"] = Buffer.byteLength(body);
+  }
+  log.debug("Leaving requestOnce().");
+  return new Promise(function (resolve, reject) {
+    // `agent: false` — a socket of its own per attempt, so the idle timeout
+    // below cannot outlive this request on a pooled keep-alive socket and fire
+    // on the next one. A few dozen extra TLS handshakes cost nothing here.
+    const request = client.request(target,
+      { method: opts.method || "GET", headers: headers, agent: false },
+      function (reply) {
+        const chunks = [];
+        reply.on("data", function (chunk) {
+          chunks.push(chunk);
+        });
+        reply.on("error", reject);
+        reply.on("end", function () {
+          const answerHeaders = new Headers();
+          Object.keys(reply.headers).forEach(function (name) {
+            [].concat(reply.headers[name]).forEach(function (value) {
+              answerHeaders.append(name, value);
+            });
+          });
+          // A Response refuses a body for these statuses, even an empty one.
+          const noBody = [204, 205, 304].indexOf(reply.statusCode) !== -1;
+          resolve(new Response(noBody ? null : Buffer.concat(chunks),
+            { status: reply.statusCode, statusText: reply.statusMessage,
+              headers: answerHeaders }));
+        });
+      });
+    request.setTimeout(Math.max(1, remainingMs), function () {
+      request.destroy(new Error("no response in " +
+        Math.round(remainingMs / 1000) + "s"));
+    });
+    request.on("error", reject);
+    if (body !== null) {
+      request.write(body);
+    }
+    request.end();
+  });
+}
 
 async function stsFetch(url, options) {
   log.debug("Entering stsFetch(). url=" + url);
@@ -158,7 +243,7 @@ async function stsFetch(url, options) {
   while (Date.now() < until) {
     attempts++;
     try {
-      const response = await fetch(url, options);
+      const response = await requestOnce(url, options, until - Date.now());
       if (attempts > 1) {
         log.info("[busy] " + url + " answered on attempt " + attempts +
                  "; the mock was blocked on a signature until then.");
