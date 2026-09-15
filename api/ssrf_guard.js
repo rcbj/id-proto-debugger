@@ -28,6 +28,12 @@
 //                                        empty. A bare single address is
 //                                        refused, with the reason logged: see
 //                                        parseRange().
+//   appconfig.allowedAddressRanges       array of RANGES in the same grammar.
+//                                        ABSENT OR EMPTY BY DEFAULT, and then
+//                                        nothing below changes. A NON-EMPTY
+//                                        array switches the guard into
+//                                        ALLOW-LIST MODE — see "Allow-list
+//                                        mode" further down.
 //
 // THREE LAYERS, because no one of them is enough:
 //
@@ -52,11 +58,42 @@
 //      LITERAL ADDRESSES — Node never calls `lookup` for those, and a redirect
 //      Location is usually a literal.
 //
-// What is deliberately NOT here: an allow-list of public hosts (this is a
-// debugger — it must reach arbitrary identity providers), and any attempt to
-// block by hostname. Names are checked by what they RESOLVE to, so
-// `localtest.me`, `127.0.0.1.nip.io` and a hostile DNS record pointing at
-// loopback are all caught by the same rule.
+// What is deliberately NOT here: any attempt to block by hostname. Names are
+// checked by what they RESOLVE to, so `localtest.me`, `127.0.0.1.nip.io` and a
+// hostile DNS record pointing at loopback are all caught by the same rule.
+//
+// ---------------------------------------------------------------------------
+// ALLOW-LIST MODE (appconfig.allowedAddressRanges), and why it exists.
+//
+// The block-list above is right for a debugger that must reach arbitrary
+// identity providers. It is wrong for the one deployment that must reach
+// exactly ONE: the debugger embedded inside the mock STS (embedded/CLAUDE.md),
+// where the api runs as a child of that service in product mode and has no
+// business dialing anything but its parent. There the question inverts from
+// "is this address forbidden?" to "is this address one of the few permitted?",
+// and the permitted ones are typically LOOPBACK — exactly what the block-list
+// refuses first. So a non-empty allow-list REPLACES the block-list rather than
+// being consulted beside it (the default block-list would refuse the very
+// address the allow-list names), and it switches the address policy ON
+// whatever blockPrivateNetworkCalls says, because an allow-list that a stray
+// `false` elsewhere silently disarms is not an allow-list.
+//
+// IT FLOWS THROUGH THE SAME TWO MEMBERS EVERY RELAY ALREADY ASKS. The Kerberos
+// relay, the LDAP client, the TLS probe and the SPIFFE client each read
+// `guard.enabled` and `guard.blockedRangeFor(address)` and refuse when the
+// latter returns text — they reuse the DECISION, not the ranges. So in this
+// mode `blockedRangeFor()` answers for an address OUTSIDE every allowed range
+// with a text naming the allow-list ("everything outside allowedAddressRanges
+// [...]"), and each relay's own sentence — "... it is in the blocked range
+// <text>" — still reads as the truth. Nothing in those four files had to
+// change for them to be covered, which is the point: a fifth relay written
+// against the same two members inherits the allow-list for nothing.
+//
+// AN ALLOW-LIST WITH NO USABLE ENTRY FAILS CLOSED, which is the opposite of
+// the block-list's empty case and deliberately so. A block-list whose every
+// entry is a typo blocks nothing and says so; an allow-list whose every entry
+// is a typo must permit nothing, because the operator's intent was plainly to
+// restrict, and a typo must never be what opens the relay.
 // ---------------------------------------------------------------------------
 const dns = require('dns');
 const net = require('net');
@@ -381,9 +418,43 @@ function createGuard(appconfig, log) {
     log.debug("Entering error().");
     log.debug("Leaving error().");
   } };
+  // A NON-EMPTY allowedAddressRanges is allow-list mode (see the header). An
+  // absent key, a non-array or `[]` leaves the block-list exactly as it was.
+  const allowListMode = Array.isArray(appconfig.allowedAddressRanges) &&
+      appconfig.allowedAddressRanges.length > 0;
   // Only an explicit false disables the guard: a missing key, a typo or a
   // stringly-typed "false" from an environment must not silently open it.
-  const enabled = appconfig.blockPrivateNetworkCalls !== false;
+  // And in allow-list mode nothing disables it — see the header.
+  const enabled = allowListMode ||
+      appconfig.blockPrivateNetworkCalls !== false;
+  const allowedRanges = [];
+  if (allowListMode) {
+    for (const entry of appconfig.allowedAddressRanges) {
+      const parsed = parseRange(entry);
+      if (parsed.error) {
+        // Named, like a bad blocked range — but here an ignored entry NARROWS
+        // what is reachable rather than widening it, so it cannot open a hole.
+        logger.error('ssrf_guard: ignoring allowed range "' + entry +
+                     '" — it ' + parsed.error + '.');
+      } else {
+        allowedRanges.push(parsed);
+      }
+    }
+    if (!allowedRanges.length) {
+      logger.error('ssrf_guard: no usable ranges in allowedAddressRanges — ' +
+                   'FAILING CLOSED: every outbound address will be refused. ' +
+                   'Entries must be CIDR blocks ("127.0.0.0/8") or ' +
+                   'first-last pairs ("127.0.0.1-127.0.0.1").');
+    }
+  }
+  // The text blockedRangeFor() hands back for an address outside the
+  // allow-list. It is written to finish the sentence every relay already
+  // builds around it ("it is in the blocked range <text>").
+  const allowListRefusalText = allowedRanges.length
+    ? 'everything outside allowedAddressRanges [' +
+      allowedRanges.map(function (r) { return r.text; }).join(', ') + ']'
+    : 'everything (allowedAddressRanges has no usable entry, so it fails ' +
+      'closed)';
   const configured = Array.isArray(appconfig.blockedAddressRanges) &&
       appconfig.blockedAddressRanges.length
     ? appconfig.blockedAddressRanges
@@ -401,7 +472,7 @@ function createGuard(appconfig, log) {
       ranges.push(parsed);
     }
   }
-  if (!ranges.length) {
+  if (!ranges.length && !allowListMode) {
     logger.error('ssrf_guard: no usable ranges in blockedAddressRanges — ' +
                  'nothing will be blocked. ' +
                  'Entries must be CIDR blocks ("10.0.0.0/8") or ' +
@@ -413,8 +484,25 @@ function createGuard(appconfig, log) {
     log.debug("Entering blockedRangeFor().");
     const address = toAddress(ip);
     if (!address) {
+      // Not an address — a NAME. Every caller resolves a name and asks again
+      // about each address it resolved to, in both modes, so there is nothing
+      // to decide here yet.
       log.debug("Leaving blockedRangeFor().");
       return null;
+    }
+    if (allowListMode) {
+      // The block-list is NOT consulted: the allow-list replaces it, since
+      // the default block-list refuses loopback first and loopback is what
+      // an allow-list here usually names. No usable entry matches nothing,
+      // so an empty parse refuses everything — failing closed.
+      for (const allowed of allowedRanges) {
+        if (withinRange(address, allowed)) {
+          log.debug("Leaving blockedRangeFor(). Inside the allow-list.");
+          return null;
+        }
+      }
+      log.debug("Leaving blockedRangeFor(). Outside the allow-list.");
+      return allowListRefusalText;
     }
     for (const range of ranges) {
       if (withinRange(address, range)) {
@@ -428,6 +516,27 @@ function createGuard(appconfig, log) {
 
   function blockedError(host, ip, rangeText) {
     log.debug("Entering blockedError().");
+    if (allowListMode) {
+      // Same code and the same fields, so every handler that maps
+      // EBLOCKEDADDRESS to a refusal keeps working — but a sentence that
+      // tells the operator the truth. "In the blocked range" and "set
+      // blockPrivateNetworkCalls to false" would both be wrong here: nothing
+      // is blocked by name, and that switch does not govern this mode.
+      const outside = new Error(
+        'Refusing to call ' + host + ': it resolves to ' + ip +
+        ', which is outside the allowed address ranges (' +
+        (allowedRanges.length
+          ? allowedRanges.map(function (r) { return r.text; }).join(', ')
+          : 'none usable — the allow-list fails closed') +
+        '). This deployment may only call the addresses in ' +
+        'allowedAddressRanges.');
+      outside.code = 'EBLOCKEDADDRESS';
+      outside.blockedHost = host;
+      outside.blockedAddress = ip;
+      outside.blockedRange = rangeText;
+      log.debug("Leaving blockedError(). Allow-list mode.");
+      return outside;
+    }
     const error = new Error(
       'Refusing to call ' + host + ': it resolves to ' + ip +
           ', which is in the blocked range ' +
@@ -673,18 +782,36 @@ function createGuard(appconfig, log) {
       return assertUrlAllowed(targetOf(config))
                               .then(function () { return config; });
     });
-    logger.info('ssrf_guard: enabled; refusing outbound calls to ' +
-                ranges.length +
-                ' blocked range(s): ' +
-                    ranges.map(function (r) { return r.text; }).join(', '));
+    if (allowListMode) {
+      logger.info('ssrf_guard: enabled in ALLOW-LIST mode; refusing every ' +
+                  'outbound address outside ' + allowedRanges.length +
+                  ' allowed range(s): ' +
+                  (allowedRanges.length
+                    ? allowedRanges.map(function (r) { return r.text; })
+                      .join(', ')
+                    : '(none usable — every address is refused)'));
+    } else {
+      logger.info('ssrf_guard: enabled; refusing outbound calls to ' +
+                  ranges.length +
+                  ' blocked range(s): ' +
+                      ranges.map(function (r) { return r.text; }).join(', '));
+    }
     log.debug("Leaving install().");
     return { enabled: true,
+            mode: allowListMode ? 'allow' : 'block',
+            allowedRanges: allowedRanges.map(function (r) { return r.text; }),
             ranges: ranges.map(function (r) { return r.text; }) };
   }
 
   log.debug("Leaving createGuard().");
   return {
     enabled: enabled,
+    // 'allow' when allowedAddressRanges is a non-empty array, else 'block'.
+    mode: allowListMode ? 'allow' : 'block',
+    // The usable allowed ranges as written; empty in block mode, and ALSO
+    // empty in an allow-list that parsed to nothing — `mode` tells the two
+    // apart, and the second refuses every address.
+    allowedRanges: allowedRanges.map(function (r) { return r.text; }),
     ranges: ranges.map(function (r) { return r.text; }),
     blockedRangeFor: blockedRangeFor,
     assertUrlAllowed: assertUrlAllowed,

@@ -16,6 +16,38 @@
 //      out their landing card (client/static_site.js — Kerberos, today)
 //
 // CONFIG_FILE selects which env config is baked in (default ./env/prod.js).
+//
+// ---------------------------------------------------------------------------
+// DEPLOYMENT: 'static' (the default, and exactly what this script always did)
+// or 'embedded'.
+//
+// 'embedded' builds the UI the mock STS serves (embedded/CLAUDE.md). Four of
+// the steps above exist because a STATIC site has no backend, and on that
+// deployment it has one — the api runs as a child of the mock STS, behind its
+// proxy at `/api` — so each is switched off, explicitly, at its own step:
+//
+//   * step 2a — nothing is dropped and no landing card is greyed: Kerberos,
+//     SPNEGO, LDAP and SPIFFE all work there, and the static-only note under
+//     the grid stays hidden because there is nothing greyed for it to explain;
+//   * step 2b — no dist/claimdescription: the api serves GET /claimdescription
+//     at apiUrl, which is `/api/claimdescription` there, so a static copy at
+//     the site root would be a second source nobody reads;
+//   * step 5 — Google Analytics is NEVER injected, even with
+//     GA_MEASUREMENT_ID set: this is somebody's own identity service, not
+//     idptools.com;
+//   * step 7 — no callback/ shim: the mock STS serves /callback itself.
+//
+// And one step is ADDED (3a): the literal `__STS_EMBED_STS_URL__`, which the
+// mock STS substitutes with its own base URL at serve time, must survive
+// minification in every bundle that carries a default naming that service —
+// see client/src/env/embedded.js. A build that folded it away would ship a UI
+// whose every default points at a string, and nothing would fail until a
+// person clicked.
+//
+// OUT_DIR, when set, is where dist/ goes instead of client/dist. It is emptied
+// first exactly as client/dist is, so it is refused when it resolves to
+// something that must never be emptied (see resolveDist()).
+// ---------------------------------------------------------------------------
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -55,11 +87,63 @@ var log = {
 };
 
 const CLIENT_DIR = __dirname;
-const DIST = path.join(CLIENT_DIR, 'dist');
+
+// Which deployment this build is for. Anything but the two known names is a
+// typo, and a typo here must not quietly produce the static build — that
+// would ship an embedded UI with its Kerberos pages deleted.
+const DEPLOYMENT = process.env.DEPLOYMENT || 'static';
+if (DEPLOYMENT !== 'static' && DEPLOYMENT !== 'embedded') {
+  throw new Error('DEPLOYMENT must be "static" (the default) or "embedded", ' +
+      'not "' + DEPLOYMENT + '".');
+}
+const EMBEDDED = DEPLOYMENT === 'embedded';
+
+// Where dist/ goes. OUT_DIR is emptied before the build like client/dist, so
+// a value that resolves to the filesystem root, the home directory, or this
+// checkout (or anything above it) is refused rather than recursively removed.
+function resolveDist() {
+  log.debug("Entering resolveDist().");
+  if (!process.env.OUT_DIR) {
+    log.debug("Leaving resolveDist(). client/dist");
+    return path.join(CLIENT_DIR, 'dist');
+  }
+  const out = path.resolve(process.env.OUT_DIR);
+  const repoRoot = path.resolve(CLIENT_DIR, '..');
+  const forbidden = [path.parse(out).root, require('os').homedir(),
+    repoRoot, CLIENT_DIR];
+  const isAncestorOfCheckout = (repoRoot + path.sep).indexOf(out + path.sep) ===
+      0;
+  if (forbidden.indexOf(out) !== -1 || isAncestorOfCheckout) {
+    log.debug("Leaving resolveDist(). Refused.");
+    throw new Error('OUT_DIR=' + out + ' would be emptied before the build, ' +
+        'and it is the filesystem root, the home directory, or this ' +
+        'checkout or a directory above it. Choose a directory of its own.');
+  }
+  log.debug("Leaving resolveDist(). " + out);
+  return out;
+}
+
+const DIST = resolveDist();
 const PUBLIC = path.join(CLIENT_DIR, 'public');
 const SRC = path.join(CLIENT_DIR, 'src');
 const COMMON_DATA = path.join(CLIENT_DIR, '..', 'common', 'data.js');
-const CONFIG_FILE = process.env.CONFIG_FILE || './env/prod.js';
+// The default follows the deployment, so `DEPLOYMENT=embedded node build.js`
+// cannot bake in prod.js's idptools.com addresses by omission. Note the path
+// is relative to client/src, because it is the bundles' own require() that
+// envify rewrites — the file is client/src/env/embedded.js.
+const CONFIG_FILE = process.env.CONFIG_FILE ||
+    (EMBEDDED ? './env/embedded.js' : './env/prod.js');
+
+// The placeholder client/src/env/embedded.js writes the mock STS's base URL
+// as, and the configuration keys whose defaults are built from it. A bundle
+// carrying any of these keys carries the configuration, and so must carry the
+// placeholder too (step 3a).
+const STS_PLACEHOLDER = '__STS_EMBED_STS_URL__';
+const STS_PLACEHOLDER_KEYS = ['wstrustStsUrlDefault', 'oid4vciIssuerUrlDefault',
+  'oid4vpVerifierUrlDefault', 'rfc8414MetadataUrlDefault',
+  'krb5SpnegoUrlDefault', 'spiffeServerAddressDefault',
+  'spiffeBundleUrlDefault', 'scimBaseUrlDefault', 'ssfTransmitterUrlDefault',
+  'samlMetadataUrlDefault', 'wsfedMetadataUrlDefault'];
 const BROWSERIFY = path.join(CLIENT_DIR, 'node_modules', '.bin', 'browserify');
 const TERSER = path.join(CLIENT_DIR, 'node_modules', '.bin', 'terser');
 const CLEANCSS = path.join(CLIENT_DIR, 'node_modules', '.bin', 'cleancss');
@@ -201,42 +285,51 @@ fs.cpSync(PUBLIC, DIST, { recursive: true });
 //     into a no-op and ship a Kerberos workflow whose every button fails at the
 //     network. Same for the card — a marker that stopped matching leaves a live
 //     link to a page this build just deleted.
-staticSite.excludedFiles().forEach(function (rel) {
-  const full = path.join(DIST, rel);
-  if (!fs.existsSync(full)) {
-    throw new Error('client/static_site.js excludes ' + rel + ', which is ' +
-        'not in client/public — renamed or already gone? An exclusion that ' +
-        'matches nothing silently ships the thing it names.');
+//
+//     EMBEDDED: none of 2a runs. The api is there, so every page ships, every
+//     card stays live and the static-only note stays hidden (see the header).
+if (!EMBEDDED) {
+  staticSite.excludedFiles().forEach(function (rel) {
+    const full = path.join(DIST, rel);
+    if (!fs.existsSync(full)) {
+      throw new Error('client/static_site.js excludes ' + rel + ', which is ' +
+          'not in client/public — renamed or already gone? An exclusion that ' +
+          'matches nothing silently ships the thing it names.');
+    }
+    fs.rmSync(full);
+    log.info('excluded from the static build: ' + rel);
+  });
+
+  const landingPage = path.join(DIST, 'index.html');
+  const disabled = staticSite.disableUnavailableCards(
+      fs.readFileSync(landingPage, 'utf8'));
+  if (disabled.count === 0) {
+    throw new Error('no landing card carries ' + staticSite.CARD_MARKER +
+        ' — client/public/index.html must mark the cards whose pages this ' +
+        'build drops, or they stay live and link to a 404.');
   }
-  fs.rmSync(full);
-  log.info('excluded from the static build: ' + rel);
-});
 
-const landingPage = path.join(DIST, 'index.html');
-const disabled = staticSite.disableUnavailableCards(
-    fs.readFileSync(landingPage, 'utf8'));
-if (disabled.count === 0) {
-  throw new Error('no landing card carries ' + staticSite.CARD_MARKER +
-      ' — client/public/index.html must mark the cards whose pages this ' +
-      'build drops, or they stay live and link to a 404.');
+  //     The note under the grid is the same rewrite in reverse: it is hidden
+  //     on every api-backed deployment (where nothing is greyed, so a note
+  //     about greyed cards would describe something that is not there) and
+  //     revealed here, because a dead card says why it is dead and nothing
+  //     about where to get a build that carries it. Asserted for the same
+  //     reason as the card marker — a marker that stopped matching leaves the
+  //     note invisible on the one deployment it was written for, and nothing
+  //     404s.
+  const noted = staticSite.showStaticOnlyNotes(disabled.html);
+  if (noted.count === 0) {
+    throw new Error('nothing in client/public/index.html carries ' +
+        staticSite.NOTE_MARKER + ' — the static build has no note telling a ' +
+        'visitor where to get the workflows it just greyed out.');
+  }
+  fs.writeFileSync(landingPage, noted.html);
+  log.info('disabled ' + disabled.count + ' landing card(s) not on this ' +
+      'deployment, and revealed ' + noted.count + ' static-only note(s)');
+} else {
+  log.info('DEPLOYMENT=embedded: every page ships, no landing card is ' +
+      'greyed and no static-only note is revealed — the api is present');
 }
-
-//     The note under the grid is the same rewrite in reverse: it is hidden on
-//     every api-backed deployment (where nothing is greyed, so a note about
-//     greyed cards would describe something that is not there) and revealed
-//     here, because a dead card says why it is dead and nothing about where to
-//     get a build that carries it. Asserted for the same reason as the card
-//     marker — a marker that stopped matching leaves the note invisible on the
-//     one deployment it was written for, and nothing 404s.
-const noted = staticSite.showStaticOnlyNotes(disabled.html);
-if (noted.count === 0) {
-  throw new Error('nothing in client/public/index.html carries ' +
-      staticSite.NOTE_MARKER + ' — the static build has no note telling a ' +
-      'visitor where to get the workflows it just greyed out.');
-}
-fs.writeFileSync(landingPage, noted.html);
-log.info('disabled ' + disabled.count + ' landing card(s) not on this ' +
-    'deployment, and revealed ' + noted.count + ' static-only note(s)');
 
 // 2b. Ship the IANA JWT claim registry as a static object at /claimdescription.
 //     On api-backed deployments Express serves GET /claimdescription from
@@ -245,9 +338,14 @@ log.info('disabled ' + disabled.count + ' landing card(s) not on this ' +
 //     here) 404s. Emit the same bytes at that exact path so claim descriptions
 //     resolve. The client reads it via response.text() + DOMParser, so the
 //     object's content-type does not matter for parsing.
+//
+//     EMBEDDED: skipped. The api IS there and serves it at apiUrl — `/api/
+//     claimdescription` — so a copy at the site root is read by nothing.
 const CLAIM_XML_SRC = path.join(CLIENT_DIR, '..', 'api', 'jwt.xml');
-log.info('copying api/jwt.xml -> dist/claimdescription');
-fs.copyFileSync(CLAIM_XML_SRC, path.join(DIST, 'claimdescription'));
+if (!EMBEDDED) {
+  log.info('copying api/jwt.xml -> dist/claimdescription');
+  fs.copyFileSync(CLAIM_XML_SRC, path.join(DIST, 'claimdescription'));
+}
 
 // 3. Bundle. oauth2_oidc_2 requires('./data.js'), so stage common/data.js into
 // src/    (the Docker build does the same COPY). Removed again afterward.
@@ -270,11 +368,13 @@ fs.copyFileSync(CLAIM_XML_SRC, path.join(DIST, 'claimdescription'));
 //    with every Kerberos page excluded from this deployment, nothing here reads
 //    common/krb5, and copying ten modules into client/src for no bundle to
 //    require is how a stale copy gets left in a working tree.
+//
+//    EMBEDDED builds every entry — the exclusion list is a static-site list.
 const BUILT_BUNDLES = BUNDLES.filter(function (entry) {
-  return !staticSite.bundleIsExcluded(entry[0]);
+  return EMBEDDED || !staticSite.bundleIsExcluded(entry[0]);
 });
 BUNDLES.filter(function (entry) {
-  return staticSite.bundleIsExcluded(entry[0]);
+  return !EMBEDDED && staticSite.bundleIsExcluded(entry[0]);
 }).forEach(function (entry) {
   log.info('not bundling ' + entry[0] + ' — its page is not on this ' +
       'deployment');
@@ -371,6 +471,54 @@ try {
   stagedXmldsig.forEach((f) => fs.rmSync(f, { force: true }));
 }
 
+// 3a. EMBEDDED ONLY: the mock STS's placeholder survived minification.
+//
+//     client/src/env/embedded.js writes every default that names the mock STS
+//     as `"__STS_EMBED_STS_URL__" + "/path"`, and the mock STS replaces the
+//     literal when it serves the file. terser folds that concatenation into
+//     one string, which keeps the substring — but "keeps it today" is a
+//     property of one minifier's version, and the day it stops the UI ships
+//     with every default pointing at a placeholder and nothing fails until a
+//     person clicks. So it is asserted per bundle, after terser has run: a
+//     bundle whose text names one of the default KEYS carries the
+//     configuration object (terser does not mangle property names), and must
+//     therefore carry the literal as well. At least one bundle must, or the
+//     configuration was not the embedded one at all.
+function assertStsPlaceholderSurvived() {
+  log.debug("Entering assertStsPlaceholderSurvived().");
+  let carrying = 0;
+  BUILT_BUNDLES.forEach(function (entry) {
+    const file = path.join(DIST, 'js', entry[0] + '.js');
+    const text = fs.readFileSync(file, 'utf8');
+    const readsADefault = STS_PLACEHOLDER_KEYS.some(function (key) {
+      return text.indexOf(key) !== -1;
+    });
+    if (!readsADefault) {
+      return;
+    }
+    if (text.indexOf(STS_PLACEHOLDER) === -1) {
+      log.debug("Leaving assertStsPlaceholderSurvived(). Missing.");
+      throw new Error('dist/js/' + entry[0] + '.js carries the mock STS ' +
+          'defaults but not the literal ' + STS_PLACEHOLDER + ' — the ' +
+          'minifier folded or renamed it, so the mock STS has nothing to ' +
+          'substitute and every such default would point at a placeholder. ' +
+          'Build with MINIFY=false to compare.');
+    }
+    carrying++;
+  });
+  if (carrying === 0) {
+    log.debug("Leaving assertStsPlaceholderSurvived(). None.");
+    throw new Error('no bundle carries ' + STS_PLACEHOLDER + ' — was ' +
+        'CONFIG_FILE (' + CONFIG_FILE + ') really client/src/env/embedded.js?');
+  }
+  log.info(STS_PLACEHOLDER + ' survived in all ' + carrying + ' bundle(s) ' +
+      'that carry the mock STS defaults');
+  log.debug("Leaving assertStsPlaceholderSurvived().");
+}
+if (EMBEDDED) {
+  assertStsPlaceholderSurvived();
+}
+
 // 4. Resolve <!--#include file="/partials/x.html"--> directives in-place
 const INCLUDE_RE = /<!--#include file="([^"]+)"-->/g;
 function resolveIncludes(dir) {
@@ -424,8 +572,13 @@ function assertNoLinksToExcluded(dir) {
   }
   log.debug("Leaving assertNoLinksToExcluded().");
 }
-log.info('checking for links to pages this deployment does not carry');
-assertNoLinksToExcluded(DIST);
+//     EMBEDDED: skipped, because 2a dropped nothing — every link resolves to
+//     a page that shipped, and the exclusion list would report links to
+//     pages that are in fact present.
+if (!EMBEDDED) {
+  log.info('checking for links to pages this deployment does not carry');
+  assertNoLinksToExcluded(DIST);
+}
 
 // 4b. Stamp the current year and the M.N.O version into every page. The
 //     {{YEAR}} / {{VERSION}} / {{BUILD_INFO}} placeholders ship in the footer
@@ -453,7 +606,10 @@ log.info('stamping copyright year ' + YEAR + ' and version ' + VERSION.version);
 stampYear(DIST);
 
 // 5. Inject Google Analytics into each page's <head> (hosted build only)
-if (GA_MEASUREMENT_ID) {
+//    EMBEDDED: never, whatever GA_MEASUREMENT_ID says — that UI is served by
+//    somebody's own identity service, and an analytics tag in it would report
+//    their users to a site that is not theirs.
+if (GA_MEASUREMENT_ID && !EMBEDDED) {
   const snippet = gaSnippet(GA_MEASUREMENT_ID);
   const HEAD_RE = /<head\b[^>]*>/i;
   function injectGA(dir) {
@@ -475,6 +631,8 @@ if (GA_MEASUREMENT_ID) {
       GA_MEASUREMENT_ID +
       ')');
   injectGA(DIST);
+} else if (EMBEDDED) {
+  log.info('DEPLOYMENT=embedded — never injecting Google Analytics');
 } else {
   log.info('GA_MEASUREMENT_ID not set — skipping Google Analytics injection');
 }
@@ -538,8 +696,18 @@ if (MINIFY) {
 }
 
 // 7. Callback shim
-fs.mkdirSync(path.join(DIST, 'callback'), { recursive: true });
-fs.writeFileSync(path.join(DIST, 'callback', 'index.html'), CALLBACK_HTML);
-log.info('wrote callback/index.html shim');
+//
+//    EMBEDDED: not written. The mock STS serves /callback itself, and a
+//    directory of the same name in the tree it serves would be a second answer
+//    to the one URL an authorization server redirects a browser to.
+if (!EMBEDDED) {
+  fs.mkdirSync(path.join(DIST, 'callback'), { recursive: true });
+  fs.writeFileSync(path.join(DIST, 'callback', 'index.html'), CALLBACK_HTML);
+  log.info('wrote callback/index.html shim');
+}
 
-log.info('done — dist/ is ready.');
+if (EMBEDDED || process.env.OUT_DIR) {
+  log.info('done — ' + DIST + ' is ready (DEPLOYMENT=' + DEPLOYMENT + ').');
+} else {
+  log.info('done — dist/ is ready.');
+}

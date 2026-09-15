@@ -283,6 +283,171 @@ async function agentLayer() {
 }
 
 // ---------------------------------------------------------------------------
+// 4a. ALLOW-LIST MODE (appconfig.allowedAddressRanges).
+//
+// The embedded debugger's api may dial only the mock STS it runs inside, so
+// there the policy inverts: a non-empty allow-list REPLACES the block-list,
+// switches the policy on whatever blockPrivateNetworkCalls says, and FAILS
+// CLOSED when none of its entries parse. The four raw-socket relays are
+// covered by it only because they ask the same two members the agents do —
+// `enabled` and `blockedRangeFor()` — so that is asserted by reading them,
+// and the refusal they would build is checked for reading as the truth.
+// ---------------------------------------------------------------------------
+async function allowListMode() {
+  log.debug("Entering allowListMode().");
+  log.info("=== Allow-list mode (allowedAddressRanges) ===");
+
+  // Switched on by a non-empty list, even against an explicit false.
+  var guard = guardModule.createGuard({ blockPrivateNetworkCalls: false,
+      allowedAddressRanges: ["127.0.0.0/8", "::1/128"] }, quiet);
+  assert.strictEqual(guard.enabled, true,
+    "a non-empty allow-list must enable the address policy even when " +
+        "blockPrivateNetworkCalls is false.");
+  assert.strictEqual(guard.mode, "allow",
+    "the guard should report allow mode.");
+  assert.deepStrictEqual(guard.allowedRanges, ["127.0.0.0/8", "::1/128"],
+    "the usable allowed ranges should be reported as written.");
+
+  // Inside: allowed — including LOOPBACK, which the block-list refuses first.
+  ["127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"].forEach(function (ip) {
+    assert.strictEqual(guard.blockedRangeFor(ip), null,
+      ip + " is inside the allow-list and must be allowed.");
+  });
+  // Outside: refused, and the text finishes every relay's sentence ("it is in
+  // the blocked range <text>") by naming the allow-list.
+  ["10.0.0.1", "8.8.8.8", "169.254.169.254", "fe80::1"].forEach(function (ip) {
+    var text = guard.blockedRangeFor(ip);
+    assert.ok(text, ip + " is outside the allow-list and must be refused.");
+    assert.ok(/outside allowedAddressRanges \[127\.0\.0\.0\/8, ::1\/128\]/
+        .test(text),
+      "the refusal text should name the allow-list, got: " + text);
+  });
+  // A NAME is not decided here in either mode: callers resolve and ask again.
+  assert.strictEqual(guard.blockedRangeFor("sts.example.com"), null,
+    "a hostname is resolved by the caller, not judged by blockedRangeFor().");
+
+  // The pre-flight: allowed literal passes, disallowed literal is refused
+  // with a message that says OUTSIDE rather than "in the blocked range".
+  await guard.assertUrlAllowed("https://127.0.0.1:8081/.well-known/x");
+  var refused = null;
+  try {
+    await guard.assertUrlAllowed("https://8.8.8.8/token");
+  } catch (e) {
+    refused = e;
+  }
+  assert.ok(refused,
+    "a public address outside the allow-list must be refused.");
+  assert.strictEqual(refused.code, "EBLOCKEDADDRESS",
+    "with the code every handler already maps, got: " + refused.code);
+  assert.ok(/outside the allowed address ranges/.test(refused.message),
+    "the message should say the address is outside the allowed ranges, got: " +
+        refused.message);
+  assert.ok(!/in the blocked range/.test(refused.message) &&
+            !/blockPrivateNetworkCalls/.test(refused.message),
+    "and must not point at the block-list or its switch, got: " +
+        refused.message);
+
+  // The agent layer — a redirect hop — honours it in both directions.
+  var served = 0;
+  var fixture = http.createServer(function (req, res) {
+    served++;
+    res.end("REACHED");
+  });
+  var port = await listen(fixture);
+  function fetchWith(agent) {
+    log.debug("Entering fetchWith().");
+    log.debug("Leaving fetchWith().");
+    return new Promise(function (resolve, reject) {
+      var req = http.request({ host: "127.0.0.1", port: port, path: "/",
+          agent: agent }, function (res) {
+        var body = "";
+        res.on("data", function (d) { body += d; });
+        res.on("end", function () { resolve(body); });
+      });
+      req.on("error", reject);
+      req.end();
+    });
+  }
+  assert.strictEqual(await fetchWith(guard.httpAgent), "REACHED",
+    "loopback inside the allow-list must be reachable through the agent.");
+  var elsewhere = guardModule.createGuard(
+      { allowedAddressRanges: ["10.0.0.0/8"] }, quiet);
+  var agentRefusal = null;
+  try {
+    await fetchWith(elsewhere.httpAgent);
+  } catch (e) {
+    agentRefusal = e;
+  }
+  assert.ok(agentRefusal && agentRefusal.code === "EBLOCKEDADDRESS",
+    "loopback OUTSIDE the allow-list must be refused by the agent, got: " +
+        (agentRefusal && agentRefusal.message));
+  assert.strictEqual(served, 1,
+    "the refused connection must never reach the server.");
+  fixture.close();
+
+  // FAILS CLOSED: no usable entry refuses everything (the block-list's empty
+  // case is the opposite, and is re-checked below so the two stay apart).
+  var typo = guardModule.createGuard(
+      { allowedAddressRanges: ["127.0.0.1", "not a range"] }, quiet);
+  assert.strictEqual(typo.enabled, true, "a typo'd allow-list is still on.");
+  assert.strictEqual(typo.mode, "allow");
+  assert.deepStrictEqual(typo.allowedRanges, []);
+  ["127.0.0.1", "::1", "8.8.8.8", "10.1.1.1"].forEach(function (ip) {
+    var text = typo.blockedRangeFor(ip);
+    assert.ok(text && /fails closed/.test(text),
+      "an allow-list with no usable entry must refuse " + ip + ", got: " +
+          text);
+  });
+  var emptyBlock = guardModule.createGuard(
+      { blockedAddressRanges: ["not a range"] }, quiet);
+  assert.strictEqual(emptyBlock.blockedRangeFor("127.0.0.1"), null,
+    "an unusable BLOCK-list still blocks nothing — the two empty cases are " +
+        "deliberately opposite.");
+
+  // Absent or [] leaves the block-list exactly as it was.
+  [undefined, []].forEach(function (value) {
+    var plain = guardModule.createGuard({ allowedAddressRanges: value }, quiet);
+    assert.strictEqual(plain.mode, "block",
+      JSON.stringify(value) + " must not select allow-list mode.");
+    assert.ok(plain.blockedRangeFor("127.0.0.1"),
+      "with " + JSON.stringify(value) + " loopback is blocked as before.");
+    assert.strictEqual(plain.blockedRangeFor("8.8.8.8"), null,
+      "with " + JSON.stringify(value) + " a public address is allowed as " +
+          "before.");
+    var off = guardModule.createGuard({ allowedAddressRanges: value,
+        blockPrivateNetworkCalls: false }, quiet);
+    assert.strictEqual(off.enabled, false,
+      "with " + JSON.stringify(value) + " blockPrivateNetworkCalls=false " +
+          "still disables the policy.");
+  });
+
+  // Every relay reaches the decision through those two members. Read as
+  // STATEMENTS (whitespace collapsed), so an 80-column wrap cannot hide a call.
+  var apiDir = path.join(__dirname, "..", "api");
+  if (!fs.existsSync(path.join(apiDir, "krb5_relay.js"))) {
+    log.info("[allow-list] the relay sources are not in this layout; " +
+             "skipping the source half.");
+  } else {
+    ["krb5_relay.js", "ldap_client.js", "tls_probe.js",
+     "spiffe_client.js"].forEach(function (file) {
+      var source = fs.readFileSync(path.join(apiDir, file), "utf8")
+        .replace(/\s+/g, " ");
+      assert.ok(/guard && guard\.enabled/.test(source),
+        "api/" + file + " must ask guard.enabled, which is how allow-list " +
+            "mode switches its address policy on.");
+      assert.ok(/guard\.blockedRangeFor\(/.test(source),
+        "api/" + file + " must ask guard.blockedRangeFor(), which is where " +
+            "allow-list mode refuses an address.");
+    });
+  }
+  log.info("[allow-list] OK — on regardless of the switch, loopback inside " +
+           "it reachable, everything outside refused with a message naming " +
+           "the allow-list, an unusable list fails closed, absent/[] " +
+           "unchanged, and all four relays ask the same two members.");
+  log.debug("Leaving allowListMode().");
+}
+
+// ---------------------------------------------------------------------------
 // 4b. The scheme policy: http and https, nothing else.
 //
 // axios's Node adapter supports file: and data: as well (platform.protocols),
@@ -471,6 +636,7 @@ async function test() {
   await urlPreflight();
   schemePolicy();
   await agentLayer();
+  await allowListMode();
   installation();
   shippedConfiguration();
   log.info("Test completed successfully.");

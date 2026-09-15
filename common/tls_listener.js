@@ -64,6 +64,24 @@
 // lives in configuration, the code supports both, and a deployment that has a
 // reverse proxy terminating TLS in front of it is not forced to terminate it
 // twice.
+//
+// ---------------------------------------------------------------------------
+// A UNIX SOCKET IS THE THIRD ANSWER, AND IT IS ALWAYS PLAIN HTTP.
+//
+// When the debugger is EMBEDDED in the mock STS (embedded/CLAUDE.md), the api
+// is a forked child of that service and its only peer is that service's
+// reverse proxy. `options.socketPath`, or DEBUGGER_LISTEN_SOCKET in the
+// environment, binds plain HTTP on that path instead of a TCP port — and it
+// OUTRANKS `https` and TLS_ENABLED, deliberately, because the TLS belongs to
+// the proxy's listener: a certificate here would be a second handshake over
+// a socket nothing else can reach, and a stack configuration left at `https:
+// true` must not be what stops an embedded api starting. The socket is
+// created 0600 (the umask is narrowed around the bind and the mode set again
+// once it is listening), so only the user the parent runs as can connect —
+// the filesystem permission IS the access control, there being no network
+// address to firewall. When the process was forked with an IPC channel it
+// says `{ type: 'debugger-api-listening', socket }` once, which is how the
+// parent knows to start proxying rather than polling a path.
 // ---------------------------------------------------------------------------
 'use strict';
 
@@ -192,6 +210,102 @@ function materialFor(appconfig, serviceName) {
     'hand: node common/generate_tls_cert.js --out-dir <dir>');
 }
 
+// The unix socket path this process should bind, or '' for a TCP port. The
+// option outranks the environment, so a caller (a test) can pass one without
+// touching process.env; the environment is how the mock STS asks for it.
+// Exported because a service has to know BEFORE it listens — the api sets
+// `trust proxy` from this, and that has to be in place before a request.
+function socketPathFor(options) {
+  log.debug("Entering socketPathFor().");
+  const opts = options || {};
+  const chosen = opts.socketPath || process.env.DEBUGGER_LISTEN_SOCKET || '';
+  log.debug("Leaving socketPathFor(). " + (chosen || '(none)'));
+  return String(chosen);
+}
+
+// Remove what a previous run left at the path, and nothing else. A socket
+// file outlives a process that was killed rather than closed (server.close()
+// unlinks it; SIGKILL does not), and bind() on an existing path fails with
+// EADDRINUSE. But ONLY a socket is removed: a regular file or a directory at
+// that path is a mistake in the parent's configuration, and deleting whatever
+// happens to be there is not a thing a listener gets to do.
+function removeStaleSocket(socketPath) {
+  log.debug("Entering removeStaleSocket(). " + socketPath);
+  let stat = null;
+  try {
+    stat = fs.lstatSync(socketPath);
+  } catch (e) {
+    // ENOENT is the ordinary case — nothing was left behind.
+    log.debug("Caught in removeStaleSocket(): " + ((e && e.code) || e));
+    log.debug("Leaving removeStaleSocket(). Nothing there.");
+    return;
+  }
+  if (!stat.isSocket()) {
+    log.debug("Leaving removeStaleSocket(). Not a socket; refusing.");
+    throw new Error('tls_listener: ' + socketPath + ' exists and is not a ' +
+      'unix socket, so it is not a stale listener this process may remove. ' +
+      'Choose another DEBUGGER_LISTEN_SOCKET path.');
+  }
+  fs.unlinkSync(socketPath);
+  log.info('tls_listener: removed a stale socket at ' + socketPath + '.');
+  log.debug("Leaving removeStaleSocket(). Removed.");
+}
+
+// Bind plain HTTP on a unix socket, mode 0600, and tell a forking parent.
+function listenOnSocket(app, serviceName, socketPath) {
+  log.debug("Entering listenOnSocket(). " + socketPath);
+  servingCertificatePem = null;
+  removeStaleSocket(socketPath);
+  const plain = http.createServer(app);
+  // The umask is narrowed for the bind itself, so the socket is never, even
+  // for the moments before the callback below, connectable by another user.
+  // For a pipe, node binds synchronously inside listen(), so restoring it
+  // straight afterwards is enough. process.umask() cannot be SET in a worker
+  // thread; there the chmod in the callback is the only line of defence, and
+  // the refusal is logged rather than fatal.
+  let previousUmask = null;
+  try {
+    previousUmask = process.umask(0o177);
+  } catch (e) {
+    log.warn('tls_listener: could not narrow the umask for the bind (' +
+             ((e && e.message) || e) + '); relying on chmod after it.');
+  }
+  try {
+    plain.listen(socketPath, function () {
+      try {
+        fs.chmodSync(socketPath, 0o600);
+      } catch (e) {
+        // A socket we cannot restrict is one another local user may reach,
+        // and there is no other gate in front of it — so this is fatal.
+        log.error('tls_listener: could not chmod ' + socketPath + ' to 0600: ' +
+                  ((e && e.message) || e) + '. Closing the listener.');
+        plain.close();
+        return;
+      }
+      log.info(serviceName + ' running on http+unix://' + socketPath +
+               ' (mode 0600; plain HTTP whatever https/TLS_ENABLED say)');
+      if (typeof process.send === 'function') {
+        try {
+          process.send({ type: 'debugger-api-listening',
+                         socket: socketPath });
+        } catch (e) {
+          // The parent went away between the fork and the bind. The
+          // disconnect handler in the service exits for that; here the only
+          // thing to do is say so.
+          log.warn('tls_listener: could not tell the parent the socket is ' +
+                   'listening: ' + ((e && e.message) || e));
+        }
+      }
+    });
+  } finally {
+    if (previousUmask !== null) {
+      process.umask(previousUmask);
+    }
+  }
+  log.debug("Leaving listenOnSocket().");
+  return plain;
+}
+
 // Bind, and say what was bound. Returns the server so a caller can hold it.
 //
 // The announcement is built from what was actually decided rather than from
@@ -203,6 +317,13 @@ function listen(app, appconfig, options) {
   const serviceName = opts.name || 'service';
   const port = opts.port;
   const host = opts.host;
+  const socketPath = socketPathFor(opts);
+  if (socketPath) {
+    // Asked BEFORE materialFor(), so a configuration that says https and names
+    // no certificate cannot throw on the way to a listener that needs none.
+    log.debug("Leaving listen(). Unix socket.");
+    return listenOnSocket(app, serviceName, socketPath);
+  }
   const material = materialFor(appconfig, serviceName);
 
   if (!material) {
@@ -246,6 +367,7 @@ function isSecure() {
 
 module.exports = {
   listen: listen,
+  socketPathFor: socketPathFor,
   serverCertificate: serverCertificate,
   isSecure: isSecure
 };

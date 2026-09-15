@@ -804,6 +804,14 @@ COPY infra/edge/edge_common.js ./
 # not — so it is useful here without the whole api tree being staged.
 COPY api/ssrf_guard.js ./
 COPY api/connect_timeout.js ./
+# The debugger embedded in the mock STS (embedded/CLAUDE.md). The test reads
+# the socket listener and the two embedded configurations; the two env files
+# arrive RENAMED, because this directory is flat and both are `embedded.js`.
+# client/build.js is not copied, so its DEPLOYMENT check says it skipped.
+COPY tests/embedded_deployment.js ./
+COPY common/tls_listener.js ./
+COPY client/src/env/embedded.js ./embedded_client_env.js
+COPY api/env/embedded.js ./embedded_api_env.js
 COPY tests/schemas ./schemas
 # The suite's own headless-by-default check. It starts no browser: it READS this
 # directory, so it needs nothing here except to BE here — and every test script
