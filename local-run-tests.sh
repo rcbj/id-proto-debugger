@@ -449,7 +449,7 @@ init()
   # is configureStsRfc9700Realm(), after the stack is up. That call is also the
   # capability probe: it replaced a test for `oauth2_bcp.js` in the sts/
   # submodule, which was a PATH test and silently took its else branch when
-  # mock-sts reorganised its directories, printing a confident and wrong
+  # iya-sts reorganised its directories, printing a confident and wrong
   # explanation while quietly dropping five jobs. Asking the running service
   # answers the same question about the code that is actually running — and
   # answers it about realms too, which a file probe could not have seen at all.
@@ -600,7 +600,7 @@ prepTestEnv()
   # with ERR_MODULE_NOT_FOUND. The containerized suite is unaffected: there
   # bbs2023.js is copied flat beside the tests, next to tests/node_modules.
   #
-  # `npm ci`, not `npm install`: mock-sts commits its lock, and `npm install`
+  # `npm ci`, not `npm install`: iya-sts commits its lock, and `npm install`
   # REWRITES it (its lock still carries the pre-rename package name), which would
   # leave the submodule with a modified file after every run.
   #
@@ -1550,6 +1550,19 @@ WARNING
 
 init
 check_return_code $?
+# The banner (on a pass) and this script's exit status, as the last lines of
+# every exit from here on — see launcherExitStatus() in common/common.sh,
+# which init just sourced. The modes below that run tests set SUITE_PASSED on
+# the way out; `--saml-dev`, which brings a stack up and runs nothing, does
+# not. `$?` is captured first and handed back to `exit`.
+onExit()
+{
+  local status=$?
+  echo "Entering onExit()."
+  launcherExitStatus "${status}" "local-run-tests.sh"
+  exit "${status}"
+}
+trap onExit EXIT
 prepTestEnv
 check_return_code $?
 if [ "${KRB5_REAL_DC}" = "1" ];
@@ -1557,6 +1570,7 @@ then
   runKrb5RealDc
   check_return_code $?
   echo "Kerberos real-DC work passed (${KRB5_REAL_DC_WHAT})."
+  SUITE_PASSED=1
   exit 0
 fi
 if [ "${SAML_ONLY}" = "1" ];
@@ -1565,6 +1579,7 @@ then
   check_return_code $?
   echo "SAML tests passed (idp=${SAML_ONLY_IDP}); the sts half includes" \
        "SAML 1.1, which has no Keycloak equivalent."
+  SUITE_PASSED=1
   exit 0
 fi
 if [ "${WSFED_ONLY}" = "1" ];
@@ -1572,6 +1587,7 @@ then
   runWsfedOnly
   check_return_code $?
   echo "WS-Federation test passed (idp=${WSFED_ONLY_IDP})."
+  SUITE_PASSED=1
   exit 0
 fi
 if [ "${DELEGATION_ONLY}" = "1" ];
@@ -1580,6 +1596,7 @@ then
   check_return_code $?
   echo "The delegation chain(s) passed (${DELEGATION_ONLY_WHAT}): a sign-in" \
        "and two hops through a middle tier, once per protocol family."
+  SUITE_PASSED=1
   exit 0
 fi
 if [ "${FEDERATION_ONLY}" = "1" ];
@@ -1588,6 +1605,7 @@ then
   check_return_code $?
   echo "The federated sign-in passed: an OIDC application in one trust realm," \
        "authenticated over SAML 2.0 in another."
+  SUITE_PASSED=1
   exit 0
 fi
 startDocker
@@ -1638,13 +1656,7 @@ check_return_code $?
 node --version
 check_return_code $?
 
-cat <<'EOF'
-   _   _ _   _            _                                  _
-  / \ | | | | |_ ___  ___| |_ ___   _ __   __ _ ___ ___  ___| |
- / _ \| | | | __/ _ \/ __| __/ __| | '_ \ / _` / __/ __|/ _ \ |
-/ ___ \ | | | ||  __/\__ \ |_\__ \ | |_) | (_| \__ \__ \  __/_|
-/_/   \_\_|_|  \__\___||___/\__|___/ | .__/ \__,_|___/___/\___(_)
-                                     |_|
-EOF
+# Printed by the EXIT trap, as the last thing on the screen.
+SUITE_PASSED=1
 
 exit 0

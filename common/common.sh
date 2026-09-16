@@ -11,9 +11,62 @@ check_return_code()
   fi
 }
 
+# ---------------------------------------------------------------------------
+# THE LAST THING A LAUNCHER PRINTS: THE BANNER, AND THE STATUS IT EXITS WITH.
+#
+# Called from each launcher's EXIT trap, AFTER whatever teardown that trap
+# does. Before 2026-09-15 the containerized launcher printed its banner and
+# then let the trap run `docker-compose down`, so a passing run ended in a
+# screen of container shutdown lines, and a failing one ended in the
+# teardown's own `Leaving docker_compose(). rc=0` / `+ return 0` — which reads
+# as the script's status and is not: bash exits with the status the script
+# had when the trap began unless the trap itself calls `exit`. Both are fixed
+# by printing here, last, and naming the status in words.
+#
+#   $1  the status the script is exiting with — the caller's `$?`, captured
+#       as the trap's FIRST statement, before anything can overwrite it
+#   $2  the launcher's name, for the line
+#
+# The banner is printed only when the status is 0 AND the launcher set
+# SUITE_PASSED=1, because several launchers also exit 0 without having run
+# the suite (`--saml-dev` brings a stack up and runs nothing) and a banner
+# there would claim a pass nobody measured.
+#
+# xtrace is switched off first: every launcher runs under `set -x`, and the
+# trace of these echos would otherwise be the real last lines of the log.
+# ---------------------------------------------------------------------------
+launcherExitStatus()
+{
+  { set +x; } 2>/dev/null
+  local status=$1
+  local name=$2
+  echo "Entering launcherExitStatus()."
+  if [ "${status}" -eq 0 ] && [ "${SUITE_PASSED:-0}" = "1" ];
+  then
+    cat <<'EOF'
+   _   _ _   _            _                                  _
+  / \ | | | | |_ ___  ___| |_ ___   _ __   __ _ ___ ___  ___| |
+ / _ \| | | | __/ _ \/ __| __/ __| | '_ \ / _` / __/ __|/ _ \ |
+/ ___ \ | | | ||  __/\__ \ |_\__ \ | |_) | (_| \__ \__ \  __/_|
+/_/   \_\_|_|  \__\___||___/\__|___/ | .__/ \__,_|___/___/\___(_)
+                                     |_|
+EOF
+  fi
+  echo "Leaving launcherExitStatus()."
+  echo "${name}: exiting with status ${status}"
+}
+
 common_setup()
 {
   echo "Entering common_setup()."
+  # The tag THIS checkout builds and runs the mock STS under. Overridable, so
+  # a run can be pointed at an image somebody else built; the default carries
+  # the compose project (the checkout's directory name unless it is set), so
+  # two checkouts of this repository do not collide either. See the note above
+  # COMPOSE_FORWARDED_VARS.
+  STS_IMAGE="${STS_IMAGE:-rcbj/sts:${COMPOSE_PROJECT_NAME:-id-proto-debugger}}"
+  export STS_IMAGE
+  echo "The mock STS image for this run is ${STS_IMAGE}."
   REV=/usr/bin/rev
   JQ=/usr/bin/jq
   CURL=/usr/bin/curl
@@ -58,6 +111,15 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} BUILD_NUMBER GIT_COMMIT"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_CONCURRENCY TEST_JOB_TIMEOUT_MS"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_WAIT_TIME_MS"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_LOG_LEVEL"
+# THE MOCK STS IMAGE'S TAG, which is not this repository's alone: `sts/` is the
+# iya-sts submodule and that repository builds its own stack from the same
+# source. A docker tag is machine-wide, so both writing `rcbj/sts` means the
+# last build wins and a run here can start a mock built from another
+# checkout's tree — which is what happened on 2026-09-15, costing seven jobs
+# that failed on defects already fixed in the submodule this checkout points
+# at. That repository's launchers already tag `rcbj/sts:<project>` for the
+# same reason; these tag one of their own below.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_IMAGE"
 # The stack TLS pair. Every compose file here mounts the DIRECTORY and
 # names the two files inside it, so all three have to cross sudo — and
 # STACK_TLS_CA_FILE is what the mock STS is given as NODE_EXTRA_CA_CERTS
@@ -912,7 +974,7 @@ renderWaltidConfig()
 # Make sure the mock STS is on disk before anything tries to build it.
 #
 # sts/ is a SUBMODULE, not code in this repository: it is
-# https://github.com/rcbj/mock-sts.git on branch main, and what this repository
+# https://github.com/rcbj/iya-sts.git on branch main, and what this repository
 # records is a link to it. Two things then depend on the checkout existing, and
 # both fail a long way from the cause when it does not:
 #
@@ -975,7 +1037,7 @@ requireMockStsCheckout()
   then
     echo "ERROR: ${dir} has no checkout of the mock STS in it, and ${root} is not a git" >&2
     echo "       working tree, so the submodule cannot be initialised here. Clone it directly:" >&2
-    echo "         git clone -b main https://github.com/rcbj/mock-sts.git ${dir}" >&2
+    echo "         git clone -b main https://github.com/rcbj/iya-sts.git ${dir}" >&2
     return 1
   fi
   if [ ! -f "${root}/.gitmodules" ] || ! grep -q '^[[:space:]]*path[[:space:]]*=[[:space:]]*sts[[:space:]]*$' "${root}/.gitmodules";
@@ -1000,7 +1062,7 @@ requireMockStsCheckout()
   if [ $? -ne 0 ];
   then
     echo "ERROR: 'git submodule update ${update_args} -- sts' failed in ${root}." >&2
-    echo "       The mock STS is fetched over https from https://github.com/rcbj/mock-sts.git," >&2
+    echo "       The mock STS is fetched over https from https://github.com/rcbj/iya-sts.git," >&2
     echo "       so this is usually network access or a proxy rather than credentials." >&2
     return 1
   fi
@@ -1774,7 +1836,7 @@ trustStsCertificate()
 # IT IS ALSO THE CAPABILITY PROBE, and it replaced a worse one. local-run-tests.sh
 # used to decide whether to schedule those jobs by looking for `oauth2_bcp.js`
 # in the sts/ submodule — a path test, which silently took its else branch and
-# printed a confident, wrong explanation when mock-sts reorganised its
+# printed a confident, wrong explanation when iya-sts reorganised its
 # directories. Asking the running service to create the realm answers the same
 # question about the code that is actually running, and answers it about REALMS
 # too, which that probe could not have seen at all.

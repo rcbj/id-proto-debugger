@@ -49,10 +49,12 @@
 // it would be reporting a defect in the mock as a defect in this debugger.
 //
 // IT KEEPS EVERY COOKIE, BY NAME. There are two by the end — the sign-on
-// session (`sts_mock_session`, the identity provider's) and the console's own
-// (`sts_mock_admin`, established from the ID Token) — and the console reads the
+// session (`sts_session`, the identity provider's) and the console's own
+// (`sts_admin`, established from the ID Token) — and the console reads the
 // SECOND. A jar that kept only the last `Set-Cookie` seen would work by luck
-// and break the day the order changed.
+// and break the day the order changed. Both lost their `mock_` in iya-sts
+// 27b81c5 (2026-09-12), and a walk still looking for the old names reports
+// "set no sign-on session cookie" after a perfectly good 303.
 //
 // A GATE THAT IS OFF IS A LEGITIMATE STATE — `admin.authRequired` is
 // switchable — and is reported rather than treated as a pass: no redirect
@@ -225,7 +227,7 @@ async function signInToTheConsole(base, user, callerLog) {
         "&action=login" +
         (csrf ? "&csrf_token=" + encodeURIComponent(csrf) : "")
   });
-  if (!cookies.get("sts_mock_session")) {
+  if (!cookies.get("sts_session")) {
     warn("[console] signing in at /authn/login answered " + signedIn.status +
          " and set no sign-on session cookie. This service checks no " +
          "password, so a refusal there is about the request rather than the " +
@@ -243,7 +245,7 @@ async function signInToTheConsole(base, user, callerLog) {
     at = await hop(at.headers.get("location") || "");
   }
 
-  if (!cookies.get("sts_mock_admin")) {
+  if (!cookies.get("sts_admin")) {
     warn("[console] the authorization code flow finished holding [" +
          cookies.names().join(", ") + "] and not the CONSOLE's own session " +
          "cookie. That cookie is what the console reads: since 2026-09-06 " +

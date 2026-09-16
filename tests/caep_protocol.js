@@ -230,16 +230,22 @@ async function signIn() {
     anonymous: true, redirect: 'manual',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
   const cookie = String(posted.setCookie || '');
-  const got = /sts_mock_session=([^;]+)/.exec(cookie);
+  // The cookie is `sts_session` since iya-sts 27b81c5 (it was
+  // `sts_mock_session`), and its VALUE is `<session id>.<handle>` rather than
+  // the bare id: the handle is a secret the mock stores only a hash of, so a
+  // session id read off an event or a list is no longer a cookie anybody can
+  // present. The id is everything before the first dot — ids are base64url,
+  // which has no dot — and that is what every Security Event Token names.
+  const got = /sts_session=([^;]+)/.exec(cookie);
   if (!got) {
     log.debug("Leaving signIn(). No session cookie.");
     return { ok: false, why: 'The sign-in screen answered ' + posted.status +
       ' and set no session cookie. It said: ' + posted.text.slice(0, 200) };
   }
-  sessionCookie = "sts_mock_session=" + got[1];
-  sessionId = got[1];
+  sessionCookie = "sts_session=" + got[1];
+  sessionId = got[1].split('.')[0];
   log.debug("Leaving signIn(). " + sessionId);
-  return { ok: true, sessionId: got[1] };
+  return { ok: true, sessionId: sessionId };
 }
 
 // Present the existing session at the authorization endpoint. TWICE is the
@@ -522,16 +528,24 @@ async function signingInEmitsAnEvent() {
 
   const afterSignIn = await poll(50);
   const established = ofType(afterSignIn, 'session-established');
-  // THE SUBJECT THIS SERVICE USES IS NOT THE NAME THAT WAS TYPED. It derives
-  // one — `urn:sts-mock:user:<name>` here — and a receiver only ever sees
-  // the derived form, so section 2b has to add THAT rather than the name.
-  // Learning it from the register is the honest way round: it is what the
-  // transmitter actually put in the subject.
+  // THE SUBJECT THIS SERVICE USES IS NOT THE NAME THAT WAS TYPED. Since
+  // iya-sts 64580f4 (2026-09-14) it is `urn:uuid:<entryUUID>` — the person's
+  // directory entry, which survives a rename — where it was
+  // `urn:sts-mock:user:<name>`, so nothing about it can be derived from the
+  // name any more. A receiver only ever sees that form, so section 2b has to
+  // add THAT rather than the name. Learning it from the register is the
+  // honest way round: it is what the transmitter actually put in the subject.
   const report = await call('GET', adminUrl + '/caep', null, {});
   const mine = ((report.body || {}).sessions || []).filter(function (one) {
     return one.sessionId === signed.sessionId;
   })[0];
   realSub = mine ? mine.sub : WHO;
+  // And the directory's own answer for the same person, asked separately, so
+  // that the check below compares the event with something the CAEP register
+  // did not also write.
+  const person = await call('GET', adminUrl + '/users?user=' +
+      encodeURIComponent(WHO), null, {});
+  const directorySub = String((person.body || {}).subject || '');
   check('signing in put a session-established on the stream', function () {
     assert.ok(established.length > 0,
         'Nothing arrived. ' + afterSignIn.length + ' set(s) were polled, ' +
@@ -560,13 +574,17 @@ async function signingInEmitsAnEvent() {
         'session of theirs is.');
     assert.strictEqual(claims.sub_id.session.id, signed.sessionId,
         'the session named is not the one that was just created.');
-    assert.ok(String(claims.sub_id.user.sub).indexOf(WHO) >= 0,
+    assert.ok(/^urn:uuid:[0-9a-f-]{36}$/.test(directorySub),
+        'the directory holds no urn:uuid subject for "' + WHO + '", who has ' +
+        'just signed in. GET /admin-api/users answered: ' +
+        JSON.stringify(person.body || person.text).slice(0, 300));
+    assert.strictEqual(claims.sub_id.user.sub, directorySub,
         'the `user` member names "' + claims.sub_id.user.sub + '" and the ' +
-        'name that was typed was "' + WHO + '". A transmitter DERIVES a ' +
-        'subject identifier rather than using the typed name — this one ' +
-        'makes a urn: of it — and a receiver only ever sees the derived ' +
-        'form, which is why section 2b adds THAT to the stream rather than ' +
-        'the name.');
+        'directory says "' + WHO + '" is "' + directorySub + '". A ' +
+        'transmitter DERIVES a subject identifier rather than using the ' +
+        'typed name — this one is the person\'s entryUUID — and a receiver ' +
+        'only ever sees the derived form, which is why section 2b adds THAT ' +
+        'to the stream rather than the name.');
     assert.ok(String(claims.sub_id.user.iss).length > 0,
         'the `user` member carries no issuer. A receiver matches that string ' +
         'against the issuer it discovered, so an event without one names ' +
@@ -736,8 +754,10 @@ async function everyEventEmittedByHand() {
     // this is the only place the two meet. A refusal here means the two ends
     // disagree about what may follow what — which is a real interoperability
     // finding rather than a bug in either.
+    // `realSub`, not the typed name: the model is a receiver's, and a
+    // receiver knows the person only by the subject the events carry.
     const model = caep.newSession({ iss: String(metadata.issuer || ''),
-      sub: WHO, sid: signed.sessionId });
+      sub: realSub || WHO, sid: signed.sessionId });
     const ordered = arrived.slice().sort(function (a, b) {
       return Number(a.claims.iat || 0) - Number(b.claims.iat || 0);
     });

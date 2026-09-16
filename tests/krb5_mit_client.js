@@ -312,6 +312,34 @@ async function adminPost(pathname, body) {
   return parsed;
 }
 
+// THE SUBJECT THE MOCK HOLDS FOR A NAME. Since iya-sts 64580f4 (2026-09-14) a
+// person's `sub` is `urn:uuid:<entryUUID>` — their directory entry, which
+// survives a rename — where it was `urn:sts-mock:user:<name>`, so it cannot be
+// spelt out of the name any more. The management API answers it on the
+// person's drill-down; `tools/attach-admin-token.js` supplies the credential.
+async function subjectOf(name) {
+  log.debug("Entering subjectOf(). " + name);
+  const response = await fetch(stsUrl + "/admin-api/users?user=" +
+      encodeURIComponent(name), { headers: { Accept: "application/json" } });
+  const text = await response.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    log.debug("Leaving subjectOf(). Not JSON.");
+    throw new Error("GET /admin-api/users answered " + response.status +
+        " with something that is not JSON: " + text.slice(0, 300));
+  }
+  const subject = String(parsed.subject || "");
+  assert.ok(/^urn:uuid:[0-9a-f-]{36}$/.test(subject),
+    "the mock holds no urn:uuid subject for \"" + name + "\". Since " +
+    "iya-sts 64580f4 no session exists without a directory entry, so a " +
+    "person who has signed in must have one. It answered: " +
+    text.slice(0, 300));
+  log.debug("Leaving subjectOf(). " + subject);
+  return subject;
+}
+
 // ---------------------------------------------------------------------------
 // THE CONFIGURATION THIS RUN GIVES MIT KERBEROS.
 //
@@ -920,7 +948,7 @@ function theProtectedPageAcceptsARealTicket() {
 // ---------------------------------------------------------------------------
 // 9. THE SIGN-IN DOOR, and the session it mints.
 // ---------------------------------------------------------------------------
-function theTicketSignsThePersonIn() {
+async function theTicketSignsThePersonIn() {
   log.debug("Entering theTicketSignsThePersonIn().");
   log.info("=== SPNEGO at /authn/spnego ===");
   const result = curl(["--negotiate", "-u", ":", stsUrl + "/authn/spnego"]);
@@ -930,10 +958,20 @@ function theTicketSignsThePersonIn() {
   assert.ok(/you are signed in/i.test(result.body),
     "the door's answer must be the sign-in page rather than the protected " +
     "page's table: " + result.body.replace(/\s+/g, " ").slice(0, 400));
-  assert.ok(new RegExp("urn:sts-mock:user:alice").test(result.body),
-    "and it must name the subject the session carries — the principal with " +
-    "its realm STRIPPED, so that somebody who typed \"alice\" at the " +
-    "password screen and the same person arriving with a ticket are ONE " +
+  // The person is the principal with its realm STRIPPED, so that somebody
+  // who typed "alice" at the password screen and the same person arriving
+  // with a ticket are ONE person. And since iya-sts 64580f4 (2026-09-14) the
+  // subject is that person's directory entry — `urn:uuid:<entryUUID>`, no
+  // longer `urn:sts-mock:user:alice` — so it is asked of the directory and
+  // compared, which is the same claim: one entry, one `sub` to every relying
+  // party, whichever door was used.
+  assert.ok(/Signed in as <strong>alice<\/strong>/.test(result.body),
+    "and it must name the person the session carries — the principal with " +
+    "its realm STRIPPED: " + result.body.replace(/\s+/g, " ").slice(0, 400));
+  const subject = await subjectOf("alice");
+  assert.ok(result.body.indexOf(subject) >= 0,
+    "and it must name the subject the directory holds for alice (" +
+    subject + "), so that the password screen and the ticket are ONE " +
     "subject to every relying party: " +
     result.body.replace(/\s+/g, " ").slice(0, 400));
 
@@ -942,7 +980,10 @@ function theTicketSignsThePersonIn() {
     "the door must SET A SESSION COOKIE, which is the whole difference " +
     "between this endpoint and the protected page and the only part of it " +
     "that outlives the request: " + result.headers.slice(0, 400));
-  const session = (cookies.join("; ").match(/sts_mock_session=([^;\s]+)/) ||
+  // `sts_session=<session id>.<handle>` since iya-sts 27b81c5 (it was
+  // `sts_mock_session` holding the bare id). The WHOLE value is kept: section
+  // 10 presents it, and the mock accepts a session only with its handle.
+  const session = (cookies.join("; ").match(/sts_session=([^;\s]+)/) ||
       [])[1];
   assert.ok(session,
     "and it must be the session cookie every protocol in that service reads. " +
@@ -998,7 +1039,7 @@ async function theSessionSatisfiesAnApplication(session) {
       encodeURIComponent(clientId) + "&redirect_uri=" +
       encodeURIComponent("https://localhost:3000/callback") +
       "&scope=openid&state=krb-cli&nonce=krb-cli-nonce";
-  const result = curl(["-b", "sts_mock_session=" + session, authorize]);
+  const result = curl(["-b", "sts_session=" + session, authorize]);
   assert.ok(result.httpStatus >= 300 && result.httpStatus < 400,
     "an authorization request carrying the Kerberos session should redirect " +
     "straight to the application with a code — no sign-in screen, because " +
@@ -1215,7 +1256,7 @@ async function test() {
     anSpnOutsideTheServiceHostsIsRefused(ready);
     theChallengeIsBare();
     theProtectedPageAcceptsARealTicket();
-    const session = theTicketSignsThePersonIn();
+    const session = await theTicketSignsThePersonIn();
     await theSessionSatisfiesAnApplication(session);
     aReplayedTicketMintsNothing();
     kdestroyLeavesNothingToAuthenticateWith();

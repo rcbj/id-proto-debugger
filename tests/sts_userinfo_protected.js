@@ -134,7 +134,7 @@ function rpKeys() {
 // machine, keygen from 297ms to 1,936ms.
 //
 // Twelve seconds at 6.4x is seventy-seven, on a fast machine. On the two-core
-// runner the mock-sts repository's coverage job uses it is comfortably past
+// runner the iya-sts repository's coverage job uses it is comfortably past
 // ninety, and that job failed on exactly this line in about half of its runs —
 // `could not reach .../oauth2/userinfo in 90s of trying (fetch failed, 1
 // attempt(s))`, with `attempts` of ONE, which is the tell: a single fetch
@@ -153,7 +153,7 @@ function rpKeys() {
 // TEN MINUTES, AND NOT THROUGH `fetch`, SINCE 2026-09-15 — BECAUSE FIVE
 // MINUTES WAS NEVER THE WINDOW.
 //
-// mock-sts's coverage job went on failing on this line after the raise above,
+// iya-sts's coverage job went on failing on this line after the raise above,
 // on two runs of a tree that passed twice the same day, with the same tell:
 // `in 300s of trying (fetch failed, 1 attempt(s))`. The service log put
 // numbers on it. A SLH-DSA-SHAKE-128s UserInfo response took 193s on the run

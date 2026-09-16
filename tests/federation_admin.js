@@ -147,10 +147,54 @@ async function tidy(base, path, body, what) {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// WHO A PERSON IS IN A REALM, NOW THAT IT IS NOT THEIR NAME (2026-09-14).
+//
+// Since iya-sts 64580f4 a person's `sub` is `urn:uuid:<entryUUID>` in every
+// protocol — the directory entry's RFC 4530 identifier — where it used to be
+// built from the name. Two things follow for a federation test, and both are
+// the mock's documented rules rather than guesses:
+//
+//   * `subjectOf(base, name)` is the subject a realm holds for somebody. It is
+//     not derivable from the name any more, so the realm's management API is
+//     asked; `/admin-api/users?user=` answers it on the person's drill-down.
+//   * `federatedNameOf(idpBase, name)` is what the NEAR realm files a person
+//     under when the far realm names them by that subject. A partner's
+//     `urn:uuid:` is a value in the PARTNER's namespace, so the near realm
+//     never looks it up in its own directory: it becomes the local name
+//     `sub-<uuid>` (iya-sts `federation/federation_map.js`'s `usernameFor()`).
+//     That applies only where the far realm hands over its `sub` — an OAuth
+//     2.0 or OpenID Connect hop. A SAML or WS-Federation hop names the person
+//     by a NameID, which is still the username, so the name crosses as it is.
+// ---------------------------------------------------------------------------
+async function subjectOf(base, name) {
+  logger().debug("Entering subjectOf(). " + name);
+  const person = await adminGet(base,
+    "/users?user=" + encodeURIComponent(name));
+  const subject = String((person && person.subject) || "");
+  assert.ok(/^urn:uuid:[0-9a-f-]{36}$/.test(subject),
+    base + " holds no urn:uuid subject for \"" + name + "\". Since iya-sts " +
+    "64580f4 no signed-in session exists without a directory entry, so a " +
+    "person who has signed in there must have one. It answered: " +
+    JSON.stringify(person).slice(0, 300));
+  logger().debug("Leaving subjectOf(). " + subject);
+  return subject;
+}
+
+async function federatedNameOf(idpBase, name) {
+  logger().debug("Entering federatedNameOf(). " + name);
+  const subject = await subjectOf(idpBase, name);
+  const local = "sub-" + subject.slice("urn:uuid:".length).toLowerCase();
+  logger().debug("Leaving federatedNameOf(). " + local);
+  return local;
+}
+
 module.exports = {
   configure: configure,
   adminGet: adminGet,
   adminPost: adminPost,
   must: must,
-  tidy: tidy
+  tidy: tidy,
+  subjectOf: subjectOf,
+  federatedNameOf: federatedNameOf
 };

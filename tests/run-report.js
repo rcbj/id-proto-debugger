@@ -233,7 +233,7 @@ function jobTypeOf(script) {
 //
 //     They were marked EXCLUSIVE as an interim measure and are NOT any more.
 //     The cause was the mock blocking and the fix landed over there on
-//     2026-08-30 (rcbj/mock-sts#6): a front process owning the sockets and the
+//     2026-08-30 (rcbj/iya-sts#6): a front process owning the sockets and the
 //     state, with the signing handed to a pool of stateless children. Its
 //     `workers.count` defaults to 2 and nothing here has to set it. **A JOB
 //     THAT MAKES A SHARED SERVICE BLOCK IS STILL THIS TABLE'S PROBLEM** — that
@@ -2551,7 +2551,7 @@ function buildJobs() {
   //
   // Every other job in this section — the codec, the crypto vectors, the PAC
   // layout, the AS and TGS exchanges — runs against the mock KDC in the
-  // rcbj/mock-sts submodule. The mock was written from the same reading of RFC
+  // rcbj/iya-sts submodule. The mock was written from the same reading of RFC
   // 4120 and [MS-PAC] as the client it checks, so the two agree by construction
   // and a shared misreading is invisible to all of them. This job is the answer
   // to that, and it is the open risk docs/kerberos.md names.
@@ -3719,7 +3719,7 @@ function buildJobs() {
   // not use the shared mock and would be wrong to. Persistence is a claim
   // about what happens across a RESTART, so this job starts its own Postgres
   // and its own mock, restarts it, and reads what came back — and the shared
-  // instance must stay in memory mode, which mock-sts's own
+  // instance must stay in memory mode, which iya-sts's own
   // docker-compose.yml argues at length ("a test that persisted would be a
   // test whose second run started from the first run's leavings").
   //

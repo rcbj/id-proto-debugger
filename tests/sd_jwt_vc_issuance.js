@@ -94,7 +94,7 @@ var waitTime = appconfig.waitTime;
 // not late, the server was not answering anybody. The floor was raised to
 // 30000 against that measurement and said so as INTERIM.
 //
-// THE CAUSE IS FIXED (rcbj/mock-sts#6, 2026-08-30: the signing runs in a pool
+// THE CAUSE IS FIXED (rcbj/iya-sts#6, 2026-08-30: the signing runs in a pool
 // of stateless child processes and the front process's event loop stays free),
 // so it is back at 20000 — and going back is the point rather than tidiness. A
 // floor of 30000 would sit ABOVE the stall it was raised for, which means the
@@ -3863,8 +3863,14 @@ async function credentialOfferSameDevice(driver) {
             payload.sub).length > 0,
     "the credential should describe a subject. Got: " + payload.sub);
   if (mockIsTheAs) {
-    assert.ok(String(payload.sub).indexOf(signInUser) !== -1,
-      "it should describe the user who signed in. Got: " + payload.sub);
+    // The subject is the person's directory entry, `urn:uuid:<entryUUID>`,
+    // since iya-sts 64580f4 (2026-09-14) — it no longer spells the name, so
+    // the person who signed in is looked up rather than searched for.
+    var signedIn = await directorySubjectOf(signInUser);
+    assert.strictEqual(String(payload.sub), signedIn,
+      "it should describe the user who signed in (" + signInUser + ", " +
+          "whose directory subject is " + signedIn + "). Got: " +
+          payload.sub);
   }
   var failed = (await readStepThreeChecks(driver, "the H.1 credential"))
     .filter(function (c) { return c.result === "FAILED"; })
@@ -3933,6 +3939,53 @@ async function credentialOfferSameDevice(driver) {
 // so this section checks that the wallet refuses to send without it, that the
 // issuer refuses a wrong one, and that the code is single use.
 // ---------------------------------------------------------------------------
+// WHO A CROSS-DEVICE OFFER IS FOR, AND THE SUBJECT THAT PERSON HAS. H.2's
+// End-User was identified out of band, so the mock makes the offer to the
+// person `oid4vci.offerUsername` names. Until iya-sts 64580f4 (2026-09-14) the
+// subject was `urn:sts-mock:user:<name>` and a prefix check was enough; it is
+// `urn:uuid:<entryUUID>` now, the person's directory entry, so the only way to
+// know which one to expect is to ask — the setting for the name, then the
+// person's drill-down for the subject. Both through the management API, which
+// `tools/attach-admin-token.js` supplies the credential for.
+async function offeredEndUser() {
+  log.debug("Entering offeredEndUser().");
+  var config = await httpJson(issuerBase + "/admin-api/config",
+      { headers: { Accept: "application/json" } });
+  var username = "";
+  ((config.body || {}).groups || []).forEach(function (group) {
+    (group.settings || []).forEach(function (setting) {
+      if (setting.key === "oid4vci.offerUsername") {
+        username = String(setting.value || "");
+      }
+    });
+  });
+  assert.ok(username,
+    "the issuer's configuration names nobody as oid4vci.offerUsername, so " +
+        "there is no End-User a cross-device offer could be for. GET " +
+        "/admin-api/config answered " + config.status + ": " +
+        config.raw.slice(0, 200));
+  var subject = await directorySubjectOf(username);
+  log.debug("Leaving offeredEndUser(). " + username + " is " + subject);
+  return { username: username, subject: subject };
+}
+
+// The subject the issuer's directory gives a person, from that person's
+// drill-down in the management API. Shared by H.1 (the person who signed in)
+// and H.2 (the person a cross-device offer is made to).
+async function directorySubjectOf(username) {
+  log.debug("Entering directorySubjectOf(). " + username);
+  var person = await httpJson(issuerBase + "/admin-api/users?user=" +
+      encodeURIComponent(username),
+      { headers: { Accept: "application/json" } });
+  var subject = String((person.body || {}).subject || "");
+  assert.ok(/^urn:uuid:[0-9a-f-]{36}$/.test(subject),
+    "the issuer's directory holds no urn:uuid subject for " + username +
+        ". GET /admin-api/users answered " + person.status + ": " +
+        person.raw.slice(0, 300));
+  log.debug("Leaving directorySubjectOf(). " + subject);
+  return subject;
+}
+
 async function crossDeviceOffer(driver) {
   log.debug("Entering crossDeviceOffer().");
   log.info("=== H.2: Credential Offer - Cross-Device ===");
@@ -4116,9 +4169,11 @@ async function crossDeviceOffer(driver) {
       "code for an access token.");
   var accessToken = await value(driver, "vc_access_token");
   var claims = jsonFromB64u(accessToken.split(".")[1]);
-  assert.ok(String(claims.sub || "").indexOf("urn:sts-mock:user:") === 0,
+  var endUser = await offeredEndUser();
+  assert.strictEqual(claims.sub, endUser.subject,
     "the access token should describe the End-User the issuer already knew " +
-        "about. Got: " + claims.sub);
+        "about — " + endUser.username + ", whose directory subject is " +
+        endUser.subject + ". Got: " + claims.sub);
   log.info("[H.2] OK — the pre-authorized code was redeemed for an access " +
            "token describing " + claims.sub + ".");
 

@@ -465,6 +465,31 @@ async function aStreamIsCreatedAndRead(driver) {
   await driver.executeScript(
       "document.getElementById('ssf_stream_delivery').value = " +
       "'urn:ietf:rfc:8936'; window.ssf.deliveryChanged();");
+  // ASK FOR THIS VOCABULARY AND NOTHING ELSE. The page ships every
+  // events_requested box unticked, and a stream created with an empty
+  // request is delivered EVERY type the transmitter supports (SSF 1.0
+  // section 7.1.1; `createStream()` in the mock) — CAEP's and RISC's
+  // included. Since the mock began emitting those by itself (`caep.autoEmit`
+  // on a sign-in or sign-out, `risc.autoEmit` on a directory change), every
+  // unlocked job in the pool that signs somebody in or provisions a user puts
+  // a Security Event Token on this stream. On the 2026-09-15 runs they filled
+  // the queue ahead of the verification event, a poll of ten came back
+  // without it, and section 6 failed as "the event history does not name the
+  // event type" — while the same job run alone passed. Ticking the Pure SSF
+  // boxes makes the stream this job's own litter, which is the rule in
+  // tests/CLAUDE.md, rather than a share of everybody else's.
+  const ticked = await driver.executeScript(
+      "var boxes = document.querySelectorAll('.ssf-event-choice');" +
+      "var out = [];" +
+      "for (var i = 0; i < boxes.length; i++) {" +
+      "  boxes[i].checked = true; out.push(boxes[i].value);" +
+      "}" +
+      "return out;");
+  assert.ok(ticked.some(function (uri) {
+    return /\/verification$/.test(uri);
+  }), "The events_requested column offers no verification type to tick, " +
+      "so section 6's verification event could not be asked for. It " +
+      "offers: " + JSON.stringify(ticked));
   await click(driver, "btn_ssf_create");
   const status = await waitForValue(driver, "ssf_stream_status_text",
       "stream status");
@@ -571,11 +596,16 @@ async function verificationAndPollProduceAnEvent(driver) {
   const messages = await waitForText(driver, "ssf_messages",
       "message history");
   assert.ok(messages.indexOf("received") >= 0);
+  // The history's own text goes into both messages. This assertion failed on
+  // two runs in a row as a bare "does not name the event type", with nothing
+  // in the log to say whether the row was unreadable, about another event, or
+  // not drawn at all.
   assert.ok(messages.indexOf("verification") >= 0,
-      "The event history does not name the event type.");
+      "The event history does not name the event type. The poll said: " +
+      polled + ". The history reads: " + messages.slice(0, 2000));
   assert.ok(messages.indexOf("jti:") >= 0,
       "The event history does not show the jti, which is what an " +
-      "acknowledgement names.");
+      "acknowledgement names. The history reads: " + messages.slice(0, 2000));
   log.info("[delivery] OK — " + polled);
   log.debug("Leaving verificationAndPollProduceAnEvent().");
 }

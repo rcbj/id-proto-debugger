@@ -182,38 +182,47 @@ services:
   # sts:8081 — matching env/docker-tests.js wstrustStsUrlDefault.
   sts:
     container_name: sts
-    image: rcbj/sts
+    # THE TAG IS MACHINE-WIDE AND THIS IS NOT THE ONLY REPOSITORY THAT BUILDS
+    # IT (2026-09-15). `sts/` is the iya-sts submodule and that repository
+    # builds its own stack from the same source; both wrote `rcbj/sts`, so
+    # whichever ran last owned the tag — and a run here then started a mock
+    # built from somebody else's working tree. It cost a run of this suite:
+    # seven jobs failed on two defects that had been fixed in the submodule
+    # this checkout points at, because the container was not built from it.
+    # The launchers set STS_IMAGE to a tag of their own (see common.sh);
+    # a bare `docker-compose up` still gets `rcbj/sts`, which is what the
+    # documentation names.
+    image: ${STS_IMAGE:-rcbj/sts}
     # ---------------------------------------------------------------------
-    # THE ONE CONTAINER IN THIS STACK THAT IS STILL ROOT, AND THE UMASK IS
-    # WHAT THAT COSTS.
+    # THE SAME UID AS THE TESTS CONTAINER, BECAUSE THE SPIRE SOCKET IS
+    # PRIVATE NOW.
     #
-    # Every image this repository builds now runs as an unprivileged user
-    # (see the block at the foot of each Dockerfile). This one is not this
-    # repository's image — sts/ is the mock-sts submodule — and it could not
-    # make the change anyway: it binds 88 (the KDC, TCP and UDP), 389 and 636
-    # (the directory), all three privileged, so it needs uid 0 or
-    # CAP_NET_BIND_SERVICE and neither is somebody else's checkout's business
-    # to decide here.
+    # Every image this repository builds runs as uid 10001 (see the block at
+    # the foot of each Dockerfile). This one is not this repository's image —
+    # sts/ is the iya-sts submodule — and it used to stay root because it
+    # binds 88 (the KDC, TCP and UDP), 389 and 636 (the directory), all
+    # privileged. `net.ipv4.ip_unprivileged_port_start: 0` below removes
+    # that reason without touching the image: the sysctl is per network
+    # namespace, so it lowers the bar inside this container and nowhere else.
     #
-    # What that leaves is the SOCKET below. STS_SPIFFE_SERVER_SOCKET makes
-    # this service bind /spire-sock/server.sock, and the tests container —
-    # which is NOT root any more — dials it. A Unix socket is created with
-    # mode 0777 & ~umask, so at the default 022 it lands 0755 root:root, and
-    # connect(2) on a Unix socket needs WRITE permission on the file: the
-    # tests container would be refused with EACCES, and spiffe_protocol.js
-    # would report its Debug.GetInfo check as a failed gRPC call rather than
-    # as a permission problem. `umask 0000` makes it 0777, which is the
-    # ordinary arrangement for a socket meant to be dialled by anyone —
-    # inside a throwaway container, on a docker volume that exists for the
-    # length of one test run and holds no bytes.
+    # What forced the change is the SOCKET below. STS_SPIFFE_SERVER_SOCKET
+    # makes this service bind /spire-sock/server.sock and the tests container
+    # dials it. Until the 2026-09-15 bump this service ran under `umask 0000`
+    # so the socket landed 0777. iya-sts 27b81c5 (2026-09-12) made that
+    # socket PRIVATE: it is the SPIRE Server API's trusted `local` entity,
+    # so the service chmods it 0600 once bound, and a chmod ignores the
+    # umask. connect(2) on a Unix socket needs WRITE, so a root-owned 0600
+    # socket refused the tests container with EACCES, reported by
+    # spiffe_protocol.js as a failed gRPC call rather than as a permission.
+    # Running as the tests container's uid is the arrangement that socket was
+    # written for — "this process's uid and nobody else" — rather than a way
+    # round it.
     #
-    # The command is SPELLED OUT here rather than left to the image, because
-    # setting `entrypoint:` in compose CLEARS the image's CMD (compose does
-    # this; plain docker does not). `node server.js` is sts/Dockerfile's own
-    # CMD and the two have to be kept in step — that image declares no
-    # ENTRYPOINT, so there is nothing else here that can drift.
+    # No `entrypoint:` any more, so the image's own CMD applies again.
     # ---------------------------------------------------------------------
-    entrypoint: ["/bin/sh", "-c", "umask 0000; exec node server.js"]
+    user: "10001:10001"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
     # The mock OID4VCI Credential Issuer this service also hosts advertises
     # ITSELF as its authorization server, so an issuer-initiated offer can be
     # walked end to end without a second identity provider. Set
@@ -312,13 +321,34 @@ services:
       # something that is not the problem. This one is well inside it and is
       # the directory the volume below is mounted at on both sides.
       - STS_SPIFFE_SERVER_SOCKET=/spire-sock/server.sock
+      # No passwd entry exists for uid 10001 in that image, so Docker would
+      # leave HOME at `/`, which this uid cannot write.
+      - HOME=/tmp
+      # ---------------------------------------------------------------------
+      # WHICH BROWSER ORIGINS MAY READ WHAT THIS SERVICE ANSWERS.
+      #
+      # Until iya-sts 2f9825f (2026-09-13) every response carried
+      # `Access-Control-Allow-Origin: *`. It is an allowlist now: this
+      # service's own origins, whatever an application's `appCorsOrigin`
+      # lists, and `global.corsOrigins`. The debugger is none of the first
+      # two — its pages are served by the `client` container and call this
+      # one straight from the browser for discovery, JWKS, SSF, SCIM, the
+      # credential issuer and the verifier — so without this line every one
+      # of those fetches is a CORS refusal, which a page reports as a bare
+      # "Failed to fetch" and a Selenium job as an element that never
+      # appeared. Eighty-odd jobs failed that way on the first run.
+      #
+      # `https://client:3000` is the origin the tests container's browser
+      # loads; `https://localhost:3000` is the same page from the host.
+      # ---------------------------------------------------------------------
+      - STS_CORS_ORIGINS=https://client:3000,https://localhost:3000
       # ---------------------------------------------------------------------
       # THE MAIN PORT IS HTTPS, AND THE WHOLE SUITE TALKS TO IT THAT WAY.
       #
       # This replaced a SECOND mock instance (`sts-rfc9700`, deleted). RFC 9700
       # mode used to need one: `oauth2.rfc9700` derives `global.https` in that
       # service, so it binds 8081 as TLS, and one process could not serve the
-      # permissive pass and the compliant one. Since mock-sts marks that flag
+      # permissive pass and the compliant one. Since iya-sts marks that flag
       # `realmRuntime` it can be set on a TRUST REALM — a realm binds no socket,
       # so only the mode's checks change — and `/realm/rfc9700/...` is the
       # compliant server while `/...` stays permissive. See common/common.sh's
@@ -677,7 +707,17 @@ services:
 volumes:
   # The mock STS's SPIRE Server API Unix socket, shared with the tests
   # container. See both services above.
+  #
+  # A tmpfs OWNED BY 10001 rather than a plain named volume, because Docker
+  # creates a plain one root:root 0755 and the mock, running as 10001, could
+  # not bind a socket in it. 0700 is what the mock itself would make the
+  # directory, so it has nothing to warn about.
   spire-server-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=10001,gid=10001,mode=0700"
   postgres_data:
 
 networks:

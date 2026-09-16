@@ -42,7 +42,7 @@ jobs:
         with:
           # remote-run-tests.sh builds the STS locally (keycloak-tests.yml) to run
           # the suite against the deployed site, and its source is the sts/
-          # submodule — https://github.com/rcbj/mock-sts.git.
+          # submodule — https://github.com/rcbj/iya-sts.git.
           # `recursive`, not `true`, and the difference is load-bearing: there
           # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP
           # library the api's client uses, and sts/node-ldapjs is the same

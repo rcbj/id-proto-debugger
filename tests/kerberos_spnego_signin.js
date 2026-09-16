@@ -252,6 +252,36 @@ async function adminPost(path, body) {
   return parsed;
 }
 
+// THE SUBJECT THE MOCK HOLDS FOR A NAME. Since iya-sts 64580f4 (2026-09-14) a
+// person's `sub` is `urn:uuid:<entryUUID>` in every protocol — their directory
+// entry's identifier, which survives a rename — where it used to be
+// `urn:sts-mock:user:<name>`. Nothing about it can be derived from the name
+// any more, so the test asks the management API, which answers it on the
+// person's drill-down. Asserted to have that shape, so a service that answered
+// '' (no entry) fails here naming the directory rather than a page later.
+async function subjectOf(name) {
+  log.debug("Entering subjectOf(). " + name);
+  const response = await fetch(stsUrl + "/admin-api/users?user=" +
+      encodeURIComponent(name), { headers: { Accept: "application/json" } });
+  const text = await response.text();
+  let parsed = null;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    log.debug("Leaving subjectOf(). Not JSON.");
+    throw new Error("GET /admin-api/users answered " + response.status +
+        " with something that is not JSON: " + text.slice(0, 300));
+  }
+  const subject = String(parsed.subject || "");
+  assert.ok(/^urn:uuid:[0-9a-f-]{36}$/.test(subject),
+    "the mock holds no urn:uuid subject for \"" + name + "\". Since " +
+    "iya-sts 64580f4 no session exists without a directory entry, so a " +
+    "person who has signed in must have one. It answered: " +
+    text.slice(0, 300));
+  log.debug("Leaving subjectOf(). " + subject);
+  return subject;
+}
+
 // ---------------------------------------------------------------------------
 // WHAT HAS TO BE TRUE BEFORE ANY OF THIS MEANS ANYTHING.
 //
@@ -605,12 +635,29 @@ async function theTicketSignsThePersonIn(driver) {
     "page's table. `/spnego/protected` renders 'who the ticket named' and " +
     "stops; this one renders a session. Got: " +
     JSON.stringify(body.slice(0, 400)));
-  assert.ok(new RegExp("urn:sts-mock:user:" + principal).test(body),
-    "and it must name the subject the session carries, which is the " +
+  // WHO THE SESSION IS. Two halves, because the subject is no longer spelt
+  // out of the name (iya-sts 64580f4, 2026-09-14: it is the directory entry's
+  // `urn:uuid:`). The page names the PERSON, which must be the principal with
+  // its realm STRIPPED — leaving the realm on would make somebody who typed
+  // the name at the password screen and the same person arriving with a
+  // ticket two different people. And it names the SUBJECT, which must be the
+  // one the directory holds for that stripped name: the same entry, and
+  // therefore the same `sub` to every relying party, whichever door they used.
+  // The pane shows the body as TEXT, so the name arrives inside the page's
+  // own `<strong>` rather than bare; the regexp allows either.
+  const escaped = principal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  assert.ok(new RegExp("Signed in as (<strong>)?" + escaped +
+      "(</strong>)?,").test(body),
+    "and it must name the person the session carries, which is the " +
     "principal with its realm STRIPPED — leaving the realm on would make " +
     "somebody who typed \"" + principal + "\" at the password screen and the " +
-    "same person arriving with a ticket two different subjects to every " +
-    "relying party. Got: " + JSON.stringify(body.slice(0, 400)));
+    "same person arriving with a ticket two different people. Got: " +
+    JSON.stringify(body.slice(0, 400)));
+  const subject = await subjectOf(principal);
+  assert.ok(body.indexOf(subject) >= 0,
+    "and it must name the subject the session carries, which is the one the " +
+    "directory holds for \"" + principal + "\" (" + subject + "). Got: " +
+    JSON.stringify(body.slice(0, 400)));
 
   const headers = await textOf(driver, "krb_response_headers_pane");
   assert.ok(/set-cookie/i.test(headers),
@@ -619,7 +666,11 @@ async function theTicketSignsThePersonIn(driver) {
     "that outlives the request. The response headers pane shows: " +
     JSON.stringify(headers.slice(0, 400)));
 
-  const cookie = (headers.match(/sts_mock_session=([^;\s]+)/) || [])[1];
+  // `sts_session`, and its value is `<session id>.<handle>` — both since
+  // iya-sts 27b81c5 (it was `sts_mock_session` holding the bare id). The
+  // WHOLE value is kept, because section 6 plants it in the browser and the
+  // mock accepts a session only with its handle.
+  const cookie = (headers.match(/sts_session=([^;\s]+)/) || [])[1];
   assert.ok(cookie,
     "and this test needs the cookie's value to spend it in section 6. The " +
     "response headers pane holds: " + JSON.stringify(headers.slice(0, 400)));
@@ -694,8 +745,8 @@ async function theSessionSatisfiesAnApplication(driver, cookie) {
   // is harmless.
   await driver.get(stsUrl + "/spnego");
   await driver.manage().addCookie({
-    name: "sts_mock_session", value: cookie, path: "/" });
-  const planted = await driver.manage().getCookie("sts_mock_session");
+    name: "sts_session", value: cookie, path: "/" });
+  const planted = await driver.manage().getCookie("sts_session");
   assert.ok(planted && planted.value === cookie,
     "the session cookie did not take in the browser, so the flow below would " +
     "draw a sign-in screen and this section would be testing the password " +
@@ -760,9 +811,11 @@ async function theSessionSatisfiesAnApplication(driver, cookie) {
       tokens.id_token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"),
       "base64").toString("utf8"));
 
-  assert.strictEqual(claims.sub, "urn:sts-mock:user:" + principal,
-    "the ID Token's subject must be the principal the TICKET named, with the " +
-    "realm stripped. Got " + JSON.stringify(claims.sub) + ".");
+  const subject = await subjectOf(principal);
+  assert.strictEqual(claims.sub, subject,
+    "the ID Token's subject must be the directory's subject for the " +
+    "principal the TICKET named, with the realm stripped (" + principal +
+    " is " + subject + "). Got " + JSON.stringify(claims.sub) + ".");
   assert.deepStrictEqual(claims.amr, ["pwd"],
     "`amr` must be exactly [\"pwd\"], and both halves of that matter. It is " +
     "PRESENT because the ticket carried `pre-authent`, which on this KDC " +

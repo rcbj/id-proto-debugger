@@ -6,7 +6,7 @@
 # Copy the Kerberos codec into the mock STS, which cannot share it.
 #
 # The KDC needs the same codec the browser uses — it is the other end of the same
-# wire — but it lives in the rcbj/mock-sts SUBMODULE, and compose builds that
+# wire — but it lives in the rcbj/iya-sts SUBMODULE, and compose builds that
 # service with `context: ./sts`. A Docker build cannot COPY from outside its
 # context, so `../common/krb5` is unreachable from there. The alternatives were:
 #
@@ -24,13 +24,13 @@
 # surfacing weeks later against a real domain controller.
 #
 # Usage:
-#   common/krb5/sync-to-mock-sts.sh [path-to-mock-sts]
+#   common/krb5/sync-to-mock-sts.sh [path-to-iya-sts]
 #
-# With no argument it tries ../mock-sts (a sibling development checkout) and then
+# With no argument it tries ../iya-sts (a sibling development checkout) and then
 # ./sts (the initialised submodule). Note that writing into ./sts modifies
 # somebody else's checkout — `git status` shows it as a modified submodule rather
 # than as modified files — so the sibling checkout is preferred and is what the
-# development loop uses: edit here, sync, push mock-sts, then bump the gitlink.
+# development loop uses: edit here, sync, push iya-sts, then bump the gitlink.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
@@ -45,16 +45,16 @@ MODULES=(krb5_primitives.js krb5_asn1.js krb5_crypto.js krb5_messages.js krb5_gs
 
 target="${1:-}"
 if [[ -z "${target}" ]]; then
-  if [[ -d "${REPO_ROOT}/../mock-sts" ]]; then
-    target="${REPO_ROOT}/../mock-sts"
+  if [[ -d "${REPO_ROOT}/../iya-sts" ]]; then
+    target="${REPO_ROOT}/../iya-sts"
   elif [[ -f "${REPO_ROOT}/sts/package.json" ]]; then
     target="${REPO_ROOT}/sts"
-    echo "sync-to-mock-sts: no sibling ../mock-sts checkout; writing into the SUBMODULE at sts/." >&2
+    echo "sync-to-mock-sts: no sibling ../iya-sts checkout; writing into the SUBMODULE at sts/." >&2
     echo "  That is somebody else's checkout: git status will report a modified submodule, and the" >&2
-    echo "  change has to be committed and pushed in rcbj/mock-sts before this repository's gitlink" >&2
+    echo "  change has to be committed and pushed in rcbj/iya-sts before this repository's gitlink" >&2
     echo "  can move." >&2
   else
-    echo "sync-to-mock-sts: could not find mock-sts. Pass its path, or run" >&2
+    echo "sync-to-mock-sts: could not find iya-sts. Pass its path, or run" >&2
     echo "  git submodule update --init --recursive sts" >&2
     echo "  (an uninitialised submodule is an EMPTY DIRECTORY, not a missing one)." >&2
     exit 1
@@ -67,7 +67,7 @@ if [[ ! -f "${target}/package.json" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# WHERE IN THE MOCK THE COPIES GO, which stopped being "the root" at mock-sts
+# WHERE IN THE MOCK THE COPIES GO, which stopped being "the root" at iya-sts
 # 0f986b3 ("Reorganizing source code.").
 #
 # That commit moved every module into a subdirectory; the Kerberos ones are in
@@ -91,8 +91,8 @@ for candidate in "${target}"/*/; do
 done
 if [[ ! -f "${dest_dir}/krb5_kdc.js" ]]; then
   echo "sync-to-mock-sts: could not find krb5_kdc.js anywhere in ${target}, so" >&2
-  echo "  there is no way to tell where the vendored codec belongs. Is this a" >&2
-  echo "  mock-sts checkout, and is it initialised? (An uninitialised submodule" >&2
+  echo "  there is no way to tell where the vendored codec belongs. Is this an" >&2
+  echo "  iya-sts checkout, and is it initialised? (An uninitialised submodule" >&2
   echo "  is an EMPTY DIRECTORY, not a missing one.)" >&2
   exit 1
 fi
@@ -121,6 +121,6 @@ echo "sync-to-mock-sts: ${changed} file(s) updated in ${dest_dir}."
 if [[ ${changed} -gt 0 ]]; then
   echo
   echo "Next: run tests/krb5_codec_sync.js to confirm the two copies still agree, then commit and"
-  echo "push in mock-sts, then bump this repository's sts/ gitlink. In that order — a COPY of an"
+  echo "push in iya-sts, then bump this repository's sts/ gitlink. In that order — a COPY of an"
   echo "sts/ file added to a Dockerfile before the gitlink moves breaks the image build."
 fi

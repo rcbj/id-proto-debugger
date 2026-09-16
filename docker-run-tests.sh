@@ -198,7 +198,20 @@ teardown()
 {
   docker_compose -f "${COMPOSE_FILE}" down
 }
-trap teardown EXIT
+# The EXIT trap tears down FIRST and reports LAST: the banner (on a pass) and
+# the status this script exits with, so neither is buried under the teardown's
+# container shutdown output. `$?` is captured as the first statement, before
+# the teardown overwrites it, and handed back to `exit` explicitly. See
+# launcherExitStatus() in common/common.sh.
+onExit()
+{
+  local status=$?
+  echo "Entering onExit()."
+  teardown
+  launcherExitStatus "${status}" "docker-run-tests.sh"
+  exit "${status}"
+}
+trap onExit EXIT
 
 # Start from a clean slate: remove leftover containers AND the Keycloak DB volume
 # from a previous run before bringing the stack up. The test data is disposable
@@ -273,13 +286,8 @@ check_return_code $?
 docker_compose -f "${COMPOSE_FILE}" up --build --abort-on-container-exit --exit-code-from tests
 check_return_code $?
 
-cat <<'EOF'
-   _   _ _   _            _                                  _
-  / \ | | | | |_ ___  ___| |_ ___   _ __   __ _ ___ ___  ___| |
- / _ \| | | | __/ _ \/ __| __/ __| | '_ \ / _` / __/ __|/ _ \ |
-/ ___ \ | | | ||  __/\__ \ |_\__ \ | |_) | (_| \__ \__ \  __/_|
-/_/   \_\_|_|  \__\___||___/\__|___/ | .__/ \__,_|___/___/\___(_)
-                                     |_|
-EOF
+# The banner is printed by the EXIT trap, after the teardown, so it is the last
+# thing on the screen rather than the thing the teardown scrolls away.
+SUITE_PASSED=1
 
 exit 0

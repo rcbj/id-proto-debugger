@@ -241,7 +241,7 @@ EXTENSION_AUTOARM_ORIGINS="https://sts:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # same stack as docker-run-tests.sh
 check_return_code $?
 
-# The mock STS is a submodule (https://github.com/rcbj/mock-sts.git): the same
+# The mock STS is a submodule (https://github.com/rcbj/iya-sts.git): the same
 # class of hazard as the walt.id render above, and for the same reason it is
 # checked here rather than left to the build. This run uses --abort-on-container-
 # exit, so a service that cannot be built or started takes the whole run down.
@@ -354,7 +354,18 @@ coverageTeardown()
     ${COMPOSE} down
   fi
 }
-trap coverageTeardown EXIT
+# Teardown first, then the banner (on a pass) and this script's exit status as
+# the last lines — see launcherExitStatus() in common/common.sh. `$?` is
+# captured before the teardown can overwrite it and handed back to `exit`.
+onExit()
+{
+  local status=$?
+  echo "Entering onExit()."
+  coverageTeardown
+  launcherExitStatus "${status}" "run-coverage.sh"
+  exit "${status}"
+}
+trap onExit EXIT
 
 # Start from a clean slate, as ./docker-run-tests.sh does: leftover containers and
 # the Keycloak DB volume from a previous run make provisioning 409 on a stale
@@ -471,4 +482,7 @@ if [ "${COVERAGE_RC}" -ne 0 ]; then
   echo "Coverage is below a floor in tests/coverage_floors.json."
   exit ${COVERAGE_RC}
 fi
+# Tests passed and coverage is at or above every floor: the EXIT trap prints
+# the banner.
+SUITE_PASSED=1
 exit 0

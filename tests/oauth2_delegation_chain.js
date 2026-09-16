@@ -86,9 +86,10 @@
 // the audience and comes OFF the scope list, because the one fact in
 // `scope=openid email profile offline_access apigw1` that says which party the
 // token is for belongs in the claim that means exactly that. So webapp1's
-// token is addressed to `apigw1` — the scope value VERBATIM, beside this
-// service's own `/resource`, which the `openid` scope keeps so that UserInfo
-// is still reachable — and its scope claim is the base four and nothing else.
+// token is addressed to `apigw1` — the scope value VERBATIM. It used to sit
+// beside this service's own `/resource`, kept for UserInfo, with the base four
+// on its scope claim; since iya-sts 2f9825f (2026-09-13) it is `apigw1` alone
+// and the claim is gone, for the reason OIDC_SCOPES_OFF_AN_API_TOKEN gives.
 // The two exchanges send `audience` as well, and that parameter WINS the `aud`
 // (an audience a client asked for is never widened by one this service
 // derived), but the scope list is trimmed just the same: `esb1` and `sp1` are
@@ -271,6 +272,28 @@ const BASE_SCOPE = "openid email profile offline_access";
 const scopeFor = function (nextTier) {
   return BASE_SCOPE + " " + nextTier;
 };
+
+// ---------------------------------------------------------------------------
+// WHAT AN ACCESS TOKEN FOR ANOTHER API CARRIES OF THAT BASE: NOTHING
+// (iya-sts 2f9825f, 2026-09-13).
+//
+// Every token in this chain is addressed to the NEXT tier — the gateway, the
+// ESB, the provider — and never to the mock's own resource server. Until that
+// commit the mock appended its own resource beside the API so the same token
+// could call UserInfo, and the token carried the whole base scope. RFC 9068
+// section 2.2.3 says every scope on a JWT access token MUST have meaning for
+// the resources in its `aud`, and `openid email profile offline_access` mean
+// nothing to `apigw1`; the mock now takes Entra ID's answer and leaves them
+// off. They are still GRANTED — the ID Token is minted and the refresh token
+// keeps the whole scope — so the grant is not narrowed; it is carried where it
+// means something. With nothing left, the token has no `scope` claim at all
+// (section 2.2.3 again: granted nothing, no claim).
+//
+// So what the three tokens are held to is the ABSENCE of every base scope,
+// which is the stronger statement: a token that still carried `openid` would
+// be a regression to the ambiguous token that commit removed.
+// ---------------------------------------------------------------------------
+const OIDC_SCOPES_OFF_AN_API_TOKEN = BASE_SCOPE;
 
 // ---------------------------------------------------------------------------
 // THE FOUR APPLICATION OBJECTS, as they are created in the registry before any
@@ -1404,12 +1427,13 @@ function claimsOf(token, what) {
 // ---------------------------------------------------------------------------
 // THE AUDIENCE, READ THE ONE WAY IT CAN BE. `aud` is a string where there is
 // one party and an array where there are several (RFC 7519 section 4.1.3), and
-// this chain produces BOTH shapes on purpose: the sign-in's token is addressed
-// to the gateway AND to this service's own /resource, because the `openid`
-// scope asks for UserInfo, while each exchange names one URI and gets a
-// string. So every reader here goes through this rather than comparing a claim
-// that is sometimes a list — a `claims.aud === x` would pass on the exchanges
-// and fail on the sign-in, saying nothing about either.
+// this chain produced BOTH shapes until iya-sts 2f9825f (2026-09-13): the
+// sign-in's token was addressed to the gateway AND to this service's own
+// /resource, for UserInfo, while each exchange names one URI and gets a
+// string. It is one audience everywhere now, and every reader still goes
+// through this rather than comparing a claim that may be a list — a
+// `claims.aud === x` is a check that silently stops passing the day a second
+// audience comes back.
 // ---------------------------------------------------------------------------
 function audienceList(claims) {
   log.debug("Entering audienceList().");
@@ -1450,11 +1474,23 @@ function assertTokenDescribes(token, expect) {
     "that exchanged it is the middle tier acting as itself, which is a " +
     "different thing entirely.");
   const scopes = String(claims.scope || "").split(/\s+/).filter(Boolean);
-  expect.scope.split(" ").forEach(function (one) {
+  String(expect.scope || "").split(" ").filter(Boolean).forEach(function (one) {
     assert.ok(scopes.indexOf(one) >= 0,
       expect.what + " does not carry the scope \"" + one + "\". It carries: " +
       JSON.stringify(claims.scope) + ".");
   });
+  // What must be ABSENT from the claim, which since iya-sts 2f9825f is the
+  // half of this that says the most — see OIDC_SCOPES_OFF_AN_API_TOKEN.
+  String(expect.withoutScope || "").split(" ").filter(Boolean)
+    .forEach(function (one) {
+      assert.ok(scopes.indexOf(one) < 0,
+        expect.what + " carries the scope \"" + one + "\" (scope=" +
+        JSON.stringify(claims.scope) + ", aud=" + JSON.stringify(claims.aud) +
+        "). It is addressed to another resource server, and RFC 9068 " +
+        "section 2.2.3 says every scope on it must mean something THERE — " +
+        "the mock leaves OpenID Connect scopes off such a token and keeps " +
+        "them on the ID Token and the refresh token instead.");
+    });
   if (expect.audience) {
     assertAddressedTo(claims, expect.audience, expect.what);
   }
@@ -1715,13 +1751,14 @@ async function test() {
     const first = await authenticateTheUser(driver, WEBAPP, scopeFor(GATEWAY));
     const firstClaims = assertTokenDescribes(first.access_token, {
       what: WEBAPP + "'s access token",
-      // The BASE alone. The request named the gateway in the scope list, and
-      // this issuer reads a scope naming an application as the audience — so
-      // what the token carries is the scope MINUS that name. See the header.
-      scope: BASE_SCOPE,
+      // NONE of it. The request named the gateway in the scope list, and this
+      // issuer reads a scope naming an application as the audience — so the
+      // name comes off the scope; and a token for the gateway carries no
+      // OpenID Connect scope either. See OIDC_SCOPES_OFF_AN_API_TOKEN.
+      withoutScope: OIDC_SCOPES_OFF_AN_API_TOKEN,
       // The scope value VERBATIM, which is what a derived audience is
-      // addressed to. `aud` is an array here, because an `openid` request
-      // keeps this service's own /resource beside it for UserInfo.
+      // addressed to. One audience: the mock no longer keeps its own
+      // /resource beside it for UserInfo.
       audience: GATEWAY,
       clientId: WEBAPP,
     });
@@ -1740,12 +1777,23 @@ async function test() {
     // delegation act must be filed against — the two being different strings is
     // the whole of what oauthAudience buys, so they are separate members here
     // rather than one that has to mean both.
+    //
+    // THE EXCHANGE'S SCOPE DOES NOT NAME THE NEXT TIER (iya-sts 2f9825f,
+    // 2026-09-13). The sign-in above names the gateway in its scope because
+    // that is the only way it says which API it wants. An exchange says so
+    // with `audience`, and naming the tier's client_id in the scope as well
+    // is two names for one resource that the mock cannot prove are the same:
+    // RFC 9068 section 2.2.3 has it refuse `audience=https://esb1.example.com`
+    // beside `scope=... esb1` with invalid_scope (STS-OAUTH-0245), "this
+    // request addresses X while its scope names Y". So each hop asks for the
+    // base scope and lets `audience` carry the target — which is also the
+    // spelling RFC 8693 section 2.1 gives that parameter the job of.
     const hops = [
       { clientId: GATEWAY, audience: audienceOf(ESB), target: ESB,
-        scope: scopeFor(ESB), subjectToken: first.access_token },
+        scope: BASE_SCOPE, subjectToken: first.access_token },
       // subjectToken filled in below, from what hop 1 produced.
       { clientId: ESB, audience: audienceOf(PROVIDER), target: PROVIDER,
-        scope: scopeFor(PROVIDER), subjectToken: "" },
+        scope: BASE_SCOPE, subjectToken: "" },
     ];
 
     await startNewWorkflow(driver, discovery, GATEWAY, WEBAPP);
@@ -1754,8 +1802,9 @@ async function test() {
       what: GATEWAY + "'s exchanged access token",
       // Trimmed the same way, even though this hop sent `audience` outright:
       // the parameter decides the `aud`, and the scope list loses the name
-      // regardless. Both halves are asserted below.
-      scope: BASE_SCOPE,
+      // and the OpenID Connect scopes regardless. Both halves are asserted
+      // below.
+      withoutScope: OIDC_SCOPES_OFF_AN_API_TOKEN,
       audience: audienceOf(ESB),
       clientId: GATEWAY,
     });
@@ -1777,7 +1826,7 @@ async function test() {
     const third = await exchangeAs(driver, hops[1]);
     const thirdClaims = assertTokenDescribes(third.access_token, {
       what: ESB + "'s exchanged access token",
-      scope: BASE_SCOPE,
+      withoutScope: OIDC_SCOPES_OFF_AN_API_TOKEN,
       audience: audienceOf(PROVIDER),
       clientId: ESB,
     });
@@ -1817,11 +1866,17 @@ async function test() {
       introspection.scope + "\", which carries " + PROVIDER + " — so the " +
       "signed token and the server that signed it disagree about whether " +
       "that name is a scope or an audience.");
-    BASE_SCOPE.split(" ").forEach(function (one) {
-      assert.ok(introspectedScopes.indexOf(one) >= 0,
+    // The issuer must agree with the token it signed about the base scopes
+    // too: none of them on a token for the provider. Two exchanges still do
+    // not narrow the GRANT — that lives on the refresh token, which this
+    // chain does not present — so what is asserted is agreement, not loss.
+    OIDC_SCOPES_OFF_AN_API_TOKEN.split(" ").forEach(function (one) {
+      assert.ok(introspectedScopes.indexOf(one) < 0,
         "introspection reports the final token's scope as \"" +
-        introspection.scope + "\", which has lost \"" + one + "\". Two " +
-        "exchanges must not narrow the grant by themselves.");
+        introspection.scope + "\", which carries \"" + one + "\" — but the " +
+        "token is addressed to " + audienceOf(PROVIDER) + " and the signed " +
+        "token leaves OpenID Connect scopes off. The token and the server " +
+        "that signed it disagree.");
     });
     assert.strictEqual(introspection.username, USER,
       "introspection says the final token belongs to \"" +

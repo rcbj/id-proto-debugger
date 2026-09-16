@@ -1046,6 +1046,29 @@ async function mockCanOfferAChoice(stsBase) {
   return can;
 }
 
+// THE PERSON AN ID TOKEN FROM REALM 1 DESCRIBES. `local` is realm 1's name for
+// the person typed at the partner realm as `typed`. Since iya-sts 64580f4
+// (2026-09-14) `sub` is the `urn:uuid:` of that person's entry in the realm
+// that issued the token, so it is compared EXACTLY with what realm 1's
+// directory holds for `local` — which the substring check it replaces could
+// not be. `preferred_username`, where present, must name the same person.
+async function assertDescribes(claims, spBase, local, typed, what) {
+  log.debug("Entering assertDescribes(). " + what);
+  const expected = await admin.subjectOf(spBase, local);
+  assert.strictEqual(claims.sub, expected,
+    what + "'s sub is \"" + claims.sub + "\", and " + SP_REALM + "'s " +
+    "directory says \"" + local + "\" — typed at " + IDP_REALM + " as \"" +
+    typed + "\" — is \"" + expected + "\".");
+  if (claims.preferred_username !== undefined) {
+    const named = String(claims.preferred_username);
+    assert.ok(named === local || named === typed,
+      what + "'s preferred_username is \"" + named + "\". The person typed " +
+      "at " + IDP_REALM + " as \"" + typed + "\" is \"" + local + "\" at " +
+      SP_REALM + ".");
+  }
+  log.debug("Leaving assertDescribes().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const stsUrl = process.env.WSTRUST_STS_URL || "";
@@ -1226,11 +1249,8 @@ async function test() {
         "The application's ID Token names the federation relationship \"" +
         PARTNERS[0].id + "\": " + JSON.stringify(samlClaims) + ". The " +
         "application did not choose it and must not learn about it.");
-      assert.ok(String(samlClaims.preferred_username ||
-                       samlClaims.sub).indexOf(samlUser) >= 0,
-        "The ID Token describes \"" +
-        (samlClaims.preferred_username || samlClaims.sub) + "\" and the name " +
-        "typed at " + IDP_REALM + " was \"" + samlUser + "\".");
+      await assertDescribes(samlClaims, spBase, samlUser, samlUser,
+                            "The ID Token");
       log.info("Sign-in one complete: an ID Token from " + samlClaims.iss +
                " describing " +
                (samlClaims.preferred_username || samlClaims.sub) + ".");
@@ -1247,6 +1267,15 @@ async function test() {
                "\" (" + PARTNERS[1].label + ").");
       const sentOidc = await signInThrough(driver, spBase, callbackUri,
                                            PARTNERS[1].id, oidcUser);
+      // WHO REALM 1 CALLS THAT PERSON. Since iya-sts 64580f4 (2026-09-14) an
+      // OpenID Connect partner names somebody by its `urn:uuid:` subject, and
+      // realm 1 files a partner's `urn:uuid:` as `sub-<uuid>` rather than
+      // resolving it in its own directory — so over this partner, unlike the
+      // SAML 2.0 one, the typed name does not cross. Worked out from the
+      // partner realm's own directory; see federatedNameOf().
+      const oidcLocal = await admin.federatedNameOf(idpBase, oidcUser);
+      log.info(IDP_REALM + "'s " + oidcUser + " is " + oidcLocal + " at " +
+               SP_REALM + ".");
 
       const afterOidc = await counts(spBase);
       assert.strictEqual(afterOidc[PARTNERS[1].id].authentications, 1,
@@ -1262,10 +1291,10 @@ async function test() {
         "The \"" + PARTNERS[1].id + "\" relationship recorded a failure " +
         "during a sign-in that succeeded: " +
         afterOidc[PARTNERS[1].id].lastError);
-      assert.ok(afterOidc[PARTNERS[1].id].lastUser.indexOf(oidcUser) >= 0,
+      assert.ok(afterOidc[PARTNERS[1].id].lastUser.indexOf(oidcLocal) >= 0,
         "The \"" + PARTNERS[1].id + "\" relationship's last user is \"" +
         afterOidc[PARTNERS[1].id].lastUser + "\" and this test signed in as \"" +
-        oidcUser + "\".");
+        oidcUser + "\", who is \"" + oidcLocal + "\" at " + SP_REALM + ".");
 
       const oidcClaims = await redeemAndReadIdToken(driver, callbackUri);
       assert.strictEqual(oidcClaims.iss, spBase,
@@ -1277,11 +1306,8 @@ async function test() {
       assert.ok(JSON.stringify(oidcClaims).indexOf(IDP_REALM) === -1,
         "The second ID Token mentions " + IDP_REALM + ": " +
         JSON.stringify(oidcClaims) + ".");
-      assert.ok(String(oidcClaims.preferred_username ||
-                       oidcClaims.sub).indexOf(oidcUser) >= 0,
-        "The second ID Token describes \"" +
-        (oidcClaims.preferred_username || oidcClaims.sub) + "\" and the name " +
-        "typed at " + IDP_REALM + " was \"" + oidcUser + "\".");
+      await assertDescribes(oidcClaims, spBase, oidcLocal, oidcUser,
+                            "The second ID Token");
       // TWO PEOPLE, ONE APPLICATION, TWO PROTOCOLS. The application asked the
       // same question twice and got two answers in the same shape, and the
       // fact that they arrived over completely different wire protocols is
@@ -1299,7 +1325,7 @@ async function test() {
       // BOTH PEOPLE HAVE A DIRECTORY ENTRY IN REALM 1, a service that never
       // checked a password for either of them, and each is recorded as having
       // arrived through federation.
-      for (const user of [samlUser, oidcUser]) {
+      for (const user of [samlUser, oidcLocal]) {
         const users = await adminGet(spBase,
           "/users?q=" + encodeURIComponent(user));
         assert.ok((users.users || []).some(function (one) {

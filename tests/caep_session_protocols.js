@@ -211,7 +211,7 @@ function basic(user) {
 // THE SIGN-IN, PER PROTOCOL — and the shape is the same for all five because
 // the mock funnels all five through `authn.js`: whatever the protocol, an
 // unauthenticated arrival is a 303 to `/authn/login?authn=<id>`, a POST of
-// that id sets `sts_mock_session`, and the return trip completes the flow.
+// that id sets `sts_session`, and the return trip completes the flow.
 //
 // That sameness IS the point being tested. It is what makes
 // `session-established` protocol-independent at the mock, and the reason
@@ -309,9 +309,10 @@ function cookieOf(answer) {
     : [answer.headers.get('set-cookie') || ''];
   let value = '';
   raw.forEach(function (one) {
-    const found = /sts_mock_session=([^;]+)/.exec(one || '');
+    // `sts_session` since iya-sts 27b81c5; it was `sts_mock_session`.
+    const found = /sts_session=([^;]+)/.exec(one || '');
     if (found) {
-      value = 'sts_mock_session=' + found[1];
+      value = 'sts_session=' + found[1];
     }
   });
   log.debug("Leaving cookieOf(). " + (value ? 'got one' : 'none'));

@@ -15,7 +15,7 @@
 //
 //   1. THE CATALOGUE. client/src/rfc9700.js holds one row per client-side
 //      obligation, keyed to the fifteen-section checklist this work follows
-//      (rcbj/mock-sts issue #2). Every section must be represented, every id
+//      (rcbj/iya-sts issue #2). Every section must be represented, every id
 //      unique, every row complete. The catalogue is what the report, the
 //      documentation and the tests all read, so a check with no row is
 //      invisible to all three.

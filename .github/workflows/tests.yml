@@ -24,7 +24,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
         with:
-          # sts/ is a submodule (https://github.com/rcbj/mock-sts.git). The STS
+          # sts/ is a submodule (https://github.com/rcbj/iya-sts.git). The STS
           # image is built from it and tests/Dockerfile copies a module out of it,
           # so without it both builds fail — saying "failed to read dockerfile"
           # and "COPY sts/common/vendored/bbs2023.js: not found", neither of which names a

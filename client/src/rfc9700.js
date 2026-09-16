@@ -32,7 +32,7 @@
 // this switch turned on.
 //
 // **The catalogue is the interface.** Every row carries the section from the
-// checklist this project is working to (see rcbj/mock-sts issue #2), the level
+// checklist this project is working to (see rcbj/iya-sts issue #2), the level
 // RFC 9700 states it at, and how this client answers it. Add a check and you
 // add a row; the report, the tests and the documentation all read the rows
 // rather than keeping lists of their own. A check with no row is invisible to

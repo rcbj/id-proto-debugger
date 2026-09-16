@@ -354,7 +354,7 @@ async function theServerIsThere(driver) {
     log.debug("Leaving theServerIsThere(). Not reachable.");
     return { present: false, why: 'the browser could not read a ' +
         'ServiceProviderConfig from ' + scimBaseUrl + ': "' + status + '". ' +
-        'The SCIM endpoints arrived in rcbj/mock-sts AFTER this ' +
+        'The SCIM endpoints arrived in rcbj/iya-sts AFTER this ' +
         'repository\'s sts/ gitlink was last moved, so a checkout whose ' +
         'submodule predates them has no /scim/v2 routes; a CORS refusal ' +
         'looks the same from here and is the other possibility.' };
@@ -539,7 +539,10 @@ async function theBrowserCreatesAndDeletes(driver) {
   });
   const lastId = await textOf(driver, "scim_last_user_id");
   check('the created id is remembered for the next operation', function () {
-    assert.ok(lastId && lastId.indexOf('uid=') === 0,
+    // A UUID — the entry's entryUUID — since iya-sts 64580f4 (2026-09-14);
+    // it was the entry's DN, which is what this used to look for.
+    assert.ok(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        .test(lastId || ''),
         'The last created id is "' + lastId + '". A debugger where an id ' +
         'has to be copied by hand between two fields on the same page is ' +
         'one nobody uses twice.');
@@ -2757,7 +2760,8 @@ async function everyStyleClassIsDefined(driver) {
   check('the page does not scroll sideways', function () {
     assert.ok(pageWidth.doc <= pageWidth.win + 2,
         'The document is ' + pageWidth.doc + 'px wide in a ' +
-        pageWidth.win + 'px viewport. A SCIM id is a percent-encoded DN — a ' +
+        pageWidth.win + 'px viewport. A SCIM id can be a percent-encoded ' +
+        'DN — a ' +
         'long unbroken string with no space in it — and bootstrap\'s ' +
         '`code { white-space: nowrap }` plus an auto-layout table is exactly ' +
         'how one of them pushes a pane past the edge.');

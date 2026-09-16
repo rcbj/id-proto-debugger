@@ -73,8 +73,10 @@ const RFC8414_MEMBERS = [
   "signed_metadata",
 ];
 
-// Members OIDC Discovery defines that RFC 8414 does not: they must end up
-// showing the "not defined" note rather than a stale or blank value.
+// Members OIDC Discovery defines that RFC 8414 does not: where the RFC 8414
+// document does not carry one it must end up showing the "not defined" note
+// rather than a stale or blank value, and where it does (RFC 8414 lets a server
+// publish more) it must show the document's value.
 const OIDC_ONLY_FIELDS = ["oidc_userinfo_endpoint", "claims_supported",
     "subject_types_supported",
                           "id_token_signing_alg_values_supported",
@@ -138,6 +140,30 @@ function get(url, headers) {
   });
 }
 
+// The CORS half of the metadata endpoint's contract, asked the way a browser
+// asks it: with an `Origin`. node's http client sends none, so a request
+// without one says nothing about what a page may read.
+async function metadataAllowsTheDebuggerOrigin() {
+  log.debug("Entering metadataAllowsTheDebuggerOrigin().");
+  var debuggerOrigin = new URL(baseUrl).origin;
+  var allowed = await get(metadataUrl, { Origin: debuggerOrigin });
+  assert.strictEqual(allowed.headers["access-control-allow-origin"],
+    debuggerOrigin,
+    "the metadata endpoint must let the debugger's own origin (" +
+    debuggerOrigin + ") read it — the mock's CORS allowlist " +
+    "(STS_CORS_ORIGINS) should name it. Got: " +
+    allowed.headers["access-control-allow-origin"]);
+  var stranger = "https://not-listed.cors.example";
+  var refused = await get(metadataUrl, { Origin: stranger });
+  assert.ok(refused.headers["access-control-allow-origin"] === undefined,
+    "an origin nobody listed must not be allowed to read the metadata, " +
+    "but it was answered with Access-Control-Allow-Origin: " +
+    refused.headers["access-control-allow-origin"]);
+  log.info("CORS: " + debuggerOrigin + " allowed, " + stranger +
+           " not allowed.");
+  log.debug("Leaving metadataAllowsTheDebuggerOrigin().");
+}
+
 async function testMetadataDocument() {
   log.debug("Entering testMetadataDocument().");
   log.info("=== RFC 8414 metadata document (" + metadataUrl + ") ===");
@@ -146,9 +172,18 @@ async function testMetadataDocument() {
                      "the metadata endpoint did not answer 200: " + res.status);
   assert.ok(/application\/json/.test(res.headers["content-type"] || ""),
     "metadata must be served as JSON, got: " + res.headers["content-type"]);
-  // The debugger fetches this straight from the browser.
-  assert.strictEqual(res.headers["access-control-allow-origin"], "*",
-    "the metadata endpoint must allow cross-origin reads.");
+  // The debugger fetches this straight from the browser, so the DEBUGGER'S
+  // origin must be allowed to read it.
+  //
+  // Until iya-sts 2f9825f (2026-09-13) the mock sent
+  // `Access-Control-Allow-Origin: *` on every response and this asserted the
+  // star. It is an allowlist now (sts/common/cors.js): the launchers name the
+  // debugger in STS_CORS_ORIGINS, and a discovery request — which names no
+  // client — is judged against that list and the realm's applications. So
+  // the promise is "this page's origin is echoed back", and its other half is
+  // that an origin nobody listed is not: a `*` would pass the first check and
+  // is exactly what the change removed.
+  await metadataAllowsTheDebuggerOrigin();
 
   var doc;
   try {
@@ -632,17 +667,55 @@ async function metadataSourceActivities(driver, doc) {
            signedField.length + "-character JWT of the document).");
 
   // ---- Members RFC 8414 does not define ------------------------------------
+  //
+  // WHAT THE DOCUMENT CARRIES DECIDES WHICH HALF A FIELD IS HELD TO, and it
+  // is read off the document rather than assumed. RFC 8414 section 2 lets an
+  // authorization server publish members it does not define, and since iya-sts
+  // 2f9825f (RFC 9470 step-up, 2026-09-13) the mock's RFC 8414 document
+  // carries `acr_values_supported` — so the page is RIGHT to fill that field,
+  // and a list that took every OIDC-only member to be absent failed it for
+  // showing the document's value. A member the document carries must show
+  // that value like any other; one it does not must be empty and annotated.
+  // (The field-id prefix "oidc_" is the pane's, not the document's.)
   var oidcOnly = await fieldValues(driver, OIDC_ONLY_FIELDS);
-  var badNotes = OIDC_ONLY_FIELDS.filter(function (id) {
+  var memberOf = function (id) {
+    return id.replace(/^oidc_/, "");
+  };
+  var published = OIDC_ONLY_FIELDS.filter(function (id) {
+    return doc[memberOf(id)] !== undefined;
+  });
+  var absent = OIDC_ONLY_FIELDS.filter(function (id) {
+    return doc[memberOf(id)] === undefined;
+  });
+  assert.ok(absent.length > 0,
+    "the RFC 8414 document now carries every OIDC-only member this test " +
+    "knows (" + OIDC_ONLY_FIELDS.join(", ") + "), so the \"not defined\" " +
+    "note is exercised by nothing here. Add a member it does not carry.");
+  var badNotes = absent.filter(function (id) {
     return !oidcOnly[id] || oidcOnly[id].value !== "" ||
                      oidcOnly[id].note !== NOT_DEFINED_NOTE;
   });
   assert.strictEqual(badNotes.length, 0,
-    "members RFC 8414 does not define should be empty and annotated: " +
+    "members RFC 8414 does not define, and this document does not carry, " +
+    "should be empty and annotated: " +
     badNotes.map(function (id) { return id + "=" +
                  JSON.stringify(oidcOnly[id]); }).join(", "));
-  log.info("[not defined] OK — " + OIDC_ONLY_FIELDS.length +
-           " OIDC-only members show the note.");
+  var badValues = published.filter(function (id) {
+    var value = doc[memberOf(id)];
+    var expected = Array.isArray(value) ? value.join(", ") : String(value);
+    return !oidcOnly[id] || oidcOnly[id].value !== expected;
+  });
+  assert.strictEqual(badValues.length, 0,
+    "members RFC 8414 does not define but this document carries should show " +
+    "the document's value: " +
+    badValues.map(function (id) { return id + "=" +
+                  JSON.stringify(oidcOnly[id]) + " (document: " +
+                  JSON.stringify(doc[memberOf(id)]) + ")"; }).join(", "));
+  log.info("[not defined] OK — " + absent.length +
+           " OIDC-only members show the note (" + absent.join(", ") + "); " +
+           published.length + " the document carries show its value" +
+           (published.length ? " (" + published.join(", ") + ")" : "") +
+           ".");
 
   // ---- The generated table stays inside the pane --------------------------
   var geom = await driver.executeScript(

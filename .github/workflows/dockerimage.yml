@@ -21,7 +21,7 @@ jobs:
            # Tags are pushed from here; fetch them so an existing tag is seen.
            fetch-depth: 0
            # docker-compose.yml builds the STS image from the sts/ submodule
-           # (https://github.com/rcbj/mock-sts.git), so this job cannot build
+           # (https://github.com/rcbj/iya-sts.git), so this job cannot build
            # without it: compose would report only a missing Dockerfile.
            # `recursive`, not `true`, and the difference is load-bearing: there
            # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP

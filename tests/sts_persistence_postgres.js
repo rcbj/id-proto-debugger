@@ -85,7 +85,7 @@
 //     the far end rather than being the thing under test.
 //   * **A COMPLETE MOCK STS TREE**, because it runs `node server.js` from it.
 //     `MOCK_STS_DIR` first, then the `sts/` submodule beside this suite, then a
-//     sibling `mock-sts` checkout — the same order and the same reasons as
+//     sibling `iya-sts` checkout — the same order and the same reasons as
 //     tests/module_paths.js, which is where that list is argued. The tests
 //     IMAGE carries about thirty sts modules and no `node_modules`, which is
 //     why the check is "can this actually run" and not "does server.js exist":
@@ -93,7 +93,7 @@
 //     later as a missing package.
 //
 // **IT NEVER TOUCHES THE SHARED MOCK, and that is deliberate rather than
-// convenient.** mock-sts's own docker-compose.yml says it out loud: the suite's
+// convenient.** iya-sts's own docker-compose.yml says it out loud: the suite's
 // stack starts that service with no persistence at all, and *a test that
 // persisted would be a test whose second run started from the first run's
 // leavings*. So this job configures nothing on the instance every other job is
@@ -196,7 +196,7 @@ async function preconditions() {
       "and its node_modules — not the thirty-odd modules the tests image " +
       "carries. Looked at: MOCK_STS_DIR, ../sts (the submodule; an " +
       "uninitialised one is an EMPTY DIRECTORY, so `git submodule update " +
-      "--init --recursive` is the usual fix), and ../../mock-sts. Set " +
+      "--init --recursive` is the usual fix), and ../../iya-sts. Set " +
       "MOCK_STS_DIR to a working copy to run it." };
   }
 
@@ -234,7 +234,7 @@ function mockStsRoot() {
   const candidates = [
     process.env.MOCK_STS_DIR,
     path.join(__dirname, "..", "sts"),
-    path.join(__dirname, "..", "..", "mock-sts")
+    path.join(__dirname, "..", "..", "iya-sts")
   ].filter(Boolean);
   for (const candidate of candidates) {
     const runnable = ["server.js", "package.json",

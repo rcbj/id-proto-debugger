@@ -30,10 +30,20 @@ services:
   # WS-Trust STS (mock) for remote-run-tests.sh against a local dev site. The
   # host-run browser / local api reach it at https://localhost:8081/sts.
   sts:
-    image: rcbj/sts
+    # THE TAG IS MACHINE-WIDE AND THIS IS NOT THE ONLY REPOSITORY THAT BUILDS
+    # IT (2026-09-15). `sts/` is the iya-sts submodule and that repository
+    # builds its own stack from the same source; both wrote `rcbj/sts`, so
+    # whichever ran last owned the tag — and a run here then started a mock
+    # built from somebody else's working tree. It cost a run of this suite:
+    # seven jobs failed on two defects that had been fixed in the submodule
+    # this checkout points at, because the container was not built from it.
+    # The launchers set STS_IMAGE to a tag of their own (see common.sh);
+    # a bare `docker-compose up` still gets `rcbj/sts`, which is what the
+    # documentation names.
+    image: ${STS_IMAGE:-rcbj/sts}
     # ROOT, and the only container here that is. It binds 88 (TCP and UDP),
     # 389 and 636 — all privileged — so it needs uid 0 or
-    # CAP_NET_BIND_SERVICE; and sts/ is the mock-sts submodule, somebody
+    # CAP_NET_BIND_SERVICE; and sts/ is the iya-sts submodule, somebody
     # else's checkout. Every image THIS repository builds now runs as an
     # unprivileged user; see the block at the foot of each Dockerfile.
     hostname: sts
@@ -51,6 +61,13 @@ services:
       # unset it arrives empty and sts/server.js falls back to its own default, which
       # is right for a local dev site.
       - OID4VCI_WALLET_URL=${OID4VCI_WALLET_URL}
+      # The same base URL is the ORIGIN the deployed pages call this service
+      # from, and since iya-sts 2f9825f (2026-09-13) the mock's CORS is an
+      # allowlist rather than `*` — so it has to be named here or every
+      # browser call to this service is refused. See the note on the same
+      # line in docker-compose-run-tests.yml. Empty (a local dev site) leaves
+      # the list empty, which is the service's own default.
+      - STS_CORS_ORIGINS=${OID4VCI_WALLET_URL}
       # ---------------------------------------------------------------------
       # THE MAIN PORT IS HTTPS HERE TOO, for the reason local-tests.yml and
       # docker-compose-run-tests.yml give at length: the RFC 9700 pass is a

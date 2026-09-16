@@ -163,6 +163,28 @@ async function waitForText(driver, id, what) {
   return value;
 }
 
+// The same rule one step further on: a readout that is ALREADY filled in with
+// the previous event's answer cannot be waited for by "is it non-empty". This
+// waits for the text to say the thing being asserted, and hands back whatever
+// it last read so the assertion's own message still shows it.
+async function waitForMatch(driver, id, pattern, what) {
+  log.debug("Entering waitForMatch(). " + id);
+  let seen = "";
+  try {
+    await driver.wait(async function () {
+      seen = await textOf(driver, id);
+      return pattern.test(seen || "");
+    }, WAIT, "waiting for " + what + " (#" + id + ")");
+  } catch (e) {
+    // NOT rethrown: the check below says what was expected far better than a
+    // timeout does, and it has the text to show. The wait is what gives the
+    // page time to redraw; the assertion is what reports.
+    log.debug("waitForMatch(): " + ((e && e.message) || e));
+  }
+  log.debug("Leaving waitForMatch().");
+  return seen;
+}
+
 async function openPage(driver) {
   log.debug("Entering openPage().");
   await loadUrl(driver, baseUrl + "/ssf.html");
@@ -727,13 +749,22 @@ async function everyEventCanBeSimulated(driver) {
         });
   }
 
-  const state = await textOf(driver, "caep_state");
+  // WAIT FOR THE REDRAW, WHICH IS NOT THE TOKEN. `caepSimulate()` applies the
+  // event to the model synchronously and then awaits the PUSH; the state and
+  // the counts are redrawn by `renderCaep()` in the `.then()` after it. So the
+  // signed token in the Transmit pane — which is what the loop above waits for
+  // — says nothing about these two readouts having been redrawn yet, and
+  // reading them here caught the session still `established` one run in
+  // several. Waiting for the content costs a passing run nothing.
+  const state = await waitForMatch(driver, "caep_state", /revoked/,
+      "the session state to follow session-revoked");
   check('THE SESSION STATE FOLLOWED THE EVENTS', function () {
     assert.ok(/revoked/.test(state),
         'The state readout says: ' + JSON.stringify(state.slice(0, 200)));
   });
 
-  const counts = await textOf(driver, "caep_counts");
+  const counts = await waitForMatch(driver, "caep_counts", /Total/,
+      "the event counts to be drawn");
   check('and every one of the eight is counted', function () {
     assert.ok(/Total/.test(counts), counts.slice(0, 200));
     // The zeroes are drawn too — "nothing of this type has been sent" is the
@@ -751,8 +782,12 @@ async function everyEventCanBeSimulated(driver) {
   // itself, and the pane refuses to build one rather than signing it.
   const before = await valueOf(driver, "ssf_tx_token");
   await click(driver, "btn_caep_session-presented");
-  const refusal = await waitForText(driver, "caep_simulate_status",
-      "refusal");
+  // MATCHED RATHER THAN MERELY NON-EMPTY, for the reason above: that status
+  // line still holds the last simulate's "…built. Pushing it…", so a wait for
+  // any text at all is satisfied before this click has been answered.
+  const refusal = await waitForMatch(driver, "caep_simulate_status",
+      /REVOKED/i, "the pane to refuse a presented event about a revoked " +
+      "session");
   check('A REVOKED SESSION CANNOT BE PRESENTED, and the pane refuses to ' +
       'build one', function () {
         assert.ok(/REVOKED/i.test(refusal),

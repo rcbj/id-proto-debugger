@@ -148,7 +148,7 @@ sudo CONFIG_FILE=./env/local.js docker-compose up
 Note, you will need at least 950MB of disk space ree in order to build this Docker image.
 
 `--recurse-submodules` matters: the mock STS the test suite and the local stack
-run against lives in its own repository, [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts),
+run against lives in its own repository, [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts),
 and is linked here as the `sts/` submodule. Cloned without it, `sts/` is an empty
 directory and the build fails with `failed to read dockerfile`. In a checkout that
 is already in that state:
@@ -249,7 +249,7 @@ If you need to pop up the browser for troubleshooting, pass in the --browser opt
 To generate a code coverage report, run ```./run-coverage.sh```. The report will be under the coverage directory.
 
 ### The mock STS is a submodule
-Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier and the `did:web` document — is one small Node service that used to live in `sts/` in this repository and now lives in [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts). This repository records a link to it (branch `main`) as the `sts/` submodule; the code is fetched, not vendored.
+Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier and the `did:web` document — is one small Node service that used to live in `sts/` in this repository and now lives in [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts). This repository records a link to it (branch `main`) as the `sts/` submodule; the code is fetched, not vendored.
 
 Two things build from it, and both fail unhelpfully if the submodule was never initialised:
 
@@ -296,7 +296,7 @@ On other systems, the commands needed to start the debugger in a local docker co
 
 The debugger has a third deployment shape besides the containers above and the
 static idptools.com build: **embedded inside the
-[mock STS](https://github.com/rcbj/mock-sts)**, which serves the UI from a
+[mock STS](https://github.com/rcbj/iya-sts)**, which serves the UI from a
 listener of its own behind an OIDC sign-in and runs the api as a child process
 on a unix socket behind its own proxy. This repository builds the tree that
 service consumes:
@@ -813,7 +813,7 @@ The service logs with **bunyan**, at the level its `CONFIG_FILE` names (`sts/env
 Set the level to `info` (`sts/env/test.js`) for a quiet run.
 
 ### STS for testing
-The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite it also runs against a small **WS-Trust STS mock** — [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts), linked here as the `sts/` submodule (see *The mock STS is a submodule* above) — that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. **That port is HTTPS in every stack here** (`STS_HTTPS=true`), because the RFC 9700 pass is a trust realm on the same instance rather than a second container and a realm binds no socket of its own — see `docs/rfc9700.md`; the certificate is self-signed and regenerated on every start, and `trustStsCertificate()` in `common/common.sh` installs it as an anchor for node and as an exact key pin for Chrome. Against a **deployed static site** the same mock is started on the host and reached over loopback (`https://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would not resolve in a browser off that network. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
+The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite it also runs against a small **WS-Trust STS mock** — [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), linked here as the `sts/` submodule (see *The mock STS is a submodule* above) — that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. **That port is HTTPS in every stack here** (`STS_HTTPS=true`), because the RFC 9700 pass is a trust realm on the same instance rather than a second container and a realm binds no socket of its own — see `docs/rfc9700.md`; the certificate is self-signed and regenerated on every start, and `trustStsCertificate()` in `common/common.sh` installs it as an anchor for node and as an exact key pin for Chrome. Against a **deployed static site** the same mock is started on the host and reached over loopback (`https://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would not resolve in a browser off that network. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
 
 ## VC Issuance (OID4VCI)
 

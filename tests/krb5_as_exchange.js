@@ -330,10 +330,10 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
       "but this one sent " + JSON.stringify(aes256.s2kparams) + ".\n\n" +
       "IF YOU HAVE JUST PULLED, this is almost certainly the submodule and " +
       "not a regression: the change that made omitting the default lives in " +
-      "rcbj/mock-sts, and until that is pushed and this repository's sts/ " +
+      "rcbj/iya-sts, and until that is pushed and this repository's sts/ " +
       "gitlink is bumped, the KDC under test is the older one that always " +
       "sent the field. Confirm with:\n" +
-      "  MOCK_STS_DIR=../mock-sts node krb5_as_exchange.js\n" +
+      "  MOCK_STS_DIR=../iya-sts node krb5_as_exchange.js\n" +
       "which runs the sibling working copy. If THAT passes, bump the " +
       "gitlink; if it fails too, the mock really did regress against " +
       "tests/captures/windows-server-2025.json.");

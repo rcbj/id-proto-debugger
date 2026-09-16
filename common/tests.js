@@ -159,7 +159,7 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     // opposite of what was done to sd_jwt_vc_issuance.js's `fetchWait` on the
     // same day — so the difference is worth stating. What was measured on
     // 2026-08-29 was the mock STS blocking for fourteen seconds inside one
-    // SLH-DSA-SHAKE-128s signature, and that is fixed (rcbj/mock-sts#6). But
+    // SLH-DSA-SHAKE-128s signature, and that is fixed (rcbj/iya-sts#6). But
     // the argument above never depended on it: this wait gates on a FETCH OF
     // ANOTHER SERVICE, and 2000ms was too short for one whatever that service
     // happens to be doing. `fetchWait` went back down because 30000 sat ABOVE

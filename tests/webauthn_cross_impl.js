@@ -53,7 +53,7 @@ const webauthn = shared("webauthn.js", "the wallet's WebAuthn decoder");
 // pass.
 //
 // All three go through mockStsModule() rather than being spelled out here.
-// mock-sts 0f986b3 ("Reorganizing source code.") moved every module into a
+// iya-sts 0f986b3 ("Reorganizing source code.") moved every module into a
 // subdirectory — this one is in authn/ — and it searches all three layouts in
 // that order anyway, so writing the paths out again here would be a second
 // copy of an answer that has already moved once.
@@ -85,7 +85,7 @@ try {
           "service's helpers.js instead " +
       "does not work, because it reads process.env.CONFIG_FILE relative to " +
           "ITS directory. If that " +
-      "fix is already in the mock-sts working tree, it has not been " +
+      "fix is already in the iya-sts working tree, it has not been " +
           "committed and the sts/ gitlink " +
       "has not been bumped — see docs/webauthn-plan.md on the submodule " +
           "ordering.");

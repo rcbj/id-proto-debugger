@@ -232,10 +232,20 @@ services:
   sts:
     container_name: sts
     hostname: sts
-    image: rcbj/sts
+    # THE TAG IS MACHINE-WIDE AND THIS IS NOT THE ONLY REPOSITORY THAT BUILDS
+    # IT (2026-09-15). `sts/` is the iya-sts submodule and that repository
+    # builds its own stack from the same source; both wrote `rcbj/sts`, so
+    # whichever ran last owned the tag — and a run here then started a mock
+    # built from somebody else's working tree. It cost a run of this suite:
+    # seven jobs failed on two defects that had been fixed in the submodule
+    # this checkout points at, because the container was not built from it.
+    # The launchers set STS_IMAGE to a tag of their own (see common.sh);
+    # a bare `docker-compose up` still gets `rcbj/sts`, which is what the
+    # documentation names.
+    image: ${STS_IMAGE:-rcbj/sts}
     # ROOT, and the only container here that is. It binds 88 (TCP and UDP),
     # 389 and 636 — all privileged — so it needs uid 0 or
-    # CAP_NET_BIND_SERVICE; and sts/ is the mock-sts submodule, somebody
+    # CAP_NET_BIND_SERVICE; and sts/ is the iya-sts submodule, somebody
     # else's checkout. Every image THIS repository builds now runs as an
     # unprivileged user; see the block at the foot of each Dockerfile.
     network_mode: "host"
@@ -257,6 +267,12 @@ services:
       # here rather than a value that stops the container.
       # ---------------------------------------------------------------------
       - ADMIN_API_CLIENT_SECRET=${ADMIN_API_CLIENT_SECRET:-}
+      # The debugger's origin, which the mock's CORS allowlist has had to be
+      # told since iya-sts 2f9825f (2026-09-13) — before it every response
+      # carried `Access-Control-Allow-Origin: *`. The host-run browser loads
+      # https://localhost:3000; see the note on the same line in
+      # docker-compose-run-tests.yml.
+      - STS_CORS_ORIGINS=https://localhost:3000
       # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
       # rather than given a value here.
       #
@@ -285,7 +301,7 @@ services:
       # This replaced a SECOND mock instance. RFC 9700 mode used to need one:
       # `oauth2.rfc9700` derives `global.https` in that service, so it binds
       # 8081 as TLS, and one process could not serve the permissive pass and
-      # the compliant one. Since mock-sts marks that flag `realmRuntime` it can
+      # the compliant one. Since iya-sts marks that flag `realmRuntime` it can
       # be set on a TRUST REALM — a realm binds no socket, so only the mode's
       # checks change — and `/realm/rfc9700/...` is the compliant server while
       # `/...` stays permissive. See common/common.sh's
@@ -312,7 +328,7 @@ services:
       # own, because it starts before any launcher could hand it one.
       - STS_HTTPS=true
       # THE ADDRESS THE MOCK HANDS THE END-USER BACK TO, and it has to be set
-      # here now rather than left to that service's default. mock-sts's own
+      # here now rather than left to that service's default. iya-sts's own
       # `oid4vci.walletUrl` defaults to `http://localhost:3000`, which was
       # this client's address until it started serving TLS; left alone, a
       # Credential Offer would send the End-User to an http origin nothing is

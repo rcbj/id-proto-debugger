@@ -964,7 +964,7 @@ function testsImageHasNoCollidingFilenames() {
 // will be silenced.
 //
 // **AND IT FOLLOWS `../` AS WELL AS `./`, WHICH IT DID NOT USED TO NEED TO.**
-// Every module in that repository sat in its root until mock-sts 0f986b3
+// Every module in that repository sat in its root until iya-sts 0f986b3
 // ("Reorganizing source code."), so every intra-mock require was `./x` and a
 // walker that only understood `./` saw the whole graph. After the move, the
 // cross-directory ones are `../common/app` — and a `./`-only walker would have
@@ -1058,9 +1058,32 @@ function stsRequiresIn(file, source) {
 // two things are true — the require is lazy by the parse above, and nothing
 // here calls the path that reaches it — and write down which jobs were run to
 // show the second. Everything else belongs in a COPY line.
+//
+// TWO MORE ON THE 2026-09-15 BUMP (iya-sts 040d3cf), both for the reason the
+// first one is here:
+//
+//   * `request_pool.js` -> `tls/tls_server.js`, in `runListenerPass()`, which
+//     runs only once a worker has published a listener. It requires
+//     `authn/authn.js` at load, which is the whole sign-in stack. Same
+//     function family as the LDAP entry, and the mock's comment above it
+//     gives the same rule.
+//   * `tls_client_certificates.js` -> `common/cert_enrollment.js`, in
+//     `stillHeld()`, reached only once a mutual-TLS client certificate has
+//     been ACCEPTED as an application's identity — and inside a try/catch
+//     that reads a failure as "not enrolled". It requires the admin RBAC,
+//     the credential store and the web-security layer. No in-process job
+//     here presents a client certificate.
+//
+// Shown by running the six in-process jobs (the four mock-KDC ones,
+// webauthn_cross_impl.js and sts_jws_verification.js) in the tests image
+// with both modules absent.
 // ---------------------------------------------------------------------------
 const LAZY_STS_REQUIRES = {
-  "common/request_pool.js": { "ldap/ldap_server.js": true },
+  "common/request_pool.js": {
+    "ldap/ldap_server.js": true,
+    "tls/tls_server.js": true,
+  },
+  "common/tls_client_certificates.js": { "common/cert_enrollment.js": true },
 };
 
 function stsModuleClosureIsCopied(dockerfile) {
@@ -1340,8 +1363,9 @@ function testsImageCopiesTheRequireClosure(dockerfile) {
     "naming a file rather than a build, while every host run stays green " +
     "because a checkout has the whole directory: " + unique.join(", ") +
     ". Nothing schedules a shared module, so the run-report cross-check " +
-    "above cannot see it; add a COPY tests/<name> ./ line in the files1 or " +
-    "files2 staging stage, beside the one for consent_screen.js.");
+    "above cannot see it; add a COPY tests/<name> ./ line in a staging " +
+    "stage (files1, files2 or files3), beside the one for " +
+    "consent_screen.js.");
   log.info("[tests-closure] OK — " + Object.keys(seen).length + " scheduled " +
     "scripts and modules walked, and every relative require among them is " +
     "carried into the tests image.");

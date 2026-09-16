@@ -6,7 +6,7 @@
 
 ## What this adds
 
-A tenth protocol workflow: a **Kerberos v5 debugger** that performs the AS exchange, the TGS exchange and the AP exchange against a real Key Distribution Center — an Active Directory domain controller, an MIT or Heimdal KDC, or the mock KDC added to `mock-sts` by this plan — and shows every field of every message on the way past. Plus a **Kerberos decoder** page that parses tickets, KDC messages, GSS-API tokens, keytabs and the Windows PAC out of pasted bytes.
+A tenth protocol workflow: a **Kerberos v5 debugger** that performs the AS exchange, the TGS exchange and the AP exchange against a real Key Distribution Center — an Active Directory domain controller, an MIT or Heimdal KDC, or the mock KDC added to `iya-sts` by this plan — and shows every field of every message on the way past. Plus a **Kerberos decoder** page that parses tickets, KDC messages, GSS-API tokens, keytabs and the Windows PAC out of pasted bytes.
 
 The motivating case is the one that is hardest to debug from anything else: *get a TGT from a domain controller, get a service ticket for a named SPN, present it to a Windows service, and see why the service said no.* Everything the tool does is arranged around making the failure legible, because in Kerberos the failure is almost never legible — a one-byte DER mistake, a wrong key-usage number and a genuinely wrong password all surface as the same integrity-check error.
 
@@ -56,7 +56,7 @@ So Kerberos v5 gets written in JavaScript, here. That is the same call already m
   │ common/krb5/*                 │        │ POST /krb5/  │
   │  DER · messages · RFC 3961    │ b64    │   kdc        │  TCP:88   ┌───────────┐
   │  crypto · PAC · ccache        ├───────►│              ├──────────►│ mock KDC  │
-  │                               │  DER   │ address+port │  UDP:88   │ (mock-sts)│
+  │                               │  DER   │ address+port │  UDP:88   │ (iya-sts) │
   │ WebCrypto: AES-CBC, PBKDF2,   │◄───────┤ policy       │◄──────────┤           │
   │   HMAC-SHA1/256/384           │        │ TCP framing  │  KKDCP    │ or a real │
   │ JS: CTS, n-fold, RC4, MD4     │        │ size cap     │  (https)  │  AD DC /  │
@@ -142,9 +142,9 @@ The protocol core is the same protocol. "Get a TGT from a domain controller and 
 
 ---
 
-## The mock KDC, in `mock-sts`
+## The mock KDC, in `iya-sts`
 
-`sts/` is [the `rcbj/mock-sts` submodule](https://github.com/rcbj/mock-sts), so all of this is written there and the gitlink is bumped here afterwards, per `docs/mock-sts.md`.
+`sts/` is [the `rcbj/iya-sts` submodule](https://github.com/rcbj/iya-sts), so all of this is written there and the gitlink is bumped here afterwards, per `docs/mock-sts.md`.
 
 * **`krb5_kdc.js`** — the AS exchange with the full `KDC_ERR_PREAUTH_REQUIRED` round trip (switchable per principal so the skip-it case can be shown too), the TGS exchange, renewals, and cross-realm referrals. Listeners on TCP and UDP 88, plus MS-KKDCP mounted on the existing Express app.
 * **`krb5_principals.js`** — the principal database in config: users with a password, a salt and per-etype keys; service principals with keytab-equivalent long-term keys; `krbtgt/REALM`. It deliberately contains **misconfigured principals**, because a debugger is judged on how it renders failure: one with an etype set that forces `KDC_ERR_ETYPE_NOSUPP`, one that does not exist (`KDC_ERR_C_PRINCIPAL_UNKNOWN`), one whose password has expired, and a mode that answers with a deliberately skewed timestamp.
@@ -153,7 +153,7 @@ The protocol core is the same protocol. "Get a TGT from a domain controller and 
 
 Two frictions specific to this repository's layout, both of which need deciding before phase 2:
 
-**The codec cannot be shared across the submodule boundary.** Compose builds the STS with `context: ./sts`, so it cannot `COPY ../common/krb5`. The realistic answer is a vendored copy in `mock-sts` plus a `sync-krb5.sh`, and — more importantly — **a conformance test in `tests/` that round-trips a fixture corpus through both copies and fails on divergence.** Without that test, a drifted codec talks happily to itself and the divergence is discovered against a real DC, weeks later. The alternative is to put the KDC in a side-car in this repository, the way `keycloak-wsfed/` is, which costs the submodule's tidiness and buys back a single implementation; this plan follows the stated preference for the mock STS, with the sync test as the price.
+**The codec cannot be shared across the submodule boundary.** Compose builds the STS with `context: ./sts`, so it cannot `COPY ../common/krb5`. The realistic answer is a vendored copy in `iya-sts` plus a `sync-krb5.sh`, and — more importantly — **a conformance test in `tests/` that round-trips a fixture corpus through both copies and fails on divergence.** Without that test, a drifted codec talks happily to itself and the divergence is discovered against a real DC, weeks later. The alternative is to put the KDC in a side-car in this repository, the way `keycloak-wsfed/` is, which costs the submodule's tidiness and buys back a single implementation; this plan follows the stated preference for the mock STS, with the sync test as the price.
 
 **`GET /admin/sts-metadata` walks the Express router, so a raw TCP listener on port 88 is invisible to it.** The page's whole design is that it cannot go stale, and a protocol family it cannot see is the one way it can. The listener needs an explicit entry — and the drift test needs to tolerate an entry that has no route behind it, which today is the failure it is specifically written to catch.
 
@@ -214,5 +214,5 @@ What actually paces the work is the verification loop rather than the writing: t
 
 1. **Hand-written JS versus `sspi-rs` via WASM.** Recommended: hand-written, for the reason in *The finding that shapes the architecture*.
 2. **Browser-side crypto with a thin guarded relay versus protocol endpoints in `api/`.** Recommended: browser-side.
-3. **The mock KDC in the `mock-sts` submodule** — accepting a vendored codec copy plus the conformance test — **versus a side-car in this repository** like `keycloak-wsfed/`.
+3. **The mock KDC in the `iya-sts` submodule** — accepting a vendored codec copy plus the conformance test — **versus a side-car in this repository** like `keycloak-wsfed/`.
 4. **Is etype 23 (RC4-HMAC) in scope?** It costs hand-rolled MD4 and RC4 and Microsoft is retiring it, but it is what the estates with problems are still running.

@@ -1,6 +1,6 @@
 [submodule "sts"]
 	path = sts
-	url = https://github.com/rcbj/mock-sts.git
+	url = https://github.com/rcbj/iya-sts.git
 	branch = main
 [submodule "api/node-ldapjs"]
 	path = api/node-ldapjs

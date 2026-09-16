@@ -60,7 +60,7 @@
 // there: that endpoint renders a page saying who you are and never calls
 // `startSession()`, so no browser session comes out of it and `authn.js` has
 // no `spnego` in `MECHANISMS`. Wiring the acceptor to the session is small; the
-// open question is where a headless browser gets its ticket, since `mock-sts`
+// open question is where a headless browser gets its ticket, since `iya-sts`
 // has no bundler and its own page says a browser will not answer a `Negotiate`
 // challenge without an allow-list. So the third mechanism is deferred rather
 // than faked, and this grid is 5 x 5 x 2.
@@ -1530,7 +1530,33 @@ async function redeemThroughThePage(driver, callbackUri) {
   return token;
 }
 
-async function assertOauthArtifact(token, spBase, idpBase, sent, user) {
+// THE PERSON A TOKEN FROM REALM 1 DESCRIBES. `user` is realm 1's name for the
+// person typed at realm 2 (see `local` in test()) and `typed` is the name that
+// was typed. Since iya-sts 64580f4 (2026-09-14) a token's `sub` is the
+// `urn:uuid:` of that person's entry in the realm that issued it, so it is
+// compared with what realm 1's directory holds for that name — exactly, which
+// the substring check it replaces could not be. `preferred_username`, where
+// the token carries one, must name the same person: realm 1's name for them,
+// or the name typed at realm 2 where realm 1 took it from the partner's
+// attributes — and nobody else.
+async function assertDescribesLocalPerson(claims, spBase, user, typed, what) {
+  log.debug("Entering assertDescribesLocalPerson(). " + what);
+  const expected = await admin.subjectOf(spBase, user);
+  assert.strictEqual(claims.sub, expected,
+    what + "'s sub is \"" + claims.sub + "\", and realm 1's directory says " +
+    "\"" + user + "\" — the person typed at realm 2 as \"" + typed + "\", " +
+    "as realm 1 files them — is \"" + expected + "\".");
+  if (claims.preferred_username !== undefined) {
+    const named = String(claims.preferred_username);
+    assert.ok(named === user || named === typed,
+      what + "'s preferred_username is \"" + named + "\". The person typed " +
+      "at realm 2 as \"" + typed + "\" is \"" + user + "\" at realm 1.");
+  }
+  log.debug("Leaving assertDescribesLocalPerson().");
+}
+
+async function assertOauthArtifact(token, spBase, idpBase, sent, user,
+                                   typed) {
   log.debug("Entering assertOauthArtifact().");
   if (APP_PROTOCOL === "oidc") {
     const parts = String(token).split(".");
@@ -1554,10 +1580,8 @@ async function assertOauthArtifact(token, spBase, idpBase, sent, user) {
       JSON.stringify(claims) + ". Nothing about which identity service did " +
       "the authenticating is the application's business, and this is the one " +
       "property the whole feature exists to have.");
-    assert.ok(
-      String(claims.preferred_username || claims.sub).indexOf(user) >= 0,
-      "The ID Token describes \"" + (claims.preferred_username || claims.sub) +
-      "\" and the name typed at realm 2 was \"" + user + "\".");
+    await assertDescribesLocalPerson(claims, spBase, user, typed,
+                                     "The ID Token");
     log.info("The application holds an ID Token issued by " + claims.iss +
              " describing " + (claims.preferred_username || claims.sub) +
              ", and naming realm 2 nowhere.");
@@ -1581,10 +1605,8 @@ async function assertOauthArtifact(token, spBase, idpBase, sent, user) {
   assert.ok(JSON.stringify(claims).indexOf(IDP_REALM) === -1,
     "The access token mentions " + IDP_REALM + ": " + JSON.stringify(claims) +
     ".");
-  assert.ok(String(claims.preferred_username || claims.sub).indexOf(user) >= 0,
-    "The access token describes \"" +
-    (claims.preferred_username || claims.sub) + "\" and the name typed at " +
-    "realm 2 was \"" + user + "\".");
+  await assertDescribesLocalPerson(claims, spBase, user, typed,
+                                   "The access token");
   log.info("The application holds an access token issued by " + claims.iss +
            " describing " + (claims.preferred_username || claims.sub) + ".");
   log.debug("Leaving assertOauthArtifact(). OAuth 2.0.");
@@ -1636,8 +1658,8 @@ async function assertSamlArtifact(driver, localIssuer, user) {
     "application's business, and this is the one property the whole feature " +
     "exists to have. It reads:\n" + assertionXml.slice(0, 1200));
   assert.ok(assertionXml.indexOf(user) >= 0,
-    "The assertion does not describe \"" + user + "\", the name typed at " +
-    "realm 2. It reads:\n" + assertionXml.slice(0, 1200));
+    "The assertion does not describe \"" + user + "\", realm 1's name for " +
+    "the person typed at realm 2. It reads:\n" + assertionXml.slice(0, 1200));
   log.info("The application holds a " + LABELS[APP_PROTOCOL] + " assertion " +
            "issued by realm 1 describing " + user + ", naming realm 2 " +
            "nowhere.");
@@ -1681,8 +1703,8 @@ async function assertWsFedArtifact(driver, localIssuer, user) {
     "The token the application received mentions " + IDP_REALM +
     ". It reads:\n" + tokenXml.slice(0, 1200));
   assert.ok(tokenXml.indexOf(user) >= 0,
-    "The token does not describe \"" + user + "\", the name typed at realm " +
-    "2. It reads:\n" + tokenXml.slice(0, 1200));
+    "The token does not describe \"" + user + "\", realm 1's name for the " +
+    "person typed at realm 2. It reads:\n" + tokenXml.slice(0, 1200));
   log.info("The application holds a WS-Federation token issued by realm 1 " +
            "describing " + user + ", naming realm 2 nowhere.");
   log.debug("Leaving assertWsFedArtifact().");
@@ -1956,6 +1978,21 @@ async function test() {
     await signInAtIdp(driver, user, idpBase);
 
     // ---------------------------------------------------------------------
+    // WHO REALM 1 NOW CALLS THE PERSON TYPED AT REALM 2. Everything below
+    // asserts that the application's artifact and realm 1's register
+    // describe that person, and since iya-sts 64580f4 (2026-09-14) the name
+    // does not always cross unchanged: an OAuth 2.0 or OpenID Connect hop
+    // hands over realm 2's `urn:uuid:` subject, which realm 1 files as
+    // `sub-<uuid>`. Worked out from realm 2's own directory rather than read
+    // off realm 1, so the mapping is checked rather than taken on trust. See
+    // `federatedNameOf()` in federation_admin.js.
+    // ---------------------------------------------------------------------
+    const local = (FED_PROTOCOL === "oidc" || FED_PROTOCOL === "oauth2")
+      ? await admin.federatedNameOf(idpBase, user)
+      : user;
+    log.info("Realm 2's " + user + " is " + local + " at realm 1.");
+
+    // ---------------------------------------------------------------------
     // WHAT THE FLOW LEFT BEHIND AT REALM 1, read before any artifact is
     // redeemed so that the count is about the SIGN-IN rather than about a
     // later token call.
@@ -1963,17 +2000,17 @@ async function test() {
     if (APP_PROTOCOL === "oidc" || APP_PROTOCOL === "oauth2") {
       const artifacts = await collectOauthArtifacts(driver, spBase,
                                                     callbackUri, sent);
-      await assertFederationState(spBase, user);
+      await assertFederationState(spBase, local);
       const token = await redeemThroughThePage(driver, callbackUri);
-      await assertOauthArtifact(token, spBase, idpBase, sent, user);
+      await assertOauthArtifact(token, spBase, idpBase, sent, local, user);
       log.debug("collectOauthArtifacts() returned code " +
                 String(artifacts.code).slice(0, 12) + "…");
     } else if (APP_PROTOCOL === "wsfed") {
-      await assertWsFedArtifact(driver, localIssuer, user);
-      await assertFederationState(spBase, user);
+      await assertWsFedArtifact(driver, localIssuer, local);
+      await assertFederationState(spBase, local);
     } else {
-      await assertSamlArtifact(driver, localIssuer, user);
-      await assertFederationState(spBase, user);
+      await assertSamlArtifact(driver, localIssuer, local);
+      await assertFederationState(spBase, local);
     }
 
     await clearingTheTieRestoresTheLocalScreen(driver, spBase, callbackUri);

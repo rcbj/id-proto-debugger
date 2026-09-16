@@ -189,7 +189,7 @@ function makeJws(alg, spec, key, header, payload) {
 // worker pool, and that costs a measured 6.4x on the post-quantum path —
 // SLH-DSA-SHA2-128s signing 2,291ms to 14,685ms. The SHAKE parameter set is
 // twelve seconds uninstrumented, so seventy-seven instrumented on a fast
-// machine and past ninety on a two-core CI runner. mock-sts's coverage job
+// machine and past ninety on a two-core CI runner. iya-sts's coverage job
 // failed on exactly this window in about half its runs.
 //
 // `STS_BUSY_WINDOW_MS` overrides it, so a stack that knows it is slower can
@@ -342,7 +342,7 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
 
     // AWAITED SINCE THE MOCK'S 2026-08-30 BUMP. `clientAuth.verify()` became
     // an `async function` when the post-quantum verification moved to that
-    // service's worker pool (rcbj/mock-sts#6) — a composite ML-DSA assertion
+    // service's worker pool (rcbj/iya-sts#6) — a composite ML-DSA assertion
     // took 17.8 and 23.3 seconds on the one thread that also answers its KDC.
     //
     // WITHOUT THE `await` THIS TEST FAILS IN A WAY THAT NAMES THE WRONG THING,

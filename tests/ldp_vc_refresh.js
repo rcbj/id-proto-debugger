@@ -67,7 +67,7 @@ const ROOT = path.join(__dirname, "..");
 const paths = require("./module_paths.js");
 const stsSuite = paths.requireSharedModule(
   // The tests image's flattened copy first, then wherever the submodule keeps
-  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: mock-sts 0f986b3
+  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
   // ("Reorganizing source code.") moved every module into a subdirectory, and
   // this one is in common/vendored/. mockStsModule() is the single place that
   // answers that question — see tests/module_paths.js.
