@@ -240,10 +240,18 @@ published it from `GET /tls/server-certificate` for a caller to fetch and trust
 restart. The leaf's subjectAltNames now carry that service's own
 `tls.hostnames` defaults (`sts`, `sts-mock`, `sts.example.com`) beside
 `localhost`, `client` and `api`, and the three compose files mount the pair and
-set `STS_TLS_CERT_FILE` / `STS_TLS_KEY_FILE`. One supplied pair reaches all
-FOUR of that process's TLS sockets, because they share one: 8081 under
-`global.https`, the two TLS/mutual-TLS listeners on 8443 and 9443, and the
-directory's LDAPS listener on 636. The submodule half is `tls.certificateFile`
+set `STS_TLS_CERT_FILE` / `STS_TLS_KEY_FILE`. One supplied pair reaches EVERY
+one of that process's TLS sockets, because they share one: 8081 under
+`global.https`, the directory's LDAPS listener on 636, and the embedded
+debugger's listener. **It was four until 2026-09-16**, the other two being that
+service's own TLS/mutual-TLS listeners on 8443 and 9443, which it deleted: the
+main port already asked every connection for a client certificate and required
+none (RFC 8705 needs one asked for at the token endpoint), and refusing at the
+handshake the way 9443 did is a property of a SOCKET that cannot be had on a
+port every other protocol answers on. What a client certificate is worth is
+decided where it is USED now, and `GET /tls/sign-in` is what turns a verified
+one into a session. `docs/pki.md` records what that cost
+`tests/pki_mutual_tls.js`. The submodule half is `tls.certificateFile`
 / `tls.keyFile` in `sts/tls/tls_server.js`, which falls back to the self-signed
 certificate when they are unset — so a bare `docker run` of that image is
 unchanged. `api/sts_truststore.sh`'s `STS_CERT_URL` fetch is now redundant on

@@ -1147,11 +1147,25 @@ So `POST /tls/connect` takes an optional `httpRequest: { path }` and, after the
 handshake, writes **one GET on the same socket** and reports the response
 verbatim: status line, headers, body. The same socket is the point — a second
 connection is a different connection and says nothing about this certificate on
-this handshake. The pane has a checkbox and a path field for it (`/tls/whoami`
-by default) and renders the answer as *"What the server saw"*, tabulated when the
-body is the JSON the mock STS publishes and shown as text otherwise, because a
-pane that discarded an unrecognised body would be useless against every server
-that is not the mock.
+this handshake. The pane has a checkbox and a path field for it
+(`/tls/sign-in` by default) and renders the answer as *"What the server saw"*,
+tabulated when the body is the JSON the mock STS publishes and shown as text
+otherwise, because a pane that discarded an unrecognised body would be useless
+against every server that is not the mock.
+
+**The default was `/tls/whoami` until 2026-09-17, and what changed is the far
+end rather than this pane.** The mock owned two TLS listeners whose whole
+content was an echo of the connection, and it deleted both on 2026-09-16; its
+own notes say that echo has no successor there and that nothing should be
+pointed at a replacement. What answers now is `GET /tls/sign-in` on its main
+port, and it is a **verdict rather than an echo** — whether a certificate was
+presented, whether it verified, the RFC 8705 thumbprint a token would be bound
+to, and whether that signed anybody in. So the renderer reads two spellings of
+the same verdict (`authorized`, which is node's own name for it on a socket, and
+`verified`) and treats the subject, the chain and the anchor count as *optional*:
+a server that sends them is still tabulated in full, and one that does not is no
+longer rendered as `undefined — NOT verified`, which read exactly like a
+truststore nobody had filled.
 
 What bounds it is narrower than the rest of the endpoint and needs no setting of
 its own, for the reason `POST /krb5/spnego` needs none: **the method is GET and
@@ -1181,12 +1195,24 @@ than anticipated:
   1.3 client-certificate rejection this file's longest comment is about. Both
   cases are asserted in `tests/api_tls_probe.js` and both are mutation-tested.
 
-The far end of all this in the suite is the **mock STS**, which grew two HTTPS
-listeners for it: 8443 asks for a client certificate and never refuses one (so
-it can report *why* something did not verify), 9443 requires one (so reaching it
-is itself the proof). Its client truststore starts empty and is filled at
-runtime over its plain HTTP port, because the CA in question is generated in a
-browser minutes before the connection. See `docs/mock-sts.md`.
+The far end of all this in the suite is the **mock STS**, on its **main HTTPS
+port**, which asks every connection for a client certificate and requires none.
+Its client truststore starts empty and is filled at runtime over its plain HTTP
+port, because the CA in question is generated in a browser minutes before the
+connection. See `docs/mock-sts.md`.
+
+**It had two listeners of its own for this — 8443, which asked and never
+refused, and 9443, which required one so that reaching it was itself the proof
+— and both were deleted on 2026-09-16.** Two of the five mutual-auth verdicts
+went out of reach with them: `required` and `required-and-rejected` are
+properties of a SOCKET that refuses during the handshake, and the port that
+remains carries every other protocol that service speaks, so refusing there
+would refuse nearly every caller it has. A certificate that does not verify is
+refused where it is USED now — at the token endpoint under RFC 8705, at
+`/xacml`, at `/scim/v2`, and at `GET /tls/sign-in`. `tests/pki_mutual_tls.js`
+therefore measures `not-required` against that port and tells its two runs apart
+on the far end's own verdict instead, which is the thing those two listeners
+existed to make readable and is still readable without them.
 
 ### `usable`, not `connected`
 

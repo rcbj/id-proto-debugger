@@ -413,11 +413,14 @@ init()
   # document it was given.
   SAML11_METADATA_URL="https://localhost:8081/saml11/metadata/${SAML_STS_SP_SLUG}"
   export SAML11_METADATA_URL
-  # And it hosts the TLS / mutual-TLS endpoint the PKI page presents a client
-  # certificate to (its two HTTPS listeners, 8443 and 9443). This is its MAIN
-  # port, which is https here too: the test configures the far end's truststore
-  # over it and reads
-  # the listeners' ports from the service rather than carrying a copy of them.
+  # And it hosts the endpoint the PKI page presents a client certificate to.
+  # This is its MAIN port, which is https here too, and since 2026-09-16 it is
+  # the ONLY port there that a client certificate can arrive on: that service
+  # had two TLS listeners of its own, 8443 and 9443, and deleted both — the
+  # main port already asked every connection for a certificate and required
+  # none, which is what RFC 8705 needs at the token endpoint anyway. The test
+  # configures the far end's truststore over this URL and reads the port off
+  # the service rather than carrying a copy of it.
   #
   # Separate from WSTRUST_STS_URL for the same reason WSFED_STS_METADATA_URL is
   # — that one may be pointed at a real Apache CXF STS, which has no endpoint of

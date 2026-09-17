@@ -112,9 +112,11 @@ services:
       # api — so handing it the same files makes ONE trusted root cover the
       # UI, the api and the mock at once.
       #
-      # It covers all four of this process's TLS sockets, because they share
-      # one pair: 8081 (the main port under global.https), 8443, 9443 and the
-      # directory's LDAPS listener on 636.
+      # It covers every one of this process's TLS sockets, because they share
+      # one pair: 8081 (the main port under global.https), the directory's
+      # LDAPS listener on 636, and the embedded debugger's listener. It was
+      # four sockets until 2026-09-16, the other two being that service's own
+      # TLS listeners on 8443 and 9443, which were deleted.
       # ---------------------------------------------------------------------
       - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
       - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
@@ -161,17 +163,23 @@ services:
       context: ./sts
     ports:
       - "8081:8081"
-      # The mock's TLS endpoint, which is not on the HTTP port because it is not
-      # HTTP on that listener: 8443 asks for a client certificate and never
-      # refuses one, 9443 requires it. The PKI page's TLS pane points at these,
-      # through the api — a browser cannot present a certificate it just issued.
-      # Both are in api/tls_probe.js's default port allowlist already.
-      - "8443:8443"
-      - "9443:9443"
-      # The two SPIFFE gRPC surfaces. Published for the same reason 8443 and
-      # 9443 are: a tool run on the host — including an api started outside
-      # compose — cannot reach a port that only exists on the bridge. The api
-      # container beside this one reaches them as sts:8092 and sts:8181 and
+      # 8443 AND 9443 WERE PUBLISHED HERE UNTIL 2026-09-17, and both lines are
+      # gone because the sockets are. They were the mock's own TLS listeners —
+      # 8443 asked for a client certificate and never refused one, 9443
+      # required it — and that service deleted both on 2026-09-16: the main
+      # port already had 8443's posture, and refusing at the handshake is a
+      # property of a socket that cannot be had on a port every other protocol
+      # answers on. The PKI page's TLS pane points at 8081 now, through the
+      # api, since a browser cannot present a certificate it just issued.
+      # Publishing a port nothing binds costs nothing and explains nothing,
+      # which is the whole reason to take the lines out. Both are still in
+      # api/tls_probe.js's default port allowlist, which is a list of ports a
+      # caller MAY name and not a list of ports anything here listens on.
+      #
+      # The two SPIFFE gRPC surfaces. Published because a tool run on the
+      # host — including an api started outside compose — cannot reach a
+      # port that only exists on the bridge. The api container beside this
+      # one reaches them as sts:8092 and sts:8181 and
       # needs neither line. They are 8092 and 8181 rather than SPIRE's own
       # 8081 because this service's HTTP port already has that.
       - "8092:8092"

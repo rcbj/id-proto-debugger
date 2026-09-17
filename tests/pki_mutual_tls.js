@@ -27,18 +27,47 @@
 //     completed handshake means nothing about the client certificate: the
 //     client sends its Certificate and Finished LAST, and the server's verdict
 //     arrives afterwards as an alert or as a bare hang-up;
-//   * and that the mutual-auth verdict this page reports is the one a real
-//     server produces. `required` and `required-and-rejected` are the two an
-//     operator confuses, and they are told apart here by trusting the CA
-//     between two otherwise identical runs.
+//   * and that the far end's verdict CHANGES when, and only when, its
+//     truststore does — told apart here by trusting the CA between two
+//     otherwise identical runs, so that "the server verified it" is measured
+//     against "the server would not" rather than asserted on its own.
 //
-// The mock STS grew two HTTPS listeners for this (see docs/mock-sts.md): 8443
-// asks for a client certificate and never refuses one, so it can report WHY
-// something did not verify; 9443 requires one, so reaching it is itself the
-// proof. Its client truststore starts EMPTY and is filled at runtime, because
-// the CA in question does not exist anywhere until this test builds it in a
-// browser — which is also why this test does that trusting itself, over the
-// mock's plain HTTP port, in the middle of the run.
+// ONE LISTENER SINCE THE 2026-09-17 SUBMODULE BUMP, AND THAT COST THIS FILE
+// THREE ASSERTIONS. The mock STS grew two HTTPS listeners for this — 8443,
+// which asked for a client certificate and never refused one, and 9443, which
+// required one so that reaching it was itself the proof — and it deleted both
+// on 2026-09-16 along with the `/tls/whoami` they served. Its own notes
+// (`sts/tls/CLAUDE.md`) say the connection echo has NO SUCCESSOR there and that
+// nothing should be pointed at a replacement, so this file does not invent one.
+// What is asked now is `GET /tls/sign-in` on the main port, which answers that
+// service's verdict on the certificate rather than an echo of the handshake:
+// whether one was presented, whether it verified, the RFC 8705 thumbprint, and
+// whether that signed anybody in.
+//
+// What went with the sockets, and is NOT asserted below any more:
+//
+//   * the chain the server BUILT out of what was sent. Nothing the mock
+//     publishes carries it now. The leaf is still issued three levels deep so
+//     that it must be sent with its intermediates — a leaf sent alone does
+//     not verify at the far end, and the verified/not-verified pair below
+//     still catches that — but the path itself is no longer visible, and a
+//     test that claimed otherwise would be asserting on a row that is absent.
+//   * a `required` mutual-auth verdict. Refusing at the handshake is a
+//     property of a SOCKET, and the only socket left carries every other
+//     protocol in the service, so `rejectUnauthorized: true` there would
+//     refuse nearly every caller. The measured verdict is `not-required` now,
+//     and it is still measured rather than assumed.
+//   * the far end's reading of the client's public key, which is how the
+//     post-quantum case used to prove no classical fallback had happened. The
+//     THUMBPRINT replaces it exactly and is a stronger check: it is the digest
+//     of the DER of the certificate this browser issued a moment ago, so a
+//     handshake that had quietly fallen back to something classical would have
+//     presented a different certificate or none, and could not produce it.
+//
+// Its client truststore starts EMPTY and is filled at runtime, because the CA
+// in question does not exist anywhere until this test builds it in a browser
+// — which is also why this test does that trusting itself, over the mock's
+// plain HTTP port, in the middle of the run.
 //
 // It needs the client, the api and the mock STS. No identity provider, no KDC.
 // ---------------------------------------------------------------------------
@@ -46,6 +75,7 @@ const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const { Command, Option } = require("commander");
 const assert = require("assert");
+const nodeCrypto = require("crypto");
 const browserFlags = require("./browser_flags.js");
 const { declineToRun, mustBeAbleTo } = require("./expectation.js");
 const { loadUrl } = require("./page_load.js");
@@ -202,6 +232,31 @@ async function click(driver, id) {
   log.debug("Leaving click().");
 }
 
+// ---------------------------------------------------------------------------
+// THE RFC 8705 THUMBPRINT OF A CERTIFICATE: base64url(SHA-256(DER)).
+//
+// This is what `GET /tls/sign-in` publishes for the certificate it was
+// presented, and computing it here is what lets this file still say "the
+// server saw THIS certificate" now that the far end no longer sends back a
+// subject. It is a better answer than the subject was: two certificates can
+// carry one CN and no two carry one digest, and it is the exact value a token
+// endpoint would bind an access token to.
+//
+// Computed in node from the PEM this page put in its own store, with node's
+// crypto rather than anything of this project's — the point is that the two
+// ends agree, so both readings must not be the same code.
+// ---------------------------------------------------------------------------
+function thumbprintOf(pem) {
+  log.debug("Entering thumbprintOf().");
+  const match = String(pem || "").match(
+    /-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/);
+  assert.ok(match, "a certificate PEM was expected and none was found");
+  const der = Buffer.from(match[1].replace(/\s+/g, ""), "base64");
+  const out = nodeCrypto.createHash("sha256").update(der).digest("base64url");
+  log.debug("Leaving thumbprintOf().");
+  return out;
+}
+
 async function storeEntries(driver) {
   log.debug("Entering storeEntries().");
   const raw = await driver.executeScript(
@@ -354,7 +409,13 @@ async function runTlsTest(driver, options) {
   await setCheckbox(driver, "pki_tls_system_roots", false);
   await setCheckbox(driver, "pki_tls_probe_mutual", !!options.mutualAuthProbe);
   await setCheckbox(driver, "pki_tls_http_probe", true);
-  await setField(driver, "pki_tls_http_path", "/tls/whoami");
+  // `/tls/sign-in` since 2026-09-17. It was `/tls/whoami`, which the mock
+  // served from the two TLS listeners it deleted on 2026-09-16; that route has
+  // no successor there and this is the one that answers what the far end made
+  // of the certificate. Set explicitly rather than left to the field's own
+  // default, because the field is `class="stored"` and a browser profile
+  // carrying yesterday's value would otherwise steer the test.
+  await setField(driver, "pki_tls_http_path", "/tls/sign-in");
   // The client certificate is chosen by the label the page renders, for the
   // same reason the issuer is.
   const chosen = await driver.executeScript(
@@ -468,12 +529,19 @@ async function theServerReportsWhatThisPageIssued(driver, ports, tlsHost) {
 
   const trustPem = await serverCertificatePem();
 
+  // The digest the far end will report for this leaf if it is the one that
+  // arrives. Computed before either run, because it is what tells the two
+  // runs apart from a run against some other certificate entirely.
+  const leafThumbprint = thumbprintOf(leaf.certificatePem);
+  log.info("The client certificate's RFC 8705 thumbprint is " +
+           leafThumbprint + ".");
+
   // --- Run one: the far end does NOT trust this CA yet. ---
   //
-  // Against the PERMISSIVE listener, which answers anyway — that is what it is
-  // for. The handshake completes, and the server's own account is the only
-  // thing that says the certificate was not accepted. A test that read only
-  // this end would call this a success.
+  // The port asks for a client certificate and requires none, so it answers
+  // anyway — and the server's own account is the only thing that says the
+  // certificate was not accepted. A test that read only this end would call
+  // this a success.
   await untrustEverything();
   const before = await runTlsTest(driver, {
     host: tlsHost, port: ports.optional, servername: tlsHost,
@@ -481,9 +549,9 @@ async function theServerReportsWhatThisPageIssued(driver, ports, tlsHost) {
     mutualAuthProbe: false
   });
   assert.ok(/Connected\s*yes/.test(before.table.replace(/\s+/g, " ")),
-    "the permissive listener must complete the handshake whatever it thinks " +
-    "of the certificate — that is the whole reason it exists:\n" +
-    before.table);
+    "a port that asks for a client certificate and requires none must " +
+    "complete the handshake whatever it thinks of the certificate — that is " +
+    "the posture the whole of this run depends on:\n" + before.table);
   assert.ok(before.serverView,
     "the server's own account of the connection is missing entirely. The " +
     "page asked for it (pki_tls_http_probe), so either the api did not make " +
@@ -492,23 +560,32 @@ async function theServerReportsWhatThisPageIssued(driver, ports, tlsHost) {
     "the mock STS's truststore was emptied a moment ago, so it cannot have " +
     "verified this certificate — and the page must report what the SERVER " +
     "said rather than what the handshake did:\n" + before.serverView);
-  assert.ok(/Mutual TLS Client/.test(before.serverView),
-    "the server did not name the certificate it was presented, so nothing " +
-    "here is about the certificate this page issued:\n" + before.serverView);
+  assert.ok(before.serverView.indexOf(leafThumbprint) >= 0,
+    "the server did not report the thumbprint of the certificate this page " +
+    "issued, so nothing here is about that certificate — it is about " +
+    "whatever else arrived, or about nothing:\n" + before.serverView);
+  // NOT SIGNED IN, and that is a different statement from `NOT verified`.
+  // The far end decides both on the one request, and the reason a reader
+  // wants them apart is that a certificate can verify and still sign nobody
+  // in. Here neither happened, and the assertion is that the page says so.
+  assert.ok(/whether that signed anyone in\s*no/i.test(
+              before.serverView.replace(/\s+/g, " ")),
+    "the page did not report the far end's own answer about a session. An " +
+    "unverified certificate cannot start one:\n" + before.serverView);
 
-  // --- Run two: trust the Root, and use the listener that REQUIRES a
-  // certificate. Reaching it at all is the proof. ---
+  // --- Run two: trust the Root, change NOTHING else, and read the same
+  // report again. One configuration change on the far end is the whole
+  // difference between the two runs. ---
   await trustTheIssuer(root.certificatePem);
   const after = await runTlsTest(driver, {
-    host: tlsHost, port: ports.required, servername: tlsHost,
+    host: tlsHost, port: ports.optional, servername: tlsHost,
     trustPem: trustPem, clientSubject: "Mutual TLS Client",
     mutualAuthProbe: true
   });
   const flat = after.table.replace(/\s+/g, " ");
   assert.ok(/Connected\s*yes/.test(flat),
-    "the handshake did not complete against the listener that requires a " +
-    "client certificate, now that the CA is trusted there:\n" + after.table +
-    "\nstatus: " + after.status);
+    "the handshake did not complete now that the CA is trusted there:\n" +
+    after.table + "\nstatus: " + after.status);
   assert.ok(/Certificate verified\s*yes/.test(flat),
     "this end did not verify the SERVER's certificate against the anchor " +
     "supplied, which is the other half of a mutual handshake:\n" + after.table);
@@ -516,46 +593,45 @@ async function theServerReportsWhatThisPageIssued(driver, ports, tlsHost) {
     "the status line should say the handshake completed: " + after.status);
 
   // The measured verdict, which is the thing a single connection cannot tell.
+  //
+  // `not-required` SINCE 2026-09-16, and it is still measured rather than
+  // assumed: the pane makes a second, anonymous connection, and this says
+  // that one succeeded. It read `required` while the mock had a socket that
+  // refused a connection carrying no client certificate; both of its TLS
+  // listeners were deleted, and the port that remains carries every other
+  // protocol in that service, so refusing there would refuse nearly every
+  // caller it has. `required` here now would mean the far end had started
+  // turning away anonymous callers on its main port.
   assert.ok(after.mutual, "no mutual-authentication verdict was rendered");
-  assert.ok(/Client authentication: required\b/.test(after.mutual),
-    "the verdict must be `required`: this listener refuses a connection with " +
-    "no client certificate and accepted one with it, which is precisely what " +
-    "the two probe connections measure. `required-and-rejected` here would " +
-    "mean the CA was not actually trusted; `not-required` would mean the " +
-    "anonymous connection succeeded, and it cannot have:\n" + after.mutual);
+  assert.ok(/Client authentication: not-required\b/.test(after.mutual),
+    "the verdict must be `not-required`: this port asks every connection " +
+    "for a certificate and requires none, so the pane's anonymous probe " +
+    "connection must have succeeded. `required` would mean it did not:\n" +
+    after.mutual);
 
-  // And the server's own account of the same connection.
+  // And the server's own account of the same connection — the assertion the
+  // whole file exists for. A completed handshake is not an accepted client
+  // certificate, and under TLS 1.3 the client is finished before the server
+  // has said anything.
   assert.ok(after.serverView,
     "the server's account is missing on the run that mattered");
   const serverText = after.serverView.replace(/\s+/g, " ");
-  assert.ok(/VERIFIED against \d+ anchor/.test(serverText),
-    "the SERVER did not report verifying the certificate against the anchor " +
-    "it was given. This is the assertion the whole test exists for: a " +
-    "completed handshake is not an accepted client certificate, and under " +
-    "TLS 1.3 the client is finished before the server has said anything:\n" +
+  assert.ok(/VERIFIED/.test(serverText) && !/NOT verified/.test(serverText),
+    "the SERVER did not report verifying the certificate. Nothing changed " +
+    "between this run and the one above except its truststore, so this is " +
+    "the far end's verdict and not this end's account of a handshake:\n" +
     after.serverView);
-  assert.ok(/Mutual TLS Client/.test(serverText),
-    "the server named a different certificate than the one issued here:\n" +
+  assert.ok(serverText.indexOf(leafThumbprint) >= 0,
+    "the server verified a certificate that is not the one issued here: it " +
+    "reported a different thumbprint, or none:\n" + after.serverView);
+  // AND WHAT IT WAS WORTH. The verified certificate started a session there,
+  // which is the successor to a sign-in that used to be a side effect of
+  // reaching either deleted listener at all.
+  assert.ok(/whether that signed anyone in\s*yes/i.test(serverText),
+    "the far end verified the certificate and started no session for it. " +
+    "`GET /tls/sign-in` signs the holder of a verified certificate in, so " +
+    "this is a certificate that verified and was worth nothing:\n" +
     after.serverView);
-  assert.ok(/required client certificate/.test(serverText),
-    "the server did not report which of its two listeners answered, so the " +
-    "report does not say whether a certificate was required:\n" +
-    after.serverView);
-
-  // The chain the server BUILT, which is the part no client can see. The page
-  // sends the leaf and its intermediates and not the root — a server that does
-  // not already hold the root will not trust it because we offered it — so the
-  // server has to have bridged the Issuing CA itself.
-  assert.ok(after.serverChain,
-    "the server's own view of the chain was not rendered; a leaf presented " +
-    "without its intermediates is the commonest mutual-TLS mistake there is " +
-    "and this is the only place it shows");
-  assert.ok(/Mutual TLS Issuing CA/.test(after.serverChain),
-    "the Issuing CA is not in the chain the server built, which means the " +
-    "page sent the leaf alone. Node's TLS server answers an unverifiable " +
-    "client certificate by resetting the connection with no alert, so that " +
-    "failure reads as 'the server refused my certificate' when what it could " +
-    "not do was find the issuer:\n" + after.serverChain);
   log.debug("Leaving theServerReportsWhatThisPageIssued().");
 }
 
@@ -639,37 +715,48 @@ async function aPostQuantumClientCertificateIsAccepted(driver, ports,
 
   await trustTheIssuer(root.certificatePem);
   const trustPem = await serverCertificatePem();
+  const leafThumbprint = thumbprintOf(leaf.certificatePem);
   const report = await runTlsTest(driver, {
-    host: tlsHost, port: ports.required, servername: tlsHost,
+    host: tlsHost, port: ports.optional, servername: tlsHost,
     trustPem: trustPem, clientSubject: "Post-Quantum Client",
     mutualAuthProbe: false
   });
   const flat = report.table.replace(/\s+/g, " ");
   assert.ok(/Connected\s*yes/.test(flat),
-    "an ML-DSA client certificate did not complete a handshake against the " +
-    "listener that REQUIRES one — so either OpenSSL refused the key, or the " +
-    "certificate, or the mock does not trust the CA that signed it:\n" +
+    "an ML-DSA client certificate did not complete a handshake — so either " +
+    "OpenSSL refused the key, or the certificate, or the mock does not " +
+    "trust the CA that signed it:\n" +
     report.table + "\nstatus: " + report.status);
 
   // The far end's own account, which is the only thing here that can say the
   // certificate was ACCEPTED rather than merely sent.
   assert.ok(report.serverView,
     "the server's own account of the connection is missing entirely");
-  assert.ok(/Post-Quantum Client/.test(report.serverView),
-    "the mock did not name the certificate it was presented:\n" +
-    report.serverView);
   assert.ok(!/NOT verified/.test(report.serverView),
     "the mock refused an ML-DSA client certificate whose CA it trusts:\n" +
     report.serverView);
+  assert.ok(/VERIFIED/.test(report.serverView),
+    "the mock did not say it verified the ML-DSA client certificate:\n" +
+    report.serverView);
 
-  // And the algorithm, FROM THE SERVER. Without this the whole case would
-  // pass against a connection that had quietly fallen back to something
-  // classical — and this end cannot answer it: only the far end knows what it
-  // made of the key it was presented.
-  assert.ok(/ml-dsa/i.test(report.serverView),
-    "the server's account of this connection never mentions ML-DSA, so " +
-    "nothing here proves the post-quantum key was what authenticated the " +
-    "client:\n" + report.serverView.slice(0, 2000));
+  // AND THAT IT WAS THIS ML-DSA CERTIFICATE, which is what stops the whole
+  // case passing against a connection that had quietly fallen back to
+  // something classical.
+  //
+  // It used to be read from the server's own account of the client's public
+  // key, published by the `/tls/whoami` that went with the mock's two deleted
+  // TLS listeners. The thumbprint is the replacement and it is a stronger
+  // statement, not a weaker one: it is the SHA-256 of the DER of the
+  // certificate @noble/post-quantum and pkijs built in this browser a minute
+  // ago, so a handshake that authenticated with anything else — a classical
+  // certificate, a different one, none at all — could not produce it. What
+  // it no longer proves on its own is the NEGOTIATION, which is the pane's
+  // own post-quantum block below.
+  assert.ok(report.serverView.indexOf(leafThumbprint) >= 0,
+    "the server verified a certificate that is not the ML-DSA one issued " +
+    "here (expected the thumbprint " + leafThumbprint + "), so nothing here " +
+    "proves the post-quantum key was what authenticated the client:\n" +
+    report.serverView.slice(0, 2000));
 
   // The page's own post-quantum block, which is what a reader of the pane
   // sees: the certificate half and the key-exchange half, reported apart.
@@ -695,33 +782,37 @@ async function test() {
     // one since 2026-09-02. The two checks below are FAILURES instead: they
     // ask a service that IS there. See tests/expectation.js.
     declineToRun(log, "STS_TLS_URL is not set, so there is no TLS endpoint " +
-      "to present a certificate to. This test needs the mock STS\'s HTTPS " +
-      "listeners (8443 and 9443) and its plain HTTP port to configure them.");
+      "to present a certificate to. This test needs the mock STS\'s main " +
+      "HTTPS port and its plain HTTP port to configure it.");
     log.debug("Leaving test(). Skipped.");
     return;
   }
 
   // What the far end will and will not do, read from the service rather than
-  // written down here — the ports are configurable there, and a test carrying
-  // its own copy of them is a test that breaks when somebody moves one.
+  // written down here — the port is configurable there, and a test carrying
+  // its own copy of it is a test that breaks when somebody moves it.
+  //
+  // ONE LISTENER SINCE 2026-09-16, and this reads it as one rather than
+  // looking for the pair it used to find. What is asserted is the POSTURE and
+  // not the count: the certificate must be asked for, because a socket that
+  // never asks is one no certificate can arrive on, and nothing below could
+  // then be about a certificate at all.
   let ports = null;
   let tlsHost = "";
   try {
     const described = await stsJson("/tls?format=json");
-    const optional = described.listeners.filter(function (listener) {
-      return !listener.requiresClientCertificate;
+    const asked = (described.listeners || []).filter(function (listener) {
+      return listener.listening && !listener.requiresClientCertificate;
     })[0];
-    const required = described.listeners.filter(function (listener) {
-      return listener.requiresClientCertificate;
-    })[0];
-    assert.ok(optional && required,
-      "the mock STS does not publish both listeners: " +
-      JSON.stringify(described.listeners));
-    assert.ok(optional.listening && required.listening,
-      "one of the mock STS's TLS listeners did not bind (" +
-      (described.listenError || "no reason given") + "). Its HTTP port " +
-      "answers either way, which is why it publishes this.");
-    ports = { optional: optional.port, required: required.port };
+    assert.ok(asked,
+      "the mock STS publishes no listening port that accepts a client " +
+      "certificate: " + JSON.stringify(described.listeners));
+    assert.ok(asked.requestsClientCertificate !== false,
+      "the mock STS's main port does not ASK for a client certificate, so " +
+      "none can arrive on it however carefully this test presents one. That " +
+      "is `global.https` being off there, and the whole of this file is " +
+      "about a certificate arriving: " + JSON.stringify(asked));
+    ports = { optional: asked.port };
     tlsHost = new URL(stsBaseUrl).hostname;
   } catch (e) {
     // PRESENT and lacking the capability, so a FAILURE rather than a skip:
@@ -729,13 +820,12 @@ async function test() {
     // tests/expectation.js.
     log.debug("Leaving test(). The mock publishes no TLS endpoint.");
     mustBeAbleTo(false, "The mock STS at " + stsBaseUrl + " is reachable, " +
-      "but", "it publishes no TLS endpoint (" + e.message + "). Either the " +
-      "sts/ submodule predates its 8443/9443 listeners (bump it) or that " +
-      "document has moved.");
+      "but", "it publishes no TLS endpoint (" + e.message + "). Either that " +
+      "document has moved or the sts/ submodule is older than the main " +
+      "port's own entry in it.");
   }
-  log.info("The mock STS's TLS listeners are on " + tlsHost + ":" +
-           ports.optional + " (client certificate optional) and " + tlsHost +
-           ":" + ports.required + " (required).");
+  log.info("The mock STS accepts a client certificate on " + tlsHost + ":" +
+           ports.optional + " (asked for, never required).");
 
   const options = new chrome.Options();
   // --headless=new, NOT plain --headless. The tests image pinned Chrome 121,
