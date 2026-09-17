@@ -430,32 +430,54 @@ async function test() {
            verdict.statements.length +
     " statements; an edit breaks it.");
 
-  // --- the determinism the wait above exists for ----------------------------
+  // --- what differs between two refreshes inside one second -----------------
   log.info("=== Two refreshes inside one second ===");
-  // Pinned deliberately rather than left as folklore. It is what makes
-  // waitPastSecondBoundary() necessary, and it is the assertion that would
-  // change the day anything per-issuance (a credential id, a nonce, millisecond
-  // timestamps) is added to buildLdpVc — at which point the wait can go. It
-  // also documents a real difference between the formats for anyone reading
-  // step 4's "what changed" pane and wondering why an ldp_vc refresh can look
-  // like nothing happened.
+  // THIS USED TO ASSERT THE TWO WERE BYTE-IDENTICAL, and it said that the day
+  // anything per-issuance was added to buildLdpVc the assertion would change.
+  // That day is 2026-09-17: every credential the STS issues now carries its own
+  // STATUS LIST ENTRY (Token Status List, and Bitstring Status List entries for
+  // a W3C format), because a credential that cannot be named in a status list
+  // cannot be revoked on its own. So two refreshes differ, and they differ in
+  // exactly one place — which is worth pinning, because "they differ" alone
+  // would pass if BBS had started drawing randomness or a salt had appeared.
   const twinA = await requestCredential(meta, newAccessToken, boundKey);
   const twinB = await requestCredential(meta, newAccessToken, boundKey);
   const aStr = wallet.extractCredential(twinA.body);
   const bStr = wallet.extractCredential(twinB.body);
-  const sameSecond =
-      JSON.parse(aStr).proof.created === JSON.parse(bStr).proof.created;
+  const aDoc = JSON.parse(aStr);
+  const bDoc = JSON.parse(bStr);
+
+  assert.ok(Array.isArray(aDoc.credentialStatus) &&
+            aDoc.credentialStatus.length > 0,
+    "an ldp_vc carries Bitstring Status List entries in credentialStatus, so " +
+        "it can be revoked on its own; got " +
+    JSON.stringify(aDoc.credentialStatus));
+  const indexOf = function (doc) {
+    return String(doc.credentialStatus[0].statusListIndex);
+  };
+  assert.notStrictEqual(indexOf(aDoc), indexOf(bDoc),
+    "two issuances must take DIFFERENT status-list indexes: one index for " +
+        "both would mean revoking either revoked the other. A=" +
+    indexOf(aDoc) + " B=" + indexOf(bDoc));
+
+  const sameSecond = aDoc.proof.created === bDoc.proof.created;
   if (sameSecond) {
-    assert.strictEqual(aStr, bStr,
-      "two ldp_vc issuances stamped with the same second must be " +
-          "byte-identical: BBS Sign draws no " +
-      "randomness and this format carries no salts, so nothing else varies. " +
-          "If this ever fails, " +
-      "something per-issuance has been added — good, but " +
-          "waitPastSecondBoundary() and the note in " +
-      "step 4 about an unchanged refresh should go with it.");
-    log.info("[determinism] OK — same second, identical bytes, as the " +
-             "format implies.");
+    // Everything but the status entry and the proof over it: BBS Sign draws no
+    // randomness and this format carries no salts, so with the one per-issuance
+    // member removed the two must still be byte-identical.
+    const strip = function (doc) {
+      const copy = JSON.parse(JSON.stringify(doc));
+      delete copy.credentialStatus;
+      delete copy.proof;
+      return JSON.stringify(copy);
+    };
+    assert.strictEqual(strip(aDoc), strip(bDoc),
+      "two ldp_vc issuances stamped with the same second must differ ONLY in " +
+          "their status entry: BBS Sign draws no randomness and this format " +
+          "carries no salts. If this fails, something ELSE per-issuance has " +
+          "been added — good, but it should be named here.");
+    log.info("[determinism] OK — same second, identical but for the status " +
+             "entry each credential needs of its own.");
   } else {
     // The two straddled a second boundary. Not a failure and not a pass either:
     // say so rather than logging OK for a check that did not run.
