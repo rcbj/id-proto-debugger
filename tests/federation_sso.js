@@ -745,21 +745,33 @@ async function mockKnowsTheAttributes(stsBase) {
 }
 
 // ---------------------------------------------------------------------------
-// THE TWO THINGS THAT WEAR `a.fedbtn`, AND WHY THIS FUNCTION EXISTS.
+// THE THREE THINGS THAT WEAR `a.fedbtn`, AND WHY THIS FUNCTION EXISTS.
 //
-// The mock's sign-in screen styles two OFFERS with the same class. The
+// The mock's sign-in screen styles several OFFERS with the same class. The
 // federation partners are the ones this test is about: one per usable
-// relationship, each leading to `/federation/login/<id>`. Under them sits the
-// Kerberos door — `integratedOptionHtml()`'s SPNEGO link, offered to every
-// application on every screen with nothing configured anywhere, because the
-// mechanism is a property of the person's machine rather than of the relying
-// party. A class is what a button LOOKS like and an href is what it DOES, so
-// the counting above reads the href.
+// relationship, each leading to `/federation/login/<id>`. Under them sit the
+// AMBIENT doors, which belong to the person rather than to the relying party
+// and are therefore offered with nothing configured on any relationship:
+//
+//   * the Kerberos door — `integratedOptionHtml()`'s SPNEGO link, offered on
+//     every screen because the mechanism is a property of the person's
+//     MACHINE;
+//   * the wallet door — `walletOptionHtml()`'s `/authn/wallet` link, which
+//     arrived with the 2026-09-17 submodule bump (iya-sts #38). It is the
+//     same shape of offer one layer out: a property of what the person's
+//     WALLET holds, gated on that service's `oid4vp.signIn` and on nothing
+//     about the application. It is withheld, as a paragraph rather than a
+//     button, when the request demands a security key.
+//
+// A class is what a button LOOKS like and an href is what it DOES, so the
+// counting above reads the href.
 //
 // This is the other half of that: a narrowed selector stops seeing anything
 // that arrives under a different href, so everything else wearing the class
-// has to be accounted for by name. Anything that is neither a partner nor the
-// Kerberos door is a button this screen should not be drawing at all.
+// has to be accounted for BY NAME — which is the point, and is why a new
+// ambient door reaches this test as a failure rather than passing unnoticed.
+// Anything that is neither a partner nor one of the two ambient doors is a
+// button this screen should not be drawing at all.
 // ---------------------------------------------------------------------------
 async function assertOnlyOtherButtonIsKerberos(driver, where) {
   log.debug("Entering assertOnlyOtherButtonIsKerberos().");
@@ -769,10 +781,12 @@ async function assertOnlyOtherButtonIsKerberos(driver, where) {
     if (href.indexOf("/federation/login/") >= 0) {
       continue;
     }
-    assert.ok(href.indexOf("/authn/spnego") >= 0,
+    assert.ok(href.indexOf("/authn/spnego") >= 0 ||
+              href.indexOf("/authn/wallet") >= 0,
       where + " carries a button styled like a federation partner that " +
-      "points at \"" + href + "\". It is neither a partner nor the ambient " +
-      "Kerberos door, so it is an offer this screen should not be making.");
+      "points at \"" + href + "\". It is neither a partner nor one of the " +
+      "two ambient doors (Kerberos, a wallet), so it is an offer this " +
+      "screen should not be making.");
   }
   log.debug("Leaving assertOnlyOtherButtonIsKerberos(). " + buttons.length +
             " button(s) on the screen.");

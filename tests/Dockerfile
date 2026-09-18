@@ -721,6 +721,29 @@ COPY sts/oauth-oidc/assertion_grant.js sts/oauth-oidc/oauth21.js ./sts/oauth-oid
 COPY sts/oauth-oidc/saml_assertion_grant.js ./sts/oauth-oidc/
 COPY sts/persistence/directory_merge.js ./sts/persistence/
 COPY sts/ssf/ssf_events.js sts/ssf/ssf_subjects.js ./sts/ssf/
+# ---------------------------------------------------------------------------
+# THE SIXTH recomputation (2026-09-17), on the same schedule as the five above:
+# the sts/ gitlink moved to iya-sts 972c9cd and two modules this image already
+# carries reached for two it did not.
+#
+# cache_registry.js is the mock's register of every cache and replay store,
+# added there by issue #74 so that one page can list them and one control can
+# empty them. That made it a LEAF that everything with a cache now loads —
+# eleven of the files copied above require it, which is why one absent file
+# took eleven modules with it.
+#
+# sender_constraints.js is issue #34's: DPoP and mTLS binding settings pulled
+# out of oauth2.js, and oauth2_bcp.js (already here) reads them.
+#
+# Both are ordinary .js in the mock. NOT EVERY MISSING MODULE CAN BE FIXED
+# HERE ANY MORE, and that is new with the TypeScript conversion (#50): a module
+# that is now .ts has no .js beside it in a CHECKOUT — the mock compiles only
+# inside its own image build — so a COPY naming one stops this build with
+# "not found". `common/account_state.ts` is the first of those, and it is
+# handled in tests/jwk_pem_encoding.js's LAZY_STS_REQUIRES instead.
+# ---------------------------------------------------------------------------
+COPY sts/common/cache_registry.js ./sts/common/
+COPY sts/oauth-oidc/sender_constraints.js ./sts/oauth-oidc/
 # The mock's manifest, read by the final stage for the Express version these
 # modules are written against. Flat and renamed on purpose; see the RUN that
 # installs it.

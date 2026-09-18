@@ -197,7 +197,12 @@ async function preconditions() {
       "carries. Looked at: MOCK_STS_DIR, ../sts (the submodule; an " +
       "uninitialised one is an EMPTY DIRECTORY, so `git submodule update " +
       "--init --recursive` is the usual fix), and ../../iya-sts. Set " +
-      "MOCK_STS_DIR to a working copy to run it." };
+      "MOCK_STS_DIR to a working copy to run it. A tree that IS there and " +
+      "was skipped anyway is either missing its node_modules or is not " +
+      "BUILT — the mock is TypeScript since iya-sts #50 and a checkout has " +
+      "no .js beside its .ts, so `node server.js` refuses to start from " +
+      "one; `(cd sts && ./build-typescript.sh)` is the fix, and the [mock] " +
+      "lines above say which of the two it was." };
   }
 
   const url = process.env.STS_TEST_POSTGRES_URL;
@@ -229,6 +234,61 @@ async function preconditions() {
 // is enough. This one is going to run `node server.js`, so a tree without its
 // dependencies is not a candidate at all — and the tests image contains exactly
 // such a tree, which is the case this check exists for.
+// ---------------------------------------------------------------------------
+// A COMPILED tree, which became a third condition on 2026-09-17.
+//
+// The mock is TypeScript since iya-sts #50 and a CHECKOUT holds `x.ts` with no
+// `x.js` beside it: it is compiled inside that repository's own image build,
+// so `node server.js` from a checkout refuses to start with STS-CORE-0093 and
+// names 188 sources. Without this the tree looked runnable, the child was
+// spawned, and the job failed on "the mock STS exited with 1 before it was
+// listening" — a message about a process rather than about a missing build
+// step.
+//
+// ASKED OF THE MOCK'S OWN MODULE rather than reimplemented here. `sts/common/
+// compiled_tree.js` is what the service itself consults at startup, it takes
+// the root as a parameter, and it is plain .js precisely so it can run before
+// anything is compiled. A second walk here would be a second reading of which
+// directories hold sources and what a `.d.ts` means, and the two would come to
+// differ — the argument tests/krb5_codec_sync.js makes about the wire codec.
+//
+// A tree that is present and not built is a fact about THIS MACHINE, like a
+// missing npm install, so it makes the candidate not-a-candidate and this job
+// declines to run. It is not a failure: nothing about the debugger is broken.
+// To run it here, build the submodule — `(cd sts && ./build-typescript.sh)`.
+// ---------------------------------------------------------------------------
+function isCompiled(root) {
+  log.debug("Entering isCompiled(). root=" + root);
+  const module = path.join(root, "common", "compiled_tree.js");
+  if (!fs.existsSync(module)) {
+    // Older than #50, so every source is already .js and there is nothing to
+    // build. Not an obstacle, and not this function's business to guess at.
+    log.debug("Leaving isCompiled(). No compiled_tree.js; pre-TypeScript.");
+    return true;
+  }
+  let answer;
+  try {
+    answer = require(module).uncompiledSources(root);
+  } catch (e) {
+    log.info("[mock] " + root + " has a compiled_tree.js that could not be " +
+             "asked (" + e.message + "), so the tree is taken as built and " +
+             "the spawn below will say if it is not.");
+    log.debug("Leaving isCompiled(). Unreadable.");
+    return true;
+  }
+  if (!answer.found.length) {
+    log.debug("Leaving isCompiled(). Built.");
+    return true;
+  }
+  log.info("[mock] " + root + " is a checkout whose TypeScript is not built: " +
+           answer.found.length + " source(s) have no .js beside them (" +
+           answer.found.slice(0, 3).join(", ") + ", ...). `node server.js` " +
+           "refuses to start from it (STS-CORE-0093), so it is not a " +
+           "candidate. Build it with `(cd sts && ./build-typescript.sh)`.");
+  log.debug("Leaving isCompiled(). Not built.");
+  return false;
+}
+
 function mockStsRoot() {
   log.debug("Entering mockStsRoot().");
   const candidates = [
@@ -242,16 +302,25 @@ function mockStsRoot() {
                       path.join("node_modules", "pg")].every(function (part) {
       return fs.existsSync(path.join(candidate, part));
     });
-    if (runnable) {
-      log.info("[mock] Running the mock STS out of " + candidate + ".");
-      log.debug("Leaving mockStsRoot(). " + candidate);
-      return candidate;
+    // The two conditions are reported APART, because they have different
+    // fixes and a message that names the wrong one sends the reader at the
+    // wrong command. This branch claimed "not the dependencies" for every
+    // rejected tree with a server.js in it, so a checkout that had its
+    // node_modules and only wanted building was reported as an npm problem.
+    if (!runnable) {
+      if (fs.existsSync(path.join(candidate, "server.js"))) {
+        log.info("[mock] " + candidate + " has a server.js but not the " +
+                 "dependencies to run it (express, pg), so it is not a " +
+                 "candidate. That is what the tests image looks like.");
+      }
+      continue;
     }
-    if (fs.existsSync(path.join(candidate, "server.js"))) {
-      log.info("[mock] " + candidate + " has a server.js but not the " +
-               "dependencies to run it (express, pg), so it is not a " +
-               "candidate. That is what the tests image looks like.");
+    if (!isCompiled(candidate)) {
+      continue;
     }
+    log.info("[mock] Running the mock STS out of " + candidate + ".");
+    log.debug("Leaving mockStsRoot(). " + candidate);
+    return candidate;
   }
   log.debug("Leaving mockStsRoot(). None.");
   return "";

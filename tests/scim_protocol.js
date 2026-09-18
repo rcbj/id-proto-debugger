@@ -673,8 +673,15 @@ async function aFullUserRoundTrips() {
   // --- the second read: the directory ---
   // `entryUUID` by name: RFC 4530 makes it operational, and an LDAP search
   // returns an operational attribute only when it is asked for.
+  //
+  // `pwdAccountLockedTime` for the same reason, and it is the one that would
+  // have gone WRONG QUIETLY: draft-behera-ldap-password-policy makes it
+  // operational too, so `*` never brings it back — and the check below
+  // asserts its ABSENCE. Left unnamed here it is absent from every entry
+  // whatever the directory holds, and the check passes for a user who has
+  // been disabled, which is the opposite of what it says.
   const entries = await ldapSearch(usersDn, '(uid=' + user.userName + ')',
-      ['*', 'entryUUID']);
+      ['*', 'entryUUID', 'pwdAccountLockedTime']);
   check('the SCIM create really wrote an LDAP entry', function () {
     assert.strictEqual(entries.length, 1,
         'The SCIM server answered 201 and the directory has ' +
@@ -725,12 +732,37 @@ async function aFullUserRoundTrips() {
         'Storing the newlines verbatim produces a value no LDAP client can ' +
         'read.');
   });
-  check('active:true is recorded as an LDAP boolean', function () {
-    const stored = attr(entry, 'scimActive');
-    assert.ok(stored.length > 0, 'active was sent and scimActive is empty.');
-    assert.strictEqual(stored[0].toUpperCase(), 'TRUE',
-        'RFC 4517 section 3.3.3 spells the LDAP booleans in CAPITALS and ' +
-        'nothing else is one. Stored: ' + stored[0]);
+  // ---------------------------------------------------------------------
+  // `active` IS THE ACCOUNT'S LOCK, AND IT IS AN ABSENCE WHEN TRUE.
+  //
+  // This read `scimActive` and asserted the LDAP boolean `TRUE` until the
+  // 2026-09-17 submodule bump. That attribute was an INVENTION of the mock's
+  // that nothing else read — `active: false` deactivated nobody — and
+  // iya-sts #36 replaced it with draft-behera-ldap-password-policy's
+  // `pwdAccountLockedTime`, the same lock an administrator's disable writes.
+  // So `active` stopped being a field that is merely recorded and became one
+  // with consequences: a disable by SCIM ends every session the person holds
+  // and RISC reports `account-disabled`.
+  //
+  // WHICH INVERTS WHAT THERE IS TO ASSERT. The truthy case is now the
+  // ABSENCE of an attribute rather than the presence of one, so a check
+  // written the old way round — look for a value, assert on it — cannot be
+  // adapted by renaming the attribute: `attr()` answers an empty array both
+  // for "this account is not locked" and for "this mock stopped storing the
+  // lock at all", and only the resource read back tells those apart. Both
+  // halves are therefore asserted, and the second is the load-bearing one.
+  // ---------------------------------------------------------------------
+  check('active:true leaves no account lock in the directory', function () {
+    const locked = attr(entry, 'pwdAccountLockedTime');
+    assert.strictEqual(locked.length, 0,
+        'active:true was sent and the entry carries pwdAccountLockedTime=' +
+        locked[0] + '. That attribute IS the disabled state since iya-sts ' +
+        '#36, so an account created as active must not have one.');
+    const invented = attr(entry, 'scimActive');
+    assert.strictEqual(invented.length, 0,
+        'the entry still carries the invented scimActive attribute, which ' +
+        '#36 replaced with pwdAccountLockedTime. Two spellings of one fact ' +
+        'is how they come to disagree.');
   });
 
   // --- the third read: the resource itself ---
@@ -745,6 +777,17 @@ async function aFullUserRoundTrips() {
         'The enterprise extension did not come back at all.');
     assert.strictEqual(read.body[scim.ENTERPRISE_SCHEMA].department,
         user[scim.ENTERPRISE_SCHEMA].department);
+    // THE OTHER HALF OF THE LOCK, and the one that cannot be satisfied by a
+    // mock that quietly stopped storing it: the directory check above passes
+    // on an ABSENT attribute, and so would a service that dropped `active`
+    // altogether. Here it has to be present and true. iya-sts #36: on the way
+    // out `active` is always sent, and it is `true` unless the entry is
+    // locked.
+    assert.strictEqual(read.body.active, true,
+        'active came back as ' + JSON.stringify(read.body.active) + '. This ' +
+        'user was created active and nothing has locked it, so the resource ' +
+        'must say so — RFC 7643 section 4.1.1, and the lock is ' +
+        'pwdAccountLockedTime since iya-sts #36.');
   });
   check('meta carries created, lastModified, resourceType and location',
       function () {

@@ -1271,6 +1271,29 @@ async function stepFour(driver, context) {
     "reusing the holder key means the binding must be reported as unchanged.");
   assert.strictEqual(row("vct").changed, "no",
                      "a refresh returns the same kind of credential.");
+  // ---- THE STATUS ENTRY, which is per-issuance and must be SHOWN as such --
+  //
+  // The mock STS grew status lists per realm with the 2026-09-17 submodule
+  // bump (iya-sts #38), so every issuance now takes its own slot on the
+  // issuer's list — which is the mechanism by which one credential is
+  // revoked without touching another, and therefore something a refresh
+  // changes every single time.
+  //
+  // It belongs in THIS table, beside iat and the signature, and not among the
+  // claim differences below: a new slot is not the issuer rewriting the
+  // End-User's data. Reported there it took this job red for the right
+  // observation and the wrong conclusion — "1 claim value(s) changed", which
+  // is section 14.5's other case and the one a holder should actually worry
+  // about.
+  var status = row("Status entry");
+  assert.ok(status,
+    "the comparison table has no Status entry row. Each issuance takes its " +
+        "own slot on the issuer's status list, so a refresh changes it and " +
+        "a holder cannot see that anywhere else on this page.");
+  assert.strictEqual(status.changed, "yes",
+    "the two credentials carry the same status entry (" + status.before +
+        "). Two issuances sharing one slot cannot be revoked independently, " +
+        "which is the whole point of the list.");
 
   var oldPayload = jsonFromB64u(before.credential.split("~")[0].split(".")[1]);
   var newPayload = jsonFromB64u(refreshed.split("~")[0].split(".")[1]);
@@ -1314,7 +1337,9 @@ async function stepFour(driver, context) {
         verdict);
   assert.ok(/only the signature/.test(verdict),
     "with identical claim values it is the \"only the signature\" case. Got: " +
-        verdict);
+        verdict + ". A status entry that moved is NOT a changed " +
+        "claim: it is per-issuance machinery, reported in the comparison " +
+        "table above. See claimDifferences() in client/src/vc_issuance_4.js.");
   var claimDiff = await text(driver, "vc_compare_claims");
   assert.ok(/Not one disclosed claim VALUE differs/.test(claimDiff),
     "and the claim comparison should say the values are unchanged rather " +

@@ -1084,6 +1084,20 @@ const LAZY_STS_REQUIRES = {
     "tls/tls_server.js": true,
   },
   "common/tls_client_certificates.js": { "common/cert_enrollment.js": true },
+  // TYPESCRIPT-ONLY, so this one is not a judgement call the way the two
+  // above are: `common/account_state.ts` has no .js beside it in a CHECKOUT
+  // (the mock compiles inside its own image build, issue #50), so a COPY
+  // naming it would stop the tests image with "not found" and there is
+  // nothing else to write instead. It is also genuinely out of reach here:
+  // issuance_gate.js requires it inside disabledSubject(), which is asked
+  // only of a running service deciding whether to issue somebody a session,
+  // and the six in-process jobs start none. All six pass with it absent.
+  //
+  // If a job here ever DOES reach it, the failure is `Cannot find module
+  // './account_state'` from inside issuance_gate.js at run time, and the fix
+  // is not a COPY line: it is compiling the mock's TypeScript into this
+  // image, which is the mock's own `build-typescript.sh`.
+  "common/issuance_gate.js": { "common/account_state.js": true },
 };
 
 function stsModuleClosureIsCopied(dockerfile) {
@@ -1163,6 +1177,21 @@ function stsModuleClosureIsCopied(dockerfile) {
           log.info("[sts-closure] " + dep + " is required LAZILY by sts/" +
             name + " and is deliberately not in the image; see " +
             "LAZY_STS_REQUIRES.");
+          return;
+        }
+        // A TYPESCRIPT-ONLY module cannot be put right with a COPY line, and
+        // saying "add a COPY" for one sends the reader at a build that then
+        // stops with "not found" — a second failure that names the file and
+        // not the reason. Since the conversion (#50) this is the commonest
+        // shape of this failure, so it is reported as itself.
+        const asTs = dep.replace(/\.js$/, ".ts");
+        if (fs.existsSync(path.join(stsDir, asTs))) {
+          missing.push(dep + " (required by sts/" + name + ", and the mock " +
+            "has it as " + asTs + " — TYPESCRIPT-ONLY, so no COPY can " +
+            "satisfy it: the mock compiles inside its own image build. " +
+            "Either nothing here reaches it, and it belongs in " +
+            "LAZY_STS_REQUIRES with a note saying why, or something does, " +
+            "and this image has to compile the mock's TypeScript)");
           return;
         }
         missing.push(dep + " (required by sts/" + name +
