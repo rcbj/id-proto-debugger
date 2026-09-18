@@ -3153,3 +3153,98 @@ configureKeycloakWsfed()
   echo "Leaving configureKeycloakWsfed(). WSFED_METADATA_URL=${WSFED_METADATA_URL}"
   return 0
 }
+
+# ---------------------------------------------------------------------------
+# A MOCK STS TREE THE HOST CAN RUN, TAKEN OUT OF THE IMAGE THAT WAS JUST BUILT.
+#
+# `tests/sts_persistence_postgres.js` is the one job here that starts the mock
+# ITSELF — `node server.js`, against a postgres it runs in a container — so it
+# needs a complete tree: sources, node_modules, and since iya-sts #50 the
+# COMPILED TypeScript. A checkout has none of the third. `server.js` refuses to
+# start from one with STS-CORE-0093, naming 188 sources with no `.js` beside
+# them, and that job self-skipped for want of a build.
+#
+# IT IS COPIED RATHER THAN BUILT, and that is the whole point of doing it here.
+# `sts/build-typescript.sh` refuses to run on a host checkout on purpose —
+# issue #50, no compiled files on the host — and it needs a `tsc` that exists
+# nowhere in this tree: the submodule has no `tests/node_modules`, and neither
+# does this repository. Building would mean an npm install of somebody else's
+# devDependencies on every run, and an offline run could not do it at all.
+#
+# The image compose has just built ALREADY CONTAINS the answer: `/usr/src/sts`,
+# compiled, with its `.ts` stripped and its runtime node_modules installed. It
+# is the very tree the stack is running, so the job tests what the rest of the
+# suite is talking to rather than something assembled beside it.
+#
+# THE SUBMODULE IS LEFT ALONE. A build in place would leave ~188 untracked
+# `.js` files in somebody else's checkout — iya-sts cannot gitignore them,
+# because tsconfig.build.json compiles in place — and `git status` would report
+# `sts` as dirty from then on.
+#
+# Best effort: a failure here leaves MOCK_STS_DIR unset and that job skips
+# exactly as it did before, which is the state this function exists to improve
+# and not one worth stopping a 300-job run over.
+# ---------------------------------------------------------------------------
+extractMockStsTree()
+{
+  echo "Entering extractMockStsTree()."
+  if [ -n "${MOCK_STS_DIR:-}" ];
+  then
+    echo "MOCK_STS_DIR was supplied by the caller (${MOCK_STS_DIR}); using it."
+    echo "Leaving extractMockStsTree(). Supplied."
+    return 0
+  fi
+  local image="${STS_IMAGE:-rcbj/sts}"
+  local dir cid
+  dir="$(mktemp -d)"
+  # `docker create` makes a container without starting it, which is the
+  # documented way to read a filesystem out of an image.
+  cid="$(docker create "${image}" 2>/dev/null)"
+  if [ -z "${cid}" ];
+  then
+    echo "extractMockStsTree(): could not create a container from ${image}," \
+         "so the persistence job will skip. This is not fatal."
+    rm -rf "${dir}"
+    echo "Leaving extractMockStsTree(). No image."
+    return 0
+  fi
+  if ! docker cp "${cid}:/usr/src/sts/." "${dir}/" >/dev/null 2>&1;
+  then
+    echo "extractMockStsTree(): could not copy /usr/src/sts out of" \
+         "${image}, so the persistence job will skip. This is not fatal."
+    docker rm -f "${cid}" >/dev/null 2>&1 || true
+    rm -rf "${dir}"
+    echo "Leaving extractMockStsTree(). Nothing copied."
+    return 0
+  fi
+  docker rm -f "${cid}" >/dev/null 2>&1 || true
+  # The two files mockStsRoot() tests for before it will use a tree at all.
+  if [ ! -f "${dir}/server.js" ] || [ ! -d "${dir}/node_modules/pg" ];
+  then
+    echo "extractMockStsTree(): ${image} has no runnable tree at" \
+         "/usr/src/sts (server.js or node_modules/pg is missing), so the" \
+         "persistence job will skip. This is not fatal."
+    rm -rf "${dir}"
+    echo "Leaving extractMockStsTree(). Incomplete."
+    return 0
+  fi
+  declare -gx MOCK_STS_DIR="${dir}"
+  declare -gx MOCK_STS_DIR_IS_OURS="yes"
+  echo "extractMockStsTree(): the mock STS tree from ${image} is at ${dir}."
+  echo "Leaving extractMockStsTree(). MOCK_STS_DIR=${MOCK_STS_DIR}"
+  return 0
+}
+
+# Remove what extractMockStsTree() made, and only that: a MOCK_STS_DIR the
+# caller supplied is somebody's working copy and is never deleted.
+removeMockStsTree()
+{
+  echo "Entering removeMockStsTree()."
+  if [ "${MOCK_STS_DIR_IS_OURS:-}" = "yes" ] && [ -n "${MOCK_STS_DIR:-}" ];
+  then
+    rm -rf "${MOCK_STS_DIR}"
+    echo "removeMockStsTree(): removed ${MOCK_STS_DIR}."
+  fi
+  echo "Leaving removeMockStsTree()."
+  return 0
+}

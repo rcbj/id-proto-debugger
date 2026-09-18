@@ -639,6 +639,13 @@ startDocker()
   # Start Docker containers
   CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml build
   check_return_code $?
+  # THE ONE JOB THAT STARTS THE MOCK ITSELF needs a tree the host can run, and
+  # since iya-sts #50 that means a COMPILED one, which a checkout is not. The
+  # image just built carries exactly that, so it is copied out rather than
+  # built here; see extractMockStsTree() for why building is not available.
+  # Best effort — it never stops the run, and without it that job skips as it
+  # did before.
+  extractMockStsTree
   CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml up -d
   check_return_code $?
   # The WS-Federation side-car must actually be running, not merely created: the
@@ -1562,6 +1569,10 @@ onExit()
 {
   local status=$?
   echo "Entering onExit()."
+  # The copy extractMockStsTree() made, and only that one: a MOCK_STS_DIR the
+  # caller supplied is somebody's working copy. Before the status is reported,
+  # so a failing run cleans up after itself too.
+  removeMockStsTree
   launcherExitStatus "${status}" "local-run-tests.sh"
   exit "${status}"
 }

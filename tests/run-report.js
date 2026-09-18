@@ -2504,11 +2504,18 @@ function buildJobs() {
         key: "windows",
         label: "real Windows KDC",
         skip: env.KRB5_DC_JSON ? null :
-          "no real Windows KDC to delegate against (KRB5_DC_JSON unset). " +
-          "The four delegation accounts are provisioned by " +
-          "infra/terraform-krb5 and described in the bootstrap's dc.json; " +
-          "./infra/krb5-test.sh fetches it and sets this. Not free tier, so " +
-          "nothing starts it automatically.",
+          "COSTS MONEY, SO IT IS SKIPPED BY DECISION rather than for want " +
+          "of anything here: no real Windows KDC to delegate against " +
+          "(KRB5_DC_JSON unset). The four delegation accounts are " +
+          "provisioned by infra/terraform-krb5 and described in the " +
+          "bootstrap's dc.json. To run it: `./infra/krb5-test.sh` (it takes " +
+          "no arguments; KRB5_KEEP=1 leaves the stack up), which applies the " +
+          "Terraform, fetches dc.json, sets this and destroys the stack " +
+          "afterwards on an EXIT trap whatever the result. A forest " +
+          "promotion needs more than a t3.micro has, so this is NOT free " +
+          "tier and no launcher starts it \u2014 a suite " +
+          "that stood a domain controller up on every run would bill for " +
+          "every run.",
         env: {
           KRB5_DELEG_TARGET: "windows",
           KRB5_DC_JSON: env.KRB5_DC_JSON,
@@ -2568,11 +2575,18 @@ function buildJobs() {
   // launcher sets it, on purpose.
   {
     const realDcSkip = env.KRB5_DC_HOST ? null :
-      "no real Windows KDC to test against (KRB5_DC_HOST unset). This one " +
-      "job drives a domain controller on EC2, which costs money and is not " +
-      "free tier, so no launcher starts it. Run ./infra/krb5-test.sh, which " +
-      "applies infra/terraform-krb5, runs this test and tears the stack down " +
-      "again whatever the result.";
+      "COSTS MONEY, SO IT IS SKIPPED BY DECISION rather than for want of " +
+      "anything here: no real Windows KDC to test against (KRB5_DC_HOST " +
+      "unset). This one job drives a Windows Server domain controller on " +
+      "EC2 \u2014 a forest promotion needs more than a t3.micro has, so it " +
+      "is NOT free tier. To run it: `./infra/krb5-test.sh` (no arguments; " +
+      "KRB5_KEEP=1 leaves it running), which applies " +
+      "infra/terraform-krb5, runs this test and destroys the stack " +
+      "afterwards on an EXIT trap whatever the result. No launcher starts " +
+      "it, because a suite that stood a domain controller up on every run " +
+      "would bill for every run. The offline half of what it proves is " +
+      "asserted on every ordinary run by tests/krb5_windows_vectors.js, " +
+      "against a recorded exchange from a real DC.";
     const job = {
       name: "Kerberos against a REAL Windows KDC (AS-REQ, TGS-REQ, ktpass keytab, PAC, AP-REQ)",
       script: "krb5_real_dc.js",
