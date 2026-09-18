@@ -1864,29 +1864,53 @@ async function whatTheServerAcceptsIsPublished() {
 // A token from the mock's own authorization server. Every grant works there and
 // the scope is whatever is asked for, which is what makes a scope test
 // possible at all.
+//
+// MINTED BY THE NAME IT WILL BE PRESENTED UNDER, which is why this goes
+// through the api rather than straight out of this process.
+//
+// This service has TWO names on the containerized and host stacks alike: the
+// test reaches it as `stsUrl` (localhost, published by compose) and the api
+// reaches it as `scimBaseUrl`'s origin (`sts`, the compose DNS name). It mints
+// `iss` from the name it was ASKED on, and RFC 9068 section 4 makes `iss` an
+// exact match against the authorization server the token is presented to. So
+// a token minted here on localhost and presented at /scim/v2 through the api
+// on `sts` is refused 401 — a correct refusal of a token that genuinely names
+// another issuer, which reads as a broken credential.
+//
+// Deriving the endpoint from `scimBaseUrl` rather than from `stsUrl` is the
+// whole fix: one client, one name, and the `iss` on the token is the `iss` at
+// the door. It cannot simply be minted directly, because the test process
+// cannot resolve `sts` at all; the api can, and its /token proxy is the same
+// one the debugger's own page uses.
+//
+// Pinning the mock to a single name instead (`global.publicBaseUrl`) was the
+// other way and is not available: the BROWSER reaches it as localhost, so one
+// issuer for both would put an unreachable authority in every document the
+// browser tests follow.
 async function accessToken(scope) {
   log.debug("Entering accessToken(). scope=" + scope);
-  const response = await fetch(stsUrl + '/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'grant_type=client_credentials&client_id=' +
-        encodeURIComponent(SCIM_CLIENT_ID) +
-        '&client_secret=secret&scope=' + encodeURIComponent(scope)
+  const tokenEndpoint = new URL(scimBaseUrl).origin + '/oauth2/token';
+  const answer = await postJson(apiUrl + '/token', {
+    token_endpoint: tokenEndpoint,
+    grant_type: 'client_credentials',
+    client_id: SCIM_CLIENT_ID,
+    client_secret: 'secret',
+    scope: scope,
+    sslValidate: 'false',
+    auth_style: 'post'
   });
-  const text = await response.text();
-  let payload;
-  try {
-    payload = JSON.parse(text);
-  } catch (e) {
+  const payload = answer.payload;
+  if (!payload || typeof payload !== 'object') {
     log.debug("Leaving accessToken(). The token endpoint did not answer JSON.");
-    return { ok: false, why: 'the token endpoint at ' + stsUrl +
-        '/oauth2/token answered ' + response.status + ' with a body that is ' +
-        'not JSON: ' + text.slice(0, 200) };
+    return { ok: false, why: 'the api at ' + apiUrl + '/token answered ' +
+        answer.status + ' for ' + tokenEndpoint + ' with a body that is not ' +
+        'JSON: ' + String(answer.payload).slice(0, 200) };
   }
   if (!payload.access_token) {
     log.debug("Leaving accessToken(). No token.");
-    return { ok: false, why: 'the token endpoint answered ' +
-        response.status + ': ' + JSON.stringify(payload).slice(0, 300) };
+    return { ok: false, why: 'the token endpoint at ' + tokenEndpoint +
+        ', through the api, answered ' + answer.status + ': ' +
+        JSON.stringify(payload).slice(0, 300) };
   }
   log.debug("Leaving accessToken(). Got one.");
   return { ok: true, token: payload.access_token, scope: payload.scope };
