@@ -669,6 +669,46 @@ function run() {
     }), ["3.2"], "an ID Token with no nonce at all");
   });
 
+  // ---------------------------------------------------------------------
+  // 3.2 ON A REFRESH, which is the case the rule above must NOT reach.
+  //
+  // A nonce binds an ID Token to the AUTHENTICATION REQUEST that asked for
+  // it, and section 3.2 is about one attack: a code injected from another
+  // session and redeemed at the token endpoint. A refresh redeems no code,
+  // and OpenID Connect Core section 12.2 — which lists what an ID Token
+  // returned from a refresh must carry — does not list `nonce`, so most
+  // servers omit it.
+  //
+  // Requiring it anyway refused EVERY refresh in compliance mode at MUST
+  // level and the page discarded the token set, which is a correct response
+  // rejected for lacking a parameter it is not supposed to have. Reported
+  // 2026-09-18 from a live run.
+  //
+  // The third case is why this is an exemption and not a deletion: a server
+  // that DOES send the claim has asserted something, and an assertion that
+  // disagrees with this session is still worth refusing.
+  // ---------------------------------------------------------------------
+  check("3.2 — a refreshed ID Token needs no nonce, and a wrong one is " +
+        "still refused", function () {
+    startTransaction();
+    assertBlocking(rfc9700.checkTokenResponse({
+      data: { id_token: jwt({ iss: "https://op.example.com", sub: SUBJECT }) },
+      grantType: "refresh_token", clientId: "client-1"
+    }), [], "a refreshed ID Token carrying no nonce");
+    startTransaction();
+    assertBlocking(rfc9700.checkTokenResponse({
+      data: { id_token: jwt({ iss: "https://op.example.com",
+                              nonce: "nonce-value", sub: SUBJECT }) },
+      grantType: "refresh_token", clientId: "client-1"
+    }), [], "a refreshed ID Token repeating the nonce that was sent");
+    startTransaction();
+    assertBlocking(rfc9700.checkTokenResponse({
+      data: { id_token: jwt({ iss: "https://op.example.com",
+                              nonce: "somebody-elses", sub: SUBJECT }) },
+      grantType: "refresh_token", clientId: "client-1"
+    }), ["3.2"], "a refreshed ID Token carrying another session's nonce");
+  });
+
   check("2.7 — an ID Token from another issuer is discarded", function () {
     startTransaction();
     assertBlocking(rfc9700.checkTokenResponse({

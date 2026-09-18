@@ -1382,12 +1382,39 @@ function checkTokenResponse(tr) {
         "The ID Token could not be decoded, so its nonce cannot be checked " +
         "and no token from this response may be used."));
     } else {
+      // NOT ON A GRANT THAT HAS NO AUTHENTICATION REQUEST BEHIND IT, which
+      // since 2026-09-18 means the refresh grant. A nonce binds an ID Token
+      // to the AUTHENTICATION REQUEST that asked for it, and section 3.2 is
+      // about ONE attack: a code injected from another session, redeemed at
+      // the token endpoint. A refresh redeems no code — there is no
+      // authorization response to inject, and nothing for the value to bind
+      // to — and OpenID Connect Core section 12.2, which lists what an ID
+      // Token returned from a refresh must carry, does not list `nonce`.
+      // Most servers therefore omit it, this one included.
+      //
+      // Applying it anyway refused every refresh in compliance mode at MUST
+      // level, so `successfulInternalRefreshAPICall()` discarded the token
+      // set — a correct response rejected for lacking a parameter it is not
+      // supposed to have. That is the same failure `checkAuthorizationRequest
+      // ()`'s `deviceFlow` exemption exists to prevent, and it reads the same
+      // way: as the mode being broken rather than the flow being wrong.
+      //
+      // A refreshed ID Token that DOES carry one is still held to matching,
+      // below: a server that sends the claim has asserted something, and an
+      // assertion that disagrees with this session is worth the same finding
+      // it always was.
+      var fromAuthentication = tr.grantType !== "refresh_token";
       if (record && record.nonce) {
-        if (!claims.nonce) {
+        if (!claims.nonce && fromAuthentication) {
           findings.push(finding("3.2", MUST,
             "A nonce was sent with the authentication request and the ID " +
             "Token carries none. Without it there is no defence against a " +
             "code injected from another session."));
+        } else if (!claims.nonce) {
+          findings.push(finding("3.2", INFO,
+            "The refreshed ID Token carries no nonce, which is what OpenID " +
+            "Connect Core section 12.2 expects: a nonce binds a token to an " +
+            "authentication request, and a refresh makes none."));
         } else if (claims.nonce !== record.nonce) {
           findings.push(finding("3.2", MUST,
             "The ID Token's nonce is '" + claims.nonce + "' and this " +
