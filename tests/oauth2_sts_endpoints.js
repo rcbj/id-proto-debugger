@@ -93,6 +93,37 @@ var EXCHANGE_AUDIENCE = "https://api.example.com";
 var EXCHANGE_RESOURCE = "sts-endpoint-test-api";
 
 // ---------------------------------------------------------------------------
+// WHAT A REAL DEPLOYMENT WOULD HAVE, SO THAT THIS JOB RUNS AGAINST ONE
+// (2026-09-18).
+//
+// This file was written against a DEVELOPMENT-mode mock, which checks no
+// password, requires no client secret and no PKCE, and signs in any name. A
+// PRODUCT-mode service (a deployed one) refuses each of those, and the job
+// stopped at its first request with an answer about the fixture. So the job
+// carries what a real deployment would have in BOTH modes: a confidential
+// client with a secret, a PKCE pair on every code-bearing request, and a
+// directory entry with a real password for every person it signs in. Where
+// product mode REFUSES something this file asserts — the password grant, the
+// implicit and hybrid response types (RFC 9700 section 2.1.2 and 2.4) — the
+// refusal is what is asserted there.
+// ---------------------------------------------------------------------------
+var CLIENT_SECRET = "endpoint-client-" + crypto.randomBytes(12).toString("hex");
+var SERVICE_CLIENT = "sts-endpoint-test-service";
+var SERVICE_SECRET = "endpoint-service-" +
+    crypto.randomBytes(12).toString("hex");
+var PERSON_PASSWORD = "Endpoint-" + crypto.randomBytes(12).toString("hex") +
+    "-9!";
+var PRODUCT = false;
+// The software statement every RFC 7591 / 7592 request here carries.
+var STATEMENT = "";
+// The PKCE verifier behind each challenge this file sent, and behind each code
+// that came back, so a code redemption carries its verifier unless the test
+// names one itself.
+var challengeVerifiers = {};
+var codeVerifiers = {};
+var peopleMade = {};
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 function b64u(buf) {
@@ -122,6 +153,54 @@ function form(obj) {
   return new URLSearchParams(obj).toString();
 }
 
+function pkcePair() {
+  log.debug("Entering pkcePair().");
+  const verifier = b64u(crypto.randomBytes(32));
+  const challenge = b64u(crypto.createHash("sha256").update(verifier,
+      "ascii").digest());
+  challengeVerifiers[challenge] = verifier;
+  log.debug("Leaving pkcePair().");
+  return { verifier: verifier, challenge: challenge };
+}
+
+// A directory entry with PERSON_PASSWORD for `username`, made once per run.
+// givenName and mail are derived from the name, which is what the ID Token
+// assertions below read in both modes.
+async function person(username) {
+  log.debug("Entering person(). " + username);
+  if (peopleMade[username]) {
+    log.debug("Leaving person(). Already made.");
+    return;
+  }
+  const base = registry.baseOf(stsBase);
+  const created = await registry.adminPost(base, "/users/create", {
+    username: username, invent: false, credential: "password",
+    password: PERSON_PASSWORD,
+    attributes: { cn: username, givenName: username, sn: username,
+                  displayName: username,
+                  mail: username + "@suite.example.test" }
+  });
+  if (!(created && created.ok)) {
+    const set = await registry.adminPost(base, "/users/set-password",
+        { user: username, password: PERSON_PASSWORD });
+    assert.ok(set && set.ok, "could not create " + username + " or set its " +
+      "password: " + JSON.stringify(created).slice(0, 200));
+  }
+  peopleMade[username] = true;
+  log.debug("Leaving person().");
+}
+
+// The two hidden fields the sign-in screen posts back.
+function screenFields(page) {
+  log.debug("Entering screenFields().");
+  log.debug("Leaving screenFields().");
+  return {
+    authn_id: (page.match(/name="authn_id" value="([^"]+)"/) || [])[1],
+    csrf_token: (page.match(/name="csrf_token" value="([^"]+)"/) || [])[1] ||
+        ""
+  };
+}
+
 function get(url, options) {
   log.debug("Entering get().");
   log.debug("Leaving get().");
@@ -129,6 +208,24 @@ function get(url, options) {
 }
 async function postForm(url, body, headers) {
   log.debug("Entering postForm().");
+  body = Object.assign({}, body);
+  headers = headers || {};
+  // A code redemption carries the verifier of the challenge that got the code,
+  // unless the test names one itself (several send a WRONG one on purpose).
+  if (body.grant_type === "authorization_code" &&
+      !("code_verifier" in body) && codeVerifiers[body.code]) {
+    body.code_verifier = codeVerifiers[body.code];
+  }
+  // This client's credential on every request that authenticates it: one
+  // naming it, and introspection and revocation, which a product-mode service
+  // answers only for an authenticated caller.
+  const endpointOnly = /\/oauth2\/(introspect|revoke)$/.test(url);
+  if ((body.client_id === CLIENT_ID || endpointOnly) &&
+      !body.client_secret && !body.client_assertion &&
+      !headers.Authorization) {
+    body.client_id = CLIENT_ID;
+    body.client_secret = CLIENT_SECRET;
+  }
   const r = await fetch(url, {
     method: "POST",
     headers: Object.assign({
@@ -204,6 +301,34 @@ function parseRedirect(location) {
 // options.cookie    reuse an existing session instead of signing in again
 async function authorize(meta, params, options) {
   log.debug("Entering authorize().");
+  options = Object.assign({}, options || {});
+  params = Object.assign({}, params);
+  // A code-bearing request carries PKCE, which a product-mode service requires
+  // of every client.
+  if (String(params.response_type || "").split(" ").indexOf("code") >= 0 &&
+      !params.code_challenge) {
+    const pair = pkcePair();
+    params.code_challenge = pair.challenge;
+    params.code_challenge_method = "S256";
+  }
+  // Everybody this signs in has a directory entry and a real password, unless
+  // the caller names a password on purpose.
+  if (!options.cookie && !options.password) {
+    options.username = options.username || "test-user";
+    await person(options.username);
+    options.password = PERSON_PASSWORD;
+  }
+  const out = await signInAndAuthorize(meta, params, options);
+  const code = out.params && out.params.get("code");
+  if (code && challengeVerifiers[params.code_challenge]) {
+    codeVerifiers[code] = challengeVerifiers[params.code_challenge];
+  }
+  log.debug("Leaving authorize().");
+  return out;
+}
+
+async function signInAndAuthorize(meta, params, options) {
+  log.debug("Entering signInAndAuthorize().");
   options = options || {};
   const username = options.username || "test-user";
   let r = await get(meta.authorization_endpoint + "?" + form(params),
@@ -233,7 +358,7 @@ async function authorize(meta, params, options) {
     out.prompted = false;
     out.consented = settledFirst.screens;
     out.cookie = options.cookie;
-    log.debug("Leaving authorize().");
+    log.debug("Leaving signInAndAuthorize().");
     return out;
   }
 
@@ -245,7 +370,8 @@ async function authorize(meta, params, options) {
     "the authentication service should show the sign-in screen, got HTTP " +
         r.status + ".");
   const page = await r.text();
-  const authnId = (page.match(/name="authn_id" value="([^"]+)"/) || [])[1];
+  const fields = screenFields(page);
+  const authnId = fields.authn_id;
   assert.ok(authnId, "the sign-in screen carries no authn_id to post back.");
 
   r = await fetch(meta.issuer + "/authn/login", {
@@ -253,7 +379,8 @@ async function authorize(meta, params, options) {
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form({ authn_id: authnId, username: username,
                password: options.password || "any-password",
-                 action: options.action || "login" })
+                 action: options.action || "login",
+                 csrf_token: fields.csrf_token })
   });
   // The sign-in form is a POST and the answer to it is a redirect. WHICH
   // redirect is the interesting part, and it is asserted the way RFC 9700
@@ -285,7 +412,7 @@ async function authorize(meta, params, options) {
     const out = parseRedirect(r.headers.get("location"));
     out.prompted = true;
     out.page = page;
-    log.debug("Leaving authorize(). The user refused at the sign-in screen.");
+    log.debug("Leaving signInAndAuthorize(). The user refused at the sign-in screen.");
     return out;
   }
   assert.strictEqual(r.status, 302,
@@ -310,7 +437,7 @@ async function authorize(meta, params, options) {
   out.username = username;
   out.page = page;
   out.viaAuthorize = next;
-  log.debug("Leaving authorize().");
+  log.debug("Leaving signInAndAuthorize().");
   return out;
 }
 
@@ -327,10 +454,19 @@ async function testLoginScreen(meta, verify) {
     scope: "openid profile email", state: "login-state", nonce: "login-nonce",
     login_hint: "prefilled-user"
   };
+  // A FRESH PKCE pair for every request this section builds by hand: RFC 9700
+  // section 2.1.1 makes a challenge transaction-specific, and a product-mode
+  // service refuses one it has already seen redeemed. authorize() adds its own.
+  const fresh = function (extra) {
+    const pair = pkcePair();
+    return Object.assign({}, params, extra || {}, {
+      code_challenge: pair.challenge, code_challenge_method: "S256",
+      nonce: "login-nonce-" + b64u(crypto.randomBytes(6)) });
+  };
 
   // 1. The unauthenticated request is handed to the authentication service —
   //    a redirect to an endpoint of its own, not a form in this endpoint's body.
-  const first = await get(meta.authorization_endpoint + "?" + form(params));
+  const first = await get(meta.authorization_endpoint + "?" + form(fresh()));
   assert.strictEqual(first.status, 302,
     "an unauthenticated request should be sent to the authentication " +
         "service, got HTTP " + first.status + ".");
@@ -367,7 +503,8 @@ async function testLoginScreen(meta, verify) {
 
   // 2. Signing in leads back to the authorization endpoint, then to the client.
   const username = "signed.in.user";
-  const authz = await authorize(meta, params, { username: username });
+  const signedInParams = fresh();
+  const authz = await authorize(meta, signedInParams, { username: username });
   assert.ok(authz.viaAuthorize &&
             authz.viaAuthorize.indexOf(meta.authorization_endpoint) === 0,
     "submitting the login form should redirect back to the authorization " +
@@ -378,7 +515,8 @@ async function testLoginScreen(meta, verify) {
     "the authorization response should go to the client's redirect_uri. Got: " +
         authz.location);
   const code = authz.params.get("code");
-  assert.ok(code, "no authorization code came back after the login.");
+  assert.ok(code, "no authorization code came back after the login. The " +
+      "flow ended at " + authz.location);
   assert.strictEqual(authz.params.get("state"), "login-state",
                      "state must survive the login round trip.");
 
@@ -410,7 +548,7 @@ async function testLoginScreen(meta, verify) {
   assert.ok(String(it.email).indexOf(username) === 0,
     "the ID token's email should be derived from the username. Got: " +
         it.email);
-  assert.strictEqual(it.nonce, "login-nonce",
+  assert.strictEqual(it.nonce, signedInParams.nonce,
                      "the nonce must survive the login round trip.");
   assert.ok(it.auth_time > 0,
             "the ID token should say when the user authenticated.");
@@ -430,24 +568,29 @@ async function testLoginScreen(meta, verify) {
            '", the name that was typed in.');
 
   // 4. A different user gets a different identity — nothing is hard-coded.
-  const other = await authorize(meta, params, { username: "someone.else" });
-  const otherSet = (await postForm(meta.token_endpoint, {
+  const other = await authorize(meta, fresh(), { username: "someone.else" });
+  const otherRedeemed = await postForm(meta.token_endpoint, {
     grant_type: "authorization_code", code: other.params.get("code"),
     client_id: CLIENT_ID, redirect_uri: REDIRECT_URI
-  })).body;
+  });
+  assert.strictEqual(otherRedeemed.status, 200,
+    "the second person's code should be redeemed. The authorization ended " +
+        "at " + other.location + "; the token endpoint answered HTTP " +
+        otherRedeemed.status + ": " + otherRedeemed.raw);
+  const otherSet = otherRedeemed.body;
   assert.strictEqual(claimsOf(otherSet.access_token).username, "someone.else",
     "a second sign-in should produce that second identity.");
   assert.notStrictEqual(claimsOf(otherSet.access_token).sub, at.sub,
     "two different usernames must not share a subject.");
 
   // 5. The session: no second prompt, unless prompt=login asks for one.
-  const again = await authorize(meta, params, { cookie: authz.cookie });
+  const again = await authorize(meta, fresh(), { cookie: authz.cookie });
   assert.strictEqual(again.prompted, false,
     "a request on an established session should not prompt again.");
   assert.ok(again.params.get("code"),
             "the session request should still issue a code.");
   const forced = await get(meta.authorization_endpoint + "?" +
-      form(Object.assign({ prompt: "login" }, params)),
+      form(fresh({ prompt: "login" })),
     { headers: { cookie: authz.cookie } });
   assert.strictEqual(forced.status, 302,
     "prompt=login should send the person to the authentication service even " +
@@ -458,19 +601,22 @@ async function testLoginScreen(meta, verify) {
   // …and the return URL it stashed must have had `prompt` taken off it, or the
   // person comes back, is sent to sign in again, and never leaves.
   const forcedScreen = await get(meta.issuer + forced.headers.get("location"));
-  const forcedId = (await forcedScreen.text())
-    .match(/name="authn_id" value="([^"]+)"/)[1];
+  const forcedFields = screenFields(await forcedScreen.text());
+  await person("prompted.user");
   const forcedDone = await fetch(meta.issuer + "/authn/login", {
     method: "POST", redirect: "manual",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: form({ authn_id: forcedId, username: "prompted.user",
-                 password: "any-password", action: "login" })
+    body: form({ authn_id: forcedFields.authn_id, username: "prompted.user",
+                 password: PERSON_PASSWORD, action: "login",
+                 csrf_token: forcedFields.csrf_token })
   });
+  assert.ok(forcedDone.headers.get("location"),
+    "signing in at the forced prompt should redirect onwards, got HTTP " +
+        forcedDone.status + ".");
   assert.ok(!/[?&]prompt=/.test(forcedDone.headers.get("location") || ""),
     "the return URL must drop prompt, or signing in loops for ever. Got: " +
         forcedDone.headers.get("location"));
-  const silent = await authorize(meta, Object.assign({ prompt: "none" },
-      params));
+  const silent = await authorize(meta, fresh({ prompt: "none" }));
   assert.strictEqual(silent.params.get("error"), "login_required",
     "prompt=none with no session must fail rather than show UI. Got: " +
         silent.params.get("error"));
@@ -478,22 +624,22 @@ async function testLoginScreen(meta, verify) {
            "it, prompt=none refuses.");
 
   // 6. The ways the login screen says no.
-  const cancelled = await authorize(meta, params, { action: "cancel" });
+  const cancelled = await authorize(meta, fresh(), { action: "cancel" });
   assert.strictEqual(cancelled.params.get("error"), "access_denied",
     "cancelling at the login screen should be access_denied. Got: " +
         cancelled.params.get("error"));
   assert.strictEqual(cancelled.params.get("state"), "login-state",
                      "even the cancel keeps state.");
 
-  const started = await get(meta.authorization_endpoint + "?" + form(params));
+  const started = await get(meta.authorization_endpoint + "?" + form(fresh()));
   const noName = await get(meta.issuer + started.headers.get("location"));
-  const authnId =
-      (await noName.text()).match(/name="authn_id" value="([^"]+)"/)[1];
+  const noNameFields = screenFields(await noName.text());
+  const authnId = noNameFields.authn_id;
   const blank = await fetch(meta.issuer + "/authn/login", {
     method: "POST", redirect: "manual",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form({ authn_id: authnId, username: "", password: "x",
-               action: "login" })
+               action: "login", csrf_token: noNameFields.csrf_token })
   });
   assert.strictEqual(blank.status, 200,
       "an empty username should re-show the form, not redirect.");
@@ -503,7 +649,7 @@ async function testLoginScreen(meta, verify) {
     method: "POST", redirect: "manual",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: form({ authn_id: authnId, username: "carol", password: "invalid",
-               action: "login" })
+               action: "login", csrf_token: noNameFields.csrf_token })
   });
   assert.ok(/Authentication failed for carol/.test(await refused.text()),
     'the reserved password "invalid" should be refused at the sign-in ' +
@@ -516,7 +662,7 @@ async function testLoginScreen(meta, verify) {
       { headers: { cookie: authz.cookie } });
   assert.strictEqual(loggedOut.status, 200, "logout should answer.");
   const afterLogout = await get(meta.authorization_endpoint + "?" +
-      form(params),
+      form(fresh()),
     { headers: { cookie: authz.cookie } });
   assert.strictEqual(afterLogout.status, 302,
     "after signing out the next request should be sent to the " +
@@ -584,6 +730,9 @@ async function testAuthorizationCode(meta, verify) {
   const challenge = b64u(crypto.createHash("sha256").update(verifier,
       "ascii").digest());
   const nonce = "nonce-" + b64u(crypto.randomBytes(6));
+  // A second transaction gets a nonce of its own: RFC 9700 section 2.1.1, and
+  // a product-mode service refuses one already redeemed.
+  const nonce2 = "nonce-" + b64u(crypto.randomBytes(6));
 
   const authz = await authorize(meta, {
     response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
@@ -625,19 +774,22 @@ async function testAuthorizationCode(meta, verify) {
 
   // A fresh one for the token assertions below, so they read against a code
   // whose whole history is this exchange.
+  const verifier2 = b64u(crypto.randomBytes(32));
+  const challenge2 = b64u(crypto.createHash("sha256").update(verifier2,
+      "ascii").digest());
   const second = await authorize(meta, {
     response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
-    scope: "openid profile email", state: "state-2", nonce: nonce,
-    code_challenge: challenge, code_challenge_method: "S256"
+    scope: "openid profile email", state: "state-2", nonce: nonce2,
+    code_challenge: challenge2, code_challenge_method: "S256"
   });
   const code2 = second.params.get("code");
   const tokens = await postForm(meta.token_endpoint, {
     grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI, code_verifier: verifier
+    redirect_uri: REDIRECT_URI, code_verifier: verifier2
   });
   assert.strictEqual(tokens.status, 200, "the code exchange failed: " +
                      tokens.raw);
-  const set = tokens.body;
+  let set = tokens.body;
   assert.strictEqual(set.token_type, "Bearer", "token_type should be Bearer.");
   assert.ok(set.expires_in > 0, "expires_in should be positive.");
 
@@ -672,7 +824,7 @@ async function testAuthorizationCode(meta, verify) {
             "the access token should expire after it was issued.");
   assert.strictEqual(it.aud, CLIENT_ID,
                      "the ID token's audience is the client.");
-  assert.strictEqual(it.nonce, nonce,
+  assert.strictEqual(it.nonce, nonce2,
       "the ID token must echo the nonce from the authorization request.");
   assert.strictEqual(it.at_hash, halfHash(set.access_token),
     "the ID token's at_hash should be the left half of the SHA-256 of the " +
@@ -689,56 +841,103 @@ async function testAuthorizationCode(meta, verify) {
            "matching claims, and the refresh token is an encrypted, opaque " +
            "JWE that introspects as a refresh_token for the same subject.");
 
-  // Single use, NON-SPEC-ally relaxed to idempotent for the rest of the code's
-  // own lifetime: the identical Token Request gets the identical token set
-  // back — the first answer, not a second one — because a debugging service
-  // that answers a reloaded page with "Unknown or already-used authorization
-  // code" has told the user nothing about which of those two it was. The
-  // relaxation is the mock's, is documented in docs/mock-sts.md, and RFC 6749
-  // section 4.1.2 permits a real server to refuse this outright.
-  const replay = await postForm(meta.token_endpoint, {
-    grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI, code_verifier: verifier
-  });
-  assert.strictEqual(replay.status, 200,
-    "the same Token Request for a code already redeemed should be answered " +
-        "with what it was answered the first time. Got HTTP " + replay.status +
-        ": " + replay.raw);
-  assert.deepStrictEqual(replay.body, set,
-    "a replay must return the SAME token set, not a newly minted one — " +
-        "nothing is issued twice here.");
-  log.info("[code] OK — an identical replay returns the identical tokens.");
+  if (PRODUCT) {
+    // RFC 9700 section 4.5 and RFC 6749 section 10.5, which a product-mode
+    // service applies instead of the relaxation below: a code presented twice
+    // is refused, and what it bought is revoked, because two holders of one
+    // code cannot be told apart.
+    const replayed = await postForm(meta.token_endpoint, {
+      grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI, code_verifier: verifier2
+    });
+    assert.strictEqual(replayed.status, 400,
+      "a product-mode service must refuse a code presented twice. Got HTTP " +
+          replayed.status + ": " + replayed.raw);
+    assert.strictEqual(replayed.body.error, "invalid_grant",
+                       "that refusal should be invalid_grant.");
+    assert.ok(/single use/i.test(String(replayed.body.error_description)),
+      "the refusal should say a code is single use. Got: " +
+          replayed.body.error_description);
+    const revoked = await postForm(meta.introspection_endpoint,
+        { token: set.access_token });
+    assert.strictEqual(revoked.body.active, false,
+      "the access token the replayed code bought must be revoked.");
+    log.info("[code] OK — a replayed code is refused and what it bought is " +
+             "revoked (product mode).");
+    // A fresh set for the sections after this one, since this one is dead.
+    const third = await authorize(meta, {
+      response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
+      scope: "openid profile email", state: "state-3",
+      nonce: "nonce-" + b64u(crypto.randomBytes(6))
+    });
+    const renewed = await postForm(meta.token_endpoint, {
+      grant_type: "authorization_code", code: third.params.get("code"),
+      client_id: CLIENT_ID, redirect_uri: REDIRECT_URI
+    });
+    assert.strictEqual(renewed.status, 200, "the third code exchange failed: " +
+                       renewed.raw);
+    set = renewed.body;
+  } else {
+    // Single use, NON-SPEC-ally relaxed to idempotent for the rest of the code's
+    // own lifetime: the identical Token Request gets the identical token set
+    // back — the first answer, not a second one — because a debugging service
+    // that answers a reloaded page with "Unknown or already-used authorization
+    // code" has told the user nothing about which of those two it was. The
+    // relaxation is the mock's, is documented in docs/mock-sts.md, and RFC 6749
+    // section 4.1.2 permits a real server to refuse this outright.
+    const replay = await postForm(meta.token_endpoint, {
+      grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI, code_verifier: verifier2
+    });
+    assert.strictEqual(replay.status, 200,
+      "the same Token Request for a code already redeemed should be answered " +
+          "with what it was answered the first time. Got HTTP " + replay.status +
+          ": " + replay.raw);
+    assert.deepStrictEqual(replay.body, set,
+      "a replay must return the SAME token set, not a newly minted one — " +
+          "nothing is issued twice here.");
+    log.info("[code] OK — an identical replay returns the identical tokens.");
 
-  // Everything else about that code is still refused, and the refusal says
-  // which part of the request did not match. This is what stops the relaxation
-  // from being a way to redeem somebody else's code.
-  const otherClient = await postForm(meta.token_endpoint, {
-    grant_type: "authorization_code", code: code2,
-    client_id: CLIENT_ID + "-somebody-else",
-    redirect_uri: REDIRECT_URI, code_verifier: verifier
-  });
-  assert.strictEqual(otherClient.status, 400,
-    "a redeemed code presented by a DIFFERENT client must be refused. Got " +
-        "HTTP " + otherClient.status + ": " + otherClient.raw);
-  assert.strictEqual(otherClient.body.error, "invalid_grant",
-                     "that refusal should be invalid_grant.");
-  assert.ok(/client_id/.test(String(otherClient.body.error_description)),
-    "the refusal should name what differed from the request the code was " +
-        "redeemed with. Got: " + otherClient.body.error_description);
-  const otherVerifier = await postForm(meta.token_endpoint, {
-    grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
-    redirect_uri: REDIRECT_URI, code_verifier: b64u(crypto.randomBytes(32))
-  });
-  assert.strictEqual(otherVerifier.status, 400,
-    "a redeemed code presented with a different code_verifier must be " +
-        "refused. Got HTTP " + otherVerifier.status + ": " +
-        otherVerifier.raw);
-  assert.ok(/code_verifier/.test(String(otherVerifier.body.error_description)),
-    "that refusal should name the code_verifier. Got: " +
-        otherVerifier.body.error_description);
-  log.info("[code] OK — a redeemed code is replayed only for the request it " +
-           "was redeemed with; another client and another verifier are both " +
-           "refused, each told what differed.");
+    // Everything else about that code is still refused, and the refusal says
+    // which part of the request did not match. This is what stops the relaxation
+    // from being a way to redeem somebody else's code.
+    const otherClient = await postForm(meta.token_endpoint, {
+      grant_type: "authorization_code", code: code2,
+      client_id: CLIENT_ID + "-somebody-else",
+      redirect_uri: REDIRECT_URI, code_verifier: verifier2
+    });
+    if (PRODUCT) {
+      // A client this service has no registration for is refused as a client
+      // before its code is looked at.
+      assert.strictEqual(otherClient.body.error, "invalid_client",
+        "a redeemed code presented by an UNREGISTERED client must be refused " +
+            "as invalid_client in product mode. Got HTTP " + otherClient.status +
+            ": " + otherClient.raw);
+    } else {
+    assert.strictEqual(otherClient.status, 400,
+      "a redeemed code presented by a DIFFERENT client must be refused. Got " +
+          "HTTP " + otherClient.status + ": " + otherClient.raw);
+    assert.strictEqual(otherClient.body.error, "invalid_grant",
+                       "that refusal should be invalid_grant.");
+    assert.ok(/client_id/.test(String(otherClient.body.error_description)),
+      "the refusal should name what differed from the request the code was " +
+          "redeemed with. Got: " + otherClient.body.error_description);
+    }
+    const otherVerifier = await postForm(meta.token_endpoint, {
+      grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
+      redirect_uri: REDIRECT_URI, code_verifier: b64u(crypto.randomBytes(32))
+    });
+    assert.strictEqual(otherVerifier.status, 400,
+      "a redeemed code presented with a different code_verifier must be " +
+          "refused. Got HTTP " + otherVerifier.status + ": " +
+          otherVerifier.raw);
+    assert.ok(/code_verifier/.test(String(otherVerifier.body.error_description)),
+      "that refusal should name the code_verifier. Got: " +
+          otherVerifier.body.error_description);
+    log.info("[code] OK — a redeemed code is replayed only for the request it " +
+             "was redeemed with; another client and another verifier are both " +
+             "refused, each told what differed.");
+  }
 
   // And a code this server never minted is its own answer, rather than being
   // reported as one that was used: the two are indistinguishable to a client,
@@ -746,7 +945,7 @@ async function testAuthorizationCode(meta, verify) {
   const unknown = await postForm(meta.token_endpoint, {
     grant_type: "authorization_code", code: "not-a-code-" + b64u(
         crypto.randomBytes(12)),
-    client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, code_verifier: verifier
+    client_id: CLIENT_ID, redirect_uri: REDIRECT_URI, code_verifier: verifier2
   });
   assert.strictEqual(unknown.status, 400,
     "a code this server never issued must be refused. Got HTTP " +
@@ -775,21 +974,48 @@ async function testAuthorizationErrors(meta) {
   assert.strictEqual(body.error, "invalid_request",
                      "the error should be invalid_request. Got: " + body.error);
 
-  // With one, errors go back to the client.
-  const unsupported = await authorize(meta, {
+  // With one, errors go back to the client. A PRODUCT-mode service answers
+  // them on the server instead (a 400 naming the same error) wherever it
+  // cannot first establish that the redirect_uri belongs to the client and the
+  // request is one it may be answered at — RFC 9700 section 4.11.2's open
+  // redirector, closed.
+  const errorOf = async function (query) {
+    const r = await get(meta.authorization_endpoint + "?" + form(query));
+    if (r.status === 302) {
+      const at = parseRedirect(r.headers.get("location"));
+      return { where: "redirect", error: at.params.get("error"),
+               state: at.params.get("state") };
+    }
+    const text = await r.text();
+    let json = {};
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      // An HTML page: the error is read off its text below.
+    }
+    return { where: "server " + r.status, error: json.error ||
+             ((/unsupported_response_type|invalid_request/.exec(text) || [])[0]),
+             state: "s" };
+  };
+  const unsupported = await errorOf({
     response_type: "cwazy", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
         state: "s"
   });
-  assert.strictEqual(unsupported.params.get("error"),
-                     "unsupported_response_type",
-    "an unknown response_type should come back as unsupported_response_type.");
-  assert.strictEqual(unsupported.params.get("state"), "s",
+  if (!PRODUCT) {
+    assert.strictEqual(unsupported.where, "redirect",
+      "an unknown response_type should be reported to the client.");
+  }
+  assert.strictEqual(unsupported.error, "unsupported_response_type",
+    "an unknown response_type should come back as unsupported_response_type. " +
+        "Got " + unsupported.error + " (" + unsupported.where + ").");
+  assert.strictEqual(unsupported.state, "s",
                      "an error response must echo state too.");
 
-  const noClient = await authorize(meta, { response_type: "code",
+  const noClient = await errorOf({ response_type: "code",
       redirect_uri: REDIRECT_URI });
-  assert.strictEqual(noClient.params.get("error"), "invalid_request",
-                     "a missing client_id is invalid_request.");
+  assert.strictEqual(noClient.error, "invalid_request",
+    "a missing client_id is invalid_request. Got " + noClient.error + " (" +
+        noClient.where + ").");
   log.info("[authorize] OK — errors are reported where OAuth 2.0 says they " +
            "should be.");
   log.debug("Leaving testAuthorizationErrors().");
@@ -798,8 +1024,48 @@ async function testAuthorizationErrors(meta) {
 async function testImplicitAndHybrid(meta, verify) {
   log.debug("Entering testImplicitAndHybrid().");
   log.info("=== Implicit and hybrid response types ===");
-  for (const responseType of ["token", "id_token", "code id_token",
-       "code id_token token"]) {
+  if (PRODUCT) {
+    // RFC 9700 section 2.1.2: a response that puts an ACCESS token in the
+    // front channel is refused, and product mode implies RFC 9700 mode. What
+    // is asserted is the refusal and that no token rode on it. Only the two that carry an ACCESS token are refused; an ID Token in the
+    // fragment carries none, so `id_token` and `code id_token` are answered
+    // and checked below exactly as in development.
+    for (const refusedType of ["token", "code id_token token"]) {
+      const answer = await get(meta.authorization_endpoint + "?" + form({
+        response_type: refusedType, client_id: CLIENT_ID,
+        redirect_uri: REDIRECT_URI, scope: "openid",
+        nonce: "n-" + refusedType.replace(/\s/g, "-"), state: "s"
+      }));
+      let location = answer.headers.get("location") || "";
+      const text = await answer.text();
+      log.info("[authorize] " + refusedType + " answered HTTP " + answer.status +
+               " " + location.slice(0, 160));
+      if (answer.status === 302 && location.indexOf("http") !== 0) {
+        // Sent to sign in first: the refusal comes once somebody has.
+        const signed = await authorize(meta, {
+          response_type: refusedType, client_id: CLIENT_ID,
+          redirect_uri: REDIRECT_URI, scope: "openid",
+          nonce: "n2-" + refusedType.replace(/\s/g, "-"), state: "s" });
+        location = signed.location;
+      }
+      // Refused on the server (400) or reported to the client as an error;
+      // never a sign-in screen that goes on to issue, and never a token.
+      const refused = answer.status === 400 ? {
+        params: new URLSearchParams({ error: (/"error":"([^"]+)"/.exec(text) ||
+                                               [])[1] || "(a 400 page)" }),
+        location: "HTTP 400" } : parseRedirect(location);
+      assert.ok(answer.status === 400 ||
+                (answer.status === 302 && /[?&#]error=/.test(location)),
+        refusedType + ": a product-mode service must refuse a token in the " +
+            "front channel. Got HTTP " + answer.status + " " + location);
+      assert.ok(!/access_token=|id_token=/.test(location),
+        refusedType + ": the refusal must carry no token.");
+      log.info("[authorize] OK — " + refusedType + " refused with " +
+               refused.params.get("error") + " (product mode).");
+    }
+  }
+  for (const responseType of (PRODUCT ? ["id_token", "code id_token"]
+       : ["token", "id_token", "code id_token", "code id_token token"])) {
     const authz = await authorize(meta, {
       response_type: responseType, client_id: CLIENT_ID,
           redirect_uri: REDIRECT_URI,
@@ -858,23 +1124,47 @@ async function testOtherGrants(meta, verify, codeTokens) {
 
   const cc = await postForm(meta.token_endpoint,
       { grant_type: "client_credentials", scope: "api" },
-    { Authorization: "Basic " +
-     Buffer.from("service-client:secret").toString("base64") });
+    { Authorization: "Basic " + Buffer.from(SERVICE_CLIENT + ":" +
+                                            SERVICE_SECRET).toString("base64") });
   assert.strictEqual(cc.status, 200, "client_credentials failed: " + cc.raw);
   const ccClaims = verify(cc.body.access_token,
       "the client_credentials access token");
-  assert.strictEqual(ccClaims.sub, "service-client",
+  // RFC 9700 mode (which product mode implies) names a client's own token
+  // `urn:sts:client:<id>`, so a client can never be mistaken for a person of
+  // the same name.
+  assert.ok(ccClaims.sub === SERVICE_CLIENT ||
+            ccClaims.sub === "urn:sts:client:" + SERVICE_CLIENT,
     "client_credentials should describe the client itself (from " +
-        "client_secret_basic).");
+        "client_secret_basic). Got: " + ccClaims.sub);
   assert.ok(!cc.body.refresh_token,
             "client_credentials has no user, so no refresh token.");
   assert.ok(!cc.body.id_token,
             "client_credentials has no user, so no ID token.");
 
-  const ro = await postForm(meta.token_endpoint, {
+  if (PRODUCT) {
+    // RFC 9700 section 2.4: the resource owner password credentials grant
+    // MUST NOT be used, and product mode implies RFC 9700 mode.
+    await person(RO_USER);
+    const roRefused = await postForm(meta.token_endpoint, {
+      grant_type: "password", username: RO_USER, password: PERSON_PASSWORD,
+      scope: "openid", client_id: CLIENT_ID
+    });
+    assert.strictEqual(roRefused.status, 400,
+      "a product-mode service must refuse the password grant, even with the " +
+          "right password. Got HTTP " + roRefused.status + ": " +
+          roRefused.raw);
+    assert.ok(["unsupported_grant_type", "unauthorized_client"]
+              .indexOf(roRefused.body.error) >= 0,
+      "the refusal should say the grant is not allowed. Got: " +
+          roRefused.raw);
+    assert.ok(!roRefused.body.access_token, "and it must carry no token.");
+    log.info("[grants] OK — the password grant is refused (product mode).");
+  }
+  const ro = PRODUCT ? null : await postForm(meta.token_endpoint, {
     grant_type: "password", username: RO_USER, password: "s3cret",
         scope: "openid", client_id: CLIENT_ID
   });
+  if (!PRODUCT) {
   assert.strictEqual(ro.status, 200, "the password grant failed: " + ro.raw);
   const roClaims = verify(ro.body.access_token,
       "the password grant access token");
@@ -898,6 +1188,7 @@ async function testOtherGrants(meta, verify, codeTokens) {
                      "the reserved 'invalid' password must be refused.");
   assert.strictEqual(roBad.body.error, "invalid_grant",
                      "a failed password grant is invalid_grant.");
+  }
 
   const tx = await postForm(meta.token_endpoint, {
     grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -1004,7 +1295,7 @@ async function testRegistration(meta) {
   log.info("=== Dynamic client registration (RFC 7591 / 7592) ===");
   const r = await fetch(meta.registration_endpoint, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
+    body: JSON.stringify({ software_statement: STATEMENT,
       client_name: "Endpoint Test Client",
       redirect_uris: [REDIRECT_URI],
       grant_types: ["authorization_code", "refresh_token"],
@@ -1039,7 +1330,7 @@ async function testRegistration(meta) {
   const updated = await fetch(reg.registration_client_uri, {
     method: "PUT",
         headers: Object.assign({ "Content-Type": "application/json" }, authed),
-    body: JSON.stringify({ client_name: "Renamed Client",
+    body: JSON.stringify({ software_statement: STATEMENT, client_name: "Renamed Client",
                          redirect_uris: [REDIRECT_URI] })
   });
   assert.strictEqual(updated.status, 200, "updating the registration failed.");
@@ -1170,7 +1461,7 @@ async function testNativeRedirectsRegistrationAndRefreshScope(meta) {
 
   const javascript = await fetch(meta.registration_endpoint, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ redirect_uris: ["javascript:alert(1)"],
+    body: JSON.stringify({ software_statement: STATEMENT, redirect_uris: ["javascript:alert(1)"],
                            token_endpoint_auth_method: "none" })
   });
   assert.strictEqual(javascript.status, 400,
@@ -1181,7 +1472,7 @@ async function testNativeRedirectsRegistrationAndRefreshScope(meta) {
 
   const reg = await (await fetch(meta.registration_endpoint, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ client_name: "Native registration",
+    body: JSON.stringify({ software_statement: STATEMENT, client_name: "Native registration",
                            redirect_uris: [native],
                            token_endpoint_auth_method: "none" })
   })).json();
@@ -1194,7 +1485,7 @@ async function testNativeRedirectsRegistrationAndRefreshScope(meta) {
   const framed = await fetch(reg.registration_client_uri, {
     method: "PUT",
     headers: Object.assign({ "Content-Type": "application/json" }, authed),
-    body: JSON.stringify({ redirect_uris: [native],
+    body: JSON.stringify({ software_statement: STATEMENT, redirect_uris: [native],
                            frontchannel_logout_uri: "javascript:alert(1)" })
   });
   assert.strictEqual(framed.status, 400,
@@ -1227,6 +1518,9 @@ async function test() {
   const jwks = await (await get(meta.jwks_uri)).json();
   assert.ok(jwks.keys && jwks.keys.length, "jwks_uri returned no keys.");
   const verify = makeVerifier(jwks);
+  PRODUCT = await registry.isProduct(registry.baseOf(stsBase));
+  log.info("The service is in " + (PRODUCT ? "PRODUCT" : "development") +
+           " mode.");
 
   // ---------------------------------------------------------------------
   // THE CLIENT, IN THE REGISTRY, BEFORE ANY OF IT IS SENT.
@@ -1261,10 +1555,25 @@ async function test() {
                        "urn:ietf:params:oauth:grant-type:device_code",
                        "urn:ietf:params:oauth:grant-type:token-exchange"],
       oauthScope: ["openid", "profile", "email", "api"],
-      oauthTokenEndpointAuthMethod: "none",
-      oauthConfidential: "FALSE"
+      oauthTokenEndpointAuthMethod: "client_secret_post",
+      oauthClientSecret: CLIENT_SECRET,
+      oauthConfidential: "TRUE"
     },
     why: "the one client this file drives every advertised endpoint with"
+  });
+  await registry.provision(registry.baseOf(stsBase), {
+    identifier: SERVICE_CLIENT,
+    name: "OAuth2 STS endpoints (client credentials)",
+    protocols: ["oauth2"],
+    fields: {
+      oauthClientId: SERVICE_CLIENT,
+      oauthGrantType: ["client_credentials"],
+      oauthScope: ["api"],
+      oauthTokenEndpointAuthMethod: "client_secret_basic",
+      oauthClientSecret: SERVICE_SECRET,
+      oauthConfidential: "TRUE"
+    },
+    why: "the machine client the client_credentials grant authenticates as"
   });
 
   // The API the exchange above aims at, and the grant that says this client
@@ -1299,6 +1608,11 @@ async function test() {
   await testImplicitAndHybrid(meta, verify);
   await testOtherGrants(meta, verify, codeTokens);
   await testIntrospectionAndRevocation(meta, verify);
+  // Every registration and update below carries a software statement this
+  // realm signed for a publisher registered through the management API: the
+  // door a product-mode service keeps open, so nothing is turned off for it.
+  STATEMENT = await registry.softwareStatement(registry.baseOf(stsBase),
+      "sts-endpoint-test-publisher");
   await testRegistration(meta);
   await testNativeRedirectsRegistrationAndRefreshScope(meta);
   log.info("Test completed successfully.");

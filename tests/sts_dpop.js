@@ -52,6 +52,16 @@ var CREDENTIAL_ENDPOINT = stsBase + "/oid4vci/credential";
 var NONCE_ENDPOINT = stsBase + "/oid4vci/nonce";
 var NOTIFICATION_ENDPOINT = stsBase + "/oid4vci/notification";
 var CLIENT_ID = "dpop-test-client";
+// A CONFIDENTIAL CLIENT AND A REAL USER (2026-09-18). The client was public,
+// and a product-mode service lets a public client use neither the
+// client_credentials grant this file leans on nor any grant without PKCE; the
+// user was a name nobody created. Both are fresh per run: `post()` puts the
+// secret on every token and introspection request, and test() creates the
+// user with this password before anything signs in.
+var CLIENT_SECRET = "dpop-client-" + crypto.randomBytes(12).toString("hex");
+var USER = "dpop-user";
+var USER_PASSWORD = "Dpop-user-" + crypto.randomBytes(9).toString("base64url") +
+                    "-Aa1!";
 // Where the authorization endpoint is told to send the code. Nothing listens
 // there — the redirect is read, not followed — but it is named here rather
 // than inside the one function that uses it, because it is now also what this
@@ -213,7 +223,17 @@ async function post(url, opts) {
   var body;
   if (options.form) {
     headers["Content-Type"] = "application/x-www-form-urlencoded";
-    body = new URLSearchParams(options.form).toString();
+    // This client's credential on every request that authenticates it — a
+    // token request naming it, and introspection, which a product-mode
+    // service answers only for an authenticated caller.
+    var form = Object.assign({}, options.form);
+    var introspecting = url === stsBase + "/oauth2/introspect";
+    if ((form.client_id === CLIENT_ID || introspecting) &&
+        !form.client_secret && !form.client_assertion) {
+      form.client_id = CLIENT_ID;
+      form.client_secret = CLIENT_SECRET;
+    }
+    body = new URLSearchParams(form).toString();
   } else if (options.json !== undefined) {
     headers["Content-Type"] = "application/json";
     body = JSON.stringify(options.json);
@@ -679,17 +699,21 @@ async function notificationEndpointIsProtectedToo() {
 async function refreshTokenCarriesTheBinding() {
   log.debug("Entering refreshTokenCarriesTheBinding().");
   log.info("=== The refresh token is bound too (RFC 9449 section 5) ===");
-  // A grant that issues a refresh token: password, which this mock accepts for
-  // any password but "invalid".
+  // A grant that issues a refresh token: the authorization code, redeemed
+  // with a proof (2026-09-18). It was the PASSWORD grant, which RFC 9700
+  // section 2.4 removes and a product-mode service refuses outright.
   var key = newKey("ec");
   var proof = makeProof(key, { htm: "POST", htu: TOKEN_ENDPOINT });
+  var cookie = await signIn();
+  var granted = await codeWith(cookie, {}, "the refresh-token case");
   var issued = await post(TOKEN_ENDPOINT, {
-    form: { grant_type: "password", username: "dpop-user", password: "anything",
-            client_id: CLIENT_ID, scope: "openid" },
+    form: { grant_type: "authorization_code", code: granted.code,
+            code_verifier: granted.verifier, redirect_uri: REDIRECT_URI,
+            client_id: CLIENT_ID },
     headers: { DPoP: proof }
   });
   assert.strictEqual(issued.status, 200,
-                     "the password grant with a proof failed: " +
+                     "the authorization code with a proof failed: " +
                      issued.text.slice(0, 200));
   assert.ok(issued.body.refresh_token,
             "this grant should have issued a refresh token.");
@@ -760,16 +784,15 @@ async function nonceHandshakeWorks() {
   // Nonce mode is a server setting and this test drives the server over HTTP,
   // so it is turned on through the non-spec control endpoint the mock publishes
   // for exactly this purpose (and which /admin/sts-metadata lists as non-spec).
-  var on = await post(stsBase + "/dpop/nonce-mode",
-      { json: { required: true } });
-  if (on.status === 404) {
-    log.warn("[nonce] SKIPPED — this STS has no /dpop/nonce-mode control " +
-             "endpoint.");
-    log.debug("Leaving nonceHandshakeWorks().");
-    return;
-  }
-  assert.strictEqual(on.status, 200, "could not turn nonce mode on: " +
-                     on.text.slice(0, 200));
+  //
+  // THROUGH THE SETTING SINCE 2026-09-18, `oauth2.dpopNonceRequired` on
+  // /admin-api/config: the control endpoint is a development-mode door and a
+  // product-mode service refuses it. The setting is what that control
+  // changes, so the handshake below is the same one either way.
+  var on = await registry.adminPost(registry.baseOf(stsBase), "/config/set",
+      { key: "oauth2.dpopNonceRequired", value: "true" });
+  assert.ok(on && on.ok !== false, "could not turn nonce mode on: " +
+            JSON.stringify(on).slice(0, 200));
   try {
     var key = newKey("ec");
     // First attempt, no nonce: the server must ASK rather than simply refuse,
@@ -855,37 +878,48 @@ async function nonceHandshakeWorks() {
   } finally {
     // Always back off, or every later section in this process — and any other
     // test sharing this STS — starts failing for a reason it cannot see.
-    var off = await post(stsBase + "/dpop/nonce-mode",
-        { json: { required: false } });
-    assert.strictEqual(off.status, 200, "could not turn nonce mode back off.");
+    // `reset` rather than writing `false`, so the setting goes back to
+    // whatever the service had rather than to an override of this job's.
+    var off = await registry.adminPost(registry.baseOf(stsBase),
+        "/config/reset", { key: "oauth2.dpopNonceRequired" });
+    assert.ok(off && off.ok !== false, "could not turn nonce mode back off.");
     log.debug("nonce mode turned back off.");
   }
   log.debug("Leaving nonceHandshakeWorks().");
 }
 
-async function authorizationCodeCanBeBoundToTheKey() {
-  log.debug("Entering authorizationCodeCanBeBoundToTheKey().");
-  log.info("=== dpop_jkt binds the authorization code (RFC 9449 " +
-           "section 10) ===");
-  // The authorization endpoint needs a signed-in session, so this drives its
-  // login screen the way oauth2_sts_endpoints.js does: post the form, read the
-  // redirect, take the code out of it.
-  var key = newKey("ec");
-  var redirectUri = REDIRECT_URI;
-  var authorize = stsBase + "/oauth2/authorize?" + new URLSearchParams({
-    response_type: "code", client_id: CLIENT_ID, redirect_uri: redirectUri,
-    scope: "openid", state: "dpop-state", dpop_jkt: jkt(key)
-  }).toString();
+// ---------------------------------------------------------------------------
+// A SIGNED-IN SESSION, AND CODES FROM IT (2026-09-18).
+//
+// Both halves used to lean on development mode: the sign-in typed a name
+// nobody created with a password nobody set, and the authorization requests
+// carried no PKCE. A product-mode service refuses both, so the user is created
+// with a real password (test()) and every authorization request carries a
+// fresh S256 pair whose verifier goes with its code to the token endpoint.
+// ---------------------------------------------------------------------------
+function authorizeUrl(extra) {
+  log.debug("Entering authorizeUrl().");
+  var pair = registry.pkce();
+  var url = stsBase + "/oauth2/authorize?" + new URLSearchParams(
+    Object.assign({
+      response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
+      scope: "openid", state: "dpop-state",
+      code_challenge: pair.challenge, code_challenge_method: pair.method
+    }, extra || {})).toString();
+  log.debug("Leaving authorizeUrl().");
+  return { url: url, verifier: pair.verifier };
+}
 
-  // The authorization endpoint hands an unauthenticated request to the
-  // authentication service, so this drives it the way a browser would and the
-  // way oauth2_sts_endpoints.js does: GET authorize, follow the redirect to
-  // /authn/login, post the form's own authn_id back, then follow to the
-  // authorization response.
-  var sentToService = await fetch(authorize, { redirect: "manual" });
+// Drives the sign-in screen once, the way a browser would: GET authorize,
+// follow to /authn/login, post the form's own authn_id back. Answers the
+// session cookie.
+async function signIn() {
+  log.debug("Entering signIn().");
+  var sentToService = await fetch(authorizeUrl().url, { redirect: "manual" });
   assert.strictEqual(sentToService.status, 302,
     "expected a redirect to the authentication service, got " +
-        sentToService.status);
+        sentToService.status + ": " +
+        String(await sentToService.text()).slice(0, 200));
   var screenUrl = sentToService.headers.get("location");
   assert.ok(/\/authn\/login\?authn=/.test(screenUrl),
     "expected the sign-in screen, got " + screenUrl);
@@ -895,13 +929,14 @@ async function authorizationCodeCanBeBoundToTheKey() {
                      form1.status);
   var page = await form1.text();
   var authnId = (page.match(/name="authn_id" value="([^"]+)"/) || [])[1];
+  var csrf = (page.match(/name="csrf_token" value="([^"]+)"/) || [])[1] || "";
   assert.ok(authnId, "the sign-in screen carries no authn_id to post back.");
   var loggedIn = await fetch(stsBase + "/authn/login", {
     method: "POST", redirect: "manual",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ authn_id: authnId, username: "dpop-user",
-                                password: "any-password",
-                                    action: "login" }).toString()
+    body: new URLSearchParams({ authn_id: authnId, username: USER,
+                                password: USER_PASSWORD, action: "login",
+                                csrf_token: csrf }).toString()
   });
   // The sign-in form is a POST and the answer to it is a redirect. WHICH
   // redirect is the interesting part, and it is asserted the way RFC 9700
@@ -909,9 +944,7 @@ async function authorizationCodeCanBeBoundToTheKey() {
   // sends now and what the BCP asks for, 302 is what it sent before and what
   // most servers send, and **307 is the one that is forbidden** — it replays
   // the method and the body, which on this request is the username and
-  // password, onto whatever the redirect names. Pinning 302 exactly made this
-  // fail the day the mock started doing the more correct thing, and it never
-  // checked the code the specification actually cares about.
+  // password, onto whatever the redirect names.
   assert.ok(loggedIn.status === 303 || loggedIn.status === 302,
             "the sign-in form should redirect, got " + loggedIn.status);
   assert.notStrictEqual(loggedIn.status, 307,
@@ -919,37 +952,47 @@ async function authorizationCodeCanBeBoundToTheKey() {
     "with 307.");
   var cookie = String(loggedIn.headers.get("set-cookie") || "").split(";")[0];
   assert.ok(cookie, "signing in should establish a session.");
+  log.debug("Leaving signIn().");
+  return cookie;
+}
 
-  // Every code below comes from re-GETting the same authorization URL with that
-  // session, which is what a browser would do on a second visit.
-  var codeFor = async function (what) {
-    log.debug("Entering codeFor().");
-    var r = await fetch(authorize, { headers: { Cookie: cookie },
-        redirect: "manual" });
-    var location = r.headers.get("location") || "";
-    // AND THE CONSENT SCREEN, which since 2026-09-01 stands between a
-    // signed-in person and an authorization response the first time a given
-    // username, client_id and scope meet. It is passed rather than asserted —
-    // the SECOND call here draws no screen at all, because the answer to the
-    // first one is on the person entry — which is exactly why it is a helper
-    // and not four lines inlined: a copy that assumed the screen would be
-    // there would fail on every call but the first.
-    var settled = await consentScreen.settleAuthorization({
-      base: stsBase, location: location, cookie: cookie
-    });
-    location = settled.location || location;
-    assert.ok(/[?&]code=/.test(location),
-      "no code for " + what + ". status=" + r.status + " location=" +
-          location.slice(0, 200));
-    log.debug("Leaving codeFor().");
-    return new URL(location).searchParams.get("code");
-  };
+// A code for a fresh authorization request, on a session that already signed
+// in — what a browser does on a second visit. The consent screen stands
+// between a signed-in person and the response the first time a username,
+// client_id and scope meet, and is passed rather than asserted.
+async function codeWith(cookie, extra, what) {
+  log.debug("Entering codeWith().");
+  var asked = authorizeUrl(extra);
+  var r = await fetch(asked.url, { headers: { Cookie: cookie },
+      redirect: "manual" });
+  var location = r.headers.get("location") || "";
+  var settled = await consentScreen.settleAuthorization({
+    base: stsBase, location: location, cookie: cookie
+  });
+  location = settled.location || location;
+  assert.ok(/[?&]code=/.test(location),
+    "no code for " + what + ". status=" + r.status + " location=" +
+        location.slice(0, 200));
+  log.debug("Leaving codeWith().");
+  return { code: new URL(location).searchParams.get("code"),
+           verifier: asked.verifier };
+}
 
-  // Redeeming it without a proof must fail, even though PKCE was not used: the
-  // code is bound to the key now.
+async function authorizationCodeCanBeBoundToTheKey() {
+  log.debug("Entering authorizationCodeCanBeBoundToTheKey().");
+  log.info("=== dpop_jkt binds the authorization code (RFC 9449 " +
+           "section 10) ===");
+  var key = newKey("ec");
+  var redirectUri = REDIRECT_URI;
+  var cookie = await signIn();
+  var bind = { dpop_jkt: jkt(key) };
+
+  // Redeeming it without a proof must fail, even with the right PKCE
+  // verifier: the code is bound to the key now.
+  var c1 = await codeWith(cookie, bind, "the no-proof case");
   var noProof = await post(TOKEN_ENDPOINT, {
-    form: { grant_type: "authorization_code",
-           code: await codeFor("the no-proof case"),
+    form: { grant_type: "authorization_code", code: c1.code,
+            code_verifier: c1.verifier,
             redirect_uri: redirectUri, client_id: CLIENT_ID }
   });
   assert.strictEqual(noProof.status, 400,
@@ -963,9 +1006,10 @@ async function authorizationCodeCanBeBoundToTheKey() {
     JSON.stringify(noProof.body.error));
   log.info("[dpop_jkt] OK — a bound code is refused without a proof.");
 
+  var c2 = await codeWith(cookie, bind, "the wrong-key case");
   var wrong = await post(TOKEN_ENDPOINT, {
-    form: { grant_type: "authorization_code",
-           code: await codeFor("the wrong-key case"),
+    form: { grant_type: "authorization_code", code: c2.code,
+            code_verifier: c2.verifier,
             redirect_uri: redirectUri, client_id: CLIENT_ID },
     headers: { DPoP: makeProof(newKey("ec"), { htm: "POST",
               htu: TOKEN_ENDPOINT }) }
@@ -975,9 +1019,10 @@ async function authorizationCodeCanBeBoundToTheKey() {
         wrong.status);
   log.info("[dpop_jkt] OK — the wrong key is refused.");
 
+  var c3 = await codeWith(cookie, bind, "the right-key case");
   var right = await post(TOKEN_ENDPOINT, {
-    form: { grant_type: "authorization_code",
-           code: await codeFor("the right-key case"),
+    form: { grant_type: "authorization_code", code: c3.code,
+            code_verifier: c3.verifier,
             redirect_uri: redirectUri, client_id: CLIENT_ID },
     headers: { DPoP: makeProof(key, { htm: "POST", htu: TOKEN_ENDPOINT }) }
   });
@@ -988,17 +1033,10 @@ async function authorizationCodeCanBeBoundToTheKey() {
 
   // The control: WITHOUT dpop_jkt the same flow still works with no proof at
   // all, so none of the above is the authorization endpoint simply breaking.
-  var unbound = stsBase + "/oauth2/authorize?" + new URLSearchParams({
-    response_type: "code", client_id: CLIENT_ID, redirect_uri: redirectUri,
-    scope: "openid", state: "dpop-state"
-  }).toString();
-  var plainRedirect = await fetch(unbound, { headers: { Cookie: cookie },
-      redirect: "manual" });
-  var plainCode =
-      new URL(plainRedirect.headers.get("location")).searchParams.get("code");
+  var c4 = await codeWith(cookie, {}, "the unbound control");
   var plain = await post(TOKEN_ENDPOINT, {
-    form: { grant_type: "authorization_code", code: plainCode,
-           redirect_uri: redirectUri,
+    form: { grant_type: "authorization_code", code: c4.code,
+            code_verifier: c4.verifier, redirect_uri: redirectUri,
             client_id: CLIENT_ID }
   });
   assert.strictEqual(plain.status, 200,
@@ -1049,13 +1087,15 @@ async function test() {
       oauthRedirectUri: [REDIRECT_URI],
       oauthResponseType: ["code"],
       oauthGrantType: ["authorization_code", "refresh_token",
-                       "client_credentials", "password"],
+                       "client_credentials"],
       oauthScope: ["openid"],
-      oauthTokenEndpointAuthMethod: "none",
-      oauthConfidential: "FALSE"
+      oauthTokenEndpointAuthMethod: "client_secret_post",
+      oauthClientSecret: CLIENT_SECRET
     },
     why: "the client every proof in this file is made for"
   });
+
+  await registry.ensurePerson(registry.baseOf(stsBase), USER, USER_PASSWORD);
 
   await serverAdvertisesDpop();
   await bearerStillWorks();

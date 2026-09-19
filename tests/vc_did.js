@@ -272,7 +272,8 @@ async function theDidResolvesAndTheOriginProvesIt(meta) {
 async function sdJwtVcNamesTheDidAndVerifies(meta) {
   log.debug("Entering sdJwtVcNamesTheDidAndVerifies().");
   log.info("=== dc+sd-jwt issued by a DID-named issuer ===");
-  const held = await common.mintJwtVcJson(issuerBase, "IdentityCredentialDid");
+  const held = await common.mintJwtVcJson(issuerBase, "IdentityCredentialDid",
+                                          ACCESS_TOKEN);
   const issuerJwt = String(held.credential).split("~")[0];
   const payload = common.jsonFromB64u(issuerJwt.split(".")[1]);
 
@@ -314,7 +315,8 @@ async function sdJwtVcNamesTheDidAndVerifies(meta) {
 
   // The non-regression: the plain configuration must still be resolvable the
   // way the specification says, by inserting the well-known path into its iss.
-  const plain = await common.mintJwtVcJson(issuerBase, "IdentityCredential");
+  const plain = await common.mintJwtVcJson(issuerBase, "IdentityCredential",
+                                           ACCESS_TOKEN);
   const plainPayload =
       common.jsonFromB64u(String(plain.credential).split("~")[0].split(".")[1]);
   assert.strictEqual(plainPayload.iss, meta.credential_issuer,
@@ -351,7 +353,7 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
   log.debug("Entering ldpVcNamesTheDidAndVerifies().");
   log.info("=== ldp_vc issued by a DID-named issuer ===");
   const held = await common.mintJwtVcJson(issuerBase,
-      "IdentityCredentialLdpVcDid");
+      "IdentityCredentialLdpVcDid", ACCESS_TOKEN);
   const credential = held.credential;
   assert.strictEqual(typeof credential, "object",
                      "an ldp_vc credential is a JSON object.");
@@ -400,7 +402,7 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
   // Non-regression: the plain ldp_vc configuration keeps the dereferenceable
   // https verificationMethod that tests/ldp_vc_issuance.js fetches directly.
   const plain = await common.mintJwtVcJson(issuerBase,
-      "IdentityCredentialLdpVc");
+      "IdentityCredentialLdpVc", ACCESS_TOKEN);
   assert.strictEqual(plain.credential.issuer, meta.credential_issuer,
     "the plain ldp_vc configuration must still name the https issuer.");
   assert.ok(!did.isDid(plain.credential.proof.verificationMethod),
@@ -427,9 +429,15 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
   log.debug("Leaving ldpVcNamesTheDidAndVerifies().");
 }
 
+// AN ACCESS TOKEN THIS REALM ISSUED (2026-09-18): every credential below was
+// requested with a made-up bearer string, which a product-mode issuer refuses.
+// The holder signs in once and each request presents that token.
+let ACCESS_TOKEN = "";
+
 async function test() {
   log.debug("Entering test().");
   log.info("Running the DID-named issuer checks against " + issuerBase);
+  ACCESS_TOKEN = await common.holderAccessToken(issuerBase, "vc-did-holder");
   const meta = await metadataAdvertisesTheDid();
   await theDidResolvesAndTheOriginProvesIt(meta);
   await sdJwtVcNamesTheDidAndVerifies(meta);

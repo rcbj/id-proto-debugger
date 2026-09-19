@@ -58,6 +58,16 @@ set -x
 #                (refresh tests/captures/windows-server-2025.json) or "both".
 #                NOT free tier, and it is the only thing here that creates
 #                billable infrastructure — see infra/terraform-krb5/README.md.
+#   --sts-url=<base>
+#                Run the suite against a DEPLOYED iya-sts at <base> (for example
+#                https://test-idp.iyasec.io) instead of the local mock: the
+#                `sts` service is not started (local-tests-external-sts.yml),
+#                every URL the jobs are handed is rebased onto <base>, and the
+#                hosts the api's relays dial (Kerberos, LDAP, SPIFFE) are its
+#                host name. Set ADMIN_API_CLIENT_SECRET to that deployment's
+#                `sts-management-api` secret — the token is minted with it — and
+#                optionally SPIFFE_TRUST_DOMAIN (default: <base>'s host minus its
+#                first label). The deployment must admit this host's address.
 #   -h|--help    Show usage.
 #
 # Environment:
@@ -277,6 +287,15 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                billable infrastructure. Teardown is on an EXIT trap, so it runs
                even when the test fails; KRB5_KEEP=1 keeps the box for
                debugging and tells you how to remove it.
+
+  --sts-url=<base>
+               Run against a DEPLOYED iya-sts (e.g. https://test-idp.iyasec.io)
+               instead of starting the local mock: every job's STS address is
+               rebased onto <base>, and Kerberos, LDAP and SPIFFE dial its
+               host. Needs ADMIN_API_CLIENT_SECRET set to that deployment's
+               sts-management-api secret; SPIFFE_TRUST_DOMAIN defaults to the
+               host minus its first label. It allows this stack's browser
+               origin by CORS on the deployment and creates its rfc9700 realm.
 USAGE
 }
 
@@ -293,6 +312,7 @@ while [ $# -gt 0 ]; do
     --federation-only) FEDERATION_ONLY=1 ;;
     --federation-only=*) FEDERATION_ONLY=1
                          FEDERATION_ONLY_DEPTH="${1#*=}" ;;
+    --sts-url=*) STS_EXTERNAL_URL="${1#*=}"; STS_EXTERNAL_URL="${STS_EXTERNAL_URL%/}" ;;
     --krb5-real-dc) KRB5_REAL_DC=1 ;;
     --krb5-real-dc=*) KRB5_REAL_DC=1; KRB5_REAL_DC_WHAT="${1#*=}" ;;
     -h|--help)  usage; exit 0 ;;
@@ -588,6 +608,75 @@ init()
   NODEJS_BASE_DIR=tests
 }
 
+# ---------------------------------------------------------------------------
+# --sts-url=<base>: every address the jobs are handed, rebased from the local
+# mock onto a deployed one (2026-09-19). The URLs init() built all begin
+# https://localhost:8081; the rest are the addresses run-report.js otherwise
+# DEFAULTS to `https://localhost:8081` or to the host name `sts`, which on this
+# stack is 127.0.0.1 in the api container — so without them a job would dial a
+# port nothing listens on here. Called at the end of init().
+# ---------------------------------------------------------------------------
+useExternalSts()
+{
+  echo "Entering useExternalSts(). base=${STS_EXTERNAL_URL}"
+  local host="${STS_EXTERNAL_URL#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  local v
+  for v in WSTRUST_STS_URL WSFED_STS_METADATA_URL SAML_STS_METADATA_URL \
+           SAML11_METADATA_URL STS_TLS_URL;
+  do
+    eval "${v}=\"\${${v}/https:\/\/localhost:8081/${STS_EXTERNAL_URL//\//\\/}}\""
+    export "${v}"
+  done
+  STS_URL="${STS_EXTERNAL_URL}"
+  API_STS_URL="${STS_EXTERNAL_URL}"
+  SSF_TRANSMITTER_URL="${STS_EXTERNAL_URL}"
+  SCIM_BASE_URL="${STS_EXTERNAL_URL}/scim/v2"
+  KRB5_KDC_HOST="${host}"
+  KRB5_SPNEGO_URL="${STS_EXTERNAL_URL}/spnego/protected"
+  LDAP_URL="ldap://${host}:389"
+  SPIFFE_WORKLOAD_ADDRESS="${host}:8092"
+  SPIFFE_SERVER_ADDRESS="${host}:8181"
+  SPIFFE_TRUST_DOMAIN="${SPIFFE_TRUST_DOMAIN:-${host#*.}}"
+  export STS_URL API_STS_URL SSF_TRANSMITTER_URL SCIM_BASE_URL KRB5_KDC_HOST \
+         KRB5_SPNEGO_URL LDAP_URL SPIFFE_WORKLOAD_ADDRESS \
+         SPIFFE_SERVER_ADDRESS SPIFFE_TRUST_DOMAIN
+  echo "  WSTRUST_STS_URL=${WSTRUST_STS_URL}"
+  echo "  SAML_STS_METADATA_URL=${SAML_STS_METADATA_URL}"
+  echo "  KRB5_KDC_HOST=${KRB5_KDC_HOST} LDAP_URL=${LDAP_URL}"
+  echo "  SPIFFE ${SPIFFE_WORKLOAD_ADDRESS} ${SPIFFE_SERVER_ADDRESS}" \
+       "trust domain ${SPIFFE_TRUST_DOMAIN}"
+  echo "Leaving useExternalSts()."
+}
+
+# The deployment's side of --sts-url, once it answers: an admin token, this
+# stack's browser origin allowed by CORS (the debugger's client calls the
+# service from https://localhost:3000), and the RFC 9700 realm. Everything the
+# local path does in startDocker() for the mock it started, against <base>.
+prepareExternalSts()
+{
+  echo "Entering prepareExternalSts()."
+  requireStsReachable https "${STS_EXTERNAL_URL}/healthcheck" sts
+  check_return_code $?
+  mintAdminApiToken "${STS_EXTERNAL_URL}"
+  if ! curl -sS --fail -o /dev/null -X POST \
+       -H "Authorization: Bearer ${STS_ADMIN_API_TOKEN}" \
+       -H "Content-Type: application/json" \
+       -d '{"key":"global.corsOrigins","value":"'"${DEBUGGER_BASE_URL}"'"}' \
+       "${STS_EXTERNAL_URL}/admin-api/config/set";
+  then
+    echo "WARNING: could not allow ${DEBUGGER_BASE_URL} by CORS on" \
+         "${STS_EXTERNAL_URL}; the browser jobs will fail on it." >&2
+  fi
+  if configureStsRfc9700Realm "${STS_EXTERNAL_URL}";
+  then
+    RFC9700_STS_URL="${STS_EXTERNAL_URL}/realm/rfc9700"
+    export RFC9700_STS_URL
+  fi
+  echo "Leaving prepareExternalSts()."
+}
+
 prepTestEnv()
 {
   npm install --prefix tests
@@ -634,6 +723,29 @@ startDocker()
   if [ -f "docker-compose-run-tests.yml" ];
   then
     CONFIG_FILE=./env/docker-tests.js docker_compose -f docker-compose-run-tests.yml down --remove-orphans 2>/dev/null || true
+  fi
+
+  # --sts-url: the mock is a DEPLOYED one, so every service here but `sts` is
+  # built and started — the override removes the api's dependency on it — and
+  # the deployment is prepared instead of the container.
+  if [ -n "${STS_EXTERNAL_URL:-}" ];
+  then
+    local services
+    services="$(CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml \
+                  config --services 2>/dev/null | grep -xE '[a-z0-9_-]+' |
+                grep -vx sts | tr '\n' ' ')"
+    echo "Starting everything but the mock STS: ${services}"
+    CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml \
+      -f local-tests-external-sts.yml build ${services}
+    check_return_code $?
+    CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml \
+      -f local-tests-external-sts.yml up -d ${services}
+    check_return_code $?
+    CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml \
+      keycloak-wsfed
+    check_return_code $?
+    prepareExternalSts
+    return 0
   fi
 
   # Start Docker containers
@@ -1560,6 +1672,10 @@ WARNING
 
 init
 check_return_code $?
+if [ -n "${STS_EXTERNAL_URL:-}" ];
+then
+  useExternalSts
+fi
 # The banner (on a pass) and this script's exit status, as the last lines of
 # every exit from here on — see launcherExitStatus() in common/common.sh,
 # which init just sourced. The modes below that run tests set SUITE_PASSED on

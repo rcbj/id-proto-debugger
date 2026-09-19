@@ -34,6 +34,7 @@
 
 const assert = require("assert");
 const crypto = require("crypto");
+const registry = require("./sts_applications.js");
 const paths = require("./module_paths");
 // The DEBUGGER's post-quantum engine, used to SIGN what the mock then verifies
 // with its own — see signerFor(). Loaded through module_paths so its requires
@@ -237,18 +238,6 @@ async function metadata() {
   return doc;
 }
 
-async function registerClient(body, base) {
-  log.debug("Entering registerClient().");
-  var response = await stsFetch((base || stsBase) + "/oauth2/register", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(Object.assign(
-      { redirect_uris: ["http://localhost:9999/callback"] }, body))
-  });
-  assert.strictEqual(response.status, 201, "registration should be accepted.");
-  log.debug("Leaving registerClient().");
-  return response.json();
-}
-
 // ---------------------------------------------------------------------------
 // CLIENT ASSERTIONS — RFC 7523, both `private_key_jwt` and `client_secret_jwt`.
 //
@@ -435,13 +424,40 @@ async function everyAdvertisedProofAlgorithmWorks() {
     .proof_signing_alg_values_supported) || [];
   assert.ok(algs.length, "no proof signing algorithms are advertised.");
 
-  var client = await registerClient({});
+  // A PERSON'S ACCESS TOKEN, THE WAY A WALLET GETS ONE (2026-09-18): a
+  // provisioned confidential client, a person with a real password, and the
+  // authorization code with PKCE. It was an open RFC 7591 registration and
+  // the password grant as "alice" — three things a product-mode service
+  // refuses — and none of them is what this section is about.
+  var base = registry.baseOf(stsBase);
+  var client = { client_id: "jws-proof-client",
+                 client_secret: "jws-proof-" +
+                   crypto.randomBytes(12).toString("hex") };
+  var redirect = "http://localhost:9999/callback";
+  var person = "jws-proof-person";
+  var password = "Jws-proof-" + crypto.randomBytes(9).toString("base64url") +
+                 "-Aa1!";
+  await registry.provision(base, {
+    identifier: client.client_id, name: "JWS proof client",
+    protocols: ["oauth2", "oidc", "oid4vci"],
+    fields: { oauthClientId: client.client_id, oauthRedirectUri: [redirect],
+              oauthTokenEndpointAuthMethod: "client_secret_post",
+              oauthClientSecret: client.client_secret },
+    why: "the client this section's proofs are made for"
+  });
+  await registry.ensurePerson(base, person, password);
+  var granted = await registry.authorizationCode(base, {
+    clientId: client.client_id, redirectUri: redirect, username: person,
+    password: password, scope: "openid" });
   var tokenResponse = await (await stsFetch(stsBase + "/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "password", username: "alice",
-      password: "any", scope: "openid", client_id: client.client_id,
+    body: new URLSearchParams({ grant_type: "authorization_code",
+      code: granted.code, code_verifier: granted.verifier,
+      redirect_uri: redirect, client_id: client.client_id,
       client_secret: client.client_secret }).toString() })).json();
+  assert.ok(tokenResponse.access_token, "the token request for the proof " +
+    "section failed: " + JSON.stringify(tokenResponse).slice(0, 300));
 
   var driven = 0;
   var undriveable = [];

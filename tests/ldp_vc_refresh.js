@@ -41,6 +41,15 @@ const assert = require("assert");
 const path = require("path");
 const { Command, Option } = require("commander");
 const common = require("./jwt_vc_json_common.js");
+const registry = require("./sts_applications.js");
+// THE HOLDER SIGNS IN (2026-09-18). The token set this job refreshes came from
+// the password grant, which RFC 9700 section 2.4 removes and a product-mode
+// service refuses. It comes from the authorization code flow now, for a holder
+// created beforehand with a real password, in every mode.
+const HOLDER = "ldp-refresh-holder";
+const HOLDER_PASSWORD = "Ldp-refresh-" +
+  require("crypto").randomBytes(9).toString("base64url") + "-Aa1!";
+const REDIRECT_URI = "https://wallet.ldp-refresh.example.test/cb";
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -187,23 +196,31 @@ async function test() {
     "this issuer offers no ldp_vc configuration \"" + LDP_CONFIG_ID + "\".");
 
   // The wallet, declared before the token endpoint is called. This job uses the
-  // PASSWORD grant to get the token set it then refreshes, so both grants are
-  // declared: a registration naming only the pre-authorized code would describe
-  // a client that cannot reach the first line of this test.
+  // AUTHORIZATION CODE grant to get the token set it then refreshes, so that
+  // grant, its redirect URI and the refresh are declared: a registration naming
+  // only the pre-authorized code would describe a client that cannot reach the
+  // first line of this test.
   await common.provisionWallet(issuerBase, { clientId: CLIENT_ID,
     grantTypes: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
-                 "password", "refresh_token"],
+                 "authorization_code", "refresh_token"],
+    redirectUris: [REDIRECT_URI],
     scopes: ["openid"],
     why: "the wallet whose refresh token this job spends twice" });
 
   // --- the credential the wallet already holds ------------------------------
   log.info("=== The credential in hand ===");
+  const stsBase = registry.stsBaseFor(issuerBase);
+  await registry.ensurePerson(stsBase, HOLDER, HOLDER_PASSWORD);
+  const granted = await registry.authorizationCode(stsBase, {
+    clientId: CLIENT_ID, redirectUri: REDIRECT_URI, username: HOLDER,
+    password: HOLDER_PASSWORD, scope: "openid" });
   const initial = await common.httpJson(issuerBase + "/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
-      grant_type: "password", username: "ldp-refresh-holder", password: "x",
-      client_id: CLIENT_ID, scope: "openid"
+      grant_type: "authorization_code", code: granted.code,
+      redirect_uri: REDIRECT_URI, code_verifier: granted.verifier,
+      client_id: CLIENT_ID
     }).toString()
   });
   assert.strictEqual(initial.status, 200,

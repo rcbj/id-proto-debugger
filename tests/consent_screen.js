@@ -87,7 +87,27 @@ function absolute(base, location) {
   if (/^https?:\/\//i.test(target)) {
     return target;
   }
+  // A Location already carrying the base's own path — what a trust realm's
+  // pages answer, `/realm/<id>/oauth2/consent?...` — is resolved against the
+  // base's ORIGIN; prefixing it with a realm base would name the realm twice.
+  // Anything else is still taken as relative to the base, as it always was.
+  let prefix = "";
+  try {
+    prefix = new URL(String(base)).pathname.replace(/\/+$/, "");
+  } catch (e) {
+    log.debug("Caught in absolute(): " + ((e && e.message) || e));
+  }
+  if (prefix && target.startsWith(prefix + "/")) {
+    return new URL(target, String(base)).toString();
+  }
   return String(base || "").replace(/\/+$/, "") + target;
+}
+
+// Where the Allow on a consent screen is posted: the screen's own path, so a
+// screen drawn inside a trust realm is answered inside it.
+function consentAction(base, location) {
+  const shown = new URL(absolute(base, location));
+  return shown.origin + shown.pathname;
 }
 
 // Is this URL still on the service we are driving? Only same-origin hops are
@@ -169,7 +189,7 @@ async function settleAuthorization(opts) {
         return { location: location, cookie: cookie, screens: screens,
                  page: page, status: shown.status, blocked: true };
       }
-      const answered = await fetch(absolute(base, "/oauth2/consent"), {
+      const answered = await fetch(consentAction(base, location), {
         method: "POST", redirect: "manual",
         headers: Object.assign({ "Content-Type": "application/x-www-form-urlencoded" },
                                headers),

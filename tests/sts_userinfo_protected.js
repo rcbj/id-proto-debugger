@@ -46,6 +46,7 @@
 const assert = require("assert");
 const nodeCrypto = require("crypto");
 const paths = require("./module_paths");
+const registry = require("./sts_applications.js");
 const { Command, Option } = require("commander");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -265,12 +266,16 @@ async function stsFetch(url, options) {
     "but not for this long, which usually means it is not running.");
 }
 
+// The software statement every registration here carries (set in test()).
+var STATEMENT = "";
+
 async function registerClient(metadata) {
   log.debug("Entering registerClient().");
   var response = await stsFetch(stsBase + "/oauth2/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(Object.assign({ redirect_uris: [REDIRECT_URI] },
+    body: JSON.stringify(Object.assign({ redirect_uris: [REDIRECT_URI],
+                                         software_statement: STATEMENT },
                                        metadata))
   });
   var body = await response.text();
@@ -281,15 +286,35 @@ async function registerClient(metadata) {
   return JSON.parse(body);
 }
 
+// A PERSON WITH A REAL PASSWORD, AND THEIR TOKEN FROM THE AUTHORIZATION CODE
+// (2026-09-18). The token came from the password grant as "alice" with the
+// password "any" — a grant RFC 9700 section 2.4 removes and a person a
+// product-mode service never invented. One session is signed in once and used
+// again for every client this job registers.
+var PERSON = "userinfo-person";
+var PERSON_PASSWORD = "Userinfo-" +
+  nodeCrypto.randomBytes(9).toString("base64url") + "-Aa1!";
+var session = null;
+
 async function accessTokenFor(client) {
   log.debug("Entering accessTokenFor().");
+  var granted = await registry.authorizationCode(registry.baseOf(stsBase), {
+    clientId: client.client_id, redirectUri: REDIRECT_URI,
+    username: PERSON, password: PERSON_PASSWORD,
+    scope: "openid profile email", cookie: session });
+  session = granted.cookie;
+  // HTTP Basic, which is what RFC 7591 section 2 makes a registration that
+  // names no token_endpoint_auth_method, and a product-mode service holds a
+  // client to the method it registered.
   var response = await stsFetch(stsBase + "/oauth2/token", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded",
+               Authorization: "Basic " + Buffer.from(
+                 encodeURIComponent(client.client_id) + ":" +
+                 encodeURIComponent(client.client_secret)).toString("base64") },
     body: new URLSearchParams({
-      grant_type: "password", username: "alice", password: "any",
-      scope: "openid profile email",
-      client_id: client.client_id, client_secret: client.client_secret
+      grant_type: "authorization_code", code: granted.code,
+      code_verifier: granted.verifier, redirect_uri: REDIRECT_URI
     }).toString()
   });
   var body = await response.text();
@@ -788,6 +813,22 @@ async function test() {
     return;
   }
   log.info("Starting Test run against " + stsBase + ".");
+  // RFC 7591 REGISTRATION IS THIS JOB'S SUBJECT (2026-09-18), and a
+  // product-mode service keeps that endpoint closed to anybody without a
+  // trusted software statement. Every registration below carries one this
+  // realm signed for a publisher registered through the management API — the
+  // door that is open in every mode, so nothing is turned off for this job.
+  var base = registry.baseOf(stsBase);
+  await registry.ensurePerson(base, PERSON, PERSON_PASSWORD);
+  STATEMENT = await registry.softwareStatement(base,
+      "userinfo-protected-publisher");
+  await sections();
+  log.info("Test completed successfully.");
+  log.debug("Leaving test().");
+}
+
+async function sections() {
+  log.debug("Entering sections().");
   await metadataAdvertisesWhatItDoes();
   await unregisteredClientGetsPlainJson();
   await everyAdvertisedSigningAlgorithmWorks();
@@ -797,8 +838,7 @@ async function test() {
   await encRegistrationDefaultsToA128CbcHs256();
   await nestedResponseIsSignedThenEncrypted();
   await unsupportedRegistrationsAreRefusedNotDowngraded();
-  log.info("Test completed successfully.");
-  log.debug("Leaving test().");
+  log.debug("Leaving sections().");
 }
 
 const program = new Command();

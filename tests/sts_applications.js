@@ -1038,7 +1038,206 @@ async function provisionAll(base, specs) {
   return entries;
 }
 
+// ---------------------------------------------------------------------------
+// WHAT A PRODUCT-MODE SERVICE NEEDS FROM A JOB, AND HOW A JOB TELLS WHICH MODE
+// IT IS TALKING TO (2026-09-18).
+//
+// The mock's suite now also runs against DEPLOYED services
+// (iya-sts deploy/aws/run-suite.sh; testidp.iyasec.io is product mode). A
+// product-mode service invents nobody, checks every password, holds every
+// authorization request to PKCE and refuses the development test controls —
+// so a job that relied on any of those stops at its first request with an
+// answer about the fixture. These are the pieces such a job needs, in one
+// place rather than copied into each.
+// ---------------------------------------------------------------------------
+
+// An RFC 7636 pair: `challenge` and `method` on the authorization request,
+// `verifier` on the token request. S256, the only method RFC 9700 allows.
+function pkce() {
+  log.debug("Entering pkce().");
+  var crypto = require("crypto");
+  var verifier = crypto.randomBytes(32).toString("base64url");
+  var challenge = crypto.createHash("sha256").update(verifier)
+    .digest("base64url");
+  log.debug("Leaving pkce().");
+  return { verifier: verifier, challenge: challenge, method: "S256" };
+}
+
+// A person with a real password, created through `/admin-api/users/create`
+// with the attributes a real account carries. A name already there is given
+// the password instead, so a second run against a kept service still signs in.
+async function ensurePerson(base, username, password) {
+  log.debug("Entering ensurePerson(). " + username);
+  var created = await adminPost(base, "/users/create", {
+    username: username, invent: false, credential: "password",
+    password: password,
+    attributes: { cn: "Test " + username, givenName: "Test",
+                  sn: String(username), displayName: "Test " + username,
+                  mail: String(username) + "@suite.example.test" }
+  });
+  if (!(created && created.ok)) {
+    var set = await adminPost(base, "/users/set-password",
+                              { user: username, password: password });
+    assert.ok(set && set.ok, "could not create " + username + " or set its " +
+      "password: " + JSON.stringify(created).slice(0, 200) + " / " +
+      JSON.stringify(set).slice(0, 200));
+  }
+  log.debug("Leaving ensurePerson().");
+}
+
+// One effective setting of the service at `base` (a base URL, realm prefix
+// included), read from `GET /admin-api/config`.
+async function setting(base, key) {
+  log.debug("Entering setting(). " + key);
+  var config = await adminGet(base, "/config");
+  var found;
+  (config.groups || []).forEach(function (group) {
+    (group.settings || []).forEach(function (row) {
+      if (row.key === key) {
+        found = row.value;
+      }
+    });
+  });
+  log.debug("Leaving setting().");
+  return found;
+}
+
+// Whether the service at `base` is in PRODUCT mode.
+async function isProduct(base) {
+  log.debug("Entering isProduct().");
+  var mode = await setting(base, "global.mode");
+  log.debug("Leaving isProduct(). " + mode);
+  return String(mode) === "product";
+}
+
+// A CODE, THE WAY A BROWSER GETS ONE: the authorization request (with a fresh
+// PKCE pair), the sign-in screen, the person's own password, the consent
+// screen passed, and the code read off the redirect. For a job that needs a
+// person's token and used the password grant for it — which RFC 9700 section
+// 2.4 removes and a product-mode service refuses. `opts`: { clientId,
+// redirectUri, username, password, scope, extra, cookie }. Answers { code,
+// verifier, cookie }. Given the `cookie` a previous call answered, the
+// session is used again and nobody signs in — what a browser does on a second
+// visit, and much cheaper for a job that needs a token per client.
+async function authorizationCode(base, opts) {
+  log.debug("Entering authorizationCode(). " + opts.clientId);
+  var consentScreen = require("./consent_screen.js");
+  var pair = pkce();
+  var url = base + "/oauth2/authorize?" + new URLSearchParams(Object.assign({
+    response_type: "code", client_id: opts.clientId,
+    redirect_uri: opts.redirectUri, scope: opts.scope || "openid",
+    state: "s-" + Date.now(), code_challenge: pair.challenge,
+    code_challenge_method: pair.method
+  }, opts.extra || {})).toString();
+  var absolute = function (location) {
+    return new URL(location, base).toString();
+  };
+  if (opts.cookie) {
+    var again = await fetch(url, { headers: { Cookie: opts.cookie },
+                                   redirect: "manual" });
+    var settledAgain = await consentScreen.settleAuthorization({
+      base: base, location: again.headers.get("location") || "",
+      cookie: opts.cookie });
+    var landed = settledAgain.location || again.headers.get("location") || "";
+    var reused = (landed.match(/[?&]code=([^&]+)/) || [])[1];
+    assert.ok(reused, "no code for " + opts.clientId + " on the session " +
+      "already held; the flow ended at " + String(landed).slice(0, 200));
+    log.debug("Leaving authorizationCode(). Session reused.");
+    return { code: decodeURIComponent(reused), verifier: pair.verifier,
+             cookie: opts.cookie };
+  }
+  var first = await fetch(url, { redirect: "manual" });
+  var screenAt = first.headers.get("location") || "";
+  assert.ok(/\/authn\/login\?authn=/.test(screenAt),
+    "the authorization request for " + opts.clientId + " should reach the " +
+    "sign-in screen; it answered " + first.status + " " + screenAt + " " +
+    String(await first.text()).slice(0, 200));
+  var screen = await fetch(absolute(screenAt), { redirect: "manual" });
+  var page = await screen.text();
+  var authnId = (page.match(/name="authn_id" value="([^"]+)"/) || [])[1];
+  var csrf = (page.match(/name="csrf_token" value="([^"]+)"/) || [])[1] || "";
+  assert.ok(authnId, "the sign-in screen carries no authn_id.");
+  // Posted back to the path the screen was served from — `/realm/<id>/authn/
+  // login` in a trust realm. A root-relative "/authn/login" resolved against
+  // the host posted every realm's sign-in to the DEFAULT realm's screen, which
+  // holds no such sign-in, so a flow in any realm could never complete.
+  var screenUrl = new URL(absolute(screenAt));
+  var signedIn = await fetch(screenUrl.origin + screenUrl.pathname, {
+    method: "POST", redirect: "manual",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ authn_id: authnId, username: opts.username,
+                                password: opts.password, action: "login",
+                                csrf_token: csrf }).toString()
+  });
+  // EVERY cookie the answer sets, as one Cookie header: a sign-in in a trust
+  // realm can set more than one, and keeping only the first dropped the
+  // session whenever it was not first.
+  var setCookies = typeof signedIn.headers.getSetCookie === "function"
+    ? signedIn.headers.getSetCookie()
+    : [String(signedIn.headers.get("set-cookie") || "")];
+  var cookie = setCookies.map(function (line) {
+    return String(line).split(";")[0];
+  }).filter(function (pair) {
+    return /=./.test(pair);
+  }).join("; ");
+  if (!cookie) {
+    // What the screen said, so a refusal names itself: a wrong password, a
+    // rate limit, an account that needs something first.
+    var said = String(await signedIn.text()).replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ").slice(0, 400);
+    assert.fail("signing " + opts.username + " in should establish a " +
+      "session; the screen answered " + signedIn.status + ": " + said);
+  }
+  var back = await fetch(absolute(signedIn.headers.get("location") || url),
+                         { headers: { Cookie: cookie }, redirect: "manual" });
+  var location = back.headers.get("location") || "";
+  var settled = await consentScreen.settleAuthorization({
+    base: base, location: location, cookie: cookie });
+  location = settled.location || location;
+  var code = (location.match(/[?&]code=([^&]+)/) || [])[1];
+  assert.ok(code, "no code for " + opts.clientId + "; the flow ended at " +
+    String(location).slice(0, 200));
+  log.debug("Leaving authorizationCode().");
+  return { code: decodeURIComponent(code), verifier: pair.verifier,
+           cookie: cookie };
+}
+
+// A SOFTWARE STATEMENT THIS REALM SIGNS (RFC 7591 section 2.3), for a job
+// that drives the dynamic registration endpoint. A product-mode service keeps
+// that endpoint closed to anybody without a trusted statement, and a statement
+// this realm issued from an application an administrator registered is the
+// door it keeps OPEN — so a job registers through it instead of turning
+// anything off. `publisher` is created through the management API if it is not
+// there; `metadata` (optional) is what the statement fixes, and everything it
+// does not fix is still the registration body's, so the refusals a job asserts
+// about the body are still the body's. Answers the compact JWS.
+async function softwareStatement(base, publisher, metadata) {
+  log.debug("Entering softwareStatement(). " + publisher);
+  await provision(base, {
+    identifier: publisher, name: publisher + " (software publisher)",
+    protocols: ["oauth2"], fields: { oauthClientId: publisher },
+    why: "the software publisher whose statements admit this job's RFC 7591 " +
+         "registrations"
+  });
+  var issued = await adminPost(base, "/applications/issue-software-statement",
+    { application: publisher,
+      metadata: JSON.stringify(metadata || {}) });
+  assert.ok(issued && issued.ok && issued.softwareStatement,
+    "the realm at " + base + " would not issue a software statement for " +
+    publisher + ": " + JSON.stringify(issued).slice(0, 300));
+  log.debug("Leaving softwareStatement().");
+  return issued.softwareStatement;
+}
+
 module.exports = {
+  softwareStatement: softwareStatement,
+  authorizationCode: authorizationCode,
+  pkce: pkce,
+  ensurePerson: ensurePerson,
+  setting: setting,
+  isProduct: isProduct,
+  adminGet: adminGet,
+  adminPost: adminPost,
   baseOf: baseOf,
   stsBaseFromEnv: stsBaseFromEnv,
   stsBaseFor: stsBaseFor,
