@@ -159,6 +159,13 @@ async function metadataAdvertisesTheDid() {
       const copy = JSON.parse(JSON.stringify(entry));
       delete copy.scope;
       delete copy.display;
+      // OpenID4VCI 1.0's final text (section 12.2.4) moved `display` into
+      // `credential_metadata`, where the drafts had it at the top of the
+      // configuration; the display name differs there instead, so it is
+      // stripped in both places and a configuration of either shape compares.
+      if (copy.credential_metadata) {
+        delete copy.credential_metadata.display;
+      }
       delete copy.issuer_identifier;
       log.debug("Leaving strip().");
       return copy;
