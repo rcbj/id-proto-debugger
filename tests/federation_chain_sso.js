@@ -823,10 +823,11 @@ async function whereDoesTheSignInStop(driver, appBase, callbackUri, label) {
 //   * a mechanism pointing at a DISABLED relationship must name that on the
 //     screen, and NOT quietly ask for a password: a broker that has stopped
 //     brokering looks exactly like one that never was.
-//   * a value that is not one of the four must be named as not one of the
-//     four, in `readiness.missing` and on the screen. A mock that ignored an
-//     unknown value would turn a typo into a silent fallback, which is this
-//     feature failing in the one way nobody would look for.
+//   * a value that is not a mechanism must be REFUSED naming itself, and
+//     leave the entry as it was (iya-sts #86; it was accepted and named in
+//     `readiness.missing` before). A mock that stored an unknown value would
+//     turn a typo into a silent fallback, which is this feature failing in
+//     the one way nobody would look for.
 //
 // Everything is restored in a `finally`, because the realms outlive this
 // process.
@@ -890,30 +891,41 @@ async function theMechanismIsWhatDecides(driver, bridgeBase, appBase,
       "`webauthn` locked the SECOND-FACTOR box as well, which would mean a " +
       "password step this mechanism says there is not.");
 
-    // A value that is not one of the four. The set is ACCEPTED — the register
-    // stores what an operator typed and reports what it thinks of it, rather
-    // than refusing the write and leaving the entry holding the last good
-    // value while the form says otherwise — and readiness is what names it.
-    const bad = await must(bridgeBase, "/federation/set",
-      { id: REL_4_FROM_3, field: "fedAuthnMechanism", value: "carrier-pigeon" },
-      "setting the mechanism to something that is not a mechanism");
-    assert.ok((bad.readiness.missing || []).some(function (one) {
-      return /fedAuthnMechanism/.test(one) && /carrier-pigeon/.test(one);
-    }), "A mechanism of \"carrier-pigeon\" should be reported as not one " +
-        "this service has, and readiness says: " +
-        JSON.stringify(bad.readiness.missing) + ". An unrecognised value " +
-        "that reads as ready is a typo turned into a silent fallback to a " +
-        "password box.");
+    // A value that is not a mechanism. Until iya-sts #86 the set was
+    // ACCEPTED and readiness named it, and the sign-in screen said so; since
+    // then every closed set the management API declares is enforced at the
+    // door, so the write is REFUSED, naming the value, and the entry keeps
+    // the last good one. Both halves are asserted: a refusal that did not
+    // name what it refused would be a typo nobody could find, and a refusal
+    // that still stored the value would be the silent fallback this case
+    // exists to catch, one step later.
+    const bad = await adminPost(bridgeBase, "/federation/set",
+      { id: REL_4_FROM_3, field: "fedAuthnMechanism",
+        value: "carrier-pigeon" });
+    const refusal = JSON.stringify(bad.errors || bad);
+    assert.ok(!bad.ok && /fedAuthnMechanism/.test(refusal) &&
+              /carrier-pigeon/.test(refusal),
+      "Setting fedAuthnMechanism to \"carrier-pigeon\" should be refused " +
+      "naming both the attribute and the value (iya-sts #86), and the mock " +
+      "answered ok=" + bad.ok + ": " + refusal + ". An unrecognised value " +
+      "that is stored is a typo turned into a silent fallback to a password " +
+      "box.");
+    const kept = await adminGet(bridgeBase, "/federation?relationship=" +
+                                encodeURIComponent(REL_4_FROM_3));
+    assert.strictEqual(
+      String(((kept && kept.fields) || {}).fedAuthnMechanism || ""),
+      "webauthn",
+      "The refused mechanism left " + REL_4_FROM_3 + " holding \"" +
+      String(((kept && kept.fields) || {}).fedAuthnMechanism || "") +
+      "\" rather than the \"webauthn\" it held before, so the refusal " +
+      "changed the entry anyway.");
     stop = await whereDoesTheSignInStop(driver, appBase, callbackUri,
-                                        "mechanism=carrier-pigeon");
-    assert.strictEqual(stop.realm, BRIDGE_REALM,
-      "An unrecognised mechanism sent the sign-in to \"" + stop.realm +
-      "\" rather than falling back to realm 4's own screen.");
-    assert.ok(/carrier-pigeon/.test(stop.problem),
-      "An unrecognised mechanism must be NAMED on the screen it falls back " +
-      "to, and the screen at " + stop.url + " says \"" + stop.problem + "\". " +
-      "A silent fallback here is the feature failing in the one way nobody " +
-      "would go looking for.");
+                                        "mechanism=carrier-pigeon refused");
+    assert.ok(stop.realm === BRIDGE_REALM && stop.passwordlessLocked,
+      "After the refused write the sign-in should still stop at realm 4 " +
+      "with the passwordless box locked, as `webauthn` does, and it " +
+      "stopped in \"" + stop.realm + "\" (passwordless locked=" +
+      stop.passwordlessLocked + ").");
 
     // Back to `federation`, and then break what it points AT.
     await set("fedAuthnMechanism", "federation",
@@ -1420,10 +1432,23 @@ async function test() {
       JSON.stringify(claims) + ". Which identity service actually checked " +
       "anything is not the application's business, and this is the one " +
       "property the whole feature exists to have.");
-    assert.ok(
-      String(claims.preferred_username || claims.sub).indexOf(user) >= 0,
-      "The ID Token describes \"" + (claims.preferred_username || claims.sub) +
-      "\" and the name typed at realm 5 was \"" + user + "\".");
+    // WHO IT DESCRIBES: realm 3's own entry for the person, by its
+    // `urn:uuid:` subject (iya-sts 64580f4), compared exactly — the name is
+    // not in the token to search for, because since #118 the profile claims
+    // are UserInfo's. A `preferred_username`, where one is still carried,
+    // must name the same person.
+    const expectedSub = await admin.subjectOf(appBase, appLocal);
+    assert.strictEqual(claims.sub, expectedSub,
+      "The ID Token's sub is \"" + claims.sub + "\", and realm 3's " +
+      "directory says \"" + appLocal + "\" — the person typed at realm 5 as " +
+      "\"" + user + "\" — is \"" + expectedSub + "\".");
+    if (claims.preferred_username !== undefined) {
+      const named = String(claims.preferred_username);
+      assert.ok(named === appLocal || named === user,
+        "The ID Token's preferred_username is \"" + named + "\". The " +
+        "person typed at realm 5 as \"" + user + "\" is \"" + appLocal +
+        "\" at realm 3.");
+    }
     log.info("The application holds an ID Token issued by " + claims.iss +
              " describing " + (claims.preferred_username || claims.sub) +
              ", naming neither realm 4 nor realm 5.");

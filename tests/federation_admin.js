@@ -15,7 +15,8 @@
 // result: who a person IS in a realm (`subjectOf()`), and what the service
 // provider files them under (`federatedNameOf()`, `localNameAt()`, and
 // `pinSubjectPolicy()`, which decides it — see the note above it for why the
-// jobs pin the policy they do).
+// jobs pin the policy they do), and how a realm is let dial its partner's
+// back channel (`trustPartnerTls()`).
 //
 // ---------------------------------------------------------------------------
 // WHY `/admin-api` AND NOT THE `/admin` CONSOLE.
@@ -339,8 +340,99 @@ async function localNameAt(spBase, relationship, name) {
   return local;
 }
 
+// ---------------------------------------------------------------------------
+// LETTING A REALM DIAL ITS PARTNER'S BACK CHANNEL (iya-sts #171, 2026-09-23).
+//
+// An OAuth 2.0 or OpenID Connect relationship redeems its code at the
+// partner's token endpoint through `federation_http`, which refuses plain
+// http and a certificate nothing trusts. Until #171 one realm setting,
+// `federation.outboundAllowInsecure`, waived both; it is gone, and writing it
+// is now refused by name. Three settings replace it, and this picks the
+// strictest one that works:
+//
+//   * `federation.outboundCaFile`, VERIFICATION ON. Every stack here hands
+//     the mock the stack's own leaf (`tls.certificateFile`, which is
+//     `stack-tls-cert.pem` — leaf, issuing CA and root), and the partner is
+//     the same process answering on the same certificate. So the file the
+//     mock already serves from is a CA file naming the root its own partner
+//     chains to, and the mock can read it because it reads it to listen.
+//   * `federation.outboundSkipTlsVerification`, development only, when the
+//     mock was given no certificate and makes its own at every start — a
+//     bare `docker run`, or ./remote-run-tests.sh against somebody else's
+//     mock. There is no file to name then, and nothing better to do.
+//   * `federation.outboundAllowHttp` as well, when the realm is served over
+//     plain http, because that is a separate refusal now.
+//
+// An sts from before #171 knows none of the three, and there the old setting
+// is still the answer — one branch, so it is kept.
+//
+// Written WHILE THE REALM IS AMBIENT, and that is asserted: a setting
+// without one lands process-wide, where it would change the certificate
+// check for every other job on this mock. Answers the keys it wrote, so a
+// caller that puts them back knows what to reset.
+// ---------------------------------------------------------------------------
+async function trustPartnerTls(spBase, realm, why) {
+  logger().debug("Entering trustPartnerTls(). " + realm);
+  const before = await adminGet(spBase, "/config");
+  const settings = {};
+  // `groups[].settings[]`, each row carrying its key and the value in force
+  // in the realm that answered.
+  (before.groups || []).forEach(function (group) {
+    (group.settings || []).forEach(function (row) {
+      if (row && row.key) {
+        settings[row.key] = row;
+      }
+    });
+  });
+  const writes = [];
+  if (!settings["federation.outboundCaFile"]) {
+    writes.push({ key: "federation.outboundAllowInsecure", value: "true" });
+  } else {
+    const certificateFile = settings["tls.certificateFile"]
+      ? String(settings["tls.certificateFile"].value || "").trim()
+      : "";
+    if (certificateFile) {
+      writes.push({ key: "federation.outboundCaFile",
+                    value: certificateFile });
+    } else {
+      writes.push({ key: "federation.outboundSkipTlsVerification",
+                    value: "true" });
+    }
+    if (/^http:/i.test(spBase)) {
+      writes.push({ key: "federation.outboundAllowHttp", value: "true" });
+    }
+  }
+  for (const write of writes) {
+    await must(spBase, "/config/set", write,
+               "setting " + write.key + "=" + write.value + " in " + realm +
+               " (" + why + ")");
+  }
+  const after = await adminGet(spBase, "/config");
+  assert.strictEqual(String(after.realm), realm,
+    "Reading " + realm + "'s configuration answered for the \"" +
+    after.realm + "\" realm, so the writes above did not land where this " +
+    "test thinks they did either.");
+  const own = after.realmSettings || [];
+  writes.forEach(function (write) {
+    assert.ok(own.indexOf(write.key) >= 0,
+      realm + " does not list " + write.key + " among its OWN settings " +
+      "(it lists: " + own.join(", ") + "), so the write went process-wide " +
+      "— which is not this test's to do, and would change the certificate " +
+      "check for every other job on this mock.");
+  });
+  logger().info("[federation] " + realm + " may dial its partner's back " +
+                "channel: " + writes.map(function (write) {
+                  return write.key + "=" + write.value;
+                }).join(", ") + ".");
+  logger().debug("Leaving trustPartnerTls().");
+  return writes.map(function (write) {
+    return write.key;
+  });
+}
+
 module.exports = {
   configure: configure,
+  trustPartnerTls: trustPartnerTls,
   adminGet: adminGet,
   adminPost: adminPost,
   must: must,

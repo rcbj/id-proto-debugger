@@ -346,6 +346,12 @@ async function keyPairWasGenerated(driver, algId) {
   log.debug("Leaving keyPairWasGenerated().");
 }
 
+// The nine keyUsage bits, by the names the page's pki_ku_* boxes carry
+// (client/src/x509.js's KEY_USAGE_BITS).
+const KEY_USAGE_BIT_NAMES = ["digitalSignature", "nonRepudiation",
+  "keyEncipherment", "dataEncipherment", "keyAgreement", "keyCertSign",
+  "cRLSign", "encipherOnly", "decipherOnly"];
+
 async function issueThrough(driver, spec) {
   log.debug("Entering issueThrough(). subject=" + spec.cn);
   await selectOption(driver, "pki_key_alg", spec.keyAlg);
@@ -374,6 +380,14 @@ async function issueThrough(driver, spec) {
   if (spec.san) {
     await setCheckbox(driver, "pki_ext_san", true);
     await setField(driver, "pki_san", spec.san);
+  }
+  if (spec.keyUsage) {
+    // The profile's keyUsage replaced, bit by bit, AFTER the profile is
+    // chosen — choosing one rewrites every box from its defaults.
+    for (const bit of KEY_USAGE_BIT_NAMES) {
+      await setCheckbox(driver, "pki_ku_" + bit,
+                        spec.keyUsage.indexOf(bit) >= 0);
+    }
   }
   await click(driver, "pki_issue");
   // The button generates the key pair and then issues, so the status line
@@ -694,9 +708,19 @@ async function aPostQuantumClientCertificateIsAccepted(driver, ports,
   await selectOption(driver, "pki_pq_mode", "pure");
   await issueThrough(driver, { profile: "root-ca", keyAlg: "ml-dsa-65",
     sigAlg: "ml-dsa-65", cn: "Post-Quantum Root CA" });
+  // digitalSignature ALONE, not the TLS Client profile's default of
+  // digitalSignature + keyEncipherment. RFC 9881 section 5 permits an ML-DSA
+  // key only digitalSignature, nonRepudiation, keyCertSign and cRLSign — an
+  // ML-DSA key encrypts nothing — and the mock enforces it: since the
+  // 2026-09 bump a chain OpenSSL verified but that breaks RFC 5280 or its
+  // algorithm profile is treated as UNVERIFIED (STS-PKI-0198), which is
+  // exactly how this case failed. The page's profile defaults take no
+  // account of the key algorithm; that is the debugger's to fix, and this
+  // is the certificate a person following the RFC would issue.
   await issueThrough(driver, { profile: "tls-client", keyAlg: "ml-dsa-65",
     sigAlg: "ml-dsa-65", cn: "Post-Quantum Client",
-    issuerSubject: "Post-Quantum Root CA" });
+    issuerSubject: "Post-Quantum Root CA",
+    keyUsage: ["digitalSignature"] });
 
   const entries = await storeEntries(driver);
   const root = entries.filter(function (e) {

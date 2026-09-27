@@ -26,6 +26,7 @@ const { Builder, By, until } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const logging = require("selenium-webdriver/lib/logging");
 const assert = require("assert");
+const crypto = require("crypto");
 const http = require("http");
 const https = require("https");
 const jwt = require("jsonwebtoken");
@@ -242,18 +243,44 @@ async function testIssuerTracksHost(doc) {
 
 // RFC 8414 section 2.1: signed_metadata is a JWT of the metadata, signed by the
 // issuer, carrying iss (and here sub).
+//
+// Verified against the key its JWS header names (RFC 7515 section 4.1.4,
+// `kid`) out of the issuer's own jwks_uri. It used to be verified against
+// /sts/cert, which was right while this service signed everything with one
+// key: since iya-sts #68 that certificate is the XML SIGNER's, a separate key
+// from the JOSE one, and a JWT is not an XML signature.
 async function testSignedMetadata(doc) {
   log.debug("Entering testSignedMetadata().");
-  var certRes = await get(stsBase + "/sts/cert");
-  assert.strictEqual(certRes.status, 200,
-                     "could not fetch the STS certificate for verification.");
+  var header = JSON.parse(Buffer.from(
+    String(doc.signed_metadata).split(".")[0], "base64url").toString("utf8"));
+  assert.ok(header.kid,
+    "signed_metadata's JWS header names no kid, so nothing says which of " +
+    "the issuer's keys signed it: " + JSON.stringify(header));
+  // jsonwebtoken's asymmetric algorithms. `none` and the HMAC family are
+  // left out on purpose: metadata MACed with a shared secret proves nothing
+  // to a party that does not hold it.
+  var asymmetric = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512",
+                    "ES256", "ES384", "ES512"];
+  assert.ok(asymmetric.indexOf(header.alg) !== -1,
+    "signed_metadata is signed with " + header.alg + ", which is not an " +
+    "asymmetric JWS algorithm this check can verify.");
+  var jwksRes = await get(doc.jwks_uri);
+  assert.strictEqual(jwksRes.status, 200,
+    "could not fetch jwks_uri (" + doc.jwks_uri + ") to verify " +
+    "signed_metadata: " + jwksRes.status);
+  var jwk = (JSON.parse(jwksRes.body).keys || []).filter(function (k) {
+    return k.kid === header.kid;
+  })[0];
+  assert.ok(jwk, "signed_metadata names kid " + header.kid + " and the " +
+    "issuer's jwks_uri publishes no key by that id.");
   var claims;
   try {
-    claims = jwt.verify(doc.signed_metadata, certRes.body,
-        { algorithms: ["RS256"] });
+    claims = jwt.verify(doc.signed_metadata,
+        crypto.createPublicKey({ key: jwk, format: "jwk" }),
+        { algorithms: [header.alg] });
   } catch (e) {
-    throw new Error("signed_metadata does not verify against the STS " +
-                    "certificate: " + e.message);
+    throw new Error("signed_metadata does not verify against the issuer's " +
+                    "key " + header.kid + ": " + e.message);
   }
 
   assert.strictEqual(claims.iss, doc.issuer,
@@ -267,8 +294,8 @@ async function testSignedMetadata(doc) {
   assert.strictEqual(mismatched.length, 0,
     "signed_metadata claims disagree with the document: " +
         mismatched.join(", "));
-  log.info("[signed_metadata] OK — verifies against the STS certificate and " +
-           "matches all " +
+  log.info("[signed_metadata] OK — verifies against the issuer's key " +
+           header.kid + " and matches all " +
     (Object.keys(doc).length - 1) + " members.");
   log.debug("Leaving testSignedMetadata().");
 }

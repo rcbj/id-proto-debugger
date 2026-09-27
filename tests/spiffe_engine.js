@@ -634,6 +634,22 @@ function listProtos(dir) {
 // tests/krb5_codec_sync.js's argument about a vendored codec, applied to the
 // one other place in this tree where the same bytes are described twice.
 // ---------------------------------------------------------------------------
+// THE MOCK'S PROTOS THIS DEBUGGER DELIBERATELY DOES NOT VENDOR, each with the
+// reason. The comparison below is EXACT once these are set aside, so a proto
+// the mock adds later still fails it and has to be decided on here — vendored
+// (and wired into api/spiffe_client.js) or listed with a reason. Vendoring a
+// file nothing loads would be worse than either: a directory described as
+// "what this client speaks" holding a surface it cannot dial.
+const MOCK_ONLY_PROTOS = {
+  // The SPIFFE Broker API (iya-sts #170, 2026-09-23): `spiffe.broker.API`, a
+  // DRAFT surface on a mutual-TLS listener per realm, through which a trusted
+  // broker fetches SVIDs on behalf of a workload it names. It is a third gRPC
+  // surface beside the Workload API and the SPIRE Server API, and this
+  // debugger's forty-nine methods are those two alone.
+  'brokerapi.proto': 'the SPIFFE Broker API (draft), which this debugger ' +
+    'does not implement'
+};
+
 function testProtoSync() {
   log.debug("Entering testProtoSync().");
   const mine = protoDir();
@@ -664,13 +680,25 @@ function testProtoSync() {
   const files = listProtos(mine).map(function (one) {
     return path.relative(mine, one);
   }).sort();
-  check('the vendored protos are the same 21 files the mock STS carries',
-    function () {
+  check('the vendored protos are the same files the mock STS carries, less ' +
+    'the ones this debugger names as not vendored', function () {
       const others = listProtos(theirs).map(function (one) {
         return path.relative(theirs, one);
+      }).filter(function (relative) {
+        if (MOCK_ONLY_PROTOS[relative]) {
+          log.info('    not vendored: ' + relative + ' — ' +
+                   MOCK_ONLY_PROTOS[relative]);
+          return false;
+        }
+        return true;
       }).sort();
       assert.deepStrictEqual(files, others,
-        'the two copies must hold the same set of .proto files');
+        'the two copies must hold the same set of .proto files. A file only ' +
+        'the mock carries is a surface this debugger has not decided on: ' +
+        'vendor it verbatim, or name it in MOCK_ONLY_PROTOS with the reason.');
+      assert.strictEqual(files.length, 21,
+        'api/protos holds ' + files.length + ' files and this debugger ' +
+        'vendors 21: the Workload API\'s and the spire-api-sdk\'s.');
     });
   files.forEach(function (relative) {
     check('api/protos/' + relative + ' is byte-identical to the mock\'s',

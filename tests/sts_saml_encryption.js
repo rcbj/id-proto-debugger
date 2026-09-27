@@ -440,10 +440,15 @@ function signedRedirect(samlRequest) {
 // Sign in and come back with whatever the service provider was sent. The cookie
 // is cleared first, so each flow is a fresh session and one service provider's
 // result cannot be another's still-live session.
-async function signInTo(sp, user) {
+// `unsigned` sends the AuthnRequest with no signature at all, for the one
+// service provider that must hold no key anywhere — see THE UNENCRYPTED
+// FALLBACK below.
+async function signInTo(sp, user, unsigned) {
   cookie = '';
+  const samlRequest = deflateB64(authnRequest(sp, sp + '/acs'));
   let r = await request('GET', '/saml2/sso?' +
-                        signedRedirect(deflateB64(authnRequest(sp, sp + '/acs'))));
+                        (unsigned ? 'SAMLRequest=' + encodeURIComponent(samlRequest)
+                                  : signedRedirect(samlRequest)));
   if (r.status !== 302 && r.status !== 303) {
     return { error: 'the SSO endpoint answered ' + r.status + ' rather than a redirect: ' +
                     String(r.body || '').replace(/\s+/g, ' ').slice(0, 300) };
@@ -572,8 +577,6 @@ async function main() {
   }
 
   log.info('THE UNENCRYPTED FALLBACK, which is a decision and not an accident');
-  await provision(SP_NOKEY, { saml2EncryptAssertion: 'true' });
-  out = await signInTo(SP_NOKEY, USER);
   // A PRODUCT-mode service refuses instead (Responder, STS-SAML-0011): an
   // assertion somebody asked to have encrypted is not sent in clear to a real
   // service provider. Development sends it in clear and says so.
@@ -588,6 +591,20 @@ async function main() {
   } catch (e) {
     // Not JSON: treated as development, and the check below says what it saw.
   }
+  // NO CERTIFICATE ANYWHERE means exactly that, and it takes two things in
+  // development: no registered signing certificate (the mock encrypts to a
+  // registered RSA one), and an UNSIGNED AuthnRequest (since iya-sts #37 a
+  // development service encrypts to the certificate it OBSERVED on a signed
+  // one). provision() registers a certificate for everybody, so this one is
+  // registered without. Product needs both — it answers only a service
+  // provider that signs its requests — and is asserted on its own terms below.
+  if (product) {
+    await provision(SP_NOKEY, { saml2EncryptAssertion: 'true' });
+  } else {
+    await provision(SP_NOKEY, { saml2EncryptAssertion: 'true',
+                                samlSigningCertificate: undefined });
+  }
+  out = await signInTo(SP_NOKEY, USER, !product);
   check('a service provider asked for encryption with NO certificate anywhere is ' +
         'answered — a mock that sent nothing would be useless exactly when ' +
         'somebody is setting this up', !out.error, out.error || 'ok');
@@ -631,10 +648,17 @@ async function main() {
     const nameId = '<saml:NameID xmlns:saml="' + NS_SAML + '">' + subject + '</saml:NameID>';
     return '<samlp:LogoutRequest xmlns:samlp="' + NS_SAMLP + '" xmlns:saml="' + NS_SAML + '"' +
       ' ID="_' + crypto.randomBytes(8).toString('hex') + '" Version="2.0"' +
-      ' IssueInstant="' + new Date().toISOString() + '">' +
+      ' IssueInstant="' + new Date().toISOString() + '"' +
+      ' Destination="' + BASE + '/saml2/slo">' +
       '<saml:Issuer>' + SP_LOGOUT + '</saml:Issuer>' +
       encryptAsServiceProvider(nameId, idpCert) + '</samlp:LogoutRequest>';
   };
+  // Every LogoutRequest here carries a Destination. It is SIGNED, and
+  // saml-bindings-2.0-os sections 3.4.5.2 and 3.5.5.2 require a signed
+  // message to say where it was sent, which the mock enforces since the
+  // 2026-09 bump. Without it every request is refused before its EncryptedID
+  // is even read — so the two refusals below passed for the wrong reason and
+  // the acceptance above failed.
   const sendLogout = function (xml) {
     // Signed on the redirect binding, like every request this service
     // provider sends: a product-mode identity provider refuses an unsigned one.
@@ -659,21 +683,28 @@ async function main() {
     bad = bad.slice(0, i) + b.slice(0, -6) + (b.slice(-6, -5) === 'A' ? 'B' : 'A') +
           b.slice(-4) + bad.slice(j);
     r = await sendLogout(bad);
+    // Refused AS UNDECRYPTABLE, not merely refused: until the Destination
+    // above, this 400 was the missing-Destination one and said nothing about
+    // the tag.
     check('an ALTERED ciphertext is REFUSED — the GCM tag is verified rather than ignored',
-          r.status === 400, 'status ' + r.status);
+          r.status === 400 && /could not be decrypted/i.test(r.body),
+          'status ' + r.status);
 
     // Encrypted to somebody else's key. The mock must not treat an
     // undecryptable subject as "a logout for nobody" and answer Success.
     const other = selfSignedCertificate(spKeyPair(), 'someone-else');
     const wrongKey = '<samlp:LogoutRequest xmlns:samlp="' + NS_SAMLP + '" xmlns:saml="' +
       NS_SAML + '" ID="_x' + STAMP + '" Version="2.0" IssueInstant="' +
-      new Date().toISOString() + '"><saml:Issuer>' + SP_LOGOUT + '</saml:Issuer>' +
+      new Date().toISOString() + '" Destination="' + BASE + '/saml2/slo">' +
+      '<saml:Issuer>' + SP_LOGOUT + '</saml:Issuer>' +
       encryptAsServiceProvider('<saml:NameID xmlns:saml="' + NS_SAML + '">' + USER +
                                '</saml:NameID>', other) + '</samlp:LogoutRequest>';
     r = await sendLogout(wrongKey);
     check('an EncryptedID encrypted to a DIFFERENT key is REFUSED rather than treated ' +
           'as a logout for nobody, which would report Success while this service had no ' +
-          'idea whose session it was', r.status === 400, 'status ' + r.status);
+          'idea whose session it was',
+          r.status === 400 && /could not be decrypted/i.test(r.body),
+          'status ' + r.status);
   }
 
   log.info('THE OUTBOUND EncryptedID, and the namespace trap that was a real defect');

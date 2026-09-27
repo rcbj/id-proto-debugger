@@ -51,6 +51,9 @@ const { waitForFocus } = require("./wait_for.js");
 // reason: every job here that signs somebody in meets the same hop, and a
 // hand-written copy per job is a chance per job to write the wait wrong.
 const consentScreen = require("./consent_screen.js");
+// A sign-out the mock asks to have confirmed (RP-Initiated Logout 1.0
+// section 2, iya-sts #124). See tests/sts_sign_out.js.
+const { signOutInBrowser } = require("./sts_sign_out.js");
 const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -595,7 +598,7 @@ async function test() {
 // page that produced them, so the two runs are compared on the same terms.
 async function ceremonyFingerprint(driver, username) {
   log.debug("Entering ceremonyFingerprint().");
-  await driver.get(STS + "/oauth2/logout");
+  await signOutInBrowser(driver, STS, By, until, waitTime * 4);
   await runCeremony(driver, username);
   // Re-run the enrolment's artifacts out of the STS is not possible (it keeps
   // only the key), so the fingerprint is taken from a fresh ceremony driven in

@@ -1082,8 +1082,10 @@ const LAZY_STS_REQUIRES = {
   "common/request_pool.js": {
     "ldap/ldap_server.js": true,
     "tls/tls_server.js": true,
+    // TypeScript-only since the 2026-09-27 bump, in the listener pass beside
+    // tls_server.js above and for the same reason.
+    "tls/client_hello.js": true,
   },
-  "common/tls_client_certificates.js": { "common/cert_enrollment.js": true },
   // TYPESCRIPT-ONLY, so this one is not a judgement call the way the two
   // above are: `common/account_state.ts` has no .js beside it in a CHECKOUT
   // (the mock compiles inside its own image build, issue #50), so a COPY
@@ -1097,7 +1099,55 @@ const LAZY_STS_REQUIRES = {
   // './account_state'` from inside issuance_gate.js at run time, and the fix
   // is not a COPY line: it is compiling the mock's TypeScript into this
   // image, which is the mock's own `build-typescript.sh`.
-  "common/issuance_gate.js": { "common/account_state.js": true },
+  "common/issuance_gate.js": {
+    "common/account_state.js": true,
+    // The same function family, both TypeScript-only since the 2026-09-27
+    // bump: what a risk decision and a recognised device say about a session
+    // the running service is about to issue.
+    "risk/risk_engine.js": true,
+    "common/device_recognition.js": true,
+  },
+  // THE 2026-09-27 BUMP (iya-sts 6d18941c) AND THE TYPESCRIPT CONVERSION.
+  // Every entry below is a module that exists only as .ts in a checkout, is
+  // required INSIDE A FUNCTION by the parse above, and sits down a path that
+  // only a RUNNING service takes: a clustered scheduler's tick, a signal to
+  // other instances about an account, an outbound fetch, a client-attestation
+  // or scope-policy decision at a token endpoint, a ClientHello inspected on
+  // a listener, a risk store opened by the persistence layer's full start.
+  // None of the six in-process jobs starts any of that.
+  //
+  // Shown the way the entries above were: all six (the four mock-KDC jobs,
+  // webauthn_cross_impl.js and sts_jws_verification.js) were run against a
+  // tree holding EXACTLY what this image copies — the checkout's .js, plus
+  // the one compiled module taken from the mock's image — and all six pass.
+  // The one TypeScript-only module that is required at LOAD time,
+  // common/enrollment_profiles (by realms.js), is not here: it is copied out
+  // of the mock's own image instead, see tests/Dockerfile.
+  "common/admin_stats.js": {
+    "cluster/scheduler.js": true,
+    "ssf/account_signals.js": true,
+  },
+  "common/applications.js": {
+    "federation/federation_http.js": true,
+    "common/scope_policy.js": true,
+    "ssf/account_signals.js": true,
+  },
+  "oauth-oidc/client_auth.js": { "oauth-oidc/client_attestation.js": true },
+  "oauth-oidc/client_jwks.js": { "federation/federation_http.js": true },
+  "persistence/persistence.js": { "risk/risk_store.js": true },
+  "persistence/persistence_replication.js": { "cluster/scheduler.js": true },
+  "persistence/persistence_minted.js": { "cluster/scheduler.js": true },
+  "common/pki_revocation.js": { "cluster/scheduler.js": true },
+  "common/used_assertions.js": { "cluster/scheduler.js": true },
+  "common/revocation_status.js": { "common/outbound_tls.js": true },
+  "common/person_assertions.js": { "ssf/account_signals.js": true },
+  "common/tls_client_certificates.js": {
+    "common/cert_enrollment.js": true,
+    "ssf/account_signals.js": true,
+  },
+  "cluster/cluster.js": { "cluster/scheduler.js": true },
+  "cluster/cluster_claims.js": { "cluster/scheduler.js": true },
+  "cluster/cluster_counters.js": { "cluster/scheduler.js": true },
 };
 
 function stsModuleClosureIsCopied(dockerfile) {
@@ -1120,11 +1170,24 @@ function stsModuleClosureIsCopied(dockerfile) {
   // does not have. Docker requires the instruction at the start of a line and
   // no COPY here uses a backslash continuation, so this is also the correct
   // reading of the file.
+  //
+  // TWO SOURCES COUNT, and the second is new with the TypeScript conversion:
+  // `sts/<path>` out of the checkout, and `/usr/src/sts/<path>` out of the
+  // `mocksts` build context — the mock's own image, which is the only place
+  // a TypeScript-only module exists compiled (see the 2026-09-27 block in
+  // tests/Dockerfile). `.json` counts beside `.js`: a require names it with
+  // its extension and it is as absent from an image without its COPY.
   const copyLine = /^COPY\s+([^\n]+)/gm;
+  const fromImage = {};
   fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
+    const image = /^--from=mocksts\s/.test(rest);
     rest.split(/\s+/).forEach(function (src) {
-      if (src.indexOf("sts/") === 0 && /\.js$/.test(src)) {
-        copied[src.slice("sts/".length)] = true;
+      const prefix = image ? "/usr/src/sts/" : "sts/";
+      if (src.indexOf(prefix) === 0 && /\.(js|json)$/.test(src)) {
+        copied[src.slice(prefix.length)] = true;
+        if (image) {
+          fromImage[src.slice(prefix.length)] = true;
+        }
       }
     });
     return _;
@@ -1138,7 +1201,19 @@ function stsModuleClosureIsCopied(dockerfile) {
       continue;
     }
     seen[name] = true;
-    const file = path.join(stsDir, name);
+    let file = path.join(stsDir, name);
+    if (fromImage[name] && !fs.existsSync(file)) {
+      // Compiled in the mock's image and TypeScript in the checkout: its
+      // requires are read off the source, which acorn cannot parse, so
+      // stsRequiresIn() falls back to reading every one as load-time — the
+      // conservative direction.
+      file = file.replace(/\.js$/, ".ts");
+    }
+    if (/\.json$/.test(name) && fs.existsSync(file)) {
+      // Data. It requires nothing, and handing it to acorn would only log a
+      // parse failure about a file that was never code.
+      continue;
+    }
     if (!fs.existsSync(file)) {
       // A COPY naming a file the submodule does not have is the OTHER failure
       // in this family: the image build itself stops, rather than a test.
@@ -1160,7 +1235,7 @@ function stsModuleClosureIsCopied(dockerfile) {
     stsRequiresIn(name, src).forEach(function (one) {
       let dep = path.posix.normalize(
         path.posix.join(path.posix.dirname(name), one.spec));
-      if (!/\.js$/.test(dep)) {
+      if (!/\.(js|json)$/.test(dep)) {
         dep = dep + ".js";
       }
       if (dep.indexOf("..") === 0) {

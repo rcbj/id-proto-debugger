@@ -1132,9 +1132,25 @@ async function test() {
       JSON.stringify(claims) + ". Nothing about which identity service did " +
       "the authenticating is the application's business, and this is the one " +
       "property the whole feature exists to have.");
-    assert.ok(String(claims.preferred_username || claims.sub).indexOf(user) >= 0,
-      "The ID Token describes \"" + (claims.preferred_username || claims.sub) +
-      "\" and the name typed at realm 2 was \"" + user + "\".");
+    // WHO IT DESCRIBES. Since iya-sts 64580f4 a token's `sub` is the
+    // `urn:uuid:` of the person's entry in the realm that issued it, and since
+    // #118 the profile claims are UserInfo's rather than the ID Token's — so
+    // the name cannot be read off the token and is not searched for in it.
+    // The sub is compared, exactly, with what realm 1's directory holds for
+    // the person the sign-in filed there; a `preferred_username`, where the
+    // token still carries one, must name that same person.
+    const expectedSub = await admin.subjectOf(spBase, local);
+    assert.strictEqual(claims.sub, expectedSub,
+      "The ID Token's sub is \"" + claims.sub + "\", and realm 1's " +
+      "directory says \"" + local + "\" — the person typed at realm 2 as \"" +
+      user + "\" — is \"" + expectedSub + "\".");
+    if (claims.preferred_username !== undefined) {
+      const named = String(claims.preferred_username);
+      assert.ok(named === local || named === user,
+        "The ID Token's preferred_username is \"" + named + "\". The " +
+        "person typed at realm 2 as \"" + user + "\" is \"" + local +
+        "\" at realm 1.");
+    }
     log.info("The application holds an ID Token issued by " + claims.iss +
              " describing " + (claims.preferred_username || claims.sub) +
              ", and naming realm 2 nowhere.");

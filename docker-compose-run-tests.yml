@@ -669,6 +669,16 @@ services:
     build:
       context: .
       dockerfile: tests/Dockerfile
+      # The mock's own built image, as a named build context. The tests image
+      # takes the in-process Kerberos jobs' copy of the mock out of the sts/
+      # checkout file by file, and since the mock went TypeScript (iya-sts
+      # #50) one module those jobs load at require time exists only compiled
+      # — common/enrollment_profiles, required at the top of realms.js. So it
+      # is copied out of this image, which is built from the same gitlink and
+      # which `service:` makes compose build before this one. See the block
+      # that uses it in tests/Dockerfile.
+      additional_contexts:
+        mocksts: service:sts
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report

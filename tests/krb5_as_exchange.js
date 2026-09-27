@@ -347,15 +347,25 @@ async function theTwoMessageDanceWorksAndCarriesTheSalt() {
   assert.strictEqual(rc4.salt, null, "arcfour's ETYPE-INFO2 entry must have " +
       "no salt");
 
-  // AD also sends the older PA-PW-SALT alongside, for clients that predate
-  // ETYPE-INFO2. Its presence is worth asserting because a client must prefer
-  // the newer one.
-  const pwSalt = err.eDataPaData.filter(function (pa) { return pa.type === 3; })[0];
-  assert.ok(pwSalt, "PA-PW-SALT should be sent alongside, as Active " +
-      "Directory does");
-  assert.strictEqual(asn1.decLatin1(prim.toBytes(pwSalt.value)),
-      CLIENT_SALT,
-    "and must carry the same salt");
+  // AND NOTHING OLDER BESIDE IT, because this request listed a newer enctype.
+  // RFC 4120 section 5.2.7.5: "a KDC MUST NOT send ETYPE-INFO or PW-SALT when
+  // the client's AS-REQ includes at least one newer etype". This asserted the
+  // OPPOSITE until the 2026-09-27 submodule bump — "PA-PW-SALT should be sent
+  // alongside, as Active Directory does" — and the mock sent it in every
+  // reply until iya-sts #204 (Samba's raw Kerberos tests found it). Active
+  // Directory does NOT: the reply captured from a real Windows Server 2025 DC
+  // in tests/captures/windows-server-2025.json, to an AS-REQ listing this
+  // same 18/17/23, carries PA-DATA 19, 111, 2, 16 and 15 and no 3. The claim
+  // was a reading of the old mock, never of AD, which is the argument
+  // tests/CLAUDE.md makes for a client nobody here wrote.
+  [{ name: "PA-PW-SALT", type: 3 }, { name: "PA-ETYPE-INFO", type: 11 }]
+    .forEach(function (older) {
+      assert.ok(!err.eDataPaData.some(function (pa) {
+        return pa.type === older.type;
+      }), older.name + " (" + older.type + ") was sent beside ETYPE-INFO2 " +
+          "to a request listing aes256 and aes128, which RFC 4120 section " +
+          "5.2.7.5 forbids and Windows Server 2025 does not do.");
+    });
 
   // 2. Now the real request, keyed from the salt the KDC just gave us.
   const preauth = await encTimestampPadata(USER_PASSWORD, aes256);
@@ -765,9 +775,10 @@ async function theKdcHonoursTheClientsEtypeOrder() {
         "PREAUTH_REQUIRED");
     const entries = msgs.readEtypeInfo2(
       reply.decoded.error.eDataPaData.filter(function (pa) { return pa.type === 19; })[0].value);
-    // The KDC advertises what the PRINCIPAL supports, in the KDC's order — that
-    // is not the same list as what the client offered, and conflating the two
-    // is how a client ends up deriving a key of the wrong type.
+    // The KDC advertises the request's OWN enctypes the principal holds, in
+    // the request's order (iya-sts #204: it used to list every key the
+    // principal had in the KDC's order, and a client takes the first entry,
+    // so an aes128-first client derived an aes256 key the KDC then refused).
     assert.ok(entries.length >= 1, label + ": the KDC must advertise " +
         "something");
     const chosen = entries.filter(function (e) { return e.etype === expected; })[0];
@@ -784,14 +795,70 @@ async function theKdcHonoursTheClientsEtypeOrder() {
     }));
     assert.strictEqual(done.decoded.kind, "AS-REP", label +
         ": expected a ticket");
-    assert.strictEqual(done.decoded.rep.ticket.encPart.etype, expected,
-      label + ": the KDC must choose the FIRST etype the client offered that " +
-          "the principal " +
-      "supports, which is " + kcrypto.etypeName(expected) + "; it used " +
-      kcrypto.etypeName(done.decoded.rep.ticket.encPart.etype));
+    // THREE ENCTYPES, AND THE CLIENT'S ORDER CHOOSES TWO OF THEM. The reply
+    // key and the session key follow the request's list; the TICKET is sealed
+    // with the krbtgt's strongest key whatever the client asked for. This
+    // read the ticket's etype until the 2026-09-27 submodule bump, which was
+    // right about a mock that used one etype for all three and wrong about
+    // Kerberos: a client listing rc4-hmac first then got a TGT sealed under
+    // the krbtgt's RC4 key — an offline target chosen by whoever asked
+    // (iya-sts, found by Samba's raw Kerberos tests).
+    const rep = done.decoded.rep;
+    assert.strictEqual(rep.encPart.etype, expected,
+      label + ": the reply must be sealed with the FIRST etype the client " +
+          "offered that the principal supports, which is " +
+          kcrypto.etypeName(expected) + "; it used " +
+          kcrypto.etypeName(rep.encPart.etype));
+    const part = msgs.readEncKdcRepPart(
+      await preauth.profile.decrypt(preauth.key,
+          kcrypto.KEY_USAGE.AS_REP_ENCPART, rep.encPart.cipher));
+    assert.strictEqual(part.key.etype, expected,
+      label + ": the session key must be of the client's chosen etype, " +
+          kcrypto.etypeName(expected) + "; it is " + part.key.etypeName);
+    assert.strictEqual(rep.ticket.encPart.etype, 18,
+      label + ": the TGT must be sealed with the krbtgt's strongest key " +
+          "(aes256-cts-hmac-sha1-96) whatever the client listed first; it " +
+          "is sealed with " + kcrypto.etypeName(rep.ticket.encPart.etype) +
+          ", which lets a client choose the enctype an offline attack on " +
+          "the krbtgt key gets to target.");
     log.debug(label + " -> " + kcrypto.etypeName(expected));
   }
   log.debug("Leaving theKdcHonoursTheClientsEtypeOrder().");
+}
+
+// ---------------------------------------------------------------------------
+// A CLIENT THAT LISTS NO NEWER ENCTYPE IS OWED THE OLDER HINTS, and that is the
+// other half of the rule the two-message dance asserts from the far side. RFC
+// 4120 section 3.1.3: such a request is answered with PA-ETYPE-INFO2 AND
+// PA-ETYPE-INFO, "both with an entry for each enctype", and PA-PW-SALT is the
+// one place an rc4-only client of that era reads its salt from. The mock never
+// sent PA-ETYPE-INFO before iya-sts #204, so a client predating ETYPE-INFO2
+// was answered with a hint it could not read.
+// ---------------------------------------------------------------------------
+async function aLegacyOnlyRequestGetsTheOlderHints() {
+  log.debug("Entering aLegacyOnlyRequestGetsTheOlderHints().");
+  const reply = await exchange(buildAsReq({ etypes: [23] }));
+  assert.strictEqual(reply.decoded.kind, "KRB-ERROR",
+    "an rc4-only AS-REQ with no pre-authentication must still be refused " +
+        "with KDC_ERR_PREAUTH_REQUIRED");
+  const padata = reply.decoded.error.eDataPaData || [];
+  const types = padata.map(function (pa) {
+    return pa.type;
+  });
+  [19, 11, 3].forEach(function (type) {
+    assert.ok(types.indexOf(type) >= 0,
+      "a request listing only rc4-hmac must be answered with PA-ETYPE-INFO2, " +
+          "PA-ETYPE-INFO and PA-PW-SALT (RFC 4120 sections 3.1.3 and " +
+          "5.2.7.5); PA-DATA " + type + " is missing from " +
+          JSON.stringify(types));
+  });
+  const pwSalt = padata.filter(function (pa) {
+    return pa.type === 3;
+  })[0];
+  assert.strictEqual(asn1.decLatin1(prim.toBytes(pwSalt.value)), CLIENT_SALT,
+    "PA-PW-SALT must carry the same salt ETYPE-INFO2 names for the " +
+        "principal's AES keys");
+  log.debug("Leaving aLegacyOnlyRequestGetsTheOlderHints().");
 }
 
 // ---------------------------------------------------------------------------
@@ -818,6 +885,7 @@ async function test() {
     await anAccountWithoutPreAuthGetsATicketStraightAway();
     await computerAccountsHaveAHostShapedSalt();
     await theKdcHonoursTheClientsEtypeOrder();
+    await aLegacyOnlyRequestGetsTheOlderHints();
     await theKdcRefusesInItsOwnVocabulary(context);
     await udpAnswersAndFallsBackHonestly();
     log.info("Test completed successfully.");

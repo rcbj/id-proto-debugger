@@ -119,6 +119,16 @@ COPY tests/sts_applications.js ./
 # and nothing schedules it so no cross-check notices it gone.
 COPY tests/consent_screen.js ./
 
+# THE SIGN-OUT CONFIRMATION CLIENT, required by webauthn_oidc_mfa.js and
+# webauthn_extension.js, which need the next authorization request to meet a
+# login form rather than a live session. Since iya-sts #124 the mock asks
+# "Sign out?" on a GET /oauth2/logout with no id_token_hint and ends nothing
+# until the form is posted, so a bare navigation there no longer signs anybody
+# out. consent_screen.js's sibling, for the other screen the mock draws, and
+# with the same failure mode when this line is missing: MODULE_NOT_FOUND in a
+# tenth of a second, naming this file rather than a build.
+COPY tests/sts_sign_out.js ./
+
 # THE /admin CONSOLE SIGN-IN WALK, required by both delegation-chain jobs —
 # which read the delegation MAPS off that console, the only place those
 # pictures exist, because the mock's register is in memory and dies with the
@@ -744,6 +754,33 @@ COPY sts/ssf/ssf_events.js sts/ssf/ssf_subjects.js ./sts/ssf/
 # ---------------------------------------------------------------------------
 COPY sts/common/cache_registry.js ./sts/common/
 COPY sts/oauth-oidc/sender_constraints.js ./sts/oauth-oidc/
+# ---------------------------------------------------------------------------
+# THE SEVENTH recomputation (2026-09-27), for the gitlink move to iya-sts
+# 6d18941c — about 730 commits, so four ordinary .js modules at once:
+# helpers.js now loads signer_groups.js, request_pool.js lingering_close.js,
+# assertion_grant.js client_jwks.js, and three of the OAuth files fapi.js.
+# pki.js reads its two anchor lists as JSON inside a function; they are data,
+# and a COPY is cheaper than the argument for exempting them.
+#
+# AND THE FIRST MODULE THIS IMAGE NEEDS AT LOAD TIME THAT A CHECKOUT CANNOT
+# SUPPLY. realms.js requires common/enrollment_profiles at its top (#251: an
+# EST label and a realm share a path position), and the mock wrote that leaf
+# as TypeScript — so the checkout has enrollment_profiles.ts and no .js, and
+# no `COPY sts/…` line can put it right. It is taken instead, compiled, out of
+# the mock's OWN image, which compose builds from this same gitlink:
+# `mocksts` is `additional_contexts: mocksts: service:sts` on the tests
+# service in docker-compose-run-tests.yml, which also makes compose build the
+# sts image FIRST. That is the same file the running mock loads, rather than a
+# second compilation of it; the mock's own Dockerfile takes the debugger's
+# built tree from an image the same way. Every OTHER TypeScript-only module
+# the closure names is required lazily, down a path no in-process job here
+# takes — see LAZY_STS_REQUIRES in tests/jwk_pem_encoding.js.
+# ---------------------------------------------------------------------------
+COPY sts/common/signer_groups.js sts/common/lingering_close.js ./sts/common/
+COPY sts/common/pki_cloud_anchors.json ./sts/common/
+COPY sts/common/pki_device_anchors.json ./sts/common/
+COPY sts/oauth-oidc/client_jwks.js sts/oauth-oidc/fapi.js ./sts/oauth-oidc/
+COPY --from=mocksts /usr/src/sts/common/enrollment_profiles.js ./sts/common/
 # The mock's manifest, read by the final stage for the Express version these
 # modules are written against. Flat and renamed on purpose; see the RUN that
 # installs it.

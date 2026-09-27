@@ -272,6 +272,15 @@ expect is the entire reason `@grpc/grpc-js` is a dependency, so an edit to one
 of these would give that up silently: the debugger would go on agreeing with
 the mock and interoperate with nothing.
 
+**The mock carries one proto this directory deliberately does not**:
+`brokerapi.proto`, the SPIFFE Broker API (iya-sts #170) — a draft third gRPC
+surface, beside the two this debugger speaks, through which a trusted broker
+fetches SVIDs on a workload's behalf. Vendoring a file nothing here loads
+would make `api/protos/` stop meaning "what this client speaks", so
+`MOCK_ONLY_PROTOS` in `tests/spiffe_engine.js` names it with that reason, and
+the comparison is exact once it is set aside: a proto the mock adds later
+still fails it and has to be decided on the same way.
+
 `tests/spiffe_engine.js` compares the two copies file by file, and finds the
 mock's directory through its own `spiffe_grpc.js` rather than by naming
 `spiffe/protos` — that service moved every module into folders on 2026-08-23,

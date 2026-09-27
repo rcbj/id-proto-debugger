@@ -82,12 +82,19 @@ function rpKeys() {
   };
 }
 
+// The registration names the grant tokensFor() is about to use. RFC 7591
+// section 2 makes an omitted grant_types mean ["authorization_code"], and the
+// mock holds a client to what it registered, so a registration that said
+// nothing is refused the password grant with unauthorized_client. No
+// authorization request is ever made, so response_types is empty rather than
+// section 2's default of ["code"], which would contradict the grant.
 async function registerClient(metadata) {
   log.debug("Entering registerClient().");
   var response = await fetch(stsBase + "/oauth2/register", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(Object.assign(
-      { redirect_uris: [baseUrl + "/callback"] }, metadata))
+      { redirect_uris: [baseUrl + "/callback"], grant_types: ["password"],
+        response_types: [] }, metadata))
   });
   assert.strictEqual(response.status, 201,
     "the client registration should have been accepted.");
@@ -95,19 +102,26 @@ async function registerClient(metadata) {
   return response.json();
 }
 
+// HTTP Basic, which is what RFC 7591 section 2 makes a registration that
+// names no token_endpoint_auth_method — the registration answer says so — and
+// RFC 6749 section 2.3.1 form-encodes both halves before joining them.
 async function tokensFor(client) {
   log.debug("Entering tokensFor().");
   var response = await fetch(stsBase + "/oauth2/token", {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded",
+               Authorization: "Basic " + Buffer.from(
+                 encodeURIComponent(client.client_id) + ":" +
+                 encodeURIComponent(client.client_secret)).toString("base64") },
     body: new URLSearchParams({
       grant_type: "password", username: "alice", password: "any",
-      scope: "openid profile email",
-      client_id: client.client_id,
-      client_secret: client.client_secret }).toString() });
-  assert.strictEqual(response.status, 200, "a token should have been issued.");
+      scope: "openid profile email" }).toString() });
+  var body = await response.text();
+  assert.strictEqual(response.status, 200,
+    "a token should have been issued; got " + response.status + ": " +
+    body.slice(0, 300));
   log.debug("Leaving tokensFor().");
-  return response.json();
+  return JSON.parse(body);
 }
 
 async function userinfoResponse(accessToken) {

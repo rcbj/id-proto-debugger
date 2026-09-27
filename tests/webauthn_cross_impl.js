@@ -193,9 +193,19 @@ async function test() {
       // The public key by two independent COSE readings, compared member by
       // member. This is where an overloaded negative label (-1 is the curve for
       // EC2 and the modulus for RSA) would show up.
-      assert.deepStrictEqual(theirs.publicKeyJwk, stripJwk(mine.publicKeyJwk),
-        name +
+      assert.deepStrictEqual(stripJwk(theirs.publicKeyJwk),
+        stripJwk(mine.publicKeyJwk), name +
             ": the credential public key must be identical, member for member");
+      // And the ALGORITHM, which both readings now carry on the JWK: the
+      // wallet always has, and the mock has since iya-sts #105, because an
+      // assertion is checked against the stored JWK alone and ES384's hash
+      // or PS256's padding cannot be recovered from the key type. Both come
+      // from the COSE key's label 3, so they must name the same JOSE
+      // algorithm — a mock that stored the wrong one would verify the next
+      // assertion with the wrong hash or padding.
+      assert.strictEqual(theirs.publicKeyJwk.alg, mine.publicKeyJwk.alg,
+        name + ": both readings must name the same algorithm for the " +
+            "credential public key (COSE label 3)");
     });
     return "ES256 and RS256, fmt/AAGUID/credId/signCount/JWK all identical";
   });
@@ -312,10 +322,10 @@ async function test() {
   log.debug("Leaving test().");
 }
 
-// The wallet's JWK carries `alg` (and sometimes `kid`); the STS's does not emit
-// them. Compare the key material, which is the thing that must agree — a
-// difference in whether a convenience member is present is not a disagreement
-// about the key.
+// The key MATERIAL, without `alg` and `kid`. `kid` is a convenience member
+// the wallet sometimes adds; `alg` both readings carry now (the STS since
+// iya-sts #105) and is compared on its own, so that a disagreement about the
+// algorithm is reported as one rather than as a different key.
 function stripJwk(jwk) {
   log.debug("Entering stripJwk().");
   const out = {};

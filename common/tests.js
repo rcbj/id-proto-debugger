@@ -602,7 +602,9 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert }) => {
     await driver.wait(until.elementIsVisible(driver.findElement(
                       token_username)), waitTime);
     await driver.findElement(token_username).clear();
-    await driver.findElement(token_username).sendKeys(client_id);
+    // The name the grant is FOR, not the client: a password grant names a
+    // person, and a service with a directory refuses one it does not hold.
+    await driver.findElement(token_username).sendKeys(username);
 
     const token_password = By.id("token_password");
     await driver.wait(until.elementLocated(token_password), waitTime);

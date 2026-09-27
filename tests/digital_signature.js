@@ -1473,6 +1473,45 @@ async function xmlClickAndWait(driver, fn, message) {
   return status;
 }
 
+// The Reference URI that KEEPS comment nodes: XMLDSIG core section 4.3.3.3's
+// XPointer form of the same element a barename "#order-1" names.
+var XML_XPOINTER_URI = "#xpointer(id('order-1'))";
+
+// Signs XML_DOC under each of the four canonicalization methods — as both
+// CanonicalizationMethod and the Reference's transform — with the Reference
+// URI given ('' lets the pane derive the barename), validates each, and
+// returns the four DigestValues in XML_C14N order.
+async function xmlC14nDigests(driver, refUri) {
+  log.debug("Entering xmlC14nDigests().");
+  var label = refUri || '(derived)';
+  var digests = [];
+  await setTextarea(driver, 'ds_xml_ref_uri', refUri);
+  for (var c = 0; c < XML_C14N.length; c++) {
+    var tag = "[XML c14n " + XML_C14N[c] + " URI " + label + "]";
+    await selectValue(driver, 'ds_xml_c14n', XML_C14N[c]);
+    await selectValue(driver, 'ds_xml_t_c14n', XML_C14N[c]);
+    await setTextarea(driver, 'ds_xml_value', XML_DOC);
+    // The digest is read BETWEEN Sign and Validate. One detail pane serves
+    // both, and Validate replaces what Sign wrote — so reading it afterwards
+    // finds the verification report and no DigestValue at all.
+    var signedC14n = await xmlClickAndWait(driver, 'xmlSign',
+        tag + " signing did not finish.");
+    assert.ok(/^Signed/.test(signedC14n),
+      tag + " sign reported: " + signedC14n);
+    var report = await getValue(driver, By.id('ds_xml_report'));
+    var match = report.match(/DigestValue: (\S+)/);
+    assert.ok(match, "[XML] the detail pane must report the DigestValue " +
+      "after Sign. Detail pane held: " + report.slice(0, 200));
+    digests.push(match[1]);
+    var verifiedC14n = await xmlClickAndWait(driver, 'xmlValidate',
+        tag + " validation did not finish.");
+    assert.ok(/VALID \u2713/.test(verifiedC14n),
+      tag + " validate reported: " + verifiedC14n);
+  }
+  log.debug("Leaving xmlC14nDigests().");
+  return digests;
+}
+
 async function xmlSignAndValidate(driver, label) {
   log.debug("Entering xmlSignAndValidate().");
   var signed = await xmlClickAndWait(driver, 'xmlSign',
@@ -1543,41 +1582,44 @@ async function testXmlSignature(driver) {
   log.info("[XML] OK — a modified document is refused.");
 
   // The four canonicalization methods. What is asserted is not only that each
-  // verifies — it is that the two halves of each pair produce DIFFERENT
-  // reference digests, because otherwise the WithComments option would be a
-  // label on a control that does nothing.
-  var digests = [];
-  for (var c = 0; c < XML_C14N.length; c++) {
-    await selectValue(driver, 'ds_xml_c14n', XML_C14N[c]);
-    await selectValue(driver, 'ds_xml_t_c14n', XML_C14N[c]);
-    await setTextarea(driver, 'ds_xml_value', XML_DOC);
-    // The digest is read BETWEEN Sign and Validate. One detail pane serves
-    // both, and Validate replaces what Sign wrote — so reading it afterwards
-    // finds the verification report and no DigestValue at all.
-    var signedC14n = await xmlClickAndWait(driver, 'xmlSign',
-        "[XML c14n " + XML_C14N[c] + "] signing did not finish.");
-    assert.ok(/^Signed/.test(signedC14n),
-      "[XML c14n " + XML_C14N[c] + "] sign reported: " + signedC14n);
-    var report = await getValue(driver, By.id('ds_xml_report'));
-    var match = report.match(/DigestValue: (\S+)/);
-    assert.ok(match, "[XML] the detail pane must report the DigestValue " +
-      "after Sign. Detail pane held: " + report.slice(0, 200));
-    digests.push(match[1]);
-    var verifiedC14n = await xmlClickAndWait(driver, 'xmlValidate',
-        "[XML c14n " + XML_C14N[c] + "] validation did not finish.");
-    assert.ok(/VALID \u2713/.test(verifiedC14n),
-      "[XML c14n " + XML_C14N[c] + "] validate reported: " + verifiedC14n);
-  }
-  assert.notStrictEqual(digests[0], digests[1],
+  // verifies — it is WHEN the two halves of each pair produce different
+  // reference digests, because that is XMLDSIG core section 4.3.3.3's comment
+  // rule and not a property of the canonicalizer alone (issue #304):
+  //
+  //   * a BARENAME Reference (URI="#order-1", what the pane derives) removes
+  //     comment nodes while dereferencing, so a #WithComments method has
+  //     none left to render and the two digests must be IDENTICAL — which is
+  //     what stops a comment inserted in transit from breaking a signature;
+  //   * an XPOINTER Reference (URI="#xpointer(id('order-1'))") keeps them, so
+  //     there the digests must DIFFER, or the WithComments option would be a
+  //     label on a control that does nothing.
+  //
+  // Asserting only the second, over a barename, is what this section did
+  // until common/xmldsig.js learned the rule — and it then failed on a
+  // correct engine.
+  var barename = await xmlC14nDigests(driver, '');
+  assert.strictEqual(barename[0], barename[1],
+    "[XML] exclusive C14N with and without comments produced DIFFERENT " +
+    "digests over a barename Reference — URI=\"#id\" removes comments " +
+    "before canonicalization (XMLDSIG core 4.3.3.3), so they must agree.");
+  assert.strictEqual(barename[2], barename[3],
+    "[XML] inclusive C14N with and without comments produced DIFFERENT " +
+    "digests over a barename Reference — URI=\"#id\" removes comments " +
+    "before canonicalization (XMLDSIG core 4.3.3.3), so they must agree.");
+  var xpointer = await xmlC14nDigests(driver, XML_XPOINTER_URI);
+  assert.notStrictEqual(xpointer[0], xpointer[1],
     "[XML] exclusive C14N with and without comments produced the SAME " +
-    "digest over a document that contains one — the option does nothing.");
-  assert.notStrictEqual(digests[2], digests[3],
+    "digest over an XPointer Reference to a document that contains one — " +
+    "the option does nothing.");
+  assert.notStrictEqual(xpointer[2], xpointer[3],
     "[XML] inclusive C14N with and without comments produced the SAME " +
-    "digest over a document that contains one — the option does nothing.");
+    "digest over an XPointer Reference to a document that contains one — " +
+    "the option does nothing.");
+  await setTextarea(driver, 'ds_xml_ref_uri', '');
   await selectValue(driver, 'ds_xml_c14n', XML_C14N[0]);
   await selectValue(driver, 'ds_xml_t_c14n', XML_C14N[0]);
-  log.info("[XML] OK — four canonicalization methods, and comments really " +
-           "change the digest.");
+  log.info("[XML] OK — four canonicalization methods; comments change the " +
+           "digest through an XPointer Reference and not through a barename.");
 
   // Every DigestMethod.
   for (var d = 0; d < XML_DIGESTS.length; d++) {

@@ -231,37 +231,55 @@ function halfHash(value) {
 
 // "The token describes the user who signed in" — asserted through the claim the
 // OP publishes for it rather than through `sub`, whose FORM is the OP's own
-// business (this mock namespaces it, `urn:sts-mock:user:<name>`, and a real OP
-// may use a pairwise identifier that contains nothing recognisable at all).
-// What matters is that some claim ties the token to the identity typed at the
-// login screen, and that the same subject appears on every artifact of the
-// flow.
-function assertDescribesUser(claims, user, what) {
+// business (this mock issues an opaque `urn:uuid:` from its directory, and a
+// real OP may use a pairwise identifier that contains nothing recognisable at
+// all). What matters is that some claim ties the token to the identity typed
+// at the login screen, and that the same subject appears on every artifact of
+// the flow.
+//
+// `mayDefer` is for an ID TOKEN, and only one issued beside an access token.
+// OIDC Core section 5.4 puts the profile scope's claims at the UserInfo
+// endpoint and in the ID Token only "when no Access Token is issued" — which
+// is response_type=id_token alone — so a conforming OP may send a `code
+// id_token` or `id_token token` ID Token that carries nothing but an opaque
+// `sub`. There is no name in it to check, and the caller then ties that `sub`
+// to an artifact that DOES describe the user instead. Answers whether this
+// token established the identity itself.
+function assertDescribesUser(claims, user, what, mayDefer) {
   log.debug("Entering assertDescribesUser(). what=" + what);
   assert.ok(claims.sub, what + " carries no sub.");
   // `sub` is opaque, and the two OPs this runs against prove it: the mock
-  // namespaces the login name (`urn:sts-mock:user:<name>`) and Keycloak issues
-  // a UUID that contains nothing recognisable. So the login name is checked
-  // through `preferred_username`, and `sub` is only compared when the caller
-  // was told what it should be (Keycloak's provisioning knows the UUID; the
-  // mock's does not have one to give).
+  // issues a `urn:uuid:` and Keycloak a bare UUID, neither containing anything
+  // recognisable. So the login name is checked through `preferred_username`,
+  // and `sub` is only compared when the caller was told what it should be
+  // (Keycloak's provisioning knows the UUID; the mock's does not have one to
+  // give).
+  let established = true;
   if (claims.preferred_username !== undefined) {
     assert.strictEqual(claims.preferred_username, user.login,
       what + " describes " + claims.preferred_username +
           ", not the user who signed in (" +
       user.login + ").");
   } else if (!user.sub) {
-    assert.ok(String(claims.sub).indexOf(user.login) >= 0,
-      what + "'s sub (" + claims.sub +
-          ") does not identify the user who signed in (" + user.login +
-      "), and there is no preferred_username to check instead.");
+    established = String(claims.sub).indexOf(user.login) >= 0;
+    if (!established && mayDefer) {
+      log.info(what + " carries no preferred_username and an opaque sub (" +
+          claims.sub + "), as OIDC Core 5.4 allows beside an access token; " +
+          "its subject is tied to the user through another artifact.");
+    } else {
+      assert.ok(established,
+        what + "'s sub (" + claims.sub +
+            ") does not identify the user who signed in (" + user.login +
+        "), and there is no preferred_username to check instead.");
+    }
   }
   if (user.sub) {
     assert.strictEqual(claims.sub, user.sub,
       what + "'s sub is " + claims.sub +
           ", not the subject the suite provisioned (" + user.sub + ").");
   }
-  log.debug("Leaving assertDescribesUser().");
+  log.debug("Leaving assertDescribesUser(). established=" + established);
+  return established;
 }
 
 async function getJson(url) {
@@ -585,7 +603,17 @@ async function checkAuthorizationResponse(driver, flow, sent, expected) {
                        claims.iss + ".");
     assert.strictEqual(claims.aud, expected.clientId, "The ID token's aud is " +
                        claims.aud + ".");
-    assertDescribesUser(claims, expected.user, "The ID token");
+    // Beside an access token, OIDC Core 5.4 lets the name live at UserInfo
+    // only, so the ID token may defer to the access token checked below (same
+    // response) or to the one the code is exchanged for (exchangeCode()).
+    const named = assertDescribesUser(claims, expected.user, "The ID token",
+        Boolean(flow.accessToken || flow.code));
+    if (!named) {
+      log.info("[" + flow.responseType + "] The ID token's subject is " +
+          "checked against the " + (flow.accessToken ?
+          "access token from the same response." :
+          "access token the code is exchanged for."));
+    }
     assert.strictEqual(claims.nonce, sent.nonce,
       "The ID token's nonce is " + claims.nonce +
           ", not the one the page sent (" + sent.nonce + "). " +
@@ -722,7 +750,8 @@ async function checkNoTokenRequestNotice(driver, flow) {
 // The code half of a code-bearing flow: redeem it through the page's Token
 // Request. With `dpopJkt` set, the token that comes back must be bound to it.
 // ---------------------------------------------------------------------------
-async function exchangeCode(driver, flow, sent, expected, { dpopJkt } = {}) {
+async function exchangeCode(driver, flow, sent, expected,
+    { dpopJkt, frontIdToken } = {}) {
   log.debug("Entering exchangeCode().");
   log.info("Entering exchangeCode().");
   const token_client_id = By.id("token_client_id");
@@ -799,6 +828,15 @@ async function exchangeCode(driver, flow, sent, expected, { dpopJkt } = {}) {
   assert.strictEqual(claims.iss, expected.issuer,
                      "The exchanged access token's iss is " + claims.iss + ".");
   assertDescribesUser(claims, expected.user, "The exchanged access token");
+  // A Hybrid flow's front-channel ID token names a subject, and the token this
+  // code bought must be about the same person. It is also what vouches for an
+  // ID token that carried only an opaque sub (OIDC Core 5.4).
+  const frontSub = frontIdToken ? claimsOf(frontIdToken).sub : "";
+  if (frontSub) {
+    assert.strictEqual(claims.sub, frontSub,
+      "The exchanged access token describes " + claims.sub + ", and the " +
+          "authorization endpoint's ID token describes " + frontSub + ".");
+  }
 
   // The binding, in both directions. "Bound" is read off the token's own
   // cnf.jkt rather than off the fact that a proof was sent, because an
@@ -846,6 +884,17 @@ async function exchangeCode(driver, flow, sent, expected, { dpopJkt } = {}) {
   assert.strictEqual(idClaims.nonce, sent.nonce,
     "The token endpoint's ID token carries nonce " + idClaims.nonce +
         ", not the one the page sent.");
+  // OIDC Core 3.3.3.6: when the authorization endpoint returned an ID token
+  // too, the two MUST carry the same iss and sub.
+  if (frontSub) {
+    assert.strictEqual(idClaims.sub, frontSub,
+      "The token endpoint's ID token names " + idClaims.sub + " and the " +
+          "authorization endpoint's names " + frontSub + " — OIDC Core " +
+          "3.3.3.6 requires the same sub.");
+    assert.strictEqual(idClaims.iss, claimsOf(frontIdToken).iss,
+      "The two ID tokens of one Hybrid flow name different issuers " +
+          "(OIDC Core 3.3.3.6).");
+  }
   log.info("[" + flow.responseType + "] OK — the code redeemed at the token " +
            "endpoint, and both tokens verify.");
   log.info("Leaving exchangeCode().");
@@ -1104,7 +1153,8 @@ async function test() {
 
     if (flow.code) {
       await exchangeCode(driver, flow, sent, expected,
-                         { dpopJkt: dpop.expectBound ? dpopJkt : "" });
+                         { dpopJkt: dpop.expectBound ? dpopJkt : "",
+                           frontIdToken: params.id_token || "" });
     }
 
     log.info("Test completed successfully.");

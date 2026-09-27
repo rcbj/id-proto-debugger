@@ -103,10 +103,10 @@
 // asserts realm 2 has NO relationships at all, which is true there and would be
 // false here within a second of the pool starting.
 //
-// The one thing this leaves behind is `federation.outboundAllowInsecure` on
-// realm 1, which the OIDC and OAuth 2.0 federation points need and none of them
-// resets — see allowInsecureOutbound(). Fifty jobs turning one realm setting on
-// and off around each other is a flake; a setting left on in a realm that
+// The one thing this leaves behind is `federation.outboundCaFile` on realm 1,
+// which the OIDC and OAuth 2.0 federation points need and none of them
+// resets — see trustRealm2BackChannel(). Fifty jobs turning one realm setting
+// on and off around each other is a flake; a setting left on in a realm that
 // belongs entirely to this file is not.
 //
 // ---------------------------------------------------------------------------
@@ -366,53 +366,33 @@ async function createRealms(stsBase) {
 // cannot work without it.
 //
 // An OIDC or OAuth 2.0 federation is the only one of the five with a BACK
-// CHANNEL: realm 1 redeems the code at realm 2's token endpoint, which is
-// `federation_http.js`, which is `https` only and refuses a certificate
-// nothing trusts unless `federation.outboundAllowInsecure` says otherwise.
-// Every stack in this suite runs the mock on a self-signed certificate it
-// regenerates at every start, so without this the twenty points fail with a
-// 502 naming TLS — a failure that reads as the partner being down.
+// CHANNEL: realm 1 redeems the code at realm 2's token endpoint, through
+// `federation_http`, which refuses plain http and a certificate nothing
+// trusts. Without a setting the twenty points fail with a 502 naming TLS — a
+// failure that reads as the partner being down. Which setting is
+// `trustPartnerTls()`'s decision in federation_admin.js: since iya-sts #171
+// it is `federation.outboundCaFile` naming the certificate file the mock
+// already serves from, so the back channel is VERIFIED against the stack's
+// own root rather than waved through.
 //
 // IT IS NOT PUT BACK, and that is the deliberate half. Fifty jobs setting one
 // realm-scoped setting and resetting it around each other is a flake that
 // appears only in the pool: a point that reset it while another was mid-redeem
 // would fail that one for a reason nothing in its output could name. The realm
 // belongs entirely to this file, nothing else reads that setting there, and it
-// is left on.
+// is left on. Every point writes the same value, so the race is harmless.
 // ---------------------------------------------------------------------------
-async function allowInsecureOutbound(spBase) {
-  log.debug("Entering allowInsecureOutbound().");
+async function trustRealm2BackChannel(spBase) {
+  log.debug("Entering trustRealm2BackChannel().");
   if (FED_PROTOCOL !== "oidc" && FED_PROTOCOL !== "oauth2") {
-    log.debug("Leaving allowInsecureOutbound(). No back channel is used.");
+    log.debug("Leaving trustRealm2BackChannel(). No back channel is used.");
     return;
   }
-  await must(spBase, "/config/set",
-             { key: "federation.outboundAllowInsecure", value: "true" },
-             "allowing realm 1 to dial realm 2 over its own self-signed TLS");
-  // WHICH REALM THE WRITE LANDED IN, which is the half worth asserting. A
-  // setting written while a realm is ambient goes into that realm's own
-  // override map, and one written WITHOUT one lands process-wide — where it
-  // would relax the certificate check for every other job on this mock. The
-  // snapshot answers both questions at once: `realm` says which realm was
-  // ambient for the read, and `realmSettings` is that realm's own override
-  // list.
-  const snapshot = await adminGet(spBase, "/config");
-  assert.strictEqual(String(snapshot.realm), SP_REALM,
-    "Reading realm 1's configuration answered for the \"" + snapshot.realm +
-    "\" realm, so the write above did not land where this test thinks it " +
-    "did either.");
-  assert.ok((snapshot.realmSettings || [])
-              .indexOf("federation.outboundAllowInsecure") >= 0,
-    "Realm 1 does not list federation.outboundAllowInsecure among its OWN " +
-    "settings (it lists: " + (snapshot.realmSettings || []).join(", ") +
-    "), so the write went process-wide — which is not this test's to do, and " +
-    "would relax the certificate check for every other job on this mock. A " +
-    FED_PROTOCOL + " federation redeems a code at the partner's token " +
-    "endpoint over the mock's own self-signed TLS, so without it every point " +
-    "of this row fails with a 502 naming a certificate rather than this " +
-    "setting.");
+  await admin.trustPartnerTls(spBase, SP_REALM,
+    "a " + FED_PROTOCOL + " federation redeems a code at realm 2's token " +
+    "endpoint over the mock's own TLS");
   log.info("Realm 1 may dial realm 2's back channel.");
-  log.debug("Leaving allowInsecureOutbound().");
+  log.debug("Leaving trustRealm2BackChannel().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1916,7 +1896,7 @@ async function test() {
   // then be testing whatever the mock happened to be configured with.
   // ---------------------------------------------------------------------
   await createRealms(stsBase);
-  await allowInsecureOutbound(spBase);
+  await trustRealm2BackChannel(spBase);
   await registerApplication(spBase, callbackUri);
   await registerPartnerAtIdp(idpBase, spBase, partnerAppId);
   const partner = await readPartnerMetadata(idpBase, partnerAppId);

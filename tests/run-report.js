@@ -346,7 +346,7 @@ const JOB_LOCKS = {
   // own tickets against the same acceptor would disturb.
   "krb5_mit_client.js": "sts-spnego-signin",
   // The mock's SSF configuration. `ssf_protocol.js` turns
-  // `ssf.pushAllowInsecure` ON (its own RFC 8935 listener is plain http) and
+  // `ssf.pushAllowHttp` ON (its own RFC 8935 listener is plain http) and
   // flips both deliberate defects — `ssf.legacySubClaim` and
   // `ssf.breakSetSignature` — one at a time. Each is restored, and not
   // instantly: a job polling that transmitter inside that window gets a SET
@@ -562,6 +562,7 @@ function buildJobs() {
       CLIENT_SECRET: env.RESOURCE_OWNER_CREDENTIAL_CLIENT_SECRET,
       SCOPE: env.RESOURCE_OWNER_CREDENTIAL_SCOPE,
       USER: env.RESOURCE_OWNER_CREDENTIAL_USER,
+      USERNAME: env.RESOURCE_OWNER_CREDENTIAL_USERNAME,
     },
   });
 

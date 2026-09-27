@@ -67,6 +67,7 @@
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
+const crypto = require("crypto");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
 const registry = require("./sts_applications.js");
@@ -1168,18 +1169,39 @@ async function testAgent(held, trustBundle, adminBase, entryId) {
   // ---- Agent administration, back as the administrator ------------------
   const listed = await call(Object.assign({ service: "agent",
     method: "ListAgents", request: {} }, adminBase));
-  check("ListAgents holds this run's agent, and its selectors are marked " +
-    "UNVERIFIED — an attestation payload nothing checked is a claim, not a " +
-    "fact", function () {
+  // WHAT A JOIN TOKEN'S AGENT CARRIES IS WHAT THE SERVER VERIFIED, AND NOT
+  // THE TOKEN. This asserted an `unverified` selector until the 2026-09-27
+  // submodule bump, which was right about a mock that put any attestation
+  // payload on the agent unread and wrong about a join token all along: the
+  // server MINTED that token and checks it, so its agent was never a claim.
+  // iya-sts #40 (2026-09-21) made every attestor return only the selectors it
+  // established, and 2026-09-12 stopped the token itself reaching the
+  // directory: the selector is `join_token:token-sha256:<16 hex>`, so whoever
+  // holds the token can find its agent and nobody can rebuild the token.
+  const tokenDigest = crypto.createHash("sha256").update(tokenValue, "utf8")
+    .digest("hex").slice(0, 16);
+  check("ListAgents holds this run's agent, carrying the join token's " +
+    "VERIFIED selector — a digest of the token, never the token itself",
+    function () {
       assert.ok(listed.ok, listed.status.details);
       const ours = (listed.messages[0].agents || []).filter(function (row) {
         return spiffeId.fromProto(row.id) === agentId;
       });
       assert.strictEqual(ours.length, 1, "this run's agent is not listed");
-      assert.ok((ours[0].selectors || []).some(function (selector) {
-        return String(selector.value).indexOf("unverified") === 0;
-      }), "an agent's selectors here are claims: " +
-          JSON.stringify(ours[0].selectors));
+      const selectors = ours[0].selectors || [];
+      assert.ok(selectors.some(function (selector) {
+        return selector.type === "join_token" &&
+          selector.value === "token-sha256:" + tokenDigest;
+      }), "a join token's agent should carry join_token:token-sha256:" +
+          tokenDigest + " (the first 16 hex of the token's SHA-256), and " +
+          "carries " + JSON.stringify(selectors));
+      assert.ok(!JSON.stringify(ours[0]).includes(tokenValue),
+        "the join token itself is on the agent's record — a credential in " +
+        "the directory, readable by anybody who may list agents");
+      assert.ok(!selectors.some(function (selector) {
+        return String(selector.value).indexOf("unverified") >= 0;
+      }), "an attestor that verified its evidence reported a selector as " +
+          "unverified: " + JSON.stringify(selectors));
     });
 
   const countAgents = await call(Object.assign({ service: "agent",

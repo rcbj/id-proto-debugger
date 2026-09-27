@@ -860,6 +860,19 @@ async function runFlow(driver, flowKey, stsUrl, landing) {
     "in its query string without it (" + landing + " landing here), and the " +
     "page reads both — so this is where that goes wrong.");
 
+  // The Token Request's scope is the one the authorization request asked
+  // for. The page seeds that field with EVERY value in scopes_supported, and
+  // since iya-sts #110 the mock advertises its own protected scopes there
+  // (scim:*, ssf:*) while issuing them only to a client whose registration
+  // declares them — so the seeded field is refused with invalid_scope, which
+  // is RFC 6749 section 5.2 working rather than anything this job is about.
+  const tokenScope = By.id("token_scope");
+  await driver.wait(until.elementLocated(tokenScope), waitTime);
+  await driver.executeScript("arguments[0].scrollIntoView({block:'center'});",
+    await driver.findElement(tokenScope));
+  await driver.findElement(tokenScope).clear();
+  await driver.findElement(tokenScope).sendKeys(flow.scope);
+
   // Exchange it.
   await driver.executeScript("arguments[0].scrollIntoView({block:'center'});",
     await driver.findElement(By.className("token_btn")));

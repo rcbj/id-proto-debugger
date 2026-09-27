@@ -111,10 +111,12 @@ function newKey(type) {
   assert.ok(spec, "newKey(): " + alg + " is not an algorithm this test can " +
     "sign with. Add it to DPOP_ALGS — a server advertising an algorithm this " +
     "file cannot produce is one the file cannot vouch for.");
-  var pair = spec.gen[1]
-    ? crypto.generateKeyPairSync(spec.gen[0], spec.gen[1])
-    : crypto.generateKeyPairSync(spec.gen[0]);
-  var jwk = pair.publicKey.export({ format: "jwk" });
+  var pair = spec.noble && !nodeHasMlDsa()
+    ? nobleKeyPair(alg, spec)
+    : (spec.gen[1]
+        ? crypto.generateKeyPairSync(spec.gen[0], spec.gen[1])
+        : crypto.generateKeyPairSync(spec.gen[0]));
+  var jwk = pair.publicJwk || pair.publicKey.export({ format: "jwk" });
   log.debug("Leaving newKey(). " + alg);
   return {
     alg: alg,
@@ -129,6 +131,49 @@ function newKey(type) {
           : (jwk.kty === "OKP"
               ? { kty: jwk.kty, crv: jwk.crv, x: jwk.x }
               : { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y }))
+  };
+}
+
+// WHETHER NODE'S OWN OPENSSL CAN MAKE AN ML-DSA KEY. Node 24 is linked
+// against OpenSSL 3.5, which has ML-DSA, and every image here pins 24; node
+// 22 — what a host run of ./local-run-tests.sh may well be — has none, and
+// generateKeyPairSync("ml-dsa-44") throws ERR_INVALID_ARG_VALUE. Probed by
+// generating a key rather than by reading a version, as openssl35.js does.
+var mlDsaProbe = null;
+
+function nodeHasMlDsa() {
+  log.debug("Entering nodeHasMlDsa().");
+  if (mlDsaProbe === null) {
+    try {
+      crypto.generateKeyPairSync("ml-dsa-44");
+      mlDsaProbe = true;
+    } catch (e) {
+      log.warn("node " + process.version + " (OpenSSL " +
+        process.versions.openssl + ") has no ML-DSA (" + e.message + "); " +
+        "the ML-DSA proofs are signed with @noble/post-quantum instead. " +
+        "The mock verifies ML-DSA with that same library, so on this host " +
+        "the PRIMITIVE is shared and only the JOSE framing, the AKP JWK and " +
+        "its thumbprint are checked independently. Node 24 restores the " +
+        "cross-implementation check.");
+      mlDsaProbe = false;
+    }
+  }
+  log.debug("Leaving nodeHasMlDsa(). " + mlDsaProbe);
+  return mlDsaProbe;
+}
+
+// An ML-DSA key pair from @noble/post-quantum, in the shape newKey() reads:
+// the private half is the library's secret key, which makeProof() signs with,
+// and the public half is already the RFC 9964 AKP JWK, since there is no node
+// KeyObject to export one from.
+function nobleKeyPair(alg, spec) {
+  log.debug("Entering nobleKeyPair(). alg=" + alg);
+  var ml = require("@noble/post-quantum/ml-dsa.js")[spec.noble];
+  var keys = ml.keygen(crypto.randomBytes(32));
+  log.debug("Leaving nobleKeyPair().");
+  return {
+    privateKey: { noble: ml, secretKey: keys.secretKey },
+    publicJwk: { kty: "AKP", alg: alg, pub: b64u(Buffer.from(keys.publicKey)) }
   };
 }
 
@@ -164,12 +209,12 @@ var DPOP_ALGS = {
   // FIPS 204 ML-DSA, the three the JOSE registry names (kty AKP, RFC 9964,
   // which also defines the AKP thumbprint members). Pure ML-DSA signs the
   // message itself, so there is no digest to name.
-  "ML-DSA-44": { gen: ["ml-dsa-44", null], hash: null, options: {},
-                 sigBytes: 2420 },
-  "ML-DSA-65": { gen: ["ml-dsa-65", null], hash: null, options: {},
-                 sigBytes: 3309 },
-  "ML-DSA-87": { gen: ["ml-dsa-87", null], hash: null, options: {},
-                 sigBytes: 4627 }
+  "ML-DSA-44": { gen: ["ml-dsa-44", null], noble: "ml_dsa44", hash: null,
+                 options: {}, sigBytes: 2420 },
+  "ML-DSA-65": { gen: ["ml-dsa-65", null], noble: "ml_dsa65", hash: null,
+                 options: {}, sigBytes: 3309 },
+  "ML-DSA-87": { gen: ["ml-dsa-87", null], noble: "ml_dsa87", hash: null,
+                 options: {}, sigBytes: 4627 }
 };
 
 function jkt(key) {
@@ -224,8 +269,11 @@ function makeProof(key, opts) {
     // "sha256" and branched on RS256 alone, which was right while two
     // algorithms were offered and would have verified an RS384 proof against
     // the wrong digest the moment a third was.
-    signature = crypto.sign(key.spec.hash, Buffer.from(signingInput, "ascii"),
-      Object.assign({ key: key.privateKey }, key.spec.options));
+    signature = key.privateKey.noble
+      ? Buffer.from(key.privateKey.noble.sign(key.privateKey.secretKey,
+          Buffer.from(signingInput, "ascii")))
+      : crypto.sign(key.spec.hash, Buffer.from(signingInput, "ascii"),
+          Object.assign({ key: key.privateKey }, key.spec.options));
   }
   log.debug("Leaving makeProof().");
   return signingInput + "." + b64u(signature);

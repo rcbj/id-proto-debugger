@@ -200,7 +200,11 @@ async function test() {
     const client_id = process.env.CLIENT_ID;
     const client_secret = process.env.CLIENT_SECRET;
     const scope = process.env.SCOPE;
+    // USER is Keycloak's UUID for the person, which is what a token's `sub`
+    // carries; USERNAME is the name typed into the grant, which common.sh
+    // provisions equal to the client id (and falls back to it here).
     const username = process.env.USER;
+    const loginName = process.env.USERNAME || client_id;
     const password = client_id;
     const audience = process.env.AUDIENCE;
     log.info("Set environment variables.");
@@ -225,7 +229,7 @@ async function test() {
     log.info("Completed populateMetadata().");
     log.info("Retrieve access_token.");
     const access_token = await getAccessTokenPassword(driver, client_id,
-        client_secret, scope, username, password);
+        client_secret, scope, loginName, password);
     log.info("Found access_token=" + access_token);
     log.info("Calling verifyAccessToken().");
     await verifyAccessToken(access_token, client_id, scope, { user: username,

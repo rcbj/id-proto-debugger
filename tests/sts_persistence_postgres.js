@@ -106,6 +106,7 @@ const assert = require("assert");
 const fs = require("fs");
 const net = require("net");
 const path = require("path");
+const tls = require("tls");
 const { Command, Option } = require("commander");
 const { spawn, spawnSync } = require("child_process");
 const common = require("./jwt_vc_json_common.js");
@@ -405,10 +406,83 @@ async function startPostgres() {
 // the run's own — the coordination section starts one with
 // STS_PERSISTENCE_COORDINATE off, which is a setting the mock marks
 // `runtime: false`, so it cannot be reached through /admin-api/config/set.
+// ---------------------------------------------------------------------------
+// THE MOCK'S DEFAULT TLS PARAMETERS NEED OPENSSL 3.5, AND THE NODE RUNNING
+// THIS JOB MAY BE OLDER.
+//
+// This is the one job here that runs the mock with the HOST's node rather
+// than in the mock's own image, which pins Node 24 and so OpenSSL 3.5. Since
+// the 2026-09-27 submodule bump the mock's `tls.groups` default leads with
+// the ML-KEM hybrids (X25519MLKEM768, in OpenSSL 3.5's tuple syntax) and its
+// `tls.signatureAlgorithms` with ML-DSA, and it refuses to start at all when
+// a TLS context cannot be built from them — `[STS-TLS-0001] tls: NOT
+// STARTING`, which is correct of it. On a host whose node carries OpenSSL 3.0
+// (Node 22, for one) the first instance therefore exited 1 before listening,
+// and every section of this job went with it.
+//
+// So where this node cannot build those two lists, the child is handed the
+// mock's OWN defaults with the post-quantum entries taken out, through the two
+// environment variables the mock names in that message. That is the same
+// argument portEnv() makes for switching https off: what is under test here is
+// what SURVIVES A RESTART, and the key-exchange groups of a listener this job
+// never connects to are incidental. It is logged, and it changes nothing on a
+// node that has the algorithms — which the containerized stack's does.
+// ---------------------------------------------------------------------------
+let tlsEnvCache = null;
+
+function tlsEnvForThisNode(root) {
+  log.debug("Entering tlsEnvForThisNode().");
+  if (tlsEnvCache) {
+    log.debug("Leaving tlsEnvForThisNode(). Cached.");
+    return tlsEnvCache;
+  }
+  let supported = true;
+  try {
+    tls.createSecureContext({ ecdhCurve: "X25519MLKEM768",
+                              sigalgs: "mldsa65:ecdsa_secp256r1_sha256" });
+  } catch (e) {
+    log.debug("Caught in tlsEnvForThisNode(): " + e.message);
+    supported = false;
+  }
+  if (supported) {
+    tlsEnvCache = {};
+    log.debug("Leaving tlsEnvForThisNode(). This node has them.");
+    return tlsEnvCache;
+  }
+  let defaults = {};
+  try {
+    defaults = require(path.join(root, "env", "defaults.js")).tls || {};
+  } catch (e) {
+    log.debug("Caught in tlsEnvForThisNode(): " + e.message);
+  }
+  const groups = String(defaults.groups || "X25519:P-256:P-384")
+    .split(/[\s:\/]+/)
+    .filter(function (one) {
+      return one && !/mlkem/i.test(one);
+    });
+  const sigalgs = String(defaults.signatureAlgorithms ||
+      "ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256")
+    .split(":")
+    .filter(function (one) {
+      return one && !/mldsa/i.test(one);
+    });
+  tlsEnvCache = { STS_TLS_GROUPS: groups.join(":"),
+                  STS_TLS_SIGALGS: sigalgs.join(":") };
+  log.info("[mock] this node (" + process.version + ", OpenSSL " +
+    process.versions.openssl + ") has no ML-KEM groups or ML-DSA " +
+    "signature schemes, which the mock's TLS defaults lead with, so each " +
+    "instance is started with them left out: STS_TLS_GROUPS=" +
+    tlsEnvCache.STS_TLS_GROUPS + ", STS_TLS_SIGALGS=" +
+    tlsEnvCache.STS_TLS_SIGALGS + ".");
+  log.debug("Leaving tlsEnvForThisNode(). Classical lists.");
+  return tlsEnvCache;
+}
+
 async function startMock(root, databaseUrl, label, extraEnv) {
   log.debug("Entering startMock(). label=" + label);
   const httpPort = await freePort();
-  const env = Object.assign({}, process.env, await portEnv(httpPort), {
+  const env = Object.assign({}, process.env, await portEnv(httpPort),
+      tlsEnvForThisNode(root), {
     STS_PERSISTENCE_MODE: "postgres",
     // NOT `STS_PERSISTENCE_DATABASE_URL`, which is the name five of its six
     // siblings would suggest and which this job spent a while getting wrong.
@@ -437,7 +511,10 @@ async function startMock(root, databaseUrl, label, extraEnv) {
     CONFIG_FILE: path.join(root, "env", "local.js")
   }, extraEnv || {});
 
-  const child = spawn("node", ["server.js"], {
+  // THIS node, not whichever `node` is first on PATH: tlsEnvForThisNode()
+  // asked this binary's OpenSSL what it can do, and the answer is about the
+  // binary that then runs the mock only if they are the same one.
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: root, env: env, stdio: ["ignore", "pipe", "pipe"]
   });
   started.processes.push(child);
@@ -446,7 +523,15 @@ async function startMock(root, databaseUrl, label, extraEnv) {
   child.stderr.on("data", function (chunk) { output.push(String(chunk)); });
 
   const base = "http://127.0.0.1:" + httpPort;
-  const until = Date.now() + 45000;
+  // TWO MINUTES, AND IT WAS FORTY-FIVE SECONDS until 2026-09-27. The loop
+  // polls, so a passing start pays nothing for the headroom. The mock of the
+  // 2026-09-27 bump starts a compiled TypeScript tree with over a thousand
+  // settings, and a SECOND instance also joins the first one's change log
+  // before it listens; in the pool, beside four browsers, that went past
+  // forty-five seconds while the same job alone started each instance well
+  // inside it.
+  const startBudgetMs = 120000;
+  const until = Date.now() + startBudgetMs;
   while (Date.now() < until) {
     if (child.exitCode !== null) {
       assert.fail("the mock STS (" + label + ") exited with " +
@@ -467,7 +552,7 @@ async function startMock(root, databaseUrl, label, extraEnv) {
     await pause(300);
   }
   assert.fail("the mock STS (" + label + ") did not answer on " + base +
-    " within forty-five seconds. Its output was:\n" +
+    " within " + (startBudgetMs / 1000) + " seconds. Its output was:\n" +
     output.join("").slice(-2000));
 }
 
@@ -1365,13 +1450,14 @@ function fatalMessage(output) {
 async function startMockExpectingFailure(root, databaseUrl) {
   log.debug("Entering startMockExpectingFailure().");
   const httpPort = await freePort();
-  const env = Object.assign({}, process.env, await portEnv(httpPort), {
+  const env = Object.assign({}, process.env, await portEnv(httpPort),
+      tlsEnvForThisNode(root), {
     STS_PERSISTENCE_MODE: "postgres",
     STS_DATABASE_URL: databaseUrl,
     STS_LOG_LEVEL: "warn",
     CONFIG_FILE: path.join(root, "env", "local.js")
   });
-  const child = spawn("node", ["server.js"], {
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: root, env: env, stdio: ["ignore", "pipe", "pipe"]
   });
   started.processes.push(child);

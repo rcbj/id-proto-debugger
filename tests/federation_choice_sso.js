@@ -83,21 +83,22 @@
 // ---------------------------------------------------------------------------
 // ONE THING THE MOCK HAS TO BE CONFIGURED FOR, AND IT IS NOT A HACK
 //
-// `federation.outboundAllowInsecure`. The OpenID Connect relationship redeems
-// its code over a BACK CHANNEL, which `federation_http.js` makes, and that
-// module refuses two things by default: an `http://` URL, and a certificate
-// nothing here trusts. A client secret and an authorization code travel on
-// that request, so both refusals are right — and BOTH apply to this suite.
-// Every stack here runs the mock on a self-signed certificate it regenerates
-// at every start, so the `https` stacks need this setting exactly as much as
-// the `http` ones do; the scheme says nothing about whether it is needed.
+// The OpenID Connect relationship redeems its code over a BACK CHANNEL, which
+// `federation_http` makes, and that module refuses two things by default: an
+// `http://` URL, and a certificate nothing here trusts. A client secret and
+// an authorization code travel on that request, so both refusals are right.
 // That was the shape of this file's first failure: the SAML 2.0 half passed,
 // the OpenID Connect half timed out coming back, and the reason was a 502
-// naming a certificate on a page nobody was reading.
+// naming a certificate on a page nobody was reading. Until iya-sts #171 one
+// setting, `federation.outboundAllowInsecure`, waived both; it is three now,
+// and `trustPartnerTls()` in federation_admin.js picks the strictest that
+// works — on every stack here `federation.outboundCaFile`, naming the file
+// the mock already serves its own certificate from, so the back channel is
+// verified rather than waved through.
 //
 // It is written WHILE REALM 1 IS AMBIENT, so it lands in that realm's own
-// override map rather than process-wide — a mock relaxed process-wide would
-// stop checking certificates for every other job in the pool — and it is put
+// override map rather than process-wide — a mock changed process-wide would
+// change the certificate check for every other job in the pool — and it is put
 // back with `/admin-api/config/reset` rather than by writing the old value
 // back: a `set` leaves `source: override` on the row for ever, and the mock's
 // own suite trips over that on the next run against the same container.
@@ -246,44 +247,17 @@ async function createRealms(stsBase) {
 //
 // The OpenID Connect relationship is the only one of the two with a BACK
 // CHANNEL: realm 1 redeems the code at realm 2's token endpoint and reads
-// realm 2's JWKS, both through `federation_http.js`, which refuses an
-// `http://` URL and refuses a certificate nothing trusts. Every stack in this
-// suite runs the mock on a self-signed certificate it regenerates at every
-// start, so this is needed on a `https` stack exactly as much as on a plain
-// one — reading the scheme and skipping the write is what made the OpenID
-// Connect half of this test time out coming back, with the reason on an error
-// page nobody was reading.
-//
-// WHICH REALM THE WRITE LANDED IN is asserted, because that is the half that
-// costs somebody else a run: a setting written while a realm is ambient goes
-// into that realm's own override map, and one written WITHOUT one lands
-// process-wide, where it would stop every other job on this mock from checking
-// a certificate. `realm` says which realm answered the read and
-// `realmSettings` is that realm's own override list, so the snapshot answers
-// both questions at once.
+// realm 2's JWKS, both through `federation_http`. Which setting lets it, and
+// the assertion that the write landed IN REALM 1 rather than process-wide,
+// are `trustPartnerTls()`'s. Answers the keys written, for the reset.
 // ---------------------------------------------------------------------------
-async function allowInsecureOutbound(spBase) {
-  log.debug("Entering allowInsecureOutbound().");
-  await must(spBase, "/config/set",
-             { key: "federation.outboundAllowInsecure", value: "true" },
-             "allowing " + SP_REALM + " to dial " + IDP_REALM + " over the " +
-             "mock's own self-signed TLS, which the OpenID Connect " +
-             "relationship needs to redeem its code");
-  const snapshot = await adminGet(spBase, "/config");
-  assert.strictEqual(String(snapshot.realm), SP_REALM,
-    "Reading " + SP_REALM + "'s configuration answered for the \"" +
-    snapshot.realm + "\" realm, so the write above did not land where this " +
-    "test thinks it did either.");
-  assert.ok((snapshot.realmSettings || [])
-              .indexOf("federation.outboundAllowInsecure") >= 0,
-    SP_REALM + " does not list federation.outboundAllowInsecure among its " +
-    "OWN settings (it lists: " + (snapshot.realmSettings || []).join(", ") +
-    "), so the write went process-wide — which is not this test's to do, and " +
-    "would relax the certificate check for every other job on this mock.");
-  log.info(SP_REALM + " may dial a partner whose certificate nothing here " +
-           "trusts, which is what the OpenID Connect relationship's back " +
-           "channel needs.");
-  log.debug("Leaving allowInsecureOutbound().");
+async function trustPartnerBackChannel(spBase) {
+  log.debug("Entering trustPartnerBackChannel().");
+  const keys = await admin.trustPartnerTls(spBase, SP_REALM,
+    "the OpenID Connect relationship redeems its code at " + IDP_REALM +
+    "'s token endpoint");
+  log.debug("Leaving trustPartnerBackChannel().");
+  return keys;
 }
 
 // ---------------------------------------------------------------------------
@@ -1101,11 +1075,11 @@ async function test() {
   const samlUser = usernameFor("fedchoice-saml");
   const oidcUser = usernameFor("fedchoice-oidc");
 
-  // Whether the setting below was actually written, so the `finally` resets
+  // Which settings below were actually written, so the `finally` resets
   // exactly what it turned on: a reset of a setting that is not overridden is
   // refused by the mock, and a `must()` in a `finally` would then replace the
   // real failure with that one.
-  let relaxedOutbound = false;
+  let relaxedOutbound = [];
   // process.exit() is synchronous termination, so it would skip both of the
   // `finally` blocks below — orphaning the browser (one headless Chrome is
   // ~15 processes, which is how a run of this suite once left 559 of them on
@@ -1122,8 +1096,7 @@ async function test() {
     // configured with.
     // -------------------------------------------------------------------
     await createRealms(stsBase);
-    await allowInsecureOutbound(spBase);
-    relaxedOutbound = true;
+    relaxedOutbound = await trustPartnerBackChannel(spBase);
     await registerApplication(spBase, callbackUri);
 
     const samlPartner = await readSamlPartner(idpBase,
@@ -1363,10 +1336,9 @@ async function test() {
     // The same argument the driver's own finally is written under, one level
     // out: process.exit() below would skip THIS block too, and the setting
     // would be left on realm 1 by every failing run.
-    if (relaxedOutbound) {
-      await must(spBase, "/config/reset",
-                 { key: "federation.outboundAllowInsecure" },
-                 "resetting federation.outboundAllowInsecure in " + SP_REALM);
+    for (const key of relaxedOutbound) {
+      await must(spBase, "/config/reset", { key: key },
+                 "resetting " + key + " in " + SP_REALM);
     }
   }
   if (testFailed) {
