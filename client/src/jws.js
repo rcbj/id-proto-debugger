@@ -462,7 +462,8 @@ function verifyOctets(spec, key, octets, signature) {
 function spkiFromCertificatePem(pem) {
   log.debug("Entering spkiFromCertificatePem().");
   var der = bytesLib.pemToDer(pem);
-  var cert = forge.asn1.fromDer(forge.util.binary.raw.encode(der));
+  var cert = forge.asn1.fromDer(forge.util.binary.raw.encode(der),
+      { decodeBitStrings: false });
   var tbs = cert.value[0];
   var versioned = tbs.value[0].tagClass === forge.asn1.Class.CONTEXT_SPECIFIC;
   var spki = tbs.value[versioned ? 6 : 5];
@@ -482,10 +483,19 @@ function spkiFromCertificatePem(pem) {
 // there.) The leading octet of a DER BIT STRING is the count of unused bits
 // and is not part of the key — dropping it is the whole of the encoding, and
 // keeping it produces a point that is off the curve by one byte.
+//
+// decodeBitStrings: false is not optional. By default forge tries to parse a
+// BIT STRING's contents as DER and, when they happen to parse, replaces the
+// bytes with the tree — so `bits.value` is no longer the key. A P-384 point
+// is 04 || x || y, 97 octets, and when x begins 0x5f those octets read as an
+// OCTET STRING of exactly 95: one key in a few hundred, every signature under
+// it refused, and nothing wrong with the key. P-256 does the same at 0x3f,
+// and an Ed key whenever its first two octets look like a tag and a length.
 function spkiPublicBits(pem) {
   log.debug("Entering spkiPublicBits().");
   var der = bytesLib.pemToDer(pem);
-  var spki = forge.asn1.fromDer(forge.util.binary.raw.encode(der));
+  var spki = forge.asn1.fromDer(forge.util.binary.raw.encode(der),
+      { decodeBitStrings: false });
   var bits = spki.value[1];
   var raw = bits.value;
   var out = forge.util.binary.raw.decode(
@@ -510,8 +520,12 @@ function spkiPublicBits(pem) {
 function pkcs8PrivateBits(spec, pem) {
   log.debug("Entering pkcs8PrivateBits().");
   var der = bytesLib.pemToDer(pem);
-  var pki = forge.asn1.fromDer(forge.util.binary.raw.encode(der));
-  var inner = forge.asn1.fromDer(pki.value[2].value);
+  // Not decoding BIT STRINGs for the reason spkiPublicBits() gives; the
+  // ECPrivateKey's optional publicKey is one.
+  var pki = forge.asn1.fromDer(forge.util.binary.raw.encode(der),
+      { decodeBitStrings: false });
+  var inner = forge.asn1.fromDer(pki.value[2].value,
+      { decodeBitStrings: false });
   var raw;
   if (spec.family === 'okp') {
     raw = inner.value;
