@@ -496,14 +496,16 @@ function theComplexSubject() {
   log.debug("Entering theComplexSubject().");
   log.info("5. the subject, through the pipe's own RFC 9493 grammar");
 
-  check("it is a COMPLEX subject, told from a plain one by the ABSENCE of " +
-      "`format`", function () {
+  check("it is a COMPLEX subject, told from a plain one by " +
+      "\"format\": \"complex\"", function () {
     const subject = caep.complexSubject(session(), {});
-    assert.strictEqual(subject.format, undefined,
-        'that is SSF section 4\'s own discriminator. "does it have a member ' +
-        'called user" is wrong for an opaque subject whose id happens to be ' +
-        'spelt that way.');
-    assert.strictEqual(subject.user.format, 'issuer_subject_id');
+    assert.strictEqual(subject.format, 'complex',
+        'that is SSF 1.0 final section 3.3\'s discriminator. A complex ' +
+        'subject with no format is the pre-final draft shape, and the mock ' +
+        'refuses it.');
+    assert.strictEqual(subject.user.format, 'iss_sub',
+        'RFC 9493 section 3.2.3 names the format iss_sub; ' +
+        'issuer_subject_id was the draft spelling and is refused.');
     assert.strictEqual(subject.session.format, 'opaque');
   });
 

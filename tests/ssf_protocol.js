@@ -451,8 +451,8 @@ async function theStreamLifecycleWorks() {
   check('a format RFC 9493 does not define is refused', function () {
     assert.strictEqual(badFormat.status, 400);
     assert.ok(String((badFormat.body || {}).description)
-        .indexOf('issuer_subject_id') >= 0,
-        'The refusal has to LIST the eight, because the mistake is not ' +
+        .indexOf('iss_sub') >= 0,
+        'The refusal has to LIST the formats, because the mistake is not ' +
         'knowing them.');
   });
   log.info("[streams] OK.");
@@ -491,8 +491,10 @@ async function everySubjectFormatCrossesTheWire() {
     });
   }
   const complex = {
+    format: ssf.COMPLEX_FORMAT,
     user: { format: 'email', email: 'alice@example.com' },
     session: { format: 'opaque', id: 'sess-1' },
+    application: { format: 'uri', uri: 'https://rp.example.com/' },
     device: { format: 'opaque', id: 'dev-1' },
     tenant: { format: 'opaque', id: 'acme' },
     org_unit: { format: 'opaque', id: 'eng' },
@@ -500,8 +502,33 @@ async function everySubjectFormatCrossesTheWire() {
   };
   const complexAdd = await call('POST', add.url,
       { stream_id: id, subject: complex }, {});
-  check('a COMPLEX subject with all six members is accepted', function () {
+  check('a COMPLEX subject with all seven members is accepted', function () {
     assert.strictEqual(complexAdd.status, 204, complexAdd.text);
+  });
+  // SSF 1.0 section 3.3: additional member names MAY be used.
+  const extraMember = await call('POST', add.url,
+      { stream_id: id, subject: { format: ssf.COMPLEX_FORMAT,
+        user: { format: 'email', email: 'alice@example.com' },
+        workload: { format: 'uri', uri: 'spiffe://example.org/w' } } }, {});
+  check('a complex subject with an ADDITIONAL member is accepted',
+    function () {
+      assert.strictEqual(extraMember.status, 204, extraMember.text);
+    });
+  // The pre-final shape: members and no "format": "complex". Issue #300 —
+  // the mock refuses it, and this workflow no longer builds it.
+  const draftComplex = await call('POST', add.url,
+      { stream_id: id, subject: {
+        user: { format: 'email', email: 'alice@example.com' },
+        session: { format: 'opaque', id: 'sess-1' } } }, {});
+  check('a complex subject with no "format": "complex" is refused',
+    function () {
+      assert.strictEqual(draftComplex.status, 400, draftComplex.text);
+    });
+  const draftName = await call('POST', add.url,
+      { stream_id: id, subject: { format: 'issuer_subject_id',
+        iss: 'https://i/', sub: 'alice' } }, {});
+  check('the draft format name issuer_subject_id is refused', function () {
+    assert.strictEqual(draftName.status, 400, draftName.text);
   });
   const loose = await call('POST', add.url,
       { stream_id: id,
@@ -540,8 +567,8 @@ async function everySubjectFormatCrossesTheWire() {
   check('adding to an unknown stream is a 404', function () {
     assert.strictEqual(noStream.status, 404);
   });
-  log.info("[subjects] OK — both grammars agree on all eight formats, the " +
-      "complex subject, and three refusals.");
+  log.info("[subjects] OK — both grammars agree on all eleven formats, the " +
+      "complex subject, and the refusals.");
 }
 
 // ---------------------------------------------------------------------------
@@ -938,7 +965,7 @@ async function theDefectsAreReachable() {
   await drain(poll, id);
   const addSubject = ssf.endpointFor(metadata, 'add_subject_endpoint');
   await call('POST', addSubject.url, { stream_id: id,
-    subject: { format: 'issuer_subject_id', iss: 'https://i/',
+    subject: { format: 'iss_sub', iss: 'https://i/',
       sub: 'alice' } }, {});
   await call('POST', verify.url, { stream_id: id, state: 'legacy' }, {});
   const withLegacy = await drain(poll, id);

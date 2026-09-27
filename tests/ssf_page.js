@@ -164,10 +164,10 @@ async function thePageLoadsAndTheBundleRan(driver) {
       "           .options.length," +
       "         types: document.getElementById('ssf_tx_type').options.length," +
       "         algs: document.getElementById('ssf_tx_alg').options.length };");
-  assert.strictEqual(counts.formats, 9,
+  assert.strictEqual(counts.formats, 12,
       "The subject format picker has " + counts.formats + " options. RFC " +
-      "9493 defines eight formats and SSF adds the complex subject, so it " +
-      "should have nine.");
+      "9493 defines eight formats, SSF 1.0 section 3.5 three more, and SSF " +
+      "adds the complex subject, so it should have twelve.");
   assert.strictEqual(counts.types, 2,
       "The event type picker has " + counts.types + " options. This page " +
       "loads in the PURE SSF profile, and SSF 1.0 defines two event types of " +
@@ -547,7 +547,7 @@ async function theSubjectPaneChecksBeforeItSends(driver) {
   // And one that really goes across the wire.
   await driver.executeScript(
       "document.getElementById('ssf_subject_format').value = " +
-      "'issuer_subject_id'; window.ssf.subjectFormatChanged();" +
+      "'iss_sub'; window.ssf.subjectFormatChanged();" +
       "window.ssf.fillSubjectExample();");
   await click(driver, "btn_ssf_add_subject");
   await driver.wait(async function () {

@@ -107,7 +107,7 @@ is a branch naming a vocabulary:
   change it;
 * on the mock, **one rule in `streamCoversSubject()`**, without which CAEP
   would deliver nothing at all: a stream naming a PERSON now covers a complex
-  subject naming a session of theirs. That is SSF section 4's own intent and
+  subject naming a session of theirs. That is SSF section 3.3's own intent and
   was simply unreachable while no event carried a complex subject.
 
 ### And what adding the SECOND vocabulary cost, which is the shorter list
@@ -151,7 +151,7 @@ underneath.
 
 | Module | What it holds |
 |---|---|
-| `client/src/ssf_client.js` | **The pipe.** RFC 9493's eight subject formats with their closed member sets and SSF's complex subject; discovery and the endpoint lookup; stream configurations; the RFC 8417 envelope and every finding a SET can produce; both deliveries. |
+| `client/src/ssf_client.js` | **The pipe.** RFC 9493's eight subject formats and SSF 1.0 section 3.5's three, with their closed member sets, and SSF's complex subject; discovery and the endpoint lookup; stream configurations; the RFC 8417 envelope and every finding a SET can produce; both deliveries. |
 | `client/src/ssf_events.js` | **The vocabulary.** SSF's two event types, the three families, and the validator. |
 | `client/src/ssf_history.js` | The two histories — the token sets and the event messages — and the redaction. |
 | `api/ssf_proxy.js` | What `POST /ssf/call` will and will not forward. No axios and no network. |
@@ -196,10 +196,22 @@ subject, and three refusals. That is the argument `common/pq_jose.js` makes in
 the mock about the composite construction, applied to a grammar instead of to a
 signature.
 
-### The eight formats, and the rule that catches people
+### The eleven formats, and the rule that catches people
 
-`account` (an `acct:` URI), `email`, `issuer_subject_id`, `opaque`,
-`phone_number`, `decentralized_identifier`, `uri`, `aliases`.
+RFC 9493's eight: `account` (an `acct:` URI), `email`, `iss_sub`, `opaque`,
+`phone_number`, `did`, `uri`, `aliases`. SSF 1.0 section 3.5's three:
+`jwt_id` (`iss`, `jti` — one JWT), `saml_assertion_id` (`issuer`,
+`assertion_id` — one SAML assertion) and `ip-addresses` (a member of the same
+name holding an **array** of IPv4/IPv6 strings, the one format whose member is
+not a single string).
+
+**The names are the registered ones and no others are accepted.** Section
+3.2.3 is `iss_sub` and section 3.2.6 is `did`; `issuer_subject_id` and
+`decentralized_identifier` were draft spellings that this workflow used until
+issue #300, and the mock STS refuses them as unknown formats. There is no
+legacy alias on either side, deliberately. (`decentralized_identifier` still
+appears in `vc_presentation_1.js` — as an OpenID4VP client-identifier prefix,
+which is a different registry and correct there.)
 
 **Each format's member set is CLOSED.** RFC 9493 section 3 gives every format an
 exhaustive list of members and a conforming receiver must REJECT an identifier
@@ -223,16 +235,23 @@ conforming receiver rejects and the sender never finds out.
 
 ### The complex subject is what makes CAEP possible
 
-SSF 1.0 section 4 lets a `sub_id` be an object whose members — `user`, `device`,
-`session`, `tenant`, `org_unit`, `group` — are each themselves a subject
-identifier. That is what makes *"this session was revoked"* expressible at all:
-the person is not revoked, one session of theirs is.
+SSF 1.0 section 3.3 lets a `sub_id` be an object whose members — `user`,
+`device`, `session`, `application`, `tenant`, `org_unit`, `group` — are each
+themselves a subject identifier. That is what makes *"this session was
+revoked"* expressible at all: the person is not revoked, one session of theirs
+is.
 
-A complex subject is told from a simple one by the **absence of `format`**,
-which is the specification's own discriminator. The obvious alternative — "does
-it have a member called `user`?" — is wrong for an `opaque` subject whose id
-happens to be spelt that way, and `tests/ssf_engine.js` asserts exactly that
-case.
+A complex subject carries **`"format": "complex"`**, which is the final
+specification's discriminator. Pre-final drafts told the two apart by the
+ABSENCE of `format`; an object with no `format` is now refused outright, and
+`tests/ssf_engine.js` asserts that. The obvious alternative — "does it have a
+member called `user`?" — was always wrong, for an `opaque` subject whose id
+happens to be spelt that way.
+
+**The seven member names are not a closed set** — section 3.3 says additional
+ones MAY be used — so an unknown member name is accepted (the page notes it)
+while its VALUE is still held to being a valid simple subject identifier. A
+member may not itself be complex, and an alias may not contain one.
 
 `critical_subject_members` in the transmitter's metadata names the members a
 receiver MUST understand. Publishing one is a promise, so this workflow refuses

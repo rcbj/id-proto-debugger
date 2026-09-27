@@ -39,9 +39,11 @@
 //
 // NINE SECTIONS:
 //
-//   1. the eight RFC 9493 formats — every valid combination, and the closed
+//   1. the eight RFC 9493 formats and SSF 1.0 section 3.5's three — every
+//      valid combination, the registered names and ONLY those, the closed
 //      member set, the required members, the value shapes and the nesting ban
-//   2. complex subjects, the six members, and critical_subject_members
+//   2. complex subjects — "format": "complex", the seven members, additional
+//      members, and critical_subject_members
 //   3. subject keys and descriptions
 //   4. the two delivery methods and the URN-versus-shorthand trap
 //   5. discovery — both well-known shapes, every metadata member, and the
@@ -110,21 +112,56 @@ function refuses(verdict, fragment, what) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. THE EIGHT FORMATS OF RFC 9493 SECTION 3.
+// 1. THE EIGHT FORMATS OF RFC 9493 SECTION 3, AND SSF 1.0 SECTION 3.5's THREE.
 // ---------------------------------------------------------------------------
 function everyFormatIsDefinedAndValidates() {
-  log.info("[subjects] All eight RFC 9493 formats, and the example of each.");
-  assert.strictEqual(ssf.SUBJECT_FORMATS.length, 8,
-      'RFC 9493 section 3 defines eight formats and this table has ' +
-      ssf.SUBJECT_FORMATS.length + '.');
+  log.debug("Entering everyFormatIsDefinedAndValidates().");
+  log.info("[subjects] All eleven formats — RFC 9493's eight and SSF 1.0 " +
+      "section 3.5's three — and the example of each.");
+  assert.strictEqual(ssf.SUBJECT_FORMATS.length, 11,
+      'RFC 9493 section 3 defines eight formats and SSF 1.0 section 3.5 ' +
+      'three more, and this table has ' + ssf.SUBJECT_FORMATS.length + '.');
   checks++;
-  ['account', 'email', 'issuer_subject_id', 'opaque', 'phone_number',
-   'decentralized_identifier', 'uri', 'aliases'].forEach(function (name) {
-    check('the "' + name + '" format is defined', function () {
-      assert.ok(ssf.SUBJECT_FORMAT_NAMES.indexOf(name) >= 0,
-          'RFC 9493 defines "' + name + '" and this build does not.');
+  ['account', 'email', 'iss_sub', 'opaque', 'phone_number', 'did', 'uri',
+   'aliases', 'jwt_id', 'saml_assertion_id', 'ip-addresses']
+    .forEach(function (name) {
+      check('the "' + name + '" format is defined', function () {
+        assert.ok(ssf.SUBJECT_FORMAT_NAMES.indexOf(name) >= 0,
+            'RFC 9493 or SSF 1.0 defines "' + name + '" and this build ' +
+            'does not.');
+      });
     });
+  // THE DRAFT SPELLINGS ARE GONE, AND NOT MERELY UNLISTED. Issue #300: the
+  // mock STS refuses them with no legacy alias, so a validator here that still
+  // passed one would build a subject the far end rejects.
+  [['issuer_subject_id', { format: 'issuer_subject_id',
+    iss: 'https://issuer.example.com/', sub: 'a' }],
+   ['decentralized_identifier', { format: 'decentralized_identifier',
+     url: 'did:example:123' }]].forEach(function (pair) {
+    check('the draft name "' + pair[0] + '" is not a format', function () {
+      assert.ok(ssf.SUBJECT_FORMAT_NAMES.indexOf(pair[0]) < 0,
+          '"' + pair[0] + '" is a pre-RFC spelling and must not be listed.');
+    });
+    refuses(ssf.validateSubjectId(pair[1], {}), pair[0],
+        'a subject in the draft format "' + pair[0] + '"');
   });
+  check('the three SSF 1.0 section 3.5 formats have their closed sets',
+    function () {
+      const byName = {};
+      ssf.SUBJECT_FORMATS.forEach(function (row) {
+        byName[row.format] = row;
+      });
+      assert.deepStrictEqual(byName.jwt_id.members, ['iss', 'jti']);
+      assert.deepStrictEqual(byName.jwt_id.required, ['iss', 'jti']);
+      assert.deepStrictEqual(byName.saml_assertion_id.members,
+          ['issuer', 'assertion_id']);
+      assert.deepStrictEqual(byName.saml_assertion_id.required,
+          ['issuer', 'assertion_id']);
+      assert.deepStrictEqual(byName['ip-addresses'].members,
+          ['ip-addresses']);
+      assert.deepStrictEqual(byName['ip-addresses'].required,
+          ['ip-addresses']);
+    });
   ssf.SUBJECT_FORMATS.forEach(function (row) {
     check('the "' + row.format + '" example validates', function () {
       const verdict = ssf.validateSubjectId(row.example, {});
@@ -143,7 +180,8 @@ function everyFormatIsDefinedAndValidates() {
         });
       });
   });
-  log.info("[subjects] OK — eight formats, every specimen valid.");
+  log.info("[subjects] OK — eleven formats, every specimen valid.");
+  log.debug("Leaving everyFormatIsDefinedAndValidates().");
 }
 
 function theMemberSetIsClosed() {
@@ -193,13 +231,46 @@ function theValueShapesAreChecked() {
   refuses(ssf.validateSubjectId({ format: 'email', email: 'alice' }, {}),
       'email address', 'an email address with no @');
   refuses(ssf.validateSubjectId(
-      { format: 'decentralized_identifier', url: 'https://example.com' }, {}),
+      { format: 'did', url: 'https://example.com' }, {}),
       'DID', 'a DID that is an https URL');
   refuses(ssf.validateSubjectId({ format: 'uri', uri: '/users/1' }, {}),
       'absolute URI', 'a relative URI');
   refuses(ssf.validateSubjectId(
-      { format: 'issuer_subject_id', iss: 'issuer.example.com', sub: 'a' },
+      { format: 'iss_sub', iss: 'issuer.example.com', sub: 'a' },
       {}), 'absolute URI', 'an issuer that is not a URI');
+  check('a jwt_id "iss" is a StringOrURI, so a bare string passes',
+    function () {
+      const verdict = ssf.validateSubjectId(
+          { format: 'jwt_id', iss: 'issuer', jti: 'j-1' }, {});
+      assert.ok(verdict.ok, verdict.errors.join(' '));
+    });
+  refuses(ssf.validateSubjectId(
+      { format: 'jwt_id', iss: 'https://x', jti: 'j', sub: 'a' }, {}),
+      'sub', 'a jwt_id carrying a "sub" it does not define');
+  refuses(ssf.validateSubjectId(
+      { format: 'saml_assertion_id', iss: 'https://x', assertion_id: 'a' },
+      {}), 'iss', 'a saml_assertion_id spelling "issuer" as "iss"');
+  refuses(ssf.validateSubjectId(
+      { format: 'ip-addresses', 'ip-addresses': '10.0.0.1' }, {}),
+      'ARRAY', 'ip-addresses as a single string rather than an array');
+  refuses(ssf.validateSubjectId(
+      { format: 'ip-addresses', 'ip-addresses': [] }, {}),
+      'empty', 'an empty ip-addresses array');
+  refuses(ssf.validateSubjectId(
+      { format: 'ip-addresses', 'ip-addresses': ['10.0.0.1', 'host.example'] },
+      {}), 'ip-addresses[1]', 'a host name inside ip-addresses');
+  refuses(ssf.validateSubjectId(
+      { format: 'ip-addresses', 'ip-addresses': ['10.0.0.0/8'] }, {}),
+      'IPv4 or IPv6', 'a CIDR block inside ip-addresses');
+  refuses(ssf.validateSubjectId(
+      { format: 'ip-addresses', 'ip-addresses': [7] }, {}),
+      'non-empty string', 'a number inside ip-addresses');
+  check('IPv4, IPv6 and an IPv4-mapped IPv6 address all pass', function () {
+    const verdict = ssf.validateSubjectId({ format: 'ip-addresses',
+      'ip-addresses': ['192.0.2.1', '2001:db8::1', '::ffff:192.0.2.1', '::']
+    }, {});
+    assert.ok(verdict.ok, verdict.errors.join(' '));
+  });
   check('an opaque id has NO shape rule, by definition', function () {
     const verdict = ssf.validateSubjectId(
         { format: 'opaque', id: '///not a uri///' }, {});
@@ -214,8 +285,8 @@ function theValueShapesAreChecked() {
   refuses(ssf.validateSubjectId({ format: 'nonsuch', id: 'x' }, {}),
       'nonsuch', 'a format RFC 9493 does not define');
   refuses(ssf.validateSubjectId({ email: 'a@b.c' }, {}), 'format',
-      'a simple identifier with no format — which is ALSO how a complex one ' +
-      'is told apart, so the message has to name the format member');
+      'a simple identifier with no format — the message has to name the ' +
+      'format member');
   log.info("[subjects] OK — every value rule refuses by name.");
 }
 
@@ -251,39 +322,86 @@ function aliasesMayNotNest() {
 // ---------------------------------------------------------------------------
 // 2. COMPLEX SUBJECTS.
 // ---------------------------------------------------------------------------
-function complexSubjectsAreClosedToo() {
-  log.info("[complex] SSF 1.0 section 4's six members, and the fact that a " +
-      "complex subject is told from a simple one by the ABSENCE of `format`.");
-  assert.strictEqual(ssf.COMPLEX_SUBJECT_MEMBERS.length, 6,
-      'SSF defines six complex subject members and this build has ' +
-      ssf.COMPLEX_SUBJECT_MEMBERS.length + '.');
+function complexSubjectsCarryTheirFormat() {
+  log.debug("Entering complexSubjectsCarryTheirFormat().");
+  log.info("[complex] SSF 1.0 section 3.3's seven members, the \"format\": " +
+      "\"complex\" discriminator, and additional members.");
+  assert.strictEqual(ssf.COMPLEX_FORMAT, 'complex');
+  assert.strictEqual(ssf.COMPLEX_SUBJECT_MEMBERS.length, 7,
+      'SSF 1.0 section 3.3 defines seven complex subject members and this ' +
+      'build has ' + ssf.COMPLEX_SUBJECT_MEMBERS.length + '.');
   checks++;
-  ['user', 'device', 'session', 'tenant', 'org_unit', 'group']
+  ['user', 'device', 'session', 'application', 'tenant', 'org_unit', 'group']
     .forEach(function (name) {
       check('the "' + name + '" member is defined', function () {
         assert.ok(ssf.COMPLEX_SUBJECT_MEMBER_NAMES.indexOf(name) >= 0);
       });
       check('a complex subject of one "' + name + '" validates', function () {
-        const subject = {};
+        const subject = { format: 'complex' };
         subject[name] = { format: 'opaque', id: 'x-' + name };
         const verdict = ssf.validateSubjectId(subject, {});
         assert.ok(verdict.ok, verdict.errors.join(' '));
         assert.strictEqual(verdict.complex, true);
+        assert.strictEqual(verdict.format, 'complex');
       });
     });
   check('every member at once validates', function () {
-    const subject = {};
+    const subject = { format: 'complex' };
     ssf.COMPLEX_SUBJECT_MEMBER_NAMES.forEach(function (name) {
       subject[name] = { format: 'opaque', id: name };
     });
     const verdict = ssf.validateSubjectId(subject, {});
     assert.ok(verdict.ok, verdict.errors.join(' '));
   });
-  refuses(ssf.validateSubjectId({ workload: { format: 'opaque', id: 'x' } },
-      {}), 'workload', 'a complex member SSF does not define');
-  refuses(ssf.validateSubjectId({}, {}), 'empty', 'an empty complex subject');
+  check('an "application" member validates — the one final SSF added',
+    function () {
+      const verdict = ssf.validateSubjectId({ format: 'complex',
+        user: { format: 'email', email: 'a@b.com' },
+        application: { format: 'uri', uri: 'https://rp.example.com/' } }, {});
+      assert.ok(verdict.ok, verdict.errors.join(' '));
+    });
+  // "format": "complex" IS REQUIRED. The pre-final shape — no format at all —
+  // is what this build sent before issue #300 and what the mock now refuses.
   refuses(ssf.validateSubjectId(
-      { user: { format: 'email', email: 'nope' } }, {}), 'user.email',
+      { user: { format: 'opaque', id: 'a' },
+        session: { format: 'opaque', id: 's' } }, {}),
+      'complex', 'a complex subject with no "format": "complex"');
+  check('...and the refusal is not mistaken for a complex verdict',
+    function () {
+      const verdict = ssf.validateSubjectId(
+          { user: { format: 'opaque', id: 'a' } }, {});
+      assert.strictEqual(verdict.complex, false);
+    });
+  // ADDITIONAL MEMBERS. Section 3.3: "additional members MAY be used". The
+  // name is accepted; the value is still a simple Subject Identifier.
+  check('an additional member name is accepted', function () {
+    const subject = { format: 'complex',
+      user: { format: 'opaque', id: 'a' },
+      workload: { format: 'uri', uri: 'spiffe://example.org/w' } };
+    const verdict = ssf.validateSubjectId(subject, {});
+    assert.ok(verdict.ok, verdict.errors.join(' '));
+    assert.deepStrictEqual(ssf.additionalComplexMembers(subject),
+        ['workload']);
+  });
+  check('a defined member is not reported as additional', function () {
+    assert.deepStrictEqual(ssf.additionalComplexMembers({ format: 'complex',
+      application: { format: 'opaque', id: 'a' } }), []);
+    assert.deepStrictEqual(ssf.additionalComplexMembers(
+        { format: 'opaque', id: 'a' }), []);
+  });
+  refuses(ssf.validateSubjectId({ format: 'complex',
+    workload: { format: 'email', email: 'nope' } }, {}), 'workload.email',
+      'an additional member whose value is a bad identifier');
+  refuses(ssf.validateSubjectId({ format: 'complex', workload: 'x' }, {}),
+      'workload', 'an additional member whose value is not an identifier');
+  refuses(ssf.validateSubjectId({ format: 'complex',
+    user: { format: 'complex', device: { format: 'opaque', id: 'd' } } },
+  {}), 'user', 'a complex subject nested inside a complex subject');
+  refuses(ssf.validateSubjectId({ format: 'complex' }, {}), 'no members',
+      'a complex subject with no members');
+  refuses(ssf.validateSubjectId({}, {}), 'format', 'an empty object');
+  refuses(ssf.validateSubjectId({ format: 'complex',
+    user: { format: 'email', email: 'nope' } }, {}), 'user.email',
       'a bad identifier inside a complex member — the path has to name it');
   check('an OPAQUE subject whose id is spelt "user" is still simple',
     function () {
@@ -294,21 +412,24 @@ function complexSubjectsAreClosedToo() {
       assert.ok(verdict.ok);
       assert.strictEqual(verdict.complex, false);
     });
-  log.info("[complex] OK — six members, closed, and the discriminator is " +
-      "`format`.");
+  log.info("[complex] OK — seven members, additional ones allowed, and the " +
+      "discriminator is \"format\": \"complex\".");
+  log.debug("Leaving complexSubjectsCarryTheirFormat().");
 }
 
 function criticalSubjectMembersAreEnforced() {
+  log.debug("Entering criticalSubjectMembersAreEnforced().");
   log.info("[complex] critical_subject_members is a PROMISE: a transmitter " +
       "that publishes one and omits it produces events nothing acts on.");
-  refuses(ssf.validateSubjectId({ user: { format: 'opaque', id: 'a' } },
-      { criticalMembers: ['session'] }), 'session',
+  refuses(ssf.validateSubjectId({ format: 'complex',
+    user: { format: 'opaque', id: 'a' } },
+  { criticalMembers: ['session'] }), 'session',
       'a complex subject missing a critical member');
   check('a complex subject carrying it passes', function () {
-    const verdict = ssf.validateSubjectId({
+    const verdict = ssf.validateSubjectId({ format: 'complex',
       user: { format: 'opaque', id: 'a' },
       session: { format: 'opaque', id: 's' } },
-      { criticalMembers: ['session'] });
+    { criticalMembers: ['session'] });
     assert.ok(verdict.ok, verdict.errors.join(' '));
   });
   check('a SIMPLE subject is not held to it', function () {
@@ -320,6 +441,7 @@ function criticalSubjectMembersAreEnforced() {
     assert.ok(verdict.ok, verdict.errors.join(' '));
   });
   log.info("[complex] OK.");
+  log.debug("Leaving criticalSubjectMembersAreEnforced().");
 }
 
 // ---------------------------------------------------------------------------
@@ -329,9 +451,9 @@ function subjectKeysAreStable() {
   log.info("[keys] The same subject must key the same however it was " +
       "written, and two different subjects must never collide.");
   check('member order does not change the key', function () {
-    const a = ssf.subjectKey({ format: 'issuer_subject_id',
+    const a = ssf.subjectKey({ format: 'iss_sub',
       iss: 'https://i/', sub: 'x' });
-    const b = ssf.subjectKey({ sub: 'x', format: 'issuer_subject_id',
+    const b = ssf.subjectKey({ sub: 'x', format: 'iss_sub',
       iss: 'https://i/' });
     assert.strictEqual(a, b);
   });
@@ -353,18 +475,34 @@ function subjectKeysAreStable() {
         'An opaque id and an email address that happen to read the same are ' +
         'DIFFERENT subjects.');
   });
+  check('the "complex" format does not enter a complex subject\'s key',
+    function () {
+      const key = ssf.subjectKey({ format: 'complex',
+        session: { format: 'opaque', id: 's' },
+        user: { format: 'opaque', id: 'u' } });
+      assert.strictEqual(key,
+          'complex{session=opaque{id=s};user=opaque{id=u}}');
+    });
   check('a complex subject keys differently from its user member',
     function () {
-      const a = ssf.subjectKey({ user: { format: 'opaque', id: 'x' } });
+      const a = ssf.subjectKey({ format: 'complex',
+        user: { format: 'opaque', id: 'x' } });
       const b = ssf.subjectKey({ format: 'opaque', id: 'x' });
       assert.notStrictEqual(a, b);
     });
   check('describeSubject names every value', function () {
-    assert.ok(ssf.describeSubject({ format: 'issuer_subject_id',
+    assert.ok(ssf.describeSubject({ format: 'iss_sub',
       iss: 'https://i/', sub: 'alice' }).indexOf('alice') >= 0);
-    assert.ok(ssf.describeSubject({
+    const described = ssf.describeSubject({ format: 'complex',
       user: { format: 'email', email: 'a@b.c' },
-      session: { format: 'opaque', id: 's1' } }).indexOf('session') >= 0);
+      session: { format: 'opaque', id: 's1' } });
+    assert.ok(described.indexOf('session') >= 0);
+    assert.ok(described.indexOf('format') < 0,
+        'The "complex" discriminator is not a member and must not be ' +
+        'described as one: ' + described);
+    assert.ok(ssf.describeSubject({ format: 'ip-addresses',
+      'ip-addresses': ['192.0.2.1', '2001:db8::1'] })
+      .indexOf('2001:db8::1') >= 0);
     assert.strictEqual(ssf.describeSubject(null), '(no subject)');
   });
   log.info("[keys] OK.");
@@ -588,12 +726,19 @@ function streamConfigurationsAreBuiltAndChecked() {
     assert.ok(!verdict.ok);
     assert.ok(verdict.errors.join(' ').indexOf('endpoint_url') >= 0);
   });
-  check('a bad format is refused and the eight are named', function () {
+  check('a bad format is refused and the formats are named', function () {
     const verdict = ssf.checkStreamConfiguration(
         { aud: 'a', format: 'username',
           delivery: { method: ssf.DELIVERY_POLL } }, meta);
     assert.ok(!verdict.ok);
-    assert.ok(verdict.errors.join(' ').indexOf('issuer_subject_id') >= 0);
+    assert.ok(verdict.errors.join(' ').indexOf('iss_sub') >= 0);
+  });
+  check('a stream format in a draft spelling is refused', function () {
+    const verdict = ssf.checkStreamConfiguration(
+        { aud: 'a', format: 'issuer_subject_id',
+          delivery: { method: ssf.DELIVERY_POLL } }, meta);
+    assert.ok(!verdict.ok,
+        '"issuer_subject_id" is the pre-RFC name of "iss_sub".');
   });
   check('a poll stream with an endpoint WARNS rather than refusing',
     function () {
@@ -1527,7 +1672,7 @@ function test() {
   everyRequiredMemberIsRequired();
   theValueShapesAreChecked();
   aliasesMayNotNest();
-  complexSubjectsAreClosedToo();
+  complexSubjectsCarryTheirFormat();
   criticalSubjectMembersAreEnforced();
   subjectKeysAreStable();
   deliveryMethodsAreUrns();

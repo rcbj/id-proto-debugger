@@ -457,9 +457,10 @@ async function eachGrantShapeSeedsTheSession(driver) {
       "  .value);");
   check('THE SUBJECT IS A COMPLEX ONE naming the session as well as the ' +
       'person', function () {
-        assert.strictEqual(subject.format, undefined,
-            'a complex subject is told from a plain one by the ABSENCE of ' +
-            'format.');
+        assert.strictEqual(subject.format, 'complex',
+            'a complex subject is told from a plain one by ' +
+            '"format": "complex" (SSF 1.0 section 3.3).');
+        assert.strictEqual(subject.user.format, 'iss_sub');
         assert.strictEqual(subject.session.id, 'a-real-session-id');
         assert.strictEqual(subject.user.sub, 'urn:sts-mock:user:alice');
       });

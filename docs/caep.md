@@ -25,7 +25,7 @@ are two different sentences and the difference is the whole reason there are
 two profiles rather than one.
 
 Everything below follows from a second fact: **a CAEP event is about a SESSION
-and a subject identifier normally names a PERSON.** SSF 1.0 section 4's
+and a subject identifier normally names a PERSON.** SSF 1.0 section 3.3's
 *complex subject* exists to close that gap — the person is not revoked, one
 session of theirs is — and almost every mistake worth catching in this profile
 is a consequence of getting it wrong.
@@ -101,7 +101,8 @@ in their own place and neither is correct in the other's.
 `caep_session.js`'s `complexSubject()` builds
 
 ```json
-{ "user":    { "format": "issuer_subject_id", "iss": "…", "sub": "…" },
+{ "format":  "complex",
+  "user":    { "format": "iss_sub", "iss": "…", "sub": "…" },
   "session": { "format": "opaque", "id": "…" },
   "device":  { "format": "opaque", "id": "…" } }
 ```
@@ -111,10 +112,13 @@ in their own place and neither is correct in the other's.
 and `device` are `opaque`, because neither has a shape anybody else can parse
 and RFC 9493 says so by defining no rule for that format's `id`.
 
-**A complex subject is told from a plain one by the ABSENCE of `format`**,
-which is the specification's own discriminator. The obvious alternative — "does
-it have a member called `user`?" — is wrong for an `opaque` subject whose id
-happens to be spelt that way.
+**A complex subject is told from a plain one by `"format": "complex"`**,
+which is SSF 1.0 final's own discriminator (section 3.3). Pre-final drafts used
+the ABSENCE of `format` instead, and that shape is now refused on both sides.
+The obvious alternative — "does it have a member called `user`?" — is wrong for
+an `opaque` subject whose id happens to be spelt that way. The `user` member is
+`iss_sub`, RFC 9493 section 3.2.3's registered name; the draft spelling
+`issuer_subject_id` is refused.
 
 **Leaving the session out is legal and is the most useful thing this page can
 send at a receiver under test.** The subject then names only the person, which
@@ -141,7 +145,7 @@ transmitter's refusal to send is not a message anybody receives.
 
 `sts/ssf/ssf_streams.js`'s `streamCoversSubject()` therefore covers a complex
 subject when the stream names **any one of its members**. It is deliberately
-one level and not recursive: SSF section 4 forbids a complex subject to nest
+one level and not recursive: SSF section 3.3 forbids a complex subject to nest
 another, so a member is always a plain identifier.
 
 ---

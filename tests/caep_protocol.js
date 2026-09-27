@@ -481,11 +481,11 @@ async function namingThePersonCoversTheirSessions(realSub) {
   log.info("[subjects] A stream naming the PERSON has to cover an event " +
       "about a SESSION of theirs. Without it every CAEP event is refused to " +
       "the only receiver that could have asked for it.");
-  const person = { format: 'issuer_subject_id',
+  const person = { format: 'iss_sub',
     iss: String(metadata.issuer || ''), sub: realSub };
   const added = await call('POST', endpoint('add_subject_endpoint'),
       { stream_id: streamId, subject: person, verified: true }, {});
-  check('the person is added as a plain issuer_subject_id subject',
+  check('the person is added as a plain iss_sub subject',
       function () {
         assert.ok(added.status >= 200 && added.status < 300,
             'Adding the subject answered ' + added.status + ': ' +
@@ -564,11 +564,12 @@ async function signingInEmitsAnEvent() {
   check('THE SUBJECT IS A COMPLEX ONE, naming the session as well as the ' +
       'person', function () {
     assert.ok(claims.sub_id, 'there is no sub_id at all.');
-    assert.strictEqual(claims.sub_id.format, undefined,
-        'a complex subject is told from a plain one by the ABSENCE of ' +
-        '`format`. This one carries "' + claims.sub_id.format + '", so it ' +
-        'names a person and nothing else — which asks a receiver to end ' +
-        'every session they have.');
+    assert.strictEqual(claims.sub_id.format, 'complex',
+        'a complex subject is told from a plain one by "format": ' +
+        '"complex" (SSF 1.0 section 3.3). This one carries "' +
+        claims.sub_id.format + '", so it is either a plain subject naming ' +
+        'a person and nothing else — which asks a receiver to end every ' +
+        'session they have — or the pre-final draft shape.');
     assert.ok(claims.sub_id.session,
         'there is no `session` member. The person is not revoked; one ' +
         'session of theirs is.');

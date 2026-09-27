@@ -406,17 +406,17 @@ function theHyphenatedMember() {
 function theSubject() {
   log.debug("Entering theSubject().");
   const one = account();
-  check('an ordinary RISC subject is PLAIN and issuer_subject_id by default',
+  check('an ordinary RISC subject is PLAIN and iss_sub by default',
     function () {
       const subject = risc.subjectFor(one, P + 'account-disabled');
-      assert.strictEqual(subject.format, 'issuer_subject_id');
+      assert.strictEqual(subject.format, 'iss_sub');
       assert.strictEqual(subject.sub, 'u-alice');
       const verdict = ssf.validateSubjectId(subject, { path: 'sub_id' });
       assert.ok(verdict.ok, 'the subject failed the pipe\'s own RFC 9493 ' +
           'grammar: ' + verdict.errors.join(' '));
     });
   check('every format the pane offers produces a valid subject', function () {
-    ['issuer_subject_id', 'email', 'phone_number', 'opaque', 'account']
+    ['iss_sub', 'email', 'phone_number', 'opaque', 'account']
       .forEach(function (format) {
         const subject = risc.subjectFor(one, P + 'account-disabled',
           { format: format });
@@ -430,9 +430,9 @@ function theSubject() {
     [P + 'identifier-changed', P + 'identifier-recycled'].forEach(
       function (uri) {
         const subject = risc.subjectFor(one, uri,
-          { format: 'issuer_subject_id' });
+          { format: 'iss_sub' });
         assert.strictEqual(subject.format, 'email',
-            uri + ' honoured issuer_subject_id. Its subject MUST be an ' +
+            uri + ' honoured iss_sub. Its subject MUST be an ' +
             'address or a number, and it carries the OLD value — so an ' +
             'iss_sub subject there contains none of the message.');
         assert.strictEqual(subject.email, 'alice@example.com');
@@ -441,7 +441,7 @@ function theSubject() {
   check('and a wrong-format subject WARNS rather than being refused',
     function () {
       const warningsOut = events.checkSubjectFormat(P + 'identifier-changed',
-        { format: 'issuer_subject_id', iss: 'https://x', sub: 'y' });
+        { format: 'iss_sub', iss: 'https://x', sub: 'y' });
       assert.strictEqual(warningsOut.length, 1,
           'nothing was said about an iss_sub subject on identifier-changed.');
       assert.ok(warningsOut[0].indexOf('BUILT anyway') >= 0,
@@ -452,12 +452,12 @@ function theSubject() {
   check('an ordinary event has no format rule at all', function () {
     assert.deepStrictEqual(
       events.checkSubjectFormat(P + 'account-purged',
-        { format: 'issuer_subject_id', iss: 'https://x', sub: 'y' }), []);
+        { format: 'iss_sub', iss: 'https://x', sub: 'y' }), []);
   });
   check('a COMPLEX subject on an identifier event is called out',
     function () {
       const warningsOut = events.checkSubjectFormat(P + 'identifier-recycled',
-        { user: { format: 'email', email: 'a@b.com' } });
+        { format: 'complex', user: { format: 'email', email: 'a@b.com' } });
       assert.ok(warningsOut.length === 1 &&
           warningsOut[0].indexOf('COMPLEX') >= 0,
           'a complex subject on an identifier event was not reported. It ' +
@@ -467,7 +467,7 @@ function theSubject() {
   check('checkSubject() reports both the grammar AND the format rule',
     function () {
       const verdict = risc.checkSubject(
-        { format: 'issuer_subject_id', iss: 'https://x', sub: 'y' },
+        { format: 'iss_sub', iss: 'https://x', sub: 'y' },
         P + 'identifier-changed', []);
       assert.ok(verdict.ok, 'the subject is valid RFC 9493 and was refused.');
       assert.ok((verdict.warnings || []).join(' ').indexOf('MUST be') >= 0,

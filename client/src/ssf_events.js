@@ -1364,11 +1364,12 @@ function checkSubjectFormat(uri, subject) {
     return warnings;
   }
   var format = String(subject.format || '');
-  if (!format) {
+  if (!format || format === 'complex') {
     warnings.push('"' + uri + '" wants a subject in one of these formats: ' +
-        formats.join(', ') + '. This one is a COMPLEX subject — it has no ' +
-        '`format` of its own — which names a person and possibly a session, ' +
-        'and this event is about an IDENTIFIER rather than about either.');
+        formats.join(', ') + '. This one is a COMPLEX subject — its ' +
+        '`format` is "complex" rather than one identifier\'s — which names ' +
+        'a person and possibly a session, and this event is about an ' +
+        'IDENTIFIER rather than about either.');
     log.debug("Leaving checkSubjectFormat(). Complex subject.");
     return warnings;
   }

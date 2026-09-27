@@ -1725,9 +1725,11 @@ function subjectFormatChanged() {
   var chosen = val('ssf_subject_format');
   if (chosen === 'complex') {
     setText('ssf_subject_what',
-      'SSF 1.0 section 4. A complex subject has NO "format" member and ' +
-      'carries any of ' + ssfClient.COMPLEX_SUBJECT_MEMBER_NAMES.join(', ') +
-      ', each itself a Subject Identifier. That is what makes "this session ' +
+      'SSF 1.0 section 3.3. A complex subject carries "format": ' +
+      '"complex" and any of ' +
+      ssfClient.COMPLEX_SUBJECT_MEMBER_NAMES.join(', ') +
+      ' — or an additional member name, which the section allows — each ' +
+      'itself a simple Subject Identifier. That is what makes "this session ' +
       'was revoked" expressible at all: the person is not revoked, one ' +
       'session of theirs is — which is the distinction the whole of CAEP ' +
       'rests on.');
@@ -1748,6 +1750,7 @@ function fillSubjectExample() {
   var chosen = val('ssf_subject_format');
   if (chosen === 'complex') {
     setVal('ssf_subject_json', pretty({
+      format: ssfClient.COMPLEX_FORMAT,
       user: { format: 'email', email: 'alice@example.com' },
       session: { format: 'opaque', id: 'sess-0123456789' },
       device: { format: 'opaque', id: 'device-abcdef' }
@@ -1812,6 +1815,12 @@ function checkSubject() {
       'Valid: ' + (verdict.complex ? 'a complex subject' :
         'the "' + verdict.format + '" format') + ' — ' +
       ssfClient.describeSubject(got.subject), 'ssf-status ssf-ok');
+    ssfClient.additionalComplexMembers(got.subject).forEach(function (name) {
+      host.appendChild(node('p', 'ssf-finding ssf-finding-warn',
+        '"' + name + '" is not one of the members SSF 1.0 section 3.3 ' +
+        'defines. It is allowed — additional member names MAY be used — ' +
+        'but a receiver that does not know it is free to ignore it.'));
+    });
     log.debug("Leaving checkSubject(). Valid.");
     return false;
   }
@@ -3265,7 +3274,7 @@ function renderCaepSubjectFindings(subject) {
   var verdict = caepSession.checkSubject(subject, criticalMembers());
   if (verdict.ok) {
     host.appendChild(node('p', 'ssf-note ssf-ok',
-      'Valid against RFC 9493 and SSF section 4 — ' +
+      'Valid against RFC 9493 and SSF section 3.3 — ' +
       ssfClient.describeSubject(subject) + '.'));
   }
   (verdict.errors || []).forEach(function (text) {
