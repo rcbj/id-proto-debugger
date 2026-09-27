@@ -292,7 +292,13 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
     }
     var symmetric = spec.kind === "hmac";
     var clientId = "assertion-client-" + i;
-    var secret = "secret-for-" + clientId;
+    // AT LEAST AS LONG AS THE LARGEST HASH OUTPUT (64 octets for HS512).
+    // RFC 7518 section 3.2: a key the size of the hash output or larger MUST
+    // be used, and the service refuses a shorter one in product mode since
+    // iya-sts #202. A longer secret is accepted by every version of the
+    // service, older pinned ones included, so no behaviour needs detecting.
+    var secret = "secret-for-" + clientId + "-" +
+                 crypto.randomBytes(32).toString("hex");
     var pair = symmetric ? null : keyPairFor(spec, alg);
     var now = Math.floor(Date.now() / 1000);
     // AN HOUR, AND IT WAS FIVE MINUTES UNTIL 2026-08-31.
