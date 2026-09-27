@@ -713,16 +713,29 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
     why: "the relying party providerId names and the assertion is audienced to"
   });
 
-  log.info("Select binding: " + binding);
+  // Two selectors since issue #307: the request binding (how Shibboleth's
+  // parameters travel) and the response binding, which in SAML 1.1 is the
+  // browser profile. This job's "artifact" is a GET asking for
+  // Browser/Artifact, as it always was.
+  var requestBinding = binding === "post" ? "post" : "redirect";
+  var responseBinding = binding === "artifact" ? "artifact" : "post";
+  log.info("Select request binding: " + requestBinding +
+           ", response binding: " + responseBinding);
   await driver.executeScript(
     "var s=document.getElementById('saml_binding'); if(s){ s.value = " +
-        "arguments[0]; s.dispatchEvent(new Event('change')); }",
-    binding
+        "arguments[0]; s.dispatchEvent(new Event('change')); }" +
+    "var r=document.getElementById('saml_response_binding'); if(r){ " +
+        "r.value = arguments[1]; r.dispatchEvent(new Event('change')); }",
+    requestBinding, responseBinding
   );
   var selected =
       await driver.findElement(By.id("saml_binding")).getAttribute("value");
-  assert.strictEqual(selected, binding, "Binding '" + binding +
-                     "' is not available in the selector.");
+  assert.strictEqual(selected, requestBinding, "Request binding '" +
+                     requestBinding + "' is not available in the selector.");
+  var selectedResponse = await driver.findElement(
+      By.id("saml_response_binding")).getAttribute("value");
+  assert.strictEqual(selectedResponse, responseBinding, "Response binding '" +
+                     responseBinding + "' is not available in the selector.");
 
   // The request is rebuilt by the change handler; wait for it to name the
   // profile this binding asks for rather than reading whatever was there

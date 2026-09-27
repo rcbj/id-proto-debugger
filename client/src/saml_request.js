@@ -180,6 +180,56 @@ function isReferenceOnly() {
 }
 
 // ---------------------------------------------------------------------------
+// TWO BINDINGS, AND THEY ARE ANSWERS TO DIFFERENT QUESTIONS.
+//
+// The REQUEST binding is how the AuthnRequest reaches the identity provider,
+// and its choices are the ones a SingleSignOnService can name: Redirect or
+// POST. The RESPONSE binding is the AuthnRequest's ProtocolBinding — how the
+// <Response> comes back — and it is offered whatever SingleSignOnService
+// bindings the metadata lists, because those say how a request may ARRIVE and
+// nothing about how a response leaves.
+//
+// Until issue #307 they were one selector with a third "HTTP-Artifact" option,
+// which read as though the IdP's HTTP-Artifact SingleSignOnService were what
+// made an artifact response possible. It is not: an HTTP-Artifact
+// SingleSignOnService is an AuthnRequest sent AS an artifact, and the mock STS
+// stopped advertising one (iya-sts #191) after SimpleSAMLphp read it literally
+// and did exactly that. What an artifact RESPONSE needs is an
+// ArtifactResolutionService to resolve it at, which is what the note under
+// the response selector reports on.
+// ---------------------------------------------------------------------------
+function requestBinding() {
+  log.debug("Entering requestBinding().");
+  log.debug("Leaving requestBinding().");
+  return val('saml_binding') === 'post' ? 'post' : 'redirect';
+}
+function responseBinding() {
+  log.debug("Entering responseBinding().");
+  log.debug("Leaving responseBinding().");
+  return val('saml_response_binding') === 'artifact' ? 'artifact' : 'post';
+}
+
+// A configuration saved before #307 holds `artifact` in the request selector,
+// which no longer has that option — restoreState() would leave it blank. Read
+// the stored value itself and split it into the two settings it always meant:
+// a Redirect-bound request asking for an HTTP-Artifact response.
+function migrateLegacyArtifactBinding() {
+  log.debug("Entering migrateLegacyArtifactBinding().");
+  if (!window.localStorage) {
+    log.debug("Leaving migrateLegacyArtifactBinding(). No storage.");
+    return;
+  }
+  if (localStorage.getItem(STORE_PREFIX + 'saml_binding') !== 'artifact') {
+    log.debug("Leaving migrateLegacyArtifactBinding(). Nothing to migrate.");
+    return;
+  }
+  setVal('saml_binding', 'redirect');
+  setVal('saml_response_binding', 'artifact');
+  saveState();
+  log.debug("Leaving migrateLegacyArtifactBinding(). Migrated.");
+}
+
+// ---------------------------------------------------------------------------
 // Small DOM helpers
 // ---------------------------------------------------------------------------
 function el(id) {
@@ -774,28 +824,25 @@ function applyVersionAvailability() {
     if (v !== '2.0') logout.classList.add('saml-unavailable');
     else logout.classList.remove('saml-unavailable');
   }
-  // The binding selector keeps all three options in 1.1 and they keep their
+  // Both binding selectors keep their options in 1.1 and they keep their
   // meanings; only the words change, because "HTTP-Redirect" names a SAML 2.0
-  // binding URI that does not exist in 1.1.
-  var bindingOpts = {
+  // binding URI that does not exist in 1.1, and in 1.1 the response binding
+  // IS the choice of browser profile.
+  relabelOptions('saml_binding', {
     redirect: isEleven ? 'HTTP Redirect (GET to the inter-site transfer ' +
         'service)' : 'HTTP-Redirect (GET)',
     post: isEleven ? 'HTTP POST (form POST to the inter-site transfer ' +
-        'service)' : 'HTTP-POST',
-    artifact: isEleven ? 'HTTP Artifact (Browser/Artifact, section 4.1)' :
-        'HTTP-Artifact'
-  };
-  var sel = el('saml_binding');
-  if (sel) {
-    for (var i = 0; i < sel.options.length; i++) {
-      var o = sel.options[i];
-      if (bindingOpts[o.value]) o.text = bindingOpts[o.value];
-    }
-  }
+        'service)' : 'HTTP-POST'
+  });
+  relabelOptions('saml_response_binding', {
+    post: isEleven ? 'Browser/POST (section 4.2)' : 'HTTP-POST',
+    artifact: isEleven ? 'Browser/Artifact (section 4.1)' : 'HTTP-Artifact'
+  });
 
   setText('saml_version_warning', versionNote(v));
   show('saml_version_warning', v !== '2.0');
   setText('saml_binding_note', bindingNote(v));
+  renderResponseBindingNote();
   setText('saml_sso_endpoints_note', ssoEndpointsNote(v));
   setText('saml_slo_note', v === '2.0' ? '' :
       'SAML ' + v + ' has no Single Logout. There is no message for one and ' +
@@ -843,6 +890,22 @@ function setUnavailable(containerId, off, controlIds) {
     if (e) e.disabled = !!off;
   }
   log.debug("Leaving setUnavailable().");
+}
+
+// Rewrite the visible text of a select's options by value. An option the map
+// does not name keeps its text.
+function relabelOptions(selectId, labels) {
+  log.debug("Entering relabelOptions(). id=" + selectId);
+  var sel = el(selectId);
+  if (!sel) {
+    log.debug("Leaving relabelOptions(). No such element.");
+    return;
+  }
+  for (var i = 0; i < sel.options.length; i++) {
+    var o = sel.options[i];
+    if (labels[o.value]) o.text = labels[o.value];
+  }
+  log.debug("Leaving relabelOptions().");
 }
 
 // textContent, not innerHTML: these are messages, not markup.
@@ -901,16 +964,60 @@ function bindingNote(v) {
     return '';
   }
   log.debug("Leaving bindingNote(). 1.1.");
-  return 'In SAML 1.1 this chooses two things at once. Redirect and POST ' +
-    'differ only in how the request reaches the inter-site transfer ' +
-    'service — the answer comes back on Browser/POST either way (section ' +
-    '4.2), as a form POST of a SAMLResponse to the shire URL. Artifact asks ' +
-    'for Browser/Artifact (section 4.1): the browser is redirected to the ' +
-    'shire with a SAMLart, and the API resolves it over the SOAP binding at ' +
-    'the SAML responder, which destroys it — an artifact is one-shot. Note ' +
-    'that SAML 1.1 defines no POST-bound request at all; that option sends ' +
-    'the same non-standard parameters as a form and needs an identity ' +
-    'provider that reads one.';
+  return 'Redirect and POST differ only in how the request reaches the ' +
+    'inter-site transfer service; which browser profile answers is the ' +
+    'response binding below. Note that SAML 1.1 defines no POST-bound ' +
+    'request at all; that option sends the same non-standard parameters as ' +
+    'a form and needs an identity provider that reads one.';
+}
+
+// What the selected response binding needs, and whether the loaded metadata
+// supplies it. The one thing an artifact response needs from the identity
+// provider is somewhere to RESOLVE the artifact — its ArtifactResolutionService
+// (in SAML 1.1, its SAML responder) — so that is what this reports on, rather
+// than on the HTTP-Artifact SingleSignOnService a document may or may not list.
+function responseBindingNote(v) {
+  log.debug("Entering responseBindingNote().");
+  if (v !== '2.0' && v !== '1.1') {
+    log.debug("Leaving responseBindingNote(). Reference only.");
+    return '';
+  }
+  var isEleven = v === '1.1';
+  if (responseBinding() !== 'artifact') {
+    log.debug("Leaving responseBindingNote(). POST.");
+    return isEleven ?
+      'Browser/POST (section 4.2): the identity provider answers with a form ' +
+      'POST of a SAMLResponse to the shire URL.' :
+      'This is the AuthnRequest\'s ProtocolBinding, and it is offered ' +
+      'whatever SingleSignOnService bindings the metadata lists — those say ' +
+      'how a request may arrive, not how a response leaves.';
+  }
+  var ars = val('saml_ars').trim();
+  var where = isEleven ? 'SAML responder' : 'Artifact Resolution Service';
+  var head = isEleven ?
+    'Browser/Artifact (section 4.1): the browser is redirected to the shire ' +
+    'with a SAMLart, and the API resolves it over SOAP, which destroys it — ' +
+    'an artifact is one-shot. ' :
+    'The IdP redirects back with a SAMLart and the API resolves it over SOAP ' +
+    '(ArtifactResolve). An HTTP-Artifact SingleSignOnService is not needed ' +
+    'for this — that would be an AuthnRequest sent AS an artifact. ';
+  if (!ars) {
+    log.debug("Leaving responseBindingNote(). No resolution service.");
+    return head + 'The ' + where + ' field is EMPTY: the loaded metadata ' +
+      'advertises no ArtifactResolutionService, so there is nowhere to ' +
+      'resolve the artifact. Fill it in, or choose ' +
+      (isEleven ? 'Browser/POST.' : 'HTTP-POST.');
+  }
+  log.debug("Leaving responseBindingNote(). Resolution service present.");
+  return head + 'It will be resolved at the ' + where + ', ' + ars + '.' +
+    (appconfig.backendAvailable ? '' : ' This deployment has no API, so ' +
+     'nothing here can make that SOAP call.');
+}
+
+function renderResponseBindingNote() {
+  log.debug("Entering renderResponseBindingNote().");
+  setText('saml_response_binding_note', responseBindingNote(samlVersion()));
+  log.debug("Leaving renderResponseBindingNote().");
 }
 
 function ssoEndpointsNote(v) {
@@ -1196,10 +1303,9 @@ function ssoDestination(binding) {
     log.debug("Leaving ssoDestination(). The inter-site transfer service.");
     return its;
   }
-  // The AuthnRequest itself is delivered via HTTP-POST or HTTP-Redirect. The
-  // "artifact" choice affects only how the *response* comes back
-  // (ProtocolBinding = HTTP-Artifact), so the request is still sent to the
-  // Redirect SSO endpoint.
+  // The AuthnRequest itself is delivered via HTTP-POST or HTTP-Redirect. An
+  // HTTP-Artifact response is the separate response binding
+  // (ProtocolBinding), and has no bearing on which endpoint this is.
   if (binding === 'post') {
     log.debug("Leaving ssoDestination().");
     return val('saml_sso_post');
@@ -1238,8 +1344,7 @@ function saml11RequestParams(target) {
   // anything here; it is in the profile and a service provider that omitted it
   // would be sending a request no Shibboleth identity provider recognises.
   out.push(['time', String(Math.floor(Date.now() / 1000))]);
-  out.push(['profile',
-            val('saml_binding') === 'artifact' ? 'artifact' : 'post']);
+  out.push(['profile', responseBinding()]);
   var fmt = val('saml_nameid_format');
   if (fmt) out.push(['format', fmt]);
   log.debug("Leaving saml11RequestParams(). " + out.length + " parameters.");
@@ -1263,7 +1368,7 @@ function saml11QueryString(params) {
 function saml11RequestText(dest, params) {
   log.debug("Entering saml11RequestText().");
   var qs = saml11QueryString(params);
-  if (val('saml_binding') === 'post') {
+  if (requestBinding() === 'post') {
     var lines = ['POST ' + (dest || '(no inter-site transfer service — ' +
                  'load metadata)'),
                  'Content-Type: application/x-www-form-urlencoded', ''];
@@ -1278,7 +1383,7 @@ function saml11RequestText(dest, params) {
 }
 
 // Which binding the IdP should use to return the response.
-//   * artifact request flow → HTTP-Artifact (resolved server-side at the ACS).
+//   * artifact response selected → HTTP-Artifact (resolved at the ACS).
 //   * with a backend         → HTTP-POST: the ACS is a real POST endpoint that
 //                              stashes the (large) SAMLResponse and redirects here.
 //   * backendless (static)   → HTTP-Redirect: there is no server to receive a
@@ -1322,9 +1427,9 @@ function hasSamlLanding() {
 // CloudFront's 8,192-byte cap. It is kept because it is the only thing that
 // works there, and because real deployments do use the Redirect binding; it is
 // not the default anywhere a POST can land.
-function responseProtocolBinding(binding) {
+function responseProtocolBinding(respBinding) {
   log.debug("Entering responseProtocolBinding().");
-  if (binding === 'artifact') {
+  if (respBinding === 'artifact') {
     log.debug("Leaving responseProtocolBinding().");
     return BINDING.artifact;
   }
@@ -1335,8 +1440,7 @@ function responseProtocolBinding(binding) {
 function buildAuthnRequest() {
   log.debug("Entering buildAuthnRequest().");
   var version = val('saml_version');
-  var binding = val('saml_binding');
-  var dest = ssoDestination(binding);
+  var dest = ssoDestination(requestBinding());
   var acs = val('saml_acs_url');
   var issuer = val('saml_sp_entity_id');
   var fmt = val('saml_nameid_format');
@@ -1380,7 +1484,8 @@ function buildAuthnRequest() {
          ' xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"' +
          ' ID="' + id + '" Version="2.0" IssueInstant="' + instant + '"' +
          (dest ? ' Destination="' + xmlEscape(dest) + '"' : '') +
-         ' ProtocolBinding="' + responseProtocolBinding(binding) + '"' +
+         ' ProtocolBinding="' + responseProtocolBinding(responseBinding()) +
+         '"' +
          (acs ? ' AssertionConsumerServiceURL="' + xmlEscape(acs) + '"' : '') +
           '>' +
          '\n  <saml:Issuer>' + xmlEscape(issuer) + '</saml:Issuer>' +
@@ -1739,11 +1844,11 @@ function buildRequestUi() {
   saveState();
 
   if (isSaml11()) {
-    var dest11 = ssoDestination(val('saml_binding'));
+    var dest11 = ssoDestination(requestBinding());
     setStatus('saml_call_status', dest11
-      ? ('Built the SAML 1.1 ' + (val('saml_binding') === 'post' ?
+      ? ('Built the SAML 1.1 ' + (requestBinding() === 'post' ?
          'form POST' : 'inter-site transfer request') + ' for the ' +
-         (val('saml_binding') === 'artifact' ? 'Browser/Artifact' :
+         (responseBinding() === 'artifact' ? 'Browser/Artifact' :
           'Browser/POST') + ' profile. Nothing in it is signed — SAML 1.1 ' +
          'has no request document.')
       : 'Built the SAML 1.1 request parameters — load metadata for the ' +
@@ -1762,7 +1867,7 @@ function buildRequestUi() {
   var signOn = signEnabled();
   var encOn = encEnabled();
   var priv = val('saml_sp_private_key');
-  var binding = val('saml_binding');
+  var binding = requestBinding();
 
   if (signOn && !priv) {
     setStatus('saml_call_status', 'Signing is enabled but there is no SP ' +
@@ -1785,9 +1890,9 @@ function buildRequestUi() {
       return false;
     }
 
-    // Redirect (and artifact, sent via redirect): encryption applies to the XML
-    // payload; signing is a detached query-string signature over the deflated
-    // payload. Show the full request URL.
+    // Redirect: encryption applies to the XML payload; signing is a detached
+    // query-string signature over the deflated payload. Show the full request
+    // URL.
     var reqXml = encOn ? encryptAuthnRequest(xml) : xml;
     setStatus('saml_call_status', 'Building redirect request…');
     signRedirect(reqXml, ssoDestination(binding), 'saml_request', signOn)
@@ -1814,9 +1919,10 @@ function buildRequestUi() {
 
 // ---------------------------------------------------------------------------
 // Call the IdP: build + sign the AuthnRequest in the browser, then send it.
-// POST and Redirect are fully client-side. The Artifact response binding still
-// needs the API — not to sign the request, but so the ACS can perform the SOAP
-// ArtifactResolve later; we register the SP context, then sign+send in-browser.
+// POST and Redirect are fully client-side. An HTTP-Artifact RESPONSE binding
+// still needs the API — not to sign the request, but so the ACS can perform the
+// SOAP ArtifactResolve later; we register the SP context, then sign+send
+// in-browser on whichever request binding is selected.
 // ---------------------------------------------------------------------------
 function callIdp() {
   log.debug("Entering callIdp(). version=" + samlVersion());
@@ -1842,7 +1948,7 @@ function callIdp() {
     return opFailure('Send AuthnRequest',
                      'signing is enabled but there is no SP private key.');
   }
-  var binding = val('saml_binding');
+  var binding = requestBinding();
   var dest = ssoDestination(binding);
   if (!dest) {
     setStatus('saml_call_status',
@@ -1859,9 +1965,23 @@ function callIdp() {
         'the username hint does not match the selected NameIDFormat.');
   }
 
+  if (responseBinding() === 'artifact') {
+    var refusal = artifactResponseRefusal();
+    if (refusal) {
+      setStatus('saml_call_status', refusal);
+      log.debug("Leaving callIdp(). The artifact response cannot work.");
+      return opFailure('Send AuthnRequest', refusal);
+    }
+  }
+
   var xml = buildAuthnRequest();
   setVal('saml_authn_request', xml);
   saveState();
+
+  if (responseBinding() === 'artifact') {
+    log.debug("Leaving callIdp(). Handed to the artifact-response path.");
+    return sendForArtifactResponse(xml, binding, dest, signOn, encOn, priv);
+  }
 
   try {
     if (binding === 'post') {
@@ -1879,67 +1999,6 @@ function callIdp() {
         log.debug("Leaving callIdp().");
         return opFailed(postId, e.message);
       }
-      log.debug("Leaving callIdp().");
-      return false;
-    }
-
-    if (binding === 'artifact') {
-      // Register the SP context (ARS URL + key) so the ACS can resolve the
-      // artifact via SOAP; then send the (optionally encrypted, optionally
-      // query-string-signed) redirect request in-browser.
-      if (!appconfig.backendAvailable) {
-        setStatus('saml_call_status', 'Artifact binding needs the API ' +
-                  'backend (for artifact resolution).');
-        log.debug("Leaving callIdp().");
-        return opFailure('Send AuthnRequest',
-                         'the Artifact binding needs the API backend.');
-      }
-      var reqXmlA = encOn ? encryptAuthnRequest(xml) : xml;
-      var artifactSent = false;
-      setStatus('saml_call_status', 'Preparing artifact request…');
-      fetch(appconfig.apiUrl + '/samlartifactctx', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          arsUrl: val('saml_ars'), privateKeyPem: priv,
-                      certPem: val('saml_sp_public_key'),
-          spEntityId: val('saml_sp_entity_id'), sigAlg: SIG_ALG_RSA_SHA256,
-          // WS-Addressing headers for the SOAP ArtifactResolve envelope.
-          wsa: {
-            enabled: (function () { var w =
-                      el('saml_wsa_support'); return !!(w && w.checked); })(),
-            to: val('saml_wsa_to'),
-            action: val('saml_wsa_action'),
-            replyTo: val('saml_wsa_replyto'),
-            from: val('saml_wsa_from'),
-            messageId: val('saml_wsa_messageid')
-          }
-        })
-      })
-        .then(function (r) { return r.json()
-            .then(function (j) { if (!r.ok) { throw new Error(j && j.error ?
-            j.error : ('HTTP ' + r.status)); } return j; }); })
-        .then(function (ctx) { return signRedirect(reqXmlA, dest,
-            ctx.relayState, signOn); })
-        .then(function (res) {
-          artifactSent = true;
-          var id = opSent('Send AuthnRequest', 'sent to ' + dest);
-          try {
-            // A refusal throws, and the existing handler below records it as a
-            // failed operation and reports it — which is what should happen.
-            window.location.assign(urlSafety.safeExternalUrl(res.location,
-                                   'The IdP destination'));
-          } catch (e) {
-            opFailed(id, e.message);
-            throw e;
-          }
-        })
-        .catch(function (e) {
-          log.error('callIdp artifact: ' + e.message);
-          setStatus('saml_call_status', 'Artifact request failed: ' +
-                    e.message);
-          if (!artifactSent) opFailure('Send AuthnRequest', e.message);
-        });
       log.debug("Leaving callIdp().");
       return false;
     }
@@ -1971,12 +2030,140 @@ function callIdp() {
   log.debug("Leaving callIdp().");
 }
 
+// Why an HTTP-Artifact response cannot work from here, or '' when it can. Two
+// things it needs and neither is an HTTP-Artifact SingleSignOnService: the API,
+// because resolving an artifact is a SOAP call a browser cannot make, and an
+// address to resolve it at.
+function artifactResponseRefusal() {
+  log.debug("Entering artifactResponseRefusal().");
+  var isEleven = isSaml11();
+  if (!appconfig.backendAvailable) {
+    log.debug("Leaving artifactResponseRefusal(). No API.");
+    return isEleven ?
+      'The Browser/Artifact profile needs the API backend: resolving an ' +
+      'artifact is a SOAP call a browser cannot make.' :
+      'An HTTP-Artifact response needs the API backend (for artifact ' +
+      'resolution).';
+  }
+  if (!val('saml_ars').trim()) {
+    log.debug("Leaving artifactResponseRefusal(). No resolution service.");
+    return 'No Artifact Resolution Service address — the IdP metadata ' +
+      'advertises no ArtifactResolutionService, so an artifact could not be ' +
+      'resolved. Fill in the field, or choose the ' +
+      (isEleven ? 'Browser/POST' : 'HTTP-POST') + ' response binding.';
+  }
+  log.debug("Leaving artifactResponseRefusal().");
+  return '';
+}
+
+// Register the SP context with the API — the resolution service's address,
+// the key that signs the SOAP request, the WS-Addressing headers — and resolve
+// to what it answers, whose `relayState` is the handle the ACS finds that
+// context by again. Shared by both protocol versions; `extra` carries what
+// differs between them.
+function registerArtifactContext(extra) {
+  log.debug("Entering registerArtifactContext().");
+  var w = el('saml_wsa_support');
+  var body = Object.assign({
+    arsUrl: val('saml_ars'),
+    privateKeyPem: val('saml_sp_private_key'),
+    certPem: val('saml_sp_public_key'),
+    spEntityId: val('saml_sp_entity_id'),
+    // WS-Addressing headers for the SOAP envelope.
+    wsa: {
+      enabled: !!(w && w.checked),
+      to: val('saml_wsa_to'),
+      action: val('saml_wsa_action'),
+      replyTo: val('saml_wsa_replyto'),
+      from: val('saml_wsa_from'),
+      messageId: val('saml_wsa_messageid')
+    }
+  }, extra || {});
+  log.debug("Leaving registerArtifactContext().");
+  return fetch(appconfig.apiUrl + '/samlartifactctx', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+    .then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) {
+          throw new Error(j && j.error ? j.error : ('HTTP ' + r.status));
+        }
+        return j;
+      });
+    });
+}
+
+// Send a SAML 2.0 AuthnRequest asking for ProtocolBinding=HTTP-Artifact, on
+// whichever REQUEST binding is selected. The artifact changes how the answer
+// comes back and nothing about how the question goes out, so the request is
+// signed and (optionally) encrypted exactly as it would be otherwise — the one
+// difference is the RelayState, which carries the API's context handle.
+function sendForArtifactResponse(xml, binding, dest, signOn, encOn, priv) {
+  log.debug("Entering sendForArtifactResponse(). binding=" + binding);
+  var artifactSent = false;
+  var payload;
+  try {
+    if (binding === 'post') {
+      // Sign (enveloped XML-DSIG) then encrypt, per sign-then-encrypt.
+      payload = signOn ? signPostEnveloped(xml) : xml;
+      if (encOn) payload = encryptAuthnRequest(payload);
+      setVal('saml_authn_request', payload);
+    } else {
+      payload = encOn ? encryptAuthnRequest(xml) : xml;
+    }
+  } catch (e) {
+    log.error('sendForArtifactResponse: ' + e.message);
+    setStatus('saml_call_status', 'Send failed: ' + e.message);
+    log.debug("Leaving sendForArtifactResponse(). Build failed.");
+    return opFailure('Send AuthnRequest', e.message);
+  }
+  setStatus('saml_call_status', 'Preparing artifact request…');
+  registerArtifactContext({ privateKeyPem: priv, sigAlg: SIG_ALG_RSA_SHA256 })
+    .then(function (ctx) {
+      if (binding === 'post') {
+        artifactSent = true;
+        var postId = opSent('Send AuthnRequest', 'sent to ' + dest);
+        try {
+          submitPostForm(dest, { SAMLRequest: utf8ToBase64(payload),
+                         RelayState: ctx.relayState });
+        } catch (e) {
+          opFailed(postId, e.message);
+          throw e;
+        }
+        return null;
+      }
+      return signRedirect(payload, dest, ctx.relayState, signOn)
+        .then(function (res) {
+          artifactSent = true;
+          var id = opSent('Send AuthnRequest', 'sent to ' + dest);
+          try {
+            // A refusal throws, and the handler below records it as a failed
+            // operation and reports it — which is what should happen.
+            window.location.assign(urlSafety.safeExternalUrl(res.location,
+                                   'The IdP destination'));
+          } catch (e) {
+            opFailed(id, e.message);
+            throw e;
+          }
+        });
+    })
+    .catch(function (e) {
+      log.error('sendForArtifactResponse: ' + e.message);
+      setStatus('saml_call_status', 'Artifact request failed: ' + e.message);
+      if (!artifactSent) opFailure('Send AuthnRequest', e.message);
+    });
+  log.debug("Leaving sendForArtifactResponse().");
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // SEND THE SAML 1.1 REQUEST.
 //
 // There is nothing to sign, nothing to encrypt and no document to build, so
-// this is much shorter than its 2.0 sibling and the whole of the difference
-// between the three bindings is here:
+// this is much shorter than its 2.0 sibling. The request binding decides how
+// the parameters travel:
 //
 //   redirect  navigate to the inter-site transfer service with the parameters
 //             on the query string. A top-level GET, which is what carries a
@@ -1985,11 +2172,12 @@ function callIdp() {
 //   post      the same parameters as a form POST. SAML 1.1 defines no
 //             POST-bound request; this is Shibboleth's parameters delivered
 //             the other way, and it needs an identity provider that reads one.
-//   artifact  register the SP context with the API first (it is the API that
-//             will have to make the SOAP call), then send the request as a GET
-//             carrying the returned `art:<id>` handle IN TARGET — which is
-//             the only round-tripped value SAML 1.1 has, RelayState not
-//             existing until 2.0.
+//
+// and the response binding decides the profile. Browser/Artifact registers the
+// SP context with the API first (it is the API that will have to make the SOAP
+// call), then sends the request carrying the returned `art:<id>` handle IN
+// TARGET — which is the only round-tripped value SAML 1.1 has, RelayState not
+// existing until 2.0.
 //
 // Every path records a "Sent" entry BEFORE handing the browser over, for the
 // reason the 2.0 one does: after the navigation this page is gone, and an entry
@@ -1997,7 +2185,7 @@ function callIdp() {
 // ---------------------------------------------------------------------------
 function callIdpSaml11() {
   log.debug("Entering callIdpSaml11().");
-  var binding = val('saml_binding');
+  var binding = requestBinding();
   var dest = ssoDestination(binding);
   if (!dest) {
     setStatus('saml_call_status', 'No inter-site transfer service address — ' +
@@ -2020,50 +2208,43 @@ function callIdpSaml11() {
                      'no ACS URL to send as the shire parameter.');
   }
 
-  if (binding === 'artifact') {
-    if (!appconfig.backendAvailable) {
-      setStatus('saml_call_status', 'The Artifact profile needs the API ' +
-                'backend: resolving an artifact is a SOAP call a browser ' +
-                'cannot make.');
-      log.debug("Leaving callIdpSaml11().");
-      return opFailure('Send AuthnRequest',
-                       'the Browser/Artifact profile needs the API backend.');
+  if (responseBinding() === 'artifact') {
+    var refusal = artifactResponseRefusal();
+    if (refusal) {
+      setStatus('saml_call_status', refusal);
+      log.debug("Leaving callIdpSaml11(). Browser/Artifact cannot work.");
+      return opFailure('Send AuthnRequest', refusal);
     }
     var artifactSent = false;
     setStatus('saml_call_status', 'Preparing the Browser/Artifact request…');
-    fetch(appconfig.apiUrl + '/samlartifactctx', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        // SAML 1.1's responder, not a SAML 2.0 Artifact Resolution Service:
-        // the API builds a <samlp:Request> carrying an <AssertionArtifact>
-        // rather than an <ArtifactResolve>, and this is what tells it which.
-        samlVersion: '1.1',
-        arsUrl: val('saml_ars'),
-        privateKeyPem: val('saml_sp_private_key'),
-        certPem: val('saml_sp_public_key'),
-        spEntityId: val('saml_sp_entity_id'),
-        sigAlg: selectedSigAlg(),
-        wsa: {
-          enabled: (function () { var w =
-                    el('saml_wsa_support'); return !!(w && w.checked); })(),
-          to: val('saml_wsa_to'),
-          action: val('saml_wsa_action'),
-          replyTo: val('saml_wsa_replyto'),
-          from: val('saml_wsa_from'),
-          messageId: val('saml_wsa_messageid')
-        }
-      })
+    registerArtifactContext({
+      // SAML 1.1's responder, not a SAML 2.0 Artifact Resolution Service:
+      // the API builds a <samlp:Request> carrying an <AssertionArtifact>
+      // rather than an <ArtifactResolve>, and this is what tells it which.
+      samlVersion: '1.1',
+      sigAlg: selectedSigAlg()
     })
-      .then(function (r) { return r.json()
-          .then(function (j) { if (!r.ok) { throw new Error(j && j.error ?
-          j.error : ('HTTP ' + r.status)); } return j; }); })
       .then(function (ctx) {
         var params = saml11RequestParams(ctx.relayState);
-        var url = dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
-            saml11QueryString(params);
         setVal('saml_authn_request', saml11RequestText(dest, params));
         artifactSent = true;
+        if (binding === 'post') {
+          var form = {};
+          for (var k = 0; k < params.length; k++) {
+            form[params[k][0]] = params[k][1];
+          }
+          var formId = opSent('Send AuthnRequest', 'sent to ' + dest +
+                              ' (form POST, Browser/Artifact)');
+          try {
+            submitPostForm(dest, form);
+          } catch (e) {
+            opFailed(formId, e.message);
+            throw e;
+          }
+          return;
+        }
+        var url = dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
+            saml11QueryString(params);
         var id = opSent('Send AuthnRequest', 'sent to ' + dest +
                         ' (Browser/Artifact)');
         try {
@@ -2289,6 +2470,20 @@ function bindingLabel(b) {
   return b || '\u2014';
 }
 
+// The request binding, and the response binding as well when it is the
+// artifact one — which is the only response binding that changes what
+// happened on the wire enough to be worth a column entry of its own.
+function historyBindingLabel() {
+  log.debug("Entering historyBindingLabel().");
+  var label = bindingLabel(requestBinding());
+  if (responseBinding() === 'artifact') {
+    log.debug("Leaving historyBindingLabel(). Artifact response.");
+    return label + ', response HTTP-Artifact';
+  }
+  log.debug("Leaving historyBindingLabel().");
+  return label;
+}
+
 function historyEntry(operation, result, detail, opts) {
   log.debug("Entering historyEntry().");
   opts = opts || {};
@@ -2298,7 +2493,7 @@ function historyEntry(operation, result, detail, opts) {
     result: result,
     detail: detail || '',
     binding: (opts.binding !== undefined) ?
-              opts.binding : bindingLabel(val('saml_binding')),
+              opts.binding : historyBindingLabel(),
     version: opts.version || val('saml_version'),
     spEntityId: (opts.spEntityId !== undefined) ?
                  opts.spEntityId : val('saml_sp_entity_id'),
@@ -2509,6 +2704,7 @@ window.onload = function () {
       xmldsig.SIG_METHODS, xmldsig.PQ_SIG_URIS);
   log.debug('Entering onload().');
   restoreState();
+  migrateLegacyArtifactBinding();
   setReturnLink();
   // Reflect the restored preference: if the user turned saving off in an
   // earlier session, the note has to be back on the page, and any key pair
@@ -2574,6 +2770,16 @@ window.onload = function () {
     els[i].addEventListener('input', saveState);
     els[i].addEventListener('change', autoBuildRequest);
   }
+
+  // The note under the response binding reports on the Artifact Resolution
+  // Service field, so it follows both.
+  ['saml_response_binding', 'saml_ars'].forEach(function (id) {
+    var ne = el(id);
+    if (ne) {
+      ne.addEventListener('change', renderResponseBindingNote);
+      ne.addEventListener('input', renderResponseBindingNote);
+    }
+  });
 
   // Live URL validation for the Configuration Parameters fields.
   var urlIds =
