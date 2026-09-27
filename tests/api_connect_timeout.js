@@ -54,10 +54,6 @@ var connectTimeout = paths.requireSharedModule(
 var guardModule = paths.requireSharedModule(
   [__dirname + "/../api/ssrf_guard.js", __dirname + "/ssrf_guard.js"],
    "ssrf_guard.js");
-var staleSocketRetry = paths.requireSharedModule(
-  [__dirname + "/../api/stale_socket_retry.js",
-   __dirname + "/stale_socket_retry.js"],
-  "stale_socket_retry.js");
 
 var quiet = { debug: function () {
   log.debug("Entering debug().");
@@ -856,6 +852,101 @@ async function keepAliveIsConfigured() {
   log.debug("Leaving keepAliveIsConfigured().");
 }
 
+// A POOLED SOCKET MUST BE RETIRED BEFORE THE SERVER RETIRES IT. A server
+// closes a connection idle for its keep-alive timeout, and a request written
+// onto it as that close is in flight dies with ECONNRESET before any response.
+// Node's agent avoids that by reading `Keep-Alive: timeout=N` and retiring the
+// socket a second early — but only by SHORTENING its own idle timeout, and an
+// agent built with none has 0, which the hint never undercuts, so the socket
+// is kept until the server closes it. That is what took a coverage run red on
+// 2026-09-27: GET /samlmetadata, `read ECONNRESET`, six seconds (a Node
+// server's five plus its one-second buffer) after the previous fetch of the
+// same document from the mock STS. server.js now gives its agents an idle
+// timeout; this checks that it does, and that the timeout is one the hint can
+// undercut. Read off the parked socket rather than by waiting six seconds for
+// a race, which is deterministic and costs nothing.
+async function pooledSocketHonoursServerHint() {
+  log.debug("Entering pooledSocketHonoursServerHint().");
+  log.info("=== A pooled socket is retired before the server's hint ===");
+
+  var idleTimeout = 5000;
+  var serverPath = path.join(__dirname, "..", "api", "server.js");
+  if (fs.existsSync(serverPath)) {
+    var source = fs.readFileSync(serverPath, "utf8");
+    var declared = /const OUTBOUND_IDLE_SOCKET_TIMEOUT = (\d+);/
+      .exec(source);
+    assert.ok(declared,
+      "server.js must declare OUTBOUND_IDLE_SOCKET_TIMEOUT for its agents.");
+    assert.ok(/keepAlive: KEEP_ALIVE,\s*timeout: OUTBOUND_IDLE_SOCKET_TIMEOUT/
+      .test(source),
+      "agentFor() must build its agents with " +
+          "timeout: OUTBOUND_IDLE_SOCKET_TIMEOUT; without one, node ignores " +
+          "the server's Keep-Alive hint and a request sent as the server " +
+          "closes the socket is reset.");
+    idleTimeout = Number(declared[1]);
+  } else {
+    log.info("api/server.js is not staged here; checking node's own " +
+             "value, 5000.");
+  }
+
+  // A Node server, as the mock STS is: it advertises `timeout=5`.
+  var idp = http.createServer(function (req, res) {
+    res.end("ok");
+  });
+  var port = await listen(idp);
+
+  function parkedSocketTimeout(options) {
+    log.debug("Entering parkedSocketTimeout().");
+    var agent = connectTimeout.withConnectTimeout(
+      guardModule.createGuard({ blockPrivateNetworkCalls: false }, quiet)
+        .createAgent("http", options), 4000);
+    return new Promise(function (resolve, reject) {
+      var req = http.request({ host: "127.0.0.1", port: port, path: "/",
+          agent: agent },
+        function (res) {
+          var hint = res.headers["keep-alive"];
+          res.resume();
+          res.on("end", function () {
+            setImmediate(function () {
+              var free = [].concat.apply([], Object.keys(agent.freeSockets)
+                .map(function (k) {
+                  return agent.freeSockets[k];
+                }));
+              var timeout = free.length ? free[0].timeout : null;
+              agent.destroy();
+              log.debug("Leaving parkedSocketTimeout().");
+              resolve({ hint: hint, timeout: timeout });
+            });
+          });
+        });
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  var fixed = await parkedSocketTimeout({ keepAlive: true,
+                                          timeout: idleTimeout });
+  var hinted = /^timeout=(\d+)/.exec(fixed.hint || "");
+  assert.ok(hinted, "the test server should advertise a Keep-Alive " +
+    "timeout; it sent " + JSON.stringify(fixed.hint) + ".");
+  var serverIdle = Number(hinted[1]) * 1000;
+  assert.ok(fixed.timeout > 0 && fixed.timeout < serverIdle,
+    "a socket parked by server.js's agent must be retired before the " +
+        "server's " + serverIdle + "ms; its idle timeout is " +
+        fixed.timeout + ".");
+
+  // The defect, shown: the same agent with no timeout keeps the socket for
+  // ever. Logged rather than asserted, so a node that fixes this upstream
+  // does not fail a check about this service.
+  var bare = await parkedSocketTimeout({ keepAlive: true });
+  log.info("[keep-alive hint] server advertises " + fixed.hint + "; " +
+           "server.js's agent parks the socket for " + fixed.timeout +
+           "ms, an agent with no timeout for " +
+           (bare.timeout ? bare.timeout + "ms" : "ever (0)") + ".");
+  idp.close();
+  log.debug("Leaving pooledSocketHonoursServerHint().");
+}
+
 
 // --- the manifest declares everything the service requires ------------------
 //
@@ -1005,109 +1096,6 @@ function manifestDeclaresEveryRequire() {
   log.debug("Leaving manifestDeclaresEveryRequire().");
 }
 
-// A POOLED socket the far end closed in the instant a request was written onto
-// it fails with ECONNRESET and no response — which is what took a coverage run
-// red on 2026-09-27 (GET /samlmetadata, 500, `read ECONNRESET`). The api
-// retries such a call ONCE, and only for a safe method: a POST is never sent
-// twice, and a response of any status is the far end's answer and is passed
-// through. Driven against a stub with axios's interceptor shape, because the
-// tests image has no axios; the decision is the part worth pinning.
-async function staleSocketIsRetriedOnce() {
-  log.debug("Entering staleSocketIsRetriedOnce().");
-  log.info("=== Stale pooled socket: one retry of a safe method ===");
-
-  function stubAxios(failures, errorFor) {
-    log.debug("Entering stubAxios().");
-    var stub = { calls: 0, onError: null };
-    stub.interceptors = { response: { use: function (ok, onError) {
-      stub.onError = onError;
-      return 0;
-    } } };
-    stub.request = function (config) {
-      stub.calls++;
-      if (stub.calls <= failures) {
-        var error = errorFor(config);
-        return stub.onError ? stub.onError(error) : Promise.reject(error);
-      }
-      return Promise.resolve({ status: 200, config: config });
-    };
-    log.debug("Leaving stubAxios().");
-    return stub;
-  }
-  function reset(code) {
-    log.debug("Entering reset().");
-    log.debug("Leaving reset().");
-    return function (config) {
-      var e = new Error("read " + code);
-      e.code = code;
-      e.config = config;
-      return e;
-    };
-  }
-
-  // A GET that loses its socket once succeeds on the second attempt.
-  var get = stubAxios(1, reset("ECONNRESET"));
-  staleSocketRetry.install(get, quiet);
-  var answer = await get.request({ method: "get", url: "https://idp/md" });
-  assert.strictEqual(answer.status, 200,
-    "a GET reset on a pooled socket must be retried and succeed.");
-  assert.strictEqual(get.calls, 2, "exactly one retry; saw " +
-    (get.calls - 1) + ".");
-
-  // EPIPE is the same stale socket, seen on the write rather than the read.
-  var pipe = stubAxios(1, reset("EPIPE"));
-  staleSocketRetry.install(pipe, quiet);
-  await pipe.request({ method: "head", url: "https://idp/md" });
-  assert.strictEqual(pipe.calls, 2, "EPIPE on a HEAD must be retried once.");
-
-  // Once, not a loop: a host that resets the retry too is refusing.
-  var always = stubAxios(99, reset("ECONNRESET"));
-  staleSocketRetry.install(always, quiet);
-  await assert.rejects(always.request({ method: "get", url: "https://x/" }),
-    function (e) {
-      return e.code === "ECONNRESET";
-    }, "a second reset must reach the caller.");
-  assert.strictEqual(always.calls, 2,
-    "a call is retried at most once; saw " + always.calls + " attempts.");
-
-  // A POST is never repeated: the first copy may have spent a code.
-  var post = stubAxios(1, reset("ECONNRESET"));
-  staleSocketRetry.install(post, quiet);
-  await assert.rejects(post.request({ method: "post", url: "https://x/t" }));
-  assert.strictEqual(post.calls, 1, "a POST must not be retried.");
-
-  // An answer is an answer, whatever its status or code.
-  var answered = stubAxios(1, function (config) {
-    var e = reset("ECONNRESET")(config);
-    e.response = { status: 502 };
-    return e;
-  });
-  staleSocketRetry.install(answered, quiet);
-  await assert.rejects(answered.request({ method: "get", url: "https://x/" }));
-  assert.strictEqual(answered.calls, 1,
-    "a failure that carries a response must not be retried.");
-
-  // Nor any other network error — a refused connect is not a stale socket.
-  var refused = stubAxios(1, reset("ECONNREFUSED"));
-  staleSocketRetry.install(refused, quiet);
-  await assert.rejects(refused.request({ method: "get", url: "https://x/" }));
-  assert.strictEqual(refused.calls, 1, "ECONNREFUSED must not be retried.");
-
-  // And server.js must actually install it on the pooled path.
-  var serverPath = path.join(__dirname, "..", "api", "server.js");
-  if (fs.existsSync(serverPath)) {
-    var source = fs.readFileSync(serverPath, "utf8");
-    assert.ok(/if \(KEEP_ALIVE\) \{\s*staleSocketRetry\.install\(axios/
-      .test(source),
-      "server.js must install stale_socket_retry.js on the shared axios " +
-          "instance when keepAlive is on.");
-  } else {
-    log.info("api/server.js is not staged here; its install check skipped.");
-  }
-  log.info("Stale pooled sockets: safe methods retried once, nothing else.");
-  log.debug("Leaving staleSocketIsRetriedOnce().");
-}
-
 async function test() {
   log.debug("Entering test().");
   await stalledConnectIsAborted();
@@ -1119,7 +1107,7 @@ async function test() {
   await maxRedirectsIsEnforced();
   userAgentIsConfigured();
   await keepAliveIsConfigured();
-  await staleSocketIsRetriedOnce();
+  await pooledSocketHonoursServerHint();
   shippedConfiguration();
   manifestDeclaresEveryRequire();
   log.info("Test completed successfully.");
