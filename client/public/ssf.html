@@ -312,8 +312,8 @@ Transmitter configuration metadata</legend>
     <div>
       <label class="ssf-label" for="ssf_stream_aud">aud</label>
       <input class="ssf-field" type="text" id="ssf_stream_aud"
-             placeholder="https://receiver.example.com"
-             title="Who the SETs on this stream are addressed to. A receiver checks for ITSELF in it, so an event addressed to somebody else is one to refuse.">
+             placeholder="assigned by the transmitter"
+             title="Who the SETs on this stream are addressed to. Transmitter-Supplied (SSF 1.0 section 8.1.1): leave it empty and the transmitter assigns the identifier this receiver authenticated as, which is written back here from its answer. A receiver checks for ITSELF in it, so an event addressed to somebody else is one to refuse.">
     </div>
     <div>
       <label class="ssf-label" for="ssf_stream_delivery">delivery.method</label>

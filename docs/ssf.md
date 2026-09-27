@@ -366,11 +366,32 @@ behaved like a PATCH would let a receiver believe it had cleared
 after they were "removed". `tests/ssf_protocol.js` asserts both directions
 against the mock.
 
-`aud` is **required** and this workflow refuses to send a configuration without
-one. So does the mock, and `sts/ssf/CLAUDE.md` argues why it does not default it
-to the authenticated caller: a receiver whose audience was invented for it never
-learns the member is required, and the audience it checks for ITSELF in would be
-a name the transmitter chose.
+**`aud` is the TRANSMITTER's, and this workflow no longer sends one.** SSF 1.0
+final section 8.1.1 lists it as Transmitter-Supplied — "this property cannot be
+updated" — and section 8 has the transmitter's authorization associate each
+receiver with its stream IDs and `aud` values. The drafts left it to the
+receiver, and until the 2026-09 `sts/` bump (iya-sts #144) so did this page and
+the mock: `aud` was required on a create, taken as sent and replaceable by a
+PATCH, so a receiver could have its events addressed to any name at all,
+including another receiver's. Now:
+
+* **a create sends no `aud`**, and the mock addresses the stream to the
+  identifier the receiver authenticated as (Basic's user, a token's client);
+* **a create that names one** gets it only if the transmitter associates that
+  name with the receiver — the mock's `ssfReceiverId` values on the
+  application's entry — and a 400 naming the associated set otherwise. The
+  field on the page is still there for that case, and
+  `checkStreamConfiguration()` WARNS rather than refuses when it is filled;
+* **an update never carries it** (`streamBody(true)` blanks it): section
+  8.1.1.3 lets a Transmitter-Supplied member ride an update only unchanged, so
+  sending it buys nothing and a stale value is a refusal;
+* **the answer's `aud` is written back into the field** (`noteStreamAudience()`
+  in `ssf.js`, on create, read and update), because it is what every SET on the
+  stream will carry and so what an arriving one is checked against for
+  `invalid_audience`. An array writes its first value.
+
+`STREAM_MEMBERS` says `owner: 'transmitter'` for it, which is what the stream
+table draws.
 
 ### The three statuses, and the one that matters
 
@@ -380,7 +401,28 @@ nothing; a disabled one drops what is waiting.** That is the difference between
 receiver taking a maintenance window pauses rather than disables.
 `tests/ssf_protocol.js` asserts both halves against a real transmitter: an event
 asked for during a pause comes back after the resume, and one queued before a
-disable does not survive it.
+disable does not survive it. **A paused poll stream is not silent, though**:
+section 8.1.5 has the transmitter announce the change with a `stream-updated`
+event on the stream itself, sent before it stops and after it starts, so the
+poll made during a pause hands out that one type and nothing else.
+
+### What the final specification changed in the answers
+
+Three status codes and timings a client written against the drafts gets wrong,
+all followed by the mock since the 2026-09 bump:
+
+* **Add Subject answers an EMPTY 200** (section 8.1.3.2) and Remove Subject a
+  204 (section 8.1.3.3). The mock answered 204 to both until the OpenID
+  conformance suite said otherwise.
+* **The verification endpoint's 204 means QUEUED** (section 8.1.4.2). Delivery
+  is asynchronous, so on a push stream the event arrives after the answer, and
+  a check made the instant the request returns is a check of the scheduler.
+* **The mock's own receiver (`POST /ssf/receive`, the roles reversed) checks
+  what a receiver must**: the explicit `typ`, the issuer (section 4.1.6) and
+  the audience (RFC 8417 section 2.2). Its audience defaults to that endpoint's
+  own URL and its issuers to the mock's own transmitter, so this page, acting
+  as a foreign transmitter, addresses `…/ssf/receive` and has its `iss` added
+  to `ssf.receiveIssuers` for the run.
 
 ---
 
@@ -647,7 +689,11 @@ are this stack's mock's (configurable there as `ssf.authScopeRead` /
 two different permissions rather than a pair: read gets a stream, its status
 and its poll queue; write creates, updates and deletes one, adds and removes
 subjects, and triggers a verification event. `openid` is not the transmitter's
-business at all — it is how the **ID Token** above is asked for.
+business at all — it is how the **ID Token** above is asked for. **Since
+iya-sts #110 the mock issues either only to a client that DECLARES it**
+(`oauthAllowedScope` on the application's entry), so a hand-off through a
+client that does not — the seeded `webapp1` included — comes back as
+`invalid_scope` from the token endpoint, naming the attribute to set.
 
 **Two fields on two pages, and both are needed.** `#scope` on
 `oauth2_oidc_1.html` is the authorization request's, which the code grant and

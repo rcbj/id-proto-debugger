@@ -459,8 +459,11 @@ async function aStreamIsCreatedAndRead(driver) {
       "field that is simply empty.");
   await fill(driver, "ssf_basic_user", "ssf-page-runner");
   await fill(driver, "ssf_basic_password", "pw");
-  await fill(driver, "ssf_stream_aud",
-      "https://receiver.example.com/ssf-page");
+  // `aud` LEFT EMPTY, and read back below. SSF 1.0 section 8.1.1 makes it
+  // Transmitter-Supplied: the mock addresses the stream to the identifier
+  // this receiver authenticated as, and refuses a create naming anything it
+  // does not associate with it — which is what this line used to send.
+  await fill(driver, "ssf_stream_aud", "");
   await fill(driver, "ssf_stream_description", "ssf_page.js");
   await driver.executeScript(
       "document.getElementById('ssf_stream_delivery').value = " +
@@ -498,6 +501,12 @@ async function aStreamIsCreatedAndRead(driver) {
   const id = await valueOf(driver, "ssf_stream_id");
   assert.ok(id.length > 0, "No stream_id came back.");
   created.push(id);
+  const aud = await valueOf(driver, "ssf_stream_aud");
+  assert.strictEqual(aud, "ssf-page-runner",
+      "The aud field should hold what the TRANSMITTER assigned — the " +
+      "identifier this page authenticated as — read back from its answer, " +
+      "because that is what every SET on the stream will carry and so what " +
+      "an arriving one is checked against. It holds \"" + aud + "\".");
   const view = await waitForText(driver, "ssf_stream_view", "stream view");
   assert.ok(view.indexOf("events_delivered") >= 0);
   assert.ok(view.indexOf("transmitter") >= 0,
@@ -553,10 +562,12 @@ async function theSubjectPaneChecksBeforeItSends(driver) {
   await driver.wait(async function () {
     const text = await textOf(driver, "ssf_subject_status");
     return text.indexOf("add subject succeeded") >= 0 ||
-      text.indexOf("204") >= 0;
+      text.indexOf("200") >= 0;
   }, WAIT, "Add Subject did not report a result");
+  // SSF 1.0 section 8.1.3.2: an EMPTY 200. It was 204 before the mock
+  // followed the final specification (Remove Subject is still 204).
   const added = await textOf(driver, "ssf_subject_status");
-  assert.ok(added.indexOf("204") >= 0, "Add Subject said: " + added);
+  assert.ok(added.indexOf("200") >= 0, "Add Subject said: " + added);
   await click(driver, "btn_ssf_remove_subject");
   await driver.wait(async function () {
     const text = await textOf(driver, "ssf_subject_status");
@@ -630,8 +641,15 @@ async function thePageCanSignAndPushAnEvent(driver) {
       "Crypto — which does not exist on this suite's http origin.");
   const priv = await valueOf(driver, "ssf_tx_private_key");
   assert.ok(priv.indexOf('"kty"') >= 0, "No private JWK: " + priv);
-  await fill(driver, "ssf_tx_iss", "https://ssf-page-test.example/");
-  await fill(driver, "ssf_tx_aud", "https://mock-sts.example/");
+  // THE MOCK'S RECEIVER CHECKS WHAT A RECEIVER MUST (iya-sts #144): an
+  // audience, which defaults to the endpoint's own URL — so that is what is
+  // addressed — and an issuer, which defaults to its OWN transmitter's. This
+  // page is a foreign transmitter here, so its issuer is added for the run
+  // and cleanUp() puts the setting back.
+  const txIssuer = "https://ssf-page-test.example/";
+  await acceptIssuerAtTheMock(txIssuer);
+  await fill(driver, "ssf_tx_iss", txIssuer);
+  await fill(driver, "ssf_tx_aud", stsUrl + "/ssf/receive");
   await fill(driver, "ssf_tx_endpoint", stsUrl + "/ssf/receive");
   await driver.executeScript(
       "document.getElementById('ssf_tx_type').value = " +
@@ -1215,8 +1233,59 @@ async function preconditions() {
   return { ok: true, why: "" };
 }
 
+// `ssf.receiveIssuers`, through the mock's management API — whose token
+// tools/attach-admin-token.js puts on this process's fetch. What was there is
+// kept for cleanUp(): an override's text, or `false` for a setting that
+// followed its default and is RESET afterwards rather than pinned to that
+// default. The lock this job holds (`sts-ssf` in run-report.js) is the one
+// every job touching the mock's SSF configuration takes.
+let receiveIssuersBefore = null;
+
+async function acceptIssuerAtTheMock(issuer) {
+  log.debug("Entering acceptIssuerAtTheMock(). " + issuer);
+  const admin = stsUrl + "/admin-api";
+  const before = await fetch(admin + "/config", {
+    headers: { Accept: "application/json" } });
+  const doc = before.ok ? await before.json() : {};
+  // The rows are under `groups[].settings`.
+  const rows = [];
+  (doc.groups || []).forEach(function (group) {
+    (group.settings || []).forEach(function (one) {
+      rows.push(one);
+    });
+  });
+  const row = rows.filter(function (one) {
+    return one.key === "ssf.receiveIssuers";
+  })[0];
+  if (row && receiveIssuersBefore === null) {
+    receiveIssuersBefore = row.overridden === true
+      ? String(row.text === undefined ? "" : row.text) : false;
+  }
+  const set = await fetch(admin + "/config/set", {
+    method: "POST",
+    headers: { "Content-Type": "application/json",
+      Accept: "application/json" },
+    body: JSON.stringify({ key: "ssf.receiveIssuers", value: issuer }) });
+  assert.strictEqual(set.status, 200,
+      "The mock refused to accept " + issuer + " as an issuer at " +
+      "/ssf/receive: " + (await set.text()));
+  log.debug("Leaving acceptIssuerAtTheMock().");
+}
+
 async function cleanUp() {
   log.debug("Entering cleanUp().");
+  if (receiveIssuersBefore !== null) {
+    const restore = receiveIssuersBefore === false
+      ? { path: "/reset", body: { key: "ssf.receiveIssuers" } }
+      : { path: "/set", body: { key: "ssf.receiveIssuers",
+        value: receiveIssuersBefore } };
+    await fetch(stsUrl + "/admin-api/config" + restore.path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(restore.body) }).catch(function () {
+      return null;
+    });
+  }
   let id;
   for (id of created) {
     await fetch(stsUrl + "/ssf/stream", {

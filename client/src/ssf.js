@@ -836,8 +836,8 @@ function drawExchange(exchange) {
   } else {
     lines.push('');
     lines.push('(no body — which on this protocol is usually a SUCCESS: Add ' +
-      'Subject, Remove Subject and the verification endpoint all answer 204 ' +
-      'with nothing in them.)');
+      'Subject answers an empty 200, and Remove Subject and the ' +
+      'verification endpoint answer 204 with nothing in them.)');
   }
   if (exchange.error) {
     lines.push('');
@@ -1328,10 +1328,14 @@ function requestedEvents() {
   return out;
 }
 
+// `aud` goes on a CREATE only, and only when the field holds one: it is
+// Transmitter-Supplied (SSF 1.0 section 8.1.1), so an update that carried it
+// would have to carry the stream's value exactly (section 8.1.1.3) and gains
+// nothing by doing so.
 function streamBody(withId) {
   log.debug("Entering streamBody().");
   var body = ssfClient.buildStreamConfiguration({
-    aud: val('ssf_stream_aud'),
+    aud: withId ? '' : val('ssf_stream_aud'),
     events_requested: requestedEvents(),
     deliveryMethod: val('ssf_stream_delivery'),
     endpointUrl: val('ssf_stream_endpoint'),
@@ -1389,6 +1393,7 @@ function createStream() {
       setStatus('ssf_stream_status_text',
         'Created ' + read.streamId + '.', 'ok');
       notePollEndpoint(read);
+      noteStreamAudience(read);
       renderStream(read);
       log.debug("Leaving createStream(). " + read.streamId);
     });
@@ -1425,6 +1430,7 @@ function readStream() {
     var read = ssfClient.readStreamConfiguration(answer.body, {});
     setStatus('ssf_stream_status_text', 'Read ' + read.streamId + '.', 'ok');
     notePollEndpoint(read);
+    noteStreamAudience(read);
     renderStream(read);
     log.debug("Leaving readStream(). One stream.");
   });
@@ -1461,6 +1467,7 @@ function updateStream(method, label) {
       settleCall(entry, operations.SUCCESS, '');
       var read = ssfClient.readStreamConfiguration(answer.body, body);
       notePollEndpoint(read);
+      noteStreamAudience(read);
       setStatus('ssf_stream_status_text',
         (method === 'PUT'
           ? 'Replaced. Every member this page left empty went back to its ' +
@@ -1924,6 +1931,27 @@ function notePollEndpoint(read) {
   }
   log.debug("Leaving notePollEndpoint(). " +
       (pollEndpointFromLastStream || 'none'));
+}
+
+// THE TRANSMITTER'S `aud`, READ BACK INTO THE FIELD. It is what every SET on
+// this stream will carry and so what an arriving one is checked against — a
+// value typed here before the create is at most a request, and the answer is
+// the only statement of what was assigned. An array is addressed to every
+// name in it; the first is written, which is the receiver's own when the
+// transmitter chose.
+function noteStreamAudience(read) {
+  log.debug("Entering noteStreamAudience().");
+  var aud = read ? read.audience : undefined;
+  if (Object.prototype.toString.call(aud) === '[object Array]') {
+    aud = aud.length ? aud[0] : '';
+  }
+  if (typeof aud !== 'string' || !aud) {
+    log.debug("Leaving noteStreamAudience(). None answered.");
+    return;
+  }
+  setVal('ssf_stream_aud', aud);
+  saveState();
+  log.debug("Leaving noteStreamAudience(). " + aud);
 }
 
 function pollOnce() {

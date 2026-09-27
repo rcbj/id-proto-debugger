@@ -916,10 +916,13 @@ var STREAM_MEMBERS = [
   { name: 'iss', owner: 'transmitter',
     what: 'The `iss` every SET on this stream will carry. The transmitter\'s ' +
           'own, and it matches its metadata.' },
-  { name: 'aud', owner: 'receiver',
-    what: 'Who the SETs are addressed to. A string or an array, and a ' +
-          'receiver checks for ITSELF in it — an event whose `aud` is ' +
-          'somebody else is one to refuse with invalid_audience.' },
+  { name: 'aud', owner: 'transmitter',
+    what: 'Who the SETs are addressed to, ASSIGNED BY THE TRANSMITTER (SSF ' +
+          '1.0 section 8.1.1) from whoever the receiver authenticated as — ' +
+          'a receiver that could choose one could have events addressed to ' +
+          'another receiver. Read it back from the answer: a receiver ' +
+          'checks for ITSELF in it, and an event whose `aud` is somebody ' +
+          'else is one to refuse with invalid_audience.' },
   { name: 'events_supported', owner: 'transmitter',
     what: 'Everything this transmitter can send, whatever this stream asked ' +
           'for.' },
@@ -952,6 +955,14 @@ var STREAM_MEMBERS = [
 // carrying a `stream_id` on a create is a receiver asking for something no
 // transmitter will honour, and sending it would make the refusal harder to
 // read than the omission.
+//
+// **`aud` IS THE ONE EXCEPTION, AND ONLY WHEN THE CALLER NAMES ONE.** It is
+// Transmitter-Supplied (SSF 1.0 section 8.1.1), so the ordinary create sends
+// none and is given the identifier it authenticated as. A caller that passes
+// one is a receiver associated with several names choosing among them — or
+// an update repeating the stream's own value, which section 8.1.1.3 allows
+// only unchanged — and a transmitter refuses any other. An empty value is
+// never sent.
 function buildStreamConfiguration(values) {
   log.debug("Entering buildStreamConfiguration().");
   var asked = values || {};
@@ -994,17 +1005,25 @@ function buildStreamConfiguration(values) {
 // What is wrong with a configuration this page is about to send, as sentences.
 // Checked HERE rather than only at the transmitter because two of the three
 // produce refusals a reader cannot act on: "invalid_request" on a delivery
-// method says nothing about the URN, and an empty `aud` produces events
-// addressed to nobody that a receiver then refuses one at a time.
+// method says nothing about the URN, and a format outside RFC 9493 is refused
+// by a transmitter that may not say which formats it would have taken.
+//
+// A MISSING `aud` IS NOT ONE OF THEM. Until SSF 1.0 final this refused a
+// create without one; section 8.1.1 makes it Transmitter-Supplied, so leaving
+// it out is the ordinary request and naming one is what earns the sentence.
 function checkStreamConfiguration(body, metadata) {
   log.debug("Entering checkStreamConfiguration().");
   var errors = [];
   var warnings = [];
   var doc = readMetadata(metadata);
   var config = body || {};
-  if (!config.aud) {
-    errors.push('"aud" is required. It is who the SETs on this stream are ' +
-        'addressed to, and a receiver checks for itself in it.');
+  if (config.aud !== undefined && config.aud !== '' &&
+      config.stream_id === undefined) {
+    warnings.push('"aud" is Transmitter-Supplied (SSF 1.0 section 8.1.1): ' +
+        'the transmitter addresses this stream\'s events to whoever this ' +
+        'receiver authenticated as. Naming one is accepted only if the ' +
+        'transmitter associates that name with this receiver, and refused ' +
+        'otherwise — leave it empty to be given it.');
   }
   if (config.delivery) {
     var method = config.delivery.method;

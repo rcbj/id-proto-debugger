@@ -391,6 +391,19 @@ notice of that.
 the far end decided to do.** Everything else drives a request and reads the
 answer; that one signs somebody in and waits.
 
+**A sign-out through `/oauth2/logout` is two steps since the 2026-09 `sts/`
+bump**, in both `caep_protocol.js` and `caep_session_protocols.js`. RP-Initiated
+Logout 1.0 section 2 leaves the OP to confirm the End-User's intent, and the
+mock (iya-sts #124) answers a GET carrying no `id_token_hint` for the session
+with a "Sign out?" page; nothing ends — and no `session-revoked` is sent — until
+its form is POSTed back with `confirm=yes` and the `confirm_for` value only a
+request carrying that session's cookie was shown. A bare GET reads as a
+sign-out that emitted nothing. Two more things the matrix learned from the same
+bump: a SAML 2.0 **single sign-on needs a fresh AuthnRequest**, because the
+mock refuses a replayed one before it looks at the session; and the stream
+covers everybody, so with the suite in a pool it also carries every other
+job's sign-ins, and the event naming THIS session is the one the checks read.
+
 ### `caep_session_protocols.js` — the event-type x sign-in-protocol matrix
 
 **Five jobs, one per sign-in protocol**, each signing in over its own protocol

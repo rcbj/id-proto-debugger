@@ -535,13 +535,21 @@ async function eachGrantShapeSeedsTheSession(driver) {
 // consent screen here would be a second copy of what those jobs already own,
 // failing for their reasons and reported as a CAEP defect.
 // ---------------------------------------------------------------------------
+//
+// NEITHER ASKS FOR AN `ssf:` SCOPE, and they did until the 2026-09 bump. Since
+// iya-sts #110 `ssf:read` and `ssf:write` are that service's own PROTECTED
+// scopes, issued only to a client whose `oauthAllowedScope` declares them —
+// and `webapp1` declares neither, so asking for one was an invalid_scope 400
+// from the token endpoint, which reached this page's console as a failed
+// resource load. What this section is about is the SHAPE of the token set
+// the hand-off carries back, which the scope does not change.
 const DRIVEN = [
   { label: 'OAuth2 Resource Owner Password Credential Grant', idToken: true,
-    scope: 'openid ssf:read',
+    scope: 'openid',
     what: 'a person, authenticated at the TOKEN endpoint, with openid asked ' +
           'for — so an ID Token comes back and this page can name them' },
   { label: 'OAuth2 Client Credential', idToken: false,
-    scope: 'ssf:read',
+    scope: 'profile',
     what: 'NO USER AT ALL — the client is the subject — so there is no ID ' +
           'Token, and the session below is entirely this page\'s invention' }
 ];
@@ -684,7 +692,11 @@ async function everyEventCanBeSimulated(driver) {
   // sign with. The signature is `jws.js`'s pure-JavaScript engine and NOT Web
   // Crypto, which is what lets this work on the containerized suite's
   // http origin where `crypto.subtle` does not exist at all.
-  await fill(driver, "ssf_stream_aud", "https://caep-page.example/receiver");
+  //
+  // The stream's `aud` is LEFT EMPTY: SSF 1.0 section 8.1.1 makes it
+  // Transmitter-Supplied, the mock assigns the identifier this page
+  // authenticated as, and it refuses a create naming anything else.
+  await fill(driver, "ssf_stream_aud", "");
   await click(driver, "btn_ssf_create");
   const status = await waitForValue(driver, "ssf_stream_status_text",
       "stream status");
@@ -693,11 +705,18 @@ async function everyEventCanBeSimulated(driver) {
   const streamId = await valueOf(driver, "ssf_stream_id");
   assert.ok(streamId.length > 0, "No stream_id came back.");
   created.push(streamId);
+  const streamAud = await valueOf(driver, "ssf_stream_aud");
+  assert.strictEqual(streamAud, "caep-page-runner",
+      "The aud field should hold what the TRANSMITTER assigned, read back " +
+      "from its answer. It holds \"" + streamAud + "\".");
 
   await click(driver, "btn_ssf_tx_key");
   await waitForValue(driver, "ssf_tx_private_key", "signing key");
+  // The audience the mock's /ssf/receive answers to by default is its own
+  // URL (iya-sts #144 — a receiver MUST check it, RFC 8417 section 2.2), and
+  // a SET addressed anywhere else is refused as invalid_audience.
   await fill(driver, "ssf_tx_iss", stsUrl);
-  await fill(driver, "ssf_tx_aud", "https://caep-page.example/receiver");
+  await fill(driver, "ssf_tx_aud", stsUrl + "/ssf/receive");
   await fill(driver, "ssf_tx_endpoint", stsUrl + "/ssf/receive");
   await fill(driver, "caep_iss", stsUrl);
   await fill(driver, "caep_sub", "urn:sts-mock:user:caep-page");

@@ -694,15 +694,38 @@ function streamConfigurationsAreBuiltAndChecked() {
   });
   const meta = { issuer: 'https://i/', jwks_uri: 'https://i/jwks',
     delivery_methods_supported: [ssf.DELIVERY_POLL] };
-  check('no aud is refused', function () {
-    const verdict = ssf.checkStreamConfiguration(
-        { delivery: { method: ssf.DELIVERY_POLL } }, meta);
-    assert.ok(!verdict.ok);
-    assert.ok(verdict.errors.join(' ').indexOf('aud') >= 0);
+  // `aud` IS TRANSMITTER-SUPPLIED (SSF 1.0 section 8.1.1). Until the final
+  // specification this refused a create without one; the mock STS now refuses
+  // a create that names one it does not associate with the receiver, so the
+  // ordinary create sends none and reads the assigned value back.
+  check('no aud is the ORDINARY create, and nothing sends one', function () {
+    const body = ssf.buildStreamConfiguration({ deliveryMethod: 'poll' });
+    assert.strictEqual(body.aud, undefined,
+        'An empty aud reached the wire. It is the transmitter\'s to assign.');
+    const verdict = ssf.checkStreamConfiguration(body, meta);
+    assert.ok(verdict.ok, verdict.errors.join(' '));
+    assert.strictEqual(verdict.warnings.length, 0);
   });
+  check('naming an aud on a create WARNS that it is the transmitter\'s',
+    function () {
+      const verdict = ssf.checkStreamConfiguration(
+          { aud: 'a', delivery: { method: ssf.DELIVERY_POLL } }, meta);
+      assert.ok(verdict.ok,
+          'A receiver associated with several names may choose among ' +
+          'them, so this is not an error.');
+      assert.ok(verdict.warnings.join(' ').indexOf('Transmitter-Supplied')
+          >= 0);
+    });
+  check('the stream member table says aud is the TRANSMITTER\'s',
+    function () {
+      const row = ssf.STREAM_MEMBERS.filter(function (one) {
+        return one.name === 'aud';
+      })[0];
+      assert.strictEqual(row.owner, 'transmitter');
+    });
   check('the shorthand method is refused and the URNs are named', function () {
     const verdict = ssf.checkStreamConfiguration(
-        { aud: 'a', delivery: { method: 'push' } }, meta);
+        { delivery: { method: 'push' } }, meta);
     assert.ok(!verdict.ok);
     const said = verdict.errors.join(' ');
     assert.ok(said.indexOf('urn:ietf:rfc:8935') >= 0 &&
@@ -712,7 +735,7 @@ function streamConfigurationsAreBuiltAndChecked() {
   });
   check('a method the transmitter does not offer is refused', function () {
     const verdict = ssf.checkStreamConfiguration(
-        { aud: 'a', delivery: { method: ssf.DELIVERY_PUSH,
+        { delivery: { method: ssf.DELIVERY_PUSH,
           endpoint_url: 'https://r/e' } }, meta);
     assert.ok(!verdict.ok);
     assert.ok(verdict.errors.join(' ').indexOf('delivery_methods_supported')
@@ -720,7 +743,7 @@ function streamConfigurationsAreBuiltAndChecked() {
   });
   check('push with no endpoint is refused', function () {
     const verdict = ssf.checkStreamConfiguration(
-        { aud: 'a', delivery: { method: ssf.DELIVERY_PUSH } },
+        { delivery: { method: ssf.DELIVERY_PUSH } },
         { issuer: 'i', jwks_uri: 'j',
           delivery_methods_supported: [ssf.DELIVERY_PUSH] });
     assert.ok(!verdict.ok);
@@ -728,14 +751,14 @@ function streamConfigurationsAreBuiltAndChecked() {
   });
   check('a bad format is refused and the formats are named', function () {
     const verdict = ssf.checkStreamConfiguration(
-        { aud: 'a', format: 'username',
+        { format: 'username',
           delivery: { method: ssf.DELIVERY_POLL } }, meta);
     assert.ok(!verdict.ok);
     assert.ok(verdict.errors.join(' ').indexOf('iss_sub') >= 0);
   });
   check('a stream format in a draft spelling is refused', function () {
     const verdict = ssf.checkStreamConfiguration(
-        { aud: 'a', format: 'issuer_subject_id',
+        { format: 'issuer_subject_id',
           delivery: { method: ssf.DELIVERY_POLL } }, meta);
     assert.ok(!verdict.ok,
         '"issuer_subject_id" is the pre-RFC name of "iss_sub".');
@@ -744,7 +767,7 @@ function streamConfigurationsAreBuiltAndChecked() {
     function () {
       // It is legal and pointless, which is exactly what a warning is for.
       const verdict = ssf.checkStreamConfiguration(
-          { aud: 'a', delivery: { method: ssf.DELIVERY_POLL,
+          { delivery: { method: ssf.DELIVERY_POLL,
             endpoint_url: 'https://r/e' } }, meta);
       assert.ok(verdict.ok);
       assert.strictEqual(verdict.warnings.length, 1);

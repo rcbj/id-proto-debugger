@@ -158,14 +158,35 @@ async function call(method, url, body, options) {
     setCookie: response.headers.get('set-cookie') || '' };
 }
 
+// THE SETTING AS IT WAS, found in GET /config. The rows are under
+// `groups[].settings` — the flat `settings` list this read once went away, and
+// with it every restore: the lookup found nothing, nothing was recorded, and
+// the run left each setting it touched overridden on the shared mock. A row
+// records whether it was OVERRIDDEN as well as its value, because restoring an
+// override that was never there is itself a change (see restoreSettings()).
+function settingRow(configDocument, key) {
+  log.debug("Entering settingRow(). " + key);
+  const doc = configDocument || {};
+  const rows = (doc.settings || []).slice();
+  (doc.groups || []).forEach(function (group) {
+    (group.settings || []).forEach(function (one) {
+      rows.push(one);
+    });
+  });
+  const row = rows.filter(function (one) {
+    return one.key === key;
+  })[0] || null;
+  log.debug("Leaving settingRow(). " + (row ? 'found' : 'none'));
+  return row;
+}
+
 async function setSetting(key, value) {
   log.debug("Entering setSetting(). " + key);
   const before = await call('GET', adminUrl + '/config', null, {});
-  const row = ((before.body || {}).settings || []).filter(function (one) {
-    return one.key === key;
-  })[0];
+  const row = settingRow(before.body, key);
   if (row && changed[key] === undefined) {
-    changed[key] = row.value;
+    changed[key] = { overridden: row.overridden === true,
+      text: row.text !== undefined ? String(row.text) : String(row.value) };
   }
   const out = await call('POST', adminUrl + '/config/set',
       { key: key, value: String(value) }, {});
@@ -174,13 +195,22 @@ async function setSetting(key, value) {
   log.debug("Leaving setSetting().");
 }
 
+// A setting that was NOT overridden before this run is RESET — its override
+// cleared, so it follows its default again — rather than set to the value it
+// had, which would leave an override behind that nobody asked for. One that
+// was overridden gets that value back.
 async function restoreSettings() {
   log.debug("Entering restoreSettings().");
   const keys = Object.keys(changed);
   let i;
   for (i = 0; i < keys.length; i++) {
-    await call('POST', adminUrl + '/config/set',
-        { key: keys[i], value: String(changed[keys[i]]) }, {});
+    const was = changed[keys[i]];
+    if (was.overridden) {
+      await call('POST', adminUrl + '/config/set',
+          { key: keys[i], value: was.text }, {});
+    } else {
+      await call('POST', adminUrl + '/config/reset', { key: keys[i] }, {});
+    }
   }
   log.debug("Leaving restoreSettings(). " + keys.length + " restored.");
 }
@@ -261,11 +291,30 @@ async function present() {
   return out;
 }
 
+// RP-INITIATED LOGOUT ASKS FIRST (iya-sts #124). A GET that carries neither
+// an id_token_hint for this session nor a matching logout_hint is answered
+// with a "Sign out?" page, and nothing ends until its form is POSTed back
+// with `confirm=yes` and the `confirm_for` value only a request carrying
+// this session's cookie was shown — section 2 of RP-Initiated Logout 1.0
+// leaves the OP to confirm the End-User's intent, and this one does. So a
+// sign-out here is the two steps a person makes: read the page, press the
+// button. A GET that ended the session straight away was the older mock.
 async function signOut() {
   log.debug("Entering signOut().");
-  const out = await call('GET', stsUrl + '/oauth2/logout', null,
+  const asked = await call('GET', stsUrl + '/oauth2/logout', null,
       { anonymous: true, redirect: 'manual', headers: cookieHeader() });
-  log.debug("Leaving signOut(). " + out.status);
+  const found = /name="confirm_for" value="([^"]*)"/.exec(asked.text || '');
+  if (!found) {
+    log.debug("Leaving signOut(). No confirmation asked: " + asked.status);
+    return asked;
+  }
+  const form = 'confirm=yes&confirm_for=' + encodeURIComponent(found[1]);
+  const out = await call('POST', stsUrl + '/oauth2/logout', form,
+      { anonymous: true, redirect: 'manual',
+        headers: Object.assign({
+          'Content-Type': 'application/x-www-form-urlencoded' },
+        cookieHeader()) });
+  log.debug("Leaving signOut(). Confirmed: " + out.status);
   return out;
 }
 
@@ -411,8 +460,9 @@ async function theEightAreOffered() {
 async function aStreamAgreesThem() {
   log.info("[stream] A stream requesting the eight, and the person added to " +
       "it as a subject.");
+  // No `aud`: SSF 1.0 section 8.1.1 makes it Transmitter-Supplied, and the
+  // mock addresses the stream to the client this run authenticated as.
   const body = ssf.buildStreamConfiguration({
-    aud: 'https://caep-protocol.example/receiver',
     events_requested: events.CAEP_EVENT_URIS.slice()
       .concat([events.SSF_PREFIX + 'stream-updated']),
     deliveryMethod: ssf.DELIVERY_POLL,
