@@ -329,6 +329,12 @@ async function theTgsPageTakesTheSpnAndOffersTheWayBack(driver) {
 
   await setField(driver, "krb_kdc_host", kdcHost);
   await setField(driver, "krb_kdc_port", kdcPort);
+  // ENABLED, not located: the markup ships this button disabled until the page
+  // has read the TGT, after a round trip to the api, and a click on a disabled
+  // input is performed without complaint and never seen by the page.
+  await driver.wait(until.elementIsEnabled(
+      driver.findElement(By.id("krb_tgs_button"))), 20000,
+      "the TGS button was never enabled — no TGT was offered");
   await driver.findElement(By.id("krb_tgs_button")).click();
   await waitForText(driver, "krb_tgs_status", /A service ticket for|refused/,
       60000, "the TGS page produced no service ticket");
