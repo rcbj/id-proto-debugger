@@ -68,6 +68,36 @@ jobs:
           # with `Cannot find module 'ldapjs'`, naming a package rather than a
           # submodule.
           submodules: recursive
+          # Full history, so the step below can check out whichever commit the
+          # site was built from.
+          fetch-depth: 0
+
+      # Test the commit the site was BUILT FROM, not the one this run was handed.
+      # A workflow_run-triggered workflow always runs on the default branch, so
+      # the checkout above is master's HEAD — while the test site is deployed
+      # from develop. On 2026-09-27 that tested master at 79cb9d7 against a
+      # site built from develop at b7469a6: six jobs failed, each on a
+      # difference between the two commits (a picker with 12 options where the
+      # old test expected 9, an older mock STS issuing a JWS refresh token
+      # where the new one issues a JWE, a module the old test required that
+      # the new tree moved). workflow_run.head_sha does not help: the deploy is
+      # itself workflow_run-triggered, so it is attributed to master too. The
+      # site's own version.json is the one record of what it is, and it holds
+      # for the nightly and manual triggers as well.
+      - name: Check out the deployed commit
+        run: |
+          set -euo pipefail
+          url=https://test.idptools.com/version.json
+          commit="$(curl -fsSL "$url" | jq -r '.commit // empty')" || commit=""
+          if [ -z "$commit" ]; then
+            echo "::warning::$url named no commit; testing origin/develop," \
+                 "which is the branch this site deploys from."
+            commit=origin/develop
+          fi
+          echo "Deployed commit: $commit"
+          git checkout --detach "$commit"
+          git submodule update --init --recursive
+          git log -1 --oneline
 
       # The script runs run-report.js and the test scripts on the runner itself,
       # not in a container, so the runner needs the node the images use.
