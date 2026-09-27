@@ -15,6 +15,7 @@ const {
   convertToOAuth2Format  } = require('./data.js');
 const ssrfGuard = require('./ssrf_guard.js');
 const connectTimeout = require('./connect_timeout.js');
+const staleSocketRetry = require('./stale_socket_retry.js');
 const krb5Relay = require('./krb5_relay.js');
 const tlsProbeModule = require('./tls_probe.js');
 // The listener itself — whether this service binds TLS or plain HTTP, and with
@@ -596,6 +597,15 @@ log.info("Outbound call timeout: " + CALL_TIMEOUT +
 log.info("Outbound User-Agent: " + USER_AGENT);
 log.info("Outbound connection pooling (keepAlive): " + (KEEP_ALIVE ?
          "on" : "off") + ".");
+// A pooled connection can be closed by the far end in the instant a request is
+// written onto it, which fails a perfectly good call with ECONNRESET. Only a
+// pool has that race, so only a pool gets the one retry of a safe method that
+// covers it. See stale_socket_retry.js.
+if (KEEP_ALIVE) {
+  staleSocketRetry.install(axios, log);
+  log.info("Outbound safe-method calls that lose a pooled connection " +
+           "before any response are retried once.");
+}
 log.info("CORS allowed origins: " +
          (ALLOWED_ORIGINS === "*" ?
           "* (any site) — uiUrl is not configured" : ALLOWED_ORIGINS.join(
