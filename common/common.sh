@@ -63,8 +63,12 @@ common_setup()
   # a run can be pointed at an image somebody else built; the default carries
   # the compose project (the checkout's directory name unless it is set), so
   # two checkouts of this repository do not collide either. See the note above
-  # COMPOSE_FORWARDED_VARS.
-  STS_IMAGE="${STS_IMAGE:-rcbj/sts:${COMPOSE_PROJECT_NAME:-id-proto-debugger}}"
+  # COMPOSE_FORWARDED_VARS. Named under IMAGE_REGISTRY like the other images
+  # the test stack builds (docker-compose-run-tests.yml), and tagged
+  # IMAGE_TAG when a run sets one — tests.yml does, and pushes it.
+  local sts_repo="${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/sts"
+  local sts_tag="${IMAGE_TAG:-${COMPOSE_PROJECT_NAME:-id-proto-debugger}}"
+  STS_IMAGE="${STS_IMAGE:-${sts_repo}:${sts_tag}}"
   export STS_IMAGE
   echo "The mock STS image for this run is ${STS_IMAGE}."
   REV=/usr/bin/rev
@@ -152,6 +156,14 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_CONFIG_FILE TESTS_CONFIG_F
 # ADMIN_API_CLIENT_SECRET and the tests container as
 # STS_ADMIN_API_CLIENT_SECRET. See the block below, where it is generated.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} ADMIN_API_CLIENT_SECRET"
+# WHERE THE TEST STACK'S IMAGES COME FROM AND GO (2026-09-27).
+# docker-compose-run-tests.yml pulls every third-party image, and every base
+# image it builds FROM, out of a private mirror on ghcr.io (IMAGE_MIRROR), and
+# names what it builds under IMAGE_REGISTRY with tag IMAGE_TAG. All three have
+# defaults in the compose file, so unforwarded they would not fail — they
+# would silently fall back to them, which is the failure this list exists for.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_MIRROR IMAGE_REGISTRY"
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_TAG"
 
 
 # ---------------------------------------------------------------------------
@@ -1079,6 +1091,51 @@ requireMockStsCheckout()
   requireNestedLdapjsCheckout "${dir}" || return 1
   echo "Leaving requireMockStsCheckout(). ${dir} is populated."
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# CAN THIS MACHINE READ THE PRIVATE IMAGE MIRROR ON ghcr.io?
+#
+# docker-compose-run-tests.yml pulls its third-party images, and builds every
+# image FROM, a mirror of PRIVATE packages (see .github/image-mirror.txt).
+# Without a `docker login ghcr.io` the first build dies on "failed to resolve
+# source metadata ... denied", which names neither the login nor the mirror,
+# so the containerized launchers ask here first. One manifest request, made
+# as whoever compose will run as — root's credentials under sudo are not the
+# developer's.
+# ---------------------------------------------------------------------------
+requireGhcrMirror()
+{
+  echo "Entering requireGhcrMirror()."
+  local mirror="${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}"
+  local probe="${mirror}/ubuntu:latest"
+  local registry="${mirror%%/*}"
+  resolveDockerSudo
+  local docker_cmd="docker"
+  if [ -n "${DOCKER_SUDO}" ];
+  then
+    docker_cmd="sudo docker"
+  fi
+  if ${docker_cmd} manifest inspect "${probe}" >/dev/null 2>&1;
+  then
+    echo "Leaving requireGhcrMirror(). ${probe} is readable."
+    return 0
+  fi
+  echo "ERROR: cannot read the image mirror ${probe}." >&2
+  echo "       The test stack pulls every third-party image, and every base" >&2
+  echo "       image it builds from, out of PRIVATE packages on" \
+       "${registry}." >&2
+  echo "       Log in with a token that can read packages, then run again:" >&2
+  echo "" >&2
+  echo "         gh auth refresh -h github.com -s read:packages" >&2
+  echo "         gh auth token | ${docker_cmd} login ${registry}" \
+       "-u <GitHub user> --password-stdin" >&2
+  echo "" >&2
+  echo "       If the login works and the image is missing, the mirror has" >&2
+  echo "       not been filled: run the \"Mirror Images\" workflow, or" >&2
+  echo "       .github/scripts/mirror-images.sh missing (write:packages)." >&2
+  echo "Leaving requireGhcrMirror(). ${probe} is not readable."
+  return 1
 }
 
 # ---------------------------------------------------------------------------

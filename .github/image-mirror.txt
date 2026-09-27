@@ -1,0 +1,36 @@
+# THE THIRD-PARTY IMAGES THE TEST STACK USES, AND WHERE THEIR COPIES LIVE.
+#
+# Every image docker-compose-run-tests.yml (and the coverage overlay on top of
+# it) pulls or builds FROM is copied into a PRIVATE package under
+#
+#   ghcr.io/rcbj/id-proto-debugger/mirror/<mirror path>
+#
+# by .github/workflows/mirror-images.yml, and the stack pulls it from there
+# rather than from Docker Hub or quay.io. On 2026-09-27 the scheduled run
+# died three seconds in because a token request to auth.docker.io was reset;
+# with the copies here, the upstream registries are touched only when an
+# image is missing from the mirror or on the weekly refresh.
+#
+# Two columns: the upstream reference, and its path under the mirror prefix
+# (IMAGE_MIRROR in the compose file). A line here is used in one of two ways:
+#
+#   * an `image:` in the compose file, written as
+#       ${IMAGE_MIRROR:-...}/<mirror path>
+#   * a base image some Dockerfile names in a FROM, redirected by an entry in
+#     that service's build.additional_contexts — which is how the mock STS's
+#     Dockerfile, in a submodule this repository does not edit, is covered.
+#
+# tests/image_mirror_coverage.js fails when a FROM or an `image:` in the test
+# stack is not covered here, so a new base image cannot silently go back to
+# Docker Hub. Add it here in the same commit, and the next test run's mirror
+# job copies it before the stack is built.
+#
+# upstream                               mirror path
+ubuntu:latest                            ubuntu:latest
+node:24-alpine                           node:24-alpine
+node:24.16.0-bookworm-slim               node:24.16.0-bookworm-slim
+eclipse-temurin:11-jdk                   eclipse-temurin:11-jdk
+postgres:18                              postgres:18
+quay.io/keycloak/keycloak:26.6.4         keycloak/keycloak:26.6.4
+waltid/issuer-api2:0.23.0                waltid/issuer-api2:0.23.0
+waltid/verifier-api2:0.23.0              waltid/verifier-api2:0.23.0

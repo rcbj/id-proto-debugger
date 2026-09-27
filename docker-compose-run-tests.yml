@@ -1,7 +1,39 @@
 #version: '3'
+# ---------------------------------------------------------------------------
+# EVERY IMAGE THIS STACK PULLS COMES FROM ghcr.io, AND SO DOES EVERY IMAGE IT
+# BUILDS FROM.
+#
+# Third-party images are PRIVATE copies under ${IMAGE_MIRROR} (default
+# ghcr.io/rcbj/id-proto-debugger/mirror), made by
+# .github/workflows/mirror-images.yml from the list in
+# .github/image-mirror.txt. Two mechanisms, and both are in this file:
+#
+#   * `image:` on a service that is only run names the mirror directly.
+#   * a base image in a Dockerfile's FROM is REDIRECTED by the build's
+#     `additional_contexts` below: BuildKit resolves `FROM ubuntu:latest`
+#     against a named context called `ubuntu` before it goes to any registry,
+#     so every stage, intermediate ones included, is built from the mirror.
+#     That is what covers sts/Dockerfile, which is the iya-sts submodule's
+#     and is not edited here. (`ubuntu`, not `ubuntu:latest`: BuildKit drops
+#     `:latest` when it looks a name up.)
+#
+# The images built here are named under ${IMAGE_REGISTRY} (default
+# ghcr.io/rcbj/id-proto-debugger) with tag ${IMAGE_TAG} (default `latest`);
+# tests.yml pushes them after a run. Locally nothing is pushed, but the pulls
+# need `docker login ghcr.io` with a token that can read packages — the
+# launchers check that first and say so (common.sh, requireGhcrMirror).
+#
+# tests/image_mirror_coverage.js fails when a FROM or an `image:` here is not
+# covered, because an uncovered one does not fail: it quietly pulls from
+# Docker Hub again.
+# ---------------------------------------------------------------------------
+x-mirror-contexts: &mirror-contexts
+  ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
+  "node:24.16.0-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.16.0-bookworm-slim
+  "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
 services:
   postgres:
-    image: postgres:18
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/postgres:18
     # No `user:` needed and one would BREAK it: the official image's
     # entrypoint starts as root only to create and chown PGDATA on a fresh
     # volume, then drops to the `postgres` account with gosu before the
@@ -29,7 +61,7 @@ services:
     networks:
       - keycloak
   keycloak:
-    image: quay.io/keycloak/keycloak:26.6.4
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/keycloak/keycloak:26.6.4
     # Already non-root: the Keycloak image declares USER 1000 itself.
     # DPoP (RFC 9449) is a PREVIEW feature in Keycloak 26 and is off unless it is
     # named here: without it the server ignores the DPoP header entirely, issues a
@@ -66,7 +98,7 @@ services:
       - keycloak
   api:
     container_name: api
-    image: rcbj/api
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/api:${IMAGE_TAG:-latest}
     environment:
       # api and client KEEP this file. `api/env/test.js` is the deployed-site
       # configuration (https://api.tools.test.idptools.io), not a compose one, so
@@ -97,6 +129,7 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile
+      additional_contexts: *mirror-contexts
       args:
         CONFIG_FILE: ${CONFIG_FILE}
         # Optional: CI fixes the build number so the image and the git tag agree.
@@ -138,7 +171,7 @@ services:
       - 4000:4000
   client:
     container_name: client
-    image: rcbj/client
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/client:${IMAGE_TAG:-latest}
     environment:
       # api and client KEEP this file. `api/env/test.js` is the deployed-site
       # configuration (https://api.tools.test.idptools.io), not a compose one, so
@@ -152,7 +185,8 @@ services:
       - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
     build:
       context: .
-      dockerfile: client/Dockerfile 
+      dockerfile: client/Dockerfile
+      additional_contexts: *mirror-contexts
       args:
         CONFIG_FILE: ${CONFIG_FILE}
     # The stack's TLS pair, generated on the host before compose starts. See
@@ -192,7 +226,7 @@ services:
     # The launchers set STS_IMAGE to a tag of their own (see common.sh);
     # a bare `docker-compose up` still gets `rcbj/sts`, which is what the
     # documentation names.
-    image: ${STS_IMAGE:-rcbj/sts}
+    image: ${STS_IMAGE:-${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/sts:${IMAGE_TAG:-latest}}
     # ---------------------------------------------------------------------
     # THE SAME UID AS THE TESTS CONTAINER, BECAUSE THE SPIRE SOCKET IS
     # PRIVATE NOW.
@@ -399,6 +433,9 @@ services:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
       context: ./sts
+      # Its FROMs are ubuntu:latest and node:24.16.0-bookworm-slim; the
+      # contexts send both to the mirror without touching the submodule.
+      additional_contexts: *mirror-contexts
     # https, and `rejectUnauthorized:false` — the certificate is self-signed and
     # regenerated every start, so nothing in this container can have an anchor
     # for it. Liveness is this check's question, not trust.
@@ -443,7 +480,7 @@ services:
   # publishes in its metadata is built from it.
   waltid-issuer-api:
     container_name: waltid-issuer-api
-    image: waltid/issuer-api2:0.23.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/waltid/issuer-api2:0.23.0
     # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
     # its own. It needs none: its configuration is bind-mounted READ-ONLY,
     # persistence.conf puts sessions in memory, and its signing key comes
@@ -469,7 +506,7 @@ services:
   # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
   waltid-issuer:
     container_name: waltid-issuer
-    image: node:24-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -507,7 +544,7 @@ services:
   # private key is committed.
   waltid-verifier-api:
     container_name: waltid-verifier-api
-    image: waltid/verifier-api2:0.23.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/waltid/verifier-api2:0.23.0
     # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
     # its own. It needs none: its configuration is bind-mounted READ-ONLY,
     # persistence.conf puts sessions in memory, and its signing key comes
@@ -530,7 +567,7 @@ services:
   # urlPrefix names, so every URL it hands the wallet is one the browser can use.
   waltid-verifier:
     container_name: waltid-verifier
-    image: node:24-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -565,10 +602,11 @@ services:
   # container) and the api /samlmetadata proxy at keycloak-wsfed:8080/auth.
   keycloak-wsfed:
     container_name: keycloak-wsfed
-    image: rcbj/keycloak-wsfed
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/keycloak-wsfed:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: keycloak-wsfed/Dockerfile
+      additional_contexts: *mirror-contexts
     hostname: keycloak-wsfed
     environment:
       KEYCLOAK_USER: keycloak
@@ -586,7 +624,7 @@ services:
       - "8082:8080"
   tests:
     container_name: tests
-    image: rcbj/test
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/test:${IMAGE_TAG:-latest}
     # Point the WS-Federation provisioning + test at the side-car by its compose
     # DNS name (the entrypoint defaults these empty so live-site runs skip WS-Fed).
     environment:
@@ -678,6 +716,7 @@ services:
       # which `service:` makes compose build before this one. See the block
       # that uses it in tests/Dockerfile.
       additional_contexts:
+        <<: *mirror-contexts
         mocksts: service:sts
     # Persist the generated report/logs to the host (gitignored).
     volumes:

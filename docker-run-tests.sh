@@ -165,6 +165,11 @@ requireMockStsCheckout "${CURRENT_DIR}"
 # dies at startup with `Cannot find module 'ldapjs'`.
 requireApiLdapjsCheckout "${CURRENT_DIR}"
 check_return_code $?
+# Every image the stack pulls or builds FROM comes from a PRIVATE mirror on
+# ghcr.io (docker-compose-run-tests.yml, .github/image-mirror.txt). Without a
+# login the build fails on a pull error that names neither; this says which.
+requireGhcrMirror
+check_return_code $?
 
 # The walt.id issuer's configuration is rendered before compose brings the stack
 # up: the container mounts the result, and the signing key it contains is

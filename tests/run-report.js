@@ -456,6 +456,17 @@ function buildJobs() {
     env: {},
   });
 
+  // WHERE THE STACK'S IMAGES COME FROM. docker-compose-run-tests.yml takes
+  // every third-party image, and every base image it builds FROM, from a
+  // private mirror on ghcr.io — and a FROM the mirror does not cover is not
+  // an error, it is a pull from Docker Hub. This fails on one, including a
+  // submodule bump that moves sts/Dockerfile to a new tag. Node only.
+  jobs.push({
+    name: "Image mirror coverage (every pulled and FROM image is on ghcr.io)",
+    script: "image_mirror_coverage.js",
+    env: {},
+  });
+
   // WHERE A DOWNLOADED FILE LANDS. Several pages here have a Download button
   // and the tests that drive one write a real file; the browser's default
   // directory on a host run is the developer's ~/Downloads, and the assertion

@@ -486,6 +486,27 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 
 `tests/CLAUDE.md` describes what each test file covers, what gates or skips it, and the environment hazards every browser test has to handle — Web Crypto's secure-context requirement, `--headless=new`, waiting on content rather than elements, and the rest. **Read it before writing or changing a test**; each of those hazards has already cost a run, and each fails in a way that names something other than itself.
 
+**The two containerized launchers pull everything from ghcr.io, and it is
+PRIVATE — run `docker login ghcr.io` once.** Since 2026-09-27
+`docker-compose-run-tests.yml` takes every third-party image (Postgres,
+Keycloak, walt.id, node) AND every base image the five Dockerfiles it builds
+name in a `FROM` from private copies under
+`ghcr.io/rcbj/id-proto-debugger/mirror/`, because a reset connection to
+auth.docker.io took a scheduled run down three seconds in. The `FROM`s are
+redirected by each build's `additional_contexts` (BuildKit resolves a named
+context before any registry), which is how `sts/Dockerfile` is covered without
+editing the submodule. The list is `.github/image-mirror.txt`, filled by the
+**Mirror Images** workflow (weekly refresh, and a `missing`-only pass at the
+start of every `tests.yml` run), and `tests/image_mirror_coverage.js` fails when
+a `FROM` or an `image:` is not covered — including a submodule bump that moves
+the mock to a new node tag. What the stack builds is named
+`${IMAGE_REGISTRY}/<name>:${IMAGE_TAG}` (default
+`ghcr.io/rcbj/id-proto-debugger/…:latest`) and `tests.yml` pushes it, under the
+commit and the branch. `requireGhcrMirror()` in `common/common.sh` checks the
+login first and prints the two commands; under `sudo` it is ROOT's login that
+counts. `IMAGE_MIRROR`, `IMAGE_REGISTRY` and `IMAGE_TAG` are forwarded past
+sudo like the rest.
+
 There is no linting toolchain configured in this project.
 
 ## Configuration
