@@ -130,6 +130,66 @@ function utf8(text) {
   return new Uint8Array(out);
 }
 
+// The inverse of utf8(), and STRICT: null for anything that is not
+// well-formed UTF-8 — a truncated sequence, a stray continuation byte, an
+// overlong form, an encoded surrogate or a code point past U+10FFFF — so a
+// caller can fall back to another reading rather than get U+FFFD in a
+// principal name, which would hash to a key nobody holds. Written out for
+// the reason utf8() is. A HOT PATH (decGeneralString calls it once per
+// KerberosString of every message), so it does not log; see the note above
+// the codec in krb5_asn1.js.
+function fromUtf8(bytes) {
+  var b = toBytes(bytes);
+  var s = "";
+  var i = 0;
+  while (i < b.length) {
+    var c = b[i];
+    var need;
+    var cp;
+    var min;
+    if (c < 0x80) {
+      s += String.fromCharCode(c);
+      i++;
+      continue;
+    } else if (c >= 0xc2 && c <= 0xdf) {
+      need = 1;
+      cp = c & 0x1f;
+      min = 0x80;
+    } else if (c >= 0xe0 && c <= 0xef) {
+      need = 2;
+      cp = c & 0x0f;
+      min = 0x800;
+    } else if (c >= 0xf0 && c <= 0xf4) {
+      need = 3;
+      cp = c & 0x07;
+      min = 0x10000;
+    } else {
+      return null;
+    }
+    if (i + need >= b.length) {
+      return null;
+    }
+    for (var k = 1; k <= need; k++) {
+      var cc = b[i + k];
+      if ((cc & 0xc0) !== 0x80) {
+        return null;
+      }
+      cp = (cp << 6) | (cc & 0x3f);
+    }
+    if (cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) {
+      return null;
+    }
+    if (cp >= 0x10000) {
+      cp -= 0x10000;
+      s += String.fromCharCode(0xd800 + (cp >> 10), 0xdc00 + (cp & 0x3ff));
+    } else {
+      s += String.fromCharCode(cp);
+    }
+    i += need + 1;
+  }
+  return s;
+}
+
 // UTF-16 little-endian: the encoding the NT hash is taken over, and the reason
 // etype 23 keys are what they are. No surrogate handling is needed because
 // JavaScript strings are already UTF-16 code units.
@@ -449,6 +509,7 @@ function rc4(key, data) {
 module.exports = {
   toBytes: toBytes,
   utf8: utf8,
+  fromUtf8: fromUtf8,
   utf16le: utf16le,
   concat: concat,
   xor: xor,
