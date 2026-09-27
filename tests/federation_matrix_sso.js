@@ -809,6 +809,10 @@ async function createRelationship(spBase, partner, partnerAppId, callbackUri) {
                { id: RELATIONSHIP, field: field, value: value },
                "setting " + field + " on " + RELATIONSHIP);
   }
+  // WHICH PERSON THE PARTNER SIGNS IN (iya-sts #109): the mapped name, matched
+  // or created as it is, where the sts knows `fedSubjectPolicy` at all — the
+  // reason is pinSubjectPolicy()'s, in federation_admin.js.
+  await admin.pinSubjectPolicy(spBase, RELATIONSHIP);
   const enabled = await must(spBase, "/federation/enable",
                              { id: RELATIONSHIP },
                              "enabling " + RELATIONSHIP);
@@ -1985,11 +1989,13 @@ async function test() {
     // hands over realm 2's `urn:uuid:` subject, which realm 1 files as
     // `sub-<uuid>`. Worked out from realm 2's own directory rather than read
     // off realm 1, so the mapping is checked rather than taken on trust. See
-    // `federatedNameOf()` in federation_admin.js.
+    // `federatedNameOf()` in federation_admin.js. And since iya-sts #109 the
+    // relationship's `fedSubjectPolicy` decides what an entry created at the
+    // first sign-in is called; `localNameAt()` reads it off the relationship.
     // ---------------------------------------------------------------------
     const local = (FED_PROTOCOL === "oidc" || FED_PROTOCOL === "oauth2")
-      ? await admin.federatedNameOf(idpBase, user)
-      : user;
+      ? await admin.federatedNameOf(idpBase, user, spBase, RELATIONSHIP)
+      : await admin.localNameAt(spBase, RELATIONSHIP, user);
     log.info("Realm 2's " + user + " is " + local + " at realm 1.");
 
     // ---------------------------------------------------------------------

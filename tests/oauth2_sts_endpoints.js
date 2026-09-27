@@ -446,6 +446,45 @@ async function signInAndAuthorize(meta, params, options) {
 // unauthenticated request has to authenticate the user before it issues
 // anything — and the username typed in is the identity every token describes.
 // ---------------------------------------------------------------------------
+// The profile claims of a sign-in: the ID Token's when it carries them, and
+// the UserInfo endpoint's for this access token when it does not (OpenID
+// Connect Core section 5.4 — see testLoginScreen()).
+async function profileClaims(meta, idTokenClaims, accessToken) {
+  log.debug("Entering profileClaims().");
+  if (idTokenClaims && idTokenClaims.preferred_username !== undefined) {
+    log.debug("Leaving profileClaims(). From the ID Token.");
+    return idTokenClaims;
+  }
+  // RFC 8414's document need not name the UserInfo endpoint, which is
+  // OpenID Connect's; the OpenID Provider's own discovery document does.
+  let userinfo = meta.userinfo_endpoint;
+  if (!userinfo) {
+    const discovery = await get(stsBase +
+        "/.well-known/openid-configuration");
+    userinfo = JSON.parse(await discovery.text()).userinfo_endpoint;
+  }
+  assert.ok(userinfo, "the OpenID Provider should name a UserInfo endpoint.");
+  const r = await get(userinfo,
+      { headers: { Authorization: "Bearer " + accessToken,
+                   Accept: "application/json" } });
+  const text = await r.text();
+  assert.strictEqual(r.status, 200,
+    "UserInfo should answer for the access token the sign-in issued. Got " +
+        "HTTP " + r.status + ": " + text);
+  let body = {};
+  try {
+    body = JSON.parse(text);
+  } catch (e) {
+    log.debug("Caught in profileClaims(): " + ((e && e.message) || e));
+    // An encrypted or signed answer is a registration this client never made.
+    assert.fail("UserInfo answered with something other than JSON: " + text);
+  }
+  assert.strictEqual(body.sub, idTokenClaims.sub,
+    "UserInfo should describe the ID Token's subject.");
+  log.debug("Leaving profileClaims(). From UserInfo.");
+  return body;
+}
+
 async function testLoginScreen(meta, verify) {
   log.debug("Entering testLoginScreen().");
   log.info("=== The login screen ===");
@@ -541,13 +580,21 @@ async function testLoginScreen(meta, verify) {
         "the directory entry's urn:uuid: identifier. Got: " + at.sub);
   assert.strictEqual(it.sub, at.sub,
     "the ID Token and the access token should name the same subject.");
-  assert.strictEqual(it.preferred_username, username,
-                     "the ID token should name that user too.");
-  assert.strictEqual(it.given_name, username,
-                     "the ID token's claims should describe that user.");
-  assert.ok(String(it.email).indexOf(username) === 0,
-    "the ID token's email should be derived from the username. Got: " +
-        it.email);
+  // WHERE THE PROFILE CLAIMS ARE. OpenID Connect Core section 5.4 returns
+  // the profile and email scopes' claims from the UserInfo endpoint when an
+  // access token is issued, and in the ID Token only for
+  // response_type=id_token. The mock STS put them in every ID Token until
+  // iya-sts #118 (2026-09-22) and answers from UserInfo since, so the claims
+  // are read from the ID Token where it carries them (the pinned `sts/`
+  // gitlink) and from UserInfo otherwise (the vendored copy's current tree).
+  const described = await profileClaims(meta, it, set.access_token);
+  assert.strictEqual(described.preferred_username, username,
+                     "the ID token or UserInfo should name that user too.");
+  assert.strictEqual(described.given_name, username,
+                     "the claims should describe that user.");
+  assert.ok(String(described.email).indexOf(username) === 0,
+    "the email should be derived from the username. Got: " +
+        described.email);
   assert.strictEqual(it.nonce, signedInParams.nonce,
                      "the nonce must survive the login round trip.");
   assert.ok(it.auth_time > 0,
@@ -561,8 +608,9 @@ async function testLoginScreen(meta, verify) {
     grant_type: "refresh_token", refresh_token: set.refresh_token,
         client_id: CLIENT_ID
   });
-  assert.strictEqual(claimsOf(refreshed.body.id_token).preferred_username,
-                     username,
+  assert.strictEqual((await profileClaims(meta,
+      claimsOf(refreshed.body.id_token), refreshed.body.access_token))
+      .preferred_username, username,
     "refreshing should keep describing the user who signed in.");
   log.info('[login] OK — the tokens describe "' + username +
            '", the name that was typed in.');
@@ -658,9 +706,32 @@ async function testLoginScreen(meta, verify) {
            "password are all handled.");
 
   // 7. Signing out means the next request prompts again.
-  const loggedOut = await get(meta.issuer + "/oauth2/logout",
+  let loggedOut = await get(meta.issuer + "/oauth2/logout",
       { headers: { cookie: authz.cookie } });
   assert.strictEqual(loggedOut.status, 200, "logout should answer.");
+  // iya-sts #124 asks the person to confirm a sign-out that carries no
+  // id_token_hint for this session: press the page's own button. An older
+  // sts signs out at once, and its answer has no such form.
+  const confirmPage = await loggedOut.text();
+  if (/name="confirm_for"/.test(confirmPage)) {
+    const fields = {};
+    (confirmPage.match(/<input type="hidden"[^>]*>/g) || []).forEach(
+      function (tag) {
+        const name = /name="([^"]+)"/.exec(tag);
+        const value = /value="([^"]*)"/.exec(tag);
+        if (name) {
+          fields[name[1]] = value ? value[1].replace(/&amp;/g, "&") : "";
+        }
+      });
+    fields.confirm = "yes";
+    loggedOut = await fetch(meta.issuer + "/oauth2/logout", {
+      method: "POST", redirect: "manual",
+      headers: { cookie: authz.cookie,
+                 "Content-Type": "application/x-www-form-urlencoded" },
+      body: form(fields) });
+    assert.strictEqual(loggedOut.status, 200, "the confirmed sign-out " +
+                       "should answer.");
+  }
   const afterLogout = await get(meta.authorization_endpoint + "?" +
       form(fresh()),
     { headers: { cookie: authz.cookie } });
@@ -841,17 +912,26 @@ async function testAuthorizationCode(meta, verify) {
            "matching claims, and the refresh token is an encrypted, opaque " +
            "JWE that introspects as a refresh_token for the same subject.");
 
-  if (PRODUCT) {
-    // RFC 9700 section 4.5 and RFC 6749 section 10.5, which a product-mode
-    // service applies instead of the relaxation below: a code presented twice
-    // is refused, and what it bought is revoked, because two holders of one
-    // code cannot be told apart.
-    const replayed = await postForm(meta.token_endpoint, {
-      grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
-      redirect_uri: REDIRECT_URI, code_verifier: verifier2
-    });
+  // THE SAME CODE, PRESENTED A SECOND TIME — sent ONCE, and what the service
+  // did with it decides which branch below judges it. Until iya-sts #187 the
+  // mode decided: product refused a replay and development answered an
+  // identical one with the same token set. Since #187 it is refused in EVERY
+  // mode (the courtesy survives only as `oauth2.codeReplayIdempotent`, off by
+  // default), so a development service that refuses is judged exactly as a
+  // product one is, and only a 200 from a development service is read as the
+  // old courtesy.
+  const replayed = await postForm(meta.token_endpoint, {
+    grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
+    redirect_uri: REDIRECT_URI, code_verifier: verifier2
+  });
+  if (PRODUCT || replayed.status !== 200) {
+    // RFC 6749 section 4.1.2, RFC 9700 section 4.5 and RFC 6749 section
+    // 10.5: a code presented twice is refused, and what it bought is revoked,
+    // because two holders of one code cannot be told apart. Product mode has
+    // always done this; every mode does since iya-sts #187.
     assert.strictEqual(replayed.status, 400,
-      "a product-mode service must refuse a code presented twice. Got HTTP " +
+      "a service must refuse a code presented twice (every mode since " +
+          "iya-sts #187; product mode before it). Got HTTP " +
           replayed.status + ": " + replayed.raw);
     assert.strictEqual(replayed.body.error, "invalid_grant",
                        "that refusal should be invalid_grant.");
@@ -863,7 +943,7 @@ async function testAuthorizationCode(meta, verify) {
     assert.strictEqual(revoked.body.active, false,
       "the access token the replayed code bought must be revoked.");
     log.info("[code] OK — a replayed code is refused and what it bought is " +
-             "revoked (product mode).");
+             "revoked (" + (PRODUCT ? "product" : "development") + " mode).");
     // A fresh set for the sections after this one, since this one is dead.
     const third = await authorize(meta, {
       response_type: "code", client_id: CLIENT_ID, redirect_uri: REDIRECT_URI,
@@ -878,6 +958,11 @@ async function testAuthorizationCode(meta, verify) {
                        renewed.raw);
     set = renewed.body;
   } else {
+    // THE PRE-#187 DEVELOPMENT COURTESY, which the pinned sts/ gitlink still
+    // has. DELETE THIS BRANCH once the sts/ pin is past iya-sts #187: from
+    // then on a development service refuses a replay too, and the branch
+    // above judges it.
+    //
     // Single use, NON-SPEC-ally relaxed to idempotent for the rest of the code's
     // own lifetime: the identical Token Request gets the identical token set
     // back — the first answer, not a second one — because a debugging service
@@ -885,15 +970,11 @@ async function testAuthorizationCode(meta, verify) {
     // code" has told the user nothing about which of those two it was. The
     // relaxation is the mock's, is documented in docs/mock-sts.md, and RFC 6749
     // section 4.1.2 permits a real server to refuse this outright.
-    const replay = await postForm(meta.token_endpoint, {
-      grant_type: "authorization_code", code: code2, client_id: CLIENT_ID,
-      redirect_uri: REDIRECT_URI, code_verifier: verifier2
-    });
-    assert.strictEqual(replay.status, 200,
+    assert.strictEqual(replayed.status, 200,
       "the same Token Request for a code already redeemed should be answered " +
-          "with what it was answered the first time. Got HTTP " + replay.status +
-          ": " + replay.raw);
-    assert.deepStrictEqual(replay.body, set,
+          "with what it was answered the first time. Got HTTP " +
+          replayed.status + ": " + replayed.raw);
+    assert.deepStrictEqual(replayed.body, set,
       "a replay must return the SAME token set, not a newly minted one — " +
           "nothing is issued twice here.");
     log.info("[code] OK — an identical replay returns the identical tokens.");
@@ -1330,7 +1411,9 @@ async function testRegistration(meta) {
   const updated = await fetch(reg.registration_client_uri, {
     method: "PUT",
         headers: Object.assign({ "Content-Type": "application/json" }, authed),
+    // RFC 7592 section 2.2: the update carries the client's own client_id.
     body: JSON.stringify({ software_statement: STATEMENT, client_name: "Renamed Client",
+                         client_id: reg.client_id,
                          redirect_uris: [REDIRECT_URI] })
   });
   assert.strictEqual(updated.status, 200, "updating the registration failed.");
@@ -1344,9 +1427,13 @@ async function testRegistration(meta) {
       headers: authed });
   assert.strictEqual(deleted.status, 204,
                      "deleting the registration should answer 204.");
+  // RFC 7592 section 3: a client that does not exist is 401, and the
+  // registration access token is revoked. An sts older than iya-sts #120
+  // answered 404, and this job runs against a pinned sts too.
   const gone = await fetch(reg.registration_client_uri, { headers: authed });
-  assert.strictEqual(gone.status, 404,
-                     "the client should be gone after a delete.");
+  assert.ok(gone.status === 401 || gone.status === 404,
+            "the client should be gone after a delete (401; 404 before " +
+            "iya-sts #120). Got " + gone.status);
   log.info("[register] OK — register, read, update and delete, with the " +
            "management calls protected.");
   log.debug("Leaving testRegistration().");
@@ -1486,6 +1573,7 @@ async function testNativeRedirectsRegistrationAndRefreshScope(meta) {
     method: "PUT",
     headers: Object.assign({ "Content-Type": "application/json" }, authed),
     body: JSON.stringify({ software_statement: STATEMENT, redirect_uris: [native],
+                           client_id: reg.client_id,
                            frontchannel_logout_uri: "javascript:alert(1)" })
   });
   assert.strictEqual(framed.status, 400,
@@ -1540,39 +1628,64 @@ async function test() {
   // testRegistration() further down registers a client of its own through RFC
   // 7591 and deletes it again; that one is not pre-registered here, because
   // its whole subject is what the registration endpoint does.
+  //
+  // THE SCOPES EACH CLIENT MAY BE ISSUED ARE DECLARED, where the STS knows
+  // the attribute (iya-sts #110, 2026-09-22): `oauthScope` became a record of
+  // what a client ASKED for, and in product mode a scope is issued only when
+  // it is on `oauthAllowedScope`. An STS from before that has no such
+  // attribute and refuses one it does not know, so it is added only when the
+  // registry's `editable` table names it — this file runs against both.
   // ---------------------------------------------------------------------
+  var declaresScopes = await registry.registryEditable(
+      registry.baseOf(stsBase), "oauthAllowedScope");
+  // THE DELEGATION POLICY (iya-sts #108): in product an RFC 8693 exchange in
+  // which this client impersonates the subject is refused unless the policy
+  // says it may — trusted to impersonate, and allowed to delegate to the API
+  // the exchange aims at. Declared only where the STS knows the attributes.
+  var declaresDelegation = await registry.registryEditable(
+      registry.baseOf(stsBase), "appTrustedToImpersonate");
+  var clientFields = {
+    oauthClientId: CLIENT_ID,
+    oauthRedirectUri: [REDIRECT_URI],
+    oauthResponseType: ["code", "token", "id_token", "code id_token",
+                        "code id_token token"],
+    oauthGrantType: ["authorization_code", "refresh_token",
+                     "client_credentials", "password",
+                     "urn:ietf:params:oauth:grant-type:device_code",
+                     "urn:ietf:params:oauth:grant-type:token-exchange"],
+    oauthScope: ["openid", "profile", "email", "api"],
+    oauthTokenEndpointAuthMethod: "client_secret_post",
+    oauthClientSecret: CLIENT_SECRET,
+    oauthConfidential: "TRUE"
+  };
+  var serviceFields = {
+    oauthClientId: SERVICE_CLIENT,
+    oauthGrantType: ["client_credentials"],
+    oauthScope: ["api"],
+    oauthTokenEndpointAuthMethod: "client_secret_basic",
+    oauthClientSecret: SERVICE_SECRET,
+    oauthConfidential: "TRUE"
+  };
+  if (declaresScopes) {
+    clientFields.oauthAllowedScope = ["openid", "profile", "email", "api"];
+    serviceFields.oauthAllowedScope = ["api"];
+  }
+  if (declaresDelegation) {
+    clientFields.appTrustedToImpersonate = "TRUE";
+    clientFields.appAllowedToDelegateTo = [EXCHANGE_RESOURCE];
+  }
   await registry.provision(registry.baseOf(stsBase), {
     identifier: CLIENT_ID,
     name: "OAuth2 STS endpoints",
     protocols: ["oauth2", "oidc"],
-    fields: {
-      oauthClientId: CLIENT_ID,
-      oauthRedirectUri: [REDIRECT_URI],
-      oauthResponseType: ["code", "token", "id_token", "code id_token",
-                          "code id_token token"],
-      oauthGrantType: ["authorization_code", "refresh_token",
-                       "client_credentials", "password",
-                       "urn:ietf:params:oauth:grant-type:device_code",
-                       "urn:ietf:params:oauth:grant-type:token-exchange"],
-      oauthScope: ["openid", "profile", "email", "api"],
-      oauthTokenEndpointAuthMethod: "client_secret_post",
-      oauthClientSecret: CLIENT_SECRET,
-      oauthConfidential: "TRUE"
-    },
+    fields: clientFields,
     why: "the one client this file drives every advertised endpoint with"
   });
   await registry.provision(registry.baseOf(stsBase), {
     identifier: SERVICE_CLIENT,
     name: "OAuth2 STS endpoints (client credentials)",
     protocols: ["oauth2"],
-    fields: {
-      oauthClientId: SERVICE_CLIENT,
-      oauthGrantType: ["client_credentials"],
-      oauthScope: ["api"],
-      oauthTokenEndpointAuthMethod: "client_secret_basic",
-      oauthClientSecret: SERVICE_SECRET,
-      oauthConfidential: "TRUE"
-    },
+    fields: serviceFields,
     why: "the machine client the client_credentials grant authenticates as"
   });
 

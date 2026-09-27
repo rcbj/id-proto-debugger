@@ -2461,19 +2461,32 @@ async function test() {
   // everySchemeIsExercised() drives. Those authenticate a USER rather than an
   // application, and putting them on this entry would be claiming the
   // application holds credentials it does not.
+  //
+  // THE TWO SCOPES ARE DECLARED as well as recorded, where the registry knows
+  // the attribute (iya-sts #110, 2026-09-22): `scim:read` and `scim:write` are
+  // that service's own PROTECTED scopes, issued in every mode only to a client
+  // whose `oauthAllowedScope` lists them — and SCIM asks the same question
+  // again on every call. An sts from before #110 has no such attribute and
+  // refuses one it does not know, so it is added only when the registry's
+  // `editable` table names it.
   // ---------------------------------------------------------------------
+  const scimClientFields = {
+    scimClientId: [SCIM_CLIENT_ID],
+    oauthClientId: [SCIM_CLIENT_ID],
+    oauthGrantType: ["client_credentials"],
+    oauthScope: ["scim:read", "scim:write"],
+    oauthTokenEndpointAuthMethod: "client_secret_post",
+    oauthConfidential: "TRUE"
+  };
+  if (await registry.registryEditable(registry.baseOf(stsUrl),
+                                      "oauthAllowedScope")) {
+    scimClientFields.oauthAllowedScope = ["scim:read", "scim:write"];
+  }
   await registry.provision(registry.baseOf(stsUrl), {
     identifier: SCIM_CLIENT_ID,
     name: "SCIM protocol test client",
     protocols: ["scim", "oauth2"],
-    fields: {
-      scimClientId: [SCIM_CLIENT_ID],
-      oauthClientId: [SCIM_CLIENT_ID],
-      oauthGrantType: ["client_credentials"],
-      oauthScope: ["scim:read", "scim:write"],
-      oauthTokenEndpointAuthMethod: "client_secret_post",
-      oauthConfidential: "TRUE"
-    },
+    fields: scimClientFields,
     why: "the client this job provisions and deprovisions accounts as"
   });
 

@@ -475,6 +475,12 @@ async function createRelationship(spBase, partner, fields, peer) {
                { id: partner.id, field: field, value: value },
                "setting " + field + " on \"" + partner.id + "\"");
   }
+  // WHICH PERSON THE PARTNER SIGNS IN (iya-sts #109): the mapped name, matched
+  // or created as it is, where the sts knows `fedSubjectPolicy` at all. Under
+  // the default a created entry is `choice-saml2~<name>`, and the ID Token
+  // assertions below that the application never learns the relationship's
+  // name could not hold — pinSubjectPolicy() in federation_admin.js.
+  await admin.pinSubjectPolicy(spBase, partner.id);
   const enabled = await must(spBase, "/federation/enable", { id: partner.id },
                              "enabling \"" + partner.id + "\"");
   assert.ok(enabled.readiness.ready,
@@ -1203,6 +1209,11 @@ async function test() {
                "\" (" + PARTNERS[0].label + ").");
       const sentSaml = await signInThrough(driver, spBase, callbackUri,
                                            PARTNERS[0].id, samlUser);
+      // WHO REALM 1 CALLS THAT PERSON: the NameID as it crossed, unless the
+      // relationship's fedSubjectPolicy (iya-sts #109) namespaced the entry
+      // the sign-in created. See localNameAt() in federation_admin.js.
+      const samlLocal = await admin.localNameAt(spBase, PARTNERS[0].id,
+                                                samlUser);
 
       // READ BEFORE THE CODE IS REDEEMED, so the count is about the SIGN-IN
       // rather than about the token call.
@@ -1224,10 +1235,10 @@ async function test() {
         "The \"" + PARTNERS[0].id + "\" relationship recorded a failure " +
         "during a sign-in that succeeded: " +
         afterSaml[PARTNERS[0].id].lastError);
-      assert.ok(afterSaml[PARTNERS[0].id].lastUser.indexOf(samlUser) >= 0,
+      assert.ok(afterSaml[PARTNERS[0].id].lastUser.indexOf(samlLocal) >= 0,
         "The \"" + PARTNERS[0].id + "\" relationship's last user is \"" +
         afterSaml[PARTNERS[0].id].lastUser + "\" and this test signed in as \"" +
-        samlUser + "\".");
+        samlUser + "\", who is \"" + samlLocal + "\" at " + SP_REALM + ".");
 
       const samlClaims = await redeemAndReadIdToken(driver, callbackUri);
       assert.strictEqual(samlClaims.iss, spBase,
@@ -1249,7 +1260,7 @@ async function test() {
         "The application's ID Token names the federation relationship \"" +
         PARTNERS[0].id + "\": " + JSON.stringify(samlClaims) + ". The " +
         "application did not choose it and must not learn about it.");
-      await assertDescribes(samlClaims, spBase, samlUser, samlUser,
+      await assertDescribes(samlClaims, spBase, samlLocal, samlUser,
                             "The ID Token");
       log.info("Sign-in one complete: an ID Token from " + samlClaims.iss +
                " describing " +
@@ -1273,7 +1284,8 @@ async function test() {
       // resolving it in its own directory — so over this partner, unlike the
       // SAML 2.0 one, the typed name does not cross. Worked out from the
       // partner realm's own directory; see federatedNameOf().
-      const oidcLocal = await admin.federatedNameOf(idpBase, oidcUser);
+      const oidcLocal = await admin.federatedNameOf(idpBase, oidcUser,
+                                                    spBase, PARTNERS[1].id);
       log.info(IDP_REALM + "'s " + oidcUser + " is " + oidcLocal + " at " +
                SP_REALM + ".");
 
@@ -1325,7 +1337,7 @@ async function test() {
       // BOTH PEOPLE HAVE A DIRECTORY ENTRY IN REALM 1, a service that never
       // checked a password for either of them, and each is recorded as having
       // arrived through federation.
-      for (const user of [samlUser, oidcLocal]) {
+      for (const user of [samlLocal, oidcLocal]) {
         const users = await adminGet(spBase,
           "/users?q=" + encodeURIComponent(user));
         assert.ok((users.users || []).some(function (one) {

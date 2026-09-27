@@ -124,9 +124,11 @@ function newKey(type) {
     // `ext` would travel in the proof header and change the thumbprint input.
     publicJwk: jwk.kty === "RSA"
       ? { kty: jwk.kty, n: jwk.n, e: jwk.e }
-      : (jwk.kty === "OKP"
-          ? { kty: jwk.kty, crv: jwk.crv, x: jwk.x }
-          : { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y })
+      : (jwk.kty === "AKP"
+          ? { kty: jwk.kty, alg: jwk.alg, pub: jwk.pub }
+          : (jwk.kty === "OKP"
+              ? { kty: jwk.kty, crv: jwk.crv, x: jwk.x }
+              : { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y }))
   };
 }
 
@@ -158,7 +160,16 @@ var DPOP_ALGS = {
   ES256K: { gen: ["ec", { namedCurve: "secp256k1" }], hash: "sha256",
             options: { dsaEncoding: "ieee-p1363" }, sigBytes: 64 },
   // RFC 8037: Ed25519 hashes internally, so there is no digest to name.
-  EdDSA: { gen: ["ed25519", null], hash: null, options: {}, sigBytes: 64 }
+  EdDSA: { gen: ["ed25519", null], hash: null, options: {}, sigBytes: 64 },
+  // FIPS 204 ML-DSA, the three the JOSE registry names (kty AKP, RFC 9964,
+  // which also defines the AKP thumbprint members). Pure ML-DSA signs the
+  // message itself, so there is no digest to name.
+  "ML-DSA-44": { gen: ["ml-dsa-44", null], hash: null, options: {},
+                 sigBytes: 2420 },
+  "ML-DSA-65": { gen: ["ml-dsa-65", null], hash: null, options: {},
+                 sigBytes: 3309 },
+  "ML-DSA-87": { gen: ["ml-dsa-87", null], hash: null, options: {},
+                 sigBytes: 4627 }
 };
 
 function jkt(key) {
@@ -166,7 +177,11 @@ function jkt(key) {
   var j = key.publicJwk;
   var canonical = j.kty === "RSA"
     ? JSON.stringify({ e: j.e, kty: j.kty, n: j.n })
-    : JSON.stringify({ crv: j.crv, kty: j.kty, x: j.x, y: j.y });
+    : (j.kty === "AKP"
+        ? JSON.stringify({ alg: j.alg, kty: j.kty, pub: j.pub })
+        : (j.kty === "OKP"
+            ? JSON.stringify({ crv: j.crv, kty: j.kty, x: j.x })
+            : JSON.stringify({ crv: j.crv, kty: j.kty, x: j.x, y: j.y })));
   log.debug("Leaving jkt().");
   return crypto.createHash("sha256").update(canonical,
                            "utf8").digest("base64url");
@@ -730,6 +745,36 @@ async function refreshTokenCarriesTheBinding() {
   assert.strictEqual(refreshClaims.active, true,
     "the refresh token should introspect as active. Got: " +
         refreshIntrospected.text.slice(0, 200));
+  // RFC 9449 SECTION 5 HAS TWO HALVES, and this client is on the second: a
+  // refresh token issued to a PUBLIC client is bound to the key, and one
+  // issued to a CONFIDENTIAL client is NOT — "they are already
+  // sender-constrained with a different existing mechanism", the client's
+  // authentication. This job's client authenticates with its secret (the
+  // request helper adds it), so a service that follows the section — the
+  // mock since iya-sts #176 — leaves the token unbound, and the client may
+  // prove a NEW key when it refreshes. An older service binds it, and the
+  // checks after this block hold it to that binding.
+  if (!(refreshClaims.cnf && refreshClaims.cnf.jkt)) {
+    var rotated = newKey("ec");
+    var rotatedRefresh = await post(TOKEN_ENDPOINT, {
+      form: { grant_type: "refresh_token",
+              refresh_token: issued.body.refresh_token,
+              client_id: CLIENT_ID },
+      headers: { DPoP: makeProof(rotated, { htm: "POST",
+                                            htu: TOKEN_ENDPOINT }) }
+    });
+    assert.strictEqual(rotatedRefresh.status, 200,
+      "an authenticated client's unbound refresh token must be redeemable " +
+          "with a proof from a NEW key: " +
+          rotatedRefresh.text.slice(0, 200));
+    assert.strictEqual(claimsOf(rotatedRefresh.body.access_token).cnf.jkt,
+      jkt(rotated), "and the new access token is bound to the new key.");
+    log.info("[refresh] OK — a confidential client's refresh token is not " +
+             "key-bound (RFC 9449 section 5), and refreshing with a new key " +
+             "binds the new access token to it.");
+    log.debug("Leaving refreshTokenCarriesTheBinding(). Confidential.");
+    return;
+  }
   assert.ok(refreshClaims.cnf && refreshClaims.cnf.jkt === jkt(key),
     "a refresh token issued alongside a bound access token must itself be " +
         "bound: a wallet is a " +

@@ -340,9 +340,11 @@ const HOPS = [
 ];
 
 // The name this file signs into the console AS, for the drawings alone. A name
-// and not a credential — the mock checks no password anywhere — and distinctive
-// so that the directory entry and the audit row it leaves say which job made
-// them. The ELEMENT is in it because the two runs are two jobs.
+// and not a credential in development, which checks no password; where the
+// console needs a role, console_signin.js gives the account a password of its
+// own (see signInToTheConsole() below). Distinctive so that the directory
+// entry and the audit row it leaves say which job made them. The ELEMENT is
+// in it because the two runs are two jobs.
 const CONSOLE_USER = "wstrust-delegation-" + DELEGATION.element;
 
 // ---------------------------------------------------------------------------
@@ -1198,11 +1200,21 @@ function assertGraphIsAChain(graph) {
 // Returns the Cookie header, or null when the gate is off (a legitimate state
 // — the setting is switchable — reported rather than treated as a pass) or
 // when the walk did not complete.
+//
+// WITH THE CONSOLE'S READ ROLE, WHERE THE CONSOLE NEEDS ONE (iya-sts #103).
+// Product mode never opens the console to whoever signs in, and a development
+// roster stops being open to anyone once somebody holds a role — and a
+// signed-in person with no role is refused 403 on every page, so the maps and
+// the lineage below were simply not drawn. `{ grant: "read" }` asks
+// console_signin.js to grant it, and it does so ONLY where
+// `GET /admin-api/rbac` says the console is not open to anyone: granting where
+// it is would close that window for every other job in the pool. Reading is
+// all this job does there.
 // ---------------------------------------------------------------------------
 async function signInToTheConsole() {
   log.debug("Entering signInToTheConsole().");
   const session = await consoleSignin.signInToTheConsole(stsBase(),
-      CONSOLE_USER, log);
+      CONSOLE_USER, log, { grant: "read" });
   log.debug("Leaving signInToTheConsole(). " +
       (session ? "Holding a session." : "No session."));
   return session;
@@ -1219,9 +1231,10 @@ async function saveDrawing(session, urlPath, filename, what) {
   if (r.status === 401 || r.status === 403) {
     log.warn("[drawing] the console refused " + url + " with " + r.status +
              ". That is its own gate (admin.authRequired) and its roster: " +
-             "some other job has granted a console role to somebody else, so " +
-             "`admin.openWhenEmpty` no longer makes this session an " +
-             "administrator. " + what + " was not saved.");
+             "this session holds no console role — the read role " +
+             "console_signin.js grants where the console is shut (iya-sts " +
+             "#103) did not land, or the roster closed after it looked; its " +
+             "[console] lines above say which. " + what + " was not saved.");
     log.debug("Leaving saveDrawing(). Refused.");
     return null;
   }
@@ -1249,9 +1262,9 @@ async function consoleJson(session, urlPath, what) {
       session ? { headers: { Cookie: session } } : undefined);
   if (r.status === 401 || r.status === 403) {
     log.warn("[console] " + url + " was refused with " + r.status + ". That " +
-             "is the console's own gate and its roster — some other job has " +
-             "granted a console role to somebody else, so this session is no " +
-             "longer an administrator. " + what + " was not checked.");
+             "is the console's own gate and its roster — this session holds " +
+             "no console role, and the [console] lines above say why. " +
+             what + " was not checked.");
     log.debug("Leaving consoleJson(). Refused.");
     return null;
   }

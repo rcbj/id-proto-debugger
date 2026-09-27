@@ -156,6 +156,11 @@ const waitForModule = require("./wait_for.js");
 const consentScreen = require("./consent_screen.js");
 waitForModule.configure({ log: log, waitTime: waitTime });
 const { waitForPageBundle } = waitForModule;
+// The shared federation helpers — for this file, only the subject policy and
+// the name it produces (iya-sts #109). This file's own adminGet()/must() below
+// predate the module and are left where they are.
+const admin = require("./federation_admin.js");
+admin.configure({ log: log });
 
 const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
        waitTime, log, assert });
@@ -470,6 +475,13 @@ async function createRelationship(spBase, partner) {
                { id: RELATIONSHIP, field: field, value: value },
                "setting " + field + " on the relationship");
   }
+  // WHICH PERSON THE PARTNER SIGNS IN (iya-sts #109): the mapped name, matched
+  // or created as it is, where the sts knows `fedSubjectPolicy` at all. Under
+  // the default a created entry is `federation-realm-2~<name>`, which would
+  // put realm 2's name into the application's ID Token — the one thing the
+  // assertion below says it must never carry. pinSubjectPolicy() in
+  // federation_admin.js has the whole argument.
+  await admin.pinSubjectPolicy(spBase, RELATIONSHIP);
   const enabled = await must(spBase, "/federation/enable", { id: RELATIONSHIP },
                              "enabling the relationship");
   assert.ok(enabled.readiness.ready,
@@ -1017,6 +1029,10 @@ async function test() {
 
     // What the flow left behind at realm 1, read before the code is redeemed so
     // that the count is about the SIGN-IN rather than about the token call.
+    // WHO REALM 1 CALLS THE PERSON: the NameID as it crossed, unless the
+    // relationship's fedSubjectPolicy (iya-sts #109) namespaced the entry the
+    // sign-in created. See localNameAt() in federation_admin.js.
+    const local = await admin.localNameAt(spBase, RELATIONSHIP, user);
     const after = await relationshipNow(spBase);
     assert.strictEqual(Number(after.authentications || 0), 1,
       "Realm 1's relationship counted " + after.authentications +
@@ -1024,18 +1040,18 @@ async function test() {
     assert.ok(!String(after.lastError || "").trim(),
       "The relationship recorded a failure during a sign-in that succeeded: " +
       after.lastError);
-    assert.ok(String(after.lastUser || "").indexOf(user) >= 0,
+    assert.ok(String(after.lastUser || "").indexOf(local) >= 0,
       "The relationship's last user is \"" + after.lastUser + "\" and this " +
-      "test signed in as \"" + user + "\".");
+      "test signed in as \"" + user + "\", who is \"" + local + "\" there.");
 
     // The person now has a directory entry in REALM 1 — a service that never
     // checked a password for them.
     const users = await adminGet(spBase,
-      "/users?q=" + encodeURIComponent(user));
+      "/users?q=" + encodeURIComponent(local));
     assert.ok((users.users || []).some(function (one) {
-      return String(one.name) === user || String(one.key) === user;
-    }), "Realm 1 has no directory entry for " + user + ", who has just signed " +
-        "in there. It lists: " +
+      return String(one.name) === local || String(one.key) === local;
+    }), "Realm 1 has no directory entry for " + local + ", who has just " +
+        "signed in there. It lists: " +
         (users.users || []).map(function (o) { return o.name; }).join(", "));
     // AND IT SAYS HOW THEY GOT THERE. The mock files a federated sign-in under
     // the protocol the relationship speaks, so a person who has never had a

@@ -144,6 +144,11 @@ const waitForModule = require("./wait_for.js");
 const consentScreen = require("./consent_screen.js");
 waitForModule.configure({ log: log, waitTime: waitTime });
 const { waitForPageBundle } = waitForModule;
+// The shared federation helpers — for this file, only the subject policy and
+// the name it produces (iya-sts #109). This file's own adminGet()/must() below
+// predate the module and are left where they are.
+const admin = require("./federation_admin.js");
+admin.configure({ log: log });
 
 const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
        waitTime, log, assert });
@@ -494,6 +499,13 @@ async function createServiceProviderSide(base, id, protocol, partner, what) {
                { id: id, field: field, value: value },
                "setting " + field + " on " + id);
   }
+  // WHICH PERSON THE PARTNER SIGNS IN (iya-sts #109): the mapped name, matched
+  // or created as it is, where the sts knows `fedSubjectPolicy` at all. Under
+  // the default realm 4 would create `federation-realm-5~<name>` and realm 3
+  // `federation-realm-4~federation-realm-5~<name>`, and the ID Token below —
+  // which must name neither realm — would carry both. pinSubjectPolicy() in
+  // federation_admin.js has the whole argument.
+  await admin.pinSubjectPolicy(base, id);
   const enabled = await must(base, "/federation/enable", { id: id },
                              "enabling " + id);
   assert.ok(enabled.readiness.ready,
@@ -1263,10 +1275,24 @@ async function test() {
     // that says the chain ran once end to end rather than, say, realm 4
     // answering out of a session it already had.
     // ---------------------------------------------------------------------
-    for (const [what, base, id] of [
-        ["realm 3's SAML 2.0 relationship with realm 4", appBase, REL_3_TO_4],
+    //
+    // WHO EACH REALM CALLS THE PERSON. Realm 4 files the name realm 5's token
+    // carried, and realm 3 the name realm 4's assertion carried — which is
+    // realm 4's own name for them — so the second is worked out from the
+    // first. Unchanged unless a relationship's fedSubjectPolicy (iya-sts #109)
+    // namespaced the entry a sign-in created; see localNameAt() in
+    // federation_admin.js.
+    const bridgeLocal = await admin.localNameAt(bridgeBase, REL_4_TO_5, user);
+    const appLocal = await admin.localNameAt(appBase, REL_3_TO_4, bridgeLocal);
+    const localAt = {};
+    localAt[APP_REALM] = appLocal;
+    localAt[BRIDGE_REALM] = bridgeLocal;
+    localAt[IDP_REALM] = user;
+    for (const [what, base, id, local] of [
+        ["realm 3's SAML 2.0 relationship with realm 4", appBase, REL_3_TO_4,
+         appLocal],
         ["realm 4's WS-Federation relationship with realm 5", bridgeBase,
-         REL_4_TO_5]]) {
+         REL_4_TO_5, bridgeLocal]]) {
       const after = await relationshipNow(base, id);
       assert.strictEqual(Number(after.authentications || 0), 1,
         what + " counted " + after.authentications + " federated sign-in(s) " +
@@ -1274,9 +1300,9 @@ async function test() {
       assert.ok(!String(after.lastError || "").trim(),
         what + " recorded a failure during a sign-in that succeeded: " +
         after.lastError);
-      assert.ok(String(after.lastUser || "").indexOf(user) >= 0,
+      assert.ok(String(after.lastUser || "").indexOf(local) >= 0,
         what + "'s last user is \"" + after.lastUser + "\" and this test " +
-        "signed in as \"" + user + "\".");
+        "signed in as \"" + user + "\", who is \"" + local + "\" there.");
     }
     log.info("Both consuming relationships counted exactly one sign-in, by " +
              user + ", with no refusal recorded.");
@@ -1289,11 +1315,12 @@ async function test() {
     for (const [where, base] of [[APP_REALM, appBase],
                                  [BRIDGE_REALM, bridgeBase],
                                  [IDP_REALM, idpBase]]) {
+      const local = localAt[where];
       const users = await adminGet(base,
-        "/users?q=" + encodeURIComponent(user));
+        "/users?q=" + encodeURIComponent(local));
       assert.ok((users.users || []).some(function (one) {
-        return String(one.name) === user || String(one.key) === user;
-      }), "Realm \"" + where + "\" has no directory entry for " + user +
+        return String(one.name) === local || String(one.key) === local;
+      }), "Realm \"" + where + "\" has no directory entry for " + local +
           ", who has just signed in through it. It lists: " +
           (users.users || []).map(function (o) { return o.name; }).join(", "));
     }
@@ -1303,7 +1330,7 @@ async function test() {
     for (const [where, base] of [[APP_REALM, appBase],
                                  [BRIDGE_REALM, bridgeBase]]) {
       const users = await adminGet(base,
-        "/users?q=" + encodeURIComponent(user));
+        "/users?q=" + encodeURIComponent(localAt[where]));
       assert.ok((users.protocols || []).some(function (one) {
         return /Federation/i.test(String(one));
       }), "Realm \"" + where + "\" does not record " + user + " as having " +

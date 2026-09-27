@@ -11,6 +11,12 @@
 // for character apart from one error message naming the base URL and one not.
 // `federation_matrix_sso.js` would have been the third copy. It is not.
 //
+// Beside those four are the questions every federation job asks of the
+// result: who a person IS in a realm (`subjectOf()`), and what the service
+// provider files them under (`federatedNameOf()`, `localNameAt()`, and
+// `pinSubjectPolicy()`, which decides it — see the note above it for why the
+// jobs pin the policy they do).
+//
 // ---------------------------------------------------------------------------
 // WHY `/admin-api` AND NOT THE `/admin` CONSOLE.
 //
@@ -181,11 +187,155 @@ async function subjectOf(base, name) {
   return subject;
 }
 
-async function federatedNameOf(idpBase, name) {
+// `spBase` and `relationship` are optional, and with them the answer is the
+// name the near realm files the person under THROUGH that relationship — which
+// since iya-sts #109 is not always the mapped name. See localNameAt().
+async function federatedNameOf(idpBase, name, spBase, relationship) {
   logger().debug("Entering federatedNameOf(). " + name);
   const subject = await subjectOf(idpBase, name);
-  const local = "sub-" + subject.slice("urn:uuid:".length).toLowerCase();
+  const mapped = "sub-" + subject.slice("urn:uuid:".length).toLowerCase();
+  if (!spBase || !relationship) {
+    logger().debug("Leaving federatedNameOf(). " + mapped);
+    return mapped;
+  }
+  const local = await localNameAt(spBase, relationship, mapped);
   logger().debug("Leaving federatedNameOf(). " + local);
+  return local;
+}
+
+// ---------------------------------------------------------------------------
+// WHICH LOCAL PERSON A PARTNER'S SUBJECT BECOMES (iya-sts #109, 2026-09-22).
+//
+// Until #109 a service-provider-side relationship matched the name it mapped
+// out of an assertion onto a local person, and created one of that name when
+// there was none. Since then a partner signs in only the person its subject
+// is LINKED to, and the relationship's `fedSubjectPolicy` decides what an
+// unlinked subject becomes:
+//
+//   link-at-first-sign-in  the default (and what an empty value means). A
+//                          subject naming an existing person is sent to the
+//                          SP's own sign-in screen first, to link; one naming
+//                          nobody gets a NEW entry `<relationship>~<name>`.
+//   jit-namespaced         always a new entry `<relationship>~<name>`.
+//   pre-linked             nobody is signed in who was not linked first,
+//                          through POST /admin-api/users/federation-link.
+//   any-existing           the old name match, and a created entry keeps the
+//                          plain name. DEVELOPMENT ONLY: product refuses to
+//                          set it (STS-FED-0095).
+//
+// WHAT THE FEDERATION JOBS HERE PIN, AND WHY IT IS `any-existing`. Each of
+// them signs in a person the service provider has never seen and asserts two
+// things about the result: that the SP CREATED the entry at the first
+// federated sign-in, and that the application's tokens name NEITHER the
+// partner realm NOR the relationship — "the one property the whole feature
+// exists to have", in federation_sso.js's words. Under the default policy
+// the created entry is `<relationship>~<name>`, and the relationship ids here
+// ARE partner realm names (`federation-realm-2`, `choice-saml2`, the chain's
+// `federation-realm-4`), so the SP's own username would carry the partner
+// into every ID Token and the second assertion could not hold. `pre-linked`
+// keeps the names but provisions the person BEFORE the sign-in, which is the
+// first assertion gone, and it needs the partner's `urn:uuid:` subject before
+// anybody has signed in there. `any-existing` keeps both assertions exactly
+// as they were; what it costs is that these jobs need a DEVELOPMENT realm,
+// which they already did — product never creates a federated person
+// (STS-FED-0090), and the partner realms here check no password. The subject
+// policies themselves are the mock's own job to test
+// (`sts_federation_subject_policy.js` in iya-sts), and an sts from before #109
+// has no such attribute, so it is set only where the relationship's own
+// `editable` list names it.
+// ---------------------------------------------------------------------------
+const SUBJECT_POLICY_FOR_TESTS = "any-existing";
+
+// Where `fedSubjectPolicy` is known, per relationship, once read: null for an
+// sts that predates it, otherwise the policy in force (empty meaning the
+// default). Keyed on the realm base AND the id, for editableModes()'s reason
+// in sts_applications.js.
+const policyByRelationship = {};
+
+async function subjectPolicyOf(spBase, relationship) {
+  logger().debug("Entering subjectPolicyOf(). " + relationship);
+  const key = spBase + " " + relationship;
+  if (Object.prototype.hasOwnProperty.call(policyByRelationship, key)) {
+    logger().debug("Leaving subjectPolicyOf(). Cached.");
+    return policyByRelationship[key];
+  }
+  const view = await adminGet(spBase,
+    "/federation?relationship=" + encodeURIComponent(relationship));
+  assert.ok(view && view.found,
+    "The relationship \"" + relationship + "\" is not registered at " +
+    spBase + ", so which person its partner signs in cannot be read off it.");
+  const knows = (view.editable || []).some(function (row) {
+    return row && row.name === "fedSubjectPolicy";
+  });
+  const policy = knows
+    ? String((view.fields || {}).fedSubjectPolicy || "").trim()
+    : null;
+  policyByRelationship[key] = policy;
+  logger().debug("Leaving subjectPolicyOf(). " +
+                 (policy === null ? "Before #109." : policy || "(default)"));
+  return policy;
+}
+
+// Put SUBJECT_POLICY_FOR_TESTS on a service-provider-side relationship, where
+// the sts knows the attribute. Answers true when it was set and false for an
+// sts from before #109, which behaves that way with no attribute at all.
+async function pinSubjectPolicy(spBase, relationship) {
+  logger().debug("Entering pinSubjectPolicy(). " + relationship);
+  const key = spBase + " " + relationship;
+  delete policyByRelationship[key];
+  if ((await subjectPolicyOf(spBase, relationship)) === null) {
+    logger().info("[federation] " + spBase + " predates fedSubjectPolicy " +
+                  "(iya-sts #109), so \"" + relationship + "\" matches the " +
+                  "mapped name onto a local person without being told to.");
+    logger().debug("Leaving pinSubjectPolicy(). Before #109.");
+    return false;
+  }
+  const result = await adminPost(spBase, "/federation/set",
+    { id: relationship, field: "fedSubjectPolicy",
+      value: SUBJECT_POLICY_FOR_TESTS });
+  assert.ok(result.ok,
+    "Setting fedSubjectPolicy=" + SUBJECT_POLICY_FOR_TESTS + " on \"" +
+    relationship + "\" at " + spBase + " was refused: " +
+    JSON.stringify(result.errors || result) + ". That value is " +
+    "development-only (STS-FED-0095), and this job needs it for the reason " +
+    "federation_admin.js gives: it asserts a person CREATED at the first " +
+    "federated sign-in, which a product-mode realm never does. Run it " +
+    "against a development realm.");
+  delete policyByRelationship[key];
+  const now = await subjectPolicyOf(spBase, relationship);
+  assert.strictEqual(now, SUBJECT_POLICY_FOR_TESTS,
+    "\"" + relationship + "\" was set to fedSubjectPolicy=" +
+    SUBJECT_POLICY_FOR_TESTS + " and its entry says \"" + now + "\".");
+  logger().info("[federation] \"" + relationship + "\" matches the mapped " +
+                "name onto a local person (fedSubjectPolicy=" + now + ").");
+  logger().debug("Leaving pinSubjectPolicy(). Set.");
+  return true;
+}
+
+// The name the service provider at `spBase` files a person under when the
+// partner behind `relationship` names them `name` (the MAPPED name: the
+// NameID, or `sub-<uuid>` for an OAuth 2.0 or OpenID Connect hop — see
+// federatedNameOf()) and nobody linked that subject beforehand, so the
+// entry was created by the sign-in. Read off the relationship's own policy,
+// so it is right whichever one a job chose.
+async function localNameAt(spBase, relationship, name) {
+  logger().debug("Entering localNameAt(). " + relationship + " " + name);
+  const policy = await subjectPolicyOf(spBase, relationship);
+  if (policy === null || policy === "any-existing") {
+    logger().debug("Leaving localNameAt(). The name as mapped.");
+    return name;
+  }
+  if (policy === "pre-linked") {
+    // Nobody is created under pre-linked: the person is whoever an
+    // administrator linked, which the job that linked them knows and this
+    // cannot work out. The mapped name is the only answer there is.
+    logger().debug("Leaving localNameAt(). Pre-linked; the name as mapped.");
+    return name;
+  }
+  // link-at-first-sign-in (or empty) and jit-namespaced: a created entry is
+  // namespaced to the relationship, `federation_links.ts`'s namespacedName().
+  const local = relationship + "~" + name;
+  logger().debug("Leaving localNameAt(). " + local);
   return local;
 }
 
@@ -196,5 +346,9 @@ module.exports = {
   must: must,
   tidy: tidy,
   subjectOf: subjectOf,
-  federatedNameOf: federatedNameOf
+  federatedNameOf: federatedNameOf,
+  subjectPolicyOf: subjectPolicyOf,
+  pinSubjectPolicy: pinSubjectPolicy,
+  localNameAt: localNameAt,
+  SUBJECT_POLICY_FOR_TESTS: SUBJECT_POLICY_FOR_TESTS
 };

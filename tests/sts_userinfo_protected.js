@@ -269,6 +269,33 @@ async function stsFetch(url, options) {
 // The software statement every registration here carries (set in test()).
 var STATEMENT = "";
 
+// The registration as answered, 201 or not — for the negatives, which may
+// be refused at registration (iya-sts #120, OpenID Connect Registration
+// section 2) or, by an older sts, only at UserInfo.
+async function tryRegisterClient(metadata) {
+  log.debug("Entering tryRegisterClient().");
+  var response = await stsFetch(stsBase + "/oauth2/register", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(Object.assign({ redirect_uris: [REDIRECT_URI],
+                                         software_statement: STATEMENT },
+                                       metadata))
+  });
+  var body = await response.text();
+  log.debug("Leaving tryRegisterClient().");
+  return { status: response.status, body: body };
+}
+
+// Refused at registration, by name, as invalid_client_metadata.
+function refusedAtRegistration(attempt, value) {
+  log.debug("Entering refusedAtRegistration().");
+  var refused = attempt.status === 400 &&
+    attempt.body.indexOf("invalid_client_metadata") !== -1 &&
+    (!value || attempt.body.indexOf(value) !== -1);
+  log.debug("Leaving refusedAtRegistration().");
+  return refused;
+}
+
 async function registerClient(metadata) {
   log.debug("Entering registerClient().");
   var response = await stsFetch(stsBase + "/oauth2/register", {
@@ -632,7 +659,16 @@ async function unsupportedRegistrationsAreRefusedNotDowngraded() {
     var why = cases[i][2];
     var metadata = {};
     metadata[member] = value;
-    var client = await registerClient(metadata);
+    var attempt = await tryRegisterClient(metadata);
+    if (refusedAtRegistration(attempt, value)) {
+      log.info("  " + member + "=" + value + " was refused at registration, " +
+               "by name — the earliest place a client can be told.");
+      continue;
+    }
+    assert.strictEqual(attempt.status, 201,
+      "registration should have been accepted or refused by name; got " +
+      attempt.status + ": " + attempt.body.slice(0, 300));
+    var client = JSON.parse(attempt.body);
     var tokens = await accessTokenFor(client);
     var answer = await callUserinfo(tokens.access_token);
     assert.notStrictEqual(answer.status, 200,
@@ -646,13 +682,19 @@ async function unsupportedRegistrationsAreRefusedNotDowngraded() {
   }
 
   // And an encryption registration with no key to encrypt to: the same rule.
-  var noKeyClient = await registerClient({
+  var noKeyAttempt = await tryRegisterClient({
     userinfo_encrypted_response_alg: "RSA-OAEP-256" });
-  var noKeyTokens = await accessTokenFor(noKeyClient);
-  var noKeyAnswer = await callUserinfo(noKeyTokens.access_token);
-  assert.notStrictEqual(noKeyAnswer.status, 200,
-    "a client that asked for an encrypted response and registered no jwks " +
-    "must not be answered 200 in the clear.");
+  if (!refusedAtRegistration(noKeyAttempt, "")) {
+    assert.strictEqual(noKeyAttempt.status, 201,
+      "registration should have been accepted or refused by name; got " +
+      noKeyAttempt.status + ": " + noKeyAttempt.body.slice(0, 300));
+    var noKeyClient = JSON.parse(noKeyAttempt.body);
+    var noKeyTokens = await accessTokenFor(noKeyClient);
+    var noKeyAnswer = await callUserinfo(noKeyTokens.access_token);
+    assert.notStrictEqual(noKeyAnswer.status, 200,
+      "a client that asked for an encrypted response and registered no " +
+      "jwks must not be answered 200 in the clear.");
+  }
   log.info("[negatives] OK — an algorithm this server cannot perform, and an " +
            "encryption registration with no key, are refused rather than " +
            "quietly downgraded to unprotected JSON.");
