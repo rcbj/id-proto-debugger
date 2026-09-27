@@ -809,6 +809,36 @@ And one deliberate substitution, which looks like an omission and is not:
   put back here fails in node with the rule written out rather than as a 400
   from whichever server was being debugged.
 
+**And a generated User is FITTED to the types a server publishes, once one has
+been read.** The generator's `home` email, `fax` number and `home` address are
+RFC 7643 section 8.7.1's own canonical values, and a server may narrow that
+list — section 7 puts `canonicalValues` on the `type` SUB-attribute, not on
+`emails` — and refuse a create over one value outside it. This project's mock
+does exactly that since iya-sts #206 (`emails.type` is `work` alone, because
+the directory attribute behind it has nowhere to put `home`), answering
+`400 invalidValue: Attribute 'type' contains non-canonical value from complex
+attribute 'emails'`. Three pieces meet it, all in the same place:
+
+* `scim_client.js`'s `canonicalTypesOf(schema)` reads a Schemas resource into
+  `{ emails: ['work'], … }` — only a NON-EMPTY list, for the `roles` reason
+  above — and `randomUser({ types })` / `fitTypes()` **re-type** each value
+  outside it to a type no other value carries yet, or the list's first. They
+  re-type rather than drop, so the second email a value-filter PATCH removes is
+  still there, and they consume no randomness, so a seed names the same people
+  either way.
+* the page's `formatAttributeSpec()` records a complex attribute's list off
+  that `type` sub-attribute. It read only the top level until 2026-09-27, so
+  for an attribute shaped the RFC's own way it recorded no list at all and the
+  snapping `applySchemaToBody()` promises above never fired.
+* a scenario is given the same map (`configuredTypesFor('User')` on the page),
+  and the three steps that NAME a type — the lifecycle's `other` email, the
+  sweep's `pager` number and its `emails[type eq "home"]` remove — send an
+  allowed one instead, removing by `value` where the fitted values now share a
+  type.
+
+With no Schemas document read nothing is fitted, which is the same rule as the
+filter's: a schema nobody has read changes nothing.
+
 **Random is seeded and therefore reproducible.** `newRng()` is a mulberry32 over
 a hash of a caller-supplied seed string, so the same seed always produces the
 same fifty users and the same random scenario. The page shows the seed. An

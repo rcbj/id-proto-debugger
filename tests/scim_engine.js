@@ -514,6 +514,109 @@ function theGeneratorEmitsEveryOptionalAttribute() {
   log.debug("Leaving theGeneratorEmitsEveryOptionalAttribute().");
 }
 
+// ---------------------------------------------------------------------------
+// 4b. THE GENERATOR FITS ITSELF TO THE TYPES A SERVER PUBLISHES.
+//
+// RFC 7643 section 7 puts `canonicalValues` on the `type` SUB-attribute, and a
+// server may narrow section 8.7.1's work/home/other there — this project's
+// mock STS offers `emails` work alone since iya-sts #206 and refuses a create
+// carrying `home` with 400 invalidValue. So the three things that must hold:
+// the list is read from where the RFC puts it (and an EMPTY one, section
+// 8.7.1's "none suggested", is not read as "none allowed"); fitting re-types
+// rather than drops, so the second email a value-filter PATCH removes is still
+// there; and fitting consumes no randomness, so a seed names the same people
+// either way. And a scenario given the types must stop sending the ones the
+// server refused — `pager`, `other`, a `home` value filter.
+// ---------------------------------------------------------------------------
+function theGeneratorFitsThePublishedTypes() {
+  log.debug("Entering theGeneratorFitsThePublishedTypes().");
+  log.info("4b. The generator fitted to a server's published types.");
+  const schema = { id: scim.USER_SCHEMA, attributes: [
+    { name: 'emails', type: 'complex', multiValued: true, subAttributes: [
+      { name: 'value', type: 'string' },
+      { name: 'type', type: 'string', canonicalValues: ['work'] }] },
+    { name: 'phoneNumbers', type: 'complex', multiValued: true,
+      subAttributes: [{ name: 'type', type: 'string',
+                        canonicalValues: ['work', 'mobile'] }] },
+    { name: 'addresses', type: 'complex', multiValued: true,
+      subAttributes: [{ name: 'type', type: 'string',
+                        canonicalValues: ['work'] }] },
+    { name: 'roles', type: 'complex', multiValued: true, subAttributes: [
+      { name: 'type', type: 'string', canonicalValues: [] }] },
+    { name: 'userType', type: 'string', canonicalValues: ['Employee'] }
+  ] };
+  const types = scim.canonicalTypesOf(schema);
+  check('canonicalTypesOf() reads the list off the type sub-attribute, and ' +
+      'only a non-empty one', function () {
+    assert.deepStrictEqual(types,
+        { emails: ['work'], phoneNumbers: ['work', 'mobile'],
+          addresses: ['work'] },
+        'Read ' + JSON.stringify(types) + '. roles.type\'s empty list is ' +
+        'RFC 7643 section 8.7.1\'s "none suggested", and reading it as ' +
+        '"none allowed" is the scimmy defect scim_client.js documents; ' +
+        'userType is not a complex attribute\'s `type` at all.');
+  });
+  const plain = scim.randomUser({ seed: 'fit', prefix: 'fit', index: 0 });
+  const fitted = scim.randomUser({ seed: 'fit', prefix: 'fit', index: 0,
+                                   types: types });
+  check('a fitted User carries no type outside the published lists',
+      function () {
+    fitted.emails.forEach(function (row) {
+      assert.strictEqual(row.type, 'work', 'An email typed ' + row.type +
+          ' survived fitting to a server that offers work alone.');
+    });
+    fitted.phoneNumbers.forEach(function (row) {
+      assert.ok(['work', 'mobile'].indexOf(row.type) >= 0,
+          'A phone number typed ' + row.type + ' survived fitting.');
+    });
+  });
+  check('fitting RE-TYPES rather than drops, and consumes no randomness',
+      function () {
+    assert.strictEqual(fitted.emails.length, plain.emails.length,
+        'Fitting dropped an email. The second one is what a value-filter ' +
+        'PATCH removes, and every value generated should still be sent.');
+    assert.strictEqual(fitted.userName, plain.userName,
+        'The same seed named a different person once types were given.');
+    assert.deepStrictEqual(fitted.emails.map(function (row) {
+      return row.value;
+    }), plain.emails.map(function (row) {
+      return row.value;
+    }));
+    assert.deepStrictEqual(fitted.ims, plain.ims,
+        'ims has no published list here and was changed anyway.');
+  });
+  check('fitTypes() prefers a type no other value already carries',
+      function () {
+    const resource = { phoneNumbers: [{ value: '1', type: 'work' },
+                                      { value: '2', type: 'fax' },
+                                      { value: '3', type: 'pager' }] };
+    const notes = scim.fitTypes(resource,
+        { phoneNumbers: ['work', 'mobile'] });
+    assert.deepStrictEqual(resource.phoneNumbers.map(function (row) {
+      return row.type;
+    }), ['work', 'mobile', 'work']);
+    assert.strictEqual(notes.length, 2,
+        'Two values were re-typed and ' + notes.length + ' note(s) say so.');
+  });
+  const sweep = scenarios.plan('modify-sweep', { seed: 's', prefix: 'fit',
+      userCount: 1, types: types });
+  const lifecycle = scenarios.plan('user-lifecycle', { seed: 's',
+      prefix: 'fit', types: types });
+  check('a scenario given the types sends none the server refused',
+      function () {
+    const text = JSON.stringify(sweep.steps) + JSON.stringify(lifecycle.steps);
+    ['"pager"', '"other"', 'type eq \\"home\\"', '"home"', '"fax"']
+      .forEach(function (needle) {
+        assert.ok(text.indexOf(needle) < 0,
+            'A scenario planned against work-only emails still sends ' +
+            needle + '.');
+      });
+    assert.ok(text.indexOf('emails[value eq') >= 0,
+        'The value-filter remove is gone rather than re-aimed at a value.');
+  });
+  log.debug("Leaving theGeneratorFitsThePublishedTypes().");
+}
+
 function theSeedIsReproducible() {
   log.debug("Entering theSeedIsReproducible().");
   log.info("2b. Reproducibility.");
@@ -1609,6 +1712,7 @@ function test() {
   theIdIsEncodedExactlyOnce();
   theGeneratorEmitsEveryOptionalAttribute();
   theSeedIsReproducible();
+  theGeneratorFitsThePublishedTypes();
   theMessageBodiesAreRfcShaped();
   everySchemeInSection2IsSupported();
   theHobaBlobIsLengthPrefixed();

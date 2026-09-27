@@ -185,6 +185,15 @@ const created = { users: [], groups: [] };
 // credential would answer 200 and leave them nothing to sign.
 let defaultAuthHeaders = null;
 
+// The `type` values the User schema publishes for each complex multi-valued
+// attribute, read in section 1 and handed to every generated User — see
+// canonicalTypesOf() in scim_client.js. This mock narrows RFC 7643's
+// work/home/other to what its directory can store (iya-sts #206: `emails`
+// work, `phoneNumbers` work and mobile, `addresses` work) and refuses a
+// create carrying anything else, so a User generated with the RFC's whole
+// vocabulary is a 400 before one attribute is stored.
+let publishedTypes = null;
+
 // Not the run's prefix: this name gains a directory entry at the mock (a Basic
 // username is RECORDED as an authentication there), and section 10 asserts
 // nothing matching the prefix is left behind. A run's provisioning identity is
@@ -537,6 +546,9 @@ async function discoveryAnswers() {
           'The User schema does not describe ' + name + '.');
     });
   });
+  publishedTypes = scim.canonicalTypesOf(one.body);
+  log.info("     the User schema publishes these type vocabularies: " +
+      JSON.stringify(publishedTypes));
   check('userName is described as required and unique', function () {
     const userName = (one.body.attributes || []).filter(function (row) {
       return row.name === 'userName';
@@ -640,7 +652,7 @@ async function aFullUserRoundTrips() {
   log.debug("Entering aFullUserRoundTrips().");
   log.info("2. A user with every optional attribute.");
   const user = scim.randomUser({ seed: prefix + ':full', prefix: prefix,
-                                 index: 0 });
+                                 index: 0, types: publishedTypes });
   const result = await scimCall({ operation: 'createUser', body: user });
   check('POST /Users answers 201 with a Location header', function () {
     assertAnswered(result, 'create');
@@ -835,7 +847,7 @@ async function replaceAndModify(subject) {
   log.debug("Entering replaceAndModify().");
   log.info("3. PUT and PATCH.");
   const replacement = scim.randomUser({ seed: prefix + ':replace',
-      prefix: prefix, index: 1 });
+      prefix: prefix, index: 1, types: publishedTypes });
   // A PUT REPLACES, so the replacement keeps the SAME userName — changing it
   // as well would make a failure ambiguous between "the PUT did not apply" and
   // "the PUT created somebody else".
@@ -955,7 +967,7 @@ async function listingAndFiltering() {
   let i;
   for (i = 0; i < 5; i++) {
     const user = scim.randomUser({ rng: rng, prefix: prefix + 'page',
-                                   index: i });
+                                   index: i, types: publishedTypes });
     const made = await scimCall({ operation: 'createUser', body: user });
     assertAnswered(made, 'create for paging');
     assert.strictEqual(made.status, 201,
@@ -1581,7 +1593,7 @@ async function searchAndBulk() {
   for (i = 0; i < 3; i++) {
     operations.push({ method: 'POST', bulkId: 'u' + i, path: '/Users',
         data: scim.randomUser({ rng: rng, prefix: prefix + 'bulk',
-                                index: i }) });
+                                index: i, types: publishedTypes }) });
   }
   const bulkGroup = scim.randomGroup({ rng: rng, prefix: prefix + 'bulk' });
   bulkGroup.members = [{ value: 'bulkId:u0', type: 'User' }];
@@ -1703,7 +1715,8 @@ async function everyRefusalIsAnAnswer() {
         'userName is the one REQUIRED attribute on a User. A server that ' +
         'accepts this has a schema it does not enforce.');
   });
-  const twin = scim.randomUser({ seed: prefix + ':twin', prefix: prefix });
+  const twin = scim.randomUser({ seed: prefix + ':twin', prefix: prefix,
+                                 types: publishedTypes });
   const firstTwin = await scimCall({ operation: 'createUser', body: twin });
   check('the first of a pair is created', function () {
     assertAnswered(firstTwin, 'first twin');
@@ -1972,7 +1985,8 @@ async function everySchemeIsExercised(state) {
         });
         const mayNotWrite = await scimCall({ operation: 'createUser',
             body: scim.randomUser({ seed: prefix + ':scope',
-                                    prefix: prefix }) },
+                                    prefix: prefix,
+                                    types: publishedTypes }) },
             { headers: { Authorization: 'Bearer ' + readOnly.token } });
         check('scope: a read-only token may NOT write — 403', function () {
           assertAnswered(mayNotWrite, 'read-only write');
