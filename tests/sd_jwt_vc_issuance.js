@@ -4572,7 +4572,7 @@ async function claimsSelection(driver) {
   var meta = (await httpJson(issuerMetadataUrl)).body;
   var configs = meta.credential_configurations_supported || {};
   var config = configs[VCI_CONFIG_ID] || {};
-  var advertised = config.claims || [];
+  var advertised = claimsOfConfiguration(config);
   assert.ok(advertised.length >= 3,
     "this section needs an issuer that advertises several claims for " +
     VCI_CONFIG_ID + "; its metadata lists " + advertised.length + ".");
@@ -4880,6 +4880,10 @@ async function authorizationDetailsIsTheDefault(driver) {
     "var configs = doc.credential_configurations_supported;" +
     "Object.keys(configs).forEach(function (k) {" +
     "  delete configs[k].claims;" +
+    // OpenID4VCI 1.0 final keeps them in credential_metadata (12.2.4).
+    "  if (configs[k].credential_metadata) {" +
+    "    delete configs[k].credential_metadata.claims;" +
+    "  }" +
     "});" +
     "window.localStorage.setItem('vci_info', JSON.stringify(doc));");
   await driver.navigate().refresh();
@@ -5243,12 +5247,24 @@ async function preAuthorizedClaimsThroughThePages(driver) {
 // credential that comes back — and the issuer's refusals go through the same
 // parser the authorization endpoint uses, so exercising them here covers both.
 // ---------------------------------------------------------------------------
+// A credential configuration's claims descriptions, wherever the issuer
+// put them: inside credential_metadata (OpenID4VCI 1.0 final, section
+// 12.2.4) or at the top of the configuration (the drafts).
+function claimsOfConfiguration(config) {
+  log.debug("Entering claimsOfConfiguration().");
+  var metadata = (config && config.credential_metadata) || {};
+  var claims = metadata.claims !== undefined ? metadata.claims :
+    (config && config.claims);
+  log.debug("Leaving claimsOfConfiguration().");
+  return claims || [];
+}
+
 async function preAuthorizedClaimsRequest() {
   log.debug("Entering preAuthorizedClaimsRequest().");
   log.info("=== claims on the pre-authorized code flow ===");
   var meta = (await httpJson(issuerMetadataUrl)).body;
-  var advertised = ((meta.credential_configurations_supported ||
-      {})[VCI_CONFIG_ID] || {}).claims || [];
+  var advertised = claimsOfConfiguration(
+      (meta.credential_configurations_supported || {})[VCI_CONFIG_ID] || {});
   var top = advertised.filter(function (c) { return c.path.length === 1; });
   assert.ok(top.length >= 2,
     "this section asks for one of several top-level claims; the issuer " +
@@ -5684,9 +5700,16 @@ async function batchAndEncryptedIssuance(driver) {
       "this issuer should advertise a batch_size worth exercising. Got: " +
       batchSize);
   var encryption = meta.credential_response_encryption || {};
-  assert.deepStrictEqual(encryption.alg_values_supported, ["RSA-OAEP-256"],
-    "it should advertise only the algorithm it performs. Got: " +
-        JSON.stringify(encryption));
+  // RSA-OAEP-256 is what this wallet asks for. Since iya-sts #187 the mock
+  // also encrypts to an EC key with ECDH-ES, so the list is no longer that
+  // one entry — but nothing beyond the two it performs may appear on it.
+  var algs = encryption.alg_values_supported || [];
+  assert.ok(algs.indexOf("RSA-OAEP-256") !== -1 &&
+            algs.every(function (a) {
+              return a === "RSA-OAEP-256" || a === "ECDH-ES";
+            }),
+    "it should advertise RSA-OAEP-256, and only algorithms it performs. " +
+        "Got: " + JSON.stringify(encryption));
 
   await stepOneConfigured(driver, "scope");
   await click(driver, By.id("start_issuance_button"));
@@ -5958,8 +5981,12 @@ async function issuerNegatives() {
       headers: headers, body: body });
   assert.strictEqual(replay.status, 400,
                      "replaying a c_nonce must be refused.");
-  assert.strictEqual(replay.body.error, "invalid_proof",
-                     "a replayed nonce should be an invalid_proof.");
+  // OpenID4VCI 1.0 section 8.3.1.2: a proof quoting a c_nonce the issuer no
+  // longer holds is invalid_nonce, which tells the wallet to fetch a new one
+  // from the Nonce Endpoint; invalid_proof is for a missing or bad proof.
+  assert.strictEqual(replay.body.error, "invalid_nonce",
+                     "a replayed nonce should be an invalid_nonce " +
+                     "(OpenID4VCI 1.0 section 8.3.1.2).");
 
   // A proof whose signature does not match the key in its own header.
   var nonce2 = (await httpJson(meta.nonce_endpoint,

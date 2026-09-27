@@ -1220,18 +1220,21 @@ function requestRefreshedCredential() {
       // A c_nonce is single use and short-lived, so the proof built when the
       // page loaded can be stale by the time anyone presses the button. Same
       // recovery as step 2: rebuild it and send once more.
+      // OpenID4VCI 1.0 section 8.3.1.2 calls that refusal invalid_nonce;
+      // the drafts before it said invalid_proof, so both are the signal.
       if (response.ok || !response.body ||
-          response.body.error !== "invalid_proof") return response;
-      log.debug("the issuer rejected the proof; rebuilding it with a fresh " +
-                "nonce and retrying once.");
+          !vciWallet.isStaleNonceError(response.body.error)) {
+        return response;
+      }
+      log.debug("the issuer rejected the proof (" + response.body.error +
+                "); rebuilding it with a fresh nonce and retrying once.");
       // Two requests were made, so two rows: the retry is not a reason to hide
       // the refusal that caused it.
       sdJwtVc.recordHistoryEntry({
         kind: sdJwtVc.HISTORY_KIND.CREDENTIAL_REQUEST,
         outcome: sdJwtVc.HISTORY_OUTCOME.FAILED,
-        detail: "invalid_proof — the c_nonce had been spent or had expired; " +
-            "rebuilding the proof and " +
-                "retrying once"
+        detail: response.body.error + " — the c_nonce had been spent or " +
+            "had expired; rebuilding the proof and retrying once"
       });
       renderHistory();
       status("vc_reissue_status",

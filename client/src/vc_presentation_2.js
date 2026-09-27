@@ -218,6 +218,15 @@ function prepareLdpStatements() {
               value: line.trim(),
                requested: wanted, checked: wanted, encoded: "", error: "" };
     });
+    // A requested claim whose value is an OBJECT (credentialStatus) matched
+    // only the statement linking to it; what the object says is in the
+    // statements about the node at the far end, so those come too.
+    var named = state.rows.filter(function (r) { return r.requested; })
+      .map(function (r) { return r.statementIndex; });
+    bbs2023.withDescribedNodes(statements, named).forEach(function (i) {
+      state.rows[i].requested = true;
+      state.rows[i].checked = true;
+    });
     log.debug("Leaving prepareLdpStatements(). " + statements.length +
               " statement(s).");
     return true;

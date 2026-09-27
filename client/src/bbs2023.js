@@ -247,11 +247,75 @@ function b64uToBytes(str) {
   return out;
 }
 
+// A statement's subject and, when it is a node rather than a literal, its
+// object — each as the term exactly as written, `<iri>` or `_:label`. The
+// object is "" for a literal: a literal names nothing further to disclose.
+function statementTerms(line) {
+  log.debug("Entering statementTerms().");
+  var m = /^(<[^>]*>|_:\S+)\s+<[^>]*>\s+(<[^>]*>|_:\S+)?/
+    .exec(String(line).trim());
+  if (!m) {
+    log.debug("Leaving statementTerms(). Not a statement.");
+    return { subject: "", object: "" };
+  }
+  log.debug("Leaving statementTerms().");
+  return { subject: m[1], object: m[2] || "" };
+}
+
+// The chosen statements, CLOSED over the nodes they point at: a statement
+// whose object is a node the credential says something about brings every
+// statement about that node with it, and so on down.
+//
+// A claim path is a JSON path and a disclosure is a set of N-Quads, and the
+// two only line up for a claim whose value is a literal. When the value is an
+// object — `credentialStatus`, whose entries are the whole point of asking for
+// it — the statement the path names is only the LINK
+// `_:c14n0 cred:credentialStatus <…#127601>`, and what the entry says (its
+// type, list, index and purpose) is four more statements whose subject is the
+// far end of that link. Disclosing the link alone tells a verifier an entry
+// exists and not which bit to read, so it can make no statement about the
+// credential's status at all — which a verifier following Bitstring Status
+// List section 3.2 and OpenID4VP section 6 refuses, rightly.
+//
+// Returns a new, sorted index list; the input is not changed.
+function withDescribedNodes(statements, indexes) {
+  log.debug("Entering withDescribedNodes().");
+  var terms = statements.map(statementTerms);
+  var chosen = {};
+  var pending = [];
+  indexes.forEach(function (i) {
+    if (!chosen[i]) {
+      chosen[i] = true;
+      pending.push(i);
+    }
+  });
+  var followed = {};
+  while (pending.length) {
+    var node = terms[pending.shift()].object;
+    if (!node || followed[node]) {
+      continue;
+    }
+    followed[node] = true;
+    terms.forEach(function (t, j) {
+      if (t.subject === node && !chosen[j]) {
+        chosen[j] = true;
+        pending.push(j);
+      }
+    });
+  }
+  var out = Object.keys(chosen).map(Number)
+    .sort(function (a, b) { return a - b; });
+  log.debug("Leaving withDescribedNodes(). " + indexes.length + " -> " +
+            out.length + " statement(s).");
+  return out;
+}
+
 module.exports = {
   CRYPTOSUITE: CRYPTOSUITE,
   IDENTITY_CONTEXT_URL: IDENTITY_CONTEXT_URL,
   PROOF_TYPE: PROOF_TYPE,
   canonicalizedStatements: canonicalizedStatements,
+  withDescribedNodes: withDescribedNodes,
   headerFor: headerFor,
   createBaseProof: createBaseProof,
   deriveProof: deriveProof,
