@@ -8,9 +8,11 @@
 // reusable module whose functions take explicit arguments/options instead of
 // reading specific DOM element ids, so they are not tied to the SAML page.
 //
-// node-forge does all the crypto (RSA sign/keygen, block ciphers, RSA key
-// wrap). Only browser-native APIs (DOMParser/XMLSerializer, window.crypto) are
-// used besides forge, so this bundles cleanly with browserify + envify.
+// node-forge does the crypto (RSA keygen, block ciphers, RSA key wrap) —
+// except the RSA SIGNATURE under node, which is node's OpenSSL (see
+// rsaSign(), issue #302); in a browser bundle that is forge too. Only
+// browser-native APIs (DOMParser/XMLSerializer, window.crypto) are used
+// besides forge, so this bundles cleanly with browserify + envify.
 
 
 var bunyan = require("bunyan");
@@ -120,6 +122,109 @@ function sigAlgSpec(uri) {
   log.debug("Leaving sigAlgSpec().");
 }
 
+// --- RSA signing: node's OpenSSL where there is one, forge where there is not
+// (issue #302).
+//
+// forge's private-key operation is JavaScript: its blinding factor comes from
+// forge.random (a Fortuna DRBG on the heap, not the platform's), and its
+// BigInteger modPow has no side-channel hardening. Under node — api/server.js
+// signing the SAML bindings, and every consumer of the copy iya-sts vendors —
+// the same octets are signed by OpenSSL instead, straight from the PEM.
+//
+// THIS FILE IS ALSO BROWSERIFIED, into ten bundles, which is why the require
+// below is written the way it is. A literal require of the crypto module is
+// replaced by browserify with the whole crypto-browserify shim (and elliptic,
+// GHSA-848j-6mx2-7j84), and tests/jwk_pem_encoding.js fails the suite on one.
+// The module name is therefore held in a variable, which browserify's static
+// analysis does not follow, and the call is made only once `process.versions
+// .node` says this is node: browserify's process shim has an empty
+// `versions`, so in a bundle the require is never reached and the bundle's
+// own require (which would throw "Cannot find module") is never asked.
+//
+// PKCS#1 v1.5 is deterministic, so both paths produce the SAME BYTES — which
+// tests/xmlsec_interop.js asserts. PSS is randomized and cannot be compared
+// that way; what matters there is the parameters, and both paths use MGF1
+// with the message hash and a salt as long as the digest, which is what
+// RFC 9231's sha*-rsa-MGF1 identifiers default to and what defaultVerify()'s
+// pssFor() expects.
+var NODE_CRYPTO_MODULE = 'crypto';
+var nodeCryptoCache;
+function nodeCrypto() {
+  log.debug("Entering nodeCrypto().");
+  if (nodeCryptoCache !== undefined) {
+    log.debug("Leaving nodeCrypto(). Cached.");
+    return nodeCryptoCache;
+  }
+  nodeCryptoCache = null;
+  if (typeof process === 'undefined' || !process.versions ||
+      !process.versions.node || typeof require !== 'function') {
+    log.debug("Leaving nodeCrypto(). Not node.");
+    return null;
+  }
+  try {
+    var c = require(NODE_CRYPTO_MODULE);
+    if (c && typeof c.sign === 'function' &&
+        typeof c.createPrivateKey === 'function') {
+      nodeCryptoCache = c;
+    }
+  } catch (e) {
+    log.debug("nodeCrypto(): no crypto module: " + e.message);
+  }
+  log.debug("Leaving nodeCrypto().");
+  return nodeCryptoCache;
+}
+
+// Which backend rsaSign() will use here: 'node' or 'forge'. Exported so a test
+// can say which one it compared.
+function rsaSignBackend() {
+  log.debug("Entering rsaSignBackend().");
+  log.debug("Leaving rsaSignBackend().");
+  return nodeCrypto() ? 'node' : 'forge';
+}
+
+// Sign `octets` (a raw binary string — already UTF-8 where it came from
+// text) with an RSA private key in PEM. `hash` is sha1/sha256/sha384/sha512
+// and `pad` is 'pss' or anything else for PKCS#1 v1.5. Returns the signature
+// as a binary string, which is what forge's pk.sign() returned, so every call
+// site keeps its base64 step. `forceForge` exists for the test that compares
+// the two backends.
+//
+// A PEM that is not an RSA key goes to forge, which refuses it with the error
+// it always gave ("OID is not RSA") rather than with a different one here.
+function rsaSign(privateKeyPem, hash, octets, pad, forceForge) {
+  log.debug("Entering rsaSign(). hash=" + hash + " pad=" + (pad || 'v1_5'));
+  var c = forceForge ? null : nodeCrypto();
+  if (c) {
+    var key = null;
+    try {
+      key = c.createPrivateKey(privateKeyPem);
+    } catch (e) {
+      log.debug("rsaSign(): node could not read the key: " + e.message);
+      key = null;
+    }
+    if (key && key.asymmetricKeyType === 'rsa') {
+      var params = { key: key };
+      if (pad === 'pss') {
+        params.padding = c.constants.RSA_PKCS1_PSS_PADDING;
+        params.saltLength = forge.md[hash].create().digestLength;
+      } else {
+        params.padding = c.constants.RSA_PKCS1_PADDING;
+      }
+      // Uint8Array both ways rather than Buffer: naming Buffer here would
+      // make browserify insert its Buffer shim into every bundle, for a
+      // branch no bundle ever takes.
+      var sig = c.sign(hash, forge.util.binary.raw.decode(octets), params);
+      log.debug("Leaving rsaSign(). node crypto.");
+      return forge.util.binary.raw.encode(new Uint8Array(sig));
+    }
+  }
+  var pk = forge.pki.privateKeyFromPem(privateKeyPem);
+  var md = forge.md[hash].create();
+  md.update(octets);
+  log.debug("Leaving rsaSign(). forge.");
+  return pad === 'pss' ? pk.sign(md, pssFor(hash)) : pk.sign(md);
+}
+
 // --- Canonical XML 1.0 over a DOM element ----------------------------------
 // Exclusive C14N renders on each element only the namespace declarations it
 // *visibly utilizes* (its own prefix + the prefixes of namespace-qualified
@@ -155,10 +260,55 @@ function sigAlgSpec(uri) {
 // contributes all of its attributes. XMLDSIG allows a transform to select an
 // element without its attributes; no transform anybody uses does that, and
 // pretending to support it would be worse than saying so here.
+//
+// THE APEX MAY BE THE DOCUMENT NODE (issue #304), which is what
+// URI="#xpointer(/)" names and what URI="" names once its comments are
+// removed. See c14nDocument().
 function canonicalize(apex, opts) {
   log.debug("Entering canonicalize().");
+  if (apex && apex.nodeType === 9) {
+    log.debug("Leaving canonicalize(). Document node.");
+    return c14nDocument(apex, function (root) {
+      return c14nSerialize(root, {}, opts);
+    }, opts);
+  }
   log.debug("Leaving canonicalize().");
   return c14nSerialize(apex, {}, opts);
+}
+
+// Canonical XML of the DOCUMENT NODE, for both canonicalizers — the only
+// place an element-apex canonicalizer cannot reach: the comments and
+// processing instructions OUTSIDE the document element. C14N 1.0 section 2.1
+// gives them their own line breaks, and they are the whole of the difference
+// between this and canonicalizing the document element: a comment or PI
+// before the document element is FOLLOWED by #xA, one after it is PRECEDED
+// by #xA, and nothing else at this level (the XML declaration, the DTD, the
+// whitespace between them) is in the XPath data model at all. Whether a
+// comment appears is still the method's `comments` option, and whether any
+// node appears is still the node-set's `include` — both through c14nLeaf().
+function c14nDocument(doc, renderElement, opts) {
+  log.debug("Entering c14nDocument().");
+  var out = '';
+  var afterRoot = false;
+  var child = doc.firstChild;
+  while (child) {
+    if (child.nodeType === 1) {
+      out += renderElement(child);
+      afterRoot = true;
+    } else if ((child.nodeType === 7 && child.target !== 'xml') ||
+               child.nodeType === 8) {
+      // The `xml` target is excluded because @xmldom/xmldom hands the XML
+      // DECLARATION back as a processing instruction, and it is not one —
+      // the browser's DOM does not have that node at all.
+      var text = c14nLeaf(child, opts);
+      if (text) {
+        out += afterRoot ? ('\n' + text) : (text + '\n');
+      }
+    }
+    child = child.nextSibling;
+  }
+  log.debug("Leaving c14nDocument().");
+  return out;
 }
 
 function c14nInScopeNs(el) {
@@ -302,8 +452,57 @@ function c14nSerialize(el, rendered, opts) {
 // idea (inclusive C14N already carries every in-scope declaration).
 function canonicalizeInclusive(apex, opts) {
   log.debug("Entering canonicalizeInclusive().");
+  if (apex && apex.nodeType === 9) {
+    log.debug("Leaving canonicalizeInclusive(). Document node.");
+    return c14nDocument(apex, function (root) {
+      return c14nIncl(root, {}, true, opts);
+    }, opts);
+  }
   log.debug("Leaving canonicalizeInclusive().");
   return c14nIncl(apex, {}, true, opts);
+}
+
+// The xml:* attributes an element INHERITS, for inclusive C14N 1.0 only
+// (issue #304). Section 2.4: when an element is in the node-set and its
+// parent is not — the apex of a document subset, or an element whose parent
+// a transform removed — "all element nodes along E's ancestor axis are
+// examined for nearest occurrences of attributes in the xml namespace, such
+// as xml:lang and xml:space (whether or not they are in the node-set). From
+// this list of attributes, remove any that are in E's attribute axis", and
+// the rest are rendered on E. So a SignedInfo canonicalized in place under
+// an ancestor carrying xml:lang="en-ie" is <SignedInfo xml:lang="en-ie">,
+// which is what merlin-c14n-three's c14n-27.txt says and what every other
+// implementation computes.
+//
+// EXCLUSIVE C14N DOES NOT DO THIS — its whole point is that a subtree
+// canonicalizes the same wherever it is put — and c14nSerialize() does not
+// call this.
+var XML_NS = 'http://www.w3.org/XML/1998/namespace';
+function c14nInheritedXmlAttrs(el) {
+  log.debug("Entering c14nInheritedXmlAttrs().");
+  var found = {};
+  var out = [];
+  var own = {};
+  for (var i = 0; i < el.attributes.length; i++) {
+    own[el.attributes[i].name] = true;
+  }
+  var n = el.parentNode;
+  while (n && n.nodeType === 1) {
+    for (var j = 0; j < n.attributes.length; j++) {
+      var a = n.attributes[j];
+      if (a.name.indexOf('xml:') !== 0 || found[a.name] || own[a.name]) {
+        continue;
+      }
+      // Nearest ancestor wins: the walk goes outward, so the first one seen
+      // is the one kept.
+      found[a.name] = true;
+      out.push({ name: a.name, value: a.value, namespaceURI: XML_NS,
+                 localName: a.name.slice(4), prefix: 'xml' });
+    }
+    n = n.parentNode;
+  }
+  log.debug("Leaving c14nInheritedXmlAttrs(). " + out.length + " inherited.");
+  return out;
 }
 function c14nIncl(el, rendered, isApex, opts) {
   log.debug("Entering c14nIncl().");
@@ -343,6 +542,11 @@ function c14nIncl(el, rendered, isApex, opts) {
       var aa = el.attributes[i];
       if (aa.name === 'xmlns' || aa.name.indexOf('xmlns:') === 0) continue;
       attrs.push(aa);
+    }
+    var parentOmitted = isApex || !el.parentNode ||
+        el.parentNode.nodeType !== 1 || !c14nIncluded(el.parentNode, o);
+    if (parentOmitted) {
+      attrs = attrs.concat(c14nInheritedXmlAttrs(el));
     }
     attrs.sort(function (a, b) {
       var au = a.namespaceURI || '', bu = b.namespaceURI || '';
@@ -752,9 +956,8 @@ function signWsSecurity(soapXml, opts) {
     sigVal = typeof rawSig === 'string' ? forge.util.encode64(rawSig)
       : forge.util.encode64(forge.util.binary.raw.encode(rawSig));
   } else {
-    var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
-    var md = spec.md(); md.update(siCanon, 'utf8');
-    sigVal = forge.util.encode64(pk.sign(md));
+    sigVal = forge.util.encode64(rsaSign(opts.privateKeyPem,
+        spec.md().algorithm, forge.util.encodeUtf8(siCanon)));
   }
   // A post-quantum signer has no certificate — the draft defines no X.509
   // profile — so its KeyInfo is the caller's DEREncodedKeyValue. WS-Security's
@@ -851,7 +1054,17 @@ function signEnveloped(xml, opts) {
 
   // Reference digest: c14n(root) with no <Signature> present — exactly what the
   // enveloped-signature transform reproduces at verification time.
-  var digest = digestBase64(c14nFn(root), spec.md);
+  //
+  // "root" is what the URI dereferences to, resolved as the verifiers resolve
+  // it (issue #304): URI="" is the DOCUMENT NODE, which differs from the
+  // document element only by a processing instruction outside it, and
+  // comments count only for an XPointer form under a #WithComments method.
+  var deref = dereferenceSameDocument(refUri, doc, doc);
+  var refNode = deref && deref.node ? deref.node : root;
+  var refComments = !!(deref && deref.keepComments &&
+      /WithComments$/.test(c14nAlg));
+  var digest = digestBase64(c14nFn(refNode,
+      refComments ? { comments: true } : undefined), spec.md);
 
   var signedInfo = '<ds:SignedInfo xmlns:ds="' + DS_NS + '">' +
     '<ds:CanonicalizationMethod Algorithm="' + c14nAlg + '"/>' +
@@ -916,10 +1129,8 @@ function signEnveloped(xml, opts) {
     sigB64 = typeof rawSig === 'string' ? forge.util.encode64(rawSig)
       : forge.util.encode64(forge.util.binary.raw.encode(rawSig));
   } else {
-    var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
-    var md = spec.md();
-    md.update(c14nFn(siNode), 'utf8');
-    sigB64 = forge.util.encode64(pk.sign(md));
+    sigB64 = forge.util.encode64(rsaSign(opts.privateKeyPem,
+        spec.md().algorithm, forge.util.encodeUtf8(c14nFn(siNode))));
   }
   directChildByLocal(sigNode, 'SignatureValue')
     .appendChild(doc.createTextNode(sigB64));
@@ -1109,16 +1320,25 @@ function verifyXmlSignature(xml, opts) {
     var digAlg = dmEl ? dmEl.getAttribute('Algorithm') : (XENC_NS + 'sha256');
     var dvEl = firstByLocal(ref, 'DigestValue');
     var declared = dvEl ? (dvEl.textContent || '').replace(/\s+/g, '') : '';
-    var target = uri === '' ? doc.documentElement : findById(doc,
-        uri.replace(/^#/, ''));
-    if (!target) { references.push({ uri: uri, ok: false,
-        reason: 'referenced element not found' }); continue; }
+    // The four same-document forms, resolved as verifyXml() resolves them
+    // (issue #304). Comments are rendered only when BOTH the dereference kept
+    // them (an XPointer form) and the method asks for them.
+    var deref = dereferenceSameDocument(uri, doc, doc);
+    var target = deref ? deref.node : null;
+    if (!target) {
+      references.push({ uri: uri, ok: false,
+          reason: 'referenced element not found' });
+      continue;
+    }
     var c14nRef = C14N_EXCLUSIVE;
     var trs = ref.getElementsByTagNameNS('*', 'Transform');
-    for (var t = 0; t < trs.length; t++) { var ta =
-         trs[t].getAttribute('Algorithm') ||
-         ''; if (ta.indexOf('c14n') >= 0) c14nRef = ta; }
-    var canon = c14nForAlg(c14nRef)(target);
+    for (var t = 0; t < trs.length; t++) {
+      var ta = trs[t].getAttribute('Algorithm') || '';
+      if (ta.indexOf('c14n') >= 0) c14nRef = ta;
+    }
+    var withComments = deref.keepComments && /WithComments$/.test(c14nRef);
+    var canon = c14nForAlg(c14nRef)(target,
+        withComments ? { comments: true } : undefined);
     var rmd = forgeMdFor(digAlg); rmd.update(canon, 'utf8');
     var computed = forge.util.encode64(rmd.digest().getBytes());
     references.push({ uri: uri, ok: computed === declared, computed: computed,
@@ -1368,7 +1588,35 @@ function selfSignedCertFor(privatePem, publicPem, cn) {
   var attrs = [{ name: 'commonName', value: cn || 'ws-trust-debugger' }];
   cert.setSubject(attrs);
   cert.setIssuer(attrs);
-  cert.sign(forge.pki.privateKeyFromPem(privatePem), forge.md.sha256.create());
+  // forge builds the TBSCertificate and hands its DER to `md.update()`, then
+  // calls `key.sign(md)`. The recorder keeps those octets and the key object
+  // hands them to rsaSign(), so the RSA operation is node's where there is a
+  // node (issue #302) and forge's where there is not — the certificate forge
+  // assembles around the signature is the same either way.
+  var tbs = '';
+  var digest = forge.md.sha256.create();
+  var recorder = {
+    algorithm: digest.algorithm,
+    update: function (bytes) {
+      log.debug("Entering update().");
+      tbs += bytes;
+      digest.update(bytes);
+      log.debug("Leaving update().");
+      return recorder;
+    },
+    digest: function () {
+      log.debug("Entering digest().");
+      log.debug("Leaving digest().");
+      return digest.digest();
+    }
+  };
+  cert.sign({
+    sign: function () {
+      log.debug("Entering sign().");
+      log.debug("Leaving sign().");
+      return rsaSign(privatePem, 'sha256', tbs);
+    }
+  }, recorder);
   log.debug("Leaving selfSignedCertFor().");
   return forge.pki.certificateToPem(cert).trim() + '\n';
 }
@@ -1401,11 +1649,13 @@ function signQueryString(queryString, opts) {
   if (!opts.privateKeyPem) throw new Error('signQueryString: privateKeyPem ' +
       'is required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
-  var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
-  var md = sigAlgSpec(sigAlg).md();
-  md.update(queryString, 'utf8'); // the query string is ASCII
+  var hash = sigAlgSpec(sigAlg).md().algorithm;
+  // The query string is ASCII; encodeUtf8 is what forge's md.update(s,
+  // 'utf8') did with it before, so nothing changes if it is not.
+  var raw = rsaSign(opts.privateKeyPem, hash,
+      forge.util.encodeUtf8(queryString));
   log.debug("Leaving signQueryString().");
-  return forge.util.encode64(pk.sign(md));
+  return forge.util.encode64(raw);
 }
 
 // ===========================================================================
@@ -2135,6 +2385,62 @@ function textOfNodeSet(node, include) {
   return out;
 }
 
+// What a same-document Reference URI names — XMLDSIG core section 4.3.3.3 —
+// and whether the dereference keeps comment nodes (issue #304). Four forms,
+// and the comment rule is the part everybody misses:
+//
+//   URI=""                         the document node, COMMENTS REMOVED
+//   URI="#id"                      the element with that ID, COMMENTS REMOVED
+//   URI="#xpointer(/)"             the document node, comments kept
+//   URI="#xpointer(id('id'))"      the element with that ID, comments kept
+//
+// So a "#WithComments" canonicalization renders comments only for the two
+// XPointer forms: for the bare names they were gone before it ran. (The
+// barename forms drop them precisely so that a comment added in transit
+// cannot break a signature; the XPointer forms are how a signer says it
+// wants them signed.)
+//
+// `doc` is the document carrying the Signature and `refDoc` is the one a
+// detached signature's references resolve into (the same document when there
+// is no such thing). An ID is looked up in both, as verifyXml() always did.
+// Returns { node, keepComments } — `node` null when nothing has that ID — or
+// null for a URI that is not a same-document reference at all.
+var XPOINTER_ROOT = '#xpointer(/)';
+var XPOINTER_ID = /^#xpointer\(id\((['"])([^'"]*)\1\)\)$/;
+function dereferenceSameDocument(uri, doc, refDoc) {
+  log.debug("Entering dereferenceSameDocument().");
+  var other = refDoc || doc;
+  if (uri === '') {
+    log.debug("Leaving dereferenceSameDocument(). Whole document.");
+    return { node: other, keepComments: false };
+  }
+  if (uri === XPOINTER_ROOT) {
+    log.debug("Leaving dereferenceSameDocument(). xpointer(/).");
+    return { node: other, keepComments: true };
+  }
+  var m = XPOINTER_ID.exec(uri);
+  if (m) {
+    log.debug("Leaving dereferenceSameDocument(). xpointer(id()).");
+    return { node: findById(doc, m[2]) || findById(other, m[2]),
+             keepComments: true };
+  }
+  if (uri.charAt(0) !== '#') {
+    log.debug("Leaving dereferenceSameDocument(). Not same-document.");
+    return null;
+  }
+  var bare = uri.slice(1);
+  log.debug("Leaving dereferenceSameDocument(). Bare name.");
+  return { node: findById(doc, bare) || findById(other, bare),
+           keepComments: false };
+}
+
+// The node-set predicate that removes comment nodes, for a barename
+// dereference. HOT PATH like `closure` in filter2Includer(): the
+// canonicalizer asks it about every node, so it logs nothing.
+function notComment(n) {
+  return n.nodeType !== 8;
+}
+
 // Apply a Reference's Transforms in order and return the octets to digest.
 //
 // The pipeline is a NODE-SET until a canonicalization or the base64 transform
@@ -2143,9 +2449,14 @@ function textOfNodeSet(node, include) {
 // listed before the enveloped-signature one. Read in that order the signature
 // is inside the digest, the digest is computed over a DigestValue that is
 // still empty, and the result verifies nowhere and reports nothing.
+//
+// `ctx.stripComments` is the dereference's half of the comment rule (see
+// dereferenceSameDocument()): when it is set, comment nodes are not in the
+// node-set the transforms start from, so no "#WithComments" method can bring
+// them back.
 function transformOctets(target, transforms, ctx) {
   log.debug("Entering transformOctets().");
-  var include = null;
+  var include = (ctx && ctx.stripComments) ? notComment : null;
   var octets = null;
   var c14nUsed = null;
   var list = transforms || [];
@@ -2333,11 +2644,8 @@ function defaultSign(octets, spec, opts) {
   if (!opts.privateKeyPem) {
     throw new Error('signXml: privateKeyPem is required.');
   }
-  var pk = forge.pki.privateKeyFromPem(opts.privateKeyPem);
-  var md = FORGE_MD[spec.hash].create();
-  md.update(octets);
   log.debug("Leaving defaultSign().");
-  return spec.pad === 'pss' ? pk.sign(md, pssFor(spec.hash)) : pk.sign(md);
+  return rsaSign(opts.privateKeyPem, spec.hash, octets, spec.pad);
 }
 
 function defaultVerify(octets, signature, spec, publicKey) {
@@ -2544,7 +2852,21 @@ function signXml(xml, opts) {
   // The Reference digest, over the transform pipeline, with the Signature
   // already in the tree — which is the state a verifier sees, and the reason
   // the enveloped-signature transform is not optional above.
-  var refCtx = { doc: mode === 'detached' ? doc : sigDoc, sigNode: sigNode };
+  //
+  // The Reference is resolved exactly as verifyXml() resolves it, so that
+  // URI="" digests the document node and a barename digests without its
+  // comments on BOTH sides (issue #304). A URI that does not dereference in
+  // this document — an external one a caller typed — keeps the node the mode
+  // chose, without comments, which is what a barename would have given.
+  var uriDoc = mode === 'detached' ? doc : sigDoc;
+  var deref = dereferenceSameDocument(refUri, uriDoc, uriDoc);
+  var keepComments = false;
+  if (deref && deref.node) {
+    target = deref.node;
+    keepComments = deref.keepComments;
+  }
+  var refCtx = { doc: uriDoc, sigNode: sigNode,
+                 stripComments: !keepComments };
   var refOut = transformOctets(target, transforms, refCtx);
   var dmd = digestSpec(digestUri).md.create();
   dmd.update(refOut.octets);
@@ -2750,17 +3072,17 @@ function verifyXml(xml, opts) {
       var digUri = dmEl ? dmEl.getAttribute('Algorithm') : '';
       var dvEl = firstByLocal(ref, 'DigestValue');
       var declared = dvEl ? (dvEl.textContent || '').replace(/\s+/g, '') : '';
-      var bare = uri.replace(/^#/, '');
-      var target = uri === ''
-        ? refDoc.documentElement
-        : (findById(doc, bare) || findById(refDoc, bare));
+      var deref = dereferenceSameDocument(uri, doc, refDoc);
+      var target = deref ? deref.node : null;
       if (!target) {
         entry.ok = false;
         entry.reason = 'the referenced element was not found';
         references.push(entry);
         continue;
       }
-      var ctx = { doc: target.ownerDocument || refDoc, sigNode: sig };
+      var ctx = { doc: target.nodeType === 9 ? target
+                    : (target.ownerDocument || refDoc),
+                  sigNode: sig, stripComments: !deref.keepComments };
       var out = transformOctets(target, readTransforms(ref), ctx);
       var md = digestSpec(digUri).md.create();
       md.update(out.octets);
@@ -2954,6 +3276,12 @@ module.exports = {
   hkdf: hkdf,
   hkdfParamsXml: hkdfParamsXml,
   readHkdfParams: readHkdfParams,
+  // The RSA signing boundary (issue #302), exported so the interop test can
+  // compare node's OpenSSL against forge on the same octets.
+  rsaSign: rsaSign,
+  rsaSignBackend: rsaSignBackend,
+  // The same-document Reference forms and their comment rule (issue #304).
+  dereferenceSameDocument: dereferenceSameDocument,
   signXml: signXml,
   verifyXml: verifyXml,
   signQueryString: signQueryString,

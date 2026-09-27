@@ -706,12 +706,39 @@ function generalSignatureTests() {
       xd.verifyXml(signed.xml, {}).valid);
     digests[c14n] = signed.digestValue;
   });
-  check("WithComments really changes the reference digest (exclusive)",
-    digests[xd.C14N_EXCLUSIVE] !== digests[xd.C14N_EXCLUSIVE_WC],
+  // Those four signed a BARENAME reference (URI="#order-1"), and XMLDSIG
+  // core 4.3.3.3 has that dereference REMOVE comments before any transform
+  // runs — so "#WithComments" cannot bring them back and the digest is the
+  // same either way (issue #304; merlin-xmldsig-twenty-three reference 12).
+  check("a barename reference digests the same WithComments (exclusive)",
+    digests[xd.C14N_EXCLUSIVE] === digests[xd.C14N_EXCLUSIVE_WC],
     digests[xd.C14N_EXCLUSIVE] + " vs " + digests[xd.C14N_EXCLUSIVE_WC]);
-  check("WithComments really changes the reference digest (inclusive)",
-    digests[xd.C14N_INCLUSIVE] !== digests[xd.C14N_INCLUSIVE_WC],
+  check("a barename reference digests the same WithComments (inclusive)",
+    digests[xd.C14N_INCLUSIVE] === digests[xd.C14N_INCLUSIVE_WC],
     digests[xd.C14N_INCLUSIVE] + " vs " + digests[xd.C14N_INCLUSIVE_WC]);
+  // The XPointer form is how a signer asks for comments to be KEPT, and
+  // there the pair really does differ.
+  const xpDigests = {};
+  Object.keys(xd.C14N_METHODS).forEach(function (c14n) {
+    const signed = xd.signXml(GENERAL_DOC, { mode: "enveloped",
+      c14nAlg: c14n, refUri: "#xpointer(id('order-1'))",
+      transforms: [{ algorithm: xd.TRANSFORM_ENVELOPED },
+                   { algorithm: c14n }],
+      privateKeyPem: kp.privateKeyPem, certPem: kp.certPem });
+    check("c14n " + xd.C14N_METHODS[c14n].label +
+        " verifies over #xpointer(id())",
+      xd.verifyXml(signed.xml, {}).valid);
+    xpDigests[c14n] = signed.digestValue;
+  });
+  check("WithComments really changes an #xpointer digest (exclusive)",
+    xpDigests[xd.C14N_EXCLUSIVE] !== xpDigests[xd.C14N_EXCLUSIVE_WC],
+    xpDigests[xd.C14N_EXCLUSIVE] + " vs " + xpDigests[xd.C14N_EXCLUSIVE_WC]);
+  check("WithComments really changes an #xpointer digest (inclusive)",
+    xpDigests[xd.C14N_INCLUSIVE] !== xpDigests[xd.C14N_INCLUSIVE_WC],
+    xpDigests[xd.C14N_INCLUSIVE] + " vs " + xpDigests[xd.C14N_INCLUSIVE_WC]);
+  check("without comments, #xpointer(id()) digests as the barename does",
+    xpDigests[xd.C14N_EXCLUSIVE] === digests[xd.C14N_EXCLUSIVE] &&
+    xpDigests[xd.C14N_INCLUSIVE] === digests[xd.C14N_INCLUSIVE]);
   const noComment = GENERAL_DOC.replace(/<!--[\s\S]*?-->/, "");
   const withoutComment = xd.signXml(noComment, { mode: "enveloped",
     transforms: [{ algorithm: xd.TRANSFORM_ENVELOPED },
@@ -985,6 +1012,195 @@ function apiSignatureTests() {
   log.debug("Leaving apiSignatureTests().");
 }
 
+// --- Issue #302: RSA is signed by node's OpenSSL, not forge's JavaScript ----
+// Under node, xmldsig.js hands every RSA signature to crypto.sign(). PKCS#1
+// v1.5 is deterministic, so the two backends must agree BYTE FOR BYTE on the
+// same octets — which is what proves the switch changed nothing a verifier can
+// see. PSS is randomized, so there the check is that each backend's
+// signature verifies under the OTHER's reading of the parameters (MGF1 with
+// the message hash, salt as long as the digest).
+function rsaBackendTests() {
+  log.debug("Entering rsaBackendTests().");
+  log.info("== RSA signing backend (issue #302) ==");
+  check("under node, RSA signatures come from node's crypto",
+    xd.rsaSignBackend() === "node", xd.rsaSignBackend());
+  const octets = xd.forge.util.encodeUtf8("<SignedInfo>é</SignedInfo>");
+  ["sha1", "sha256", "sha384", "sha512"].forEach(function (hash) {
+    const viaNode = xd.rsaSign(kp.privateKeyPem, hash, octets);
+    const viaForge = xd.rsaSign(kp.privateKeyPem, hash, octets, "v1_5",
+                                true);
+    check("PKCS#1 v1.5 " + hash + ": node and forge agree byte for byte",
+      viaNode === viaForge && viaNode.length === 256);
+  });
+  ["sha256", "sha384", "sha512"].forEach(function (hash) {
+    const md = xd.forge.md[hash].create();
+    const viaNode = xd.rsaSign(kp.privateKeyPem, hash, octets, "pss");
+    const viaForge = xd.rsaSign(kp.privateKeyPem, hash, octets, "pss", true);
+    md.update(octets);
+    const forgePss = xd.forge.pss.create({ md: xd.forge.md[hash].create(),
+      mgf: xd.forge.mgf.mgf1.create(xd.forge.md[hash].create()),
+      saltLength: md.digestLength });
+    const pub = xd.forge.pki.publicKeyFromPem(kp.publicKeyPem);
+    let forgeReadsNode = false;
+    try {
+      forgeReadsNode = pub.verify(md.digest().getBytes(), viaNode, forgePss);
+    } catch (e) {
+      forgeReadsNode = false;
+    }
+    const nodeReadsForge = crypto.verify(hash,
+      Buffer.from(octets, "binary"),
+      { key: kp.publicKeyPem, padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        saltLength: md.digestLength },
+      Buffer.from(viaForge, "binary"));
+    check("PSS " + hash + ": forge verifies node's signature",
+      forgeReadsNode);
+    check("PSS " + hash + ": node verifies forge's signature",
+      nodeReadsForge);
+  });
+  // Every call site, end to end: the query-string signature is the one
+  // deterministic output a caller sees directly.
+  const query = "SAMLRequest=abc&RelayState=x&SigAlg=" +
+    encodeURIComponent(xd.SIG_ALG_RSA_SHA256);
+  check("signQueryString is byte-identical to forge's PKCS#1 v1.5",
+    xd.signQueryString(query, { privateKeyPem: kp.privateKeyPem }) ===
+    xd.forge.util.encode64(xd.rsaSign(kp.privateKeyPem, "sha256",
+      query, "v1_5", true)));
+  // selfSignedCertFor() signs its TBSCertificate through the same boundary;
+  // the result must still be a certificate OpenSSL accepts as self-signed.
+  const x509 = new crypto.X509Certificate(kp.certPem);
+  check("the self-signed certificate verifies under node's OpenSSL",
+    x509.verify(x509.publicKey));
+  log.debug("Leaving rsaBackendTests().");
+}
+
+// --- Issue #304: three canonicalization defects the W3C cases found ---------
+// Small inline reproductions of what merlin-c14n-three and
+// merlin-xmldsig-twenty-three exercise, so the suite needs no network. The
+// published cases themselves are run by iya-sts's tests/w3c_xmlsec.js.
+function canonicalizationDefectTests() {
+  log.debug("Entering canonicalizationDefectTests().");
+  log.info("== Canonicalization: xml:* inheritance, comments, #xpointer " +
+      "(issue #304) ==");
+  const text = function (octets) {
+    return xd.forge.util.decodeUtf8(octets);
+  };
+
+  // 1. Inclusive C14N renders the xml:* attributes the apex inherits —
+  //    nearest ancestor first, the apex's own winning — and exclusive does
+  //    not (merlin-c14n-three, c14n-27.txt: <SignedInfo xml:lang="en-ie">).
+  const nested = new DOMParser().parseFromString(
+    '<root xml:lang="en-ie" xml:space="preserve" xml:base="http://a/">' +
+    '<mid xml:lang="fr"><a:SignedInfo xmlns:a="urn:a" Id="s" ' +
+    'xml:space="default"><x/></a:SignedInfo></mid></root>',
+    "application/xml");
+  const apex = nested.getElementsByTagNameNS("urn:a", "SignedInfo")[0];
+  const incl = text(xd.canonicalizeBy(xd.C14N_INCLUSIVE, apex));
+  check("inclusive C14N renders the inherited xml:* attributes on the apex",
+    incl === '<a:SignedInfo xmlns:a="urn:a" Id="s" xml:base="http://a/" ' +
+      'xml:lang="fr" xml:space="default"><x></x></a:SignedInfo>', incl);
+  const excl = text(xd.canonicalizeBy(xd.C14N_EXCLUSIVE, apex));
+  check("exclusive C14N does not inherit xml:* attributes",
+    excl === '<a:SignedInfo xmlns:a="urn:a" Id="s" xml:space="default">' +
+      '<x></x></a:SignedInfo>', excl);
+  const whole = text(xd.canonicalizeBy(xd.C14N_INCLUSIVE,
+    nested.documentElement));
+  check("an element whose parent is in the node-set inherits nothing",
+    whole.indexOf('<mid xml:lang="fr">') >= 0 &&
+    whole.indexOf('<x>') >= 0, whole);
+  // The signer canonicalizes its SignedInfo in place too, so a document
+  // whose root carries xml:lang still signs and verifies inclusively.
+  const langDoc = '<Doc xmlns="urn:d" xml:lang="en" ID="d1"><v>1</v></Doc>';
+  const langSigned = xd.signXml(langDoc, { mode: "enveloped",
+    c14nAlg: xd.C14N_INCLUSIVE, privateKeyPem: kp.privateKeyPem,
+    certPem: kp.certPem });
+  check("the engine's SignedInfo carries the inherited xml:lang",
+    langSigned.signedInfo.indexOf('<ds:SignedInfo xmlns="urn:d" ' +
+      'xmlns:ds="' + DSIG_NS + '" xml:lang="en">') === 0,
+    langSigned.signedInfo.slice(0, 120));
+  check("... and still verifies", xd.verifyXml(langSigned.xml, {}).valid);
+  const legacy = xd.signEnveloped(langDoc, { c14nAlg: xd.C14N_INCLUSIVE,
+    privateKeyPem: kp.privateKeyPem, certPem: kp.certPem, placement: "last" });
+  check("signEnveloped's inclusive signature on it verifies both ways",
+    xd.verifyXmlSignature(legacy, {}).valid &&
+    xd.verifyXml(legacy, {}).valid);
+
+  // 2 and 3. The four same-document Reference forms. Comments survive the
+  //    dereference only for the XPointer forms, and #xpointer(/) and ""
+  //    name the DOCUMENT NODE, with the PIs and comments outside the
+  //    document element and C14N's line breaks around them.
+  const outside = '<?keep this?><!-- before --><r ID="r1"><!--in-->t' +
+    '</r><!-- after -->';
+  const odoc = new DOMParser().parseFromString(outside, "application/xml");
+  check("#xpointer(/) with comments is the document node, line breaks and all",
+    text(xd.canonicalizeBy(xd.C14N_INCLUSIVE_WC, odoc)) ===
+      '<?keep this?>\n<!-- before -->\n<r ID="r1"><!--in-->t</r>\n' +
+      '<!-- after -->');
+  check("the document node without comments keeps its processing instruction",
+    text(xd.canonicalizeBy(xd.C14N_EXCLUSIVE, odoc)) ===
+      '<?keep this?>\n<r ID="r1">t</r>');
+  const forms = [
+    ["", odoc, false],
+    ["#r1", odoc.documentElement, false],
+    ["#xpointer(/)", odoc, true],
+    ["#xpointer(id('r1'))", odoc.documentElement, true],
+    ['#xpointer(id("r1"))', odoc.documentElement, true]
+  ];
+  forms.forEach(function (f) {
+    const d = xd.dereferenceSameDocument(f[0], odoc, odoc);
+    check('URI="' + f[0] + '" dereferences to the ' +
+        (f[1].nodeType === 9 ? "document node" : "element") +
+        (f[2] ? ", keeping comments" : ", removing comments"),
+      d && d.node === f[1] && d.keepComments === f[2]);
+  });
+  const barename = text(xd.transformOctets(odoc.documentElement,
+    [{ algorithm: xd.C14N_INCLUSIVE_WC }],
+    { doc: odoc, stripComments: true }).octets);
+  check("#WithComments renders no comment the barename dereference removed",
+    barename === '<r ID="r1">t</r>', barename);
+
+  // Signer and verifier agree on all of it, and it is observable: a comment
+  // outside the document element is signed under #xpointer(/) WithComments
+  // and ignored under URI="", while a PI there is covered by both.
+  const xpRoot = xd.signXml(outside, { mode: "enveloped",
+    refUri: "#xpointer(/)", c14nAlg: xd.C14N_INCLUSIVE,
+    transforms: [{ algorithm: xd.TRANSFORM_ENVELOPED },
+                 { algorithm: xd.C14N_INCLUSIVE_WC }],
+    privateKeyPem: kp.privateKeyPem, certPem: kp.certPem });
+  check("an #xpointer(/) WithComments signature verifies",
+    xd.verifyXml(xpRoot.xml, {}).valid);
+  check("... and a changed comment OUTSIDE the document element breaks it",
+    !xd.verifyXml(xpRoot.xml.replace("after", "later"), {}).valid);
+  const docRef = xd.signXml(outside, { mode: "enveloped", refUri: "",
+    c14nAlg: xd.C14N_INCLUSIVE,
+    transforms: [{ algorithm: xd.TRANSFORM_ENVELOPED },
+                 { algorithm: xd.C14N_INCLUSIVE_WC }],
+    privateKeyPem: kp.privateKeyPem, certPem: kp.certPem });
+  // signXml() prefers the root's ID; asking for "" means leaving refUri
+  // unset on a root with no ID, so this uses one without.
+  const noId = outside.replace(' ID="r1"', "");
+  const docRef2 = xd.signXml(noId, { mode: "enveloped",
+    c14nAlg: xd.C14N_INCLUSIVE,
+    transforms: [{ algorithm: xd.TRANSFORM_ENVELOPED },
+                 { algorithm: xd.C14N_INCLUSIVE_WC }],
+    privateKeyPem: kp.privateKeyPem, certPem: kp.certPem });
+  check('URI="" WithComments verifies',
+    docRef2.referenceUri === "" && xd.verifyXml(docRef2.xml, {}).valid);
+  check('... and survives a changed comment, which "" removes',
+    xd.verifyXml(docRef2.xml.replace("after", "later"), {}).valid &&
+    xd.verifyXml(docRef2.xml.replace("<!--in-->", "<!--x-->"), {}).valid);
+  check('... but not a changed processing instruction outside the root',
+    !xd.verifyXml(docRef2.xml.replace("keep this", "keep that"), {}).valid);
+  const legacyDoc = xd.signEnveloped(noId, { privateKeyPem: kp.privateKeyPem,
+    certPem: kp.certPem, placement: "last", refUri: "" });
+  check('signEnveloped over URI="" covers the PI outside the root too',
+    xd.verifyXmlSignature(legacyDoc, {}).valid &&
+    xd.verifyXml(legacyDoc, {}).valid &&
+    !xd.verifyXml(legacyDoc.replace("keep this", "keep that"), {}).valid);
+  check("(the ID-bearing root signs #r1, not the document)",
+    docRef.referenceUri === "#r1");
+  log.debug("Leaving canonicalizationDefectTests().");
+}
+
 async function main() {
   log.debug("Entering main().");
   try {
@@ -994,6 +1210,8 @@ async function main() {
     envelopedSignatureTests();
     generalSignatureTests();
     apiSignatureTests();
+    rsaBackendTests();
+    canonicalizationDefectTests();
   } catch (e) {
     log.error("Unexpected error: " + (e && e.stack ? e.stack : e));
     process.exit(1);
