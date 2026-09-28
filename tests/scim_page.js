@@ -354,7 +354,7 @@ async function theServerIsThere(driver) {
     log.debug("Leaving theServerIsThere(). Not reachable.");
     return { present: false, why: 'the browser could not read a ' +
         'ServiceProviderConfig from ' + scimBaseUrl + ': "' + status + '". ' +
-        'The SCIM endpoints arrived in rcbj/mock-sts AFTER this ' +
+        'The SCIM endpoints arrived in rcbj/iya-sts AFTER this ' +
         'repository\'s sts/ gitlink was last moved, so a checkout whose ' +
         'submodule predates them has no /scim/v2 routes; a CORS refusal ' +
         'looks the same from here and is the other possibility.' };
@@ -531,6 +531,51 @@ async function theBrowserCreatesAndDeletes(driver) {
         'client tested only against userName and emails has tested nothing ' +
         'about the fields it will meet.');
   });
+  // THEN THE SERVER'S OWN SCHEMAS DOCUMENT, BEFORE ANYTHING IS SENT. The full
+  // body above carries RFC 7643 section 8.7.1's whole `type` vocabulary — a
+  // `home` email, a `fax` number — and this mock publishes a narrower one on
+  // each `type` sub-attribute (iya-sts #206: `emails` is `work` alone) and
+  // refuses a create outside it with 400 invalidValue. Reading the documents
+  // is what a reader of this page does about that, and it is what makes the
+  // generator fit the body: formatAttributeSpec() records the sub-attribute's
+  // list and coerceToSpec() re-types every value outside it.
+  await driver.executeScript("return window.scim.readAllDiscovery();");
+  await driver.wait(async function () {
+    return await driver.executeScript(`
+      return document.querySelectorAll('.scim-config-fold').length > 0;
+    `);
+  }, 15000, 'the discovery documents produced no configuration groups');
+  const fitted = await driver.executeScript(`
+    window.scim.generateBodyForOperation();
+    var body = JSON.parse(document.getElementById('scim_op_body').value);
+    // From the store rather than the table: a schema's rows are drawn only
+    // once its group is unfolded, and the store is what the generator reads.
+    var spec = window.scim.configValue('attr|' +
+        window.scim.configValue('userSchema') + '|emails');
+    return { spec: spec === undefined ? null : spec,
+             types: (body.emails || []).map(function (e) { return e.type; }) };
+  `);
+  check('the emails row records the canonical list the server publishes on ' +
+      'its type sub-attribute', function () {
+    assert.ok(fitted.spec && /canonical=/.test(fitted.spec),
+        'The emails attribute row reads ' + JSON.stringify(fitted.spec) +
+        '. RFC 7643 puts canonicalValues on emails.type rather than on ' +
+        'emails, and a row that does not record it cannot fit a generated ' +
+        'type to it.');
+  });
+  check('every generated email type is one the server offers', function () {
+    const listed = /canonical=([^,]*)/.exec(fitted.spec || '');
+    const offered = listed ? listed[1].trim().split('|') : [];
+    assert.ok(fitted.types.length > 0,
+        'The regenerated body carries no emails, so there is nothing here ' +
+        'to fit and this check would pass vacuously.');
+    fitted.types.forEach(function (type) {
+      assert.ok(offered.indexOf(type) >= 0,
+          'The regenerated body carries an email typed "' + type + '" and ' +
+          'the server offers ' + offered.join('/') + '. It will be refused ' +
+          '400 invalidValue before one attribute is stored.');
+    });
+  });
   const status = await clickAndWait(driver, "btn_scim_send",
       "scim_op_status", null, 30000);
   check('the create succeeds from the browser', function () {
@@ -539,7 +584,10 @@ async function theBrowserCreatesAndDeletes(driver) {
   });
   const lastId = await textOf(driver, "scim_last_user_id");
   check('the created id is remembered for the next operation', function () {
-    assert.ok(lastId && lastId.indexOf('uid=') === 0,
+    // A UUID — the entry's entryUUID — since iya-sts 64580f4 (2026-09-14);
+    // it was the entry's DN, which is what this used to look for.
+    assert.ok(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        .test(lastId || ''),
         'The last created id is "' + lastId + '". A debugger where an id ' +
         'has to be copied by hand between two fields on the same page is ' +
         'one nobody uses twice.');
@@ -1425,30 +1473,46 @@ async function theDocumentsConfigureTheWorkflow(driver) {
     assert.ok(opened.found, 'There is no group for the User schema.');
   });
 
-  // The row for one attribute, and what it says.
-  const attrId = await driver.executeScript(`
-    var name = 'attr|' + document.getElementById('scim_cfg_userSchema').value +
-        '|nickName';
-    return 'scim_cfg_' + name.replace(/[^A-Za-z0-9_]+/g, '_');
-  `);
-  const spec = await driver.executeScript(
-      "var e = document.getElementById(arguments[0]); return e ? e.value : null;",
-      attrId);
-  if (spec === null) {
+  // The row for one attribute, and what it says. THE FIRST OF SEVERAL that
+  // this server's User schema declares, rather than nickName alone: the loop
+  // needs an attribute both the schema declares and the generator produces,
+  // and which one is the server's business. This mock took nickName off its
+  // published schema in iya-sts #206 (nothing in its directory stores it), and
+  // with a single name hard-coded here that turned the whole loop into a skip
+  // on every run — the pane still configured the workflow, and nothing
+  // asserted that it did.
+  const picked = await driver.executeScript(`
+    var schema = document.getElementById('scim_cfg_userSchema').value;
+    var names = arguments[0];
+    for (var i = 0; i < names.length; i++) {
+      var id = 'scim_cfg_' + ('attr|' + schema + '|' + names[i])
+        .replace(/[^A-Za-z0-9_]+/g, '_');
+      var e = document.getElementById(id);
+      if (e) {
+        return { name: names[i], spec: e.value };
+      }
+    }
+    return null;
+  `, ['nickName', 'title', 'displayName', 'profileUrl']);
+  if (picked === null) {
     skip('the schema drives the generator',
-        'this server\'s User schema does not declare nickName, so there is ' +
-        'no row to edit. The loop below needs one attribute that both the ' +
-        'schema declares and the generator produces.');
-    log.debug("Leaving theDocumentsConfigureTheWorkflow(). No nickName.");
+        'this server\'s User schema declares none of nickName, title, ' +
+        'displayName or profileUrl, so there is no row to edit. The loop ' +
+        'below needs one attribute that both the schema declares and the ' +
+        'generator produces.');
+    log.debug("Leaving theDocumentsConfigureTheWorkflow(). No attribute.");
     return;
   }
+  const probe = picked.name;
+  const spec = picked.spec;
+  log.info("     driving the loop through the " + probe + " attribute row.");
   check('an attribute row carries the characteristics it was given',
       function () {
     assert.ok(/type=/.test(spec) && /mutability=/.test(spec),
-        'The nickName row reads "' + spec + '". It is supposed to be the ' +
-        'attribute\'s characteristics as key=value pairs, which is what ' +
-        'parseAttributeSpec() reads back and the generator is filtered ' +
-        'through.');
+        'The ' + probe + ' row reads "' + spec + '". It is supposed to be ' +
+        'the attribute\'s characteristics as key=value pairs, which is ' +
+        'what parseAttributeSpec() reads back and the generator is ' +
+        'filtered through.');
   });
 
   // THE LOOP. Generate, drop the attribute from the schema, generate again.
@@ -1456,14 +1520,15 @@ async function theDocumentsConfigureTheWorkflow(driver) {
   const before = await driver.executeScript(`
     window.scim.generateUsers();
     var body = JSON.parse(document.getElementById('scim_gen_output').value);
-    return { nickName: body.nickName !== undefined,
+    return { present: body[arguments[0]] !== undefined,
              externalId: body.externalId !== undefined,
              schemas: body.schemas || [] };
-  `);
+  `, probe);
   check('the generated body carries the attribute to begin with', function () {
-    assert.ok(before.nickName,
-        'The generator produced no nickName, so the next assertion could ' +
-        'not tell a working filter from a generator that never made one.');
+    assert.ok(before.present,
+        'The generator produced no ' + probe + ', so the next assertion ' +
+        'could not tell a working filter from a generator that never made ' +
+        'one.');
   });
   check('and its schemas array is the CONFIGURED schema, not a constant',
       function () {
@@ -1484,24 +1549,25 @@ async function theDocumentsConfigureTheWorkflow(driver) {
   });
 
   const after = await driver.executeScript(`
+    var drop = arguments[0];
     var listId = 'schema|' +
         document.getElementById('scim_cfg_userSchema').value + '|attributes';
     var e = document.getElementById('scim_cfg_' +
         listId.replace(/[^A-Za-z0-9_]+/g, '_'));
     e.value = e.value.split(',').map(function (one) { return one.trim(); })
-      .filter(function (one) { return one !== 'nickName'; }).join(', ');
+      .filter(function (one) { return one !== drop; }).join(', ');
     e.dispatchEvent(new Event('change', { bubbles: true }));
     window.scim.generateUsers();
     var body = JSON.parse(document.getElementById('scim_gen_output').value);
-    return { nickName: body.nickName !== undefined,
+    return { present: body[drop] !== undefined,
              externalId: body.externalId !== undefined,
              warnings: (document.getElementById('scim_config_warnings') || {})
                .textContent || '' };
-  `);
+  `, probe);
   check('removing an attribute from the row removes it from the body',
       function () {
-    assert.strictEqual(after.nickName, false,
-        'nickName was taken out of the schema\'s attributes row and the ' +
+    assert.strictEqual(after.present, false,
+        probe + ' was taken out of the schema\'s attributes row and the ' +
         'generator produced it anyway. The pane is describing the workflow ' +
         'rather than configuring it, which is the whole thing this feature ' +
         'is for.');
@@ -1509,7 +1575,7 @@ async function theDocumentsConfigureTheWorkflow(driver) {
         'externalId disappeared when an unrelated attribute was removed.');
   });
   check('and the page SAYS what the configuration changed', function () {
-    assert.ok(/nickName/.test(after.warnings),
+    assert.ok(after.warnings.indexOf(probe) >= 0,
         'The body lost an attribute and nothing on the page said so. The ' +
         'notes under the preview are what stop a filtered body from looking ' +
         'like a generator bug. Warnings: "' + after.warnings.slice(0, 200) +
@@ -1604,13 +1670,13 @@ async function theDocumentsConfigureTheWorkflow(driver) {
   const restored = await driver.executeScript(`
     window.scim.generateUsers();
     var body = JSON.parse(document.getElementById('scim_gen_output').value);
-    return { nickName: body.nickName !== undefined,
+    return { present: body[arguments[0]] !== undefined,
              filter: document.getElementById('scim_cfg_filterSupported').value };
-  `);
+  `, probe);
   check('Restore discovered values undoes all of it', function () {
-    assert.ok(restored.nickName,
-        'After Restore the generator still leaves nickName out, so an edit ' +
-        'to a dynamic row survives the restore that exists to undo it.');
+    assert.ok(restored.present,
+        'After Restore the generator still leaves ' + probe + ' out, so an ' +
+        'edit to a dynamic row survives the restore that exists to undo it.');
     assert.notStrictEqual(restored.filter, 'no',
         'filter.supported is still "no" after Restore.');
   });
@@ -2757,7 +2823,8 @@ async function everyStyleClassIsDefined(driver) {
   check('the page does not scroll sideways', function () {
     assert.ok(pageWidth.doc <= pageWidth.win + 2,
         'The document is ' + pageWidth.doc + 'px wide in a ' +
-        pageWidth.win + 'px viewport. A SCIM id is a percent-encoded DN — a ' +
+        pageWidth.win + 'px viewport. A SCIM id can be a percent-encoded ' +
+        'DN — a ' +
         'long unbroken string with no space in it — and bootstrap\'s ' +
         '`code { white-space: nowrap }` plus an auto-layout table is exactly ' +
         'how one of them pushes a pane past the edge.');

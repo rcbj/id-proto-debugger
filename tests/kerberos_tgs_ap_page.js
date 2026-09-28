@@ -519,6 +519,14 @@ async function withoutMutualNothingProvesTheService(driver) {
   await setField(driver, "krb_service_host", serviceHost);
   await setField(driver, "krb_service_port", servicePort);
   await driver.findElement(By.id("krb_flag_mutual")).click();       // untick
+  // ENABLED, not located. The markup ships the button disabled and the page
+  // enables it once it has read the ticket cache — after a round trip to the
+  // api. A click before then lands on a disabled input, which WebDriver
+  // performs without complaint and the page never sees, so the wait below
+  // timed out on "Ready to present a ticket" with nothing sent.
+  await driver.wait(until.elementIsEnabled(
+      driver.findElement(By.id("krb_present_button"))), 20000,
+      "the Present button was never enabled — no usable ticket was offered");
   await driver.findElement(By.id("krb_present_button")).click();
   const status = await waitForText(driver, "krb_ap_status",
     /accepted|ACCEPTED|nothing|—/, 90000, "the one-way exchange produced no " +

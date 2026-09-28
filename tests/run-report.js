@@ -233,7 +233,7 @@ function jobTypeOf(script) {
 //
 //     They were marked EXCLUSIVE as an interim measure and are NOT any more.
 //     The cause was the mock blocking and the fix landed over there on
-//     2026-08-30 (rcbj/mock-sts#6): a front process owning the sockets and the
+//     2026-08-30 (rcbj/iya-sts#6): a front process owning the sockets and the
 //     state, with the signing handed to a pool of stateless children. Its
 //     `workers.count` defaults to 2 and nothing here has to set it. **A JOB
 //     THAT MAKES A SHARED SERVICE BLOCK IS STILL THIS TABLE'S PROBLEM** — that
@@ -346,7 +346,7 @@ const JOB_LOCKS = {
   // own tickets against the same acceptor would disturb.
   "krb5_mit_client.js": "sts-spnego-signin",
   // The mock's SSF configuration. `ssf_protocol.js` turns
-  // `ssf.pushAllowInsecure` ON (its own RFC 8935 listener is plain http) and
+  // `ssf.pushAllowHttp` ON (its own RFC 8935 listener is plain http) and
   // flips both deliberate defects — `ssf.legacySubClaim` and
   // `ssf.breakSetSignature` — one at a time. Each is restored, and not
   // instantly: a job polling that transmitter inside that window gets a SET
@@ -456,6 +456,17 @@ function buildJobs() {
     env: {},
   });
 
+  // WHERE THE STACK'S IMAGES COME FROM. docker-compose-run-tests.yml takes
+  // every third-party image, and every base image it builds FROM, from a
+  // private mirror on ghcr.io — and a FROM the mirror does not cover is not
+  // an error, it is a pull from Docker Hub. This fails on one, including a
+  // submodule bump that moves sts/Dockerfile to a new tag. Node only.
+  jobs.push({
+    name: "Image mirror coverage (every pulled and FROM image is on ghcr.io)",
+    script: "image_mirror_coverage.js",
+    env: {},
+  });
+
   // WHERE A DOWNLOADED FILE LANDS. Several pages here have a Download button
   // and the tests that drive one write a real file; the browser's default
   // directory on a host run is the developer's ~/Downloads, and the assertion
@@ -562,6 +573,7 @@ function buildJobs() {
       CLIENT_SECRET: env.RESOURCE_OWNER_CREDENTIAL_CLIENT_SECRET,
       SCOPE: env.RESOURCE_OWNER_CREDENTIAL_SCOPE,
       USER: env.RESOURCE_OWNER_CREDENTIAL_USER,
+      USERNAME: env.RESOURCE_OWNER_CREDENTIAL_USERNAME,
     },
   });
 
@@ -2504,11 +2516,18 @@ function buildJobs() {
         key: "windows",
         label: "real Windows KDC",
         skip: env.KRB5_DC_JSON ? null :
-          "no real Windows KDC to delegate against (KRB5_DC_JSON unset). " +
-          "The four delegation accounts are provisioned by " +
-          "infra/terraform-krb5 and described in the bootstrap's dc.json; " +
-          "./infra/krb5-test.sh fetches it and sets this. Not free tier, so " +
-          "nothing starts it automatically.",
+          "COSTS MONEY, SO IT IS SKIPPED BY DECISION rather than for want " +
+          "of anything here: no real Windows KDC to delegate against " +
+          "(KRB5_DC_JSON unset). The four delegation accounts are " +
+          "provisioned by infra/terraform-krb5 and described in the " +
+          "bootstrap's dc.json. To run it: `./infra/krb5-test.sh` (it takes " +
+          "no arguments; KRB5_KEEP=1 leaves the stack up), which applies the " +
+          "Terraform, fetches dc.json, sets this and destroys the stack " +
+          "afterwards on an EXIT trap whatever the result. A forest " +
+          "promotion needs more than a t3.micro has, so this is NOT free " +
+          "tier and no launcher starts it \u2014 a suite " +
+          "that stood a domain controller up on every run would bill for " +
+          "every run.",
         env: {
           KRB5_DELEG_TARGET: "windows",
           KRB5_DC_JSON: env.KRB5_DC_JSON,
@@ -2551,7 +2570,7 @@ function buildJobs() {
   //
   // Every other job in this section — the codec, the crypto vectors, the PAC
   // layout, the AS and TGS exchanges — runs against the mock KDC in the
-  // rcbj/mock-sts submodule. The mock was written from the same reading of RFC
+  // rcbj/iya-sts submodule. The mock was written from the same reading of RFC
   // 4120 and [MS-PAC] as the client it checks, so the two agree by construction
   // and a shared misreading is invisible to all of them. This job is the answer
   // to that, and it is the open risk docs/kerberos.md names.
@@ -2568,11 +2587,18 @@ function buildJobs() {
   // launcher sets it, on purpose.
   {
     const realDcSkip = env.KRB5_DC_HOST ? null :
-      "no real Windows KDC to test against (KRB5_DC_HOST unset). This one " +
-      "job drives a domain controller on EC2, which costs money and is not " +
-      "free tier, so no launcher starts it. Run ./infra/krb5-test.sh, which " +
-      "applies infra/terraform-krb5, runs this test and tears the stack down " +
-      "again whatever the result.";
+      "COSTS MONEY, SO IT IS SKIPPED BY DECISION rather than for want of " +
+      "anything here: no real Windows KDC to test against (KRB5_DC_HOST " +
+      "unset). This one job drives a Windows Server domain controller on " +
+      "EC2 \u2014 a forest promotion needs more than a t3.micro has, so it " +
+      "is NOT free tier. To run it: `./infra/krb5-test.sh` (no arguments; " +
+      "KRB5_KEEP=1 leaves it running), which applies " +
+      "infra/terraform-krb5, runs this test and destroys the stack " +
+      "afterwards on an EXIT trap whatever the result. No launcher starts " +
+      "it, because a suite that stood a domain controller up on every run " +
+      "would bill for every run. The offline half of what it proves is " +
+      "asserted on every ordinary run by tests/krb5_windows_vectors.js, " +
+      "against a recorded exchange from a real DC.";
     const job = {
       name: "Kerberos against a REAL Windows KDC (AS-REQ, TGS-REQ, ktpass keytab, PAC, AP-REQ)",
       script: "krb5_real_dc.js",
@@ -3719,7 +3745,7 @@ function buildJobs() {
   // not use the shared mock and would be wrong to. Persistence is a claim
   // about what happens across a RESTART, so this job starts its own Postgres
   // and its own mock, restarts it, and reads what came back — and the shared
-  // instance must stay in memory mode, which mock-sts's own
+  // instance must stay in memory mode, which iya-sts's own
   // docker-compose.yml argues at length ("a test that persisted would be a
   // test whose second run started from the first run's leavings").
   //

@@ -2,7 +2,7 @@
 
 **Status: a roadmap, not a record. Dated 2026-09-04.** Every "should" below is a proposal and nothing here has been built. It is written in the same voice as the rest of `docs/` — the reasoning attached to each decision, so the decision can be argued with later — and when an item lands, the paragraph describing it should move into that workflow's own notes and be deleted from here. A roadmap that still lists finished work is worse than no roadmap, because the next reader cannot tell which half is which.
 
-The source list is Robert Broeckelmann's [*OAuth2 + OIDC: All of the Specs (2026 Edition)*](https://medium.com/@robert.broeckelmann/oauth2-oidc-all-of-the-specs-2026-edition-5fe3f63a6392), 18 August 2026 — sixty-five distinct documents across OAuth 2.0, OpenID Connect, OpenID Federation, FAPI, JARM and Shared Signals. Coverage was read from `client/public/supported_standards.html`, `client/src/`, `api/` and the mock STS at `../mock-sts`, at commit `4777cc1` on `feature/254-risc`.
+The source list is Robert Broeckelmann's [*OAuth2 + OIDC: All of the Specs (2026 Edition)*](https://medium.com/@robert.broeckelmann/oauth2-oidc-all-of-the-specs-2026-edition-5fe3f63a6392), 18 August 2026 — sixty-five distinct documents across OAuth 2.0, OpenID Connect, OpenID Federation, FAPI, JARM and Shared Signals. Coverage was read from `client/public/supported_standards.html`, `client/src/`, `api/` and the mock STS at `../iya-sts`, at commit `4777cc1` on `feature/254-risc`.
 
 **Twenty-five of the sixty-five are implemented, three are partial, thirty-seven are not started.** Those counts treat a document the article cites twice as one document, and its section-level citations of RFC 6749 (§4.2, §4.3, §4.4) as part of RFC 6749.
 

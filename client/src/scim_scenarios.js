@@ -611,7 +611,11 @@ function settingsFrom(options) {
       : 5,
     groupCount: Number(given.groupCount) > 0
       ? Math.floor(Number(given.groupCount)) : 1,
-    domain: given.domain || 'example.com'
+    domain: given.domain || 'example.com',
+    // The `type` values the server's Schemas document publishes for each
+    // complex multi-valued attribute (scim_client.js's canonicalTypesOf()),
+    // or null when nobody has read one. See userFor().
+    types: given.types && typeof given.types === 'object' ? given.types : null
   };
   // A ceiling, and it is here rather than on the page's number field because a
   // scenario built by randomScenario() never touches that field. Fifty users
@@ -621,6 +625,42 @@ function settingsFrom(options) {
     out.userCount = 50;
   }
   log.debug("Leaving settingsFrom(). userCount=" + out.userCount);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// EVERY USER A SCENARIO CREATES, FITTED TO THE TYPES THE SERVER PUBLISHES.
+//
+// The generator emits `home` emails, a `fax` number and a `home` address,
+// which are RFC 7643 section 8.7.1's own canonical values — and a server may
+// narrow that list (section 7's `canonicalValues`, published on the `type`
+// sub-attribute), and refuse the whole create over one value outside it. This
+// project's mock STS does exactly that since iya-sts #206: `emails.type` is
+// `work` alone there, because the directory attribute behind it has nowhere
+// to put `home`. So a scenario given `types` builds users that fit, and one
+// given none builds the full vocabulary as before. The rng is consumed
+// identically either way (the fitting happens after generation), so a seed
+// names the same people whether or not a Schemas document was read.
+// ---------------------------------------------------------------------------
+function userFor(rng, settings, index) {
+  log.debug("Entering userFor(). index=" + index);
+  var user = scim.randomUser({ rng: rng, prefix: settings.prefix,
+                               index: index, domain: settings.domain,
+                               types: settings.types });
+  log.debug("Leaving userFor().");
+  return user;
+}
+
+// The type a step would like to send on `attribute`, or — when the server
+// publishes a list that leaves it out — the list's first entry. A PATCH that
+// adds a `pager` number to a server offering work/mobile tests the server's
+// vocabulary, not the PATCH grammar the step is for.
+function typeFor(settings, attribute, wanted) {
+  log.debug("Entering typeFor(). " + attribute + " " + wanted);
+  var allowed = (settings.types && settings.types[attribute]) || [];
+  var out = (!allowed.length || allowed.indexOf(wanted) >= 0) ? wanted
+    : allowed[0];
+  log.debug("Leaving typeFor(). " + out);
   return out;
 }
 
@@ -660,14 +700,18 @@ function buildUserLifecycle(options) {
   log.debug("Entering buildUserLifecycle().");
   var settings = settingsFrom(options);
   var rng = scim.newRng(settings.seed);
-  var full = scim.randomUser({ rng: rng, prefix: settings.prefix, index: 0,
-                               domain: settings.domain });
-  var replacement = scim.randomUser({ rng: rng, prefix: settings.prefix,
-                                      index: 1, domain: settings.domain });
+  var full = userFor(rng, settings, 0);
+  var replacement = userFor(rng, settings, 1);
   // A PUT REPLACES, so the replacement keeps the SAME userName — changing it
   // as well would make a failure ambiguous between "the PUT did not apply" and
   // "the PUT created somebody else".
   replacement.userName = full.userName;
+  // `other` when the server takes it; otherwise the added value is removed BY
+  // VALUE, since it then shares its type with the email already there.
+  var addedEmail = 'added.by.patch@' + settings.domain;
+  var addedType = typeFor(settings, 'emails', 'other');
+  var removePath = addedType === 'other' ? 'emails[type eq "other"]'
+    : 'emails[value eq "' + addedEmail + '"]';
   var steps = [
     step({ id: 'create', operation: 'createUser', body: full,
       title: 'Create a user with every optional attribute',
@@ -710,8 +754,8 @@ function buildUserLifecycle(options) {
       resourceId: ref('create', 'id'),
       body: scim.patchOp([
         { op: 'add', path: 'emails',
-          value: [{ value: 'added.by.patch@' + settings.domain,
-                    type: 'other', primary: false }] }
+          value: [{ value: addedEmail, type: addedType,
+                    primary: false }] }
       ]),
       title: 'PATCH — add to a multi-valued attribute',
       why: 'add on a multi-valued attribute APPENDS. A server that replaces ' +
@@ -720,10 +764,10 @@ function buildUserLifecycle(options) {
     step({ id: 'patch-remove', operation: 'modifyUser',
       resourceId: ref('create', 'id'),
       body: scim.patchOp([
-        { op: 'remove', path: 'emails[type eq "other"]' }
+        { op: 'remove', path: removePath }
       ]),
       title: 'PATCH — remove through a value filter path',
-      why: 'emails[type eq "other"] is a PATH, not a property name. This is ' +
+      why: removePath + ' is a PATH, not a property name. This is ' +
           'the section 3.5.2 grammar every hand-rolled SCIM server is ' +
           'subtly wrong about, and where a client\'s updates land on the ' +
           'wrong value.',
@@ -756,8 +800,7 @@ function buildProvisionTeam(options) {
   for (i = 0; i < settings.userCount; i++) {
     steps.push(step({
       id: 'user-' + i, operation: 'createUser',
-      body: scim.randomUser({ rng: rng, prefix: settings.prefix, index: i,
-                              domain: settings.domain }),
+      body: userFor(rng, settings, i),
       title: 'Create user ' + (i + 1) + ' of ' + settings.userCount,
       why: i === 0 ? 'Each user carries the full attribute set.' : '',
       expect: { status: '201', check: 'hasId' },
@@ -852,8 +895,7 @@ function buildDeprovision(options) {
   for (i = 0; i < settings.userCount; i++) {
     steps.push(step({
       id: 'user-' + i, operation: 'createUser',
-      body: scim.randomUser({ rng: rng, prefix: settings.prefix, index: i,
-                              domain: settings.domain }),
+      body: userFor(rng, settings, i),
       title: 'Create user ' + (i + 1) + ' of ' + settings.userCount,
       why: '', expect: { status: '201', check: 'hasId' }, capture: 'resource'
     }));
@@ -883,17 +925,24 @@ function buildModifySweep(options) {
   var settings = settingsFrom(options);
   var rng = scim.newRng(settings.seed);
   var steps = [];
+  var users = [];
   var i;
   for (i = 0; i < settings.userCount; i++) {
+    users.push(userFor(rng, settings, i));
     steps.push(step({
       id: 'user-' + i, operation: 'createUser',
-      body: scim.randomUser({ rng: rng, prefix: settings.prefix, index: i,
-                              domain: settings.domain }),
+      body: users[i],
       title: 'Create user ' + (i + 1),
       why: '', expect: { status: '201', check: 'hasId' }, capture: 'resource'
     }));
   }
+  // `home` when the server takes it, and otherwise the second email BY VALUE
+  // — fitTypes() re-typed it, so both emails share one type and only the
+  // value tells them apart, which is the harder case for the path grammar.
+  var homeTaken = typeFor(settings, 'emails', 'home') === 'home';
   for (i = 0; i < settings.userCount; i++) {
+    var removePath = homeTaken ? 'emails[type eq "home"]'
+      : 'emails[value eq "' + users[i].emails[1].value + '"]';
     steps.push(step({
       id: 'replace-title-' + i, operation: 'modifyUser',
       resourceId: ref('user-' + i, 'id'),
@@ -909,7 +958,8 @@ function buildModifySweep(options) {
       resourceId: ref('user-' + i, 'id'),
       body: scim.patchOp([
         { op: 'add', path: 'phoneNumbers',
-          value: [{ value: '+1-555-0' + (100 + i), type: 'pager',
+          value: [{ value: '+1-555-0' + (100 + i),
+                    type: typeFor(settings, 'phoneNumbers', 'pager'),
                     primary: false }] }
       ]),
       title: 'PATCH add on user ' + (i + 1),
@@ -919,7 +969,7 @@ function buildModifySweep(options) {
       id: 'remove-home-' + i, operation: 'modifyUser',
       resourceId: ref('user-' + i, 'id'),
       body: scim.patchOp([
-        { op: 'remove', path: 'emails[type eq "home"]' }
+        { op: 'remove', path: removePath }
       ]),
       title: 'PATCH remove through a value filter on user ' + (i + 1),
       why: '', expect: { status: ['200', '204'] }
@@ -953,8 +1003,7 @@ function buildBulk(options) {
   for (i = 0; i < settings.userCount; i++) {
     creates.push({
       method: 'POST', bulkId: 'user' + i, path: '/Users',
-      data: scim.randomUser({ rng: rng, prefix: settings.prefix, index: i,
-                              domain: settings.domain })
+      data: userFor(rng, settings, i)
     });
     // THE FEATURE THAT MAKES A BULK MORE THAN A LOOP: the group below is
     // created in the SAME request as the users it contains, and refers to them
@@ -997,8 +1046,7 @@ function buildPaging(options) {
   for (i = 0; i < settings.userCount; i++) {
     steps.push(step({
       id: 'user-' + i, operation: 'createUser',
-      body: scim.randomUser({ rng: rng, prefix: settings.prefix, index: i,
-                              domain: settings.domain }),
+      body: userFor(rng, settings, i),
       title: 'Create user ' + (i + 1),
       why: '', expect: { status: '201', check: 'hasId' }, capture: 'resource'
     }));
@@ -1056,8 +1104,7 @@ function buildFilterTour(options) {
   log.debug("Entering buildFilterTour().");
   var settings = settingsFrom(options);
   var rng = scim.newRng(settings.seed);
-  var user = scim.randomUser({ rng: rng, prefix: settings.prefix, index: 0,
-                               domain: settings.domain });
+  var user = userFor(rng, settings, 0);
   var tag = user.userName.slice(user.userName.lastIndexOf('.') + 1);
   var steps = [
     step({ id: 'create', operation: 'createUser', body: user,
@@ -1103,8 +1150,7 @@ function buildSearchPost(options) {
   log.debug("Entering buildSearchPost().");
   var settings = settingsFrom(options);
   var rng = scim.newRng(settings.seed);
-  var user = scim.randomUser({ rng: rng, prefix: settings.prefix, index: 0,
-                               domain: settings.domain });
+  var user = userFor(rng, settings, 0);
   var group = scim.randomGroup({ rng: rng, prefix: settings.prefix });
   var steps = [
     step({ id: 'create-user', operation: 'createUser', body: user,
@@ -1165,10 +1211,8 @@ function buildEnterprise(options) {
   log.debug("Entering buildEnterprise().");
   var settings = settingsFrom(options);
   var rng = scim.newRng(settings.seed);
-  var manager = scim.randomUser({ rng: rng, prefix: settings.prefix,
-                                  index: 0, domain: settings.domain });
-  var report = scim.randomUser({ rng: rng, prefix: settings.prefix,
-                                 index: 1, domain: settings.domain });
+  var manager = userFor(rng, settings, 0);
+  var report = userFor(rng, settings, 1);
   var ext = scim.ENTERPRISE_SCHEMA;
   var steps = [
     step({ id: 'manager', operation: 'createUser', body: manager,
@@ -1232,10 +1276,8 @@ function buildNegatives(options) {
   log.debug("Entering buildNegatives().");
   var settings = settingsFrom(options);
   var rng = scim.newRng(settings.seed);
-  var first = scim.randomUser({ rng: rng, prefix: settings.prefix, index: 0,
-                                domain: settings.domain });
-  var duplicate = scim.randomUser({ rng: rng, prefix: settings.prefix,
-                                    index: 1, domain: settings.domain });
+  var first = userFor(rng, settings, 0);
+  var duplicate = userFor(rng, settings, 1);
   duplicate.userName = first.userName;
   var steps = [
     step({ id: 'refused-name', operation: 'createUser',
@@ -1340,8 +1382,7 @@ function buildScopeRefusal(options) {
           'credential is simply broken.',
       expect: { status: '200' } }),
     step({ id: 'write-refused', operation: 'createUser',
-      body: scim.randomUser({ rng: rng, prefix: settings.prefix, index: 0,
-                              domain: settings.domain }),
+      body: userFor(rng, settings, 0),
       title: 'A write, with the same read-only credential',
       why: 'RFC 7644 section 2 requires the server to map an authenticated ' +
           'client to an access control policy. This is that policy saying ' +
@@ -1419,7 +1460,8 @@ function randomScenario(options) {
       seed: settings.seed + ':' + id + ':' + index,
       prefix: settings.prefix + 'r' + index,
       userCount: 1 + Math.floor(rng() * Math.min(settings.userCount, 6)),
-      domain: settings.domain
+      domain: settings.domain,
+      types: settings.types
     });
     titles.push(definition.label);
     phaseSteps.forEach(function (row) {

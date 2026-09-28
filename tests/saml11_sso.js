@@ -72,9 +72,11 @@ var waitTime = appconfig.waitTime;
 //    4.1.1.4 requires `cm:artifact` for Browser/Artifact and 4.2.1.4 requires
 //    `cm:bearer` for Browser/POST. A relying party that does not check works
 //    perfectly with either — which is exactly why this is asserted PER BINDING
-//    rather than once. `DoNotCacheCondition` is checked the same way: the
-//    Browser/POST profile's single-use policy, and absent from an artifact
-//    assertion because that one never travelled through the browser.
+//    rather than once. `DoNotCacheCondition` is checked on the artifact side
+//    only: it must be absent there, because that assertion never travelled
+//    through the browser, while on Browser/POST it is optional (the
+//    single-use policy is the relying party's, and the mock omits it by
+//    default since iya-sts #189).
 //
 // 6. **THE ASSERTION'S SIGNATURE VERIFIES THROUGH `AssertionID`.** SAML 1.1
 //    spells its ids `AssertionID` / `ResponseID`, which is on none of the lists
@@ -557,18 +559,24 @@ async function assertResponsePage(driver, binding, spEntityId, loginWait) {
     "), which the identity provider took from the providerId parameter:\n" +
         attrs);
 
-  // 1.1: the Browser/POST profile's single-use policy. Present on a POSTed
-  // assertion (it travelled through the browser) and absent on an artifact one
-  // (it did not), which is the other per-binding difference in the document.
+  // 1.1: the Browser/POST profile's single-use policy. It is the RELYING
+  // PARTY's to keep (oasis-sstc-saml-bindings-1.1 section 4.1.2), so a
+  // <saml:DoNotCacheCondition/> on a POSTed assertion is OPTIONAL — and the
+  // mock leaves it off by default since iya-sts #189, because the Shibboleth
+  // SP's stock security policy refuses every assertion that carries one
+  // (its `saml11.doNotCacheCondition` setting turns it back on). What stays a
+  // rule is the artifact side: that assertion never passed through the
+  // browser, so a condition about what the browser may cache is a claim
+  // about a journey it did not make.
   if (binding === "artifact") {
     assert(attrs.indexOf("DoNotCacheCondition") < 0,
       "an artifact-profile assertion never passes through the browser, so " +
       "the Browser/POST single-use policy should not be on it:\n" + attrs);
   } else {
-    assert(attrs.indexOf("DoNotCacheCondition") >= 0,
-      "a Browser/POST assertion travels through the browser, so section " +
-      "4.2's single-use policy (<saml:DoNotCacheCondition/>) should be on " +
-      "it:\n" + attrs);
+    log.info("Browser/POST assertion " +
+      (attrs.indexOf("DoNotCacheCondition") >= 0 ? "carries" :
+       "carries no") + " <saml:DoNotCacheCondition/> (optional; the " +
+      "single-use policy is the relying party's).");
   }
 
   // The attribute statement itself: the identity provider's claims about the
@@ -713,16 +721,29 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
     why: "the relying party providerId names and the assertion is audienced to"
   });
 
-  log.info("Select binding: " + binding);
+  // Two selectors since issue #307: the request binding (how Shibboleth's
+  // parameters travel) and the response binding, which in SAML 1.1 is the
+  // browser profile. This job's "artifact" is a GET asking for
+  // Browser/Artifact, as it always was.
+  var requestBinding = binding === "post" ? "post" : "redirect";
+  var responseBinding = binding === "artifact" ? "artifact" : "post";
+  log.info("Select request binding: " + requestBinding +
+           ", response binding: " + responseBinding);
   await driver.executeScript(
     "var s=document.getElementById('saml_binding'); if(s){ s.value = " +
-        "arguments[0]; s.dispatchEvent(new Event('change')); }",
-    binding
+        "arguments[0]; s.dispatchEvent(new Event('change')); }" +
+    "var r=document.getElementById('saml_response_binding'); if(r){ " +
+        "r.value = arguments[1]; r.dispatchEvent(new Event('change')); }",
+    requestBinding, responseBinding
   );
   var selected =
       await driver.findElement(By.id("saml_binding")).getAttribute("value");
-  assert.strictEqual(selected, binding, "Binding '" + binding +
-                     "' is not available in the selector.");
+  assert.strictEqual(selected, requestBinding, "Request binding '" +
+                     requestBinding + "' is not available in the selector.");
+  var selectedResponse = await driver.findElement(
+      By.id("saml_response_binding")).getAttribute("value");
+  assert.strictEqual(selectedResponse, responseBinding, "Response binding '" +
+                     responseBinding + "' is not available in the selector.");
 
   // The request is rebuilt by the change handler; wait for it to name the
   // profile this binding asks for rather than reading whatever was there

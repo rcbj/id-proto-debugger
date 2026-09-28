@@ -85,7 +85,7 @@
 //     the far end rather than being the thing under test.
 //   * **A COMPLETE MOCK STS TREE**, because it runs `node server.js` from it.
 //     `MOCK_STS_DIR` first, then the `sts/` submodule beside this suite, then a
-//     sibling `mock-sts` checkout — the same order and the same reasons as
+//     sibling `iya-sts` checkout — the same order and the same reasons as
 //     tests/module_paths.js, which is where that list is argued. The tests
 //     IMAGE carries about thirty sts modules and no `node_modules`, which is
 //     why the check is "can this actually run" and not "does server.js exist":
@@ -93,7 +93,7 @@
 //     later as a missing package.
 //
 // **IT NEVER TOUCHES THE SHARED MOCK, and that is deliberate rather than
-// convenient.** mock-sts's own docker-compose.yml says it out loud: the suite's
+// convenient.** iya-sts's own docker-compose.yml says it out loud: the suite's
 // stack starts that service with no persistence at all, and *a test that
 // persisted would be a test whose second run started from the first run's
 // leavings*. So this job configures nothing on the instance every other job is
@@ -106,6 +106,7 @@ const assert = require("assert");
 const fs = require("fs");
 const net = require("net");
 const path = require("path");
+const tls = require("tls");
 const { Command, Option } = require("commander");
 const { spawn, spawnSync } = require("child_process");
 const common = require("./jwt_vc_json_common.js");
@@ -196,8 +197,13 @@ async function preconditions() {
       "and its node_modules — not the thirty-odd modules the tests image " +
       "carries. Looked at: MOCK_STS_DIR, ../sts (the submodule; an " +
       "uninitialised one is an EMPTY DIRECTORY, so `git submodule update " +
-      "--init --recursive` is the usual fix), and ../../mock-sts. Set " +
-      "MOCK_STS_DIR to a working copy to run it." };
+      "--init --recursive` is the usual fix), and ../../iya-sts. Set " +
+      "MOCK_STS_DIR to a working copy to run it. A tree that IS there and " +
+      "was skipped anyway is either missing its node_modules or is not " +
+      "BUILT — the mock is TypeScript since iya-sts #50 and a checkout has " +
+      "no .js beside its .ts, so `node server.js` refuses to start from " +
+      "one; `(cd sts && ./build-typescript.sh)` is the fix, and the [mock] " +
+      "lines above say which of the two it was." };
   }
 
   const url = process.env.STS_TEST_POSTGRES_URL;
@@ -229,12 +235,67 @@ async function preconditions() {
 // is enough. This one is going to run `node server.js`, so a tree without its
 // dependencies is not a candidate at all — and the tests image contains exactly
 // such a tree, which is the case this check exists for.
+// ---------------------------------------------------------------------------
+// A COMPILED tree, which became a third condition on 2026-09-17.
+//
+// The mock is TypeScript since iya-sts #50 and a CHECKOUT holds `x.ts` with no
+// `x.js` beside it: it is compiled inside that repository's own image build,
+// so `node server.js` from a checkout refuses to start with STS-CORE-0093 and
+// names 188 sources. Without this the tree looked runnable, the child was
+// spawned, and the job failed on "the mock STS exited with 1 before it was
+// listening" — a message about a process rather than about a missing build
+// step.
+//
+// ASKED OF THE MOCK'S OWN MODULE rather than reimplemented here. `sts/common/
+// compiled_tree.js` is what the service itself consults at startup, it takes
+// the root as a parameter, and it is plain .js precisely so it can run before
+// anything is compiled. A second walk here would be a second reading of which
+// directories hold sources and what a `.d.ts` means, and the two would come to
+// differ — the argument tests/krb5_codec_sync.js makes about the wire codec.
+//
+// A tree that is present and not built is a fact about THIS MACHINE, like a
+// missing npm install, so it makes the candidate not-a-candidate and this job
+// declines to run. It is not a failure: nothing about the debugger is broken.
+// To run it here, build the submodule — `(cd sts && ./build-typescript.sh)`.
+// ---------------------------------------------------------------------------
+function isCompiled(root) {
+  log.debug("Entering isCompiled(). root=" + root);
+  const module = path.join(root, "common", "compiled_tree.js");
+  if (!fs.existsSync(module)) {
+    // Older than #50, so every source is already .js and there is nothing to
+    // build. Not an obstacle, and not this function's business to guess at.
+    log.debug("Leaving isCompiled(). No compiled_tree.js; pre-TypeScript.");
+    return true;
+  }
+  let answer;
+  try {
+    answer = require(module).uncompiledSources(root);
+  } catch (e) {
+    log.info("[mock] " + root + " has a compiled_tree.js that could not be " +
+             "asked (" + e.message + "), so the tree is taken as built and " +
+             "the spawn below will say if it is not.");
+    log.debug("Leaving isCompiled(). Unreadable.");
+    return true;
+  }
+  if (!answer.found.length) {
+    log.debug("Leaving isCompiled(). Built.");
+    return true;
+  }
+  log.info("[mock] " + root + " is a checkout whose TypeScript is not built: " +
+           answer.found.length + " source(s) have no .js beside them (" +
+           answer.found.slice(0, 3).join(", ") + ", ...). `node server.js` " +
+           "refuses to start from it (STS-CORE-0093), so it is not a " +
+           "candidate. Build it with `(cd sts && ./build-typescript.sh)`.");
+  log.debug("Leaving isCompiled(). Not built.");
+  return false;
+}
+
 function mockStsRoot() {
   log.debug("Entering mockStsRoot().");
   const candidates = [
     process.env.MOCK_STS_DIR,
     path.join(__dirname, "..", "sts"),
-    path.join(__dirname, "..", "..", "mock-sts")
+    path.join(__dirname, "..", "..", "iya-sts")
   ].filter(Boolean);
   for (const candidate of candidates) {
     const runnable = ["server.js", "package.json",
@@ -242,16 +303,25 @@ function mockStsRoot() {
                       path.join("node_modules", "pg")].every(function (part) {
       return fs.existsSync(path.join(candidate, part));
     });
-    if (runnable) {
-      log.info("[mock] Running the mock STS out of " + candidate + ".");
-      log.debug("Leaving mockStsRoot(). " + candidate);
-      return candidate;
+    // The two conditions are reported APART, because they have different
+    // fixes and a message that names the wrong one sends the reader at the
+    // wrong command. This branch claimed "not the dependencies" for every
+    // rejected tree with a server.js in it, so a checkout that had its
+    // node_modules and only wanted building was reported as an npm problem.
+    if (!runnable) {
+      if (fs.existsSync(path.join(candidate, "server.js"))) {
+        log.info("[mock] " + candidate + " has a server.js but not the " +
+                 "dependencies to run it (express, pg), so it is not a " +
+                 "candidate. That is what the tests image looks like.");
+      }
+      continue;
     }
-    if (fs.existsSync(path.join(candidate, "server.js"))) {
-      log.info("[mock] " + candidate + " has a server.js but not the " +
-               "dependencies to run it (express, pg), so it is not a " +
-               "candidate. That is what the tests image looks like.");
+    if (!isCompiled(candidate)) {
+      continue;
     }
+    log.info("[mock] Running the mock STS out of " + candidate + ".");
+    log.debug("Leaving mockStsRoot(). " + candidate);
+    return candidate;
   }
   log.debug("Leaving mockStsRoot(). None.");
   return "";
@@ -336,10 +406,83 @@ async function startPostgres() {
 // the run's own — the coordination section starts one with
 // STS_PERSISTENCE_COORDINATE off, which is a setting the mock marks
 // `runtime: false`, so it cannot be reached through /admin-api/config/set.
+// ---------------------------------------------------------------------------
+// THE MOCK'S DEFAULT TLS PARAMETERS NEED OPENSSL 3.5, AND THE NODE RUNNING
+// THIS JOB MAY BE OLDER.
+//
+// This is the one job here that runs the mock with the HOST's node rather
+// than in the mock's own image, which pins Node 24 and so OpenSSL 3.5. Since
+// the 2026-09-27 submodule bump the mock's `tls.groups` default leads with
+// the ML-KEM hybrids (X25519MLKEM768, in OpenSSL 3.5's tuple syntax) and its
+// `tls.signatureAlgorithms` with ML-DSA, and it refuses to start at all when
+// a TLS context cannot be built from them — `[STS-TLS-0001] tls: NOT
+// STARTING`, which is correct of it. On a host whose node carries OpenSSL 3.0
+// (Node 22, for one) the first instance therefore exited 1 before listening,
+// and every section of this job went with it.
+//
+// So where this node cannot build those two lists, the child is handed the
+// mock's OWN defaults with the post-quantum entries taken out, through the two
+// environment variables the mock names in that message. That is the same
+// argument portEnv() makes for switching https off: what is under test here is
+// what SURVIVES A RESTART, and the key-exchange groups of a listener this job
+// never connects to are incidental. It is logged, and it changes nothing on a
+// node that has the algorithms — which the containerized stack's does.
+// ---------------------------------------------------------------------------
+let tlsEnvCache = null;
+
+function tlsEnvForThisNode(root) {
+  log.debug("Entering tlsEnvForThisNode().");
+  if (tlsEnvCache) {
+    log.debug("Leaving tlsEnvForThisNode(). Cached.");
+    return tlsEnvCache;
+  }
+  let supported = true;
+  try {
+    tls.createSecureContext({ ecdhCurve: "X25519MLKEM768",
+                              sigalgs: "mldsa65:ecdsa_secp256r1_sha256" });
+  } catch (e) {
+    log.debug("Caught in tlsEnvForThisNode(): " + e.message);
+    supported = false;
+  }
+  if (supported) {
+    tlsEnvCache = {};
+    log.debug("Leaving tlsEnvForThisNode(). This node has them.");
+    return tlsEnvCache;
+  }
+  let defaults = {};
+  try {
+    defaults = require(path.join(root, "env", "defaults.js")).tls || {};
+  } catch (e) {
+    log.debug("Caught in tlsEnvForThisNode(): " + e.message);
+  }
+  const groups = String(defaults.groups || "X25519:P-256:P-384")
+    .split(/[\s:\/]+/)
+    .filter(function (one) {
+      return one && !/mlkem/i.test(one);
+    });
+  const sigalgs = String(defaults.signatureAlgorithms ||
+      "ecdsa_secp256r1_sha256:rsa_pss_rsae_sha256")
+    .split(":")
+    .filter(function (one) {
+      return one && !/mldsa/i.test(one);
+    });
+  tlsEnvCache = { STS_TLS_GROUPS: groups.join(":"),
+                  STS_TLS_SIGALGS: sigalgs.join(":") };
+  log.info("[mock] this node (" + process.version + ", OpenSSL " +
+    process.versions.openssl + ") has no ML-KEM groups or ML-DSA " +
+    "signature schemes, which the mock's TLS defaults lead with, so each " +
+    "instance is started with them left out: STS_TLS_GROUPS=" +
+    tlsEnvCache.STS_TLS_GROUPS + ", STS_TLS_SIGALGS=" +
+    tlsEnvCache.STS_TLS_SIGALGS + ".");
+  log.debug("Leaving tlsEnvForThisNode(). Classical lists.");
+  return tlsEnvCache;
+}
+
 async function startMock(root, databaseUrl, label, extraEnv) {
   log.debug("Entering startMock(). label=" + label);
   const httpPort = await freePort();
-  const env = Object.assign({}, process.env, await portEnv(httpPort), {
+  const env = Object.assign({}, process.env, await portEnv(httpPort),
+      tlsEnvForThisNode(root), {
     STS_PERSISTENCE_MODE: "postgres",
     // NOT `STS_PERSISTENCE_DATABASE_URL`, which is the name five of its six
     // siblings would suggest and which this job spent a while getting wrong.
@@ -368,7 +511,10 @@ async function startMock(root, databaseUrl, label, extraEnv) {
     CONFIG_FILE: path.join(root, "env", "local.js")
   }, extraEnv || {});
 
-  const child = spawn("node", ["server.js"], {
+  // THIS node, not whichever `node` is first on PATH: tlsEnvForThisNode()
+  // asked this binary's OpenSSL what it can do, and the answer is about the
+  // binary that then runs the mock only if they are the same one.
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: root, env: env, stdio: ["ignore", "pipe", "pipe"]
   });
   started.processes.push(child);
@@ -377,7 +523,15 @@ async function startMock(root, databaseUrl, label, extraEnv) {
   child.stderr.on("data", function (chunk) { output.push(String(chunk)); });
 
   const base = "http://127.0.0.1:" + httpPort;
-  const until = Date.now() + 45000;
+  // TWO MINUTES, AND IT WAS FORTY-FIVE SECONDS until 2026-09-27. The loop
+  // polls, so a passing start pays nothing for the headroom. The mock of the
+  // 2026-09-27 bump starts a compiled TypeScript tree with over a thousand
+  // settings, and a SECOND instance also joins the first one's change log
+  // before it listens; in the pool, beside four browsers, that went past
+  // forty-five seconds while the same job alone started each instance well
+  // inside it.
+  const startBudgetMs = 120000;
+  const until = Date.now() + startBudgetMs;
   while (Date.now() < until) {
     if (child.exitCode !== null) {
       assert.fail("the mock STS (" + label + ") exited with " +
@@ -398,7 +552,7 @@ async function startMock(root, databaseUrl, label, extraEnv) {
     await pause(300);
   }
   assert.fail("the mock STS (" + label + ") did not answer on " + base +
-    " within forty-five seconds. Its output was:\n" +
+    " within " + (startBudgetMs / 1000) + " seconds. Its output was:\n" +
     output.join("").slice(-2000));
 }
 
@@ -1296,13 +1450,14 @@ function fatalMessage(output) {
 async function startMockExpectingFailure(root, databaseUrl) {
   log.debug("Entering startMockExpectingFailure().");
   const httpPort = await freePort();
-  const env = Object.assign({}, process.env, await portEnv(httpPort), {
+  const env = Object.assign({}, process.env, await portEnv(httpPort),
+      tlsEnvForThisNode(root), {
     STS_PERSISTENCE_MODE: "postgres",
     STS_DATABASE_URL: databaseUrl,
     STS_LOG_LEVEL: "warn",
     CONFIG_FILE: path.join(root, "env", "local.js")
   });
-  const child = spawn("node", ["server.js"], {
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: root, env: env, stdio: ["ignore", "pipe", "pipe"]
   });
   started.processes.push(child);

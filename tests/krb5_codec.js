@@ -982,6 +982,56 @@ function principalsParseWithTheRightNameTypes() {
   log.debug("Leaving principalsParseWithTheRightNameTypes().");
 }
 
+// ---------------------------------------------------------------------------
+// A KerberosString is read as UTF-8, the encoding it is written in (issue
+// #308, found by Samba's as_req_tests.test_as_req_unicode on iya-sts #204).
+// Read as Latin-1 it round-tripped every ASCII name and no other: the KDC
+// re-encoded the misread characters into the ETYPE-INFO2 salt, and the
+// client derived a key from a salt that was not its own.
+// ---------------------------------------------------------------------------
+function kerberosStringsAreUtf8() {
+  log.debug("Entering kerberosStringsAreUtf8().");
+  const names = ["alice", "caf\u00e9", "\u5f20\u4e09",
+                 "\ud83d\udd10e1cc"];
+  names.forEach(function (name) {
+    const t = asn1.readTlv(asn1.encGeneralString(name), 0);
+    eq("the GeneralString " + JSON.stringify(name) + " is its UTF-8",
+       t.value, hex(prim.utf8(name)));
+    assert.strictEqual(asn1.decGeneralString(t), name,
+      JSON.stringify(name) + " must survive a round trip");
+  });
+  // The salt as a KDC hands it back: ETYPE-INFO2 carries the realm and the
+  // name, and the client hashes exactly those bytes.
+  const salt = "EXAMPLE.COM\ud83d\udd10e1cc";
+  const e = msg.readKdcResponse(msg.encKrbError({
+    stime: new Date(Date.UTC(2026, 8, 26)), susec: 0, errorCode: 25,
+    realm: "EXAMPLE.COM", sname: { type: 2, name: ["krbtgt", "EXAMPLE.COM"] },
+    eData: asn1.encSequenceOf([msg.encPaData({
+      type: msg.PA_TYPE.ETYPE_INFO2,
+      value: msg.encEtypeInfo2([{ etype: 18, salt: salt, s2kparams: null }])
+    })])
+  })).error;
+  const info = msg.readEtypeInfo2(e.eDataPaData[0].value);
+  assert.strictEqual(info[0].salt, salt, "the ETYPE-INFO2 salt must decode " +
+      "to the salt encoded, not to its UTF-8 bytes read one per character");
+  eq("and hashes as the same bytes", prim.utf8(info[0].salt),
+     hex(prim.utf8(salt)));
+  // Not UTF-8 at all — a lone continuation byte, an overlong "/", a
+  // truncated sequence, an encoded surrogate — still reads back byte for
+  // byte, as Latin-1, rather than failing or turning into U+FFFD.
+  ["41 80 42", "c0 af", "e2 82", "ed a0 80", "f4 90 80 80"].forEach(
+    function (bytes) {
+      const raw = unhex(bytes.replace(/ /g, ""));
+      assert.strictEqual(prim.fromUtf8(raw), null,
+        bytes + " is not well-formed UTF-8");
+      const t = { tag: 0x1b, value: raw };
+      assert.strictEqual(asn1.decGeneralString(t),
+        String.fromCharCode.apply(null, Array.from(raw)),
+        bytes + " must fall back to Latin-1");
+    });
+  log.debug("Leaving kerberosStringsAreUtf8().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Verifying the Kerberos v5 DER codec and " +
@@ -997,6 +1047,7 @@ async function test() {
   paForUserRoundTrips();
   theTreeViewDescribesUnknownBytes();
   principalsParseWithTheRightNameTypes();
+  kerberosStringsAreUtf8();
   refusesMalformedAndHostileInput();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");

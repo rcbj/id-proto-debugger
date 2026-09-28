@@ -1210,11 +1210,14 @@
                    target="_blank" rel="noopener noreferrer">RFC 9493</a>
               &mdash; Subject Identifiers for Security Event Tokens
               <span class="std-where">IETF</span></td>
-            <td>All eight formats &mdash; <code>account</code>,
-              <code>email</code>, <code>issuer_subject_id</code>,
-              <code>opaque</code>, <code>phone_number</code>,
-              <code>decentralized_identifier</code>, <code>uri</code> and
-              <code>aliases</code> &mdash; with each format&rsquo;s
+            <td>All eight formats, under their registered names &mdash;
+              <code>account</code>, <code>email</code>,
+              <code>iss_sub</code>, <code>opaque</code>,
+              <code>phone_number</code>, <code>did</code>, <code>uri</code>
+              and <code>aliases</code> &mdash; plus the three SSF 1.0
+              section 3.5 adds (<code>jwt_id</code>,
+              <code>saml_assertion_id</code>,
+              <code>ip-addresses</code>), with each format&rsquo;s
               <strong>closed member set enforced</strong>: an identifier
               carrying a member its format does not define is one every
               conforming receiver must reject, and it looks perfectly fine in

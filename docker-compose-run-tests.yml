@@ -1,7 +1,39 @@
 #version: '3'
+# ---------------------------------------------------------------------------
+# EVERY IMAGE THIS STACK PULLS COMES FROM ghcr.io, AND SO DOES EVERY IMAGE IT
+# BUILDS FROM.
+#
+# Third-party images are PRIVATE copies under ${IMAGE_MIRROR} (default
+# ghcr.io/rcbj/id-proto-debugger/mirror), made by
+# .github/workflows/mirror-images.yml from the list in
+# .github/image-mirror.txt. Two mechanisms, and both are in this file:
+#
+#   * `image:` on a service that is only run names the mirror directly.
+#   * a base image in a Dockerfile's FROM is REDIRECTED by the build's
+#     `additional_contexts` below: BuildKit resolves `FROM ubuntu:latest`
+#     against a named context called `ubuntu` before it goes to any registry,
+#     so every stage, intermediate ones included, is built from the mirror.
+#     That is what covers sts/Dockerfile, which is the iya-sts submodule's
+#     and is not edited here. (`ubuntu`, not `ubuntu:latest`: BuildKit drops
+#     `:latest` when it looks a name up.)
+#
+# The images built here are named under ${IMAGE_REGISTRY} (default
+# ghcr.io/rcbj/id-proto-debugger) with tag ${IMAGE_TAG} (default `latest`);
+# tests.yml pushes them after a run. Locally nothing is pushed, but the pulls
+# need `docker login ghcr.io` with a token that can read packages — the
+# launchers check that first and say so (common.sh, requireGhcrMirror).
+#
+# tests/image_mirror_coverage.js fails when a FROM or an `image:` here is not
+# covered, because an uncovered one does not fail: it quietly pulls from
+# Docker Hub again.
+# ---------------------------------------------------------------------------
+x-mirror-contexts: &mirror-contexts
+  ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
+  "node:24.16.0-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.16.0-bookworm-slim
+  "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
 services:
   postgres:
-    image: postgres:18
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/postgres:18
     # No `user:` needed and one would BREAK it: the official image's
     # entrypoint starts as root only to create and chown PGDATA on a fresh
     # volume, then drops to the `postgres` account with gosu before the
@@ -29,7 +61,7 @@ services:
     networks:
       - keycloak
   keycloak:
-    image: quay.io/keycloak/keycloak:26.6.4
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/keycloak/keycloak:26.6.4
     # Already non-root: the Keycloak image declares USER 1000 itself.
     # DPoP (RFC 9449) is a PREVIEW feature in Keycloak 26 and is off unless it is
     # named here: without it the server ignores the DPoP header entirely, issues a
@@ -66,7 +98,7 @@ services:
       - keycloak
   api:
     container_name: api
-    image: rcbj/api
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/api:${IMAGE_TAG:-latest}
     environment:
       # api and client KEEP this file. `api/env/test.js` is the deployed-site
       # configuration (https://api.tools.test.idptools.io), not a compose one, so
@@ -97,6 +129,7 @@ services:
     build:
       context: .
       dockerfile: api/Dockerfile
+      additional_contexts: *mirror-contexts
       args:
         CONFIG_FILE: ${CONFIG_FILE}
         # Optional: CI fixes the build number so the image and the git tag agree.
@@ -138,7 +171,7 @@ services:
       - 4000:4000
   client:
     container_name: client
-    image: rcbj/client
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/client:${IMAGE_TAG:-latest}
     environment:
       # api and client KEEP this file. `api/env/test.js` is the deployed-site
       # configuration (https://api.tools.test.idptools.io), not a compose one, so
@@ -152,7 +185,8 @@ services:
       - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
     build:
       context: .
-      dockerfile: client/Dockerfile 
+      dockerfile: client/Dockerfile
+      additional_contexts: *mirror-contexts
       args:
         CONFIG_FILE: ${CONFIG_FILE}
     # The stack's TLS pair, generated on the host before compose starts. See
@@ -182,38 +216,47 @@ services:
   # sts:8081 — matching env/docker-tests.js wstrustStsUrlDefault.
   sts:
     container_name: sts
-    image: rcbj/sts
+    # THE TAG IS MACHINE-WIDE AND THIS IS NOT THE ONLY REPOSITORY THAT BUILDS
+    # IT (2026-09-15). `sts/` is the iya-sts submodule and that repository
+    # builds its own stack from the same source; both wrote `rcbj/sts`, so
+    # whichever ran last owned the tag — and a run here then started a mock
+    # built from somebody else's working tree. It cost a run of this suite:
+    # seven jobs failed on two defects that had been fixed in the submodule
+    # this checkout points at, because the container was not built from it.
+    # The launchers set STS_IMAGE to a tag of their own (see common.sh);
+    # a bare `docker-compose up` still gets `rcbj/sts`, which is what the
+    # documentation names.
+    image: ${STS_IMAGE:-${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/sts:${IMAGE_TAG:-latest}}
     # ---------------------------------------------------------------------
-    # THE ONE CONTAINER IN THIS STACK THAT IS STILL ROOT, AND THE UMASK IS
-    # WHAT THAT COSTS.
+    # THE SAME UID AS THE TESTS CONTAINER, BECAUSE THE SPIRE SOCKET IS
+    # PRIVATE NOW.
     #
-    # Every image this repository builds now runs as an unprivileged user
-    # (see the block at the foot of each Dockerfile). This one is not this
-    # repository's image — sts/ is the mock-sts submodule — and it could not
-    # make the change anyway: it binds 88 (the KDC, TCP and UDP), 389 and 636
-    # (the directory), all three privileged, so it needs uid 0 or
-    # CAP_NET_BIND_SERVICE and neither is somebody else's checkout's business
-    # to decide here.
+    # Every image this repository builds runs as uid 10001 (see the block at
+    # the foot of each Dockerfile). This one is not this repository's image —
+    # sts/ is the iya-sts submodule — and it used to stay root because it
+    # binds 88 (the KDC, TCP and UDP), 389 and 636 (the directory), all
+    # privileged. `net.ipv4.ip_unprivileged_port_start: 0` below removes
+    # that reason without touching the image: the sysctl is per network
+    # namespace, so it lowers the bar inside this container and nowhere else.
     #
-    # What that leaves is the SOCKET below. STS_SPIFFE_SERVER_SOCKET makes
-    # this service bind /spire-sock/server.sock, and the tests container —
-    # which is NOT root any more — dials it. A Unix socket is created with
-    # mode 0777 & ~umask, so at the default 022 it lands 0755 root:root, and
-    # connect(2) on a Unix socket needs WRITE permission on the file: the
-    # tests container would be refused with EACCES, and spiffe_protocol.js
-    # would report its Debug.GetInfo check as a failed gRPC call rather than
-    # as a permission problem. `umask 0000` makes it 0777, which is the
-    # ordinary arrangement for a socket meant to be dialled by anyone —
-    # inside a throwaway container, on a docker volume that exists for the
-    # length of one test run and holds no bytes.
+    # What forced the change is the SOCKET below. STS_SPIFFE_SERVER_SOCKET
+    # makes this service bind /spire-sock/server.sock and the tests container
+    # dials it. Until the 2026-09-15 bump this service ran under `umask 0000`
+    # so the socket landed 0777. iya-sts 27b81c5 (2026-09-12) made that
+    # socket PRIVATE: it is the SPIRE Server API's trusted `local` entity,
+    # so the service chmods it 0600 once bound, and a chmod ignores the
+    # umask. connect(2) on a Unix socket needs WRITE, so a root-owned 0600
+    # socket refused the tests container with EACCES, reported by
+    # spiffe_protocol.js as a failed gRPC call rather than as a permission.
+    # Running as the tests container's uid is the arrangement that socket was
+    # written for — "this process's uid and nobody else" — rather than a way
+    # round it.
     #
-    # The command is SPELLED OUT here rather than left to the image, because
-    # setting `entrypoint:` in compose CLEARS the image's CMD (compose does
-    # this; plain docker does not). `node server.js` is sts/Dockerfile's own
-    # CMD and the two have to be kept in step — that image declares no
-    # ENTRYPOINT, so there is nothing else here that can drift.
+    # No `entrypoint:` any more, so the image's own CMD applies again.
     # ---------------------------------------------------------------------
-    entrypoint: ["/bin/sh", "-c", "umask 0000; exec node server.js"]
+    user: "10001:10001"
+    sysctls:
+      net.ipv4.ip_unprivileged_port_start: 0
     # The mock OID4VCI Credential Issuer this service also hosts advertises
     # ITSELF as its authorization server, so an issuer-initiated offer can be
     # walked end to end without a second identity provider. Set
@@ -312,13 +355,34 @@ services:
       # something that is not the problem. This one is well inside it and is
       # the directory the volume below is mounted at on both sides.
       - STS_SPIFFE_SERVER_SOCKET=/spire-sock/server.sock
+      # No passwd entry exists for uid 10001 in that image, so Docker would
+      # leave HOME at `/`, which this uid cannot write.
+      - HOME=/tmp
+      # ---------------------------------------------------------------------
+      # WHICH BROWSER ORIGINS MAY READ WHAT THIS SERVICE ANSWERS.
+      #
+      # Until iya-sts 2f9825f (2026-09-13) every response carried
+      # `Access-Control-Allow-Origin: *`. It is an allowlist now: this
+      # service's own origins, whatever an application's `appCorsOrigin`
+      # lists, and `global.corsOrigins`. The debugger is none of the first
+      # two — its pages are served by the `client` container and call this
+      # one straight from the browser for discovery, JWKS, SSF, SCIM, the
+      # credential issuer and the verifier — so without this line every one
+      # of those fetches is a CORS refusal, which a page reports as a bare
+      # "Failed to fetch" and a Selenium job as an element that never
+      # appeared. Eighty-odd jobs failed that way on the first run.
+      #
+      # `https://client:3000` is the origin the tests container's browser
+      # loads; `https://localhost:3000` is the same page from the host.
+      # ---------------------------------------------------------------------
+      - STS_CORS_ORIGINS=https://client:3000,https://localhost:3000
       # ---------------------------------------------------------------------
       # THE MAIN PORT IS HTTPS, AND THE WHOLE SUITE TALKS TO IT THAT WAY.
       #
       # This replaced a SECOND mock instance (`sts-rfc9700`, deleted). RFC 9700
       # mode used to need one: `oauth2.rfc9700` derives `global.https` in that
       # service, so it binds 8081 as TLS, and one process could not serve the
-      # permissive pass and the compliant one. Since mock-sts marks that flag
+      # permissive pass and the compliant one. Since iya-sts marks that flag
       # `realmRuntime` it can be set on a TRUST REALM — a realm binds no socket,
       # so only the mode's checks change — and `/realm/rfc9700/...` is the
       # compliant server while `/...` stays permissive. See common/common.sh's
@@ -351,8 +415,10 @@ services:
       # leaf is issued from a Root CA that outlives it and its
       # subjectAltNames already carry this service's own tls.hostnames
       # defaults, so one trusted root covers all three processes. It reaches
-      # all four TLS sockets here — 8081, 8443, 9443 and LDAPS on 636 — since
-      # they share one pair.
+      # every TLS socket here — 8081, LDAPS on 636 and the embedded debugger's
+      # listener — since they share one pair. It was four until 2026-09-16,
+      # the other two being that service's own TLS listeners on 8443 and 9443,
+      # which were deleted.
       # ---------------------------------------------------------------------
       - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
       - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
@@ -367,6 +433,9 @@ services:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
       context: ./sts
+      # Its FROMs are ubuntu:latest and node:24.16.0-bookworm-slim; the
+      # contexts send both to the mirror without touching the submodule.
+      additional_contexts: *mirror-contexts
     # https, and `rejectUnauthorized:false` — the certificate is self-signed and
     # regenerated every start, so nothing in this container can have an anchor
     # for it. Liveness is this check's question, not trust.
@@ -411,7 +480,7 @@ services:
   # publishes in its metadata is built from it.
   waltid-issuer-api:
     container_name: waltid-issuer-api
-    image: waltid/issuer-api2:0.23.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/waltid/issuer-api2:0.23.0
     # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
     # its own. It needs none: its configuration is bind-mounted READ-ONLY,
     # persistence.conf puts sessions in memory, and its signing key comes
@@ -437,7 +506,7 @@ services:
   # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
   waltid-issuer:
     container_name: waltid-issuer
-    image: node:24-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -475,7 +544,7 @@ services:
   # private key is committed.
   waltid-verifier-api:
     container_name: waltid-verifier-api
-    image: waltid/verifier-api2:0.23.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/waltid/verifier-api2:0.23.0
     # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
     # its own. It needs none: its configuration is bind-mounted READ-ONLY,
     # persistence.conf puts sessions in memory, and its signing key comes
@@ -498,7 +567,7 @@ services:
   # urlPrefix names, so every URL it hands the wallet is one the browser can use.
   waltid-verifier:
     container_name: waltid-verifier
-    image: node:24-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -533,10 +602,11 @@ services:
   # container) and the api /samlmetadata proxy at keycloak-wsfed:8080/auth.
   keycloak-wsfed:
     container_name: keycloak-wsfed
-    image: rcbj/keycloak-wsfed
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/keycloak-wsfed:${IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: keycloak-wsfed/Dockerfile
+      additional_contexts: *mirror-contexts
     hostname: keycloak-wsfed
     environment:
       KEYCLOAK_USER: keycloak
@@ -554,7 +624,7 @@ services:
       - "8082:8080"
   tests:
     container_name: tests
-    image: rcbj/test
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/test:${IMAGE_TAG:-latest}
     # Point the WS-Federation provisioning + test at the side-car by its compose
     # DNS name (the entrypoint defaults these empty so live-site runs skip WS-Fed).
     environment:
@@ -637,6 +707,17 @@ services:
     build:
       context: .
       dockerfile: tests/Dockerfile
+      # The mock's own built image, as a named build context. The tests image
+      # takes the in-process Kerberos jobs' copy of the mock out of the sts/
+      # checkout file by file, and since the mock went TypeScript (iya-sts
+      # #50) one module those jobs load at require time exists only compiled
+      # — common/enrollment_profiles, required at the top of realms.js. So it
+      # is copied out of this image, which is built from the same gitlink and
+      # which `service:` makes compose build before this one. See the block
+      # that uses it in tests/Dockerfile.
+      additional_contexts:
+        <<: *mirror-contexts
+        mocksts: service:sts
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report
@@ -677,7 +758,17 @@ services:
 volumes:
   # The mock STS's SPIRE Server API Unix socket, shared with the tests
   # container. See both services above.
+  #
+  # A tmpfs OWNED BY 10001 rather than a plain named volume, because Docker
+  # creates a plain one root:root 0755 and the mock, running as 10001, could
+  # not bind a socket in it. 0700 is what the mock itself would make the
+  # directory, so it has nothing to warn about.
   spire-server-socket:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=10001,gid=10001,mode=0700"
   postgres_data:
 
 networks:

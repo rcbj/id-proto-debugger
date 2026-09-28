@@ -106,7 +106,7 @@ incident from the wrong end.
 
 ## The subject: why RISC's is plain and CAEP's is not
 
-**This is the line of JSON that separates the two profiles.** SSF section 4's
+**This is the line of JSON that separates the two profiles.** SSF section 3.3's
 *complex subject* exists because a CAEP event is about one SESSION of one
 person and a subject identifier names the person — so `{user, session, device}`
 is how *that person, on that device, in that session* is expressible at all.
@@ -120,7 +120,7 @@ because eleven of the fourteen carry no payload:
 
 | format | what it buys |
 |---|---|
-| `issuer_subject_id` | the identifier a receiver ALREADY holds — it is what an ID Token's `iss` and `sub` said. The default |
+| `iss_sub` | the identifier a receiver ALREADY holds — it is what an ID Token's `iss` and `sub` said. The default |
 | `email` | what a receiver keying on an address expects — and `identifier-recycled` exists precisely because that key is unsafe |
 | `phone_number` | RFC 9493's spelling. The RISC text says "phone", which is the OLDER RISC subject-type name and not what SSF 1.0 uses |
 | `opaque`, `account` | offered, and rarely what a receiver holds |

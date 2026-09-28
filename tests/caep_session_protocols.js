@@ -211,7 +211,7 @@ function basic(user) {
 // THE SIGN-IN, PER PROTOCOL — and the shape is the same for all five because
 // the mock funnels all five through `authn.js`: whatever the protocol, an
 // unauthenticated arrival is a 303 to `/authn/login?authn=<id>`, a POST of
-// that id sets `sts_mock_session`, and the return trip completes the flow.
+// that id sets `sts_session`, and the return trip completes the flow.
 //
 // That sameness IS the point being tested. It is what makes
 // `session-established` protocol-independent at the mock, and the reason
@@ -302,6 +302,31 @@ function signOutUrlFor() {
   return url;
 }
 
+// Through the door signOutUrlFor() names — and through RP-Initiated Logout's
+// CONFIRMATION when that door is /oauth2/logout (iya-sts #124): a GET that
+// carries no id_token_hint for this session is answered with a "Sign out?"
+// page, and nothing ends until its form is POSTed back with `confirm=yes` and
+// the `confirm_for` value only a request carrying this session's cookie was
+// shown. That is the OP confirming the End-User's intent, which section 2 of
+// RP-Initiated Logout 1.0 leaves to it, and it is why oidc, saml11 and spnego
+// stopped emitting session-revoked on a bare GET.
+async function signOut(cookie) {
+  log.debug("Entering signOut(). " + protocol);
+  const url = signOutUrlFor();
+  const asked = await call('GET', url, null, { Cookie: cookie });
+  const found = /name="confirm_for" value="([^"]*)"/.exec(asked.text || '');
+  if (!found || url.indexOf('/oauth2/logout') < 0) {
+    log.debug("Leaving signOut(). No confirmation asked: " + asked.status);
+    return asked;
+  }
+  const out = await call('POST', url,
+      'confirm=yes&confirm_for=' + encodeURIComponent(found[1]),
+      { Cookie: cookie,
+        'Content-Type': 'application/x-www-form-urlencoded' });
+  log.debug("Leaving signOut(). Confirmed: " + out.status);
+  return out;
+}
+
 function cookieOf(answer) {
   log.debug("Entering cookieOf().");
   const raw = answer.headers.getSetCookie
@@ -309,9 +334,10 @@ function cookieOf(answer) {
     : [answer.headers.get('set-cookie') || ''];
   let value = '';
   raw.forEach(function (one) {
-    const found = /sts_mock_session=([^;]+)/.exec(one || '');
+    // `sts_session` since iya-sts 27b81c5; it was `sts_mock_session`.
+    const found = /sts_session=([^;]+)/.exec(one || '');
     if (found) {
-      value = 'sts_mock_session=' + found[1];
+      value = 'sts_session=' + found[1];
     }
   });
   log.debug("Leaving cookieOf(). " + (value ? 'got one' : 'none'));
@@ -358,9 +384,11 @@ async function signIn(who) {
 // ---------------------------------------------------------------------------
 async function agreeStream(who, delivery) {
   log.debug("Entering agreeStream(). " + delivery.method);
+  // No `aud`: SSF 1.0 section 8.1.1 makes it Transmitter-Supplied, and the
+  // mock addresses the stream to whoever `who` authenticated as. Naming one
+  // it does not associate with that receiver is a 400 since iya-sts #144.
   const made = await call('POST', stsUrl + '/ssf/stream', {
     delivery: delivery,
-    aud: 'https://caep-protocols.example/receiver',
     events_requested: SHORTS.map(function (short) {
       return P + short;
     })
@@ -459,6 +487,16 @@ function typeOf(token) {
   return { short: uri.indexOf(P) === 0 ? uri.slice(P.length) : '',
     uri: uri, claims: parsed.claims,
     payload: (parsed.claims.events || {})[uri] || null };
+}
+
+// Does a SET read by typeOf() name this session in its complex subject?
+function namesSession(read, sessionId) {
+  log.debug("Entering namesSession().");
+  const sub = read && read.claims ? read.claims.sub_id : null;
+  const out = !!(sub && sub.session &&
+      String(sub.session.id || '') === String(sessionId || ''));
+  log.debug("Leaving namesSession(). " + out);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -645,7 +683,14 @@ async function run() {
   // notePresented(), so for three of these five protocols this produced
   // NOTHING — silently, with a count of zero that reads exactly like a stream
   // nobody subscribed.
-  await call('GET', session.start, null, { Cookie: session.cookie });
+  //
+  // A FRESH START URL rather than `session.start` again: for SAML 2.0 that
+  // carries the AuthnRequest the sign-in already answered, and since the
+  // 2026-09 bump the mock refuses a replayed one ("That AuthnRequest has
+  // already been answered", a 400) before the session is looked at — so the
+  // re-presentation emitted nothing and read as a missing session-presented.
+  // The other four build the same URL either way.
+  await call('GET', startUrlFor(who), null, { Cookie: session.cookie });
 
   // Which session the register filed it under, so the five by-hand events can
   // name it. Read off the mock rather than guessed: the identifier is random.
@@ -680,7 +725,7 @@ async function run() {
   }
 
   // --- and the sign-out, LAST, for the reason the header gives ----------
-  await call('GET', signOutUrlFor(), null, { Cookie: session.cookie });
+  await signOut(session.cookie);
 
   // --- what arrived, by both deliveries ---------------------------------
   const polled = await pollSets(pollStream, who);
@@ -689,10 +734,21 @@ async function run() {
   const model = caep.newSession({ iss: stsUrl, sub: row.sub,
     sid: row.sessionId });
 
+  // THE STREAM COVERS EVERYBODY (an empty subject list), so it also carries
+  // what every other job signing in to this mock at the same moment caused —
+  // and with the suite in a pool, somebody always is. The event about THIS
+  // session wins over one about somebody else's; without that, the last
+  // session-established on the stream decided which session the checks
+  // below read, and a neighbour's sign-in failed this job.
   [['poll', polled], ['push', pushed]].forEach(function (pair) {
     pair[1].forEach(function (token) {
       const read = typeOf(token);
-      if (read.short) {
+      if (!read.short) {
+        return;
+      }
+      const held = seen[pair[0]][read.short];
+      if (!held || !namesSession(held, row.sessionId) ||
+          namesSession(read, row.sessionId)) {
         seen[pair[0]][read.short] = read;
       }
     });

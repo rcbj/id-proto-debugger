@@ -644,6 +644,18 @@ runReport()
 
 init "$@"
 check_return_code $?
+# The banner (on a pass) and this script's exit status, as the last lines of
+# every exit from here on — see launcherExitStatus() in common/common.sh,
+# which init just sourced. Nothing is torn down: this launcher leaves the local
+# identity-provider stack up. `$?` is captured first and handed back to `exit`.
+onExit()
+{
+  local status=$?
+  echo "Entering onExit()."
+  launcherExitStatus "${status}" "remote-run-tests.sh"
+  exit "${status}"
+}
+trap onExit EXIT
 prepTestEnv
 check_return_code $?
 # Before configureKeycloak, because what it finds decides SAML_ACS_URL/SAML_SLO_URL
@@ -668,13 +680,7 @@ check_return_code $?
 node --version
 check_return_code $?
 
-cat <<'EOF'
-   _   _ _   _            _                                  _
-  / \ | | | | |_ ___  ___| |_ ___   _ __   __ _ ___ ___  ___| |
- / _ \| | | | __/ _ \/ __| __/ __| | '_ \ / _` / __/ __|/ _ \ |
-/ ___ \ | | | ||  __/\__ \ |_\__ \ | |_) | (_| \__ \__ \  __/_|
-/_/   \_\_|_|  \__\___||___/\__|___/ | .__/ \__,_|___/___/\___(_)
-                                     |_|
-EOF
+# Printed by the EXIT trap, as the last thing on the screen.
+SUITE_PASSED=1
 
 exit 0

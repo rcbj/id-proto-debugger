@@ -63,7 +63,7 @@ const metadataClient = paths.requireSharedModule(
   "the wallet's metadata/JWS module");
 const stsSuite = paths.requireSharedModule(
   // The tests image's flattened copy first, then wherever the submodule keeps
-  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: mock-sts 0f986b3
+  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
   // ("Reorganizing source code.") moved every module into a subdirectory, and
   // this one is in common/vendored/. mockStsModule() is the single place that
   // answers that question — see tests/module_paths.js.
@@ -159,6 +159,13 @@ async function metadataAdvertisesTheDid() {
       const copy = JSON.parse(JSON.stringify(entry));
       delete copy.scope;
       delete copy.display;
+      // OpenID4VCI 1.0's final text (section 12.2.4) moved `display` into
+      // `credential_metadata`, where the drafts had it at the top of the
+      // configuration; the display name differs there instead, so it is
+      // stripped in both places and a configuration of either shape compares.
+      if (copy.credential_metadata) {
+        delete copy.credential_metadata.display;
+      }
       delete copy.issuer_identifier;
       log.debug("Leaving strip().");
       return copy;
@@ -272,7 +279,8 @@ async function theDidResolvesAndTheOriginProvesIt(meta) {
 async function sdJwtVcNamesTheDidAndVerifies(meta) {
   log.debug("Entering sdJwtVcNamesTheDidAndVerifies().");
   log.info("=== dc+sd-jwt issued by a DID-named issuer ===");
-  const held = await common.mintJwtVcJson(issuerBase, "IdentityCredentialDid");
+  const held = await common.mintJwtVcJson(issuerBase, "IdentityCredentialDid",
+                                          ACCESS_TOKEN);
   const issuerJwt = String(held.credential).split("~")[0];
   const payload = common.jsonFromB64u(issuerJwt.split(".")[1]);
 
@@ -314,7 +322,8 @@ async function sdJwtVcNamesTheDidAndVerifies(meta) {
 
   // The non-regression: the plain configuration must still be resolvable the
   // way the specification says, by inserting the well-known path into its iss.
-  const plain = await common.mintJwtVcJson(issuerBase, "IdentityCredential");
+  const plain = await common.mintJwtVcJson(issuerBase, "IdentityCredential",
+                                           ACCESS_TOKEN);
   const plainPayload =
       common.jsonFromB64u(String(plain.credential).split("~")[0].split(".")[1]);
   assert.strictEqual(plainPayload.iss, meta.credential_issuer,
@@ -351,7 +360,7 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
   log.debug("Entering ldpVcNamesTheDidAndVerifies().");
   log.info("=== ldp_vc issued by a DID-named issuer ===");
   const held = await common.mintJwtVcJson(issuerBase,
-      "IdentityCredentialLdpVcDid");
+      "IdentityCredentialLdpVcDid", ACCESS_TOKEN);
   const credential = held.credential;
   assert.strictEqual(typeof credential, "object",
                      "an ldp_vc credential is a JSON object.");
@@ -400,7 +409,7 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
   // Non-regression: the plain ldp_vc configuration keeps the dereferenceable
   // https verificationMethod that tests/ldp_vc_issuance.js fetches directly.
   const plain = await common.mintJwtVcJson(issuerBase,
-      "IdentityCredentialLdpVc");
+      "IdentityCredentialLdpVc", ACCESS_TOKEN);
   assert.strictEqual(plain.credential.issuer, meta.credential_issuer,
     "the plain ldp_vc configuration must still name the https issuer.");
   assert.ok(!did.isDid(plain.credential.proof.verificationMethod),
@@ -427,9 +436,15 @@ async function ldpVcNamesTheDidAndVerifies(meta) {
   log.debug("Leaving ldpVcNamesTheDidAndVerifies().");
 }
 
+// AN ACCESS TOKEN THIS REALM ISSUED (2026-09-18): every credential below was
+// requested with a made-up bearer string, which a product-mode issuer refuses.
+// The holder signs in once and each request presents that token.
+let ACCESS_TOKEN = "";
+
 async function test() {
   log.debug("Entering test().");
   log.info("Running the DID-named issuer checks against " + issuerBase);
+  ACCESS_TOKEN = await common.holderAccessToken(issuerBase, "vc-did-holder");
   const meta = await metadataAdvertisesTheDid();
   await theDidResolvesAndTheOriginProvesIt(meta);
   await sdJwtVcNamesTheDidAndVerifies(meta);

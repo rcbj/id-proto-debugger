@@ -66,7 +66,7 @@ const client = shared("krb5_client.js");
 const kpac = shared("krb5_pac.js");
 
 // The mock KDC and service live in the sts/ SUBMODULE. Between a change being
-// written in a sibling mock-sts checkout and this repository's gitlink moving,
+// written in a sibling iya-sts checkout and this repository's gitlink moving,
 // the submodule genuinely does not have the file — so the sibling is accepted
 // and announced loudly, because a green run against an unpushed working copy
 // corresponds to no commit. Both the resolution order and the two loud warnings

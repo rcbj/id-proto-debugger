@@ -94,7 +94,7 @@ var waitTime = appconfig.waitTime;
 // not late, the server was not answering anybody. The floor was raised to
 // 30000 against that measurement and said so as INTERIM.
 //
-// THE CAUSE IS FIXED (rcbj/mock-sts#6, 2026-08-30: the signing runs in a pool
+// THE CAUSE IS FIXED (rcbj/iya-sts#6, 2026-08-30: the signing runs in a pool
 // of stateless child processes and the front process's event loop stays free),
 // so it is back at 20000 — and going back is the point rather than tidiness. A
 // floor of 30000 would sit ABOVE the stall it was raised for, which means the
@@ -1271,6 +1271,29 @@ async function stepFour(driver, context) {
     "reusing the holder key means the binding must be reported as unchanged.");
   assert.strictEqual(row("vct").changed, "no",
                      "a refresh returns the same kind of credential.");
+  // ---- THE STATUS ENTRY, which is per-issuance and must be SHOWN as such --
+  //
+  // The mock STS grew status lists per realm with the 2026-09-17 submodule
+  // bump (iya-sts #38), so every issuance now takes its own slot on the
+  // issuer's list — which is the mechanism by which one credential is
+  // revoked without touching another, and therefore something a refresh
+  // changes every single time.
+  //
+  // It belongs in THIS table, beside iat and the signature, and not among the
+  // claim differences below: a new slot is not the issuer rewriting the
+  // End-User's data. Reported there it took this job red for the right
+  // observation and the wrong conclusion — "1 claim value(s) changed", which
+  // is section 14.5's other case and the one a holder should actually worry
+  // about.
+  var status = row("Status entry");
+  assert.ok(status,
+    "the comparison table has no Status entry row. Each issuance takes its " +
+        "own slot on the issuer's status list, so a refresh changes it and " +
+        "a holder cannot see that anywhere else on this page.");
+  assert.strictEqual(status.changed, "yes",
+    "the two credentials carry the same status entry (" + status.before +
+        "). Two issuances sharing one slot cannot be revoked independently, " +
+        "which is the whole point of the list.");
 
   var oldPayload = jsonFromB64u(before.credential.split("~")[0].split(".")[1]);
   var newPayload = jsonFromB64u(refreshed.split("~")[0].split(".")[1]);
@@ -1314,7 +1337,9 @@ async function stepFour(driver, context) {
         verdict);
   assert.ok(/only the signature/.test(verdict),
     "with identical claim values it is the \"only the signature\" case. Got: " +
-        verdict);
+        verdict + ". A status entry that moved is NOT a changed " +
+        "claim: it is per-issuance machinery, reported in the comparison " +
+        "table above. See claimDifferences() in client/src/vc_issuance_4.js.");
   var claimDiff = await text(driver, "vc_compare_claims");
   assert.ok(/Not one disclosed claim VALUE differs/.test(claimDiff),
     "and the claim comparison should say the values are unchanged rather " +
@@ -3863,8 +3888,14 @@ async function credentialOfferSameDevice(driver) {
             payload.sub).length > 0,
     "the credential should describe a subject. Got: " + payload.sub);
   if (mockIsTheAs) {
-    assert.ok(String(payload.sub).indexOf(signInUser) !== -1,
-      "it should describe the user who signed in. Got: " + payload.sub);
+    // The subject is the person's directory entry, `urn:uuid:<entryUUID>`,
+    // since iya-sts 64580f4 (2026-09-14) — it no longer spells the name, so
+    // the person who signed in is looked up rather than searched for.
+    var signedIn = await directorySubjectOf(signInUser);
+    assert.strictEqual(String(payload.sub), signedIn,
+      "it should describe the user who signed in (" + signInUser + ", " +
+          "whose directory subject is " + signedIn + "). Got: " +
+          payload.sub);
   }
   var failed = (await readStepThreeChecks(driver, "the H.1 credential"))
     .filter(function (c) { return c.result === "FAILED"; })
@@ -3933,6 +3964,53 @@ async function credentialOfferSameDevice(driver) {
 // so this section checks that the wallet refuses to send without it, that the
 // issuer refuses a wrong one, and that the code is single use.
 // ---------------------------------------------------------------------------
+// WHO A CROSS-DEVICE OFFER IS FOR, AND THE SUBJECT THAT PERSON HAS. H.2's
+// End-User was identified out of band, so the mock makes the offer to the
+// person `oid4vci.offerUsername` names. Until iya-sts 64580f4 (2026-09-14) the
+// subject was `urn:sts-mock:user:<name>` and a prefix check was enough; it is
+// `urn:uuid:<entryUUID>` now, the person's directory entry, so the only way to
+// know which one to expect is to ask — the setting for the name, then the
+// person's drill-down for the subject. Both through the management API, which
+// `tools/attach-admin-token.js` supplies the credential for.
+async function offeredEndUser() {
+  log.debug("Entering offeredEndUser().");
+  var config = await httpJson(issuerBase + "/admin-api/config",
+      { headers: { Accept: "application/json" } });
+  var username = "";
+  ((config.body || {}).groups || []).forEach(function (group) {
+    (group.settings || []).forEach(function (setting) {
+      if (setting.key === "oid4vci.offerUsername") {
+        username = String(setting.value || "");
+      }
+    });
+  });
+  assert.ok(username,
+    "the issuer's configuration names nobody as oid4vci.offerUsername, so " +
+        "there is no End-User a cross-device offer could be for. GET " +
+        "/admin-api/config answered " + config.status + ": " +
+        config.raw.slice(0, 200));
+  var subject = await directorySubjectOf(username);
+  log.debug("Leaving offeredEndUser(). " + username + " is " + subject);
+  return { username: username, subject: subject };
+}
+
+// The subject the issuer's directory gives a person, from that person's
+// drill-down in the management API. Shared by H.1 (the person who signed in)
+// and H.2 (the person a cross-device offer is made to).
+async function directorySubjectOf(username) {
+  log.debug("Entering directorySubjectOf(). " + username);
+  var person = await httpJson(issuerBase + "/admin-api/users?user=" +
+      encodeURIComponent(username),
+      { headers: { Accept: "application/json" } });
+  var subject = String((person.body || {}).subject || "");
+  assert.ok(/^urn:uuid:[0-9a-f-]{36}$/.test(subject),
+    "the issuer's directory holds no urn:uuid subject for " + username +
+        ". GET /admin-api/users answered " + person.status + ": " +
+        person.raw.slice(0, 300));
+  log.debug("Leaving directorySubjectOf(). " + subject);
+  return subject;
+}
+
 async function crossDeviceOffer(driver) {
   log.debug("Entering crossDeviceOffer().");
   log.info("=== H.2: Credential Offer - Cross-Device ===");
@@ -4116,9 +4194,11 @@ async function crossDeviceOffer(driver) {
       "code for an access token.");
   var accessToken = await value(driver, "vc_access_token");
   var claims = jsonFromB64u(accessToken.split(".")[1]);
-  assert.ok(String(claims.sub || "").indexOf("urn:sts-mock:user:") === 0,
+  var endUser = await offeredEndUser();
+  assert.strictEqual(claims.sub, endUser.subject,
     "the access token should describe the End-User the issuer already knew " +
-        "about. Got: " + claims.sub);
+        "about — " + endUser.username + ", whose directory subject is " +
+        endUser.subject + ". Got: " + claims.sub);
   log.info("[H.2] OK — the pre-authorized code was redeemed for an access " +
            "token describing " + claims.sub + ".");
 
@@ -4492,7 +4572,7 @@ async function claimsSelection(driver) {
   var meta = (await httpJson(issuerMetadataUrl)).body;
   var configs = meta.credential_configurations_supported || {};
   var config = configs[VCI_CONFIG_ID] || {};
-  var advertised = config.claims || [];
+  var advertised = claimsOfConfiguration(config);
   assert.ok(advertised.length >= 3,
     "this section needs an issuer that advertises several claims for " +
     VCI_CONFIG_ID + "; its metadata lists " + advertised.length + ".");
@@ -4800,6 +4880,10 @@ async function authorizationDetailsIsTheDefault(driver) {
     "var configs = doc.credential_configurations_supported;" +
     "Object.keys(configs).forEach(function (k) {" +
     "  delete configs[k].claims;" +
+    // OpenID4VCI 1.0 final keeps them in credential_metadata (12.2.4).
+    "  if (configs[k].credential_metadata) {" +
+    "    delete configs[k].credential_metadata.claims;" +
+    "  }" +
     "});" +
     "window.localStorage.setItem('vci_info', JSON.stringify(doc));");
   await driver.navigate().refresh();
@@ -5163,12 +5247,24 @@ async function preAuthorizedClaimsThroughThePages(driver) {
 // credential that comes back — and the issuer's refusals go through the same
 // parser the authorization endpoint uses, so exercising them here covers both.
 // ---------------------------------------------------------------------------
+// A credential configuration's claims descriptions, wherever the issuer
+// put them: inside credential_metadata (OpenID4VCI 1.0 final, section
+// 12.2.4) or at the top of the configuration (the drafts).
+function claimsOfConfiguration(config) {
+  log.debug("Entering claimsOfConfiguration().");
+  var metadata = (config && config.credential_metadata) || {};
+  var claims = metadata.claims !== undefined ? metadata.claims :
+    (config && config.claims);
+  log.debug("Leaving claimsOfConfiguration().");
+  return claims || [];
+}
+
 async function preAuthorizedClaimsRequest() {
   log.debug("Entering preAuthorizedClaimsRequest().");
   log.info("=== claims on the pre-authorized code flow ===");
   var meta = (await httpJson(issuerMetadataUrl)).body;
-  var advertised = ((meta.credential_configurations_supported ||
-      {})[VCI_CONFIG_ID] || {}).claims || [];
+  var advertised = claimsOfConfiguration(
+      (meta.credential_configurations_supported || {})[VCI_CONFIG_ID] || {});
   var top = advertised.filter(function (c) { return c.path.length === 1; });
   assert.ok(top.length >= 2,
     "this section asks for one of several top-level claims; the issuer " +
@@ -5604,9 +5700,16 @@ async function batchAndEncryptedIssuance(driver) {
       "this issuer should advertise a batch_size worth exercising. Got: " +
       batchSize);
   var encryption = meta.credential_response_encryption || {};
-  assert.deepStrictEqual(encryption.alg_values_supported, ["RSA-OAEP-256"],
-    "it should advertise only the algorithm it performs. Got: " +
-        JSON.stringify(encryption));
+  // RSA-OAEP-256 is what this wallet asks for. Since iya-sts #187 the mock
+  // also encrypts to an EC key with ECDH-ES, so the list is no longer that
+  // one entry — but nothing beyond the two it performs may appear on it.
+  var algs = encryption.alg_values_supported || [];
+  assert.ok(algs.indexOf("RSA-OAEP-256") !== -1 &&
+            algs.every(function (a) {
+              return a === "RSA-OAEP-256" || a === "ECDH-ES";
+            }),
+    "it should advertise RSA-OAEP-256, and only algorithms it performs. " +
+        "Got: " + JSON.stringify(encryption));
 
   await stepOneConfigured(driver, "scope");
   await click(driver, By.id("start_issuance_button"));
@@ -5878,8 +5981,12 @@ async function issuerNegatives() {
       headers: headers, body: body });
   assert.strictEqual(replay.status, 400,
                      "replaying a c_nonce must be refused.");
-  assert.strictEqual(replay.body.error, "invalid_proof",
-                     "a replayed nonce should be an invalid_proof.");
+  // OpenID4VCI 1.0 section 8.3.1.2: a proof quoting a c_nonce the issuer no
+  // longer holds is invalid_nonce, which tells the wallet to fetch a new one
+  // from the Nonce Endpoint; invalid_proof is for a missing or bad proof.
+  assert.strictEqual(replay.body.error, "invalid_nonce",
+                     "a replayed nonce should be an invalid_nonce " +
+                     "(OpenID4VCI 1.0 section 8.3.1.2).");
 
   // A proof whose signature does not match the key in its own header.
   var nonce2 = (await httpJson(meta.nonce_endpoint,

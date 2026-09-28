@@ -226,11 +226,11 @@ function theBytesSignedAreTheCanonicalizedSignedInfo() {
            "byte");
   const alg = "ML-DSA-65";
   const kp = pqc.generateAkpKeyPair(alg);
-  // Capture what the engine hands the signer, then sign it a SECOND time
-  // directly through pqc.js and require the two signatures to be identical.
-  // ML-DSA signing is deterministic, so equality here is exact — and it is
-  // what proves no re-encoding happened between the canonicalizer and the
-  // lattice.
+  // Capture what the engine hands the signer, then require the signature to
+  // verify over exactly those octets — which is what proves no re-encoding
+  // happened between the canonicalizer and the lattice. It compared the
+  // BYTES of a second signature until pqc.js began signing hedged (FIPS 204
+  // section 3.4, iya-sts #203): two hedged signatures of one message differ.
   let captured = null;
   const signed = xd.signXml(XML, {
     mode: "enveloped", sigAlg: uriFor(alg), refUri: "#_pq1", keyInfo: "none",
@@ -244,20 +244,23 @@ function theBytesSignedAreTheCanonicalizedSignedInfo() {
         "own text never reaches it, only a digest of it",
         !/[^\x00-\x7f]/.test(captured || ""),
         (captured || "").length + " characters");
-  const direct = pqc.signWithPriv(alg, bridge.binaryStringToBytes(captured),
-                                  kp.priv);
   const fromXml = Buffer.from(signed.signatureValue, "base64");
   check("the SignatureValue is exactly the signature over those octets",
-        Buffer.compare(fromXml, Buffer.from(direct)) === 0,
+        pqc.verifyWithPub(alg, fromXml,
+                          bridge.binaryStringToBytes(captured), kp.pub),
         fromXml.length + " bytes");
   // The demonstration, on octets that DO carry a high byte — which a
   // SignedInfo does not, and which is exactly why the assertion above needs
   // this one beside it to mean anything.
   const highBytes = "SignedInfo\u00e9\u00fc";
+  // Deterministic on purpose, and by asking: a hedged pair would differ
+  // whatever the conversion did, and prove nothing.
   const viaBridge = pqc.signWithPriv(alg,
-      bridge.binaryStringToBytes(highBytes), kp.priv);
+      bridge.binaryStringToBytes(highBytes), kp.priv,
+      { deterministic: true });
   const viaTextEncoder = pqc.signWithPriv(alg,
-      new TextEncoder().encode(highBytes), kp.priv);
+      new TextEncoder().encode(highBytes), kp.priv,
+      { deterministic: true });
   check("on octets with a high byte the two conversions DIVERGE, which is " +
         "the fault the one shared conversion exists to prevent",
         Buffer.compare(Buffer.from(viaBridge),

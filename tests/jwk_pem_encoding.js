@@ -964,7 +964,7 @@ function testsImageHasNoCollidingFilenames() {
 // will be silenced.
 //
 // **AND IT FOLLOWS `../` AS WELL AS `./`, WHICH IT DID NOT USED TO NEED TO.**
-// Every module in that repository sat in its root until mock-sts 0f986b3
+// Every module in that repository sat in its root until iya-sts 0f986b3
 // ("Reorganizing source code."), so every intra-mock require was `./x` and a
 // walker that only understood `./` saw the whole graph. After the move, the
 // cross-directory ones are `../common/app` — and a `./`-only walker would have
@@ -1058,9 +1058,96 @@ function stsRequiresIn(file, source) {
 // two things are true — the require is lazy by the parse above, and nothing
 // here calls the path that reaches it — and write down which jobs were run to
 // show the second. Everything else belongs in a COPY line.
+//
+// TWO MORE ON THE 2026-09-15 BUMP (iya-sts 040d3cf), both for the reason the
+// first one is here:
+//
+//   * `request_pool.js` -> `tls/tls_server.js`, in `runListenerPass()`, which
+//     runs only once a worker has published a listener. It requires
+//     `authn/authn.js` at load, which is the whole sign-in stack. Same
+//     function family as the LDAP entry, and the mock's comment above it
+//     gives the same rule.
+//   * `tls_client_certificates.js` -> `common/cert_enrollment.js`, in
+//     `stillHeld()`, reached only once a mutual-TLS client certificate has
+//     been ACCEPTED as an application's identity — and inside a try/catch
+//     that reads a failure as "not enrolled". It requires the admin RBAC,
+//     the credential store and the web-security layer. No in-process job
+//     here presents a client certificate.
+//
+// Shown by running the six in-process jobs (the four mock-KDC ones,
+// webauthn_cross_impl.js and sts_jws_verification.js) in the tests image
+// with both modules absent.
 // ---------------------------------------------------------------------------
 const LAZY_STS_REQUIRES = {
-  "common/request_pool.js": { "ldap/ldap_server.js": true },
+  "common/request_pool.js": {
+    "ldap/ldap_server.js": true,
+    "tls/tls_server.js": true,
+    // TypeScript-only since the 2026-09-27 bump, in the listener pass beside
+    // tls_server.js above and for the same reason.
+    "tls/client_hello.js": true,
+  },
+  // TYPESCRIPT-ONLY, so this one is not a judgement call the way the two
+  // above are: `common/account_state.ts` has no .js beside it in a CHECKOUT
+  // (the mock compiles inside its own image build, issue #50), so a COPY
+  // naming it would stop the tests image with "not found" and there is
+  // nothing else to write instead. It is also genuinely out of reach here:
+  // issuance_gate.js requires it inside disabledSubject(), which is asked
+  // only of a running service deciding whether to issue somebody a session,
+  // and the six in-process jobs start none. All six pass with it absent.
+  //
+  // If a job here ever DOES reach it, the failure is `Cannot find module
+  // './account_state'` from inside issuance_gate.js at run time, and the fix
+  // is not a COPY line: it is compiling the mock's TypeScript into this
+  // image, which is the mock's own `build-typescript.sh`.
+  "common/issuance_gate.js": {
+    "common/account_state.js": true,
+    // The same function family, both TypeScript-only since the 2026-09-27
+    // bump: what a risk decision and a recognised device say about a session
+    // the running service is about to issue.
+    "risk/risk_engine.js": true,
+    "common/device_recognition.js": true,
+  },
+  // THE 2026-09-27 BUMP (iya-sts 6d18941c) AND THE TYPESCRIPT CONVERSION.
+  // Every entry below is a module that exists only as .ts in a checkout, is
+  // required INSIDE A FUNCTION by the parse above, and sits down a path that
+  // only a RUNNING service takes: a clustered scheduler's tick, a signal to
+  // other instances about an account, an outbound fetch, a client-attestation
+  // or scope-policy decision at a token endpoint, a ClientHello inspected on
+  // a listener, a risk store opened by the persistence layer's full start.
+  // None of the six in-process jobs starts any of that.
+  //
+  // Shown the way the entries above were: all six (the four mock-KDC jobs,
+  // webauthn_cross_impl.js and sts_jws_verification.js) were run against a
+  // tree holding EXACTLY what this image copies — the checkout's .js, plus
+  // the one compiled module taken from the mock's image — and all six pass.
+  // The one TypeScript-only module that is required at LOAD time,
+  // common/enrollment_profiles (by realms.js), is not here: it is copied out
+  // of the mock's own image instead, see tests/Dockerfile.
+  "common/admin_stats.js": {
+    "cluster/scheduler.js": true,
+    "ssf/account_signals.js": true,
+  },
+  "common/applications.js": {
+    "federation/federation_http.js": true,
+    "common/scope_policy.js": true,
+    "ssf/account_signals.js": true,
+  },
+  "oauth-oidc/client_auth.js": { "oauth-oidc/client_attestation.js": true },
+  "oauth-oidc/client_jwks.js": { "federation/federation_http.js": true },
+  "persistence/persistence.js": { "risk/risk_store.js": true },
+  "persistence/persistence_replication.js": { "cluster/scheduler.js": true },
+  "persistence/persistence_minted.js": { "cluster/scheduler.js": true },
+  "common/pki_revocation.js": { "cluster/scheduler.js": true },
+  "common/used_assertions.js": { "cluster/scheduler.js": true },
+  "common/revocation_status.js": { "common/outbound_tls.js": true },
+  "common/person_assertions.js": { "ssf/account_signals.js": true },
+  "common/tls_client_certificates.js": {
+    "common/cert_enrollment.js": true,
+    "ssf/account_signals.js": true,
+  },
+  "cluster/cluster.js": { "cluster/scheduler.js": true },
+  "cluster/cluster_claims.js": { "cluster/scheduler.js": true },
+  "cluster/cluster_counters.js": { "cluster/scheduler.js": true },
 };
 
 function stsModuleClosureIsCopied(dockerfile) {
@@ -1083,11 +1170,24 @@ function stsModuleClosureIsCopied(dockerfile) {
   // does not have. Docker requires the instruction at the start of a line and
   // no COPY here uses a backslash continuation, so this is also the correct
   // reading of the file.
+  //
+  // TWO SOURCES COUNT, and the second is new with the TypeScript conversion:
+  // `sts/<path>` out of the checkout, and `/usr/src/sts/<path>` out of the
+  // `mocksts` build context — the mock's own image, which is the only place
+  // a TypeScript-only module exists compiled (see the 2026-09-27 block in
+  // tests/Dockerfile). `.json` counts beside `.js`: a require names it with
+  // its extension and it is as absent from an image without its COPY.
   const copyLine = /^COPY\s+([^\n]+)/gm;
+  const fromImage = {};
   fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
+    const image = /^--from=mocksts\s/.test(rest);
     rest.split(/\s+/).forEach(function (src) {
-      if (src.indexOf("sts/") === 0 && /\.js$/.test(src)) {
-        copied[src.slice("sts/".length)] = true;
+      const prefix = image ? "/usr/src/sts/" : "sts/";
+      if (src.indexOf(prefix) === 0 && /\.(js|json)$/.test(src)) {
+        copied[src.slice(prefix.length)] = true;
+        if (image) {
+          fromImage[src.slice(prefix.length)] = true;
+        }
       }
     });
     return _;
@@ -1101,7 +1201,19 @@ function stsModuleClosureIsCopied(dockerfile) {
       continue;
     }
     seen[name] = true;
-    const file = path.join(stsDir, name);
+    let file = path.join(stsDir, name);
+    if (fromImage[name] && !fs.existsSync(file)) {
+      // Compiled in the mock's image and TypeScript in the checkout: its
+      // requires are read off the source, which acorn cannot parse, so
+      // stsRequiresIn() falls back to reading every one as load-time — the
+      // conservative direction.
+      file = file.replace(/\.js$/, ".ts");
+    }
+    if (/\.json$/.test(name) && fs.existsSync(file)) {
+      // Data. It requires nothing, and handing it to acorn would only log a
+      // parse failure about a file that was never code.
+      continue;
+    }
     if (!fs.existsSync(file)) {
       // A COPY naming a file the submodule does not have is the OTHER failure
       // in this family: the image build itself stops, rather than a test.
@@ -1123,7 +1235,7 @@ function stsModuleClosureIsCopied(dockerfile) {
     stsRequiresIn(name, src).forEach(function (one) {
       let dep = path.posix.normalize(
         path.posix.join(path.posix.dirname(name), one.spec));
-      if (!/\.js$/.test(dep)) {
+      if (!/\.(js|json)$/.test(dep)) {
         dep = dep + ".js";
       }
       if (dep.indexOf("..") === 0) {
@@ -1140,6 +1252,21 @@ function stsModuleClosureIsCopied(dockerfile) {
           log.info("[sts-closure] " + dep + " is required LAZILY by sts/" +
             name + " and is deliberately not in the image; see " +
             "LAZY_STS_REQUIRES.");
+          return;
+        }
+        // A TYPESCRIPT-ONLY module cannot be put right with a COPY line, and
+        // saying "add a COPY" for one sends the reader at a build that then
+        // stops with "not found" — a second failure that names the file and
+        // not the reason. Since the conversion (#50) this is the commonest
+        // shape of this failure, so it is reported as itself.
+        const asTs = dep.replace(/\.js$/, ".ts");
+        if (fs.existsSync(path.join(stsDir, asTs))) {
+          missing.push(dep + " (required by sts/" + name + ", and the mock " +
+            "has it as " + asTs + " — TYPESCRIPT-ONLY, so no COPY can " +
+            "satisfy it: the mock compiles inside its own image build. " +
+            "Either nothing here reaches it, and it belongs in " +
+            "LAZY_STS_REQUIRES with a note saying why, or something does, " +
+            "and this image has to compile the mock's TypeScript)");
           return;
         }
         missing.push(dep + " (required by sts/" + name +
@@ -1340,8 +1467,9 @@ function testsImageCopiesTheRequireClosure(dockerfile) {
     "naming a file rather than a build, while every host run stays green " +
     "because a checkout has the whole directory: " + unique.join(", ") +
     ". Nothing schedules a shared module, so the run-report cross-check " +
-    "above cannot see it; add a COPY tests/<name> ./ line in the files1 or " +
-    "files2 staging stage, beside the one for consent_screen.js.");
+    "above cannot see it; add a COPY tests/<name> ./ line in a staging " +
+    "stage (files1, files2 or files3), beside the one for " +
+    "consent_screen.js.");
   log.info("[tests-closure] OK — " + Object.keys(seen).length + " scheduled " +
     "scripts and modules walked, and every relative require among them is " +
     "carried into the tests image.");

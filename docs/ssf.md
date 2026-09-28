@@ -107,7 +107,7 @@ is a branch naming a vocabulary:
   change it;
 * on the mock, **one rule in `streamCoversSubject()`**, without which CAEP
   would deliver nothing at all: a stream naming a PERSON now covers a complex
-  subject naming a session of theirs. That is SSF section 4's own intent and
+  subject naming a session of theirs. That is SSF section 3.3's own intent and
   was simply unreachable while no event carried a complex subject.
 
 ### And what adding the SECOND vocabulary cost, which is the shorter list
@@ -151,7 +151,7 @@ underneath.
 
 | Module | What it holds |
 |---|---|
-| `client/src/ssf_client.js` | **The pipe.** RFC 9493's eight subject formats with their closed member sets and SSF's complex subject; discovery and the endpoint lookup; stream configurations; the RFC 8417 envelope and every finding a SET can produce; both deliveries. |
+| `client/src/ssf_client.js` | **The pipe.** RFC 9493's eight subject formats and SSF 1.0 section 3.5's three, with their closed member sets, and SSF's complex subject; discovery and the endpoint lookup; stream configurations; the RFC 8417 envelope and every finding a SET can produce; both deliveries. |
 | `client/src/ssf_events.js` | **The vocabulary.** SSF's two event types, the three families, and the validator. |
 | `client/src/ssf_history.js` | The two histories — the token sets and the event messages — and the redaction. |
 | `api/ssf_proxy.js` | What `POST /ssf/call` will and will not forward. No axios and no network. |
@@ -196,10 +196,22 @@ subject, and three refusals. That is the argument `common/pq_jose.js` makes in
 the mock about the composite construction, applied to a grammar instead of to a
 signature.
 
-### The eight formats, and the rule that catches people
+### The eleven formats, and the rule that catches people
 
-`account` (an `acct:` URI), `email`, `issuer_subject_id`, `opaque`,
-`phone_number`, `decentralized_identifier`, `uri`, `aliases`.
+RFC 9493's eight: `account` (an `acct:` URI), `email`, `iss_sub`, `opaque`,
+`phone_number`, `did`, `uri`, `aliases`. SSF 1.0 section 3.5's three:
+`jwt_id` (`iss`, `jti` — one JWT), `saml_assertion_id` (`issuer`,
+`assertion_id` — one SAML assertion) and `ip-addresses` (a member of the same
+name holding an **array** of IPv4/IPv6 strings, the one format whose member is
+not a single string).
+
+**The names are the registered ones and no others are accepted.** Section
+3.2.3 is `iss_sub` and section 3.2.6 is `did`; `issuer_subject_id` and
+`decentralized_identifier` were draft spellings that this workflow used until
+issue #300, and the mock STS refuses them as unknown formats. There is no
+legacy alias on either side, deliberately. (`decentralized_identifier` still
+appears in `vc_presentation_1.js` — as an OpenID4VP client-identifier prefix,
+which is a different registry and correct there.)
 
 **Each format's member set is CLOSED.** RFC 9493 section 3 gives every format an
 exhaustive list of members and a conforming receiver must REJECT an identifier
@@ -223,16 +235,23 @@ conforming receiver rejects and the sender never finds out.
 
 ### The complex subject is what makes CAEP possible
 
-SSF 1.0 section 4 lets a `sub_id` be an object whose members — `user`, `device`,
-`session`, `tenant`, `org_unit`, `group` — are each themselves a subject
-identifier. That is what makes *"this session was revoked"* expressible at all:
-the person is not revoked, one session of theirs is.
+SSF 1.0 section 3.3 lets a `sub_id` be an object whose members — `user`,
+`device`, `session`, `application`, `tenant`, `org_unit`, `group` — are each
+themselves a subject identifier. That is what makes *"this session was
+revoked"* expressible at all: the person is not revoked, one session of theirs
+is.
 
-A complex subject is told from a simple one by the **absence of `format`**,
-which is the specification's own discriminator. The obvious alternative — "does
-it have a member called `user`?" — is wrong for an `opaque` subject whose id
-happens to be spelt that way, and `tests/ssf_engine.js` asserts exactly that
-case.
+A complex subject carries **`"format": "complex"`**, which is the final
+specification's discriminator. Pre-final drafts told the two apart by the
+ABSENCE of `format`; an object with no `format` is now refused outright, and
+`tests/ssf_engine.js` asserts that. The obvious alternative — "does it have a
+member called `user`?" — was always wrong, for an `opaque` subject whose id
+happens to be spelt that way.
+
+**The seven member names are not a closed set** — section 3.3 says additional
+ones MAY be used — so an unknown member name is accepted (the page notes it)
+while its VALUE is still held to being a valid simple subject identifier. A
+member may not itself be complex, and an alias may not contain one.
 
 `critical_subject_members` in the transmitter's metadata names the members a
 receiver MUST understand. Publishing one is a promise, so this workflow refuses
@@ -347,11 +366,32 @@ behaved like a PATCH would let a receiver believe it had cleared
 after they were "removed". `tests/ssf_protocol.js` asserts both directions
 against the mock.
 
-`aud` is **required** and this workflow refuses to send a configuration without
-one. So does the mock, and `sts/ssf/CLAUDE.md` argues why it does not default it
-to the authenticated caller: a receiver whose audience was invented for it never
-learns the member is required, and the audience it checks for ITSELF in would be
-a name the transmitter chose.
+**`aud` is the TRANSMITTER's, and this workflow no longer sends one.** SSF 1.0
+final section 8.1.1 lists it as Transmitter-Supplied — "this property cannot be
+updated" — and section 8 has the transmitter's authorization associate each
+receiver with its stream IDs and `aud` values. The drafts left it to the
+receiver, and until the 2026-09 `sts/` bump (iya-sts #144) so did this page and
+the mock: `aud` was required on a create, taken as sent and replaceable by a
+PATCH, so a receiver could have its events addressed to any name at all,
+including another receiver's. Now:
+
+* **a create sends no `aud`**, and the mock addresses the stream to the
+  identifier the receiver authenticated as (Basic's user, a token's client);
+* **a create that names one** gets it only if the transmitter associates that
+  name with the receiver — the mock's `ssfReceiverId` values on the
+  application's entry — and a 400 naming the associated set otherwise. The
+  field on the page is still there for that case, and
+  `checkStreamConfiguration()` WARNS rather than refuses when it is filled;
+* **an update never carries it** (`streamBody(true)` blanks it): section
+  8.1.1.3 lets a Transmitter-Supplied member ride an update only unchanged, so
+  sending it buys nothing and a stale value is a refusal;
+* **the answer's `aud` is written back into the field** (`noteStreamAudience()`
+  in `ssf.js`, on create, read and update), because it is what every SET on the
+  stream will carry and so what an arriving one is checked against for
+  `invalid_audience`. An array writes its first value.
+
+`STREAM_MEMBERS` says `owner: 'transmitter'` for it, which is what the stream
+table draws.
 
 ### The three statuses, and the one that matters
 
@@ -361,7 +401,28 @@ nothing; a disabled one drops what is waiting.** That is the difference between
 receiver taking a maintenance window pauses rather than disables.
 `tests/ssf_protocol.js` asserts both halves against a real transmitter: an event
 asked for during a pause comes back after the resume, and one queued before a
-disable does not survive it.
+disable does not survive it. **A paused poll stream is not silent, though**:
+section 8.1.5 has the transmitter announce the change with a `stream-updated`
+event on the stream itself, sent before it stops and after it starts, so the
+poll made during a pause hands out that one type and nothing else.
+
+### What the final specification changed in the answers
+
+Three status codes and timings a client written against the drafts gets wrong,
+all followed by the mock since the 2026-09 bump:
+
+* **Add Subject answers an EMPTY 200** (section 8.1.3.2) and Remove Subject a
+  204 (section 8.1.3.3). The mock answered 204 to both until the OpenID
+  conformance suite said otherwise.
+* **The verification endpoint's 204 means QUEUED** (section 8.1.4.2). Delivery
+  is asynchronous, so on a push stream the event arrives after the answer, and
+  a check made the instant the request returns is a check of the scheduler.
+* **The mock's own receiver (`POST /ssf/receive`, the roles reversed) checks
+  what a receiver must**: the explicit `typ`, the issuer (section 4.1.6) and
+  the audience (RFC 8417 section 2.2). Its audience defaults to that endpoint's
+  own URL and its issuers to the mock's own transmitter, so this page, acting
+  as a foreign transmitter, addresses `…/ssf/receive` and has its `iss` added
+  to `ssf.receiveIssuers` for the run.
 
 ---
 
@@ -628,7 +689,11 @@ are this stack's mock's (configurable there as `ssf.authScopeRead` /
 two different permissions rather than a pair: read gets a stream, its status
 and its poll queue; write creates, updates and deletes one, adds and removes
 subjects, and triggers a verification event. `openid` is not the transmitter's
-business at all — it is how the **ID Token** above is asked for.
+business at all — it is how the **ID Token** above is asked for. **Since
+iya-sts #110 the mock issues either only to a client that DECLARES it**
+(`oauthAllowedScope` on the application's entry), so a hand-off through a
+client that does not — the seeded `webapp1` included — comes back as
+`invalid_scope` from the token endpoint, naming the attribute to set.
 
 **Two fields on two pages, and both are needed.** `#scope` on
 `oauth2_oidc_1.html` is the authorization request's, which the code grant and

@@ -156,6 +156,11 @@ const waitForModule = require("./wait_for.js");
 const consentScreen = require("./consent_screen.js");
 waitForModule.configure({ log: log, waitTime: waitTime });
 const { waitForPageBundle } = waitForModule;
+// The shared federation helpers — for this file, only the subject policy and
+// the name it produces (iya-sts #109). This file's own adminGet()/must() below
+// predate the module and are left where they are.
+const admin = require("./federation_admin.js");
+admin.configure({ log: log });
 
 const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
        waitTime, log, assert });
@@ -470,6 +475,13 @@ async function createRelationship(spBase, partner) {
                { id: RELATIONSHIP, field: field, value: value },
                "setting " + field + " on the relationship");
   }
+  // WHICH PERSON THE PARTNER SIGNS IN (iya-sts #109): the mapped name, matched
+  // or created as it is, where the sts knows `fedSubjectPolicy` at all. Under
+  // the default a created entry is `federation-realm-2~<name>`, which would
+  // put realm 2's name into the application's ID Token — the one thing the
+  // assertion below says it must never carry. pinSubjectPolicy() in
+  // federation_admin.js has the whole argument.
+  await admin.pinSubjectPolicy(spBase, RELATIONSHIP);
   const enabled = await must(spBase, "/federation/enable", { id: RELATIONSHIP },
                              "enabling the relationship");
   assert.ok(enabled.readiness.ready,
@@ -745,21 +757,33 @@ async function mockKnowsTheAttributes(stsBase) {
 }
 
 // ---------------------------------------------------------------------------
-// THE TWO THINGS THAT WEAR `a.fedbtn`, AND WHY THIS FUNCTION EXISTS.
+// THE THREE THINGS THAT WEAR `a.fedbtn`, AND WHY THIS FUNCTION EXISTS.
 //
-// The mock's sign-in screen styles two OFFERS with the same class. The
+// The mock's sign-in screen styles several OFFERS with the same class. The
 // federation partners are the ones this test is about: one per usable
-// relationship, each leading to `/federation/login/<id>`. Under them sits the
-// Kerberos door — `integratedOptionHtml()`'s SPNEGO link, offered to every
-// application on every screen with nothing configured anywhere, because the
-// mechanism is a property of the person's machine rather than of the relying
-// party. A class is what a button LOOKS like and an href is what it DOES, so
-// the counting above reads the href.
+// relationship, each leading to `/federation/login/<id>`. Under them sit the
+// AMBIENT doors, which belong to the person rather than to the relying party
+// and are therefore offered with nothing configured on any relationship:
+//
+//   * the Kerberos door — `integratedOptionHtml()`'s SPNEGO link, offered on
+//     every screen because the mechanism is a property of the person's
+//     MACHINE;
+//   * the wallet door — `walletOptionHtml()`'s `/authn/wallet` link, which
+//     arrived with the 2026-09-17 submodule bump (iya-sts #38). It is the
+//     same shape of offer one layer out: a property of what the person's
+//     WALLET holds, gated on that service's `oid4vp.signIn` and on nothing
+//     about the application. It is withheld, as a paragraph rather than a
+//     button, when the request demands a security key.
+//
+// A class is what a button LOOKS like and an href is what it DOES, so the
+// counting above reads the href.
 //
 // This is the other half of that: a narrowed selector stops seeing anything
 // that arrives under a different href, so everything else wearing the class
-// has to be accounted for by name. Anything that is neither a partner nor the
-// Kerberos door is a button this screen should not be drawing at all.
+// has to be accounted for BY NAME — which is the point, and is why a new
+// ambient door reaches this test as a failure rather than passing unnoticed.
+// Anything that is neither a partner nor one of the two ambient doors is a
+// button this screen should not be drawing at all.
 // ---------------------------------------------------------------------------
 async function assertOnlyOtherButtonIsKerberos(driver, where) {
   log.debug("Entering assertOnlyOtherButtonIsKerberos().");
@@ -769,10 +793,12 @@ async function assertOnlyOtherButtonIsKerberos(driver, where) {
     if (href.indexOf("/federation/login/") >= 0) {
       continue;
     }
-    assert.ok(href.indexOf("/authn/spnego") >= 0,
+    assert.ok(href.indexOf("/authn/spnego") >= 0 ||
+              href.indexOf("/authn/wallet") >= 0,
       where + " carries a button styled like a federation partner that " +
-      "points at \"" + href + "\". It is neither a partner nor the ambient " +
-      "Kerberos door, so it is an offer this screen should not be making.");
+      "points at \"" + href + "\". It is neither a partner nor one of the " +
+      "two ambient doors (Kerberos, a wallet), so it is an offer this " +
+      "screen should not be making.");
   }
   log.debug("Leaving assertOnlyOtherButtonIsKerberos(). " + buttons.length +
             " button(s) on the screen.");
@@ -1003,6 +1029,10 @@ async function test() {
 
     // What the flow left behind at realm 1, read before the code is redeemed so
     // that the count is about the SIGN-IN rather than about the token call.
+    // WHO REALM 1 CALLS THE PERSON: the NameID as it crossed, unless the
+    // relationship's fedSubjectPolicy (iya-sts #109) namespaced the entry the
+    // sign-in created. See localNameAt() in federation_admin.js.
+    const local = await admin.localNameAt(spBase, RELATIONSHIP, user);
     const after = await relationshipNow(spBase);
     assert.strictEqual(Number(after.authentications || 0), 1,
       "Realm 1's relationship counted " + after.authentications +
@@ -1010,18 +1040,18 @@ async function test() {
     assert.ok(!String(after.lastError || "").trim(),
       "The relationship recorded a failure during a sign-in that succeeded: " +
       after.lastError);
-    assert.ok(String(after.lastUser || "").indexOf(user) >= 0,
+    assert.ok(String(after.lastUser || "").indexOf(local) >= 0,
       "The relationship's last user is \"" + after.lastUser + "\" and this " +
-      "test signed in as \"" + user + "\".");
+      "test signed in as \"" + user + "\", who is \"" + local + "\" there.");
 
     // The person now has a directory entry in REALM 1 — a service that never
     // checked a password for them.
     const users = await adminGet(spBase,
-      "/users?q=" + encodeURIComponent(user));
+      "/users?q=" + encodeURIComponent(local));
     assert.ok((users.users || []).some(function (one) {
-      return String(one.name) === user || String(one.key) === user;
-    }), "Realm 1 has no directory entry for " + user + ", who has just signed " +
-        "in there. It lists: " +
+      return String(one.name) === local || String(one.key) === local;
+    }), "Realm 1 has no directory entry for " + local + ", who has just " +
+        "signed in there. It lists: " +
         (users.users || []).map(function (o) { return o.name; }).join(", "));
     // AND IT SAYS HOW THEY GOT THERE. The mock files a federated sign-in under
     // the protocol the relationship speaks, so a person who has never had a
@@ -1102,9 +1132,25 @@ async function test() {
       JSON.stringify(claims) + ". Nothing about which identity service did " +
       "the authenticating is the application's business, and this is the one " +
       "property the whole feature exists to have.");
-    assert.ok(String(claims.preferred_username || claims.sub).indexOf(user) >= 0,
-      "The ID Token describes \"" + (claims.preferred_username || claims.sub) +
-      "\" and the name typed at realm 2 was \"" + user + "\".");
+    // WHO IT DESCRIBES. Since iya-sts 64580f4 a token's `sub` is the
+    // `urn:uuid:` of the person's entry in the realm that issued it, and since
+    // #118 the profile claims are UserInfo's rather than the ID Token's — so
+    // the name cannot be read off the token and is not searched for in it.
+    // The sub is compared, exactly, with what realm 1's directory holds for
+    // the person the sign-in filed there; a `preferred_username`, where the
+    // token still carries one, must name that same person.
+    const expectedSub = await admin.subjectOf(spBase, local);
+    assert.strictEqual(claims.sub, expectedSub,
+      "The ID Token's sub is \"" + claims.sub + "\", and realm 1's " +
+      "directory says \"" + local + "\" — the person typed at realm 2 as \"" +
+      user + "\" — is \"" + expectedSub + "\".");
+    if (claims.preferred_username !== undefined) {
+      const named = String(claims.preferred_username);
+      assert.ok(named === local || named === user,
+        "The ID Token's preferred_username is \"" + named + "\". The " +
+        "person typed at realm 2 as \"" + user + "\" is \"" + local +
+        "\" at realm 1.");
+    }
     log.info("The application holds an ID Token issued by " + claims.iss +
              " describing " + (claims.preferred_username || claims.sub) +
              ", and naming realm 2 nowhere.");

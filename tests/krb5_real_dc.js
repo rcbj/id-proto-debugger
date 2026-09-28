@@ -4,7 +4,7 @@
 // The Kerberos codec against a REAL Microsoft KDC.
 //
 // Every other Kerberos test in this suite runs against the mock KDC in the
-// rcbj/mock-sts submodule. That mock was written from the same reading of RFC
+// rcbj/iya-sts submodule. That mock was written from the same reading of RFC
 // 4120 and [MS-PAC] as the client it is being used to check, so the two agree
 // by construction — and a disagreement with Windows would not show up in any of
 // them. This test is the one that can only pass if the client interoperates

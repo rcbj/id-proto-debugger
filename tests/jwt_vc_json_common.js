@@ -566,7 +566,43 @@ async function provisionWallet(issuerBase, options) {
   return entry;
 }
 
+// AN ACCESS TOKEN THIS REALM ISSUED, FOR A HOLDER WHO EXISTS (2026-09-18).
+// A product-mode Credential Issuer refuses a token it cannot verify, so a job
+// that asks for a credential gets its token the way a wallet does: the holder
+// is created beforehand through the management API with a real password and
+// directory attributes, signs in through the authorization code flow with
+// PKCE as WALLET_CLIENT_ID (registered with the redirect URI and the grant),
+// and the code is redeemed. Answers the access token.
+async function holderAccessToken(issuerBase, holder) {
+  log.debug("Entering holderAccessToken(). holder=" + holder);
+  const stsBase = registry.stsBaseFor(issuerBase);
+  const redirectUri = "https://wallet." + holder + ".example.test/cb";
+  const password = "Holder-" + crypto.randomBytes(9).toString("base64url") +
+                   "-Aa1!";
+  await provisionWallet(issuerBase, {
+    grantTypes: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
+                 "authorization_code"],
+    redirectUris: [redirectUri], scopes: ["openid"],
+    why: "the wallet a holder signs in to for an access token" });
+  await registry.ensurePerson(stsBase, holder, password);
+  const granted = await registry.authorizationCode(stsBase, {
+    clientId: WALLET_CLIENT_ID, redirectUri: redirectUri, username: holder,
+    password: password, scope: "openid" });
+  const tokenSet = await httpJson(stsBase + "/oauth2/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code", code: granted.code,
+      redirect_uri: redirectUri, code_verifier: granted.verifier,
+      client_id: WALLET_CLIENT_ID }).toString() });
+  assert.strictEqual(tokenSet.status, 200,
+    "the holder's code should redeem for an access token: " + tokenSet.raw);
+  log.debug("Leaving holderAccessToken().");
+  return tokenSet.body.access_token;
+}
+
 module.exports = {
+  holderAccessToken: holderAccessToken,
   FORMAT: FORMAT,
   b64u: b64u,
   b64uDecode: b64uDecode,

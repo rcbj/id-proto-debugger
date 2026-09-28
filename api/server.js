@@ -651,7 +651,27 @@ const tlsProbe = tlsProbeModule.createProbe(appconfig, guard, log);
 // createConnection, so it carries no connect timeout. That is correct — it is
 // already connected — and it is also why the connect timeout must not be
 // thought of as a per-request guarantee once pooling is on.
+//
+// AND A POOLED SOCKET HAS TO BE RETIRED BEFORE THE FAR END RETIRES IT, which
+// is what the `timeout` below is for. A server closes a connection that has
+// been idle for its keep-alive timeout, and a request written onto it as that
+// close is in flight fails with ECONNRESET before any response — through no
+// fault of either end. Node's agent is built to win that race: it reads the
+// server's `Keep-Alive: timeout=N` and retires the socket a second early. But
+// it only ever SHORTENS its own idle timeout to the hint (`hint < timeout` in
+// Agent#keepSocketAlive), and an agent given no timeout has 0, which nothing
+// is less than — so the hint is ignored, the socket is kept until the server
+// closes it, and every request sent around that instant is reset. Node's own
+// global agent does not have this problem because it is built with a timeout
+// of 5000; these agents did not have one. Against the mock STS — a Node
+// server, which advertises five seconds and closes at six — that took a
+// coverage run red on 2026-09-27: GET /samlmetadata, `read ECONNRESET`,
+// exactly six seconds after the previous fetch of the same document. 5000 is
+// Node's own value; it is the idle limit for a server that sends no hint, and
+// a server that does gets its hint less a second. It bounds only an IDLE
+// socket: axios sets `callTimeout` on the socket for the life of each request.
 // ---------------------------------------------------------------------------
+const OUTBOUND_IDLE_SOCKET_TIMEOUT = 5000;
 const outboundAgentCache = new Map();
 
 /**
@@ -670,7 +690,8 @@ function agentFor(protocol, rejectUnauthorized) {
     return cached;
   }
   var options = {
-    keepAlive: KEEP_ALIVE };
+    keepAlive: KEEP_ALIVE,
+    timeout: OUTBOUND_IDLE_SOCKET_TIMEOUT };
   if (protocol === 'https') {
     options.rejectUnauthorized = rejectUnauthorized;
   }

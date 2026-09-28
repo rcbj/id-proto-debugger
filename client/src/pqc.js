@@ -468,6 +468,41 @@ function slhSizesFor(name) {
   return found;
 }
 
+// HEDGED BY DEFAULT (FIPS 204 section 3.4, FIPS 205 section 9.2): every
+// ML-DSA and SLH-DSA signature here mixes fresh randomness into the signing
+// — 32 octets for ML-DSA, n for SLH-DSA — which is what both standards
+// recommend, because the deterministic variant signs the same message the
+// same way every time and so hands a fault or side-channel attacker as many
+// identical computations as they care to ask for. @noble/post-quantum signs
+// deterministically when it is given no randomness, and until iya-sts #203
+// this module never gave it any. The deterministic variant is still here,
+// for the known-answer vectors that need it, but only by asking:
+// `{ deterministic: true }`. `rnd` supplies the randomness explicitly, which
+// is what an ACVP hedged vector does.
+function signingRandomness(o, length) {
+  log.debug("Entering signingRandomness(). length=" + length);
+  if (o.rnd) {
+    var given = asBytes(o.rnd);
+    if (given.length !== length) {
+      log.debug("Leaving signingRandomness(). Bad length.");
+      throw new Error('The signing randomness is ' + length + ' bytes here; ' +
+          'this one is ' + given.length + '.');
+    }
+    log.debug("Leaving signingRandomness(). Supplied.");
+    // A COPY: @noble/post-quantum 0.4.1's SLH-DSA zeroes the randomness it
+    // was handed once it has signed, so the caller's own buffer would come
+    // back all zeros and a second signature with "the same" rnd would not
+    // be the same.
+    return given.slice();
+  }
+  if (o.deterministic) {
+    log.debug("Leaving signingRandomness(). Deterministic.");
+    return undefined;
+  }
+  log.debug("Leaving signingRandomness(). Fresh.");
+  return bytes.randomBytes(length);
+}
+
 function mldsaEntry(name, prim) {
   return {
     name: name,
@@ -495,7 +530,8 @@ function mldsaEntry(name, prim) {
       var o = opts || {};
       var signer = o.prehash ? prim.prehash(o.prehash) : prim;
       var sig = signer.sign(asBytes(sk), asBytes(msg),
-                            o.context ? asBytes(o.context) : EMPTY_CTX);
+                            o.context ? asBytes(o.context) : EMPTY_CTX,
+                            signingRandomness(o, 32));
       log.debug("Leaving ML-DSA sign().");
       return sig;
     },
@@ -532,8 +568,11 @@ function slhEntry(name, prim, joseName) {
       log.debug("Entering SLH-DSA sign().");
       var o = opts || {};
       var signer = o.prehash ? prim.prehash(o.prehash) : prim;
-      var sig = signer.sign(asBytes(sk), asBytes(msg),
-                            o.context ? asBytes(o.context) : EMPTY_CTX);
+      var skBytes = asBytes(sk);
+      // n is a quarter of the secret key (SK.seed, SK.prf, PK.seed, PK.root).
+      var sig = signer.sign(skBytes, asBytes(msg),
+                            o.context ? asBytes(o.context) : EMPTY_CTX,
+                            signingRandomness(o, skBytes.length / 4));
       log.debug("Leaving SLH-DSA sign().");
       return sig;
     },
@@ -722,7 +761,7 @@ function compositeEntry(name, cfg) {
         seed: seed
       };
     },
-    sign: function (msg, sk) {
+    sign: function (msg, sk, opts) {
       log.debug("Entering composite sign().");
       var skBytes = asBytes(sk);
       if (skBytes.length !== 32 + t.privLen) {
@@ -736,7 +775,9 @@ function compositeEntry(name, cfg) {
       var tradPriv = skBytes.slice(32);
       var mPrime = compositeMessage(cfg, msg);
       var mlKp = mlPrim.keygen(seed);
-      var mlSig = mlPrim.sign(mlKp.secretKey, mPrime, strBytes(cfg.label));
+      // The ML-DSA half is hedged as the bare algorithm is, above.
+      var mlSig = mlPrim.sign(mlKp.secretKey, mPrime, strBytes(cfg.label),
+                              signingRandomness(opts || {}, 32));
       var tSig = tradSign(t, tradPriv, mPrime);
       log.debug("Leaving composite sign().");
       return concatBytes(mlSig, tSig);

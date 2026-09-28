@@ -11,9 +11,66 @@ check_return_code()
   fi
 }
 
+# ---------------------------------------------------------------------------
+# THE LAST THING A LAUNCHER PRINTS: THE BANNER, AND THE STATUS IT EXITS WITH.
+#
+# Called from each launcher's EXIT trap, AFTER whatever teardown that trap
+# does. Before 2026-09-15 the containerized launcher printed its banner and
+# then let the trap run `docker-compose down`, so a passing run ended in a
+# screen of container shutdown lines, and a failing one ended in the
+# teardown's own `Leaving docker_compose(). rc=0` / `+ return 0` — which reads
+# as the script's status and is not: bash exits with the status the script
+# had when the trap began unless the trap itself calls `exit`. Both are fixed
+# by printing here, last, and naming the status in words.
+#
+#   $1  the status the script is exiting with — the caller's `$?`, captured
+#       as the trap's FIRST statement, before anything can overwrite it
+#   $2  the launcher's name, for the line
+#
+# The banner is printed only when the status is 0 AND the launcher set
+# SUITE_PASSED=1, because several launchers also exit 0 without having run
+# the suite (`--saml-dev` brings a stack up and runs nothing) and a banner
+# there would claim a pass nobody measured.
+#
+# xtrace is switched off first: every launcher runs under `set -x`, and the
+# trace of these echos would otherwise be the real last lines of the log.
+# ---------------------------------------------------------------------------
+launcherExitStatus()
+{
+  { set +x; } 2>/dev/null
+  local status=$1
+  local name=$2
+  echo "Entering launcherExitStatus()."
+  if [ "${status}" -eq 0 ] && [ "${SUITE_PASSED:-0}" = "1" ];
+  then
+    cat <<'EOF'
+   _   _ _   _            _                                  _
+  / \ | | | | |_ ___  ___| |_ ___   _ __   __ _ ___ ___  ___| |
+ / _ \| | | | __/ _ \/ __| __/ __| | '_ \ / _` / __/ __|/ _ \ |
+/ ___ \ | | | ||  __/\__ \ |_\__ \ | |_) | (_| \__ \__ \  __/_|
+/_/   \_\_|_|  \__\___||___/\__|___/ | .__/ \__,_|___/___/\___(_)
+                                     |_|
+EOF
+  fi
+  echo "Leaving launcherExitStatus()."
+  echo "${name}: exiting with status ${status}"
+}
+
 common_setup()
 {
   echo "Entering common_setup()."
+  # The tag THIS checkout builds and runs the mock STS under. Overridable, so
+  # a run can be pointed at an image somebody else built; the default carries
+  # the compose project (the checkout's directory name unless it is set), so
+  # two checkouts of this repository do not collide either. See the note above
+  # COMPOSE_FORWARDED_VARS. Named under IMAGE_REGISTRY like the other images
+  # the test stack builds (docker-compose-run-tests.yml), and tagged
+  # IMAGE_TAG when a run sets one — tests.yml does, and pushes it.
+  local sts_repo="${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/sts"
+  local sts_tag="${IMAGE_TAG:-${COMPOSE_PROJECT_NAME:-id-proto-debugger}}"
+  STS_IMAGE="${STS_IMAGE:-${sts_repo}:${sts_tag}}"
+  export STS_IMAGE
+  echo "The mock STS image for this run is ${STS_IMAGE}."
   REV=/usr/bin/rev
   JQ=/usr/bin/jq
   CURL=/usr/bin/curl
@@ -58,6 +115,15 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} BUILD_NUMBER GIT_COMMIT"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_CONCURRENCY TEST_JOB_TIMEOUT_MS"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_WAIT_TIME_MS"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_LOG_LEVEL"
+# THE MOCK STS IMAGE'S TAG, which is not this repository's alone: `sts/` is the
+# iya-sts submodule and that repository builds its own stack from the same
+# source. A docker tag is machine-wide, so both writing `rcbj/sts` means the
+# last build wins and a run here can start a mock built from another
+# checkout's tree — which is what happened on 2026-09-15, costing seven jobs
+# that failed on defects already fixed in the submodule this checkout points
+# at. That repository's launchers already tag `rcbj/sts:<project>` for the
+# same reason; these tag one of their own below.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_IMAGE"
 # The stack TLS pair. Every compose file here mounts the DIRECTORY and
 # names the two files inside it, so all three have to cross sudo — and
 # STACK_TLS_CA_FILE is what the mock STS is given as NODE_EXTRA_CA_CERTS
@@ -90,6 +156,14 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_CONFIG_FILE TESTS_CONFIG_F
 # ADMIN_API_CLIENT_SECRET and the tests container as
 # STS_ADMIN_API_CLIENT_SECRET. See the block below, where it is generated.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} ADMIN_API_CLIENT_SECRET"
+# WHERE THE TEST STACK'S IMAGES COME FROM AND GO (2026-09-27).
+# docker-compose-run-tests.yml pulls every third-party image, and every base
+# image it builds FROM, out of a private mirror on ghcr.io (IMAGE_MIRROR), and
+# names what it builds under IMAGE_REGISTRY with tag IMAGE_TAG. All three have
+# defaults in the compose file, so unforwarded they would not fail — they
+# would silently fall back to them, which is the failure this list exists for.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_MIRROR IMAGE_REGISTRY"
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_TAG"
 
 
 # ---------------------------------------------------------------------------
@@ -912,7 +986,7 @@ renderWaltidConfig()
 # Make sure the mock STS is on disk before anything tries to build it.
 #
 # sts/ is a SUBMODULE, not code in this repository: it is
-# https://github.com/rcbj/mock-sts.git on branch main, and what this repository
+# https://github.com/rcbj/iya-sts.git on branch main, and what this repository
 # records is a link to it. Two things then depend on the checkout existing, and
 # both fail a long way from the cause when it does not:
 #
@@ -975,7 +1049,7 @@ requireMockStsCheckout()
   then
     echo "ERROR: ${dir} has no checkout of the mock STS in it, and ${root} is not a git" >&2
     echo "       working tree, so the submodule cannot be initialised here. Clone it directly:" >&2
-    echo "         git clone -b main https://github.com/rcbj/mock-sts.git ${dir}" >&2
+    echo "         git clone -b main https://github.com/rcbj/iya-sts.git ${dir}" >&2
     return 1
   fi
   if [ ! -f "${root}/.gitmodules" ] || ! grep -q '^[[:space:]]*path[[:space:]]*=[[:space:]]*sts[[:space:]]*$' "${root}/.gitmodules";
@@ -1000,7 +1074,7 @@ requireMockStsCheckout()
   if [ $? -ne 0 ];
   then
     echo "ERROR: 'git submodule update ${update_args} -- sts' failed in ${root}." >&2
-    echo "       The mock STS is fetched over https from https://github.com/rcbj/mock-sts.git," >&2
+    echo "       The mock STS is fetched over https from https://github.com/rcbj/iya-sts.git," >&2
     echo "       so this is usually network access or a proxy rather than credentials." >&2
     return 1
   fi
@@ -1017,6 +1091,51 @@ requireMockStsCheckout()
   requireNestedLdapjsCheckout "${dir}" || return 1
   echo "Leaving requireMockStsCheckout(). ${dir} is populated."
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# CAN THIS MACHINE READ THE PRIVATE IMAGE MIRROR ON ghcr.io?
+#
+# docker-compose-run-tests.yml pulls its third-party images, and builds every
+# image FROM, a mirror of PRIVATE packages (see .github/image-mirror.txt).
+# Without a `docker login ghcr.io` the first build dies on "failed to resolve
+# source metadata ... denied", which names neither the login nor the mirror,
+# so the containerized launchers ask here first. One manifest request, made
+# as whoever compose will run as — root's credentials under sudo are not the
+# developer's.
+# ---------------------------------------------------------------------------
+requireGhcrMirror()
+{
+  echo "Entering requireGhcrMirror()."
+  local mirror="${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}"
+  local probe="${mirror}/ubuntu:latest"
+  local registry="${mirror%%/*}"
+  resolveDockerSudo
+  local docker_cmd="docker"
+  if [ -n "${DOCKER_SUDO}" ];
+  then
+    docker_cmd="sudo docker"
+  fi
+  if ${docker_cmd} manifest inspect "${probe}" >/dev/null 2>&1;
+  then
+    echo "Leaving requireGhcrMirror(). ${probe} is readable."
+    return 0
+  fi
+  echo "ERROR: cannot read the image mirror ${probe}." >&2
+  echo "       The test stack pulls every third-party image, and every base" >&2
+  echo "       image it builds from, out of PRIVATE packages on" \
+       "${registry}." >&2
+  echo "       Log in with a token that can read packages, then run again:" >&2
+  echo "" >&2
+  echo "         gh auth refresh -h github.com -s read:packages" >&2
+  echo "         gh auth token | ${docker_cmd} login ${registry}" \
+       "-u <GitHub user> --password-stdin" >&2
+  echo "" >&2
+  echo "       If the login works and the image is missing, the mirror has" >&2
+  echo "       not been filled: run the \"Mirror Images\" workflow, or" >&2
+  echo "       .github/scripts/mirror-images.sh missing (write:packages)." >&2
+  echo "Leaving requireGhcrMirror(). ${probe} is not readable."
+  return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -1774,7 +1893,7 @@ trustStsCertificate()
 # IT IS ALSO THE CAPABILITY PROBE, and it replaced a worse one. local-run-tests.sh
 # used to decide whether to schedule those jobs by looking for `oauth2_bcp.js`
 # in the sts/ submodule — a path test, which silently took its else branch and
-# printed a confident, wrong explanation when mock-sts reorganised its
+# printed a confident, wrong explanation when iya-sts reorganised its
 # directories. Asking the running service to create the realm answers the same
 # question about the code that is actually running, and answers it about REALMS
 # too, which that probe could not have seen at all.
@@ -3089,5 +3208,100 @@ configureKeycloakWsfed()
   declare -gx WSFED_REALM="${WSFED_WTREALM}"
   declare -gx WSFED_USER="wsfed"
   echo "Leaving configureKeycloakWsfed(). WSFED_METADATA_URL=${WSFED_METADATA_URL}"
+  return 0
+}
+
+# ---------------------------------------------------------------------------
+# A MOCK STS TREE THE HOST CAN RUN, TAKEN OUT OF THE IMAGE THAT WAS JUST BUILT.
+#
+# `tests/sts_persistence_postgres.js` is the one job here that starts the mock
+# ITSELF — `node server.js`, against a postgres it runs in a container — so it
+# needs a complete tree: sources, node_modules, and since iya-sts #50 the
+# COMPILED TypeScript. A checkout has none of the third. `server.js` refuses to
+# start from one with STS-CORE-0093, naming 188 sources with no `.js` beside
+# them, and that job self-skipped for want of a build.
+#
+# IT IS COPIED RATHER THAN BUILT, and that is the whole point of doing it here.
+# `sts/build-typescript.sh` refuses to run on a host checkout on purpose —
+# issue #50, no compiled files on the host — and it needs a `tsc` that exists
+# nowhere in this tree: the submodule has no `tests/node_modules`, and neither
+# does this repository. Building would mean an npm install of somebody else's
+# devDependencies on every run, and an offline run could not do it at all.
+#
+# The image compose has just built ALREADY CONTAINS the answer: `/usr/src/sts`,
+# compiled, with its `.ts` stripped and its runtime node_modules installed. It
+# is the very tree the stack is running, so the job tests what the rest of the
+# suite is talking to rather than something assembled beside it.
+#
+# THE SUBMODULE IS LEFT ALONE. A build in place would leave ~188 untracked
+# `.js` files in somebody else's checkout — iya-sts cannot gitignore them,
+# because tsconfig.build.json compiles in place — and `git status` would report
+# `sts` as dirty from then on.
+#
+# Best effort: a failure here leaves MOCK_STS_DIR unset and that job skips
+# exactly as it did before, which is the state this function exists to improve
+# and not one worth stopping a 300-job run over.
+# ---------------------------------------------------------------------------
+extractMockStsTree()
+{
+  echo "Entering extractMockStsTree()."
+  if [ -n "${MOCK_STS_DIR:-}" ];
+  then
+    echo "MOCK_STS_DIR was supplied by the caller (${MOCK_STS_DIR}); using it."
+    echo "Leaving extractMockStsTree(). Supplied."
+    return 0
+  fi
+  local image="${STS_IMAGE:-rcbj/sts}"
+  local dir cid
+  dir="$(mktemp -d)"
+  # `docker create` makes a container without starting it, which is the
+  # documented way to read a filesystem out of an image.
+  cid="$(docker create "${image}" 2>/dev/null)"
+  if [ -z "${cid}" ];
+  then
+    echo "extractMockStsTree(): could not create a container from ${image}," \
+         "so the persistence job will skip. This is not fatal."
+    rm -rf "${dir}"
+    echo "Leaving extractMockStsTree(). No image."
+    return 0
+  fi
+  if ! docker cp "${cid}:/usr/src/sts/." "${dir}/" >/dev/null 2>&1;
+  then
+    echo "extractMockStsTree(): could not copy /usr/src/sts out of" \
+         "${image}, so the persistence job will skip. This is not fatal."
+    docker rm -f "${cid}" >/dev/null 2>&1 || true
+    rm -rf "${dir}"
+    echo "Leaving extractMockStsTree(). Nothing copied."
+    return 0
+  fi
+  docker rm -f "${cid}" >/dev/null 2>&1 || true
+  # The two files mockStsRoot() tests for before it will use a tree at all.
+  if [ ! -f "${dir}/server.js" ] || [ ! -d "${dir}/node_modules/pg" ];
+  then
+    echo "extractMockStsTree(): ${image} has no runnable tree at" \
+         "/usr/src/sts (server.js or node_modules/pg is missing), so the" \
+         "persistence job will skip. This is not fatal."
+    rm -rf "${dir}"
+    echo "Leaving extractMockStsTree(). Incomplete."
+    return 0
+  fi
+  declare -gx MOCK_STS_DIR="${dir}"
+  declare -gx MOCK_STS_DIR_IS_OURS="yes"
+  echo "extractMockStsTree(): the mock STS tree from ${image} is at ${dir}."
+  echo "Leaving extractMockStsTree(). MOCK_STS_DIR=${MOCK_STS_DIR}"
+  return 0
+}
+
+# Remove what extractMockStsTree() made, and only that: a MOCK_STS_DIR the
+# caller supplied is somebody's working copy and is never deleted.
+removeMockStsTree()
+{
+  echo "Entering removeMockStsTree()."
+  if [ "${MOCK_STS_DIR_IS_OURS:-}" = "yes" ] && [ -n "${MOCK_STS_DIR:-}" ];
+  then
+    rm -rf "${MOCK_STS_DIR}"
+    echo "removeMockStsTree(): removed ${MOCK_STS_DIR}."
+  fi
+  echo "Leaving removeMockStsTree()."
   return 0
 }

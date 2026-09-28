@@ -120,7 +120,7 @@ Three new modules, factored the way `dpop.js` and `jwk_pem.js` are — no DOM, s
 
 ## The mock STS side
 
-`sts/` is the [`rcbj/mock-sts`](https://github.com/rcbj/mock-sts) **submodule**, so this is a separate pull request there plus a gitlink bump here, and it cannot ride in the same commit as the client work.
+`sts/` is the [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts) **submodule**, so this is a separate pull request there plus a gitlink bump here, and it cannot ride in the same commit as the client work.
 
 * **`GET /demo-rp`** — a small relying party running OIDC Authorization Code against the STS itself. This is the "third-party website" the extension observes, and it is what makes Mode 3 testable in CI.
 * **A WebAuthn MFA step in the STS login** — after the existing password screen, `/oauth2/webauthn` registers on first use and asserts thereafter, verifies server-side, and reflects the result as `amr: ["pwd","hwk"]` with a stepped-up `acr`. That is the whole of the wiring to the OIDC workflow: the debugger's existing pages already decode `amr`/`acr`, so the chain becomes visible end to end with no new OIDC code.
@@ -222,7 +222,7 @@ Negative-case knobs, also measured on 121: UV required with a verifying authenti
 
 ## Phase 4 progress — 2026-08-08
 
-**Done: the verifier, and the cross-check that justifies it.** `mock-sts/webauthn.js` implements sections 7.1 and 7.2 server-side — its own CBOR reader, its own COSE mapping, node's `crypto.verify` — sharing no code with the client's decoder. `tests/webauthn_cross_impl.js` runs both over the same real ceremonies and requires the same verdict: **5 checks, all green**. They agree on the registration member for member (format, AAGUID, credential ID, sign count, and the public key JWK), accept the same valid ES256 and RS256 assertions, reject the same tampered one **naming the same failing check and nothing else**, treat the UV-clear assertion identically (both refuse it when UV is required, both still report the signature as valid, both accept it when UV is not), and reject challenge, origin and RP ID mismatches by the same names.
+**Done: the verifier, and the cross-check that justifies it.** `iya-sts/webauthn.js` implements sections 7.1 and 7.2 server-side — its own CBOR reader, its own COSE mapping, node's `crypto.verify` — sharing no code with the client's decoder. `tests/webauthn_cross_impl.js` runs both over the same real ceremonies and requires the same verdict: **5 checks, all green**. They agree on the registration member for member (format, AAGUID, credential ID, sign count, and the public key JWK), accept the same valid ES256 and RS256 assertions, reject the same tampered one **naming the same failing check and nothing else**, treat the UV-clear assertion identically (both refuse it when UV is required, both still report the signature as valid, both accept it when UV is not), and reject challenge, origin and RP ID mismatches by the same names.
 
 The independence is real rather than nominal: node takes an ECDSA signature in its native **DER** form, while the browser side must convert to raw `r‖s` because Web Crypto refuses DER. Those are different code paths, so an error in one is not mirrored in the other — which is the entire point, and the same arrangement `tests/bbs2023_cryptosuite.js` established for bbs-2023.
 

@@ -852,6 +852,101 @@ async function keepAliveIsConfigured() {
   log.debug("Leaving keepAliveIsConfigured().");
 }
 
+// A POOLED SOCKET MUST BE RETIRED BEFORE THE SERVER RETIRES IT. A server
+// closes a connection idle for its keep-alive timeout, and a request written
+// onto it as that close is in flight dies with ECONNRESET before any response.
+// Node's agent avoids that by reading `Keep-Alive: timeout=N` and retiring the
+// socket a second early — but only by SHORTENING its own idle timeout, and an
+// agent built with none has 0, which the hint never undercuts, so the socket
+// is kept until the server closes it. That is what took a coverage run red on
+// 2026-09-27: GET /samlmetadata, `read ECONNRESET`, six seconds (a Node
+// server's five plus its one-second buffer) after the previous fetch of the
+// same document from the mock STS. server.js now gives its agents an idle
+// timeout; this checks that it does, and that the timeout is one the hint can
+// undercut. Read off the parked socket rather than by waiting six seconds for
+// a race, which is deterministic and costs nothing.
+async function pooledSocketHonoursServerHint() {
+  log.debug("Entering pooledSocketHonoursServerHint().");
+  log.info("=== A pooled socket is retired before the server's hint ===");
+
+  var idleTimeout = 5000;
+  var serverPath = path.join(__dirname, "..", "api", "server.js");
+  if (fs.existsSync(serverPath)) {
+    var source = fs.readFileSync(serverPath, "utf8");
+    var declared = /const OUTBOUND_IDLE_SOCKET_TIMEOUT = (\d+);/
+      .exec(source);
+    assert.ok(declared,
+      "server.js must declare OUTBOUND_IDLE_SOCKET_TIMEOUT for its agents.");
+    assert.ok(/keepAlive: KEEP_ALIVE,\s*timeout: OUTBOUND_IDLE_SOCKET_TIMEOUT/
+      .test(source),
+      "agentFor() must build its agents with " +
+          "timeout: OUTBOUND_IDLE_SOCKET_TIMEOUT; without one, node ignores " +
+          "the server's Keep-Alive hint and a request sent as the server " +
+          "closes the socket is reset.");
+    idleTimeout = Number(declared[1]);
+  } else {
+    log.info("api/server.js is not staged here; checking node's own " +
+             "value, 5000.");
+  }
+
+  // A Node server, as the mock STS is: it advertises `timeout=5`.
+  var idp = http.createServer(function (req, res) {
+    res.end("ok");
+  });
+  var port = await listen(idp);
+
+  function parkedSocketTimeout(options) {
+    log.debug("Entering parkedSocketTimeout().");
+    var agent = connectTimeout.withConnectTimeout(
+      guardModule.createGuard({ blockPrivateNetworkCalls: false }, quiet)
+        .createAgent("http", options), 4000);
+    return new Promise(function (resolve, reject) {
+      var req = http.request({ host: "127.0.0.1", port: port, path: "/",
+          agent: agent },
+        function (res) {
+          var hint = res.headers["keep-alive"];
+          res.resume();
+          res.on("end", function () {
+            setImmediate(function () {
+              var free = [].concat.apply([], Object.keys(agent.freeSockets)
+                .map(function (k) {
+                  return agent.freeSockets[k];
+                }));
+              var timeout = free.length ? free[0].timeout : null;
+              agent.destroy();
+              log.debug("Leaving parkedSocketTimeout().");
+              resolve({ hint: hint, timeout: timeout });
+            });
+          });
+        });
+      req.on("error", reject);
+      req.end();
+    });
+  }
+
+  var fixed = await parkedSocketTimeout({ keepAlive: true,
+                                          timeout: idleTimeout });
+  var hinted = /^timeout=(\d+)/.exec(fixed.hint || "");
+  assert.ok(hinted, "the test server should advertise a Keep-Alive " +
+    "timeout; it sent " + JSON.stringify(fixed.hint) + ".");
+  var serverIdle = Number(hinted[1]) * 1000;
+  assert.ok(fixed.timeout > 0 && fixed.timeout < serverIdle,
+    "a socket parked by server.js's agent must be retired before the " +
+        "server's " + serverIdle + "ms; its idle timeout is " +
+        fixed.timeout + ".");
+
+  // The defect, shown: the same agent with no timeout keeps the socket for
+  // ever. Logged rather than asserted, so a node that fixes this upstream
+  // does not fail a check about this service.
+  var bare = await parkedSocketTimeout({ keepAlive: true });
+  log.info("[keep-alive hint] server advertises " + fixed.hint + "; " +
+           "server.js's agent parks the socket for " + fixed.timeout +
+           "ms, an agent with no timeout for " +
+           (bare.timeout ? bare.timeout + "ms" : "ever (0)") + ".");
+  idp.close();
+  log.debug("Leaving pooledSocketHonoursServerHint().");
+}
+
 
 // --- the manifest declares everything the service requires ------------------
 //
@@ -1012,6 +1107,7 @@ async function test() {
   await maxRedirectsIsEnforced();
   userAgentIsConfigured();
   await keepAliveIsConfigured();
+  await pooledSocketHonoursServerHint();
   shippedConfiguration();
   manifestDeclaresEveryRequire();
   log.info("Test completed successfully.");

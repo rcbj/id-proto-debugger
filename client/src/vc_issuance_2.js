@@ -1398,15 +1398,20 @@ function approveIssuance() {
 
   // The proof shown above was built when the page loaded; if it is not there
   // (or the issuer rejects it as stale — a c_nonce is single use and expires)
-  // build a fresh one and send once more.
+  // build a fresh one and send once more. OpenID4VCI 1.0 section 8.3.1.2
+  // names that refusal invalid_nonce and tells the wallet to fetch a new
+  // c_nonce; drafts before the final text said invalid_proof, so both are
+  // taken as the signal.
   var ready = request.proof ? Promise.resolve(true) : prepareRequest();
   ready
     .then(send)
     .then(function (response) {
       if (response.ok || !response.body ||
-          response.body.error !== "invalid_proof") return response;
-      log.debug("the issuer rejected the proof; rebuilding it with a fresh " +
-                "nonce and retrying once.");
+          !vciWallet.isStaleNonceError(response.body.error)) {
+        return response;
+      }
+      log.debug("the issuer rejected the proof (" + response.body.error +
+                "); rebuilding it with a fresh nonce and retrying once.");
       status("vc_approval_status",
         "The proof had gone stale (a c_nonce is single use) — rebuilding it " +
             "and trying again …", "vc-pending");

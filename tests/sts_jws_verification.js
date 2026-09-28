@@ -34,6 +34,7 @@
 
 const assert = require("assert");
 const crypto = require("crypto");
+const registry = require("./sts_applications.js");
 const paths = require("./module_paths");
 // The DEBUGGER's post-quantum engine, used to SIGN what the mock then verifies
 // with its own — see signerFor(). Loaded through module_paths so its requires
@@ -189,7 +190,7 @@ function makeJws(alg, spec, key, header, payload) {
 // worker pool, and that costs a measured 6.4x on the post-quantum path —
 // SLH-DSA-SHA2-128s signing 2,291ms to 14,685ms. The SHAKE parameter set is
 // twelve seconds uninstrumented, so seventy-seven instrumented on a fast
-// machine and past ninety on a two-core CI runner. mock-sts's coverage job
+// machine and past ninety on a two-core CI runner. iya-sts's coverage job
 // failed on exactly this window in about half its runs.
 //
 // `STS_BUSY_WINDOW_MS` overrides it, so a stack that knows it is slower can
@@ -235,18 +236,6 @@ async function metadata() {
       "/.well-known/openid-configuration")).json();
   log.debug("Leaving metadata().");
   return doc;
-}
-
-async function registerClient(body, base) {
-  log.debug("Entering registerClient().");
-  var response = await stsFetch((base || stsBase) + "/oauth2/register", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(Object.assign(
-      { redirect_uris: ["http://localhost:9999/callback"] }, body))
-  });
-  assert.strictEqual(response.status, 201, "registration should be accepted.");
-  log.debug("Leaving registerClient().");
-  return response.json();
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +292,13 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
     }
     var symmetric = spec.kind === "hmac";
     var clientId = "assertion-client-" + i;
-    var secret = "secret-for-" + clientId;
+    // AT LEAST AS LONG AS THE LARGEST HASH OUTPUT (64 octets for HS512).
+    // RFC 7518 section 3.2: a key the size of the hash output or larger MUST
+    // be used, and the service refuses a shorter one in product mode since
+    // iya-sts #202. A longer secret is accepted by every version of the
+    // service, older pinned ones included, so no behaviour needs detecting.
+    var secret = "secret-for-" + clientId + "-" +
+                 crypto.randomBytes(32).toString("hex");
     var pair = symmetric ? null : keyPairFor(spec, alg);
     var now = Math.floor(Date.now() / 1000);
     // AN HOUR, AND IT WAS FIVE MINUTES UNTIL 2026-08-31.
@@ -342,7 +337,7 @@ async function everyAdvertisedClientAssertionAlgorithmWorks() {
 
     // AWAITED SINCE THE MOCK'S 2026-08-30 BUMP. `clientAuth.verify()` became
     // an `async function` when the post-quantum verification moved to that
-    // service's worker pool (rcbj/mock-sts#6) — a composite ML-DSA assertion
+    // service's worker pool (rcbj/iya-sts#6) — a composite ML-DSA assertion
     // took 17.8 and 23.3 seconds on the one thread that also answers its KDC.
     //
     // WITHOUT THE `await` THIS TEST FAILS IN A WAY THAT NAMES THE WRONG THING,
@@ -435,13 +430,40 @@ async function everyAdvertisedProofAlgorithmWorks() {
     .proof_signing_alg_values_supported) || [];
   assert.ok(algs.length, "no proof signing algorithms are advertised.");
 
-  var client = await registerClient({});
+  // A PERSON'S ACCESS TOKEN, THE WAY A WALLET GETS ONE (2026-09-18): a
+  // provisioned confidential client, a person with a real password, and the
+  // authorization code with PKCE. It was an open RFC 7591 registration and
+  // the password grant as "alice" — three things a product-mode service
+  // refuses — and none of them is what this section is about.
+  var base = registry.baseOf(stsBase);
+  var client = { client_id: "jws-proof-client",
+                 client_secret: "jws-proof-" +
+                   crypto.randomBytes(12).toString("hex") };
+  var redirect = "http://localhost:9999/callback";
+  var person = "jws-proof-person";
+  var password = "Jws-proof-" + crypto.randomBytes(9).toString("base64url") +
+                 "-Aa1!";
+  await registry.provision(base, {
+    identifier: client.client_id, name: "JWS proof client",
+    protocols: ["oauth2", "oidc", "oid4vci"],
+    fields: { oauthClientId: client.client_id, oauthRedirectUri: [redirect],
+              oauthTokenEndpointAuthMethod: "client_secret_post",
+              oauthClientSecret: client.client_secret },
+    why: "the client this section's proofs are made for"
+  });
+  await registry.ensurePerson(base, person, password);
+  var granted = await registry.authorizationCode(base, {
+    clientId: client.client_id, redirectUri: redirect, username: person,
+    password: password, scope: "openid" });
   var tokenResponse = await (await stsFetch(stsBase + "/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ grant_type: "password", username: "alice",
-      password: "any", scope: "openid", client_id: client.client_id,
+    body: new URLSearchParams({ grant_type: "authorization_code",
+      code: granted.code, code_verifier: granted.verifier,
+      redirect_uri: redirect, client_id: client.client_id,
       client_secret: client.client_secret }).toString() })).json();
+  assert.ok(tokenResponse.access_token, "the token request for the proof " +
+    "section failed: " + JSON.stringify(tokenResponse).slice(0, 300));
 
   var driven = 0;
   var undriveable = [];

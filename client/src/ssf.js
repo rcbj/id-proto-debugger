@@ -836,8 +836,8 @@ function drawExchange(exchange) {
   } else {
     lines.push('');
     lines.push('(no body — which on this protocol is usually a SUCCESS: Add ' +
-      'Subject, Remove Subject and the verification endpoint all answer 204 ' +
-      'with nothing in them.)');
+      'Subject answers an empty 200, and Remove Subject and the ' +
+      'verification endpoint answer 204 with nothing in them.)');
   }
   if (exchange.error) {
     lines.push('');
@@ -1328,10 +1328,14 @@ function requestedEvents() {
   return out;
 }
 
+// `aud` goes on a CREATE only, and only when the field holds one: it is
+// Transmitter-Supplied (SSF 1.0 section 8.1.1), so an update that carried it
+// would have to carry the stream's value exactly (section 8.1.1.3) and gains
+// nothing by doing so.
 function streamBody(withId) {
   log.debug("Entering streamBody().");
   var body = ssfClient.buildStreamConfiguration({
-    aud: val('ssf_stream_aud'),
+    aud: withId ? '' : val('ssf_stream_aud'),
     events_requested: requestedEvents(),
     deliveryMethod: val('ssf_stream_delivery'),
     endpointUrl: val('ssf_stream_endpoint'),
@@ -1389,6 +1393,7 @@ function createStream() {
       setStatus('ssf_stream_status_text',
         'Created ' + read.streamId + '.', 'ok');
       notePollEndpoint(read);
+      noteStreamAudience(read);
       renderStream(read);
       log.debug("Leaving createStream(). " + read.streamId);
     });
@@ -1425,6 +1430,7 @@ function readStream() {
     var read = ssfClient.readStreamConfiguration(answer.body, {});
     setStatus('ssf_stream_status_text', 'Read ' + read.streamId + '.', 'ok');
     notePollEndpoint(read);
+    noteStreamAudience(read);
     renderStream(read);
     log.debug("Leaving readStream(). One stream.");
   });
@@ -1461,6 +1467,7 @@ function updateStream(method, label) {
       settleCall(entry, operations.SUCCESS, '');
       var read = ssfClient.readStreamConfiguration(answer.body, body);
       notePollEndpoint(read);
+      noteStreamAudience(read);
       setStatus('ssf_stream_status_text',
         (method === 'PUT'
           ? 'Replaced. Every member this page left empty went back to its ' +
@@ -1725,9 +1732,11 @@ function subjectFormatChanged() {
   var chosen = val('ssf_subject_format');
   if (chosen === 'complex') {
     setText('ssf_subject_what',
-      'SSF 1.0 section 4. A complex subject has NO "format" member and ' +
-      'carries any of ' + ssfClient.COMPLEX_SUBJECT_MEMBER_NAMES.join(', ') +
-      ', each itself a Subject Identifier. That is what makes "this session ' +
+      'SSF 1.0 section 3.3. A complex subject carries "format": ' +
+      '"complex" and any of ' +
+      ssfClient.COMPLEX_SUBJECT_MEMBER_NAMES.join(', ') +
+      ' — or an additional member name, which the section allows — each ' +
+      'itself a simple Subject Identifier. That is what makes "this session ' +
       'was revoked" expressible at all: the person is not revoked, one ' +
       'session of theirs is — which is the distinction the whole of CAEP ' +
       'rests on.');
@@ -1748,6 +1757,7 @@ function fillSubjectExample() {
   var chosen = val('ssf_subject_format');
   if (chosen === 'complex') {
     setVal('ssf_subject_json', pretty({
+      format: ssfClient.COMPLEX_FORMAT,
       user: { format: 'email', email: 'alice@example.com' },
       session: { format: 'opaque', id: 'sess-0123456789' },
       device: { format: 'opaque', id: 'device-abcdef' }
@@ -1812,6 +1822,12 @@ function checkSubject() {
       'Valid: ' + (verdict.complex ? 'a complex subject' :
         'the "' + verdict.format + '" format') + ' — ' +
       ssfClient.describeSubject(got.subject), 'ssf-status ssf-ok');
+    ssfClient.additionalComplexMembers(got.subject).forEach(function (name) {
+      host.appendChild(node('p', 'ssf-finding ssf-finding-warn',
+        '"' + name + '" is not one of the members SSF 1.0 section 3.3 ' +
+        'defines. It is allowed — additional member names MAY be used — ' +
+        'but a receiver that does not know it is free to ignore it.'));
+    });
     log.debug("Leaving checkSubject(). Valid.");
     return false;
   }
@@ -1915,6 +1931,27 @@ function notePollEndpoint(read) {
   }
   log.debug("Leaving notePollEndpoint(). " +
       (pollEndpointFromLastStream || 'none'));
+}
+
+// THE TRANSMITTER'S `aud`, READ BACK INTO THE FIELD. It is what every SET on
+// this stream will carry and so what an arriving one is checked against — a
+// value typed here before the create is at most a request, and the answer is
+// the only statement of what was assigned. An array is addressed to every
+// name in it; the first is written, which is the receiver's own when the
+// transmitter chose.
+function noteStreamAudience(read) {
+  log.debug("Entering noteStreamAudience().");
+  var aud = read ? read.audience : undefined;
+  if (Object.prototype.toString.call(aud) === '[object Array]') {
+    aud = aud.length ? aud[0] : '';
+  }
+  if (typeof aud !== 'string' || !aud) {
+    log.debug("Leaving noteStreamAudience(). None answered.");
+    return;
+  }
+  setVal('ssf_stream_aud', aud);
+  saveState();
+  log.debug("Leaving noteStreamAudience(). " + aud);
 }
 
 function pollOnce() {
@@ -3265,7 +3302,7 @@ function renderCaepSubjectFindings(subject) {
   var verdict = caepSession.checkSubject(subject, criticalMembers());
   if (verdict.ok) {
     host.appendChild(node('p', 'ssf-note ssf-ok',
-      'Valid against RFC 9493 and SSF section 4 — ' +
+      'Valid against RFC 9493 and SSF section 3.3 — ' +
       ssfClient.describeSubject(subject) + '.'));
   }
   (verdict.errors || []).forEach(function (text) {

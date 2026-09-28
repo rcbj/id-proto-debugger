@@ -391,9 +391,16 @@ function decGeneralString(t) {
   if (t.tag !== TAG.GENERAL_STRING && t.tag !== TAG.IA5_STRING) {
     expectTag(t, TAG.GENERAL_STRING, "a KerberosString");
   }
-  var s = "";
-  for (var i = 0; i < t.value.length; i++) s += String.fromCharCode(t.value[i]);
-  return s;
+  // UTF-8, as encGeneralString() writes and as MIT, Heimdal and Active
+  // Directory read a principal name (RFC 6806 section 7), despite RFC 4120
+  // section 5.2.1's IA5 note. It was Latin-1 until iya-sts #204 found the
+  // two halves disagreeing: a non-ASCII name decoded one byte per character
+  // was UTF-8-encoded again on the way back out — into the ETYPE-INFO2 salt,
+  // the reply's cname, the string-to-key salt — so the client derived a key
+  // the KDC did not hold. Bytes that are not well-formed UTF-8 still decode
+  // as Latin-1, so such a name reads back byte for byte rather than failing.
+  var s = prim.fromUtf8(t.value);
+  return s !== null ? s : decLatin1(t.value);
 }
 
 function decKerberosTime(t) {
@@ -593,7 +600,10 @@ function renderPrimitive(t) {
     }
     if (t.tag === TAG.GENERAL_STRING || t.tag === TAG.IA5_STRING) {
       log.debug("Leaving renderPrimitive().");
-      return decLatin1(t.value);
+      // The reading decGeneralString() gives the protocol, so the tree view
+      // shows the name the KDC will act on.
+      var text = prim.fromUtf8(t.value);
+      return text !== null ? text : decLatin1(t.value);
     }
     if (t.tag === TAG.GENERALIZED_TIME) {
       log.debug("Leaving renderPrimitive().");

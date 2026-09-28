@@ -1,0 +1,24 @@
+# Layered over local-tests.yml by `./local-run-tests.sh --sts-url=<base>` and by
+# nothing else (2026-09-19).
+#
+# THE MOCK STS IS SOMEBODY ELSE'S ON THAT RUN — a deployed iya-sts, such as
+# https://test-idp.iyasec.io — so the `sts` service is not started at all, and
+# this file removes the two things in local-tests.yml that assume it is:
+#
+#   * the api's `depends_on: sts: service_healthy`, which would otherwise make
+#     compose start a LOCAL mock on 8081, 88 and 389 as a dependency — and a
+#     job that falls back to `localhost` or `sts` would then pass against that
+#     one instead of the deployment it was pointed at;
+#   * the api's STS_CERT_URL, the local mock's self-signed certificate fetched
+#     into the api's truststore. A deployed service presents a certificate a
+#     public CA issued, which the api already trusts.
+#
+# `!override` needs Docker Compose 2.24 or later.
+version: '2.4'
+services:
+  api:
+    depends_on: !override
+      keycloak:
+        condition: service_healthy
+    environment:
+      - STS_CERT_URL=

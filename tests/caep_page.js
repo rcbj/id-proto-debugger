@@ -163,6 +163,28 @@ async function waitForText(driver, id, what) {
   return value;
 }
 
+// The same rule one step further on: a readout that is ALREADY filled in with
+// the previous event's answer cannot be waited for by "is it non-empty". This
+// waits for the text to say the thing being asserted, and hands back whatever
+// it last read so the assertion's own message still shows it.
+async function waitForMatch(driver, id, pattern, what) {
+  log.debug("Entering waitForMatch(). " + id);
+  let seen = "";
+  try {
+    await driver.wait(async function () {
+      seen = await textOf(driver, id);
+      return pattern.test(seen || "");
+    }, WAIT, "waiting for " + what + " (#" + id + ")");
+  } catch (e) {
+    // NOT rethrown: the check below says what was expected far better than a
+    // timeout does, and it has the text to show. The wait is what gives the
+    // page time to redraw; the assertion is what reports.
+    log.debug("waitForMatch(): " + ((e && e.message) || e));
+  }
+  log.debug("Leaving waitForMatch().");
+  return seen;
+}
+
 async function openPage(driver) {
   log.debug("Entering openPage().");
   await loadUrl(driver, baseUrl + "/ssf.html");
@@ -435,9 +457,10 @@ async function eachGrantShapeSeedsTheSession(driver) {
       "  .value);");
   check('THE SUBJECT IS A COMPLEX ONE naming the session as well as the ' +
       'person', function () {
-        assert.strictEqual(subject.format, undefined,
-            'a complex subject is told from a plain one by the ABSENCE of ' +
-            'format.');
+        assert.strictEqual(subject.format, 'complex',
+            'a complex subject is told from a plain one by ' +
+            '"format": "complex" (SSF 1.0 section 3.3).');
+        assert.strictEqual(subject.user.format, 'iss_sub');
         assert.strictEqual(subject.session.id, 'a-real-session-id');
         assert.strictEqual(subject.user.sub, 'urn:sts-mock:user:alice');
       });
@@ -512,13 +535,21 @@ async function eachGrantShapeSeedsTheSession(driver) {
 // consent screen here would be a second copy of what those jobs already own,
 // failing for their reasons and reported as a CAEP defect.
 // ---------------------------------------------------------------------------
+//
+// NEITHER ASKS FOR AN `ssf:` SCOPE, and they did until the 2026-09 bump. Since
+// iya-sts #110 `ssf:read` and `ssf:write` are that service's own PROTECTED
+// scopes, issued only to a client whose `oauthAllowedScope` declares them —
+// and `webapp1` declares neither, so asking for one was an invalid_scope 400
+// from the token endpoint, which reached this page's console as a failed
+// resource load. What this section is about is the SHAPE of the token set
+// the hand-off carries back, which the scope does not change.
 const DRIVEN = [
   { label: 'OAuth2 Resource Owner Password Credential Grant', idToken: true,
-    scope: 'openid ssf:read',
+    scope: 'openid',
     what: 'a person, authenticated at the TOKEN endpoint, with openid asked ' +
           'for — so an ID Token comes back and this page can name them' },
   { label: 'OAuth2 Client Credential', idToken: false,
-    scope: 'ssf:read',
+    scope: 'profile',
     what: 'NO USER AT ALL — the client is the subject — so there is no ID ' +
           'Token, and the session below is entirely this page\'s invention' }
 ];
@@ -661,7 +692,11 @@ async function everyEventCanBeSimulated(driver) {
   // sign with. The signature is `jws.js`'s pure-JavaScript engine and NOT Web
   // Crypto, which is what lets this work on the containerized suite's
   // http origin where `crypto.subtle` does not exist at all.
-  await fill(driver, "ssf_stream_aud", "https://caep-page.example/receiver");
+  //
+  // The stream's `aud` is LEFT EMPTY: SSF 1.0 section 8.1.1 makes it
+  // Transmitter-Supplied, the mock assigns the identifier this page
+  // authenticated as, and it refuses a create naming anything else.
+  await fill(driver, "ssf_stream_aud", "");
   await click(driver, "btn_ssf_create");
   const status = await waitForValue(driver, "ssf_stream_status_text",
       "stream status");
@@ -670,11 +705,18 @@ async function everyEventCanBeSimulated(driver) {
   const streamId = await valueOf(driver, "ssf_stream_id");
   assert.ok(streamId.length > 0, "No stream_id came back.");
   created.push(streamId);
+  const streamAud = await valueOf(driver, "ssf_stream_aud");
+  assert.strictEqual(streamAud, "caep-page-runner",
+      "The aud field should hold what the TRANSMITTER assigned, read back " +
+      "from its answer. It holds \"" + streamAud + "\".");
 
   await click(driver, "btn_ssf_tx_key");
   await waitForValue(driver, "ssf_tx_private_key", "signing key");
+  // The audience the mock's /ssf/receive answers to by default is its own
+  // URL (iya-sts #144 — a receiver MUST check it, RFC 8417 section 2.2), and
+  // a SET addressed anywhere else is refused as invalid_audience.
   await fill(driver, "ssf_tx_iss", stsUrl);
-  await fill(driver, "ssf_tx_aud", "https://caep-page.example/receiver");
+  await fill(driver, "ssf_tx_aud", stsUrl + "/ssf/receive");
   await fill(driver, "ssf_tx_endpoint", stsUrl + "/ssf/receive");
   await fill(driver, "caep_iss", stsUrl);
   await fill(driver, "caep_sub", "urn:sts-mock:user:caep-page");
@@ -727,13 +769,22 @@ async function everyEventCanBeSimulated(driver) {
         });
   }
 
-  const state = await textOf(driver, "caep_state");
+  // WAIT FOR THE REDRAW, WHICH IS NOT THE TOKEN. `caepSimulate()` applies the
+  // event to the model synchronously and then awaits the PUSH; the state and
+  // the counts are redrawn by `renderCaep()` in the `.then()` after it. So the
+  // signed token in the Transmit pane — which is what the loop above waits for
+  // — says nothing about these two readouts having been redrawn yet, and
+  // reading them here caught the session still `established` one run in
+  // several. Waiting for the content costs a passing run nothing.
+  const state = await waitForMatch(driver, "caep_state", /revoked/,
+      "the session state to follow session-revoked");
   check('THE SESSION STATE FOLLOWED THE EVENTS', function () {
     assert.ok(/revoked/.test(state),
         'The state readout says: ' + JSON.stringify(state.slice(0, 200)));
   });
 
-  const counts = await textOf(driver, "caep_counts");
+  const counts = await waitForMatch(driver, "caep_counts", /Total/,
+      "the event counts to be drawn");
   check('and every one of the eight is counted', function () {
     assert.ok(/Total/.test(counts), counts.slice(0, 200));
     // The zeroes are drawn too — "nothing of this type has been sent" is the
@@ -751,8 +802,12 @@ async function everyEventCanBeSimulated(driver) {
   // itself, and the pane refuses to build one rather than signing it.
   const before = await valueOf(driver, "ssf_tx_token");
   await click(driver, "btn_caep_session-presented");
-  const refusal = await waitForText(driver, "caep_simulate_status",
-      "refusal");
+  // MATCHED RATHER THAN MERELY NON-EMPTY, for the reason above: that status
+  // line still holds the last simulate's "…built. Pushing it…", so a wait for
+  // any text at all is satisfied before this click has been answered.
+  const refusal = await waitForMatch(driver, "caep_simulate_status",
+      /REVOKED/i, "the pane to refuse a presented event about a revoked " +
+      "session");
   check('A REVOKED SESSION CANNOT BE PRESENTED, and the pane refuses to ' +
       'build one', function () {
         assert.ok(/REVOKED/i.test(refusal),

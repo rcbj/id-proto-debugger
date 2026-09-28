@@ -109,7 +109,7 @@ function samlSetAllPanes(expand) {
         <input class="stored" type="text" id="saml_sso_redirect" name="saml_sso_redirect" value="http://localhost:8080/samlp/sso/redirect" />
       </div>
       <div class="saml-field">
-        <label title="SingleSignOnService with Binding urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact.">HTTP-Artifact binding URL</label>
+        <label title="SingleSignOnService with Binding urn:oasis:names:tc:SAML:2.0:bindings:HTTP-Artifact: an AuthnRequest sent AS an artifact. Nothing on this page sends one in SAML 2.0, and an HTTP-Artifact RESPONSE does not need it — that needs the Artifact Resolution Service below. Empty is normal.">HTTP-Artifact binding URL (not needed for an artifact response)</label>
         <input class="stored" type="text" id="saml_sso_artifact" name="saml_sso_artifact" value="http://localhost:8080/samlp/sso/artifact" />
       </div>
       <div class="saml-field">
@@ -170,14 +170,22 @@ function samlSetAllPanes(expand) {
     <p id="saml_version_warning" class="saml-notice saml-hidden"></p>
 
     <div class="saml-field" id="saml_binding_field">
-      <label for="saml_binding" title="Binding used to deliver the request to the IdP, and — for HTTP-Artifact — how the response comes back.">Binding</label>
+      <label for="saml_binding" title="How the request travels to the IdP: one of the bindings its metadata advertises a SingleSignOnService for.">Request binding</label>
       <select class="stored" id="saml_binding" name="saml_binding">
         <option value="redirect" selected="selected">HTTP-Redirect (GET)</option>
         <option value="post">HTTP-POST</option>
-        <option value="artifact">HTTP-Artifact</option>
       </select>
     </div>
     <p class="saml-note" id="saml_binding_note"></p>
+
+    <div class="saml-field" id="saml_response_binding_field">
+      <label for="saml_response_binding" title="The AuthnRequest's ProtocolBinding: how the IdP returns the Response. Offered whatever SingleSignOnService bindings the IdP advertises — those say how a request may ARRIVE, not how a response leaves.">Response binding (ProtocolBinding)</label>
+      <select class="stored" id="saml_response_binding" name="saml_response_binding">
+        <option value="post" selected="selected">HTTP-POST</option>
+        <option value="artifact">HTTP-Artifact</option>
+      </select>
+    </div>
+    <p class="saml-note" id="saml_response_binding_note"></p>
 
     <div class="saml-field" id="saml_hint_field">
       <label for="saml_username_hint" title="Optional subject hint. Its allowed structure is constrained by the selected NameIDFormat.">Username hint (optional)</label>

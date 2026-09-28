@@ -185,6 +185,15 @@ const created = { users: [], groups: [] };
 // credential would answer 200 and leave them nothing to sign.
 let defaultAuthHeaders = null;
 
+// The `type` values the User schema publishes for each complex multi-valued
+// attribute, read in section 1 and handed to every generated User — see
+// canonicalTypesOf() in scim_client.js. This mock narrows RFC 7643's
+// work/home/other to what its directory can store (iya-sts #206: `emails`
+// work, `phoneNumbers` work and mobile, `addresses` work) and refuses a
+// create carrying anything else, so a User generated with the RFC's whole
+// vocabulary is a 400 before one attribute is stored.
+let publishedTypes = null;
+
 // Not the run's prefix: this name gains a directory entry at the mock (a Basic
 // username is RECORDED as an authentication there), and section 10 asserts
 // nothing matching the prefix is left behind. A run's provisioning identity is
@@ -458,7 +467,7 @@ async function theMockHasScim() {
   if (result.status === 404) {
     log.debug("Leaving theMockHasScim(). 404.");
     return { present: false, why: 'the mock STS at ' + scimBaseUrl +
-        ' answers 404 there. The SCIM endpoints arrived in rcbj/mock-sts ' +
+        ' answers 404 there. The SCIM endpoints arrived in rcbj/iya-sts ' +
         'AFTER this repository\'s sts/ gitlink was last moved, so a ' +
         'checkout whose submodule predates them has no /scim/v2 routes. ' +
         'Bump the gitlink (git add sts) and rebuild the sts image.' };
@@ -537,6 +546,9 @@ async function discoveryAnswers() {
           'The User schema does not describe ' + name + '.');
     });
   });
+  publishedTypes = scim.canonicalTypesOf(one.body);
+  log.info("     the User schema publishes these type vocabularies: " +
+      JSON.stringify(publishedTypes));
   check('userName is described as required and unique', function () {
     const userName = (one.body.attributes || []).filter(function (row) {
       return row.name === 'userName';
@@ -640,7 +652,7 @@ async function aFullUserRoundTrips() {
   log.debug("Entering aFullUserRoundTrips().");
   log.info("2. A user with every optional attribute.");
   const user = scim.randomUser({ seed: prefix + ':full', prefix: prefix,
-                                 index: 0 });
+                                 index: 0, types: publishedTypes });
   const result = await scimCall({ operation: 'createUser', body: user });
   check('POST /Users answers 201 with a Location header', function () {
     assertAnswered(result, 'create');
@@ -655,16 +667,33 @@ async function aFullUserRoundTrips() {
   });
   const id = result.body.id;
   created.users.push(id);
-  check('the id is the entry\'s DN, as this mock documents', function () {
-    assert.ok(/^uid=/.test(id) && id.indexOf(usersDn) > 0,
-        'The id is "' + id + '". This mock uses the entry\'s DN as the SCIM ' +
-        'id on purpose — it is already an opaque, server-assigned unique ' +
-        'identifier — and the rest of this test reads the directory at that ' +
-        'DN.');
+  // THE ID IS THE ENTRY'S entryUUID, as this mock documents since iya-sts
+  // 64580f4 (2026-09-14). It was the DN, and RFC 7643 section 3.1 says an id
+  // is never reassigned — which a rename did to a DN. So the directory is
+  // read by `uid` below and the entry's own RFC 4530 entryUUID compared, which
+  // is a stronger claim than the DN comparison it replaces: the DN could only
+  // say "the id spells where it is", and this says "the id IS this entry".
+  check('the id is the entry\'s entryUUID, as this mock documents',
+      function () {
+    assert.ok(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+        .test(id),
+        'The id is "' + id + '". This mock uses the entry\'s entryUUID as ' +
+        'the SCIM id on purpose — assigned once, kept through a rename — ' +
+        'and the rest of this test finds the directory entry it names.');
   });
 
   // --- the second read: the directory ---
-  const entries = await ldapSearch(usersDn, '(uid=' + user.userName + ')');
+  // `entryUUID` by name: RFC 4530 makes it operational, and an LDAP search
+  // returns an operational attribute only when it is asked for.
+  //
+  // `pwdAccountLockedTime` for the same reason, and it is the one that would
+  // have gone WRONG QUIETLY: draft-behera-ldap-password-policy makes it
+  // operational too, so `*` never brings it back — and the check below
+  // asserts its ABSENCE. Left unnamed here it is absent from every entry
+  // whatever the directory holds, and the check passes for a user who has
+  // been disabled, which is the opposite of what it says.
+  const entries = await ldapSearch(usersDn, '(uid=' + user.userName + ')',
+      ['*', 'entryUUID', 'pwdAccountLockedTime']);
   check('the SCIM create really wrote an LDAP entry', function () {
     assert.strictEqual(entries.length, 1,
         'The SCIM server answered 201 and the directory has ' +
@@ -673,10 +702,13 @@ async function aFullUserRoundTrips() {
         'says it was stored.');
   });
   const entry = entries[0];
-  check('the entry is at the DN the SCIM id names', function () {
-    assert.strictEqual(String(entry.dn).toLowerCase(), String(id).toLowerCase(),
-        'The SCIM id and the entry DN disagree, so every later operation ' +
-        'addresses a different object from the one that was created.');
+  check('the entry is the one the SCIM id names', function () {
+    assert.strictEqual(String(attr(entry, 'entryUUID')[0] || '').toLowerCase(),
+        String(id).toLowerCase(),
+        'The SCIM id is "' + id + '" and the entry at ' + entry.dn +
+        ' carries entryUUID ' + JSON.stringify(attr(entry, 'entryUUID')) +
+        ', so every later operation addresses a different object from the ' +
+        'one that was created.');
   });
 
   // THE HEART OF THIS FILE. Every attribute sent, checked in the directory.
@@ -712,12 +744,37 @@ async function aFullUserRoundTrips() {
         'Storing the newlines verbatim produces a value no LDAP client can ' +
         'read.');
   });
-  check('active:true is recorded as an LDAP boolean', function () {
-    const stored = attr(entry, 'scimActive');
-    assert.ok(stored.length > 0, 'active was sent and scimActive is empty.');
-    assert.strictEqual(stored[0].toUpperCase(), 'TRUE',
-        'RFC 4517 section 3.3.3 spells the LDAP booleans in CAPITALS and ' +
-        'nothing else is one. Stored: ' + stored[0]);
+  // ---------------------------------------------------------------------
+  // `active` IS THE ACCOUNT'S LOCK, AND IT IS AN ABSENCE WHEN TRUE.
+  //
+  // This read `scimActive` and asserted the LDAP boolean `TRUE` until the
+  // 2026-09-17 submodule bump. That attribute was an INVENTION of the mock's
+  // that nothing else read — `active: false` deactivated nobody — and
+  // iya-sts #36 replaced it with draft-behera-ldap-password-policy's
+  // `pwdAccountLockedTime`, the same lock an administrator's disable writes.
+  // So `active` stopped being a field that is merely recorded and became one
+  // with consequences: a disable by SCIM ends every session the person holds
+  // and RISC reports `account-disabled`.
+  //
+  // WHICH INVERTS WHAT THERE IS TO ASSERT. The truthy case is now the
+  // ABSENCE of an attribute rather than the presence of one, so a check
+  // written the old way round — look for a value, assert on it — cannot be
+  // adapted by renaming the attribute: `attr()` answers an empty array both
+  // for "this account is not locked" and for "this mock stopped storing the
+  // lock at all", and only the resource read back tells those apart. Both
+  // halves are therefore asserted, and the second is the load-bearing one.
+  // ---------------------------------------------------------------------
+  check('active:true leaves no account lock in the directory', function () {
+    const locked = attr(entry, 'pwdAccountLockedTime');
+    assert.strictEqual(locked.length, 0,
+        'active:true was sent and the entry carries pwdAccountLockedTime=' +
+        locked[0] + '. That attribute IS the disabled state since iya-sts ' +
+        '#36, so an account created as active must not have one.');
+    const invented = attr(entry, 'scimActive');
+    assert.strictEqual(invented.length, 0,
+        'the entry still carries the invented scimActive attribute, which ' +
+        '#36 replaced with pwdAccountLockedTime. Two spellings of one fact ' +
+        'is how they come to disagree.');
   });
 
   // --- the third read: the resource itself ---
@@ -732,6 +789,17 @@ async function aFullUserRoundTrips() {
         'The enterprise extension did not come back at all.');
     assert.strictEqual(read.body[scim.ENTERPRISE_SCHEMA].department,
         user[scim.ENTERPRISE_SCHEMA].department);
+    // THE OTHER HALF OF THE LOCK, and the one that cannot be satisfied by a
+    // mock that quietly stopped storing it: the directory check above passes
+    // on an ABSENT attribute, and so would a service that dropped `active`
+    // altogether. Here it has to be present and true. iya-sts #36: on the way
+    // out `active` is always sent, and it is `true` unless the entry is
+    // locked.
+    assert.strictEqual(read.body.active, true,
+        'active came back as ' + JSON.stringify(read.body.active) + '. This ' +
+        'user was created active and nothing has locked it, so the resource ' +
+        'must say so — RFC 7643 section 4.1.1, and the lock is ' +
+        'pwdAccountLockedTime since iya-sts #36.');
   });
   check('meta carries created, lastModified, resourceType and location',
       function () {
@@ -779,7 +847,7 @@ async function replaceAndModify(subject) {
   log.debug("Entering replaceAndModify().");
   log.info("3. PUT and PATCH.");
   const replacement = scim.randomUser({ seed: prefix + ':replace',
-      prefix: prefix, index: 1 });
+      prefix: prefix, index: 1, types: publishedTypes });
   // A PUT REPLACES, so the replacement keeps the SAME userName — changing it
   // as well would make a failure ambiguous between "the PUT did not apply" and
   // "the PUT created somebody else".
@@ -899,7 +967,7 @@ async function listingAndFiltering() {
   let i;
   for (i = 0; i < 5; i++) {
     const user = scim.randomUser({ rng: rng, prefix: prefix + 'page',
-                                   index: i });
+                                   index: i, types: publishedTypes });
     const made = await scimCall({ operation: 'createUser', body: user });
     assertAnswered(made, 'create for paging');
     assert.strictEqual(made.status, 201,
@@ -1180,7 +1248,7 @@ async function anEntryWithNoUidStillMaps(population) {
     // exactly the kind of change that would turn this section into a test of
     // nothing while it went on reporting OK.
     const seeded = await ldapSearch(usersDn, "(cn=" + rdnValue + ")",
-        ["cn", "uid"]);
+        ["cn", "uid", "entryUUID"]);
     check('the entry really is there and really has NO uid', function () {
       assert.strictEqual(seeded.length, 1,
           'The search for (cn=' + rdnValue + ') under ' + usersDn +
@@ -1233,12 +1301,22 @@ async function anEntryWithNoUidStillMaps(population) {
           'collides with this entry, and SCIM reporting them under any ' +
           'other name would be this service disagreeing with itself about ' +
           'who is already here.');
-      assert.strictEqual(mine.body.Resources[0].id, dn,
+      // The entry's entryUUID, not its DN, since iya-sts 64580f4
+      // (2026-09-14) — and an entry added over LDAP, around SCIM, is given
+      // one by the directory exactly as a SCIM create is.
+      const uuid = attr(seeded[0], "entryUUID")[0] || "";
+      assert.ok(uuid,
+          'The entry at ' + dn + ' carries no entryUUID. RFC 4530 has the ' +
+          'directory assign one to every entry, however it was added, and ' +
+          'without it there is no SCIM id for this person at all.');
+      assert.strictEqual(String(mine.body.Resources[0].id).toLowerCase(),
+          uuid.toLowerCase(),
           'The resource that came back has id ' + mine.body.Resources[0].id +
-          ' and the entry is at ' + dn + '.');
+          ' and the entry at ' + dn + ' has entryUUID ' + uuid + '.');
     });
 
-    const read = await scimCall({ operation: 'readUser', id: dn });
+    const listedId = String(((mine.body.Resources || [])[0] || {}).id || "");
+    const read = await scimCall({ operation: 'readUser', id: listedId });
     check('and it can be read back one resource at a time', function () {
       assertAnswered(read, 'the read');
       assert.strictEqual(read.status, 200,
@@ -1248,6 +1326,23 @@ async function anEntryWithNoUidStillMaps(population) {
           'It came back as "' + read.body.userName + '" and the list called ' +
           'it "' + rdnValue + '". One resource has one userName however it ' +
           'is fetched.');
+    });
+
+    // AND BY ITS OLD SPELLING. The mock documents that a DN presented as an
+    // id still resolves, for a client that stored one before the id became
+    // the entryUUID, and that the resource then comes back under its NEW id —
+    // which is the only way such a client learns to stop sending the DN.
+    const byDn = await scimCall({ operation: 'readUser', id: dn });
+    check('a DN presented as the id still resolves, to the new id',
+        function () {
+      assertAnswered(byDn, 'the read by DN');
+      assert.strictEqual(byDn.status, 200,
+          'GET /Users/{DN} answered ' + byDn.status + ' ' + byDn.scimType +
+          ': ' + byDn.detail + '. A client that stored an id before ' +
+          '2026-09-14 holds a DN, and this mock says it still resolves.');
+      assert.strictEqual(String(byDn.body.id), listedId,
+          'Read by its DN it came back with id "' + byDn.body.id + '" and ' +
+          'the list gave "' + listedId + '".');
     });
   } finally {
     // In a `finally` because the checks above throw on failure and an entry
@@ -1317,16 +1412,39 @@ async function groupsAndMembership(population) {
     });
   });
   entries = await ldapSearch(groupsDn, '(cn=' + group.displayName + ')');
+  // IDS ON THE WIRE, DNS IN THE STORE. Since iya-sts 64580f4 (2026-09-14) a
+  // member's SCIM value is the person's entryUUID while `member` still holds
+  // DNs (RFC 4519 section 2.17 makes it a DN-valued attribute), and the mock
+  // translates between them. So each member's entry is found by its uid, and
+  // its DN is used only if that entry's own entryUUID is the id the
+  // population holds — an id the translation got wrong then names nobody,
+  // which is the defect this check is for.
+  const memberDns = {};
+  let p;
+  for (p = 0; p < population.length; p++) {
+    const found = await ldapSearch(usersDn,
+        '(uid=' + population[p].userName + ')', ['uid', 'entryUUID']);
+    const same = found.length === 1 &&
+        String(attr(found[0], 'entryUUID')[0] || '').toLowerCase() ===
+        String(population[p].id).toLowerCase();
+    memberDns[population[p].id] = same ?
+        String(found[0].dn).toLowerCase() : '';
+  }
   check('membership was written to the group\'s `member` attribute',
       function () {
     const stored = attr(entries[0], 'member').map(function (dn) {
       return dn.toLowerCase();
     });
     population.forEach(function (row) {
-      assert.ok(stored.indexOf(String(row.id).toLowerCase()) >= 0,
+      assert.ok(memberDns[row.id],
+          'The entry with uid=' + row.userName + ' under ' + usersDn +
+          ' is missing or does not carry entryUUID ' + row.id + ', that ' +
+          'person\'s SCIM id, so its DN cannot be looked for in `member`.');
+      assert.ok(stored.indexOf(memberDns[row.id]) >= 0,
           'Membership is a fact about the GROUP\'s entry — RFC 4519 section ' +
           '2.17 — and it is changed through a Group resource and never ' +
-          'through a User one. ' + row.userName + ' is not in `member`.');
+          'through a User one. ' + row.userName + ' (' + memberDns[row.id] +
+          ') is not in `member`: ' + stored.join(', '));
     });
   });
   check('the user resource shows the group, read-only', function () {
@@ -1475,7 +1593,7 @@ async function searchAndBulk() {
   for (i = 0; i < 3; i++) {
     operations.push({ method: 'POST', bulkId: 'u' + i, path: '/Users',
         data: scim.randomUser({ rng: rng, prefix: prefix + 'bulk',
-                                index: i }) });
+                                index: i, types: publishedTypes }) });
   }
   const bulkGroup = scim.randomGroup({ rng: rng, prefix: prefix + 'bulk' });
   bulkGroup.members = [{ value: 'bulkId:u0', type: 'User' }];
@@ -1597,7 +1715,8 @@ async function everyRefusalIsAnAnswer() {
         'userName is the one REQUIRED attribute on a User. A server that ' +
         'accepts this has a schema it does not enforce.');
   });
-  const twin = scim.randomUser({ seed: prefix + ':twin', prefix: prefix });
+  const twin = scim.randomUser({ seed: prefix + ':twin', prefix: prefix,
+                                 types: publishedTypes });
   const firstTwin = await scimCall({ operation: 'createUser', body: twin });
   check('the first of a pair is created', function () {
     assertAnswered(firstTwin, 'first twin');
@@ -1758,29 +1877,53 @@ async function whatTheServerAcceptsIsPublished() {
 // A token from the mock's own authorization server. Every grant works there and
 // the scope is whatever is asked for, which is what makes a scope test
 // possible at all.
+//
+// MINTED BY THE NAME IT WILL BE PRESENTED UNDER, which is why this goes
+// through the api rather than straight out of this process.
+//
+// This service has TWO names on the containerized and host stacks alike: the
+// test reaches it as `stsUrl` (localhost, published by compose) and the api
+// reaches it as `scimBaseUrl`'s origin (`sts`, the compose DNS name). It mints
+// `iss` from the name it was ASKED on, and RFC 9068 section 4 makes `iss` an
+// exact match against the authorization server the token is presented to. So
+// a token minted here on localhost and presented at /scim/v2 through the api
+// on `sts` is refused 401 — a correct refusal of a token that genuinely names
+// another issuer, which reads as a broken credential.
+//
+// Deriving the endpoint from `scimBaseUrl` rather than from `stsUrl` is the
+// whole fix: one client, one name, and the `iss` on the token is the `iss` at
+// the door. It cannot simply be minted directly, because the test process
+// cannot resolve `sts` at all; the api can, and its /token proxy is the same
+// one the debugger's own page uses.
+//
+// Pinning the mock to a single name instead (`global.publicBaseUrl`) was the
+// other way and is not available: the BROWSER reaches it as localhost, so one
+// issuer for both would put an unreachable authority in every document the
+// browser tests follow.
 async function accessToken(scope) {
   log.debug("Entering accessToken(). scope=" + scope);
-  const response = await fetch(stsUrl + '/oauth2/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'grant_type=client_credentials&client_id=' +
-        encodeURIComponent(SCIM_CLIENT_ID) +
-        '&client_secret=secret&scope=' + encodeURIComponent(scope)
+  const tokenEndpoint = new URL(scimBaseUrl).origin + '/oauth2/token';
+  const answer = await postJson(apiUrl + '/token', {
+    token_endpoint: tokenEndpoint,
+    grant_type: 'client_credentials',
+    client_id: SCIM_CLIENT_ID,
+    client_secret: 'secret',
+    scope: scope,
+    sslValidate: 'false',
+    auth_style: 'post'
   });
-  const text = await response.text();
-  let payload;
-  try {
-    payload = JSON.parse(text);
-  } catch (e) {
+  const payload = answer.payload;
+  if (!payload || typeof payload !== 'object') {
     log.debug("Leaving accessToken(). The token endpoint did not answer JSON.");
-    return { ok: false, why: 'the token endpoint at ' + stsUrl +
-        '/oauth2/token answered ' + response.status + ' with a body that is ' +
-        'not JSON: ' + text.slice(0, 200) };
+    return { ok: false, why: 'the api at ' + apiUrl + '/token answered ' +
+        answer.status + ' for ' + tokenEndpoint + ' with a body that is not ' +
+        'JSON: ' + String(answer.payload).slice(0, 200) };
   }
   if (!payload.access_token) {
     log.debug("Leaving accessToken(). No token.");
-    return { ok: false, why: 'the token endpoint answered ' +
-        response.status + ': ' + JSON.stringify(payload).slice(0, 300) };
+    return { ok: false, why: 'the token endpoint at ' + tokenEndpoint +
+        ', through the api, answered ' + answer.status + ': ' +
+        JSON.stringify(payload).slice(0, 300) };
   }
   log.debug("Leaving accessToken(). Got one.");
   return { ok: true, token: payload.access_token, scope: payload.scope };
@@ -1842,7 +1985,8 @@ async function everySchemeIsExercised(state) {
         });
         const mayNotWrite = await scimCall({ operation: 'createUser',
             body: scim.randomUser({ seed: prefix + ':scope',
-                                    prefix: prefix }) },
+                                    prefix: prefix,
+                                    types: publishedTypes }) },
             { headers: { Authorization: 'Bearer ' + readOnly.token } });
         check('scope: a read-only token may NOT write — 403', function () {
           assertAnswered(mayNotWrite, 'read-only write');
@@ -2331,19 +2475,32 @@ async function test() {
   // everySchemeIsExercised() drives. Those authenticate a USER rather than an
   // application, and putting them on this entry would be claiming the
   // application holds credentials it does not.
+  //
+  // THE TWO SCOPES ARE DECLARED as well as recorded, where the registry knows
+  // the attribute (iya-sts #110, 2026-09-22): `scim:read` and `scim:write` are
+  // that service's own PROTECTED scopes, issued in every mode only to a client
+  // whose `oauthAllowedScope` lists them — and SCIM asks the same question
+  // again on every call. An sts from before #110 has no such attribute and
+  // refuses one it does not know, so it is added only when the registry's
+  // `editable` table names it.
   // ---------------------------------------------------------------------
+  const scimClientFields = {
+    scimClientId: [SCIM_CLIENT_ID],
+    oauthClientId: [SCIM_CLIENT_ID],
+    oauthGrantType: ["client_credentials"],
+    oauthScope: ["scim:read", "scim:write"],
+    oauthTokenEndpointAuthMethod: "client_secret_post",
+    oauthConfidential: "TRUE"
+  };
+  if (await registry.registryEditable(registry.baseOf(stsUrl),
+                                      "oauthAllowedScope")) {
+    scimClientFields.oauthAllowedScope = ["scim:read", "scim:write"];
+  }
   await registry.provision(registry.baseOf(stsUrl), {
     identifier: SCIM_CLIENT_ID,
     name: "SCIM protocol test client",
     protocols: ["scim", "oauth2"],
-    fields: {
-      scimClientId: [SCIM_CLIENT_ID],
-      oauthClientId: [SCIM_CLIENT_ID],
-      oauthGrantType: ["client_credentials"],
-      oauthScope: ["scim:read", "scim:write"],
-      oauthTokenEndpointAuthMethod: "client_secret_post",
-      oauthConfidential: "TRUE"
-    },
+    fields: scimClientFields,
     why: "the client this job provisions and deprovisions accounts as"
   });
 

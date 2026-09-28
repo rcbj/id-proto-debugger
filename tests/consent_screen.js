@@ -87,7 +87,27 @@ function absolute(base, location) {
   if (/^https?:\/\//i.test(target)) {
     return target;
   }
+  // A Location already carrying the base's own path — what a trust realm's
+  // pages answer, `/realm/<id>/oauth2/consent?...` — is resolved against the
+  // base's ORIGIN; prefixing it with a realm base would name the realm twice.
+  // Anything else is still taken as relative to the base, as it always was.
+  let prefix = "";
+  try {
+    prefix = new URL(String(base)).pathname.replace(/\/+$/, "");
+  } catch (e) {
+    log.debug("Caught in absolute(): " + ((e && e.message) || e));
+  }
+  if (prefix && target.startsWith(prefix + "/")) {
+    return new URL(target, String(base)).toString();
+  }
   return String(base || "").replace(/\/+$/, "") + target;
+}
+
+// Where the Allow on a consent screen is posted: the screen's own path, so a
+// screen drawn inside a trust realm is answered inside it.
+function consentAction(base, location) {
+  const shown = new URL(absolute(base, location));
+  return shown.origin + shown.pathname;
 }
 
 // Is this URL still on the service we are driving? Only same-origin hops are
@@ -169,7 +189,7 @@ async function settleAuthorization(opts) {
         return { location: location, cookie: cookie, screens: screens,
                  page: page, status: shown.status, blocked: true };
       }
-      const answered = await fetch(absolute(base, "/oauth2/consent"), {
+      const answered = await fetch(consentAction(base, location), {
         method: "POST", redirect: "manual",
         headers: Object.assign({ "Content-Type": "application/x-www-form-urlencoded" },
                                headers),
@@ -243,6 +263,48 @@ const MID_AUTHORIZATION_LEG =
   /\/(oauth2\/(authorize|consent)|federation\/(acs|login))\b/;
 
 // ---------------------------------------------------------------------------
+// A PRESSED BUTTON IS NOT A PASSED SCREEN UNTIL ITS PAGE HAS GONE.
+//
+// The Allow button submits a form, and `click()` returns once the click is
+// dispatched — not once the browser has left. Until the navigation replaces
+// the document the old page is still there, button and all, so the next
+// `passInBrowser()` finds the SAME button and "presses" it again. Four of
+// those in a hundred milliseconds is `passAllInBrowser()`'s whole bound, spent
+// on one screen, and the near realm's screen that the redirect chain draws a
+// moment later is left standing. That is what took the OAuth 2.0 / OIDC /
+// WebAuthn point of the federation grid on 2026-09-16T15-03-42: realm 2's
+// consent was recorded, realm 1's was drawn and never answered, and
+// signInAtIdp() had returned 117ms after the ceremony, which only repeated
+// successful clicks can do.
+//
+// So wait for the element to go STALE, which is WebDriver's own word for "the
+// document it belonged to has been replaced". Bounded, and quiet when the
+// bound is reached: a submit that has not navigated by then is left to the
+// caller's loop, which will find the button again and press it once more.
+// ---------------------------------------------------------------------------
+async function waitUntilGone(driver, element, maxMs) {
+  log.debug("Entering waitUntilGone().");
+  const until = Date.now() + maxMs;
+  while (Date.now() < until) {
+    try {
+      await element.getTagName();
+    } catch (e) {
+      if (e && e.name === "StaleElementReferenceError") {
+        log.debug("Leaving waitUntilGone(). The page was replaced.");
+        return true;
+      }
+      // Anything else — a navigation in flight answering a command with an
+      // error of its own — is retried; the bound still ends this loop.
+      log.debug("waitUntilGone(): " + e.message);
+    }
+    await driver.sleep(50);
+  }
+  log.debug("Leaving waitUntilGone(). The page was still there after " +
+            maxMs + "ms.");
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // THE BROWSER SURFACE.
 //
 // `driver` and `By` are PASSED IN rather than required here, so that a job with
@@ -309,6 +371,7 @@ async function passInBrowser(driver, By, opts) {
     if (found.length) {
       try {
         await found[0].click();
+        await waitUntilGone(driver, found[0], options.maxMs || 30000);
         log.debug("Leaving passInBrowser(). Pressed " + id + ".");
         return true;
       } catch (e) {

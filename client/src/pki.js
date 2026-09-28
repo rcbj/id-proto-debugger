@@ -2220,22 +2220,87 @@ function renderServerView(box, result) {
           ', Host: ' + (seen.https.host || '(none)')));
     }
     var cert = seen.clientCertificate || {};
+    // TWO SPELLINGS OF THE SAME VERDICT, because the far end's answer moved.
+    // A server may call it `authorized` — node's own name for it on a
+    // socket, and what the mock STS's `/tls/whoami` published from the two
+    // TLS listeners it owned until 2026-09-16 — or `verified`, which is
+    // what `GET /tls/sign-in` on its main port publishes now. Reading only
+    // the first renders a VERIFIED certificate as "NOT verified", which is
+    // the one wrong answer this row must never give: it reads exactly like a
+    // truststore that was never filled.
+    var verified = cert.authorized === true || cert.verified === true;
+    // The name to call it by. A subject is what a reader wants and it is not
+    // always sent; a thumbprint always identifies the certificate, and on an
+    // answer built for RFC 8705 it is the whole point — it is what a token
+    // would be bound to. Fall through both rather than printing `undefined`.
+    var calledIt = cert.subject || (cert.thumbprint
+        ? 'the certificate with thumbprint ' + cert.thumbprint
+        : 'a certificate it did not name');
+    // How many anchors it holds, when it says. `/tls/sign-in` does not — it
+    // answers for this connection rather than describing the truststore — so
+    // an absent count must not be rendered as `0 anchor(s)`, which would read
+    // as a server that verified against nothing.
+    var anchors = (seen.truststore || {}).anchors;
     body.appendChild(detailRow('Client certificate, as the server read it',
         !cert.presented ? 'none was presented'
-          : (cert.subject + ' — ' + (cert.authorized
-              ? 'VERIFIED against ' +
-                ((seen.truststore || {}).anchors || 0) + ' anchor(s) it holds'
+          : (calledIt + ' — ' + (verified
+              ? 'VERIFIED' + (typeof anchors === 'number'
+                  ? ' against ' + anchors + ' anchor(s) it holds' : '')
               : 'NOT verified: ' +
                 (cert.authorizationError || 'no reason given')))));
-    if (cert.presented) {
+    if (cert.presented && cert.thumbprint && cert.subject) {
+      // Only when the subject was sent as well, since otherwise the row above
+      // is already the thumbprint and this would say it twice.
+      body.appendChild(detailRow('Which certificate, exactly',
+          cert.thumbprint + ' — the thumbprint the far end would bind an ' +
+          'RFC 8705 access token to, so this says the certificate arriving ' +
+          'is the one issued here and not merely one with the same name.'));
+    }
+    if (cert.presented && typeof cert.chainLength === 'number') {
       // NOT a count of what was sent. It is the path the server assembled, and
       // when verification succeeded its last entry is an anchor that server
       // holds — which this end did not send, and for a root must not.
+      //
+      // Conditional since 2026-09-17: a server that reports its verdict and
+      // not its path sends no `chainLength`, and `undefined certificate(s)`
+      // is worse than the row's absence.
       body.appendChild(detailRow('The path it built',
           cert.chainLength + ' certificate(s), leaf first. A leaf presented ' +
           'without its intermediates is the commonest mutual-TLS mistake ' +
           'there is and is invisible from here; it shows there as a chain of ' +
           'one that did not verify.'));
+    }
+    // WHAT THE CERTIFICATE WAS WORTH, when the far end decides that on the
+    // same request. The mock STS's `GET /tls/sign-in` does: it starts a
+    // session for a certificate that verifies, and says so. That is a
+    // different question from whether the certificate verified — a
+    // certificate can verify and still sign nobody in, which is what happens
+    // to an application's own credential — so it is its own row.
+    if (typeof seen.signedIn === 'boolean') {
+      // `why` FIRST, because that is the member the mock STS actually sends
+      // and it is the half worth reading: a certificate can verify and still
+      // start no session — revoked, not an identity here, an application's
+      // credential rather than a person's, or refused by an issuance policy
+      // — and each of those says so there. `reason` is kept beside it for a
+      // server that spells it the other way.
+      var session = seen.session || {};
+      var why = session.why || session.reason || '';
+      body.appendChild(detailRow('And whether that signed anyone in',
+          (seen.signedIn ? 'yes' : 'no') + (why ? ' — ' + why : '') +
+          (seen.note ? ' ' + seen.note : '')));
+    }
+    // THE FAR END'S REVOCATION VERDICT, which is a third state and not a
+    // boolean: `revoked` is true, false, or NULL for a check that could not
+    // reach an answer — a CRL that would not download, a chain that would not
+    // walk. Rendering null as "not revoked" would turn *nobody knows* into a
+    // clean bill of health, which is the one reading this row must not offer.
+    if (seen.revocation && seen.revocation.checked) {
+      var rev = seen.revocation;
+      body.appendChild(detailRow('Its revocation check',
+          (rev.revoked === true ? 'REVOKED'
+            : rev.revoked === false ? 'not revoked'
+            : 'NOT ESTABLISHED (' + (rev.status || 'unknown') + ')') +
+          (rev.why ? ' — ' + rev.why : '')));
     }
     if (seen.authentication && seen.authentication.authenticated === false) {
       body.appendChild(detailRow('And what it means to that server',

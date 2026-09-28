@@ -163,6 +163,72 @@ async function loadIdpMetadata(driver, metadataUrl, metadataFile) {
   log.debug("Leaving loadIdpMetadata().");
 }
 
+// Put the page's two binding selectors where this job's single SAML_BINDING
+// says: redirect and post are request bindings with an HTTP-POST response, and
+// artifact is a Redirect-bound request with an HTTP-Artifact response.
+async function selectBindings(driver, binding) {
+  log.debug("Entering selectBindings(). binding=" + binding);
+  var request = binding === "post" ? "post" : "redirect";
+  var response = binding === "artifact" ? "artifact" : "post";
+  log.info("Select request binding: " + request + ", response binding: " +
+           response);
+  await driver.executeScript(
+    "var s=document.getElementById('saml_binding'); if(s){ s.value = " +
+        "arguments[0]; s.dispatchEvent(new Event('change')); }" +
+    "var r=document.getElementById('saml_response_binding'); if(r){ " +
+        "r.value = arguments[1]; r.dispatchEvent(new Event('change')); }",
+    request, response
+  );
+  var selected =
+      await driver.findElement(By.id("saml_binding")).getAttribute("value");
+  assert.strictEqual(selected, request, "Request binding '" + request +
+                     "' is not available in the selector.");
+  var selectedResponse = await driver.findElement(
+      By.id("saml_response_binding")).getAttribute("value");
+  assert.strictEqual(selectedResponse, response, "Response binding '" +
+                     response + "' is not available in the selector.");
+  log.debug("Leaving selectBindings().");
+}
+
+// Issue #307: the HTTP-Artifact RESPONSE choice is the AuthnRequest's
+// ProtocolBinding, and it must not depend on the identity provider
+// advertising an HTTP-Artifact SingleSignOnService — which names a binding a
+// REQUEST may arrive on, and which the mock STS stopped advertising (iya-sts
+// #191). So the field that metadata would have filled is BLANKED here, before
+// the choice is looked for, and the round trip that follows then proves the
+// artifact response works without it. (Against the mock it is already blank
+// after the metadata load; against Keycloak, which does advertise one, this is
+// what makes the check mean the same thing.)
+async function assertArtifactResponseOffered(driver) {
+  log.debug("Entering assertArtifactResponseOffered().");
+  var probe = await driver.executeScript(
+    "var f=document.getElementById('saml_sso_artifact');" +
+    "var before=f?f.value:'';" +
+    "if(f){ f.value=''; f.dispatchEvent(new Event('change')); }" +
+    "var r=document.getElementById('saml_response_binding');" +
+    "var o=r?r.querySelector('option[value=\"artifact\"]'):null;" +
+    "var q=document.getElementById('saml_binding');" +
+    "var a=q?q.querySelector('option[value=\"artifact\"]'):null;" +
+    "return { advertised: before, selector: !!r, offered: !!o," +
+    " enabled: !!(o && !o.disabled && !r.disabled)," +
+    " inRequestMenu: !!a," +
+    " ars: (document.getElementById('saml_ars')||{}).value||'' };");
+  log.info("Artifact response choice: " + JSON.stringify(probe));
+  assert(probe.selector, "saml_request.html has no response binding " +
+         "(ProtocolBinding) selector.");
+  assert(probe.offered && probe.enabled, "The HTTP-Artifact response " +
+         "binding is not offered once the HTTP-Artifact SingleSignOnService " +
+         "field is empty. It is the AuthnRequest's ProtocolBinding and must " +
+         "be offered whatever SSO bindings the IdP advertises (issue #307).");
+  assert(!probe.inRequestMenu, "The REQUEST binding selector still offers " +
+         "HTTP-Artifact. Nothing on the page sends an AuthnRequest AS an " +
+         "artifact; the artifact choice belongs to the response binding.");
+  assert(probe.ars, "The metadata load left no Artifact Resolution Service " +
+         "address, which is the one thing an artifact response DOES need " +
+         "from the identity provider.");
+  log.debug("Leaving assertArtifactResponseOffered().");
+}
+
 async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
                               metadataFile) {
   log.debug("Entering samlActivities().");
@@ -255,17 +321,15 @@ async function samlActivities(driver, metadataUrl, spEntityId, user, binding,
     why: "the service provider every AuthnRequest in this job comes from"
   });
 
-  // Select the binding under test (redirect / post / artifact).
-  log.info("Select binding: " + binding);
-  await driver.executeScript(
-    "var s=document.getElementById('saml_binding'); if(s){ s.value = " +
-        "arguments[0]; s.dispatchEvent(new Event('change')); }",
-    binding
-  );
-  var selected =
-      await driver.findElement(By.id("saml_binding")).getAttribute("value");
-  assert.strictEqual(selected, binding, "Binding '" + binding +
-                     "' is not available in the selector.");
+  // Select the binding under test (redirect / post / artifact). Since issue
+  // #307 these are TWO selectors: the request binding (Redirect or POST, how
+  // the AuthnRequest travels) and the response binding (the ProtocolBinding).
+  // "artifact" here means what it always meant — a Redirect-bound request
+  // asking for an HTTP-Artifact response.
+  if (binding === "artifact") {
+    await assertArtifactResponseOffered(driver);
+  }
+  await selectBindings(driver, binding);
 
   // Send the (signed) AuthnRequest via the selected binding.
   log.info("Call IdP (" + binding + ").");

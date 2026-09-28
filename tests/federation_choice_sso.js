@@ -83,21 +83,22 @@
 // ---------------------------------------------------------------------------
 // ONE THING THE MOCK HAS TO BE CONFIGURED FOR, AND IT IS NOT A HACK
 //
-// `federation.outboundAllowInsecure`. The OpenID Connect relationship redeems
-// its code over a BACK CHANNEL, which `federation_http.js` makes, and that
-// module refuses two things by default: an `http://` URL, and a certificate
-// nothing here trusts. A client secret and an authorization code travel on
-// that request, so both refusals are right — and BOTH apply to this suite.
-// Every stack here runs the mock on a self-signed certificate it regenerates
-// at every start, so the `https` stacks need this setting exactly as much as
-// the `http` ones do; the scheme says nothing about whether it is needed.
+// The OpenID Connect relationship redeems its code over a BACK CHANNEL, which
+// `federation_http` makes, and that module refuses two things by default: an
+// `http://` URL, and a certificate nothing here trusts. A client secret and
+// an authorization code travel on that request, so both refusals are right.
 // That was the shape of this file's first failure: the SAML 2.0 half passed,
 // the OpenID Connect half timed out coming back, and the reason was a 502
-// naming a certificate on a page nobody was reading.
+// naming a certificate on a page nobody was reading. Until iya-sts #171 one
+// setting, `federation.outboundAllowInsecure`, waived both; it is three now,
+// and `trustPartnerTls()` in federation_admin.js picks the strictest that
+// works — on every stack here `federation.outboundCaFile`, naming the file
+// the mock already serves its own certificate from, so the back channel is
+// verified rather than waved through.
 //
 // It is written WHILE REALM 1 IS AMBIENT, so it lands in that realm's own
-// override map rather than process-wide — a mock relaxed process-wide would
-// stop checking certificates for every other job in the pool — and it is put
+// override map rather than process-wide — a mock changed process-wide would
+// change the certificate check for every other job in the pool — and it is put
 // back with `/admin-api/config/reset` rather than by writing the old value
 // back: a `set` leaves `source: override` on the row for ever, and the mock's
 // own suite trips over that on the next run against the same container.
@@ -246,44 +247,17 @@ async function createRealms(stsBase) {
 //
 // The OpenID Connect relationship is the only one of the two with a BACK
 // CHANNEL: realm 1 redeems the code at realm 2's token endpoint and reads
-// realm 2's JWKS, both through `federation_http.js`, which refuses an
-// `http://` URL and refuses a certificate nothing trusts. Every stack in this
-// suite runs the mock on a self-signed certificate it regenerates at every
-// start, so this is needed on a `https` stack exactly as much as on a plain
-// one — reading the scheme and skipping the write is what made the OpenID
-// Connect half of this test time out coming back, with the reason on an error
-// page nobody was reading.
-//
-// WHICH REALM THE WRITE LANDED IN is asserted, because that is the half that
-// costs somebody else a run: a setting written while a realm is ambient goes
-// into that realm's own override map, and one written WITHOUT one lands
-// process-wide, where it would stop every other job on this mock from checking
-// a certificate. `realm` says which realm answered the read and
-// `realmSettings` is that realm's own override list, so the snapshot answers
-// both questions at once.
+// realm 2's JWKS, both through `federation_http`. Which setting lets it, and
+// the assertion that the write landed IN REALM 1 rather than process-wide,
+// are `trustPartnerTls()`'s. Answers the keys written, for the reset.
 // ---------------------------------------------------------------------------
-async function allowInsecureOutbound(spBase) {
-  log.debug("Entering allowInsecureOutbound().");
-  await must(spBase, "/config/set",
-             { key: "federation.outboundAllowInsecure", value: "true" },
-             "allowing " + SP_REALM + " to dial " + IDP_REALM + " over the " +
-             "mock's own self-signed TLS, which the OpenID Connect " +
-             "relationship needs to redeem its code");
-  const snapshot = await adminGet(spBase, "/config");
-  assert.strictEqual(String(snapshot.realm), SP_REALM,
-    "Reading " + SP_REALM + "'s configuration answered for the \"" +
-    snapshot.realm + "\" realm, so the write above did not land where this " +
-    "test thinks it did either.");
-  assert.ok((snapshot.realmSettings || [])
-              .indexOf("federation.outboundAllowInsecure") >= 0,
-    SP_REALM + " does not list federation.outboundAllowInsecure among its " +
-    "OWN settings (it lists: " + (snapshot.realmSettings || []).join(", ") +
-    "), so the write went process-wide — which is not this test's to do, and " +
-    "would relax the certificate check for every other job on this mock.");
-  log.info(SP_REALM + " may dial a partner whose certificate nothing here " +
-           "trusts, which is what the OpenID Connect relationship's back " +
-           "channel needs.");
-  log.debug("Leaving allowInsecureOutbound().");
+async function trustPartnerBackChannel(spBase) {
+  log.debug("Entering trustPartnerBackChannel().");
+  const keys = await admin.trustPartnerTls(spBase, SP_REALM,
+    "the OpenID Connect relationship redeems its code at " + IDP_REALM +
+    "'s token endpoint");
+  log.debug("Leaving trustPartnerBackChannel().");
+  return keys;
 }
 
 // ---------------------------------------------------------------------------
@@ -475,6 +449,12 @@ async function createRelationship(spBase, partner, fields, peer) {
                { id: partner.id, field: field, value: value },
                "setting " + field + " on \"" + partner.id + "\"");
   }
+  // WHICH PERSON THE PARTNER SIGNS IN (iya-sts #109): the mapped name, matched
+  // or created as it is, where the sts knows `fedSubjectPolicy` at all. Under
+  // the default a created entry is `choice-saml2~<name>`, and the ID Token
+  // assertions below that the application never learns the relationship's
+  // name could not hold — pinSubjectPolicy() in federation_admin.js.
+  await admin.pinSubjectPolicy(spBase, partner.id);
   const enabled = await must(spBase, "/federation/enable", { id: partner.id },
                              "enabling \"" + partner.id + "\"");
   assert.ok(enabled.readiness.ready,
@@ -1046,6 +1026,29 @@ async function mockCanOfferAChoice(stsBase) {
   return can;
 }
 
+// THE PERSON AN ID TOKEN FROM REALM 1 DESCRIBES. `local` is realm 1's name for
+// the person typed at the partner realm as `typed`. Since iya-sts 64580f4
+// (2026-09-14) `sub` is the `urn:uuid:` of that person's entry in the realm
+// that issued the token, so it is compared EXACTLY with what realm 1's
+// directory holds for `local` — which the substring check it replaces could
+// not be. `preferred_username`, where present, must name the same person.
+async function assertDescribes(claims, spBase, local, typed, what) {
+  log.debug("Entering assertDescribes(). " + what);
+  const expected = await admin.subjectOf(spBase, local);
+  assert.strictEqual(claims.sub, expected,
+    what + "'s sub is \"" + claims.sub + "\", and " + SP_REALM + "'s " +
+    "directory says \"" + local + "\" — typed at " + IDP_REALM + " as \"" +
+    typed + "\" — is \"" + expected + "\".");
+  if (claims.preferred_username !== undefined) {
+    const named = String(claims.preferred_username);
+    assert.ok(named === local || named === typed,
+      what + "'s preferred_username is \"" + named + "\". The person typed " +
+      "at " + IDP_REALM + " as \"" + typed + "\" is \"" + local + "\" at " +
+      SP_REALM + ".");
+  }
+  log.debug("Leaving assertDescribes().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const stsUrl = process.env.WSTRUST_STS_URL || "";
@@ -1072,11 +1075,11 @@ async function test() {
   const samlUser = usernameFor("fedchoice-saml");
   const oidcUser = usernameFor("fedchoice-oidc");
 
-  // Whether the setting below was actually written, so the `finally` resets
+  // Which settings below were actually written, so the `finally` resets
   // exactly what it turned on: a reset of a setting that is not overridden is
   // refused by the mock, and a `must()` in a `finally` would then replace the
   // real failure with that one.
-  let relaxedOutbound = false;
+  let relaxedOutbound = [];
   // process.exit() is synchronous termination, so it would skip both of the
   // `finally` blocks below — orphaning the browser (one headless Chrome is
   // ~15 processes, which is how a run of this suite once left 559 of them on
@@ -1093,8 +1096,7 @@ async function test() {
     // configured with.
     // -------------------------------------------------------------------
     await createRealms(stsBase);
-    await allowInsecureOutbound(spBase);
-    relaxedOutbound = true;
+    relaxedOutbound = await trustPartnerBackChannel(spBase);
     await registerApplication(spBase, callbackUri);
 
     const samlPartner = await readSamlPartner(idpBase,
@@ -1180,6 +1182,11 @@ async function test() {
                "\" (" + PARTNERS[0].label + ").");
       const sentSaml = await signInThrough(driver, spBase, callbackUri,
                                            PARTNERS[0].id, samlUser);
+      // WHO REALM 1 CALLS THAT PERSON: the NameID as it crossed, unless the
+      // relationship's fedSubjectPolicy (iya-sts #109) namespaced the entry
+      // the sign-in created. See localNameAt() in federation_admin.js.
+      const samlLocal = await admin.localNameAt(spBase, PARTNERS[0].id,
+                                                samlUser);
 
       // READ BEFORE THE CODE IS REDEEMED, so the count is about the SIGN-IN
       // rather than about the token call.
@@ -1201,10 +1208,10 @@ async function test() {
         "The \"" + PARTNERS[0].id + "\" relationship recorded a failure " +
         "during a sign-in that succeeded: " +
         afterSaml[PARTNERS[0].id].lastError);
-      assert.ok(afterSaml[PARTNERS[0].id].lastUser.indexOf(samlUser) >= 0,
+      assert.ok(afterSaml[PARTNERS[0].id].lastUser.indexOf(samlLocal) >= 0,
         "The \"" + PARTNERS[0].id + "\" relationship's last user is \"" +
         afterSaml[PARTNERS[0].id].lastUser + "\" and this test signed in as \"" +
-        samlUser + "\".");
+        samlUser + "\", who is \"" + samlLocal + "\" at " + SP_REALM + ".");
 
       const samlClaims = await redeemAndReadIdToken(driver, callbackUri);
       assert.strictEqual(samlClaims.iss, spBase,
@@ -1226,11 +1233,8 @@ async function test() {
         "The application's ID Token names the federation relationship \"" +
         PARTNERS[0].id + "\": " + JSON.stringify(samlClaims) + ". The " +
         "application did not choose it and must not learn about it.");
-      assert.ok(String(samlClaims.preferred_username ||
-                       samlClaims.sub).indexOf(samlUser) >= 0,
-        "The ID Token describes \"" +
-        (samlClaims.preferred_username || samlClaims.sub) + "\" and the name " +
-        "typed at " + IDP_REALM + " was \"" + samlUser + "\".");
+      await assertDescribes(samlClaims, spBase, samlLocal, samlUser,
+                            "The ID Token");
       log.info("Sign-in one complete: an ID Token from " + samlClaims.iss +
                " describing " +
                (samlClaims.preferred_username || samlClaims.sub) + ".");
@@ -1247,6 +1251,16 @@ async function test() {
                "\" (" + PARTNERS[1].label + ").");
       const sentOidc = await signInThrough(driver, spBase, callbackUri,
                                            PARTNERS[1].id, oidcUser);
+      // WHO REALM 1 CALLS THAT PERSON. Since iya-sts 64580f4 (2026-09-14) an
+      // OpenID Connect partner names somebody by its `urn:uuid:` subject, and
+      // realm 1 files a partner's `urn:uuid:` as `sub-<uuid>` rather than
+      // resolving it in its own directory — so over this partner, unlike the
+      // SAML 2.0 one, the typed name does not cross. Worked out from the
+      // partner realm's own directory; see federatedNameOf().
+      const oidcLocal = await admin.federatedNameOf(idpBase, oidcUser,
+                                                    spBase, PARTNERS[1].id);
+      log.info(IDP_REALM + "'s " + oidcUser + " is " + oidcLocal + " at " +
+               SP_REALM + ".");
 
       const afterOidc = await counts(spBase);
       assert.strictEqual(afterOidc[PARTNERS[1].id].authentications, 1,
@@ -1262,10 +1276,10 @@ async function test() {
         "The \"" + PARTNERS[1].id + "\" relationship recorded a failure " +
         "during a sign-in that succeeded: " +
         afterOidc[PARTNERS[1].id].lastError);
-      assert.ok(afterOidc[PARTNERS[1].id].lastUser.indexOf(oidcUser) >= 0,
+      assert.ok(afterOidc[PARTNERS[1].id].lastUser.indexOf(oidcLocal) >= 0,
         "The \"" + PARTNERS[1].id + "\" relationship's last user is \"" +
         afterOidc[PARTNERS[1].id].lastUser + "\" and this test signed in as \"" +
-        oidcUser + "\".");
+        oidcUser + "\", who is \"" + oidcLocal + "\" at " + SP_REALM + ".");
 
       const oidcClaims = await redeemAndReadIdToken(driver, callbackUri);
       assert.strictEqual(oidcClaims.iss, spBase,
@@ -1277,11 +1291,8 @@ async function test() {
       assert.ok(JSON.stringify(oidcClaims).indexOf(IDP_REALM) === -1,
         "The second ID Token mentions " + IDP_REALM + ": " +
         JSON.stringify(oidcClaims) + ".");
-      assert.ok(String(oidcClaims.preferred_username ||
-                       oidcClaims.sub).indexOf(oidcUser) >= 0,
-        "The second ID Token describes \"" +
-        (oidcClaims.preferred_username || oidcClaims.sub) + "\" and the name " +
-        "typed at " + IDP_REALM + " was \"" + oidcUser + "\".");
+      await assertDescribes(oidcClaims, spBase, oidcLocal, oidcUser,
+                            "The second ID Token");
       // TWO PEOPLE, ONE APPLICATION, TWO PROTOCOLS. The application asked the
       // same question twice and got two answers in the same shape, and the
       // fact that they arrived over completely different wire protocols is
@@ -1299,7 +1310,7 @@ async function test() {
       // BOTH PEOPLE HAVE A DIRECTORY ENTRY IN REALM 1, a service that never
       // checked a password for either of them, and each is recorded as having
       // arrived through federation.
-      for (const user of [samlUser, oidcUser]) {
+      for (const user of [samlLocal, oidcLocal]) {
         const users = await adminGet(spBase,
           "/users?q=" + encodeURIComponent(user));
         assert.ok((users.users || []).some(function (one) {
@@ -1325,10 +1336,9 @@ async function test() {
     // The same argument the driver's own finally is written under, one level
     // out: process.exit() below would skip THIS block too, and the setting
     // would be left on realm 1 by every failing run.
-    if (relaxedOutbound) {
-      await must(spBase, "/config/reset",
-                 { key: "federation.outboundAllowInsecure" },
-                 "resetting federation.outboundAllowInsecure in " + SP_REALM);
+    for (const key of relaxedOutbound) {
+      await must(spBase, "/config/reset", { key: key },
+                 "resetting " + key + " in " + SP_REALM);
     }
   }
   if (testFailed) {

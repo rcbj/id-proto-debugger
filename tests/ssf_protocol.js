@@ -174,14 +174,35 @@ async function call(method, url, body, options) {
   return { status: response.status, body: payload, text: text };
 }
 
+// THE SETTING AS IT WAS, found in GET /config. The rows are under
+// `groups[].settings` — the flat `settings` list this read once went away, and
+// with it every restore: the lookup found nothing, nothing was recorded, and
+// the run left each setting it touched overridden on the shared mock. A row
+// records whether it was OVERRIDDEN as well as its value, because restoring an
+// override that was never there is itself a change (see restoreSettings()).
+function settingRow(configDocument, key) {
+  log.debug("Entering settingRow(). " + key);
+  const doc = configDocument || {};
+  const rows = (doc.settings || []).slice();
+  (doc.groups || []).forEach(function (group) {
+    (group.settings || []).forEach(function (one) {
+      rows.push(one);
+    });
+  });
+  const row = rows.filter(function (one) {
+    return one.key === key;
+  })[0] || null;
+  log.debug("Leaving settingRow(). " + (row ? 'found' : 'none'));
+  return row;
+}
+
 async function setSetting(key, value) {
   log.debug("Entering setSetting(). " + key);
   const before = await call('GET', adminUrl + '/config', null, {});
-  const row = ((before.body || {}).settings || []).filter(function (one) {
-    return one.key === key;
-  })[0];
+  const row = settingRow(before.body, key);
   if (row && changed[key] === undefined) {
-    changed[key] = row.value;
+    changed[key] = { overridden: row.overridden === true,
+      text: row.text !== undefined ? String(row.text) : String(row.value) };
   }
   const out = await call('POST', adminUrl + '/config/set',
       { key: key, value: String(value) }, {});
@@ -190,13 +211,22 @@ async function setSetting(key, value) {
   log.debug("Leaving setSetting().");
 }
 
+// A setting that was NOT overridden before this run is RESET — its override
+// cleared, so it follows its default again — rather than set to the value it
+// had, which would leave an override behind that nobody asked for. One that
+// was overridden gets that value back.
 async function restoreSettings() {
   log.debug("Entering restoreSettings().");
   const keys = Object.keys(changed);
   let i;
   for (i = 0; i < keys.length; i++) {
-    await call('POST', adminUrl + '/config/set',
-        { key: keys[i], value: String(changed[keys[i]]) }, {});
+    const was = changed[keys[i]];
+    if (was.overridden) {
+      await call('POST', adminUrl + '/config/set',
+          { key: keys[i], value: was.text }, {});
+    } else {
+      await call('POST', adminUrl + '/config/reset', { key: keys[i] }, {});
+    }
   }
   log.debug("Leaving restoreSettings(). " + keys.length + " restored.");
 }
@@ -307,8 +337,7 @@ async function theGateRefusesAndTellsTheScopesApart() {
         'A read-scoped token was refused: ' + readOk.text);
   });
   const writeRefused = await call('POST', where.url,
-      { aud: 'https://receiver.example.com',
-        delivery: { method: ssf.DELIVERY_POLL } },
+      { delivery: { method: ssf.DELIVERY_POLL } },
       { authorization: 'Bearer ' + readToken });
   check('ssf:read does NOT write, and the refusal names the scope',
     function () {
@@ -352,8 +381,9 @@ async function theStreamLifecycleWorks() {
       "difference between the last two, which every REST API gets wrong in " +
       "the same direction.");
   const where = ssf.endpointFor(metadata, 'configuration_endpoint');
+  // NO `aud`. It is Transmitter-Supplied (SSF 1.0 section 8.1.1) and the
+  // mock assigns the identifier this receiver authenticated as.
   const asked = ssf.buildStreamConfiguration({
-    aud: 'https://receiver.example.com/ssf-protocol',
     deliveryMethod: 'poll',
     format: 'email',
     description: 'ssf_protocol.js' });
@@ -371,6 +401,12 @@ async function theStreamLifecycleWorks() {
         'The stream\'s iss and the metadata\'s issuer must be one string — a ' +
         'receiver matches them.');
   });
+  check('the TRANSMITTER assigned the aud, and it is who we authenticated as',
+    function () {
+      assert.strictEqual(pollStream.audience, 'ssf-protocol-runner',
+          'SSF 1.0 section 8.1.1 makes aud Transmitter-Supplied; a create ' +
+          'that sent none should be addressed to its own client.');
+    });
   check('events_delivered is the INTERSECTION and not the ask', function () {
     assert.ok(pollStream.eventsDelivered.length > 0);
     pollStream.eventsDelivered.forEach(function (uri) {
@@ -412,9 +448,12 @@ async function theStreamLifecycleWorks() {
     assert.strictEqual((merged.body || {}).format, 'email',
         'A PATCH cleared a member it was not given. That is a PUT.');
   });
+  // The PUT repeats the stream's own aud, which section 8.1.1.3 allows for
+  // a Transmitter-Supplied member only UNCHANGED — the next check is the
+  // other half.
   const replaced = await call('PUT', where.url,
       { stream_id: pollStream.streamId,
-        aud: 'https://receiver.example.com/ssf-protocol',
+        aud: pollStream.audience,
         delivery: { method: ssf.DELIVERY_POLL } }, {});
   check('PUT resets what was omitted', function () {
     assert.strictEqual(replaced.status, 200);
@@ -423,6 +462,16 @@ async function theStreamLifecycleWorks() {
         'and a receiver that used it to clear events_requested would go on ' +
         'receiving what it thought it had removed.');
   });
+  const retargeted = await call('PATCH', where.url,
+      { stream_id: pollStream.streamId,
+        aud: 'https://receiver.example.com/somebody-else' }, {});
+  check('an update may not CHANGE the aud', function () {
+    assert.strictEqual(retargeted.status, 400,
+        'A PATCH re-addressed a stream\'s events. It answered ' +
+        retargeted.status + ': ' + retargeted.text);
+    assert.ok(String((retargeted.body || {}).description)
+        .indexOf('Transmitter-Supplied') >= 0);
+  });
   const unknown = await call('GET',
       where.url + '?stream_id=no-such-stream', null, {});
   check('an unknown stream_id is a 404 with an err', function () {
@@ -430,7 +479,7 @@ async function theStreamLifecycleWorks() {
     assert.strictEqual((unknown.body || {}).err, 'invalid_request');
   });
   const badMethod = await call('POST', where.url,
-      { aud: 'x', delivery: { method: 'push' } }, {});
+      { delivery: { method: 'push' } }, {});
   check('the shorthand delivery method is refused, naming the URNs',
     function () {
       assert.strictEqual(badMethod.status, 400);
@@ -439,20 +488,27 @@ async function theStreamLifecycleWorks() {
           'The values are the RFC numbers as URNs and the refusal has to ' +
           'say so — that is the whole content of the mistake.');
     });
-  const noAud = await call('POST', where.url,
-      { delivery: { method: ssf.DELIVERY_POLL } }, {});
-  check('a create with no aud is refused', function () {
-    assert.strictEqual(noAud.status, 400);
-    assert.ok(String((noAud.body || {}).description).indexOf('aud') >= 0);
+  // Until SSF 1.0 final a create with no aud was refused. Now the opposite
+  // is the rule: naming an aud this receiver is not associated with is.
+  const foreignAud = await call('POST', where.url,
+      { aud: 'https://receiver.example.com/somebody-else',
+        delivery: { method: ssf.DELIVERY_POLL } }, {});
+  check('a create naming somebody else\'s aud is refused', function () {
+    assert.strictEqual(foreignAud.status, 400,
+        'A receiver had its events addressed to a name it is not ' +
+        'associated with. It answered ' + foreignAud.status + ': ' +
+        foreignAud.text);
+    assert.ok(String((foreignAud.body || {}).description)
+        .indexOf('Transmitter-Supplied') >= 0);
   });
   const badFormat = await call('POST', where.url,
-      { aud: 'x', format: 'username',
+      { format: 'username',
         delivery: { method: ssf.DELIVERY_POLL } }, {});
   check('a format RFC 9493 does not define is refused', function () {
     assert.strictEqual(badFormat.status, 400);
     assert.ok(String((badFormat.body || {}).description)
-        .indexOf('issuer_subject_id') >= 0,
-        'The refusal has to LIST the eight, because the mistake is not ' +
+        .indexOf('iss_sub') >= 0,
+        'The refusal has to LIST the formats, because the mistake is not ' +
         'knowing them.');
   });
   log.info("[streams] OK.");
@@ -474,13 +530,16 @@ async function everySubjectFormatCrossesTheWire() {
   for (format of ssf.SUBJECT_FORMATS) {
     const answer = await call('POST', add.url,
         { stream_id: id, subject: format.example, verified: true }, {});
+    // SSF 1.0 section 8.1.3.2: Add Subject answers an EMPTY 200 — Remove is
+    // the one of the two that answers 204 (section 8.1.3.3). The mock
+    // answered 204 to both until the OpenID conformance suite said so.
     check('the "' + format.format + '" format is accepted', function () {
-      assert.strictEqual(answer.status, 204,
+      assert.strictEqual(answer.status, 200,
           'The mock refused this workflow\'s own specimen of the "' +
           format.format + '" format: ' + answer.text + '. The two grammars ' +
           'disagree, which is exactly what this section exists to find.');
       assert.strictEqual(answer.text, '',
-          'Add Subject answers 204 with NO body, and a receiver given a ' +
+          'Add Subject answers 200 with NO body, and a receiver given a ' +
           'document here has something to depend on that no transmitter has ' +
           'to send.');
     });
@@ -491,8 +550,10 @@ async function everySubjectFormatCrossesTheWire() {
     });
   }
   const complex = {
+    format: ssf.COMPLEX_FORMAT,
     user: { format: 'email', email: 'alice@example.com' },
     session: { format: 'opaque', id: 'sess-1' },
+    application: { format: 'uri', uri: 'https://rp.example.com/' },
     device: { format: 'opaque', id: 'dev-1' },
     tenant: { format: 'opaque', id: 'acme' },
     org_unit: { format: 'opaque', id: 'eng' },
@@ -500,8 +561,33 @@ async function everySubjectFormatCrossesTheWire() {
   };
   const complexAdd = await call('POST', add.url,
       { stream_id: id, subject: complex }, {});
-  check('a COMPLEX subject with all six members is accepted', function () {
-    assert.strictEqual(complexAdd.status, 204, complexAdd.text);
+  check('a COMPLEX subject with all seven members is accepted', function () {
+    assert.strictEqual(complexAdd.status, 200, complexAdd.text);
+  });
+  // SSF 1.0 section 3.3: additional member names MAY be used.
+  const extraMember = await call('POST', add.url,
+      { stream_id: id, subject: { format: ssf.COMPLEX_FORMAT,
+        user: { format: 'email', email: 'alice@example.com' },
+        workload: { format: 'uri', uri: 'spiffe://example.org/w' } } }, {});
+  check('a complex subject with an ADDITIONAL member is accepted',
+    function () {
+      assert.strictEqual(extraMember.status, 200, extraMember.text);
+    });
+  // The pre-final shape: members and no "format": "complex". Issue #300 —
+  // the mock refuses it, and this workflow no longer builds it.
+  const draftComplex = await call('POST', add.url,
+      { stream_id: id, subject: {
+        user: { format: 'email', email: 'alice@example.com' },
+        session: { format: 'opaque', id: 'sess-1' } } }, {});
+  check('a complex subject with no "format": "complex" is refused',
+    function () {
+      assert.strictEqual(draftComplex.status, 400, draftComplex.text);
+    });
+  const draftName = await call('POST', add.url,
+      { stream_id: id, subject: { format: 'issuer_subject_id',
+        iss: 'https://i/', sub: 'alice' } }, {});
+  check('the draft format name issuer_subject_id is refused', function () {
+    assert.strictEqual(draftName.status, 400, draftName.text);
   });
   const loose = await call('POST', add.url,
       { stream_id: id,
@@ -540,8 +626,8 @@ async function everySubjectFormatCrossesTheWire() {
   check('adding to an unknown stream is a 404', function () {
     assert.strictEqual(noStream.status, 404);
   });
-  log.info("[subjects] OK — both grammars agree on all eight formats, the " +
-      "complex subject, and three refusals.");
+  log.info("[subjects] OK — both grammars agree on all eleven formats, the " +
+      "complex subject, and the refusals.");
 }
 
 // ---------------------------------------------------------------------------
@@ -579,11 +665,23 @@ async function theThreeStatusesBehaveDifferently() {
       { stream_id: id, status: 'paused', reason: 'a maintenance window' }, {});
   await call('POST', verify.url, { stream_id: id, state: 'while-paused' }, {});
   const whilePaused = await drain(poll, id);
-  check('a PAUSED stream delivers nothing', function () {
-    assert.strictEqual(whilePaused.length, 0,
-        'A paused stream delivered. It is supposed to keep queueing and ' +
-        'send nothing.');
+  // SSF 1.0 section 8.1.5: the transmitter announces the change with a
+  // stream-updated event on the stream itself, sent BEFORE it stops — so a
+  // paused poll stream hands out that one event type and nothing else.
+  const pausedTypes = whilePaused.map(function (one) {
+    const parsed = ssf.parseSet(one.token);
+    return parsed.ok ? Object.keys(parsed.claims.events || {}) : [];
   });
+  check('a PAUSED stream delivers nothing but its own stream-updated',
+    function () {
+      const others = pausedTypes.filter(function (types) {
+        return types.indexOf(events.SSF_PREFIX + 'stream-updated') < 0;
+      });
+      assert.strictEqual(others.length, 0,
+          'A paused stream delivered ' + JSON.stringify(others) + '. It is ' +
+          'supposed to keep queueing and send nothing but the ' +
+          'stream-updated event announcing the pause.');
+    });
 
   await call('POST', status.url, { stream_id: id, status: 'enabled' }, {});
   const afterResume = await drain(poll, id);
@@ -681,7 +779,7 @@ async function theVerificationEventIsWellFormed() {
   check('it passes every claim rule', function () {
     const verdict = ssf.inspectSet(parsed.claims, {
       expectedIssuer: ssf.readMetadata(metadata).issuer,
-      expectedAudience: 'https://receiver.example.com/ssf-protocol' });
+      expectedAudience: pollStream.audience });
     assert.ok(verdict.ok, verdict.errors.join(' '));
     assert.strictEqual(verdict.warnings.length, 0, verdict.warnings.join(' '));
   });
@@ -745,14 +843,15 @@ async function pollingHasItsOwnRefusals() {
     assert.strictEqual(unknown.status, 404);
   });
   // A push stream, made just for this refusal. Its endpoint is this test's
-  // own listener, which is plain http — so `ssf.pushAllowInsecure` has to be
-  // on for the transmitter to dial it at all. It is turned on here and back
-  // off by restoreSettings(): what travels on a push is somebody's security
+  // own listener, which is plain http — so `ssf.pushAllowHttp` has to be on
+  // for the transmitter to dial it at all. It is turned on here and back off
+  // by restoreSettings(): what travels on a push is somebody's security
   // posture and the receiver's own authorization header, so the mock refuses
-  // plain http by default and is right to.
-  await setSetting('ssf.pushAllowInsecure', 'true');
+  // plain http by default and is right to. (It was `ssf.pushAllowInsecure`
+  // until the mock split it into three settings on 2026-09-23, and the old
+  // name is now an unknown setting rather than a silent no-op.)
+  await setSetting('ssf.pushAllowHttp', 'true');
   const pushed = await call('POST', where.url, {
-    aud: 'https://receiver.example.com/ssf-protocol-push',
     delivery: { method: ssf.DELIVERY_PUSH,
       endpoint_url: receiverUrl + '/events' } }, {});
   if (pushed.status !== 201) {
@@ -778,24 +877,30 @@ async function pollingHasItsOwnRefusals() {
   received.length = 0;
   const asked = await call('POST', verify.url,
       { stream_id: pushStream.streamId, state: 'pushed' }, {});
+  // SSF 1.0 section 8.1.4.2: the 204 says the event was QUEUED, and the
+  // push happens afterwards — the mock answered only once it had pushed
+  // until 2026-09-22. So this waits for the one it asked for, and ignores a
+  // stream-updated the same stream may carry beside it.
+  const pushedOne = await waitForPushedVerification('pushed', 10000);
   check('a verification on a PUSH stream is delivered to this listener',
     function () {
       assert.strictEqual(asked.status, 204,
           'The verification request answered ' + asked.status + ': ' +
           asked.text);
-      assert.strictEqual(received.length, 1,
-          'Nothing arrived at this test\'s own RFC 8935 endpoint. The ' +
-          'transmitter answered 204, which says the REQUEST was accepted ' +
-          'and nothing about whether the pipe works — which is the whole ' +
-          'point of a verification event.');
+      assert.ok(pushedOne,
+          'Nothing arrived at this test\'s own RFC 8935 endpoint (' +
+          received.length + ' other POST(s)). The transmitter answered ' +
+          '204, which says the REQUEST was accepted and nothing about ' +
+          'whether the pipe works — which is the whole point of a ' +
+          'verification event.');
     });
   check('it arrived with the RFC 8417 media type', function () {
-    assert.strictEqual(received[0].contentType, 'application/secevent+jwt',
-        'It arrived as "' + received[0].contentType + '". A receiver that ' +
+    assert.strictEqual(pushedOne.contentType, 'application/secevent+jwt',
+        'It arrived as "' + pushedOne.contentType + '". A receiver that ' +
         'dispatches on the type drops that with no error anybody sees.');
   });
   check('and it says what it should', function () {
-    const parsed = ssf.parseSet(received[0].body);
+    const parsed = ssf.parseSet(pushedOne.body);
     assert.ok(parsed.ok, parsed.problem);
     const payload = parsed.claims.events[events.SSF_PREFIX + 'verification'];
     assert.strictEqual(payload.state, 'pushed');
@@ -846,6 +951,34 @@ function startReceiver() {
   });
 }
 
+// The first verification SET this listener has been pushed whose `state` is
+// the one asked for, or null once `ms` has passed. Delivery is asynchronous
+// on a conforming transmitter, so a check made the instant the request
+// returns is a check of the scheduler.
+async function waitForPushedVerification(state, ms) {
+  log.debug("Entering waitForPushedVerification(). " + state);
+  const uri = events.SSF_PREFIX + 'verification';
+  const deadline = Date.now() + ms;
+  while (true) {
+    const found = received.filter(function (one) {
+      const parsed = ssf.parseSet(one.body);
+      const payload = parsed.ok ? (parsed.claims.events || {})[uri] : null;
+      return !!payload && payload.state === state;
+    })[0];
+    if (found) {
+      log.debug("Leaving waitForPushedVerification(). Arrived.");
+      return found;
+    }
+    if (Date.now() >= deadline) {
+      log.debug("Leaving waitForPushedVerification(). Timed out.");
+      return null;
+    }
+    await new Promise(function (resolve) {
+      setTimeout(resolve, 200);
+    });
+  }
+}
+
 function stopReceiver() {
   log.debug("Entering stopReceiver().");
   if (receiverServer) {
@@ -865,14 +998,23 @@ async function thisTestCanBeTheTransmitter() {
       "SET is the document most worth signing that way — RFC 8417 forbids it " +
       "to expire, so it is read long after it was written.");
   const url = stsUrl + '/ssf/receive';
+  // SINCE THE MOCK'S SSF 1.0 FINAL PASS (iya-sts #144) THAT RECEIVER CHECKS
+  // WHAT A RECEIVER MUST: the issuer (section 4.1.6) and the audience (RFC
+  // 8417 section 2.2). Its audience defaults to the endpoint's own URL, which
+  // a transmitter can discover without being told, so that is what this
+  // addresses; its accepted issuers default to the mock's OWN transmitter,
+  // so this test — a foreign transmitter — is added for the run and
+  // restoreSettings() takes it off again.
+  const issuer = 'https://ssf-protocol-test.example/';
+  await setSetting('ssf.receiveIssuers', issuer);
   const algs = ['ES256', 'ML-DSA-44'];
   let alg;
   for (alg of algs) {
     const pair = jws.generateKey(alg);
     const priv = jws.privateJwk(alg, pair.privateKey, pair.publicKey);
     const claims = ssf.buildSetClaims({
-      issuer: 'https://ssf-protocol-test.example/',
-      audience: 'https://mock-sts.example/',
+      issuer: issuer,
+      audience: url,
       uri: events.SSF_PREFIX + 'stream-updated',
       payload: { status: 'paused', reason: 'from ssf_protocol.js' } });
     const token = await ssf.signSet(claims, priv, alg, {});
@@ -891,6 +1033,23 @@ async function thisTestCanBeTheTransmitter() {
           'transmitter could depend on that no receiver has to send.');
     });
   }
+  // And the half a receiver is FOR: an event addressed to somebody else.
+  const strayPair = jws.generateKey('ES256');
+  const strayToken = await ssf.signSet(ssf.buildSetClaims({
+    issuer: issuer, audience: 'https://somebody-else.example/',
+    uri: events.SSF_PREFIX + 'stream-updated',
+    payload: { status: 'paused', reason: 'addressed elsewhere' } }),
+  jws.privateJwk('ES256', strayPair.privateKey, strayPair.publicKey),
+  'ES256', {});
+  const strayPush = ssf.buildPushRequest(strayToken, {});
+  const stray = await call('POST', url, strayPush.body,
+      { anonymous: true, headers: strayPush.headers });
+  check('a SET addressed to somebody else is refused as invalid_audience',
+    function () {
+      assert.strictEqual(stray.status, 400, stray.text);
+      assert.strictEqual(ssf.readPushResponse(stray.status, stray.body).err,
+          'invalid_audience');
+    });
   const malformed = await call('POST', url, 'not-a-jws',
       { anonymous: true,
         headers: { 'Content-Type': ssf.SET_MEDIA_TYPE } });
@@ -938,7 +1097,7 @@ async function theDefectsAreReachable() {
   await drain(poll, id);
   const addSubject = ssf.endpointFor(metadata, 'add_subject_endpoint');
   await call('POST', addSubject.url, { stream_id: id,
-    subject: { format: 'issuer_subject_id', iss: 'https://i/',
+    subject: { format: 'iss_sub', iss: 'https://i/',
       sub: 'alice' } }, {});
   await call('POST', verify.url, { stream_id: id, state: 'legacy' }, {});
   const withLegacy = await drain(poll, id);

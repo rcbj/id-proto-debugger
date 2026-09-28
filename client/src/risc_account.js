@@ -334,7 +334,7 @@ function identifierProblems(account, from) {
 // THE SUBJECT, AND WHY IT IS A PLAIN ONE.
 //
 // **THIS IS THE LINE OF JSON THAT SEPARATES THE TWO PROFILES.** SSF section
-// 4's complex subject exists because a CAEP event is about one SESSION of one
+// 3.3's complex subject exists because a CAEP event is about one SESSION of one
 // person and a subject identifier names the person — so `{user, session,
 // device}` is how *that person, on that device, in that session* is expressed
 // at all. A RISC event is about the ACCOUNT. The person IS the subject, there
@@ -342,14 +342,14 @@ function identifierProblems(account, from) {
 // disabled, on this device*, which is a sentence with no meaning.
 //
 // **WHICH FORMAT IS A CHOICE, AND IT IS THE CONSEQUENTIAL ONE**, because
-// eleven of the fourteen carry no payload members at all. `issuer_subject_id`
+// eleven of the fourteen carry no payload members at all. `iss_sub`
 // is the identifier a receiver ALREADY HOLDS — it is what an ID Token's `iss`
 // and `sub` said — and `email` is what a receiver keying on an address
 // expects, which `identifier-recycled` exists precisely to warn is unsafe.
 //
 // **AND THE TWO IDENTIFIER EVENTS OVERRIDE IT.** Their subject must be an
 // address or a number and must carry the OLD value, so honouring a caller's
-// `issuer_subject_id` there would send a subject containing none of the
+// `iss_sub` there would send a subject containing none of the
 // message. `subjectFor()` reads the row rather than the URI, so that rule is a
 // property of the catalogue.
 //
@@ -363,7 +363,7 @@ function subjectFor(account, uri, options) {
   var row = ssfEvents.EVENT_BY_URI[String(uri || '')];
   var forced = row && Object.prototype.toString.call(row.subjectFormats) ===
     '[object Array]' ? row.subjectFormats : null;
-  var format = String(asked.format || 'issuer_subject_id');
+  var format = String(asked.format || 'iss_sub');
   if (forced && forced.indexOf(format) < 0) {
     format = forced[0];
   }
@@ -379,7 +379,7 @@ function subjectFor(account, uri, options) {
     subject = { format: 'account',
       uri: 'acct:' + String(account.email || account.sub || '') };
   } else {
-    subject = { format: 'issuer_subject_id',
+    subject = { format: 'iss_sub',
       iss: String(account.iss || ''), sub: String(account.sub || '') };
   }
   log.debug("Leaving subjectFor(). " + subject.format);

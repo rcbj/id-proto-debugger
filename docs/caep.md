@@ -25,7 +25,7 @@ are two different sentences and the difference is the whole reason there are
 two profiles rather than one.
 
 Everything below follows from a second fact: **a CAEP event is about a SESSION
-and a subject identifier normally names a PERSON.** SSF 1.0 section 4's
+and a subject identifier normally names a PERSON.** SSF 1.0 section 3.3's
 *complex subject* exists to close that gap — the person is not revoked, one
 session of theirs is — and almost every mistake worth catching in this profile
 is a consequence of getting it wrong.
@@ -101,7 +101,8 @@ in their own place and neither is correct in the other's.
 `caep_session.js`'s `complexSubject()` builds
 
 ```json
-{ "user":    { "format": "issuer_subject_id", "iss": "…", "sub": "…" },
+{ "format":  "complex",
+  "user":    { "format": "iss_sub", "iss": "…", "sub": "…" },
   "session": { "format": "opaque", "id": "…" },
   "device":  { "format": "opaque", "id": "…" } }
 ```
@@ -111,10 +112,13 @@ in their own place and neither is correct in the other's.
 and `device` are `opaque`, because neither has a shape anybody else can parse
 and RFC 9493 says so by defining no rule for that format's `id`.
 
-**A complex subject is told from a plain one by the ABSENCE of `format`**,
-which is the specification's own discriminator. The obvious alternative — "does
-it have a member called `user`?" — is wrong for an `opaque` subject whose id
-happens to be spelt that way.
+**A complex subject is told from a plain one by `"format": "complex"`**,
+which is SSF 1.0 final's own discriminator (section 3.3). Pre-final drafts used
+the ABSENCE of `format` instead, and that shape is now refused on both sides.
+The obvious alternative — "does it have a member called `user`?" — is wrong for
+an `opaque` subject whose id happens to be spelt that way. The `user` member is
+`iss_sub`, RFC 9493 section 3.2.3's registered name; the draft spelling
+`issuer_subject_id` is refused.
 
 **Leaving the session out is legal and is the most useful thing this page can
 send at a receiver under test.** The subject then names only the person, which
@@ -141,7 +145,7 @@ transmitter's refusal to send is not a message anybody receives.
 
 `sts/ssf/ssf_streams.js`'s `streamCoversSubject()` therefore covers a complex
 subject when the stream names **any one of its members**. It is deliberately
-one level and not recursive: SSF section 4 forbids a complex subject to nest
+one level and not recursive: SSF section 3.3 forbids a complex subject to nest
 another, so a member is always a plain identifier.
 
 ---
@@ -386,6 +390,19 @@ notice of that.
 `caep_protocol.js` is **the only test in this suite whose subject is something
 the far end decided to do.** Everything else drives a request and reads the
 answer; that one signs somebody in and waits.
+
+**A sign-out through `/oauth2/logout` is two steps since the 2026-09 `sts/`
+bump**, in both `caep_protocol.js` and `caep_session_protocols.js`. RP-Initiated
+Logout 1.0 section 2 leaves the OP to confirm the End-User's intent, and the
+mock (iya-sts #124) answers a GET carrying no `id_token_hint` for the session
+with a "Sign out?" page; nothing ends — and no `session-revoked` is sent — until
+its form is POSTed back with `confirm=yes` and the `confirm_for` value only a
+request carrying that session's cookie was shown. A bare GET reads as a
+sign-out that emitted nothing. Two more things the matrix learned from the same
+bump: a SAML 2.0 **single sign-on needs a fresh AuthnRequest**, because the
+mock refuses a replayed one before it looks at the session; and the stream
+covers everybody, so with the suite in a pool it also carries every other
+job's sign-ins, and the event naming THIS session is the one the checks read.
 
 ### `caep_session_protocols.js` — the event-type x sign-in-protocol matrix
 

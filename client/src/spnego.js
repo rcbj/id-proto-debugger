@@ -1409,27 +1409,13 @@ window.onload = async function () {
   // back to a workflow they have already returned to.
   panes.clearReturnTarget();
   loadFields();
-  onUrlChanged();
-  await panes.reportEnvironment("krb_environment_note", {
-    disableOnNoBackend: ["krb_probe_button", "krb_authenticate_button"]
-  });
-  // A service ticket is what this page spends, and a delegated one is a service
-  // ticket obtained by S4U2Proxy — presented here exactly as any other, which
-  // is the whole point of that equivalence.
-  tickets.mount({
-    slots: ["service", "delegated"],
-    onActivate: function () {
-      renderCredentials();
-    }
-  });
-  ophistory.mount("krb_operation_history", "krb_clear_operations_button");
-  // The key fields in the ticket pane. They register themselves with
-  // kerberos_panes.js, so the keys they collect reach every message pane on
-  // this page — the negotiation tokens, the AP-REQ and the ticket inside it —
-  // without any of the render calls above knowing about it. The salt callback
-  // is this page's own: see assumedServiceSalt().
-  deckeys.mount({ defaultSalt: assumedServiceSalt });
-
+  // The controls are wired BEFORE anything is awaited. onUrlChanged() below
+  // paints the credentials pane and, with a ticket held, ENABLES Authenticate
+  // — and reportEnvironment() is a round trip to the api. A handler attached
+  // after that await left an enabled button that did nothing when pressed in
+  // between: the click was dropped, no request went out, and the status line
+  // stayed empty. The instrumented bundles of ./run-coverage.sh widened the
+  // gap enough for tests/kerberos_spnego_page.js to land in it.
   var url = el("krb_spnego_url");
   if (url) {
     url.addEventListener("change", onUrlChanged);
@@ -1450,6 +1436,26 @@ window.onload = async function () {
   if (authenticate) {
     authenticate.addEventListener("click", function () { onAuthenticate(); });
   }
+  onUrlChanged();
+  await panes.reportEnvironment("krb_environment_note", {
+    disableOnNoBackend: ["krb_probe_button", "krb_authenticate_button"]
+  });
+  // A service ticket is what this page spends, and a delegated one is a service
+  // ticket obtained by S4U2Proxy — presented here exactly as any other, which
+  // is the whole point of that equivalence.
+  tickets.mount({
+    slots: ["service", "delegated"],
+    onActivate: function () {
+      renderCredentials();
+    }
+  });
+  ophistory.mount("krb_operation_history", "krb_clear_operations_button");
+  // The key fields in the ticket pane. They register themselves with
+  // kerberos_panes.js, so the keys they collect reach every message pane on
+  // this page — the negotiation tokens, the AP-REQ and the ticket inside it —
+  // without any of the render calls above knowing about it. The salt callback
+  // is this page's own: see assumedServiceSalt().
+  deckeys.mount({ defaultSalt: assumedServiceSalt });
   log.debug("Leaving onload().");
 };
 

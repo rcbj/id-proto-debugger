@@ -1,6 +1,6 @@
 #FROM node:lts
 #
-# THIS IMAGE IS BUILT IN THREE STAGES, AND THE SPLIT IS A HARD LIMIT RATHER
+# THIS IMAGE IS BUILT IN FOUR STAGES, AND THE SPLIT IS A HARD LIMIT RATHER
 # THAN A PREFERENCE. Docker's layer store refuses a chain deeper than 125
 # layers — `maxDepth` in moby's layer package — and every RUN, COPY and ADD
 # adds one. This file is almost entirely COPY: one line per test script, per
@@ -16,25 +16,29 @@
 # the step's own output had scrolled past, so it reads as the `ls` failing.
 #
 # The fix keeps every COPY and every comment exactly where it was and moves
-# them into two staging stages that are never shipped. Each stage starts its
-# own chain from the base image, so each has the full 125 to itself, and the
-# final image takes both in with two `COPY --from` lines. Adding a COPY costs
-# a layer in ONE staging stage now, not in the image.
+# them into staging stages that are never shipped — two on that day, three
+# since the 2026-09-15 bump took `files2` past the budget below. Each stage
+# starts its own chain from the base image, so each has the full 125 to
+# itself, and the final image takes them in with one `COPY --from` line
+# apiece. Adding a COPY costs a layer in ONE staging stage now, not in the
+# image.
 #
 # THREE RULES FOR ANYTHING ADDED BELOW:
 #
-#  * A new COPY goes in `files1` or `files2` — never in the final stage, which
-#    must stay at its dozen-odd layers. Put it where its neighbours are; the
-#    split point is arbitrary (it falls between the client-side Kerberos files
-#    and the sts/ submodule block) and carries no meaning.
+#  * A new COPY goes in `files1`, `files2` or `files3` — never in the final
+#    stage, which must stay at its dozen-odd layers. Put it where its
+#    neighbours are; the split points are arbitrary (between the client-side
+#    Kerberos files and the sts/ submodule block, and before the RFC 9700
+#    scripts) and carry no meaning.
 #  * ORDER STILL DECIDES COLLISIONS. This directory is flat, several COPYs
 #    deliberately land on paths an earlier one wrote, and the LAST one wins —
 #    which is why the comments throughout warn about a module and a test
-#    sharing a basename. That is preserved because `files1` is copied into the
-#    image before `files2`, so a later line still wins. A COPY moved BACKWARDS
-#    across the stage boundary silently reverses that.
+#    sharing a basename. That is preserved because the stages are copied into
+#    the image in order — `files1`, then `files2`, then `files3` — so a later
+#    line still wins. A COPY moved BACKWARDS across a stage boundary silently
+#    reverses that.
 #  * Everything lands under /usr/src — /usr/src/app (the WORKDIR),
-#    /usr/src/client and /usr/src/common. The two `COPY --from` lines carry
+#    /usr/src/client and /usr/src/common. The `COPY --from` lines carry
 #    that one directory. A COPY writing outside it would be staged and never
 #    reach the image, with no error anywhere.
 #
@@ -42,12 +46,12 @@
 # the headroom is CHECKED rather than remembered:
 # everyDockerfileStaysUnderTheLayerLimit() in tests/jwk_pem_encoding.js counts
 # every stage of every Dockerfile in the tree and fails at a budget of 100,
-# naming the file and the stage. When it does, add a `files3` beside these two
+# naming the file and the stage. When it does, add a `files4` beside these
 # rather than merging COPY lines together: the comments here are attached to
 # the lines they explain.
 
 # ---------------------------------------------------------------------------
-# Staging stage 1 of 2. Not shipped: the final stage copies /usr/src out of it.
+# Staging stage 1 of 3. Not shipped: the final stage copies /usr/src out of it.
 # ---------------------------------------------------------------------------
 FROM ubuntu:latest AS files1
 # Create app directory
@@ -114,6 +118,16 @@ COPY tests/sts_applications.js ./
 # MODULE_NOT_FOUND in a tenth of a second, naming this file rather than a build,
 # and nothing schedules it so no cross-check notices it gone.
 COPY tests/consent_screen.js ./
+
+# THE SIGN-OUT CONFIRMATION CLIENT, required by webauthn_oidc_mfa.js and
+# webauthn_extension.js, which need the next authorization request to meet a
+# login form rather than a live session. Since iya-sts #124 the mock asks
+# "Sign out?" on a GET /oauth2/logout with no id_token_hint and ends nothing
+# until the form is posted, so a bare navigation there no longer signs anybody
+# out. consent_screen.js's sibling, for the other screen the mock draws, and
+# with the same failure mode when this line is missing: MODULE_NOT_FOUND in a
+# tenth of a second, naming this file rather than a build.
+COPY tests/sts_sign_out.js ./
 
 # THE /admin CONSOLE SIGN-IN WALK, required by both delegation-chain jobs —
 # which read the delegation MAPS off that console, the only place those
@@ -194,6 +208,18 @@ COPY docker-compose-coverage.yml ./
 COPY docker-compose.yml ./
 COPY local-tests.yml ./
 COPY keycloak-tests.yml ./
+
+# Where the stack's images come from: tests/image_mirror_coverage.js checks
+# that every image docker-compose-run-tests.yml (copied above) pulls, and every
+# FROM in the five Dockerfiles it builds, is covered by the ghcr.io mirror. It
+# needs the list and those Dockerfiles, renamed flat because this directory is
+# flat. client/Dockerfile is already here as client_Dockerfile.
+COPY tests/image_mirror_coverage.js ./
+COPY .github/image-mirror.txt ./
+COPY api/Dockerfile ./api_Dockerfile
+COPY keycloak-wsfed/Dockerfile ./keycloak-wsfed_Dockerfile
+COPY tests/Dockerfile ./tests_Dockerfile
+COPY sts/Dockerfile ./sts_Dockerfile
 
 # Where a downloaded file lands. Several pages here have a Download button, and
 # the browser's default directory on a host run is the developer's ~/Downloads
@@ -288,13 +314,13 @@ COPY tests/bbs_vectors.json ./
 # contexts come too: canonicalization must never depend on fetching one.
 #
 # The STS's copy comes out of the sts/ SUBMODULE
-# (https://github.com/rcbj/mock-sts.git) — the one place outside the compose files
+# (https://github.com/rcbj/iya-sts.git) — the one place outside the compose files
 # where this repository reaches into it. An uninitialised submodule fails this
 # build with "COPY sts/common/vendored/bbs2023.js: not found", which says nothing
 # about the cause; the launchers run requireMockStsCheckout() (common/common.sh)
 # before building so it is explained before it happens.
 #
-# NOTE THE PATH. Every module in that repository sat in its root until mock-sts
+# NOTE THE PATH. Every module in that repository sat in its root until iya-sts
 # 0f986b3 ("Reorganizing source code."), which moved them into subdirectories —
 # so every `COPY sts/…` line in this file names a folder now, and a bump across
 # that commit fails the build on the first of them. This one is still copied
@@ -472,7 +498,7 @@ COPY client/public/spnego.html /usr/src/client/public/
 COPY tests/captures ./captures
 
 # ---------------------------------------------------------------------------
-# Staging stage 2 of 2. Same rules as stage 1; see the header. It starts a
+# Staging stage 2 of 3. Same rules as stage 1; see the header. It starts a
 # fresh layer chain, which is the whole point — but note that it therefore
 # knows nothing of what stage 1 copied, and must not: nothing here reads a
 # file, every line is a COPY from the build context.
@@ -491,7 +517,7 @@ WORKDIR /usr/src/app
 # file.
 #
 # **AND THE DIRECTORY STRUCTURE IS MIRRORED, not flattened into ./sts/.** Until
-# mock-sts 0f986b3 ("Reorganizing source code.") every module in that repository
+# iya-sts 0f986b3 ("Reorganizing source code.") every module in that repository
 # was in its root, so `COPY sts/krb5_kdc.js … ./sts/` put a file next to the
 # `./app` it asked for. After it, krb5_kdc.js asks for `../common/app` — so a
 # copy landing flat in ./sts/ would look for tests/common/app.js, a directory
@@ -557,7 +583,7 @@ COPY sts/common/audit.js ./sts/common/
 COPY sts/common/config.js ./sts/common/
 # THE FOURTH recomputation, and it arrived the way all of them do: not by any
 # line here changing, but by the sts/ gitlink moving. Bumping the submodule to
-# the mock-sts commit that carries RFC 9700 support gave app.js a require on
+# the iya-sts commit that carries RFC 9700 support gave app.js a require on
 # ./oauth2_bcp, and gave admin_stats.js, krb5_kdc.js and krb5_service.js one on
 # ./applications — four files this image ALREADY copies, now reaching for four
 # it did not. oauth2_bcp.js pulls in ./client_auth and ./mtls behind it, which
@@ -658,7 +684,7 @@ COPY sts/federation/federation.js ./sts/federation/
 COPY sts/kerberos/krb5_primitives.js sts/kerberos/krb5_asn1.js sts/kerberos/krb5_crypto.js sts/kerberos/krb5_messages.js sts/kerberos/krb5_gss.js ./sts/kerberos/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build
-# until the sts/ gitlink points at a mock-sts commit that has both files.
+# until the sts/ gitlink points at an iya-sts commit that has both files.
 COPY sts/kerberos/krb5_ndr.js sts/kerberos/krb5_pac.js ./sts/kerberos/
 # SPNEGO: the mock's protected page (spnego.js) and the RFC 4178 codec it and
 # the browser share (krb5_spnego.js, vendored). Both are loaded by
@@ -672,7 +698,7 @@ COPY sts/kerberos/krb5_ndr.js sts/kerberos/krb5_pac.js ./sts/kerberos/
 # with "COPY sts/kerberos/spnego.js: not found", which says nothing about
 # submodules.
 COPY sts/kerberos/spnego.js sts/kerberos/krb5_spnego.js ./sts/kerberos/
-# ...and the acceptor's exchange half, which spnego.js requires as of mock-sts
+# ...and the acceptor's exchange half, which spnego.js requires as of iya-sts
 # 1405318 ("Kerberos sign-in, the federation picture, and UserInfo claims.").
 # It was one file until that commit, so this line has nothing to do with a test
 # being added here and everything to do with the sts/ gitlink moving: without
@@ -680,6 +706,97 @@ COPY sts/kerberos/spnego.js sts/kerberos/krb5_spnego.js ./sts/kerberos/
 # find module './spnego_exchange.js'", naming a file this image has never
 # heard of. The closure walk in tests/jwk_pem_encoding.js is what catches it.
 COPY sts/kerberos/spnego_exchange.js ./sts/kerberos/
+# ---------------------------------------------------------------------------
+# THE SEVENTH recomputation, on the 2026-09-15 bump (iya-sts 416fd44 ->
+# 040d3cf), and the largest: that range brought an error-code registry every
+# module tags its log lines from, a CORS allowlist in app.js, clustering, an
+# OAuth 2.1 layer under the RFC 9700 one, certificate enrollment and the
+# revocation machinery client authentication now consults. Without these the
+# image built and six in-process jobs died in 0.1s with "Cannot find module
+# './error_codes'", naming a file the image had never carried.
+#
+# Thirty lines rather than the one the error named, for the reason the tests
+# notes give: the error names the FIRST missing module, and this set was
+# walked to the bottom. Twenty-eight are LOAD-TIME requires. Four are lazy
+# ones that are cheap to satisfy — everything they require is already here —
+# and are copied rather than exempted because client authentication, CRL
+# numbering and an application's SSF event check are all paths a job here
+# can reach: tls_client_certificates.js (client_auth.js, mtls.js),
+# cluster_counters.js (pki_revocation.js), ssf_events.js and ssf_subjects.js
+# (applications.js). The one lazy require NOT satisfied is
+# request_pool.js -> tls/tls_server.js; see LAZY_STS_REQUIRES in
+# tests/jwk_pem_encoding.js.
+# ---------------------------------------------------------------------------
+COPY sts/common/error_codes.js sts/common/cors.js sts/common/version.js ./sts/common/
+COPY sts/common/client_address.js sts/common/certificate_subject.js ./sts/common/
+COPY sts/common/jose_certificate_header.js sts/common/jose_kid.js ./sts/common/
+COPY sts/common/pki.js sts/common/pki_merge.js sts/common/pki_revocation.js ./sts/common/
+COPY sts/common/revocation_status.js sts/common/person_assertions.js ./sts/common/
+COPY sts/common/used_assertions.js sts/common/tls_client_certificates.js ./sts/common/
+COPY sts/common/vendored/crypto_bytes.js sts/common/vendored/jose_jwe.js ./sts/common/vendored/
+COPY sts/common/vendored/key_material.js sts/common/vendored/symmetric_crypto.js ./sts/common/vendored/
+COPY sts/common/vendored/pqc.js sts/common/vendored/pqc_x509.js sts/common/vendored/x509.js ./sts/common/vendored/
+COPY sts/cluster/cluster.js sts/cluster/cluster_barrier.js ./sts/cluster/
+COPY sts/cluster/cluster_capabilities.js sts/cluster/cluster_claims.js ./sts/cluster/
+COPY sts/cluster/cluster_counters.js ./sts/cluster/
+COPY sts/oauth-oidc/assertion_grant.js sts/oauth-oidc/oauth21.js ./sts/oauth-oidc/
+COPY sts/oauth-oidc/saml_assertion_grant.js ./sts/oauth-oidc/
+COPY sts/persistence/directory_merge.js ./sts/persistence/
+COPY sts/ssf/ssf_events.js sts/ssf/ssf_subjects.js ./sts/ssf/
+# ---------------------------------------------------------------------------
+# THE SIXTH recomputation (2026-09-17), on the same schedule as the five above:
+# the sts/ gitlink moved to iya-sts 972c9cd and two modules this image already
+# carries reached for two it did not.
+#
+# cache_registry.js is the mock's register of every cache and replay store,
+# added there by issue #74 so that one page can list them and one control can
+# empty them. That made it a LEAF that everything with a cache now loads —
+# eleven of the files copied above require it, which is why one absent file
+# took eleven modules with it.
+#
+# sender_constraints.js is issue #34's: DPoP and mTLS binding settings pulled
+# out of oauth2.js, and oauth2_bcp.js (already here) reads them.
+#
+# Both are ordinary .js in the mock. NOT EVERY MISSING MODULE CAN BE FIXED
+# HERE ANY MORE, and that is new with the TypeScript conversion (#50): a module
+# that is now .ts has no .js beside it in a CHECKOUT — the mock compiles only
+# inside its own image build — so a COPY naming one stops this build with
+# "not found". `common/account_state.ts` is the first of those, and it is
+# handled in tests/jwk_pem_encoding.js's LAZY_STS_REQUIRES instead.
+# ---------------------------------------------------------------------------
+COPY sts/common/cache_registry.js ./sts/common/
+COPY sts/oauth-oidc/sender_constraints.js ./sts/oauth-oidc/
+# ---------------------------------------------------------------------------
+# THE SEVENTH recomputation (2026-09-27), for the gitlink move to iya-sts
+# 6d18941c — about 730 commits, so four ordinary .js modules at once:
+# helpers.js now loads signer_groups.js, request_pool.js lingering_close.js,
+# assertion_grant.js client_jwks.js, and three of the OAuth files fapi.js.
+# pki.js reads its two anchor lists as JSON inside a function; they are data,
+# and a COPY is cheaper than the argument for exempting them.
+#
+# AND THE FIRST MODULE THIS IMAGE NEEDS AT LOAD TIME THAT A CHECKOUT CANNOT
+# SUPPLY. realms.js requires common/enrollment_profiles at its top (#251: an
+# EST label and a realm share a path position), and the mock wrote that leaf
+# as TypeScript — so the checkout has enrollment_profiles.ts and no .js, and
+# no `COPY sts/…` line can put it right. It is taken instead, compiled, out of
+# the mock's OWN image, which compose builds from this same gitlink:
+# `mocksts` is `additional_contexts: mocksts: service:sts` on the tests
+# service in docker-compose-run-tests.yml, which also makes compose build the
+# sts image FIRST. That is the same file the running mock loads, rather than a
+# second compilation of it; the mock's own Dockerfile takes the debugger's
+# built tree from an image the same way. Every OTHER TypeScript-only module
+# the closure names is required lazily, down a path no in-process job here
+# takes — see LAZY_STS_REQUIRES in tests/jwk_pem_encoding.js.
+# ---------------------------------------------------------------------------
+COPY sts/common/signer_groups.js sts/common/lingering_close.js ./sts/common/
+COPY sts/common/pki_cloud_anchors.json ./sts/common/
+COPY sts/common/pki_device_anchors.json ./sts/common/
+COPY sts/oauth-oidc/client_jwks.js sts/oauth-oidc/fapi.js ./sts/oauth-oidc/
+COPY --from=mocksts /usr/src/sts/common/enrollment_profiles.js ./sts/common/
+# The mock's manifest, read by the final stage for the Express version these
+# modules are written against. Flat and renamed on purpose; see the RUN that
+# installs it.
+COPY sts/package.json ./sts_package.json
 # And the submodule's own env/, which is NOT optional: helpers.js does
 # require(process.env.CONFIG_FILE), and a RELATIVE CONFIG_FILE ('./env/test.js')
 # resolves against the requiring file's own directory — so it means sts/env/test.js
@@ -695,7 +812,7 @@ COPY sts/env ./sts/env
 # service, and the coupling is pre-existing rather than something Kerberos
 # introduced.
 #
-# The better fix lives in mock-sts, not here: helpers.js could require bbs2023
+# The better fix lives in iya-sts, not here: helpers.js could require bbs2023
 # lazily (its only use is already lazy — `if (!bbsKeys) ... generateKeyPair()`), or
 # bbs2023.js could read its contexts on first use. Recorded here rather than done,
 # because it is a change to a separate repository for a test-plumbing reason.
@@ -826,6 +943,16 @@ COPY tests/schemas ./schemas
 # reason — its basename is also sts/mgmt-api/admin_api.js — and adding such a
 # file to the flat list without noticing is the collision
 # testsImageHasNoCollidingFilenames() exists to catch.
+
+# ---------------------------------------------------------------------------
+# Staging stage 3 of 3, split off `files2` on the 2026-09-15 bump, when that
+# stage reached 105 layer instructions against the budget of 100. Same rules
+# as the other two; the boundary moved nothing but a FROM and a WORKDIR, so
+# every line below is still copied into the image after every line above.
+# ---------------------------------------------------------------------------
+FROM ubuntu:latest AS files3
+WORKDIR /usr/src/app
+
 # RFC 9700 (OAuth 2.0 Security BCP). Two scripts, and they need each other's
 # company here for opposite reasons. rfc9700_flows.js is Selenium and is gated
 # on RFC9700_STS_URL, so it does nothing without the second, compliant STS
@@ -1227,13 +1354,14 @@ RUN CFT=https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing && \
     /usr/local/bin/chrome --version && \
     /usr/local/bin/chromedriver --version
 
-# Everything the two staging stages assembled, in their original order so that
+# Everything the three staging stages assembled, in their original order so that
 # a later COPY still overwrites an earlier one (see the header). /usr/src is
 # the whole of it: /usr/src/app is the WORKDIR the tests run in,
 # /usr/src/client and /usr/src/common are the repository-shaped layout several
 # tests resolve as ../client and ../common.
 COPY --from=files1 /usr/src /usr/src
 COPY --from=files2 /usr/src /usr/src
+COPY --from=files3 /usr/src /usr/src
 
 # Fixed SP signing key/cert for the SAML signature-validation test + provisioning.
 RUN ls
@@ -1241,6 +1369,34 @@ RUN . $NVM_DIR/nvm.sh && npm install chromedriver
 
 # Install modules needed for the test scripts
 RUN . $NVM_DIR/nvm.sh && npm install
+
+# ---------------------------------------------------------------------------
+# THE MOCK'S OWN EXPRESS, BESIDE THE MOCK'S COPIED MODULES.
+#
+# The in-process mock-KDC jobs load sts/common/app.js — the mock's shared
+# express app — and until the 2026-09-15 bump it resolved `express` from
+# /usr/src/app/node_modules, which is THIS package's, and that is Express 5.
+# The mock is written against Express 4 (`^4` in its package.json), and
+# iya-sts 2f9825f put the first line in app.js the two majors disagree on:
+# `app.options('*', ...)`. path-to-regexp 8, under Express 5, refuses a bare
+# `*` at REGISTRATION, so app.js threw at require time and four jobs died
+# with "Missing parameter name at index 1: *" — a message naming a regexp
+# library for what is a version mismatch.
+#
+# A host run never sees it: `npm ci --prefix sts` gives the mock its whole
+# own tree, so the same require finds Express 4 in sts/node_modules. This is
+# the image's version of that, for the one package where the majors differ:
+# node walks up from sts/common/app.js and finds sts/node_modules/express
+# before it reaches ours. The version is READ from the mock's package.json
+# (staged as sts_package.json, never as sts/package.json, because
+# `npm install <pkg>` beside a package.json would try to install every
+# dependency listed in it, including a `file:` submodule this image lacks).
+# ---------------------------------------------------------------------------
+RUN . $NVM_DIR/nvm.sh \
+    && mkdir -p sts/node_modules \
+    && npm install --prefix sts --no-save --no-package-lock --omit=dev \
+         "express@$(node -p "require('./sts_package.json').dependencies.express")" \
+    && node -p "'sts express ' + require('./sts/node_modules/express/package.json').version"
 
 # ---------------------------------------------------------------------------
 # NON-ROOT FROM HERE ON. See the same block in api/Dockerfile for why the UID
@@ -1261,15 +1417,15 @@ RUN . $NVM_DIR/nvm.sh && npm install
 #     .github/workflows/tests.yml still run and are simply no longer load-
 #     bearing.
 #
-#   * `/spire-sock/server.sock` is the mock STS's SPIRE Server API socket, and
-#     THE MOCK STILL RUNS AS ROOT — it binds 88, 389 and 636, which are
-#     privileged, so it is the one container in this stack that cannot make
-#     this change. A Unix socket is created 0777 & ~umask, so at the default
-#     022 it lands 0755 root:root, and connect(2) needs WRITE: this container
-#     would have been refused with EACCES and `spiffe_protocol.js` would have
-#     failed its Debug.GetInfo check with a permission error rather than a
-#     protocol one. docker-compose-run-tests.yml gives that service `umask
-#     0000` for exactly this reason, and says so there.
+#   * `/spire-sock/server.sock` is the mock STS's SPIRE Server API socket,
+#     and since iya-sts 27b81c5 (2026-09-12) the mock chmods it 0600 once
+#     bound: it is the trusted `local` entity, reachable by that process's
+#     uid and nobody else. connect(2) needs WRITE, so this container reaches
+#     it only by BEING that uid — docker-compose-run-tests.yml runs the mock
+#     as 10001 too (with `net.ipv4.ip_unprivileged_port_start: 0` so it can
+#     still bind 88, 389 and 636) and mounts the socket's directory as a
+#     tmpfs owned by 10001, and says why there. Until the 2026-09-15 bump the
+#     mock was root under `umask 0000` instead, which the chmod ended.
 #
 #   * Chrome is already launched `--no-sandbox` by every job here (the setuid
 #     sandbox is not installed in this image and never was), so the browser

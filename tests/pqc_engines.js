@@ -413,6 +413,52 @@ function checkSignatures() {
 }
 
 // ---------------------------------------------------------------------------
+// 7a. Hedged by default, deterministic only by asking (FIPS 204 section 3.4,
+// FIPS 205 section 9.2; iya-sts #203). Every ML-DSA, SLH-DSA and composite
+// signature mixes in fresh randomness, so two signatures of one message
+// differ; `{ deterministic: true }` gives the known-answer variant back, and
+// `rnd` names the randomness, which must make the signature reproducible.
+// ---------------------------------------------------------------------------
+function checkHedgedSigning() {
+  log.debug("Entering checkHedgedSigning().");
+  const message = utf8("the quick brown fox");
+  [["ML-DSA-44", 32], ["SLH-DSA-SHA2-128s", 16],
+   ["ML-DSA-65-ES256", 32]].forEach(function (row) {
+    const name = row[0];
+    if (!pqc.SIGNATURE_ALGS[name]) {
+      assert.fail(name + " should be in the registry.");
+    }
+    const pair = pqc.generateAkpKeyPair(name);
+    const a = pqc.signWithPriv(name, message, pair.priv);
+    const b = pqc.signWithPriv(name, message, pair.priv);
+    assert.notStrictEqual(hex(a), hex(b),
+      name + " must sign hedged by default: two signatures must differ.");
+    assert.ok(pqc.verifyWithPub(name, b, message, pair.pub),
+      name + ": a hedged signature must verify.");
+    // A composite is deterministic end to end when asked: its ECDSA half is
+    // RFC 6979 in @noble/curves.
+    const d1 = pqc.signWithPriv(name, message, pair.priv,
+                                { deterministic: true });
+    const d2 = pqc.signWithPriv(name, message, pair.priv,
+                                { deterministic: true });
+    assert.strictEqual(hex(d1), hex(d2),
+      name + ": { deterministic: true } must give the same bytes twice.");
+    const rnd = new Uint8Array(row[1]).fill(7);
+    const r1 = pqc.signWithPriv(name, message, pair.priv, { rnd: rnd });
+    const r2 = pqc.signWithPriv(name, message, pair.priv, { rnd: rnd });
+    assert.strictEqual(hex(r1), hex(r2),
+      name + ": named randomness must reproduce the signature.");
+    assert.notStrictEqual(hex(r1), hex(d1),
+      name + ": and differ from the deterministic one.");
+    assert.throws(function () {
+      pqc.signWithPriv(name, message, pair.priv,
+                       { rnd: new Uint8Array(row[1] + 1) });
+    }, /randomness/, name + ": randomness of the wrong length is refused.");
+  });
+  log.debug("Leaving checkHedgedSigning().");
+}
+
+// ---------------------------------------------------------------------------
 // 8. The context string and the pre-hash are ALGORITHM CHANGES, not options.
 // ---------------------------------------------------------------------------
 function checkContextAndPrehash() {
@@ -703,6 +749,7 @@ async function test() {
   checkPrehashMapping();
   checkAkpJwk();
   checkSignatures();
+  checkHedgedSigning();
   checkContextAndPrehash();
   checkCompositeHalves();
   checkKems();

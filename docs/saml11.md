@@ -76,25 +76,51 @@ parameter the handler never looked at.
 
 ---
 
-## THE THREE BINDINGS, AND WHAT EACH ONE MEANS HERE
+## THE TWO BINDING SELECTORS, AND WHAT EACH ONE MEANS HERE
 
-The selector keeps its three options and they keep their *shape*; only the
-spellings change, because "HTTP-Redirect" names a SAML 2.0 binding URI that does
-not exist in 1.1.
+Since issue #307 the page has **two** selectors where it had one, in both
+protocol versions: the **request binding** (how the request travels — Redirect
+or POST, the bindings a `SingleSignOnService` can name) and the **response
+binding** (the SAML 2.0 `ProtocolBinding`; in SAML 1.1, the browser profile).
+They keep their *shape* in 1.1; only the spellings change, because
+"HTTP-Redirect" names a SAML 2.0 binding URI that does not exist in 1.1, and
+the response options read **Browser/POST** and **Browser/Artifact**.
 
-| Selection | The request travels | The response comes back |
+| Request binding | The request travels |
+|---|---|
+| **Redirect** | a top-level `GET` to the inter-site transfer service |
+| **POST** | a form POST of the same parameters |
+
+| Response binding | The response comes back | `profile=` |
 |---|---|---|
-| **Redirect** | a top-level `GET` to the inter-site transfer service | Browser/POST (section 4.2): a form POST of `SAMLResponse` to `shire` |
-| **POST** | a form POST of the same parameters | Browser/POST |
-| **Artifact** | a top-level `GET` | Browser/Artifact (section 4.1): a redirect to `shire` with `SAMLart`, resolved by the API over SOAP |
+| **Browser/POST** | a form POST of `SAMLResponse` to `shire` (section 4.2) | `post` |
+| **Browser/Artifact** | a redirect to `shire` with `SAMLart`, resolved by the API over SOAP (section 4.1) | `artifact` |
 
-Two notes on that table.
+Any request binding pairs with any response binding. What the single selector
+used to call **Artifact** is Redirect + Browser/Artifact, and a configuration
+saved with it is migrated to exactly that on load
+(`migrateLegacyArtifactBinding()`).
+
+**The response binding is offered whatever the metadata's
+`SingleSignOnService` entries say.** Those name the bindings a REQUEST may
+arrive on; an HTTP-Artifact one would be an `AuthnRequest` sent *as* an
+artifact, which nothing here sends. The mock STS stopped advertising one in its
+SAML 2.0 descriptor (iya-sts #191) after SimpleSAMLphp read it literally and did
+exactly that, and a page that derived the artifact choice from it would have
+lost the choice with it. What an artifact response actually needs from the
+identity provider is somewhere to **resolve** it — the
+`ArtifactResolutionService` (in 1.1, the SAML responder) — so that is what the
+note under the response selector reports on, and Call IdP refuses by name when
+the field is empty rather than sending a request whose answer nothing could
+resolve.
+
+Two notes on those tables.
 
 **Redirect and POST differ only in how the REQUEST travels**, which is the same
-thing the SAML 2.0 selector means and is worth saying because the response is
-identical. **SAML 1.1 defines no POST-bound request at all** — that option sends
-the same non-standard parameters as a form, which the mock STS reads and a
-Shibboleth identity provider would not.
+thing the SAML 2.0 request selector means and is worth saying because the
+response is decided by the other selector. **SAML 1.1 defines no POST-bound
+request at all** — that option sends the same non-standard parameters as a
+form, which the mock STS reads and a Shibboleth identity provider would not.
 
 **There is no redirect-bound RESPONSE in SAML 1.1**, so the fallback the 2.0
 workflow uses on a backend-less deployment has no equivalent. A static site needs

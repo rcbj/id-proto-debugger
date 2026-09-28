@@ -13,18 +13,51 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+  # Pulling the private image mirror and pushing what the run built, both on
+  # ghcr.io. See docker-compose-run-tests.yml's header.
+  packages: write
 
 jobs:
-  # Plain suite: full battery in containers, no coverage. Wraps
-  # ./docker-run-tests.sh, which builds the stack (docker-compose-run-tests.yml),
-  # runs the Selenium suite, and always tears the stack down.
-  test:
+  # THE IMAGE MIRROR, BEFORE EITHER STACK IS BUILT. Everything the two jobs
+  # below pull or build FROM comes from private copies on ghcr.io, so that a
+  # reset connection to Docker Hub (the 2026-09-27 scheduled run died three
+  # seconds in on one) cannot take the suite down. `missing` copies only an
+  # image the mirror does not have yet — added to .github/image-mirror.txt in
+  # this commit, say — so a complete mirror costs one manifest request per
+  # image and no request to an upstream registry at all.
+  #
+  # A job here rather than a call to mirror-images.yml, deliberately: a called
+  # workflow that declares packages: write fails OUTRIGHT when the caller's
+  # token is read-only, which it is on a Dependabot or a fork pull request.
+  # Inline, the token is simply downgraded, and with a complete mirror this
+  # job only reads.
+  mirror:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Copy any image the mirror does not have yet
+        run: .github/scripts/mirror-images.sh missing
+
+  # Plain suite: full battery in containers, no coverage. Wraps
+  # ./docker-run-tests.sh, which builds the stack (docker-compose-run-tests.yml),
+  # runs the Selenium suite, and always tears the stack down.
+  test:
+    needs: mirror
+    runs-on: ubuntu-latest
+    env:
+      # The name every image this job builds is tagged with, and pushed under
+      # (the api, the client, the mock STS, the tests and the WS-Federation
+      # side-car; common.sh derives STS_IMAGE from it).
+      IMAGE_TAG: ${{ github.sha }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
         with:
-          # sts/ is a submodule (https://github.com/rcbj/mock-sts.git). The STS
+          # sts/ is a submodule (https://github.com/rcbj/iya-sts.git). The STS
           # image is built from it and tests/Dockerfile copies a module out of it,
           # so without it both builds fail — saying "failed to read dockerfile"
           # and "COPY sts/common/vendored/bbs2023.js: not found", neither of which names a
@@ -45,6 +78,13 @@ jobs:
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:
           version: '5.2.0'
+      # THE IMAGE MIRROR AND THE BUILT IMAGES ARE PRIVATE PACKAGES on ghcr.io.
+      # GITHUB_TOKEN carries packages: write (above), and a package this
+      # repository's workflows created grants it access. Compose runs WITHOUT
+      # sudo on a runner, so this login is the one it uses.
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       # The script's docker_compose() (common/common.sh) invokes compose with
       # sudo itself, so it runs unprivileged here.
       - name: Run Selenium test suite
@@ -53,6 +93,12 @@ jobs:
         env:
           STS_LOG_LEVEL: info
         run: ./docker-run-tests.sh
+      # What this run built, to ghcr.io: under the commit and under the
+      # branch name. Not from a pull request, whose GITHUB_TOKEN may not write
+      # packages and whose images are nobody's to keep.
+      - name: Push built images
+        if: (success() || failure()) && github.event_name != 'pull_request'
+        run: .github/scripts/push-stack-images.sh "${{ github.ref_name }}"
       # The tests container writes tests/report as root via a bind mount; hand it
       # back to the runner user before the upload step reads it.
       - name: Normalize report permissions
@@ -99,7 +145,12 @@ jobs:
   # more cores. Fix one of those before touching this again.
 
   coverage:
+    needs: mirror
     runs-on: ubuntu-latest
+    env:
+      # Its own tag: these images are built with COVERAGE=true, so they are
+      # not the same images as the test job's under the same names.
+      IMAGE_TAG: ${{ github.sha }}-coverage
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v7
@@ -121,6 +172,13 @@ jobs:
         uses: KengoTODA/actions-setup-docker-compose@v1
         with:
           version: '5.2.0'
+      # THE IMAGE MIRROR AND THE BUILT IMAGES ARE PRIVATE PACKAGES on ghcr.io.
+      # GITHUB_TOKEN carries packages: write (above), and a package this
+      # repository's workflows created grants it access. Compose runs WITHOUT
+      # sudo on a runner, so this login is the one it uses.
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Run test suite with coverage
         # `info`, not the mock's own default of `debug`. That log is the record
         # of everything the mock issued and is why debug is the default for a
@@ -145,6 +203,10 @@ jobs:
         env:
           STS_LOG_LEVEL: info
         run: ./run-coverage.sh
+      - name: Push built images
+        if: (success() || failure()) && github.event_name != 'pull_request'
+        run: .github/scripts/push-stack-images.sh
+             "${{ github.ref_name }}-coverage"
       # coverage/ and tests/report are written as root inside the containers.
       - name: Normalize coverage permissions
         if: always()

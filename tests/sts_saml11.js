@@ -143,7 +143,11 @@ const BASE = (process.env.SAML11_IDP_URL ||
 // registry entry — and a row left behind names the file that made it.
 const RP = 'urn:test:saml11:' + runStamp();
 
+const PASSWORD = 'Saml11-' + crypto.randomBytes(9).toString('base64url') + '-Aa1!';
 const USER_POST = usernameFor('saml11-post');
+// Whether the service is in PRODUCT mode, where a return address nobody
+// registered is refused rather than guessed at (set in main()).
+let PRODUCT = false;
 
 const USER_ARTIFACT = usernameFor('saml11-artifact');
 
@@ -323,8 +327,9 @@ function pemOf(b64) {
 
 // ---------------------------------------------------------------------------
 // Sign in at the inter-site transfer service and stop at whatever it answers
-// with. `username` is whatever is typed: this service checks no password, which
-// is why there is not one here.
+// with. `username` is somebody this job created, with PASSWORD (2026-09-18): a
+// product-mode service checks the password and invents nobody, so a name that
+// was only typed signs in nowhere.
 //
 // The hops followed are exactly the sign-in dance — /authn/* and back to
 // /saml11/sso — and NOTHING ELSE. The redirect OUT to the assertion consumer is
@@ -342,7 +347,8 @@ async function resume(path, username) {
   if (res.status === 303 && /\/authn\/login/.test(res.headers.location || '')) {
     const id = decodeURIComponent(/authn=([^&]+)/.exec(res.headers.location)[1]);
     res = await request('POST', '/authn/login',
-                        form({ authn_id: id, username: username }), FORM);
+                        form({ authn_id: id, username: username,
+                               password: PASSWORD, action: 'login' }), FORM);
   }
   let hops = 0;
   while ((res.status === 302 || res.status === 303) && hops++ < 8) {
@@ -366,11 +372,56 @@ function soap(inner) {
     '<soap:Body>' + inner + '</soap:Body></soap:Envelope>';
 }
 
+// THE RELYING PARTY SIGNS WHAT IT SENDS THE RESPONDER (2026-09-18).
+// saml-bindings-1.1 section 3.1.3 asks the responder to authenticate the
+// requester before it hands over an artifact's assertion, and a product-mode
+// service does: an enveloped signature on the <samlp:Request>, checked against
+// the relying party's registered samlSigningCertificate. So the relying party
+// this job provisions carries a certificate made for this run, and every
+// request is signed with its key — in both modes, because a development-mode
+// service that verifies a present signature must accept this one too.
+const rpSigning = (function () {
+  const forge = require('node-forge');
+  const pair = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+  const privateKeyPem = pair.privateKey.export({ type: 'pkcs8', format: 'pem' });
+  const cert = forge.pki.createCertificate();
+  cert.publicKey = forge.pki.publicKeyFromPem(
+    pair.publicKey.export({ type: 'spki', format: 'pem' }));
+  cert.serialNumber = '01' + crypto.randomBytes(8).toString('hex');
+  cert.validity.notBefore = new Date(Date.now() - 60000);
+  cert.validity.notAfter = new Date(Date.now() + 24 * 3600 * 1000);
+  const name = [{ name: 'commonName', value: 'saml11-rp.example.com' }];
+  cert.setSubject(name);
+  cert.setIssuer(name);
+  cert.sign(forge.pki.privateKeyFromPem(privateKeyPem), forge.md.sha256.create());
+  const certB64 = forge.util.encode64(
+    forge.asn1.toDer(forge.pki.certificateToAsn1(cert)).getBytes());
+  return { privateKeyPem: privateKeyPem, certB64: certB64 };
+})();
+
+function signRequest(xml) {
+  const where = "//*[local-name(.)='Request']";
+  const sig = new SignedXml({
+    privateKey: rpSigning.privateKeyPem, idAttribute: 'RequestID',
+    canonicalizationAlgorithm: 'http://www.w3.org/2001/10/xml-exc-c14n#',
+    signatureAlgorithm: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256'
+  });
+  sig.addReference({
+    xpath: where,
+    transforms: ['http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+                 'http://www.w3.org/2001/10/xml-exc-c14n#'],
+    digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256'
+  });
+  // First child: RequestAbstractType puts ds:Signature before the query.
+  sig.computeSignature(xml, { location: { reference: where, action: 'prepend' } });
+  return sig.getSignedXml();
+}
+
 function samlRequest(inner, id) {
-  return soap('<samlp:Request xmlns:samlp="' + NS_SAMLP + '" ' +
+  return soap(signRequest('<samlp:Request xmlns:samlp="' + NS_SAMLP + '" ' +
     'xmlns:saml="' + NS_SAML + '" RequestID="' + (id || ('_r' + Date.now())) + '" ' +
     'MajorVersion="1" MinorVersion="1" IssueInstant="' + new Date().toISOString() + '">' +
-    inner + '</samlp:Request>');
+    inner + '</samlp:Request>'));
 }
 
 function statusOf(doc) {
@@ -548,20 +599,37 @@ async function main() {
     signingCertPem = pemOf((certEl.textContent || '').replace(/\s+/g, ''));
   }
 
+  // IN PRODUCT MODE A PROVIDER NOBODY REGISTERED GETS NO DOCUMENT (iya-sts
+  // #112): /saml11/metadata/{rp} answers 404 for a name no application
+  // registers, so the scoped-document checks below run where a document is
+  // minted — development, or a product sts from before #112 — and product
+  // asserts the refusal instead. `RP` is registered further down.
+  const productHere = await registry.isProduct(registry.baseOf(BASE));
+  let scopedEntityId = null;
   res = await request('GET', '/saml11/metadata/' + encodeURIComponent(RP));
-  doc = parse(res.body);
-  const scopedEntityId = doc.documentElement.getAttribute('entityID');
-  check('a scoped document names a providerID of its own',
-        scopedEntityId !== unscopedEntityId &&
-        scopedEntityId.indexOf(unscopedEntityId + ':') === 0,
-        scopedEntityId + ' vs ' + unscopedEntityId);
-  check('its endpoints carry the same path segment',
-        res.body.indexOf('/saml11/sso/') >= 0 && res.body.indexOf('/saml11/responder/') >= 0);
-  // The ask is what registers it: a relying party can be pointed at this service
-  // before anything at all has been provisioned.
+  if (productHere && res.status === 404) {
+    check('product: an unregistered relying party gets no metadata document (404)',
+          res.status === 404, 'status ' + res.status);
+  } else {
+    doc = parse(res.body);
+    scopedEntityId = doc.documentElement.getAttribute('entityID');
+    check('a scoped document names a providerID of its own',
+          scopedEntityId !== unscopedEntityId &&
+          scopedEntityId.indexOf(unscopedEntityId + ':') === 0,
+          scopedEntityId + ' vs ' + unscopedEntityId);
+    check('its endpoints carry the same path segment',
+          res.body.indexOf('/saml11/sso/') >= 0 && res.body.indexOf('/saml11/responder/') >= 0);
+  }
+  // In development the ask is what registers it: a relying party can be
+  // pointed at this service before anything at all has been provisioned.
   res = await request('GET', '/saml11/metadata/' + encodeURIComponent('urn:test:never:seen'));
-  check('a document is minted for an identifier nobody registered', res.status === 200,
-        'status ' + res.status);
+  if (productHere) {
+    check('product: no document for an identifier nobody registered (404; 200 before #112)',
+          res.status === 404 || res.status === 200, 'status ' + res.status);
+  } else {
+    check('a document is minted for an identifier nobody registered', res.status === 200,
+          'status ' + res.status);
+  }
 
   // -------------------------------------------------------------------------
   heading('Browser/POST, end to end');
@@ -580,16 +648,32 @@ async function main() {
   //
   // `RP` carries this process's stamp, so nothing here is shared with another
   // run and every assertion below is still on this job's own litter.
+  PRODUCT = await registry.isProduct(registry.baseOf(BASE));
+  for (const who of [USER_POST, USER_ARTIFACT, USER_UNREGISTERED, 'erin', 'frank',
+                     'grace', 'heidi', 'ivan', 'judy', 'lana']) {
+    await registry.ensurePerson(registry.baseOf(BASE), who, PASSWORD);
+  }
   await registry.provision(registry.baseOf(BASE), {
     identifier: RP,
     name: 'SAML 1.1 protocol test relying party',
     protocols: ['saml11'],
     fields: {
       samlEntityId: [RP],
-      samlAssertionConsumerService: [acs]
+      samlAssertionConsumerService: [acs],
+      samlSigningCertificate: [rpSigning.certB64]
     },
     why: 'the relying party providerId names in every flow below'
   });
+  if (!scopedEntityId) {
+    // Product (#112): the scoped document exists now that `RP` is registered.
+    res = await request('GET', '/saml11/metadata/' + encodeURIComponent(RP));
+    scopedEntityId = res.status === 200
+      ? parse(res.body).documentElement.getAttribute('entityID') : null;
+    check('product: the registered relying party gets its scoped document',
+          !!scopedEntityId && scopedEntityId !== unscopedEntityId &&
+          scopedEntityId.indexOf(unscopedEntityId + ':') === 0,
+          'status ' + res.status + ' ' + scopedEntityId);
+  }
   res = await signIn({ providerId: RP, shire: acs, TARGET: target, profile: 'post' }, USER_POST);
   check('the flow ends on the auto-post page',
         res.status === 200 && /saml11-form/.test(res.body), 'status ' + res.status);
@@ -671,10 +755,15 @@ async function main() {
   check('the confirmation method is cm:bearer for Browser/POST',
         textOf(assertionEl, 'ConfirmationMethod') === CM_BEARER,
         textOf(assertionEl, 'ConfirmationMethod'));
-  // The single-use policy: the assertion passed through the browser, so the
-  // relying party is told not to keep it.
-  check('a DoNotCacheCondition is present on the POST profile',
-        !!byLocal(assertionEl, 'DoNotCacheCondition'));
+  // The single-use policy (oasis-sstc-saml-bindings-1.1 section 4.1.2) is
+  // the RELYING PARTY's to keep, so a DoNotCacheCondition is optional: iya-sts
+  // sends none by default since #189 (saml11.doNotCacheCondition), because a
+  // stock Shibboleth SP refuses it. Either form is correct, which also keeps
+  // this job green against an sts pinned from before #189.
+  const doNotCache = byLocal(assertionEl, 'DoNotCacheCondition');
+  check('a DoNotCacheCondition, when present, sits in the Conditions',
+        !doNotCache || (doNotCache.parentNode &&
+                        doNotCache.parentNode.localName === 'Conditions'));
   check('there is a SubjectLocality recording where the browser was',
         !!byLocal(assertionEl, 'SubjectLocality'));
   check('there is an AuthenticationStatement',
@@ -691,7 +780,14 @@ async function main() {
         attrEls.length + ' attribute(s)');
   let sawMace = false;
   for (let i = 0; i < attrEls.length; i++) {
-    if ((attrEls[i].getAttribute('AttributeNamespace') || '').indexOf('urn:mace:dir') === 0) {
+    // Two spellings of the same urn:mace attribute: the namespace-and-name
+    // split sts sent before #189, and the whole URN under Shibboleth's URI
+    // namespace, which a stock Shibboleth attribute map reads (#189).
+    const ns = attrEls[i].getAttribute('AttributeNamespace') || '';
+    const name = attrEls[i].getAttribute('AttributeName') || '';
+    if (ns.indexOf('urn:mace:dir') === 0 ||
+        (ns === 'urn:mace:shibboleth:1.0:attributeNamespace:uri' &&
+         name.indexOf('urn:mace:dir:attribute-def:') === 0)) {
       sawMace = true;
     }
   }
@@ -797,40 +893,60 @@ async function main() {
   doc = parse(res.body);
   check('an unknown AssertionID is refused', statusOf(doc) === 'samlp:Requester', statusOf(doc));
 
-  res = await request('POST', '/saml11/responder', samlRequest(
-    '<samlp:AttributeQuery Resource="' + RP + '"><saml:Subject>' +
-    '<saml:NameIdentifier>carol</saml:NameIdentifier></saml:Subject>' +
-    '</samlp:AttributeQuery>', '_r4'), XML);
-  doc = parse(res.body);
-  check('an AttributeQuery is answered', statusOf(doc) === 'samlp:Success', statusOf(doc));
-  check('it is about the subject that was asked for',
-        (byLocal(doc, 'NameIdentifier').textContent || '').trim() === 'carol');
-  check('it carries an AttributeStatement', !!byLocal(doc, 'AttributeStatement'));
-  check('the audience is the query\'s Resource',
-        textOf(byLocal(doc, 'Assertion'), 'Audience') === RP,
-        textOf(byLocal(doc, 'Assertion'), 'Audience'));
-  // The posture, asserted rather than left to be discovered: nobody
-  // authenticated to ask this, and the subject never signed in.
-  check('a query about somebody who never signed in is ANSWERED, not refused',
-        !!byLocal(doc, 'Assertion'));
+  // A PRODUCT-mode service answers neither query: nothing authenticates the
+  // caller, and an answer would disclose a named person's attributes or
+  // sign-in history to anybody who can reach the port. That refusal is what
+  // is asserted there.
+  if (await registry.isProduct(registry.baseOf(BASE))) {
+    for (const [what, q] of [
+      ['AttributeQuery', '<samlp:AttributeQuery Resource="' + RP + '"><saml:Subject>' +
+        '<saml:NameIdentifier>carol</saml:NameIdentifier></saml:Subject></samlp:AttributeQuery>'],
+      ['AuthenticationQuery', '<samlp:AuthenticationQuery><saml:Subject>' +
+        '<saml:NameIdentifier>' + USER_ARTIFACT + '</saml:NameIdentifier></saml:Subject>' +
+        '</samlp:AuthenticationQuery>']]) {
+      res = await request('POST', '/saml11/responder', samlRequest(q, '_rq' + what), XML);
+      doc = parse(res.body);
+      check('an ' + what + ' is REFUSED in product mode',
+            statusOf(doc) === 'samlp:Requester' &&
+            /PRODUCT mode/.test(textOf(doc, 'StatusMessage')), textOf(doc, 'StatusMessage'));
+      check('and the refusal carries no assertion', !byLocal(doc, 'Assertion'));
+    }
+  } else {
+    res = await request('POST', '/saml11/responder', samlRequest(
+      '<samlp:AttributeQuery Resource="' + RP + '"><saml:Subject>' +
+      '<saml:NameIdentifier>carol</saml:NameIdentifier></saml:Subject>' +
+      '</samlp:AttributeQuery>', '_r4'), XML);
+    doc = parse(res.body);
+    check('an AttributeQuery is answered', statusOf(doc) === 'samlp:Success', statusOf(doc));
+    check('it is about the subject that was asked for',
+          (byLocal(doc, 'NameIdentifier').textContent || '').trim() === 'carol');
+    check('it carries an AttributeStatement', !!byLocal(doc, 'AttributeStatement'));
+    check('the audience is the query\'s Resource',
+          textOf(byLocal(doc, 'Assertion'), 'Audience') === RP,
+          textOf(byLocal(doc, 'Assertion'), 'Audience'));
+    // The posture, asserted rather than left to be discovered: nobody
+    // authenticated to ask this, and the subject never signed in.
+    check('a query about somebody who never signed in is ANSWERED, not refused',
+          !!byLocal(doc, 'Assertion'));
 
-  // ABOUT SOMEBODY WHO REALLY SIGNED IN — the artifact profile's user, earlier
-  // in this file. It asked about `dave`, who never had, and that was right
-  // while the responder answered an AuthenticationQuery for anybody with a
-  // password AuthenticationStatement at the instant of the query. Since
-  // 2026-09-12 the mock answers it from a session that EXISTS — a signed
-  // statement that somebody just typed a password, about somebody who was never
-  // there, is a falsehood no mode should sign — so `dave` now gets Success with
-  // no assertion. Asking about a real session keeps this check true of the
-  // pinned mock and of the current one alike.
-  res = await request('POST', '/saml11/responder', samlRequest(
-    '<samlp:AuthenticationQuery><saml:Subject>' +
-    '<saml:NameIdentifier>' + USER_ARTIFACT + '</saml:NameIdentifier></saml:Subject>' +
-    '</samlp:AuthenticationQuery>', '_r5'), XML);
-  doc = parse(res.body);
-  check('an AuthenticationQuery is answered', statusOf(doc) === 'samlp:Success', statusOf(doc));
-  check('it carries an AuthenticationStatement and NO AttributeStatement',
-        !!byLocal(doc, 'AuthenticationStatement') && !byLocal(doc, 'AttributeStatement'));
+    // ABOUT SOMEBODY WHO REALLY SIGNED IN — the artifact profile's user, earlier
+    // in this file. It asked about `dave`, who never had, and that was right
+    // while the responder answered an AuthenticationQuery for anybody with a
+    // password AuthenticationStatement at the instant of the query. Since
+    // 2026-09-12 the mock answers it from a session that EXISTS — a signed
+    // statement that somebody just typed a password, about somebody who was never
+    // there, is a falsehood no mode should sign — so `dave` now gets Success with
+    // no assertion. Asking about a real session keeps this check true of the
+    // pinned mock and of the current one alike.
+    res = await request('POST', '/saml11/responder', samlRequest(
+      '<samlp:AuthenticationQuery><saml:Subject>' +
+      '<saml:NameIdentifier>' + USER_ARTIFACT + '</saml:NameIdentifier></saml:Subject>' +
+      '</samlp:AuthenticationQuery>', '_r5'), XML);
+    doc = parse(res.body);
+    check('an AuthenticationQuery is answered', statusOf(doc) === 'samlp:Success', statusOf(doc));
+    check('it carries an AuthenticationStatement and NO AttributeStatement',
+          !!byLocal(doc, 'AuthenticationStatement') && !byLocal(doc, 'AttributeStatement'));
+  }
 
   res = await request('POST', '/saml11/responder',
                       samlRequest('<samlp:AuthorizationDecisionQuery/>', '_r6'), XML);
@@ -973,8 +1089,12 @@ async function main() {
   check('a profile that is not one of the two is refused BY NAME',
         res.status === 400 && /paos/.test(res.body), 'status ' + res.status);
   res = await request('GET', '/saml11/sso?' + form({ providerId: RP, shire: '/relative' }));
+  // Product mode refuses it as an address nobody registered, before it asks
+  // whether it is absolute; either sentence is a refusal of the same request.
   check('a relative assertion consumer URL is refused',
-        res.status === 400 && /absolute/i.test(res.body), 'status ' + res.status);
+        res.status === 400 && (/absolute/i.test(res.body) ||
+                               (PRODUCT && /regist/i.test(res.body))),
+        'status ' + res.status + ' ' + res.body.slice(0, 160));
   res = await request('GET', '/saml11/sso?' + form({ fid: 'no-such-flow-id' }));
   check('a held flow that has expired says so rather than starting a new one',
         res.status === 400 && /expired/i.test(res.body), 'status ' + res.status);
@@ -985,21 +1105,33 @@ async function main() {
   // the TARGET. It is the one thing in the assertion that is not a fact, and a
   // relying party expecting its own name refuses the assertion inside a
   // signature check with nothing saying why.
-  cookie = '';
-  res = await resume('/saml11/sso?' + form({ TARGET: 'https://guessed.example.com/app/page',
-                                             shire: acs, profile: 'post' }), 'ivan');
-  const guessedXml = samlResponseIn(res.body);
-  check('a flow naming no relying party still completes', !!guessedXml, 'status ' + res.status);
-  if (guessedXml) {
-    check('the audience is the ORIGIN of the TARGET, and not its full URL',
-          textOf(parse(guessedXml), 'Audience') === 'https://guessed.example.com',
-          textOf(parse(guessedXml), 'Audience'));
+  if (PRODUCT) {
+    // PRODUCT mode makes no guess: a flow naming no relying party has no
+    // registered return address to answer at, so it is refused, and nothing is
+    // recorded under the guessed origin.
+    cookie = '';
+    res = await request('GET', '/saml11/sso?' + form({
+      TARGET: 'https://guessed.example.com/app/page', shire: acs, profile: 'post' }));
+    check('a flow naming no relying party is REFUSED in product mode',
+          res.status === 400 && !samlResponseIn(res.body),
+          'status ' + res.status + ' ' + res.body.slice(0, 160));
+  } else {
+    cookie = '';
+    res = await resume('/saml11/sso?' + form({ TARGET: 'https://guessed.example.com/app/page',
+                                               shire: acs, profile: 'post' }), 'ivan');
+    const guessedXml = samlResponseIn(res.body);
+    check('a flow naming no relying party still completes', !!guessedXml, 'status ' + res.status);
+    if (guessedXml) {
+      check('the audience is the ORIGIN of the TARGET, and not its full URL',
+            textOf(parse(guessedXml), 'Audience') === 'https://guessed.example.com',
+            textOf(parse(guessedXml), 'Audience'));
+    }
+    res = await request('GET', '/admin-api/saml11?rp=' +
+                        encodeURIComponent('https://guessed.example.com'));
+    const guessedRow = JSON.parse(res.body);
+    check('the console flags a bare-origin identifier as probably guessed',
+          guessedRow.identifierLooksGuessed === true, JSON.stringify(guessedRow.identifierLooksGuessed));
   }
-  res = await request('GET', '/admin-api/saml11?rp=' +
-                      encodeURIComponent('https://guessed.example.com'));
-  const guessedRow = JSON.parse(res.body);
-  check('the console flags a bare-origin identifier as probably guessed',
-        guessedRow.identifierLooksGuessed === true, JSON.stringify(guessedRow.identifierLooksGuessed));
 
   // -------------------------------------------------------------------------
   heading('the registry');
@@ -1032,31 +1164,52 @@ async function main() {
   check('assertions are held for AssertionIDReference', view.assertionsHeldByReference > 0,
         String(view.assertionsHeldByReference));
   check('this run left no flow held for sign-in',
-        view.flowsHeldForSignIn - baseline.flowsHeldForSignIn === 0,
+        // Did not GROW: on a service others are using, flows held by somebody
+        // else expire during the run, so the count may fall.
+        view.flowsHeldForSignIn - baseline.flowsHeldForSignIn <= 0,
         view.flowsHeldForSignIn + ' now, ' + baseline.flowsHeldForSignIn + ' before');
 
   // -------------------------------------------------------------------------
   heading('the settings, one at a time');
   // An unsigned assertion being ACCEPTED by a relying party is the finding that
   // matters, and no happy path shows it. Each of these is restored at the end.
-  await setSetting('saml11.signAssertion', false);
+  // IN PRODUCT MODE THESE TWO ARE DEVELOPMENT-ONLY (iya-sts #181): a write
+  // turning either off is refused and the service keeps signing both, which
+  // is what the SAML 1.1 Browser/POST profile requires of the Response.
+  // Against a product-mode sts from before #181 the write still takes, so
+  // both outcomes are accepted there; development asserts the old behaviour.
+  let wrote = await setSetting('saml11.signAssertion', false);
+  let refused = wrote.status !== 200 ||
+                /refus|development only|STS-CORE-0103/i.test(wrote.body || '');
   cookie = '';
   res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target,
                                              profile: 'post' }), 'judy');
   let xml = samlResponseIn(res.body);
-  check('saml11.signAssertion=false issues an UNSIGNED assertion',
-        !!xml && !childByLocal(byLocal(parse(xml), 'Assertion'), 'Signature'));
+  if (PRODUCT && refused) {
+    check('product: saml11.signAssertion=false is refused and the assertion is still SIGNED',
+          !!xml && !!childByLocal(byLocal(parse(xml), 'Assertion'), 'Signature'));
+  } else {
+    check('saml11.signAssertion=false issues an UNSIGNED assertion',
+          !!xml && !childByLocal(byLocal(parse(xml), 'Assertion'), 'Signature'));
+  }
   check('and the Response around it is still signed',
         !!xml && !!childByLocal(parse(xml).documentElement, 'Signature'));
   await setSetting('saml11.signAssertion', true);
 
-  await setSetting('saml11.signResponse', false);
+  wrote = await setSetting('saml11.signResponse', false);
+  refused = wrote.status !== 200 ||
+            /refus|development only|STS-CORE-0103/i.test(wrote.body || '');
   cookie = '';
   res = await resume('/saml11/sso?' + form({ providerId: RP, shire: acs, TARGET: target,
                                              profile: 'post' }), 'judy');
   xml = samlResponseIn(res.body);
-  check('saml11.signResponse=false issues an unsigned Response',
-        !!xml && !childByLocal(parse(xml).documentElement, 'Signature'));
+  if (PRODUCT && refused) {
+    check('product: saml11.signResponse=false is refused and the Response is still SIGNED',
+          !!xml && !!childByLocal(parse(xml).documentElement, 'Signature'));
+  } else {
+    check('saml11.signResponse=false issues an unsigned Response',
+          !!xml && !childByLocal(parse(xml).documentElement, 'Signature'));
+  }
   check('and the assertion inside it is still signed',
         !!xml && !!childByLocal(byLocal(parse(xml), 'Assertion'), 'Signature'));
   await setSetting('saml11.signResponse', true);
@@ -1099,7 +1252,12 @@ async function main() {
   cookie = '';
   res = await resume('/saml11/sso?' + form({ providerId: unregistered, shire: acs,
                                              TARGET: target, profile: 'post' }), USER_UNREGISTERED);
-  check('autocreateApplications=false still ANSWERS the flow', !!samlResponseIn(res.body),
+  // Product mode answers only at a registered return address, and an
+  // application nobody registered has none, so it is refused there.
+  check(PRODUCT ? 'autocreateApplications=false: an unregistered relying party is REFUSED'
+                : 'autocreateApplications=false still ANSWERS the flow',
+        PRODUCT ? (res.status === 400 && !samlResponseIn(res.body))
+                : !!samlResponseIn(res.body),
         'status ' + res.status);
   res = await request('GET', '/admin-api/saml11?rp=' + encodeURIComponent(unregistered));
   check('it simply records nothing', JSON.parse(res.body).registered === false,
@@ -1112,6 +1270,14 @@ async function main() {
   // that a change made for one has not broken the other — which is not
   // hypothetical: fixing the reference attribute for these profiles changed
   // every WS-Federation assertion this service issues.
+  // Registered first: a product-mode service answers a wreply only when it is
+  // registered on the application the wtrealm names.
+  await registry.provision(registry.baseOf(BASE), {
+    identifier: 'urn:test:wsfed', name: 'SAML 1.1 test WS-Federation realm',
+    protocols: ['wsfed'],
+    fields: { wsfedRealm: ['urn:test:wsfed'], wsfedReplyUrl: [BASE + '/wsfed/rp'] },
+    why: 'the WS-Federation realm this job signs in to, to show that door still answers'
+  });
   res = await request('GET', '/wsfed?' + form({ wa: 'wsignin1.0', wtrealm: 'urn:test:wsfed',
                                                 wreply: BASE + '/wsfed/rp' }));
   check('WS-Federation still answers', res.status === 200 || res.status === 303,

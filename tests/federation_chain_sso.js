@@ -144,6 +144,11 @@ const waitForModule = require("./wait_for.js");
 const consentScreen = require("./consent_screen.js");
 waitForModule.configure({ log: log, waitTime: waitTime });
 const { waitForPageBundle } = waitForModule;
+// The shared federation helpers — for this file, only the subject policy and
+// the name it produces (iya-sts #109). This file's own adminGet()/must() below
+// predate the module and are left where they are.
+const admin = require("./federation_admin.js");
+admin.configure({ log: log });
 
 const { populateMetadata } = require("../common/tests.js")({ By, until, Select,
        waitTime, log, assert });
@@ -494,6 +499,13 @@ async function createServiceProviderSide(base, id, protocol, partner, what) {
                { id: id, field: field, value: value },
                "setting " + field + " on " + id);
   }
+  // WHICH PERSON THE PARTNER SIGNS IN (iya-sts #109): the mapped name, matched
+  // or created as it is, where the sts knows `fedSubjectPolicy` at all. Under
+  // the default realm 4 would create `federation-realm-5~<name>` and realm 3
+  // `federation-realm-4~federation-realm-5~<name>`, and the ID Token below —
+  // which must name neither realm — would carry both. pinSubjectPolicy() in
+  // federation_admin.js has the whole argument.
+  await admin.pinSubjectPolicy(base, id);
   const enabled = await must(base, "/federation/enable", { id: id },
                              "enabling " + id);
   assert.ok(enabled.readiness.ready,
@@ -811,10 +823,11 @@ async function whereDoesTheSignInStop(driver, appBase, callbackUri, label) {
 //   * a mechanism pointing at a DISABLED relationship must name that on the
 //     screen, and NOT quietly ask for a password: a broker that has stopped
 //     brokering looks exactly like one that never was.
-//   * a value that is not one of the four must be named as not one of the
-//     four, in `readiness.missing` and on the screen. A mock that ignored an
-//     unknown value would turn a typo into a silent fallback, which is this
-//     feature failing in the one way nobody would look for.
+//   * a value that is not a mechanism must be REFUSED naming itself, and
+//     leave the entry as it was (iya-sts #86; it was accepted and named in
+//     `readiness.missing` before). A mock that stored an unknown value would
+//     turn a typo into a silent fallback, which is this feature failing in
+//     the one way nobody would look for.
 //
 // Everything is restored in a `finally`, because the realms outlive this
 // process.
@@ -878,30 +891,41 @@ async function theMechanismIsWhatDecides(driver, bridgeBase, appBase,
       "`webauthn` locked the SECOND-FACTOR box as well, which would mean a " +
       "password step this mechanism says there is not.");
 
-    // A value that is not one of the four. The set is ACCEPTED — the register
-    // stores what an operator typed and reports what it thinks of it, rather
-    // than refusing the write and leaving the entry holding the last good
-    // value while the form says otherwise — and readiness is what names it.
-    const bad = await must(bridgeBase, "/federation/set",
-      { id: REL_4_FROM_3, field: "fedAuthnMechanism", value: "carrier-pigeon" },
-      "setting the mechanism to something that is not a mechanism");
-    assert.ok((bad.readiness.missing || []).some(function (one) {
-      return /fedAuthnMechanism/.test(one) && /carrier-pigeon/.test(one);
-    }), "A mechanism of \"carrier-pigeon\" should be reported as not one " +
-        "this service has, and readiness says: " +
-        JSON.stringify(bad.readiness.missing) + ". An unrecognised value " +
-        "that reads as ready is a typo turned into a silent fallback to a " +
-        "password box.");
+    // A value that is not a mechanism. Until iya-sts #86 the set was
+    // ACCEPTED and readiness named it, and the sign-in screen said so; since
+    // then every closed set the management API declares is enforced at the
+    // door, so the write is REFUSED, naming the value, and the entry keeps
+    // the last good one. Both halves are asserted: a refusal that did not
+    // name what it refused would be a typo nobody could find, and a refusal
+    // that still stored the value would be the silent fallback this case
+    // exists to catch, one step later.
+    const bad = await adminPost(bridgeBase, "/federation/set",
+      { id: REL_4_FROM_3, field: "fedAuthnMechanism",
+        value: "carrier-pigeon" });
+    const refusal = JSON.stringify(bad.errors || bad);
+    assert.ok(!bad.ok && /fedAuthnMechanism/.test(refusal) &&
+              /carrier-pigeon/.test(refusal),
+      "Setting fedAuthnMechanism to \"carrier-pigeon\" should be refused " +
+      "naming both the attribute and the value (iya-sts #86), and the mock " +
+      "answered ok=" + bad.ok + ": " + refusal + ". An unrecognised value " +
+      "that is stored is a typo turned into a silent fallback to a password " +
+      "box.");
+    const kept = await adminGet(bridgeBase, "/federation?relationship=" +
+                                encodeURIComponent(REL_4_FROM_3));
+    assert.strictEqual(
+      String(((kept && kept.fields) || {}).fedAuthnMechanism || ""),
+      "webauthn",
+      "The refused mechanism left " + REL_4_FROM_3 + " holding \"" +
+      String(((kept && kept.fields) || {}).fedAuthnMechanism || "") +
+      "\" rather than the \"webauthn\" it held before, so the refusal " +
+      "changed the entry anyway.");
     stop = await whereDoesTheSignInStop(driver, appBase, callbackUri,
-                                        "mechanism=carrier-pigeon");
-    assert.strictEqual(stop.realm, BRIDGE_REALM,
-      "An unrecognised mechanism sent the sign-in to \"" + stop.realm +
-      "\" rather than falling back to realm 4's own screen.");
-    assert.ok(/carrier-pigeon/.test(stop.problem),
-      "An unrecognised mechanism must be NAMED on the screen it falls back " +
-      "to, and the screen at " + stop.url + " says \"" + stop.problem + "\". " +
-      "A silent fallback here is the feature failing in the one way nobody " +
-      "would go looking for.");
+                                        "mechanism=carrier-pigeon refused");
+    assert.ok(stop.realm === BRIDGE_REALM && stop.passwordlessLocked,
+      "After the refused write the sign-in should still stop at realm 4 " +
+      "with the passwordless box locked, as `webauthn` does, and it " +
+      "stopped in \"" + stop.realm + "\" (passwordless locked=" +
+      stop.passwordlessLocked + ").");
 
     // Back to `federation`, and then break what it points AT.
     await set("fedAuthnMechanism", "federation",
@@ -968,21 +992,33 @@ async function mockKnowsTheMechanism(stsBase) {
 }
 
 // ---------------------------------------------------------------------------
-// THE TWO THINGS THAT WEAR `a.fedbtn`, AND WHY THIS FUNCTION EXISTS.
+// THE THREE THINGS THAT WEAR `a.fedbtn`, AND WHY THIS FUNCTION EXISTS.
 //
-// The mock's sign-in screen styles two OFFERS with the same class. The
+// The mock's sign-in screen styles several OFFERS with the same class. The
 // federation partners are the ones this test is about: one per usable
-// relationship, each leading to `/federation/login/<id>`. Under them sits the
-// Kerberos door — `integratedOptionHtml()`'s SPNEGO link, offered to every
-// application on every screen with nothing configured anywhere, because the
-// mechanism is a property of the person's machine rather than of the relying
-// party. A class is what a button LOOKS like and an href is what it DOES, so
-// the counting above reads the href.
+// relationship, each leading to `/federation/login/<id>`. Under them sit the
+// AMBIENT doors, which belong to the person rather than to the relying party
+// and are therefore offered with nothing configured on any relationship:
+//
+//   * the Kerberos door — `integratedOptionHtml()`'s SPNEGO link, offered on
+//     every screen because the mechanism is a property of the person's
+//     MACHINE;
+//   * the wallet door — `walletOptionHtml()`'s `/authn/wallet` link, which
+//     arrived with the 2026-09-17 submodule bump (iya-sts #38). It is the
+//     same shape of offer one layer out: a property of what the person's
+//     WALLET holds, gated on that service's `oid4vp.signIn` and on nothing
+//     about the application. It is withheld, as a paragraph rather than a
+//     button, when the request demands a security key.
+//
+// A class is what a button LOOKS like and an href is what it DOES, so the
+// counting above reads the href.
 //
 // This is the other half of that: a narrowed selector stops seeing anything
 // that arrives under a different href, so everything else wearing the class
-// has to be accounted for by name. Anything that is neither a partner nor the
-// Kerberos door is a button this screen should not be drawing at all.
+// has to be accounted for BY NAME — which is the point, and is why a new
+// ambient door reaches this test as a failure rather than passing unnoticed.
+// Anything that is neither a partner nor one of the two ambient doors is a
+// button this screen should not be drawing at all.
 // ---------------------------------------------------------------------------
 async function assertOnlyOtherButtonIsKerberos(driver, where) {
   log.debug("Entering assertOnlyOtherButtonIsKerberos().");
@@ -992,10 +1028,12 @@ async function assertOnlyOtherButtonIsKerberos(driver, where) {
     if (href.indexOf("/federation/login/") >= 0) {
       continue;
     }
-    assert.ok(href.indexOf("/authn/spnego") >= 0,
+    assert.ok(href.indexOf("/authn/spnego") >= 0 ||
+              href.indexOf("/authn/wallet") >= 0,
       where + " carries a button styled like a federation partner that " +
-      "points at \"" + href + "\". It is neither a partner nor the ambient " +
-      "Kerberos door, so it is an offer this screen should not be making.");
+      "points at \"" + href + "\". It is neither a partner nor one of the " +
+      "two ambient doors (Kerberos, a wallet), so it is an offer this " +
+      "screen should not be making.");
   }
   log.debug("Leaving assertOnlyOtherButtonIsKerberos(). " + buttons.length +
             " button(s) on the screen.");
@@ -1249,10 +1287,24 @@ async function test() {
     // that says the chain ran once end to end rather than, say, realm 4
     // answering out of a session it already had.
     // ---------------------------------------------------------------------
-    for (const [what, base, id] of [
-        ["realm 3's SAML 2.0 relationship with realm 4", appBase, REL_3_TO_4],
+    //
+    // WHO EACH REALM CALLS THE PERSON. Realm 4 files the name realm 5's token
+    // carried, and realm 3 the name realm 4's assertion carried — which is
+    // realm 4's own name for them — so the second is worked out from the
+    // first. Unchanged unless a relationship's fedSubjectPolicy (iya-sts #109)
+    // namespaced the entry a sign-in created; see localNameAt() in
+    // federation_admin.js.
+    const bridgeLocal = await admin.localNameAt(bridgeBase, REL_4_TO_5, user);
+    const appLocal = await admin.localNameAt(appBase, REL_3_TO_4, bridgeLocal);
+    const localAt = {};
+    localAt[APP_REALM] = appLocal;
+    localAt[BRIDGE_REALM] = bridgeLocal;
+    localAt[IDP_REALM] = user;
+    for (const [what, base, id, local] of [
+        ["realm 3's SAML 2.0 relationship with realm 4", appBase, REL_3_TO_4,
+         appLocal],
         ["realm 4's WS-Federation relationship with realm 5", bridgeBase,
-         REL_4_TO_5]]) {
+         REL_4_TO_5, bridgeLocal]]) {
       const after = await relationshipNow(base, id);
       assert.strictEqual(Number(after.authentications || 0), 1,
         what + " counted " + after.authentications + " federated sign-in(s) " +
@@ -1260,9 +1312,9 @@ async function test() {
       assert.ok(!String(after.lastError || "").trim(),
         what + " recorded a failure during a sign-in that succeeded: " +
         after.lastError);
-      assert.ok(String(after.lastUser || "").indexOf(user) >= 0,
+      assert.ok(String(after.lastUser || "").indexOf(local) >= 0,
         what + "'s last user is \"" + after.lastUser + "\" and this test " +
-        "signed in as \"" + user + "\".");
+        "signed in as \"" + user + "\", who is \"" + local + "\" there.");
     }
     log.info("Both consuming relationships counted exactly one sign-in, by " +
              user + ", with no refusal recorded.");
@@ -1275,11 +1327,12 @@ async function test() {
     for (const [where, base] of [[APP_REALM, appBase],
                                  [BRIDGE_REALM, bridgeBase],
                                  [IDP_REALM, idpBase]]) {
+      const local = localAt[where];
       const users = await adminGet(base,
-        "/users?q=" + encodeURIComponent(user));
+        "/users?q=" + encodeURIComponent(local));
       assert.ok((users.users || []).some(function (one) {
-        return String(one.name) === user || String(one.key) === user;
-      }), "Realm \"" + where + "\" has no directory entry for " + user +
+        return String(one.name) === local || String(one.key) === local;
+      }), "Realm \"" + where + "\" has no directory entry for " + local +
           ", who has just signed in through it. It lists: " +
           (users.users || []).map(function (o) { return o.name; }).join(", "));
     }
@@ -1289,7 +1342,7 @@ async function test() {
     for (const [where, base] of [[APP_REALM, appBase],
                                  [BRIDGE_REALM, bridgeBase]]) {
       const users = await adminGet(base,
-        "/users?q=" + encodeURIComponent(user));
+        "/users?q=" + encodeURIComponent(localAt[where]));
       assert.ok((users.protocols || []).some(function (one) {
         return /Federation/i.test(String(one));
       }), "Realm \"" + where + "\" does not record " + user + " as having " +
@@ -1379,10 +1432,23 @@ async function test() {
       JSON.stringify(claims) + ". Which identity service actually checked " +
       "anything is not the application's business, and this is the one " +
       "property the whole feature exists to have.");
-    assert.ok(
-      String(claims.preferred_username || claims.sub).indexOf(user) >= 0,
-      "The ID Token describes \"" + (claims.preferred_username || claims.sub) +
-      "\" and the name typed at realm 5 was \"" + user + "\".");
+    // WHO IT DESCRIBES: realm 3's own entry for the person, by its
+    // `urn:uuid:` subject (iya-sts 64580f4), compared exactly — the name is
+    // not in the token to search for, because since #118 the profile claims
+    // are UserInfo's. A `preferred_username`, where one is still carried,
+    // must name the same person.
+    const expectedSub = await admin.subjectOf(appBase, appLocal);
+    assert.strictEqual(claims.sub, expectedSub,
+      "The ID Token's sub is \"" + claims.sub + "\", and realm 3's " +
+      "directory says \"" + appLocal + "\" — the person typed at realm 5 as " +
+      "\"" + user + "\" — is \"" + expectedSub + "\".");
+    if (claims.preferred_username !== undefined) {
+      const named = String(claims.preferred_username);
+      assert.ok(named === appLocal || named === user,
+        "The ID Token's preferred_username is \"" + named + "\". The " +
+        "person typed at realm 5 as \"" + user + "\" is \"" + appLocal +
+        "\" at realm 3.");
+    }
     log.info("The application holds an ID Token issued by " + claims.iss +
              " describing " + (claims.preferred_username || claims.sub) +
              ", naming neither realm 4 nor realm 5.");

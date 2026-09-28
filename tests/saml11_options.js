@@ -348,7 +348,13 @@ function previewParams(text) {
 
 async function assertRequestPreview(driver, binding, its, acs, sp) {
   log.debug("Entering assertRequestPreview(). binding=" + binding);
-  await selectValue(driver, 'saml_binding', binding);
+  // Two selectors since issue #307. "artifact" here is a GET asking for the
+  // Browser/Artifact profile — the request binding is Redirect and the
+  // response binding (the profile) is the artifact one.
+  await selectValue(driver, 'saml_binding',
+                    binding === 'post' ? 'post' : 'redirect');
+  await selectValue(driver, 'saml_response_binding',
+                    binding === 'artifact' ? 'artifact' : 'post');
   var wantProfile = binding === 'artifact' ? 'artifact' : 'post';
   await driver.wait(async function () {
     var v = await valueOf(driver, 'saml_authn_request');
@@ -392,6 +398,47 @@ async function assertRequestPreview(driver, binding, its, acs, sp) {
       "inter-site transfer service:\n" + text);
   }
   log.debug("Leaving assertRequestPreview().");
+}
+
+// Issue #307: the artifact choice is the RESPONSE binding and is offered with
+// no HTTP-Artifact SingleSignOnService address anywhere on the page. The
+// request selector no longer carries it at all, since nothing here sends a
+// request AS an artifact; and the note under the response selector talks
+// about the Artifact Resolution Service, which is what an artifact response
+// actually needs.
+async function assertArtifactResponseOffered(driver) {
+  log.debug("Entering assertArtifactResponseOffered().");
+  var probe = await driver.executeScript(
+    "var r=document.getElementById('saml_response_binding');" +
+    "var o=r?r.querySelector('option[value=\"artifact\"]'):null;" +
+    "var q=document.getElementById('saml_binding');" +
+    "var a=q?q.querySelector('option[value=\"artifact\"]'):null;" +
+    "return { selector: !!r, offered: !!o," +
+    " enabled: !!(o && !o.disabled && !r.disabled)," +
+    " label: o ? o.text : '', inRequestMenu: !!a," +
+    " sso: document.getElementById('saml_sso_artifact').value };");
+  log.info("Artifact response choice: " + JSON.stringify(probe));
+  assert.strictEqual(probe.sso, '', "the HTTP-Artifact SSO field should be " +
+                     "empty for this check.");
+  assert(probe.selector, "saml_request.html has no response binding " +
+         "selector.");
+  assert(probe.offered && probe.enabled, "Browser/Artifact is not offered " +
+         "as a response binding when no HTTP-Artifact SingleSignOnService " +
+         "address is present. It must be offered whatever the IdP's SSO " +
+         "bindings are (issue #307).");
+  assert(probe.label.indexOf('Browser/Artifact') >= 0, "on SAML 1.1 the " +
+         "artifact response option should name the Browser/Artifact " +
+         "profile; it reads: " + probe.label);
+  assert(!probe.inRequestMenu, "the REQUEST binding selector still offers " +
+         "artifact; it belongs to the response binding.");
+  await selectValue(driver, 'saml_response_binding', 'artifact');
+  var note = await textOf(driver, 'saml_response_binding_note');
+  assert(note.indexOf('SAML responder') >= 0, "with Browser/Artifact " +
+         "selected, the note should say where the artifact is resolved (the " +
+         "SAML responder, i.e. the Artifact Resolution Service field): " +
+         note);
+  await selectValue(driver, 'saml_response_binding', 'post');
+  log.debug("Leaving assertArtifactResponseOffered().");
 }
 
 // Call IdP must refuse, by name, rather than navigating — and the Operations
@@ -509,7 +556,11 @@ async function optionActivities(driver) {
   // no identity provider to fetch metadata from, which is the point.
   await setInput(driver, 'saml_sso_redirect', its);
   await setInput(driver, 'saml_sso_post', its);
-  await setInput(driver, 'saml_sso_artifact', its);
+  // The artifact SSO field is left EMPTY on purpose (issue #307): the
+  // Browser/Artifact choice is the response binding and must not depend on
+  // it. ssoDestination() takes the inter-site transfer service from either
+  // of the other two fields.
+  await setInput(driver, 'saml_sso_artifact', '');
   await setInput(driver, 'saml_acs_url', acs);
   await setInput(driver, 'saml_sp_entity_id', sp);
 
@@ -517,6 +568,8 @@ async function optionActivities(driver) {
   await chooseVersion(driver, '1.1');
   await assertControlsOffForSaml11(driver);
   await assertVersionNoticeExplains(driver);
+
+  await assertArtifactResponseOffered(driver);
 
   for (var i = 0; i < ['redirect', 'post', 'artifact'].length; i++) {
     var binding = ['redirect', 'post', 'artifact'][i];

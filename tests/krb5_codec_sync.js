@@ -6,7 +6,7 @@
 // Why there are two copies.
 //
 // The KDC needs the same codec the browser uses — it is the other end of the same
-// wire. But the KDC lives in the rcbj/mock-sts SUBMODULE, and compose builds that
+// wire. But the KDC lives in the rcbj/iya-sts SUBMODULE, and compose builds that
 // service with `context: ./sts`. A Docker build cannot COPY from outside its
 // context, so `../common/krb5` is simply unreachable from there. The options were
 // to publish a package (too much ceremony for four files), to move the KDC into
@@ -95,7 +95,7 @@ const CANONICAL_DIR = (function () {
 // submodule's files in under sts/, a checkout has them in the submodule, and a
 // developer mid-loop has them in a sibling checkout.
 //
-// AND IT IS NO LONGER THE ROOT OF ANY OF THE THREE. mock-sts 0f986b3
+// AND IT IS NO LONGER THE ROOT OF ANY OF THE THREE. iya-sts 0f986b3
 // ("Reorganizing source code.") moved every module into a subdirectory, so the
 // vendored codec now lives in the mock's `kerberos/` folder. Rather than write
 // that name down here — a second transcription of somebody else's layout, in
@@ -121,8 +121,8 @@ function findVendoredDir() {
     { dir: path.join(__dirname, "..", "sts"), what: "the sts/ submodule" },
     { dir: path.join(__dirname, "sts"), what: "sts/ inside the tests image" },
     {
-      dir: path.join(__dirname, "..", "..", "mock-sts"),
-      what: "a sibling mock-sts checkout"
+      dir: path.join(__dirname, "..", "..", "iya-sts"),
+      what: "a sibling iya-sts checkout"
     }
   ]).filter(function (candidate) {
     // Never compare the canonical directory with itself. In the flat container
@@ -622,7 +622,7 @@ function theFilesAreIdentical(vendoredDir, what) {
     "the vendored codec has drifted from common/krb5:\n  " +
         differences.join("\n  ") +
     "\n\nRun common/krb5/sync-to-mock-sts.sh, then commit and push in " +
-        "mock-sts and bump this " +
+        "iya-sts and bump this " +
     "repository's sts/ gitlink. Note that the behavioural cross-check above " +
         "may still have PASSED " +
     "— two copies can differ in comments or formatting and agree on the wire " +

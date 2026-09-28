@@ -3547,6 +3547,29 @@ function applySchemaToBody(body, kind) {
   return { body: out, notes: notes };
 }
 
+// The `type` vocabulary of each complex attribute the configured schema for
+// `kind` lists — scim_client.js's canonicalTypesOf() map, built from the
+// attribute ROWS rather than from the document, so an edited row is what a
+// scenario follows. Null when no schema has been read, which leaves a
+// scenario's users exactly as the generator makes them: the same rule as
+// applySchemaToBody()'s "a schema nobody has read changes nothing".
+function configuredTypesFor(kind) {
+  log.debug("Entering configuredTypesFor(). " + kind);
+  var schemaId = configuredSchemaFor(kind);
+  var out = {};
+  (schemaId ? attributeNamesFor(schemaId) : []).forEach(function (name) {
+    var spec = parseAttributeSpec(configValue(dynamicName('attr', schemaId,
+        name)));
+    if (spec.type === 'complex' && spec.canonical.length) {
+      out[name] = spec.canonical;
+    }
+  });
+  var found = Object.keys(out).length ? out : null;
+  log.debug("Leaving configuredTypesFor(). " +
+      (found ? Object.keys(found).join(',') : 'none'));
+  return found;
+}
+
 // One value, made to fit one attribute's characteristics.
 function coerceToSpec(value, spec, name, notes) {
   var isArray = Object.prototype.toString.call(value) === '[object Array]';
@@ -3566,13 +3589,14 @@ function coerceToSpec(value, spec, name, notes) {
   // multi-valued attribute, and the attribute's own value when it is a plain
   // string. Both shapes occur in section 4.1, so both are handled.
   if (Object.prototype.toString.call(out) === '[object Array]') {
-    out.forEach(function (member) {
-      if (member && typeof member === 'object' && member.type !== undefined &&
-          spec.canonical.indexOf(String(member.type)) < 0) {
-        notes.push('changed a ' + name + ' type from "' + member.type +
-            '" to "' + spec.canonical[0] + '" — not in canonicalValues');
-        member.type = spec.canonical[0];
-      }
+    // The generator's own fitting, so the page and a scenario re-type a value
+    // the same way — to a type no other value of the attribute carries yet.
+    var holder = {};
+    var types = {};
+    holder[name] = out;
+    types[name] = spec.canonical;
+    scimClient.fitTypes(holder, types).forEach(function (note) {
+      notes.push(note);
     });
     return out;
   }
@@ -3856,7 +3880,8 @@ function planScenario() {
       seed: val('scim_scenario_seed'),
       prefix: val('scim_scenario_prefix'),
       userCount: Number(val('scim_scenario_count')),
-      domain: val('scim_gen_domain') || 'example.com'
+      domain: val('scim_gen_domain') || 'example.com',
+      types: configuredTypesFor('User')
     });
   } catch (e) {
     statusBad('scim_scenario_status', e.message);
@@ -4632,8 +4657,25 @@ function formatAttributeSpec(attribute) {
   if (attribute.caseExact) {
     parts.push('caseExact=true');
   }
-  if (attribute.canonicalValues && attribute.canonicalValues.length) {
-    parts.push('canonical=' + attribute.canonicalValues.join('|'));
+  // A complex attribute's canonical list is on its `type` SUB-attribute, not
+  // on itself: RFC 7643 section 8.7.1 declares work/home/other on
+  // `emails.type` and nothing on `emails`, and a server that narrows the list
+  // narrows it there. Reading only the top level recorded no list for any
+  // attribute shaped the RFC's own way, so the `type` snapping in
+  // coerceToSpec() never fired and a generated `home` email reached a server
+  // that refuses one (this project's mock STS, since iya-sts #206). The row
+  // keeps its one `canonical=` key: for a complex attribute it means the
+  // `type` of each value, which is what coerceToSpec() already reads it as.
+  var canonical = attribute.canonicalValues || [];
+  if (!canonical.length && attribute.type === 'complex') {
+    (attribute.subAttributes || []).forEach(function (sub) {
+      if (sub && sub.name === 'type' && sub.canonicalValues) {
+        canonical = sub.canonicalValues;
+      }
+    });
+  }
+  if (canonical.length) {
+    parts.push('canonical=' + canonical.join('|'));
   }
   if (attribute.referenceTypes && attribute.referenceTypes.length) {
     parts.push('referenceTypes=' + attribute.referenceTypes.join('|'));

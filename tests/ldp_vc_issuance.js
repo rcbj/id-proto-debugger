@@ -54,7 +54,7 @@ const ROOT = path.join(__dirname, "..");
 const paths = require("./module_paths.js");
 const stsSuite = paths.requireSharedModule(
   // The tests image's flattened copy first, then wherever the submodule keeps
-  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: mock-sts 0f986b3
+  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
   // ("Reorganizing source code.") moved every module into a subdirectory, and
   // this one is in common/vendored/. mockStsModule() is the single place that
   // answers that question — see tests/module_paths.js.
@@ -75,6 +75,14 @@ const sdJwtVc = paths.requireSharedModule(
 
 const LDP_CONFIG_ID = process.env.OID4VCI_LDP_CONFIG_ID ||
     "IdentityCredentialLdpVc";
+
+// A TOKEN THIS REALM ISSUED, FOR A PERSON WHO EXISTS (2026-09-18). The
+// credential was requested with a made-up bearer string and its claims were
+// invented from nothing; a product-mode issuer refuses such a token and
+// invents no claim value. The holder signs in (jwt_vc_json_common.js's
+// holderAccessToken()) and the credential carries what the directory says.
+const HOLDER = "ldp-issuance-holder";
+
 
 async function test() {
   log.debug("Entering test().");
@@ -111,7 +119,8 @@ async function test() {
     entry.credential_definition.type.join("/") + " as ldp_vc/bbs-2023.");
 
   log.info("=== What the credential endpoint returns ===");
-  const held = await common.mintJwtVcJson(issuerBase, LDP_CONFIG_ID);
+  const held = await common.mintJwtVcJson(issuerBase, LDP_CONFIG_ID,
+    await common.holderAccessToken(issuerBase, HOLDER));
   const cred = held.credential;
   assert.strictEqual(typeof cred, "object",
     "an ldp_vc credential is a JSON OBJECT, not a compact-serialized string " +

@@ -2,7 +2,7 @@
 
 A single-DC Active Directory forest on one EC2 instance, so that
 `tests/krb5_real_dc.js` can drive a **real Microsoft KDC** instead of the mock
-one in the `rcbj/mock-sts` submodule. It exists for the length of one test run.
+one in the `rcbj/iya-sts` submodule. It exists for the length of one test run.
 
 ```
 ./infra/krb5-test.sh          # apply -> wait -> test -> destroy

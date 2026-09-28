@@ -339,14 +339,18 @@ function seedFromSession(descriptor, previous) {
 // ---------------------------------------------------------------------------
 // THE COMPLEX SUBJECT, AND WHY EVERY CAEP EVENT WANTS ONE.
 //
-// SSF 1.0 section 4 lets a `sub_id` be an object whose members are each
+// SSF 1.0 section 3.3 lets a `sub_id` be an object whose members are each
 // themselves a subject identifier, and CAEP is the reason it exists: the
 // person is not revoked, ONE SESSION OF THEIRS IS. A subject naming only the
 // person asks a receiver to end every session they have — which is a much
 // larger instruction than the one that was meant, and it looks perfectly
 // reasonable in a log.
 //
-// `user` is an issuer/subject pair because that is the identifier a receiver
+// It carries `"format": "complex"`, the final specification's discriminator
+// — a complex subject without it is the pre-final draft shape and is refused.
+//
+// `user` is an `iss_sub` pair (RFC 9493 section 3.2.3; never the draft
+// spelling `issuer_subject_id`) because that is the identifier a receiver
 // ALREADY HOLDS: it is what an ID Token's `iss` and `sub` said. `session` and
 // `device` are `opaque`, because neither has a shape anybody else can parse
 // and RFC 9493 says so by defining no rule for that format's `id`.
@@ -359,9 +363,9 @@ function seedFromSession(descriptor, previous) {
 function complexSubject(session, options) {
   log.debug("Entering complexSubject().");
   var asked = options || {};
-  var subject = {};
+  var subject = { format: ssfClient.COMPLEX_FORMAT };
   if (asked.includeUser !== false) {
-    subject.user = { format: 'issuer_subject_id',
+    subject.user = { format: 'iss_sub',
       iss: String(session.iss || ''), sub: String(session.sub || '') };
   }
   if (asked.includeSession !== false) {
@@ -374,7 +378,7 @@ function complexSubject(session, options) {
     subject.tenant = { format: 'opaque', id: String(session.tenant) };
   }
   log.debug("Leaving complexSubject(). " +
-            Object.keys(subject).length + " member(s).");
+            (Object.keys(subject).length - 1) + " member(s).");
   return subject;
 }
 

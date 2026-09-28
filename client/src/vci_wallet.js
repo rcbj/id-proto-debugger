@@ -349,6 +349,19 @@ function fetchNonce(nonceEndpoint) {
     });
 }
 
+// Whether a Credential Error Response means "the c_nonce is no good — fetch
+// another and build the proofs again". OpenID4VCI 1.0 section 8.3.1.2 gives
+// that its own code, invalid_nonce; the drafts before the final text folded it
+// into invalid_proof, which is also what an issuer still on them answers. A
+// caller retries ONCE on either, so a proof that is bad for any other reason
+// costs one extra request and not a loop.
+function isStaleNonceError(error) {
+  log.debug("Entering isStaleNonceError().");
+  var stale = error === "invalid_nonce" || error === "invalid_proof";
+  log.debug("Leaving isStaleNonceError().");
+  return stale;
+}
+
 // ---------------------------------------------------------------------------
 // The Credential Request body (OID4VCI section 8.2).
 //
@@ -796,6 +809,7 @@ module.exports = {
   signProof: signProof,
   signProofs: signProofs,
   fetchNonce: fetchNonce,
+  isStaleNonceError: isStaleNonceError,
   buildRequestBody: buildRequestBody,
   describeCall: describeCall,
   encodeForm: encodeForm,

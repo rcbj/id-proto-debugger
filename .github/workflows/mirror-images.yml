@@ -1,0 +1,81 @@
+name: Mirror Images
+
+# THE TEST STACK'S THIRD-PARTY IMAGES, COPIED INTO A PRIVATE ghcr.io MIRROR.
+#
+# docker-compose-run-tests.yml pulls every third-party image, and every base
+# image a Dockerfile it builds names in a FROM, from
+# ghcr.io/rcbj/id-proto-debugger/mirror/ rather than from Docker Hub or
+# quay.io. The list is .github/image-mirror.txt; the copying is
+# .github/scripts/mirror-images.sh.
+#
+# Three ways in:
+#   * tests.yml runs the same script in `missing` mode before building, as a
+#     job of its own rather than a call to this workflow (see the comment
+#     there): a complete mirror costs one manifest request per image against
+#     ghcr.io and makes no request to an upstream registry at all.
+#   * weekly, in `refresh` mode, so a moving tag (ubuntu:latest) follows
+#     upstream on a schedule rather than whenever a test run happens to pull.
+#   * by hand, either mode.
+#
+# THE PACKAGES ARE PRIVATE. A container package GitHub creates on first push
+# is private, and linking it to this public repository does not change that
+# (iya-sts-test-corpora is the precedent in this organization). The check at
+# the end fails the job if any of them is public, since visibility can only be
+# changed in the package settings page and a mistaken click there is the one
+# way it happens.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "missing (copy only absent images) or refresh (all)"
+        type: choice
+        options: [missing, refresh]
+        default: missing
+  schedule:
+    # Mondays, well before the daily 10:00 test run.
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    env:
+      IMAGE_MIRROR: ghcr.io/rcbj/id-proto-debugger/mirror
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Copy images
+        # A schedule has no inputs, hence the fallback to `refresh`.
+        run: .github/scripts/mirror-images.sh
+             "${{ inputs.mode || 'refresh' }}"
+      - name: Confirm every mirror package is private
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          public=""
+          while read -r src path; do
+            case "${src}" in ''|'#'*) continue ;; esac
+            pkg="id-proto-debugger/mirror/${path%%:*}"
+            enc="$(jq -rn --arg p "${pkg}" '$p | @uri')"
+            if ! vis="$(gh api "/orgs/rcbj/packages/container/${enc}" \
+                          --jq .visibility 2>/dev/null)"; then
+              echo "::warning::Could not read the visibility of ${pkg}."
+              continue
+            fi
+            echo "${pkg}: ${vis}"
+            if [ "${vis}" != "private" ]; then
+              public="${public} ${pkg}"
+            fi
+          done < .github/image-mirror.txt
+          if [ -n "${public}" ]; then
+            echo "::error::These mirror packages are not private:${public}"
+            exit 1
+          fi

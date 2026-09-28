@@ -37,7 +37,7 @@
 # The fetch itself is made WITHOUT verification (`curl -k`), and that is the
 # ordinary bootstrap for a certificate regenerated every start rather than a
 # hole: it is the same act as trusting the PEM the endpoint hands back, done one
-# step earlier. mock-sts's own README says so at /tls.
+# step earlier. iya-sts's own README says so at /tls.
 #
 # ---------------------------------------------------------------------------
 # THERE ARE TWO ANCHORS NOW, SO WHAT THIS WRITES IS A BUNDLE.

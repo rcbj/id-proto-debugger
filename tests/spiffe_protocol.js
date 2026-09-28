@@ -67,6 +67,7 @@
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
+const crypto = require("crypto");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
 const registry = require("./sts_applications.js");
@@ -1037,13 +1038,56 @@ async function testAgent(held, trustBundle, adminBase, entryId) {
     { identity: { certPem: agentSvid.cert_chain[0],
                   keyPem: pair.privatePem } });
 
+  // ---- AN ENTRY BENEATH THIS AGENT ---------------------------------------
+  //
+  // The two entries created at the top of this file are parented to the
+  // SERVER, which is what a node alias looks like, and an agent may not be
+  // issued an SVID from one. The mock enforced nothing here until the
+  // 2026-09-17 submodule bump (iya-sts #61: an agent is told only about the
+  // entries beneath it, and issued nothing from one outside its set), and
+  // this file had been asking for the server-parented entry all along — a
+  // fixture that was wrong about SPIRE and passed because the far end agreed.
+  //
+  // So the workload entry an agent attests is created HERE, after the
+  // attestation, because its parent is the agent's own SPIFFE ID and that
+  // identity does not exist until AttestAgent has answered. It is created as
+  // the ADMINISTRATOR: minting an entry is not something an agent may do, and
+  // having the agent create its own would be asserting the opposite.
+  const agentEntry = await call(Object.assign({ service: "entry",
+    method: "BatchCreateEntry", request: { entries: [
+      { spiffe_id: spiffeId.toProto(
+          spiffeId.make(TRUST_DOMAIN, MINE + "/attested")),
+        parent_id: spiffeId.toProto(agentId),
+        selectors: [{ type: "unix", value: "uid:4244" }],
+        x509_svid_ttl: 600, jwt_svid_ttl: 120 }
+    ] } }, adminBase));
+  let agentEntryId = "";
+  check("an entry parented to the AGENT is what that agent may be issued — " +
+    "the two created above are parented to the server, and an agent asking " +
+    "for one of those is asking for somebody else's identity", function () {
+      assert.ok(agentEntry.ok, agentEntry.status.details);
+      const row = agentEntry.messages[0].results[0];
+      assert.strictEqual(Number(row.status.code), 0, row.status.message);
+      agentEntryId = row.entry.id;
+    });
+
   const entitled = await call(Object.assign({ service: "entry",
     method: "GetAuthorizedEntries", request: {} }, agentBase));
   check("GetAuthorizedEntries answers the agent ON THE CONNECTION — the " +
     "credential decides the answer and there is nothing to name in the " +
-    "request", function () {
+    "request, and what comes back is the entries BENEATH it and not the " +
+    "register", function () {
       assert.ok(entitled.ok, entitled.status.details);
-      assert.ok(Array.isArray(entitled.messages[0].entries));
+      const entries = entitled.messages[0].entries;
+      assert.ok(Array.isArray(entries));
+      const ids = entries.map(function (one) { return one.id; });
+      assert.ok(ids.indexOf(agentEntryId) >= 0,
+        "the entry parented to this agent is not in its authorized set: " +
+        JSON.stringify(ids));
+      assert.strictEqual(ids.indexOf(entryId), -1,
+        "an entry parented to the SERVER is in this agent's authorized " +
+        "set, so the set is the whole register rather than what this agent " +
+        "may attest");
     });
 
   const synced = await call(Object.assign({ service: "entry",
@@ -1083,7 +1127,7 @@ async function testAgent(held, trustBundle, adminBase, entryId) {
     publicKeyPem: svidPair.publicPem, privateKeyPem: svidPair.privatePem });
   const batched = await call(Object.assign({ service: "svid",
     method: "BatchNewX509SVID", request: { params: [
-      { entry_id: entryId, csr: svidCsr.base64 } ] } }, agentBase));
+      { entry_id: agentEntryId, csr: svidCsr.base64 } ] } }, agentBase));
   check("BatchNewX509SVID is what an agent calls to sign the CSR of a " +
     "workload it is attesting — only the public key is read out of it, and " +
     "the identity comes from the ENTRY", function () {
@@ -1091,12 +1135,12 @@ async function testAgent(held, trustBundle, adminBase, entryId) {
       const row = batched.messages[0].results[0];
       assert.strictEqual(Number(row.status.code), 0, row.status.message);
       assert.strictEqual(spiffeId.fromProto(row.svid.id),
-        spiffeId.make(TRUST_DOMAIN, MINE + "/one"),
+        spiffeId.make(TRUST_DOMAIN, MINE + "/attested"),
         "the identity must come from the entry and not from the CSR");
     });
 
   const newJwt = await call(Object.assign({ service: "svid",
-    method: "NewJWTSVID", request: { entry_id: entryId,
+    method: "NewJWTSVID", request: { entry_id: agentEntryId,
       audience: ["spiffe://" + TRUST_DOMAIN + "/aud-" + STAMP] } }, agentBase));
   check("NewJWTSVID is the agent's form: an entry id rather than an " +
     "identity, because an agent may not name an identity it was not given",
@@ -1125,18 +1169,39 @@ async function testAgent(held, trustBundle, adminBase, entryId) {
   // ---- Agent administration, back as the administrator ------------------
   const listed = await call(Object.assign({ service: "agent",
     method: "ListAgents", request: {} }, adminBase));
-  check("ListAgents holds this run's agent, and its selectors are marked " +
-    "UNVERIFIED — an attestation payload nothing checked is a claim, not a " +
-    "fact", function () {
+  // WHAT A JOIN TOKEN'S AGENT CARRIES IS WHAT THE SERVER VERIFIED, AND NOT
+  // THE TOKEN. This asserted an `unverified` selector until the 2026-09-27
+  // submodule bump, which was right about a mock that put any attestation
+  // payload on the agent unread and wrong about a join token all along: the
+  // server MINTED that token and checks it, so its agent was never a claim.
+  // iya-sts #40 (2026-09-21) made every attestor return only the selectors it
+  // established, and 2026-09-12 stopped the token itself reaching the
+  // directory: the selector is `join_token:token-sha256:<16 hex>`, so whoever
+  // holds the token can find its agent and nobody can rebuild the token.
+  const tokenDigest = crypto.createHash("sha256").update(tokenValue, "utf8")
+    .digest("hex").slice(0, 16);
+  check("ListAgents holds this run's agent, carrying the join token's " +
+    "VERIFIED selector — a digest of the token, never the token itself",
+    function () {
       assert.ok(listed.ok, listed.status.details);
       const ours = (listed.messages[0].agents || []).filter(function (row) {
         return spiffeId.fromProto(row.id) === agentId;
       });
       assert.strictEqual(ours.length, 1, "this run's agent is not listed");
-      assert.ok((ours[0].selectors || []).some(function (selector) {
-        return String(selector.value).indexOf("unverified") === 0;
-      }), "an agent's selectors here are claims: " +
-          JSON.stringify(ours[0].selectors));
+      const selectors = ours[0].selectors || [];
+      assert.ok(selectors.some(function (selector) {
+        return selector.type === "join_token" &&
+          selector.value === "token-sha256:" + tokenDigest;
+      }), "a join token's agent should carry join_token:token-sha256:" +
+          tokenDigest + " (the first 16 hex of the token's SHA-256), and " +
+          "carries " + JSON.stringify(selectors));
+      assert.ok(!JSON.stringify(ours[0]).includes(tokenValue),
+        "the join token itself is on the agent's record — a credential in " +
+        "the directory, readable by anybody who may list agents");
+      assert.ok(!selectors.some(function (selector) {
+        return String(selector.value).indexOf("unverified") >= 0;
+      }), "an attestor that verified its evidence reported a selector as " +
+          "unverified: " + JSON.stringify(selectors));
     });
 
   const countAgents = await call(Object.assign({ service: "agent",
@@ -1186,7 +1251,12 @@ async function testAgent(held, trustBundle, adminBase, entryId) {
     assert.strictEqual(goneAgent, "NOT_FOUND");
   });
 
+  // Handed back so the caller removes it with the other one: this entry is
+  // created here rather than beside them because its parent is an identity
+  // that does not exist until AttestAgent has answered, and the register is
+  // process state on a service the rest of the suite shares.
   log.debug("Leaving testAgent().");
+  return { agentEntryId: agentEntryId };
 }
 
 // ---------------------------------------------------------------------------
@@ -1442,18 +1512,27 @@ async function test() {
                         identity: { certPem: held.x509_svid,
                                     keyPem: held.x509_svid_key } };
     const made = await testAdmin(held, trustBundle);
-    await testAgent(held, trustBundle, adminBase, made.entryId);
+    const agentMade = await testAgent(held, trustBundle, adminBase,
+                                      made.entryId);
 
-    // This run's entries, removed. Done here rather than in the finally
-    // because it is an assertion as much as a cleanup: BatchDeleteEntry is one
-    // of the forty-two.
+    // This run's entries, removed — BOTH of them: the one parented to the
+    // server and the one parented to this run's agent. Done here rather than
+    // in the finally because it is an assertion as much as a cleanup:
+    // BatchDeleteEntry is one of the forty-two, and a batch of two exercises
+    // the per-row status the single-row call cannot.
+    const toRemove = [made.entryId, agentMade.agentEntryId].filter(Boolean);
     const removed = await call(Object.assign({ service: "entry",
-      method: "BatchDeleteEntry", request: { ids: [made.entryId] } },
+      method: "BatchDeleteEntry", request: { ids: toRemove } },
       adminBase));
     check("BatchDeleteEntry removes what this run created", function () {
       assert.ok(removed.ok, removed.status.details);
-      assert.strictEqual(Number(removed.messages[0].results[0].status.code), 0,
-        removed.messages[0].results[0].status.message);
+      const results = removed.messages[0].results;
+      assert.strictEqual(results.length, toRemove.length,
+        "one result per submitted id");
+      results.forEach(function (row, index) {
+        assert.strictEqual(Number(row.status.code), 0,
+          "id " + index + ": " + row.status.message);
+      });
     });
 
     await testLocalSocket();

@@ -1,6 +1,6 @@
 # embedded/ — the debugger as the mock STS embeds it
 
-**The consumer is the mock STS** (`rcbj/mock-sts`, the `sts/` submodule here).
+**The consumer is the mock STS** (`rcbj/iya-sts`, the `sts/` submodule here).
 It serves this debugger's UI as STATIC FILES from a listener of its own — its
 own origin, e.g. `https://host:8444/` — behind an OIDC sign-in, and proxies
 everything under `https://host:8444/api/*`, after checking an access token and

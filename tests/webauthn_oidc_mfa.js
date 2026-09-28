@@ -43,6 +43,9 @@ const { usernameFor } = require("./random_username.js");
 // reason: every job here that signs somebody in meets the same hop, and a
 // hand-written copy per job is a chance per job to write the wait wrong.
 const consentScreen = require("./consent_screen.js");
+// A sign-out the mock asks to have confirmed (RP-Initiated Logout 1.0
+// section 2, iya-sts #124). See tests/sts_sign_out.js.
+const { signOutInBrowser } = require("./sts_sign_out.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -276,7 +279,7 @@ async function test() {
       // Re-run the whole flow so this section owns its own code: an
       // authorization code is single-use, and sharing one between sections
       // would make the second failure a confusing invalid_grant.
-      await driver.get(STS + "/oauth2/logout");
+      await signOutInBrowser(driver, STS, By, until, waitTime * 4);
       await signIn(driver, MFA_USER, authorizeUrl("&acr_values=mfa"));
       await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
       await driver.findElement(By.id("wa-go")).click();
@@ -296,7 +299,7 @@ async function test() {
     await section("a second sign-in asserts with the enrolled key rather " +
                   "than enrolling again",
       async () => {
-        await driver.get(STS + "/oauth2/logout");
+        await signOutInBrowser(driver, STS, By, until, waitTime * 4);
         await signIn(driver, MFA_USER, authorizeUrl("&acr_values=mfa"));
         await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
         const heading = await driver.findElement(By.css("h1")).getText();
@@ -313,7 +316,7 @@ async function test() {
     await section("without the second factor the tokens say so", async () => {
       // The check that makes every one above mean something: a service that
       // stamped hwk on everything would have passed all of them.
-      await driver.get(STS + "/oauth2/logout");
+      await signOutInBrowser(driver, STS, By, until, waitTime * 4);
       await signIn(driver, PWD_USER, authorizeUrl(""));
       const tokens = await exchange(await codeFromRedirect(driver));
       const claims = claimsOf(tokens.id_token);

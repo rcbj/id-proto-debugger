@@ -1032,7 +1032,7 @@ async function test() {
       "SUBMODULE — run `git submodule update --init sts`; an uninitialised " +
       "submodule is an EMPTY DIRECTORY rather than a missing one. If the " +
       "submodule IS initialised and only spnego.js is missing, the gitlink " +
-      "predates it: push mock-sts and bump it.");
+      "predates it: push iya-sts and bump it.");
   }
   process.env.KRB5_REALM = REALM;
   process.env.KRB5_KDC_PORT = "0";

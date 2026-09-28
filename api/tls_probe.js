@@ -90,9 +90,13 @@
 //
 // So `httpRequest` is an optional `{ path }`: after the handshake, one GET is
 // written on the same socket and the response is reported verbatim — status
-// line, headers, body. The mock STS's `GET /tls/whoami` answers exactly this
-// question and is what the PKI page points at, but nothing here knows or cares
-// about that: any server that will answer a GET can be asked.
+// line, headers, body. The mock STS's `GET /tls/sign-in` answers this question
+// and is what the PKI page points at by default, but nothing here knows or
+// cares about that: any server that will answer a GET can be asked. It was
+// `GET /tls/whoami` until 2026-09-16, when that service deleted the two TLS
+// listeners that served it — which changed the answer's SHAPE, since the
+// replacement is a verdict on the certificate rather than an echo of the
+// connection, and changed nothing at all in this file.
 //
 // What bounds it is narrower than the rest of this file and needs no setting of
 // its own, for the same reason `POST /krb5/spnego` needs none: the method is

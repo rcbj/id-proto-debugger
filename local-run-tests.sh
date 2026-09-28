@@ -58,6 +58,16 @@ set -x
 #                (refresh tests/captures/windows-server-2025.json) or "both".
 #                NOT free tier, and it is the only thing here that creates
 #                billable infrastructure — see infra/terraform-krb5/README.md.
+#   --sts-url=<base>
+#                Run the suite against a DEPLOYED iya-sts at <base> (for example
+#                https://test-idp.iyasec.io) instead of the local mock: the
+#                `sts` service is not started (local-tests-external-sts.yml),
+#                every URL the jobs are handed is rebased onto <base>, and the
+#                hosts the api's relays dial (Kerberos, LDAP, SPIFFE) are its
+#                host name. Set ADMIN_API_CLIENT_SECRET to that deployment's
+#                `sts-management-api` secret — the token is minted with it — and
+#                optionally SPIFFE_TRUST_DOMAIN (default: <base>'s host minus its
+#                first label). The deployment must admit this host's address.
 #   -h|--help    Show usage.
 #
 # Environment:
@@ -277,6 +287,15 @@ Usage: $(basename "$0") [--saml-dev] [--saml-only[=keycloak|sts|both]]
                billable infrastructure. Teardown is on an EXIT trap, so it runs
                even when the test fails; KRB5_KEEP=1 keeps the box for
                debugging and tells you how to remove it.
+
+  --sts-url=<base>
+               Run against a DEPLOYED iya-sts (e.g. https://test-idp.iyasec.io)
+               instead of starting the local mock: every job's STS address is
+               rebased onto <base>, and Kerberos, LDAP and SPIFFE dial its
+               host. Needs ADMIN_API_CLIENT_SECRET set to that deployment's
+               sts-management-api secret; SPIFFE_TRUST_DOMAIN defaults to the
+               host minus its first label. It allows this stack's browser
+               origin by CORS on the deployment and creates its rfc9700 realm.
 USAGE
 }
 
@@ -293,6 +312,7 @@ while [ $# -gt 0 ]; do
     --federation-only) FEDERATION_ONLY=1 ;;
     --federation-only=*) FEDERATION_ONLY=1
                          FEDERATION_ONLY_DEPTH="${1#*=}" ;;
+    --sts-url=*) STS_EXTERNAL_URL="${1#*=}"; STS_EXTERNAL_URL="${STS_EXTERNAL_URL%/}" ;;
     --krb5-real-dc) KRB5_REAL_DC=1 ;;
     --krb5-real-dc=*) KRB5_REAL_DC=1; KRB5_REAL_DC_WHAT="${1#*=}" ;;
     -h|--help)  usage; exit 0 ;;
@@ -413,11 +433,14 @@ init()
   # document it was given.
   SAML11_METADATA_URL="https://localhost:8081/saml11/metadata/${SAML_STS_SP_SLUG}"
   export SAML11_METADATA_URL
-  # And it hosts the TLS / mutual-TLS endpoint the PKI page presents a client
-  # certificate to (its two HTTPS listeners, 8443 and 9443). This is its MAIN
-  # port, which is https here too: the test configures the far end's truststore
-  # over it and reads
-  # the listeners' ports from the service rather than carrying a copy of them.
+  # And it hosts the endpoint the PKI page presents a client certificate to.
+  # This is its MAIN port, which is https here too, and since 2026-09-16 it is
+  # the ONLY port there that a client certificate can arrive on: that service
+  # had two TLS listeners of its own, 8443 and 9443, and deleted both — the
+  # main port already asked every connection for a certificate and required
+  # none, which is what RFC 8705 needs at the token endpoint anyway. The test
+  # configures the far end's truststore over this URL and reads the port off
+  # the service rather than carrying a copy of it.
   #
   # Separate from WSTRUST_STS_URL for the same reason WSFED_STS_METADATA_URL is
   # — that one may be pointed at a real Apache CXF STS, which has no endpoint of
@@ -449,7 +472,7 @@ init()
   # is configureStsRfc9700Realm(), after the stack is up. That call is also the
   # capability probe: it replaced a test for `oauth2_bcp.js` in the sts/
   # submodule, which was a PATH test and silently took its else branch when
-  # mock-sts reorganised its directories, printing a confident and wrong
+  # iya-sts reorganised its directories, printing a confident and wrong
   # explanation while quietly dropping five jobs. Asking the running service
   # answers the same question about the code that is actually running — and
   # answers it about realms too, which a file probe could not have seen at all.
@@ -585,6 +608,75 @@ init()
   NODEJS_BASE_DIR=tests
 }
 
+# ---------------------------------------------------------------------------
+# --sts-url=<base>: every address the jobs are handed, rebased from the local
+# mock onto a deployed one (2026-09-19). The URLs init() built all begin
+# https://localhost:8081; the rest are the addresses run-report.js otherwise
+# DEFAULTS to `https://localhost:8081` or to the host name `sts`, which on this
+# stack is 127.0.0.1 in the api container — so without them a job would dial a
+# port nothing listens on here. Called at the end of init().
+# ---------------------------------------------------------------------------
+useExternalSts()
+{
+  echo "Entering useExternalSts(). base=${STS_EXTERNAL_URL}"
+  local host="${STS_EXTERNAL_URL#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  local v
+  for v in WSTRUST_STS_URL WSFED_STS_METADATA_URL SAML_STS_METADATA_URL \
+           SAML11_METADATA_URL STS_TLS_URL;
+  do
+    eval "${v}=\"\${${v}/https:\/\/localhost:8081/${STS_EXTERNAL_URL//\//\\/}}\""
+    export "${v}"
+  done
+  STS_URL="${STS_EXTERNAL_URL}"
+  API_STS_URL="${STS_EXTERNAL_URL}"
+  SSF_TRANSMITTER_URL="${STS_EXTERNAL_URL}"
+  SCIM_BASE_URL="${STS_EXTERNAL_URL}/scim/v2"
+  KRB5_KDC_HOST="${host}"
+  KRB5_SPNEGO_URL="${STS_EXTERNAL_URL}/spnego/protected"
+  LDAP_URL="ldap://${host}:389"
+  SPIFFE_WORKLOAD_ADDRESS="${host}:8092"
+  SPIFFE_SERVER_ADDRESS="${host}:8181"
+  SPIFFE_TRUST_DOMAIN="${SPIFFE_TRUST_DOMAIN:-${host#*.}}"
+  export STS_URL API_STS_URL SSF_TRANSMITTER_URL SCIM_BASE_URL KRB5_KDC_HOST \
+         KRB5_SPNEGO_URL LDAP_URL SPIFFE_WORKLOAD_ADDRESS \
+         SPIFFE_SERVER_ADDRESS SPIFFE_TRUST_DOMAIN
+  echo "  WSTRUST_STS_URL=${WSTRUST_STS_URL}"
+  echo "  SAML_STS_METADATA_URL=${SAML_STS_METADATA_URL}"
+  echo "  KRB5_KDC_HOST=${KRB5_KDC_HOST} LDAP_URL=${LDAP_URL}"
+  echo "  SPIFFE ${SPIFFE_WORKLOAD_ADDRESS} ${SPIFFE_SERVER_ADDRESS}" \
+       "trust domain ${SPIFFE_TRUST_DOMAIN}"
+  echo "Leaving useExternalSts()."
+}
+
+# The deployment's side of --sts-url, once it answers: an admin token, this
+# stack's browser origin allowed by CORS (the debugger's client calls the
+# service from https://localhost:3000), and the RFC 9700 realm. Everything the
+# local path does in startDocker() for the mock it started, against <base>.
+prepareExternalSts()
+{
+  echo "Entering prepareExternalSts()."
+  requireStsReachable https "${STS_EXTERNAL_URL}/healthcheck" sts
+  check_return_code $?
+  mintAdminApiToken "${STS_EXTERNAL_URL}"
+  if ! curl -sS --fail -o /dev/null -X POST \
+       -H "Authorization: Bearer ${STS_ADMIN_API_TOKEN}" \
+       -H "Content-Type: application/json" \
+       -d '{"key":"global.corsOrigins","value":"'"${DEBUGGER_BASE_URL}"'"}' \
+       "${STS_EXTERNAL_URL}/admin-api/config/set";
+  then
+    echo "WARNING: could not allow ${DEBUGGER_BASE_URL} by CORS on" \
+         "${STS_EXTERNAL_URL}; the browser jobs will fail on it." >&2
+  fi
+  if configureStsRfc9700Realm "${STS_EXTERNAL_URL}";
+  then
+    RFC9700_STS_URL="${STS_EXTERNAL_URL}/realm/rfc9700"
+    export RFC9700_STS_URL
+  fi
+  echo "Leaving prepareExternalSts()."
+}
+
 prepTestEnv()
 {
   npm install --prefix tests
@@ -600,7 +692,7 @@ prepTestEnv()
   # with ERR_MODULE_NOT_FOUND. The containerized suite is unaffected: there
   # bbs2023.js is copied flat beside the tests, next to tests/node_modules.
   #
-  # `npm ci`, not `npm install`: mock-sts commits its lock, and `npm install`
+  # `npm ci`, not `npm install`: iya-sts commits its lock, and `npm install`
   # REWRITES it (its lock still carries the pre-rename package name), which would
   # leave the submodule with a modified file after every run.
   #
@@ -633,9 +725,39 @@ startDocker()
     CONFIG_FILE=./env/docker-tests.js docker_compose -f docker-compose-run-tests.yml down --remove-orphans 2>/dev/null || true
   fi
 
+  # --sts-url: the mock is a DEPLOYED one, so every service here but `sts` is
+  # built and started — the override removes the api's dependency on it — and
+  # the deployment is prepared instead of the container.
+  if [ -n "${STS_EXTERNAL_URL:-}" ];
+  then
+    local services
+    services="$(CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml \
+                  config --services 2>/dev/null | grep -xE '[a-z0-9_-]+' |
+                grep -vx sts | tr '\n' ' ')"
+    echo "Starting everything but the mock STS: ${services}"
+    CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml \
+      -f local-tests-external-sts.yml build ${services}
+    check_return_code $?
+    CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml \
+      -f local-tests-external-sts.yml up -d ${services}
+    check_return_code $?
+    CONFIG_FILE=./env/local.js requireComposeServiceRunning local-tests.yml \
+      keycloak-wsfed
+    check_return_code $?
+    prepareExternalSts
+    return 0
+  fi
+
   # Start Docker containers
   CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml build
   check_return_code $?
+  # THE ONE JOB THAT STARTS THE MOCK ITSELF needs a tree the host can run, and
+  # since iya-sts #50 that means a COMPILED one, which a checkout is not. The
+  # image just built carries exactly that, so it is copied out rather than
+  # built here; see extractMockStsTree() for why building is not available.
+  # Best effort — it never stops the run, and without it that job skips as it
+  # did before.
+  extractMockStsTree
   CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml up -d
   check_return_code $?
   # The WS-Federation side-car must actually be running, not merely created: the
@@ -1550,6 +1672,27 @@ WARNING
 
 init
 check_return_code $?
+if [ -n "${STS_EXTERNAL_URL:-}" ];
+then
+  useExternalSts
+fi
+# The banner (on a pass) and this script's exit status, as the last lines of
+# every exit from here on — see launcherExitStatus() in common/common.sh,
+# which init just sourced. The modes below that run tests set SUITE_PASSED on
+# the way out; `--saml-dev`, which brings a stack up and runs nothing, does
+# not. `$?` is captured first and handed back to `exit`.
+onExit()
+{
+  local status=$?
+  echo "Entering onExit()."
+  # The copy extractMockStsTree() made, and only that one: a MOCK_STS_DIR the
+  # caller supplied is somebody's working copy. Before the status is reported,
+  # so a failing run cleans up after itself too.
+  removeMockStsTree
+  launcherExitStatus "${status}" "local-run-tests.sh"
+  exit "${status}"
+}
+trap onExit EXIT
 prepTestEnv
 check_return_code $?
 if [ "${KRB5_REAL_DC}" = "1" ];
@@ -1557,6 +1700,7 @@ then
   runKrb5RealDc
   check_return_code $?
   echo "Kerberos real-DC work passed (${KRB5_REAL_DC_WHAT})."
+  SUITE_PASSED=1
   exit 0
 fi
 if [ "${SAML_ONLY}" = "1" ];
@@ -1565,6 +1709,7 @@ then
   check_return_code $?
   echo "SAML tests passed (idp=${SAML_ONLY_IDP}); the sts half includes" \
        "SAML 1.1, which has no Keycloak equivalent."
+  SUITE_PASSED=1
   exit 0
 fi
 if [ "${WSFED_ONLY}" = "1" ];
@@ -1572,6 +1717,7 @@ then
   runWsfedOnly
   check_return_code $?
   echo "WS-Federation test passed (idp=${WSFED_ONLY_IDP})."
+  SUITE_PASSED=1
   exit 0
 fi
 if [ "${DELEGATION_ONLY}" = "1" ];
@@ -1580,6 +1726,7 @@ then
   check_return_code $?
   echo "The delegation chain(s) passed (${DELEGATION_ONLY_WHAT}): a sign-in" \
        "and two hops through a middle tier, once per protocol family."
+  SUITE_PASSED=1
   exit 0
 fi
 if [ "${FEDERATION_ONLY}" = "1" ];
@@ -1588,6 +1735,7 @@ then
   check_return_code $?
   echo "The federated sign-in passed: an OIDC application in one trust realm," \
        "authenticated over SAML 2.0 in another."
+  SUITE_PASSED=1
   exit 0
 fi
 startDocker
@@ -1638,13 +1786,7 @@ check_return_code $?
 node --version
 check_return_code $?
 
-cat <<'EOF'
-   _   _ _   _            _                                  _
-  / \ | | | | |_ ___  ___| |_ ___   _ __   __ _ ___ ___  ___| |
- / _ \| | | | __/ _ \/ __| __/ __| | '_ \ / _` / __/ __|/ _ \ |
-/ ___ \ | | | ||  __/\__ \ |_\__ \ | |_) | (_| \__ \__ \  __/_|
-/_/   \_\_|_|  \__\___||___/\__|___/ | .__/ \__,_|___/___/\___(_)
-                                     |_|
-EOF
+# Printed by the EXIT trap, as the last thing on the screen.
+SUITE_PASSED=1
 
 exit 0

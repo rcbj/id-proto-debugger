@@ -1220,18 +1220,21 @@ function requestRefreshedCredential() {
       // A c_nonce is single use and short-lived, so the proof built when the
       // page loaded can be stale by the time anyone presses the button. Same
       // recovery as step 2: rebuild it and send once more.
+      // OpenID4VCI 1.0 section 8.3.1.2 calls that refusal invalid_nonce;
+      // the drafts before it said invalid_proof, so both are the signal.
       if (response.ok || !response.body ||
-          response.body.error !== "invalid_proof") return response;
-      log.debug("the issuer rejected the proof; rebuilding it with a fresh " +
-                "nonce and retrying once.");
+          !vciWallet.isStaleNonceError(response.body.error)) {
+        return response;
+      }
+      log.debug("the issuer rejected the proof (" + response.body.error +
+                "); rebuilding it with a fresh nonce and retrying once.");
       // Two requests were made, so two rows: the retry is not a reason to hide
       // the refusal that caused it.
       sdJwtVc.recordHistoryEntry({
         kind: sdJwtVc.HISTORY_KIND.CREDENTIAL_REQUEST,
         outcome: sdJwtVc.HISTORY_OUTCOME.FAILED,
-        detail: "invalid_proof — the c_nonce had been spent or had expired; " +
-            "rebuilding the proof and " +
-                "retrying once"
+        detail: response.body.error + " — the c_nonce had been spent or " +
+            "had expired; rebuilding the proof and retrying once"
       });
       renderHistory();
       status("vc_reissue_status",
@@ -1562,6 +1565,24 @@ function pollDeferred() {
 // assumed from the wallet's side — it has to be read off the two credentials,
 // which is what this does.
 // ---------------------------------------------------------------------------
+// The status-list reference a credential carries, as one line: which list and
+// which index on it. `—` when the issuer sets none, which is what every
+// credential here looked like until the mock STS grew status lists per realm
+// (iya-sts #38, reached by the 2026-09-17 bump).
+function statusEntryText(payload) {
+  log.debug("Entering statusEntryText().");
+  var entry = (payload || {}).status;
+  var list = entry && entry.status_list;
+  if (!list) {
+    log.debug("Leaving statusEntryText(). None.");
+    return "\u2014";
+  }
+  var out = "index " + (list.idx === undefined ? "?" : list.idx) +
+      (list.uri ? " on " + list.uri : "");
+  log.debug("Leaving statusEntryText().");
+  return out;
+}
+
 function comparisonRows(before, after) {
   log.debug("Entering comparisonRows().");
   var b = before.payload || {};
@@ -1603,6 +1624,19 @@ function comparisonRows(before, after) {
       name: "_sd digests",
       before: String(sdJwtVc.collectSdDigests(b).length),
       after: String(sdJwtVc.collectSdDigests(a).length)
+    },
+    // THE STATUS ENTRY, which is PER-ISSUANCE and belongs here rather than
+    // among the claim differences below. Each issuance takes its own index on
+    // the issuer's status list — that is how one credential is revoked
+    // without touching another — so a refresh changes it every time, exactly
+    // as it changes `iat` and the signature. Reported as machinery it says
+    // something true and useful; reported as a changed CLAIM it said the
+    // issuer had rewritten the End-User's data, which is section 14.5's other
+    // case entirely.
+    {
+      name: "Status entry",
+      before: statusEntryText(b),
+      after: statusEntryText(a)
     }
   ];
   log.debug("Leaving comparisonRows(). " + rows.length + " row(s).");
@@ -1624,8 +1658,18 @@ function claimDifferences(before, after) {
     // The SD-JWT machinery and the per-issuance metadata are not claim CONTENT:
     // a new iat is what a refresh is, and reporting it as a changed claim would
     // bury the ones that matter.
+    //
+    // `status` JOINED THEM on 2026-09-17. It is a reference to a slot on the
+    // issuer's status list, and every issuance takes its OWN slot — that is
+    // the whole mechanism by which one credential can be revoked and another
+    // left alone — so it changes on every refresh, like iat. It is shown in
+    // the comparison table above, where the rest of the machinery is, rather
+    // than dropped: listing it HERE made a refresh that changed nothing about
+    // the End-User read as section 14.5's "the issuer updates the content
+    // too", which is a different thing and the one a holder should worry
+    // about.
     if (["iat", "nbf", "exp", "cnf", "_sd",
-        "_sd_alg"].indexOf(name) !== -1) return;
+        "_sd_alg", "status"].indexOf(name) !== -1) return;
     var beforeValue = JSON.stringify(b[name]);
     var afterValue = JSON.stringify(a[name]);
     if (beforeValue === afterValue) return;

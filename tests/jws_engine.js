@@ -753,6 +753,33 @@ function checkKeyForms() {
     count++;
   });
 
+  // --- An SPKI whose point READS AS DER. forge parses a BIT STRING's
+  //     contents as ASN.1 by default and keeps the tree when they parse, so
+  //     04 || x || y with x[0] equal to the remaining length (0x5f for P-384,
+  //     0x3f for P-256) became an OCTET STRING rather than a point, and every
+  //     signature under that key was refused. The loop above met one in a few
+  //     hundred runs; these keys are chosen so every run meets it.
+  [["ES384", 0x5f], ["ES256", 0x3f]].forEach(function (pair) {
+    const algId = pair[0];
+    let keys = null;
+    for (let tries = 0; tries < 20000 && !keys; tries++) {
+      const candidate = nodeKeyPair(algId);
+      if (Buffer.from(candidate.publicJwk.x, "base64url")[0] === pair[1]) {
+        keys = candidate;
+      }
+    }
+    assert.ok(keys, algId + ": no key with x[0] = 0x" +
+      pair[1].toString(16) + " in 20000 tries.");
+    const signed = jws.signJws({ algId: algId, payload: PAYLOAD,
+      privateKey: keys.privatePem });
+    assert.ok(jws.verifyJws({ jws: signed.serialized,
+      publicKey: keys.publicPem, algId: algId }).valid,
+      algId + ": an SPKI whose point begins 0x04 0x" +
+      pair[1].toString(16) + " was read as nested DER rather than as a " +
+      "point, so a valid signature was refused.");
+    count++;
+  });
+
   // --- An EC JWK whose coordinate lost a leading zero. A conforming
   //     publisher may trim it; the point must still be the same point.
   const ec = nodeKeyPair("ES256");

@@ -60,7 +60,7 @@
 // there: that endpoint renders a page saying who you are and never calls
 // `startSession()`, so no browser session comes out of it and `authn.js` has
 // no `spnego` in `MECHANISMS`. Wiring the acceptor to the session is small; the
-// open question is where a headless browser gets its ticket, since `mock-sts`
+// open question is where a headless browser gets its ticket, since `iya-sts`
 // has no bundler and its own page says a browser will not answer a `Negotiate`
 // challenge without an allow-list. So the third mechanism is deferred rather
 // than faked, and this grid is 5 x 5 x 2.
@@ -103,10 +103,10 @@
 // asserts realm 2 has NO relationships at all, which is true there and would be
 // false here within a second of the pool starting.
 //
-// The one thing this leaves behind is `federation.outboundAllowInsecure` on
-// realm 1, which the OIDC and OAuth 2.0 federation points need and none of them
-// resets — see allowInsecureOutbound(). Fifty jobs turning one realm setting on
-// and off around each other is a flake; a setting left on in a realm that
+// The one thing this leaves behind is `federation.outboundCaFile` on realm 1,
+// which the OIDC and OAuth 2.0 federation points need and none of them
+// resets — see trustRealm2BackChannel(). Fifty jobs turning one realm setting
+// on and off around each other is a flake; a setting left on in a realm that
 // belongs entirely to this file is not.
 //
 // ---------------------------------------------------------------------------
@@ -366,53 +366,33 @@ async function createRealms(stsBase) {
 // cannot work without it.
 //
 // An OIDC or OAuth 2.0 federation is the only one of the five with a BACK
-// CHANNEL: realm 1 redeems the code at realm 2's token endpoint, which is
-// `federation_http.js`, which is `https` only and refuses a certificate
-// nothing trusts unless `federation.outboundAllowInsecure` says otherwise.
-// Every stack in this suite runs the mock on a self-signed certificate it
-// regenerates at every start, so without this the twenty points fail with a
-// 502 naming TLS — a failure that reads as the partner being down.
+// CHANNEL: realm 1 redeems the code at realm 2's token endpoint, through
+// `federation_http`, which refuses plain http and a certificate nothing
+// trusts. Without a setting the twenty points fail with a 502 naming TLS — a
+// failure that reads as the partner being down. Which setting is
+// `trustPartnerTls()`'s decision in federation_admin.js: since iya-sts #171
+// it is `federation.outboundCaFile` naming the certificate file the mock
+// already serves from, so the back channel is VERIFIED against the stack's
+// own root rather than waved through.
 //
 // IT IS NOT PUT BACK, and that is the deliberate half. Fifty jobs setting one
 // realm-scoped setting and resetting it around each other is a flake that
 // appears only in the pool: a point that reset it while another was mid-redeem
 // would fail that one for a reason nothing in its output could name. The realm
 // belongs entirely to this file, nothing else reads that setting there, and it
-// is left on.
+// is left on. Every point writes the same value, so the race is harmless.
 // ---------------------------------------------------------------------------
-async function allowInsecureOutbound(spBase) {
-  log.debug("Entering allowInsecureOutbound().");
+async function trustRealm2BackChannel(spBase) {
+  log.debug("Entering trustRealm2BackChannel().");
   if (FED_PROTOCOL !== "oidc" && FED_PROTOCOL !== "oauth2") {
-    log.debug("Leaving allowInsecureOutbound(). No back channel is used.");
+    log.debug("Leaving trustRealm2BackChannel(). No back channel is used.");
     return;
   }
-  await must(spBase, "/config/set",
-             { key: "federation.outboundAllowInsecure", value: "true" },
-             "allowing realm 1 to dial realm 2 over its own self-signed TLS");
-  // WHICH REALM THE WRITE LANDED IN, which is the half worth asserting. A
-  // setting written while a realm is ambient goes into that realm's own
-  // override map, and one written WITHOUT one lands process-wide — where it
-  // would relax the certificate check for every other job on this mock. The
-  // snapshot answers both questions at once: `realm` says which realm was
-  // ambient for the read, and `realmSettings` is that realm's own override
-  // list.
-  const snapshot = await adminGet(spBase, "/config");
-  assert.strictEqual(String(snapshot.realm), SP_REALM,
-    "Reading realm 1's configuration answered for the \"" + snapshot.realm +
-    "\" realm, so the write above did not land where this test thinks it " +
-    "did either.");
-  assert.ok((snapshot.realmSettings || [])
-              .indexOf("federation.outboundAllowInsecure") >= 0,
-    "Realm 1 does not list federation.outboundAllowInsecure among its OWN " +
-    "settings (it lists: " + (snapshot.realmSettings || []).join(", ") +
-    "), so the write went process-wide — which is not this test's to do, and " +
-    "would relax the certificate check for every other job on this mock. A " +
-    FED_PROTOCOL + " federation redeems a code at the partner's token " +
-    "endpoint over the mock's own self-signed TLS, so without it every point " +
-    "of this row fails with a 502 naming a certificate rather than this " +
-    "setting.");
+  await admin.trustPartnerTls(spBase, SP_REALM,
+    "a " + FED_PROTOCOL + " federation redeems a code at realm 2's token " +
+    "endpoint over the mock's own TLS");
   log.info("Realm 1 may dial realm 2's back channel.");
-  log.debug("Leaving allowInsecureOutbound().");
+  log.debug("Leaving trustRealm2BackChannel().");
 }
 
 // ---------------------------------------------------------------------------
@@ -809,6 +789,10 @@ async function createRelationship(spBase, partner, partnerAppId, callbackUri) {
                { id: RELATIONSHIP, field: field, value: value },
                "setting " + field + " on " + RELATIONSHIP);
   }
+  // WHICH PERSON THE PARTNER SIGNS IN (iya-sts #109): the mapped name, matched
+  // or created as it is, where the sts knows `fedSubjectPolicy` at all — the
+  // reason is pinSubjectPolicy()'s, in federation_admin.js.
+  await admin.pinSubjectPolicy(spBase, RELATIONSHIP);
   const enabled = await must(spBase, "/federation/enable",
                              { id: RELATIONSHIP },
                              "enabling " + RELATIONSHIP);
@@ -1530,7 +1514,33 @@ async function redeemThroughThePage(driver, callbackUri) {
   return token;
 }
 
-async function assertOauthArtifact(token, spBase, idpBase, sent, user) {
+// THE PERSON A TOKEN FROM REALM 1 DESCRIBES. `user` is realm 1's name for the
+// person typed at realm 2 (see `local` in test()) and `typed` is the name that
+// was typed. Since iya-sts 64580f4 (2026-09-14) a token's `sub` is the
+// `urn:uuid:` of that person's entry in the realm that issued it, so it is
+// compared with what realm 1's directory holds for that name — exactly, which
+// the substring check it replaces could not be. `preferred_username`, where
+// the token carries one, must name the same person: realm 1's name for them,
+// or the name typed at realm 2 where realm 1 took it from the partner's
+// attributes — and nobody else.
+async function assertDescribesLocalPerson(claims, spBase, user, typed, what) {
+  log.debug("Entering assertDescribesLocalPerson(). " + what);
+  const expected = await admin.subjectOf(spBase, user);
+  assert.strictEqual(claims.sub, expected,
+    what + "'s sub is \"" + claims.sub + "\", and realm 1's directory says " +
+    "\"" + user + "\" — the person typed at realm 2 as \"" + typed + "\", " +
+    "as realm 1 files them — is \"" + expected + "\".");
+  if (claims.preferred_username !== undefined) {
+    const named = String(claims.preferred_username);
+    assert.ok(named === user || named === typed,
+      what + "'s preferred_username is \"" + named + "\". The person typed " +
+      "at realm 2 as \"" + typed + "\" is \"" + user + "\" at realm 1.");
+  }
+  log.debug("Leaving assertDescribesLocalPerson().");
+}
+
+async function assertOauthArtifact(token, spBase, idpBase, sent, user,
+                                   typed) {
   log.debug("Entering assertOauthArtifact().");
   if (APP_PROTOCOL === "oidc") {
     const parts = String(token).split(".");
@@ -1554,10 +1564,8 @@ async function assertOauthArtifact(token, spBase, idpBase, sent, user) {
       JSON.stringify(claims) + ". Nothing about which identity service did " +
       "the authenticating is the application's business, and this is the one " +
       "property the whole feature exists to have.");
-    assert.ok(
-      String(claims.preferred_username || claims.sub).indexOf(user) >= 0,
-      "The ID Token describes \"" + (claims.preferred_username || claims.sub) +
-      "\" and the name typed at realm 2 was \"" + user + "\".");
+    await assertDescribesLocalPerson(claims, spBase, user, typed,
+                                     "The ID Token");
     log.info("The application holds an ID Token issued by " + claims.iss +
              " describing " + (claims.preferred_username || claims.sub) +
              ", and naming realm 2 nowhere.");
@@ -1581,10 +1589,8 @@ async function assertOauthArtifact(token, spBase, idpBase, sent, user) {
   assert.ok(JSON.stringify(claims).indexOf(IDP_REALM) === -1,
     "The access token mentions " + IDP_REALM + ": " + JSON.stringify(claims) +
     ".");
-  assert.ok(String(claims.preferred_username || claims.sub).indexOf(user) >= 0,
-    "The access token describes \"" +
-    (claims.preferred_username || claims.sub) + "\" and the name typed at " +
-    "realm 2 was \"" + user + "\".");
+  await assertDescribesLocalPerson(claims, spBase, user, typed,
+                                   "The access token");
   log.info("The application holds an access token issued by " + claims.iss +
            " describing " + (claims.preferred_username || claims.sub) + ".");
   log.debug("Leaving assertOauthArtifact(). OAuth 2.0.");
@@ -1636,8 +1642,8 @@ async function assertSamlArtifact(driver, localIssuer, user) {
     "application's business, and this is the one property the whole feature " +
     "exists to have. It reads:\n" + assertionXml.slice(0, 1200));
   assert.ok(assertionXml.indexOf(user) >= 0,
-    "The assertion does not describe \"" + user + "\", the name typed at " +
-    "realm 2. It reads:\n" + assertionXml.slice(0, 1200));
+    "The assertion does not describe \"" + user + "\", realm 1's name for " +
+    "the person typed at realm 2. It reads:\n" + assertionXml.slice(0, 1200));
   log.info("The application holds a " + LABELS[APP_PROTOCOL] + " assertion " +
            "issued by realm 1 describing " + user + ", naming realm 2 " +
            "nowhere.");
@@ -1681,8 +1687,8 @@ async function assertWsFedArtifact(driver, localIssuer, user) {
     "The token the application received mentions " + IDP_REALM +
     ". It reads:\n" + tokenXml.slice(0, 1200));
   assert.ok(tokenXml.indexOf(user) >= 0,
-    "The token does not describe \"" + user + "\", the name typed at realm " +
-    "2. It reads:\n" + tokenXml.slice(0, 1200));
+    "The token does not describe \"" + user + "\", realm 1's name for the " +
+    "person typed at realm 2. It reads:\n" + tokenXml.slice(0, 1200));
   log.info("The application holds a WS-Federation token issued by realm 1 " +
            "describing " + user + ", naming realm 2 nowhere.");
   log.debug("Leaving assertWsFedArtifact().");
@@ -1890,7 +1896,7 @@ async function test() {
   // then be testing whatever the mock happened to be configured with.
   // ---------------------------------------------------------------------
   await createRealms(stsBase);
-  await allowInsecureOutbound(spBase);
+  await trustRealm2BackChannel(spBase);
   await registerApplication(spBase, callbackUri);
   await registerPartnerAtIdp(idpBase, spBase, partnerAppId);
   const partner = await readPartnerMetadata(idpBase, partnerAppId);
@@ -1956,6 +1962,23 @@ async function test() {
     await signInAtIdp(driver, user, idpBase);
 
     // ---------------------------------------------------------------------
+    // WHO REALM 1 NOW CALLS THE PERSON TYPED AT REALM 2. Everything below
+    // asserts that the application's artifact and realm 1's register
+    // describe that person, and since iya-sts 64580f4 (2026-09-14) the name
+    // does not always cross unchanged: an OAuth 2.0 or OpenID Connect hop
+    // hands over realm 2's `urn:uuid:` subject, which realm 1 files as
+    // `sub-<uuid>`. Worked out from realm 2's own directory rather than read
+    // off realm 1, so the mapping is checked rather than taken on trust. See
+    // `federatedNameOf()` in federation_admin.js. And since iya-sts #109 the
+    // relationship's `fedSubjectPolicy` decides what an entry created at the
+    // first sign-in is called; `localNameAt()` reads it off the relationship.
+    // ---------------------------------------------------------------------
+    const local = (FED_PROTOCOL === "oidc" || FED_PROTOCOL === "oauth2")
+      ? await admin.federatedNameOf(idpBase, user, spBase, RELATIONSHIP)
+      : await admin.localNameAt(spBase, RELATIONSHIP, user);
+    log.info("Realm 2's " + user + " is " + local + " at realm 1.");
+
+    // ---------------------------------------------------------------------
     // WHAT THE FLOW LEFT BEHIND AT REALM 1, read before any artifact is
     // redeemed so that the count is about the SIGN-IN rather than about a
     // later token call.
@@ -1963,17 +1986,17 @@ async function test() {
     if (APP_PROTOCOL === "oidc" || APP_PROTOCOL === "oauth2") {
       const artifacts = await collectOauthArtifacts(driver, spBase,
                                                     callbackUri, sent);
-      await assertFederationState(spBase, user);
+      await assertFederationState(spBase, local);
       const token = await redeemThroughThePage(driver, callbackUri);
-      await assertOauthArtifact(token, spBase, idpBase, sent, user);
+      await assertOauthArtifact(token, spBase, idpBase, sent, local, user);
       log.debug("collectOauthArtifacts() returned code " +
                 String(artifacts.code).slice(0, 12) + "…");
     } else if (APP_PROTOCOL === "wsfed") {
-      await assertWsFedArtifact(driver, localIssuer, user);
-      await assertFederationState(spBase, user);
+      await assertWsFedArtifact(driver, localIssuer, local);
+      await assertFederationState(spBase, local);
     } else {
-      await assertSamlArtifact(driver, localIssuer, user);
-      await assertFederationState(spBase, user);
+      await assertSamlArtifact(driver, localIssuer, local);
+      await assertFederationState(spBase, local);
     }
 
     await clearingTheTieRestoresTheLocalScreen(driver, spBase, callbackUri);

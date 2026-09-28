@@ -116,7 +116,12 @@ function claimsFor(vciInfo, configId) {
   log.debug("Entering claimsFor(). configId=" + configId);
   var configs = (vciInfo && vciInfo.credential_configurations_supported) || {};
   var config = configId ? configs[configId] : null;
-  var claims = config && config.claims;
+  // OpenID4VCI 1.0 final (section 12.2.4) puts `claims` inside
+  // `credential_metadata`; the drafts had it at the top of the
+  // configuration. Either is read, the final location first.
+  var metadata = config && config.credential_metadata;
+  var claims = metadata && metadata.claims !== undefined ?
+    metadata.claims : config && config.claims;
   if (Object.prototype.toString.call(claims) !== "[object Array]") {
     log.debug("Leaving claimsFor(). This configuration advertises no claims.");
     return [];

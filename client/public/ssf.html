@@ -312,8 +312,8 @@ Transmitter configuration metadata</legend>
     <div>
       <label class="ssf-label" for="ssf_stream_aud">aud</label>
       <input class="ssf-field" type="text" id="ssf_stream_aud"
-             placeholder="https://receiver.example.com"
-             title="Who the SETs on this stream are addressed to. A receiver checks for ITSELF in it, so an event addressed to somebody else is one to refuse.">
+             placeholder="assigned by the transmitter"
+             title="Who the SETs on this stream are addressed to. Transmitter-Supplied (SSF 1.0 section 8.1.1): leave it empty and the transmitter assigns the identifier this receiver authenticated as, which is written back here from its answer. A receiver checks for ITSELF in it, so an event addressed to somebody else is one to refuse.">
     </div>
     <div>
       <label class="ssf-label" for="ssf_stream_delivery">delivery.method</label>
@@ -584,7 +584,7 @@ are about</legend>
       <label class="ssf-label" for="caep_sub">sub</label>
       <input class="ssf-field" type="text" id="caep_sub"
              placeholder="the subject identifier"
-             title="The person. With `iss` above it makes the RFC 9493 issuer_subject_id a receiver already holds.">
+             title="The person. With `iss` above it makes the RFC 9493 iss_sub identifier a receiver already holds.">
     </div>
     <div>
       <label class="ssf-label" for="caep_sid">sid &mdash; the session</label>
@@ -618,7 +618,7 @@ are about</legend>
   <div class="ssf-row">
     <label class="ssf-radio"><input type="checkbox" id="caep_subject_user"
            checked
-           title="The person, as an RFC 9493 issuer_subject_id.">
+           title="The person, as an RFC 9493 iss_sub identifier.">
            user</label>
     <label class="ssf-radio"><input type="checkbox" id="caep_subject_session"
            checked
@@ -804,7 +804,7 @@ are about</legend>
       <label class="ssf-label" for="risc_sub">sub</label>
       <input class="ssf-field" type="text" id="risc_sub"
              placeholder="the subject identifier"
-             title="The person. With `iss` above it makes the RFC 9493 issuer_subject_id a receiver already holds — the identifier eleven of the fourteen event types name.">
+             title="The person. With `iss` above it makes the RFC 9493 iss_sub identifier a receiver already holds — the identifier eleven of the fourteen event types name.">
     </div>
     <div>
       <label class="ssf-label" for="risc_email">email</label>
@@ -825,7 +825,7 @@ are about</legend>
     <select class="ssf-field" id="risc_subject_format"
             onchange="return ssf.renderRiscFromEvent();"
             title="THE CONSEQUENTIAL CONTROL ON THIS PANE, because eleven of the fourteen event types carry no payload at all and the subject is the whole message. The two identifier events override it and use email regardless.">
-      <option value="issuer_subject_id" selected>issuer_subject_id &mdash;
+      <option value="iss_sub" selected>iss_sub &mdash;
         what a receiver already holds</option>
       <option value="email">email &mdash; and identifier-recycled exists
         because that key is unsafe</option>

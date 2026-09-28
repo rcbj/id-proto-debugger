@@ -158,14 +158,35 @@ async function call(method, url, body, options) {
     setCookie: response.headers.get('set-cookie') || '' };
 }
 
+// THE SETTING AS IT WAS, found in GET /config. The rows are under
+// `groups[].settings` — the flat `settings` list this read once went away, and
+// with it every restore: the lookup found nothing, nothing was recorded, and
+// the run left each setting it touched overridden on the shared mock. A row
+// records whether it was OVERRIDDEN as well as its value, because restoring an
+// override that was never there is itself a change (see restoreSettings()).
+function settingRow(configDocument, key) {
+  log.debug("Entering settingRow(). " + key);
+  const doc = configDocument || {};
+  const rows = (doc.settings || []).slice();
+  (doc.groups || []).forEach(function (group) {
+    (group.settings || []).forEach(function (one) {
+      rows.push(one);
+    });
+  });
+  const row = rows.filter(function (one) {
+    return one.key === key;
+  })[0] || null;
+  log.debug("Leaving settingRow(). " + (row ? 'found' : 'none'));
+  return row;
+}
+
 async function setSetting(key, value) {
   log.debug("Entering setSetting(). " + key);
   const before = await call('GET', adminUrl + '/config', null, {});
-  const row = ((before.body || {}).settings || []).filter(function (one) {
-    return one.key === key;
-  })[0];
+  const row = settingRow(before.body, key);
   if (row && changed[key] === undefined) {
-    changed[key] = row.value;
+    changed[key] = { overridden: row.overridden === true,
+      text: row.text !== undefined ? String(row.text) : String(row.value) };
   }
   const out = await call('POST', adminUrl + '/config/set',
       { key: key, value: String(value) }, {});
@@ -174,13 +195,22 @@ async function setSetting(key, value) {
   log.debug("Leaving setSetting().");
 }
 
+// A setting that was NOT overridden before this run is RESET — its override
+// cleared, so it follows its default again — rather than set to the value it
+// had, which would leave an override behind that nobody asked for. One that
+// was overridden gets that value back.
 async function restoreSettings() {
   log.debug("Entering restoreSettings().");
   const keys = Object.keys(changed);
   let i;
   for (i = 0; i < keys.length; i++) {
-    await call('POST', adminUrl + '/config/set',
-        { key: keys[i], value: String(changed[keys[i]]) }, {});
+    const was = changed[keys[i]];
+    if (was.overridden) {
+      await call('POST', adminUrl + '/config/set',
+          { key: keys[i], value: was.text }, {});
+    } else {
+      await call('POST', adminUrl + '/config/reset', { key: keys[i] }, {});
+    }
   }
   log.debug("Leaving restoreSettings(). " + keys.length + " restored.");
 }
@@ -230,16 +260,22 @@ async function signIn() {
     anonymous: true, redirect: 'manual',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
   const cookie = String(posted.setCookie || '');
-  const got = /sts_mock_session=([^;]+)/.exec(cookie);
+  // The cookie is `sts_session` since iya-sts 27b81c5 (it was
+  // `sts_mock_session`), and its VALUE is `<session id>.<handle>` rather than
+  // the bare id: the handle is a secret the mock stores only a hash of, so a
+  // session id read off an event or a list is no longer a cookie anybody can
+  // present. The id is everything before the first dot — ids are base64url,
+  // which has no dot — and that is what every Security Event Token names.
+  const got = /sts_session=([^;]+)/.exec(cookie);
   if (!got) {
     log.debug("Leaving signIn(). No session cookie.");
     return { ok: false, why: 'The sign-in screen answered ' + posted.status +
       ' and set no session cookie. It said: ' + posted.text.slice(0, 200) };
   }
-  sessionCookie = "sts_mock_session=" + got[1];
-  sessionId = got[1];
+  sessionCookie = "sts_session=" + got[1];
+  sessionId = got[1].split('.')[0];
   log.debug("Leaving signIn(). " + sessionId);
-  return { ok: true, sessionId: got[1] };
+  return { ok: true, sessionId: sessionId };
 }
 
 // Present the existing session at the authorization endpoint. TWICE is the
@@ -255,11 +291,30 @@ async function present() {
   return out;
 }
 
+// RP-INITIATED LOGOUT ASKS FIRST (iya-sts #124). A GET that carries neither
+// an id_token_hint for this session nor a matching logout_hint is answered
+// with a "Sign out?" page, and nothing ends until its form is POSTed back
+// with `confirm=yes` and the `confirm_for` value only a request carrying
+// this session's cookie was shown — section 2 of RP-Initiated Logout 1.0
+// leaves the OP to confirm the End-User's intent, and this one does. So a
+// sign-out here is the two steps a person makes: read the page, press the
+// button. A GET that ended the session straight away was the older mock.
 async function signOut() {
   log.debug("Entering signOut().");
-  const out = await call('GET', stsUrl + '/oauth2/logout', null,
+  const asked = await call('GET', stsUrl + '/oauth2/logout', null,
       { anonymous: true, redirect: 'manual', headers: cookieHeader() });
-  log.debug("Leaving signOut(). " + out.status);
+  const found = /name="confirm_for" value="([^"]*)"/.exec(asked.text || '');
+  if (!found) {
+    log.debug("Leaving signOut(). No confirmation asked: " + asked.status);
+    return asked;
+  }
+  const form = 'confirm=yes&confirm_for=' + encodeURIComponent(found[1]);
+  const out = await call('POST', stsUrl + '/oauth2/logout', form,
+      { anonymous: true, redirect: 'manual',
+        headers: Object.assign({
+          'Content-Type': 'application/x-www-form-urlencoded' },
+        cookieHeader()) });
+  log.debug("Leaving signOut(). Confirmed: " + out.status);
   return out;
 }
 
@@ -405,8 +460,9 @@ async function theEightAreOffered() {
 async function aStreamAgreesThem() {
   log.info("[stream] A stream requesting the eight, and the person added to " +
       "it as a subject.");
+  // No `aud`: SSF 1.0 section 8.1.1 makes it Transmitter-Supplied, and the
+  // mock addresses the stream to the client this run authenticated as.
   const body = ssf.buildStreamConfiguration({
-    aud: 'https://caep-protocol.example/receiver',
     events_requested: events.CAEP_EVENT_URIS.slice()
       .concat([events.SSF_PREFIX + 'stream-updated']),
     deliveryMethod: ssf.DELIVERY_POLL,
@@ -475,11 +531,11 @@ async function namingThePersonCoversTheirSessions(realSub) {
   log.info("[subjects] A stream naming the PERSON has to cover an event " +
       "about a SESSION of theirs. Without it every CAEP event is refused to " +
       "the only receiver that could have asked for it.");
-  const person = { format: 'issuer_subject_id',
+  const person = { format: 'iss_sub',
     iss: String(metadata.issuer || ''), sub: realSub };
   const added = await call('POST', endpoint('add_subject_endpoint'),
       { stream_id: streamId, subject: person, verified: true }, {});
-  check('the person is added as a plain issuer_subject_id subject',
+  check('the person is added as a plain iss_sub subject',
       function () {
         assert.ok(added.status >= 200 && added.status < 300,
             'Adding the subject answered ' + added.status + ': ' +
@@ -522,16 +578,24 @@ async function signingInEmitsAnEvent() {
 
   const afterSignIn = await poll(50);
   const established = ofType(afterSignIn, 'session-established');
-  // THE SUBJECT THIS SERVICE USES IS NOT THE NAME THAT WAS TYPED. It derives
-  // one — `urn:sts-mock:user:<name>` here — and a receiver only ever sees
-  // the derived form, so section 2b has to add THAT rather than the name.
-  // Learning it from the register is the honest way round: it is what the
-  // transmitter actually put in the subject.
+  // THE SUBJECT THIS SERVICE USES IS NOT THE NAME THAT WAS TYPED. Since
+  // iya-sts 64580f4 (2026-09-14) it is `urn:uuid:<entryUUID>` — the person's
+  // directory entry, which survives a rename — where it was
+  // `urn:sts-mock:user:<name>`, so nothing about it can be derived from the
+  // name any more. A receiver only ever sees that form, so section 2b has to
+  // add THAT rather than the name. Learning it from the register is the
+  // honest way round: it is what the transmitter actually put in the subject.
   const report = await call('GET', adminUrl + '/caep', null, {});
   const mine = ((report.body || {}).sessions || []).filter(function (one) {
     return one.sessionId === signed.sessionId;
   })[0];
   realSub = mine ? mine.sub : WHO;
+  // And the directory's own answer for the same person, asked separately, so
+  // that the check below compares the event with something the CAEP register
+  // did not also write.
+  const person = await call('GET', adminUrl + '/users?user=' +
+      encodeURIComponent(WHO), null, {});
+  const directorySub = String((person.body || {}).subject || '');
   check('signing in put a session-established on the stream', function () {
     assert.ok(established.length > 0,
         'Nothing arrived. ' + afterSignIn.length + ' set(s) were polled, ' +
@@ -550,23 +614,28 @@ async function signingInEmitsAnEvent() {
   check('THE SUBJECT IS A COMPLEX ONE, naming the session as well as the ' +
       'person', function () {
     assert.ok(claims.sub_id, 'there is no sub_id at all.');
-    assert.strictEqual(claims.sub_id.format, undefined,
-        'a complex subject is told from a plain one by the ABSENCE of ' +
-        '`format`. This one carries "' + claims.sub_id.format + '", so it ' +
-        'names a person and nothing else — which asks a receiver to end ' +
-        'every session they have.');
+    assert.strictEqual(claims.sub_id.format, 'complex',
+        'a complex subject is told from a plain one by "format": ' +
+        '"complex" (SSF 1.0 section 3.3). This one carries "' +
+        claims.sub_id.format + '", so it is either a plain subject naming ' +
+        'a person and nothing else — which asks a receiver to end every ' +
+        'session they have — or the pre-final draft shape.');
     assert.ok(claims.sub_id.session,
         'there is no `session` member. The person is not revoked; one ' +
         'session of theirs is.');
     assert.strictEqual(claims.sub_id.session.id, signed.sessionId,
         'the session named is not the one that was just created.');
-    assert.ok(String(claims.sub_id.user.sub).indexOf(WHO) >= 0,
+    assert.ok(/^urn:uuid:[0-9a-f-]{36}$/.test(directorySub),
+        'the directory holds no urn:uuid subject for "' + WHO + '", who has ' +
+        'just signed in. GET /admin-api/users answered: ' +
+        JSON.stringify(person.body || person.text).slice(0, 300));
+    assert.strictEqual(claims.sub_id.user.sub, directorySub,
         'the `user` member names "' + claims.sub_id.user.sub + '" and the ' +
-        'name that was typed was "' + WHO + '". A transmitter DERIVES a ' +
-        'subject identifier rather than using the typed name — this one ' +
-        'makes a urn: of it — and a receiver only ever sees the derived ' +
-        'form, which is why section 2b adds THAT to the stream rather than ' +
-        'the name.');
+        'directory says "' + WHO + '" is "' + directorySub + '". A ' +
+        'transmitter DERIVES a subject identifier rather than using the ' +
+        'typed name — this one is the person\'s entryUUID — and a receiver ' +
+        'only ever sees the derived form, which is why section 2b adds THAT ' +
+        'to the stream rather than the name.');
     assert.ok(String(claims.sub_id.user.iss).length > 0,
         'the `user` member carries no issuer. A receiver matches that string ' +
         'against the issuer it discovered, so an event without one names ' +
@@ -736,8 +805,10 @@ async function everyEventEmittedByHand() {
     // this is the only place the two meet. A refusal here means the two ends
     // disagree about what may follow what — which is a real interoperability
     // finding rather than a bug in either.
+    // `realSub`, not the typed name: the model is a receiver's, and a
+    // receiver knows the person only by the subject the events carry.
     const model = caep.newSession({ iss: String(metadata.issuer || ''),
-      sub: WHO, sid: signed.sessionId });
+      sub: realSub || WHO, sid: signed.sessionId });
     const ordered = arrived.slice().sort(function (a, b) {
       return Number(a.claims.iat || 0) - Number(b.claims.iat || 0);
     });
