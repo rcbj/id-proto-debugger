@@ -116,9 +116,37 @@ function claimsOf(jwt) {
 async function signIn(driver, username, url) {
   log.debug("Entering signIn().");
   await driver.get(url);
-  await driver.wait(until.elementLocated(By.id("username")), waitTime * 4);
-  await driver.findElement(By.id("username")).sendKeys(username);
-  await driver.findElement(By.id("kc-login")).click();
+  // Right after a sign-out the page located here can be one that is about to
+  // be replaced, and the typing or the click then lands on a dead document:
+  // "Node with given id does not belong to the document", which failed the
+  // password-only section of the PR #316 coverage run on 31b1309. So wait for
+  // the load to finish, and on a stale reference fill the form again on the
+  // page that replaced it — the old page's field went with it.
+  const deadline = Date.now() + waitTime * 4;
+  for (;;) {
+    try {
+      await driver.wait(async function () {
+        return (await driver.executeScript(
+            "return document.readyState;")) === "complete";
+      }, waitTime * 4);
+      const field = await driver.wait(until.elementLocated(By.id("username")),
+          waitTime * 4);
+      await field.clear();
+      await field.sendKeys(username);
+      await driver.findElement(By.id("kc-login")).click();
+      break;
+    } catch (e) {
+      const stale = e.name === "StaleElementReferenceError" ||
+          /does not belong to the document|stale element/i.test(
+              e.message || "");
+      if (!stale || Date.now() > deadline) {
+        log.debug("Leaving signIn(). " + e.message);
+        throw e;
+      }
+      log.info("the sign-in page was replaced under the form; filling it " +
+          "again");
+    }
+  }
   log.debug("Leaving signIn().");
 }
 

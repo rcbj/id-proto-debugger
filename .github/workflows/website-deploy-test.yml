@@ -76,12 +76,39 @@ jobs:
           (github.event.workflow_run.conclusion == 'success' &&
            github.event.workflow_run.head_branch == 'develop') }}
     steps:
+      # THE TAGS BELOW NEED A TOKEN WITH `workflows` PERMISSION, which
+      # GITHUB_TOKEN can never have. A workflow_run-triggered run is scoped to
+      # the DEFAULT branch, and GitHub refuses to let its token create a ref
+      # whose workflow files differ from that branch's — "refusing to allow a
+      # GitHub App to create or update workflow ... without `workflows`
+      # permission". This job deploys and tags DEVELOP commits, and develop
+      # routinely carries workflow changes master does not have yet, so on
+      # 2026-09-28 run 36391532008 deployed fbb937f and then failed tagging
+      # it, because its dockerimage.yml differed from master's.
+      #
+      # TAG_PUSH_TOKEN is a fine-grained personal access token on this
+      # repository with Contents: read and write and Workflows: read and
+      # write. Checkout persists it, so every `git push` below uses it. A run
+      # without it fails here, before anything is deployed, rather than
+      # deploying and then failing to record what it deployed.
+      - name: Require the tag-push token
+        env:
+          TAG_PUSH_TOKEN: ${{ secrets.TAG_PUSH_TOKEN }}
+        run: |
+          if [ -z "${TAG_PUSH_TOKEN}" ]; then
+            echo "::error::the TAG_PUSH_TOKEN secret is not set; see the" \
+                 "note above this step in website-deploy-test.yml."
+            exit 1
+          fi
+
       - name: Checkout Repository
         uses: actions/checkout@v5
         with:
           ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.ref }}
           # Tags are pushed from here; fetch them so an existing tag is seen.
           fetch-depth: 0
+          # Persisted for the tag pushes below; see the step above.
+          token: ${{ secrets.TAG_PUSH_TOKEN }}
 
       - name: Compute version
         id: version

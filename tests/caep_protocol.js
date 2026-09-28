@@ -609,7 +609,19 @@ async function signingInEmitsAnEvent() {
   if (!established.length) {
     return;
   }
-  const claims = established[0].claims;
+  // THIS sign-in's event, not merely the first one polled. The stream can
+  // carry other sign-ins' session-established too — the suite runs jobs in a
+  // pool, and the drain above cannot stop one landing between it and the
+  // poll — and taking [0] failed the 2026-09-28 run on 0dce948 with "the
+  // session named is not the one that was just created" when the session it
+  // named was simply somebody else's. The first one is kept as a fallback so
+  // that a subject with no session member at all still reaches the checks
+  // below and fails there, by name.
+  const own = established.filter(function (one) {
+    const sub = (one.claims || {}).sub_id || {};
+    return sub.session && sub.session.id === signed.sessionId;
+  })[0];
+  const claims = (own || established[0]).claims;
 
   check('THE SUBJECT IS A COMPLEX ONE, naming the session as well as the ' +
       'person', function () {

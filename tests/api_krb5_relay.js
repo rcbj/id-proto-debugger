@@ -430,7 +430,12 @@ async function theNameLookupIsOnADeadline() {
   assert.strictEqual(lookups, 1, "the relay must actually have attempted the " +
       "lookup — a refusal that arrives without one is this test passing for " +
       "the wrong reason");
-  assert.ok(elapsed >= 400, "the lookup was abandoned after " + elapsed +
+  // A FEW MILLISECONDS OF SLACK, for the clock rather than the relay: a node
+  // timer measured with Date.now() can appear to fire a millisecond early
+  // (the timer and the clock round differently), and the 2026-09-28 PR #316
+  // run on 31b1309 failed this at 399ms. What it guards against — a deadline
+  // taken from the wrong budget, or none — misses by hundreds, not by one.
+  assert.ok(elapsed >= 400 - 5, "the lookup was abandoned after " + elapsed +
       "ms, before the 400ms connect budget it is given. A deadline that " +
       "fires early kills a slow-but-working resolver.");
   assert.ok(elapsed < 1000, "the lookup ran for " + elapsed + "ms. The " +
