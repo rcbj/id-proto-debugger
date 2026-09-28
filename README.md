@@ -294,6 +294,31 @@ tag of the same name marks the commit that image was built from — so
 `ghcr.io/rcbj/id-proto-debugger-api:0.9.20260928070000`. The version is also in
 each running client's footer and in `/version.json`.
 
+No login is needed: both packages are public, so an anonymous `docker pull`
+works.
+
+### Pulling the images
+
+```bash
+# The newest master build
+docker pull ghcr.io/rcbj/id-proto-debugger-api:latest
+docker pull ghcr.io/rcbj/id-proto-debugger-client:latest
+
+# Or one specific build, pinned to the commit tagged with the same version
+docker pull ghcr.io/rcbj/id-proto-debugger-api:0.9.20260928070000
+docker pull ghcr.io/rcbj/id-proto-debugger-client:0.9.20260928070000
+
+# Or the newest develop build
+docker pull ghcr.io/rcbj/id-proto-debugger-api:develop
+docker pull ghcr.io/rcbj/id-proto-debugger-client:develop
+```
+
+The tags a package has are listed at
+<https://github.com/rcbj/id-proto-debugger/pkgs/container/id-proto-debugger-api>
+and `.../id-proto-debugger-client`.
+
+### The TLS certificate
+
 Both services serve TLS and need the certificate pair `./generate-tls-cert.sh`
 writes, so that script is still run once, from a checkout. It needs Node.js
 and npm on the host (it installs the client's dependencies to issue the
@@ -303,6 +328,73 @@ certificate with this project's own X.509 code) and `openssl`:
 git clone https://github.com/rcbj/id-proto-debugger.git
 cd id-proto-debugger
 ./generate-tls-cert.sh          # writes ./generated-tls; trust the root it prints
+```
+
+The script prints the root CA's fingerprint and writes it to
+`./generated-tls-ca/stack-tls-root.pem`. Trust that root in your browser (or
+accept the certificate on BOTH `https://localhost:3000` and
+`https://localhost:4000` — the api is a separate origin, and a browser that has
+not accepted it reports every call to it as a CORS error).
+
+### With docker compose
+
+Save this as `docker-compose.yml` beside the `generated-tls` directory the
+script wrote:
+
+```yaml
+# id-proto-debugger from its published images on ghcr.io.
+# DEBUGGER_TAG selects the build: latest (default), develop, or an M.N.O
+# version such as 0.9.20260928070000.
+services:
+  api:
+    image: ghcr.io/rcbj/id-proto-debugger-api:${DEBUGGER_TAG:-latest}
+    container_name: api
+    environment:
+      - CONFIG_FILE=./env/local.js
+      - TLS_ENABLED=true
+      - TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    volumes:
+      - ./generated-tls:/etc/idptools/tls:ro
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+
+  client:
+    image: ghcr.io/rcbj/id-proto-debugger-client:${DEBUGGER_TAG:-latest}
+    container_name: client
+    environment:
+      - CONFIG_FILE=./env/local.js
+      - TLS_ENABLED=true
+      - TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    volumes:
+      - ./generated-tls:/etc/idptools/tls:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+```
+
+Then:
+
+```bash
+docker compose pull                                  # fetch the images
+docker compose up -d                                 # start both services
+DEBUGGER_TAG=0.9.20260928070000 docker compose up -d # or pin one build
+docker compose logs -f                               # follow the logs
+docker compose down                                  # stop and remove them
+```
+
+This is not the repository's own `docker-compose.yml`, which BUILDS the images
+from source and also starts the mock STS used by the test suite.
+
+### With docker run
+
+The same two services without compose:
+
+```bash
 for svc in api:4000 client:3000; do
   docker run -d --name "${svc%%:*}" -p "${svc##*:}:${svc##*:}" \
     -e CONFIG_FILE=./env/local.js -e TLS_ENABLED=true \
@@ -313,9 +405,11 @@ for svc in api:4000 client:3000; do
 done
 ```
 
-Then open `https://localhost:3000`. The images are built with the `local`
-configuration, which is what makes the client call the api at
-`https://localhost:4000`.
+Either way, open `https://localhost:3000`. The images are built with the
+`local` configuration, which is what makes the client call the api at
+`https://localhost:4000` — so the published images run on the machine whose
+browser uses them, and register `https://localhost:3000/callback` as the
+redirect URI with your identity provider.
 
 ## Building the docker image
 ```bash
