@@ -93,6 +93,9 @@
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+// Requiring it installs it: every WebDriver command from here on races a
+// deadline. See section (7) at the foot of this file.
+const webdriverDeadline = require("./webdriver_deadline");
 
 // The log level comes from the same configuration everything else here
 // reads. A caller without one still has to be able to load this module,
@@ -234,6 +237,9 @@ function addBrowserAccessFlags(options, baseUrl, extraOrigins) {
   // and both must cover it. See the section at the foot of this file.
   addDownloadDirFlags(options);
 
+  // (7) A page-load timeout the command deadline knows about. Same two doors.
+  addPageLoadTimeout(options);
+
   // (4) The mock STS's key, when a run has one. See addStsTrustFlags() below
   // for why it is a pin rather than --ignore-certificate-errors, and why it
   // adds nothing at all when STS_SPKI_PIN is unset.
@@ -307,6 +313,8 @@ function addStsTrustFlags(options) {
   // other nor anything else in this module. Idempotent, so the tests that
   // call both get it once. See the section at the foot of this file.
   addDownloadDirFlags(options);
+  // (7) The page-load timeout, from here for the same reason. Idempotent.
+  addPageLoadTimeout(options);
   var pins = [process.env.STS_SPKI_PIN, process.env.STACK_TLS_SPKI_PIN]
     .map(function (one) {
       return String(one || "").trim();
@@ -560,6 +568,29 @@ async function pinDownloadDir(driver) {
   return driver;
 }
 
+// ---------------------------------------------------------------------------
+// (7) HOW LONG A PAGE MAY TAKE TO LOAD, SAID OUT LOUD.
+//
+// Chromedriver's page-load timeout was never set here, so it was W3C's five
+// minutes, and renderer_wedge.js's retry waited out all five before it could
+// start. It is now webdriver_deadline.js's PAGE_LOAD_TIMEOUT_MS, sent as the
+// session's `timeouts` capability so it holds from the first navigation —
+// and it has to be THAT number and no other, because the deadline that module
+// puts on every command is computed from it: a page-load timeout longer than
+// the deadline believes would be cut short by the deadline, and would report
+// a browser that stopped answering when it was only slow.
+//
+// A test that calls setTimeouts({ pageLoad }) itself is fine: that is a
+// command, and the deadline sees it. Only a capability set here is invisible
+// to it, which is why this is the one place that sets one.
+function addPageLoadTimeout(options) {
+  log.debug("Entering addPageLoadTimeout().");
+  options.set("timeouts",
+      { pageLoad: webdriverDeadline.PAGE_LOAD_TIMEOUT_MS });
+  log.debug("Leaving addPageLoadTimeout().");
+  return options;
+}
+
 module.exports = {
   addBrowserAccessFlags: addBrowserAccessFlags,
   isTransientLoadError: isTransientLoadError,
@@ -567,6 +598,7 @@ module.exports = {
   addWebCryptoEd25519Flags: addWebCryptoEd25519Flags,
   addStsTrustFlags: addStsTrustFlags,
   addDownloadDirFlags: addDownloadDirFlags,
+  addPageLoadTimeout: addPageLoadTimeout,
   pinDownloadDir: pinDownloadDir,
   downloadDir: downloadDir,
   originOf: originOf
