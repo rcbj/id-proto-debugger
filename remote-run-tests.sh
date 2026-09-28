@@ -552,6 +552,7 @@ startSideCars()
   requireComposeServiceRunning "${KEYCLOAK_COMPOSE_FILE}" keycloak-wsfed
   check_return_code $?
   waitForWaltid "${KEYCLOAK_COMPOSE_FILE}"
+  check_return_code $?
 
   # ------------------------------------------------------------------------
   # THE MOCK STS'S CERTIFICATE, AND THEN ITS RFC 9700 REALM.
@@ -591,11 +592,12 @@ startSideCars()
       RFC9700_STS_URL="${RFC9700_STS_URL:-https://localhost:8081/realm/rfc9700}"
       export RFC9700_STS_URL
     else
-      echo "The mock STS has no RFC 9700 trust realm, so the five RFC 9700 flow"
-      echo "jobs will be SKIPPED. The likeliest cause is an sts/ submodule older"
-      echo "than \`realmRuntime\` on oauth2.rfc9700. See docs/rfc9700.md."
-      echo "(tests/rfc9700_client.js is unaffected — it needs no service at all"
-      echo "and runs either way.)"
+      # FATAL: this launcher started that mock, so a realm it will not put
+      # into RFC 9700 mode is a broken stack, not five optional jobs.
+      echo "ERROR: the mock STS this launcher started has no RFC 9700 trust" >&2
+      echo "realm, so the five RFC 9700 flow jobs cannot run. The run stops." >&2
+      echo "See the reason above, and docs/rfc9700.md." >&2
+      exit 1
     fi
   fi
   echo "Leaving startSideCars()."
@@ -652,6 +654,9 @@ onExit()
 {
   local status=$?
   echo "Entering onExit()."
+  # The copy extractMockStsTree() made, and only that one: a MOCK_STS_DIR the
+  # caller supplied is somebody's working copy and is never deleted.
+  removeMockStsTree
   launcherExitStatus "${status}" "remote-run-tests.sh"
   exit "${status}"
 }
@@ -664,6 +669,13 @@ probeEdgeLandings
 check_return_code $?
 startKeycloak
 check_return_code $?
+# THE HOST-RUN JOBS THAT LOAD THE MOCK'S OWN MODULES need a compiled tree, and
+# since iya-sts #50 a checkout is not one: sts/ carries TypeScript, so
+# sts_jws_verification.js died on `Cannot find module './enrollment_profiles'`
+# (a .ts with no .js beside it) on the 2026-09-28 live run. The image the `up`
+# above just built has exactly that tree; see extractMockStsTree(). The same
+# call local-run-tests.sh makes, and best effort in the same way.
+extractMockStsTree
 resetKeycloakRealm
 check_return_code $?
 configureKeycloak
@@ -671,8 +683,8 @@ check_return_code $?
 startSideCars
 check_return_code $?
 # Provisions the wsfed realm, its relying-party client and user, and exports the
-# WSFED_* vars the WS-Federation job is gated on. Skips (rather than fails) if the
-# side-car is unusable — the check above has already stopped the run if it is down.
+# WSFED_* vars the WS-Federation job is gated on. FAILS if the side-car is
+# unusable — see the note above configureKeycloakWsfed() in common.sh.
 configureKeycloakWsfed "${KEYCLOAK_COMPOSE_FILE}"
 check_return_code $?
 runReport

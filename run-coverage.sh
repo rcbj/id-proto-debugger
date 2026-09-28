@@ -412,6 +412,7 @@ ${COMPOSE} up --build -d waltid-issuer waltid-verifier
 check_return_code $?
 WALTID_ISSUER_URL=http://localhost:7005 WALTID_VERIFIER_URL=http://localhost:7003 \
   waitForWaltid "${BASE_COMPOSE_FILE}"
+check_return_code $?
 
 # Run the suite. Services are torn down when the tests container exits; stopping
 # the API container lets c8 flush its coverage to ./coverage/api. Capture the

@@ -1774,8 +1774,22 @@ addTrustAnchor()
   # same anchor can arrive under two names (STACK_TLS_CA_FILE and
   # STACK_TLS_CERT_FILE are one file), and a byte comparison settles it
   # without another openssl invocation.
-  if [ -s "${TRUST_BUNDLE_FILE}" ] &&
-     grep -qFf "${pem}" "${TRUST_BUNDLE_FILE}" 2>/dev/null;
+  #
+  # The base64 BODY, flattened, searched for as one string. This was
+  # `grep -qFf pem bundle`, which takes every LINE of the PEM as a separate
+  # pattern and succeeds when any one matches — and every certificate has a
+  # `-----BEGIN CERTIFICATE-----` line. So once the bundle held one anchor,
+  # every later one was "already present" and never added. It surfaced on
+  # 2026-09-28 when mintAdminApiToken() became the first NODE caller of the
+  # mock STS on remote-run-tests.sh: the mock's self-signed certificate was
+  # skipped, node refused it, and both live-site runs stopped at
+  # "admin-api-token: ... fetch failed" before a single test. The browser had
+  # never noticed, because it trusts that certificate by SPKI pin instead.
+  local body
+  body="$(sed -n '/-----BEGIN/,/-----END/{/-----/d;p;}' "${pem}" |
+          tr -d '\r\n')"
+  if [ -n "${body}" ] && [ -s "${TRUST_BUNDLE_FILE}" ] &&
+     tr -d '\r\n' < "${TRUST_BUNDLE_FILE}" | grep -qF -- "${body}";
   then
     echo "That anchor is already in ${TRUST_BUNDLE_FILE}."
     export NODE_EXTRA_CA_CERTS="${TRUST_BUNDLE_FILE}"
@@ -2158,6 +2172,12 @@ verifyComposeServicesRunning()
   return 0
 }
 
+# walt.id's issuer and verifier, waited for by probe because their Jib-built
+# JVMs carry no healthcheck. Returns 1 when either never answers, and every
+# caller follows it with check_return_code: a service the launcher started
+# that does not come up FAILS THE RUN rather than leaving its jobs to fail or
+# skip later for reasons that name something else. See the note above
+# configureKeycloakWsfed() for what the skipping version of that cost.
 waitForWaltid()
 {
   echo "Entering waitForWaltid()."
@@ -2174,9 +2194,10 @@ waitForWaltid()
     do
       if [ "$(date +%s)" -ge "${deadline}" ];
       then
-        echo "WARNING: walt.id's issuer did not answer at ${issuer_probe} within the wait." >&2
+        echo "ERROR: walt.id's issuer did not answer at ${issuer_probe} within the wait." >&2
         reportContainerLog "${compose_file}" "waltid-issuer-api"
-        break
+        echo "Leaving waitForWaltid(). Issuer never answered."
+        return 1
       fi
       sleep 5
     done
@@ -2190,14 +2211,16 @@ waitForWaltid()
     do
       if [ "$(date +%s)" -ge "${deadline}" ];
       then
-        echo "WARNING: walt.id's verifier did not answer at ${verifier_probe} within the wait." >&2
+        echo "ERROR: walt.id's verifier did not answer at ${verifier_probe} within the wait." >&2
         reportContainerLog "${compose_file}" "waltid-verifier-api"
-        break
+        echo "Leaving waitForWaltid(). Verifier never answered."
+        return 1
       fi
       sleep 5
     done
   fi
   echo "Leaving waitForWaltid()."
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -3022,9 +3045,17 @@ configureKeycloak()
 # tests/run-report.js passes to tests/wsfed_sso.js.
 #
 # It is a NO-OP unless KEYCLOAK_WSFED_LOCALHOST_BASE_URL is set (so every
-# non-WS-Fed run is unaffected), and it degrades to a SKIP — warns and returns
-# WITHOUT exporting WSFED_METADATA_URL, so the job is skipped rather than the
-# suite aborting — on any provisioning failure.
+# non-WS-Fed run is unaffected). When it IS set, the launcher started the
+# side-car, and ANY provisioning failure returns 1 — every caller follows it
+# with check_return_code, so the RUN FAILS.
+#
+# IT USED TO DEGRADE TO A SKIP, and that is what it must never do again. It
+# warned, returned 0 without exporting WSFED_METADATA_URL, and run-report then
+# skipped all 21 WS-Federation jobs as "not provisioned". On 2026-09-28 the
+# mock STS began binding 8082 on the host-network stacks, WildFly booted "with
+# errors" on "Address already in use", and three live-site runs in a row
+# reported 0 failures with those 21 jobs silently missing. A service this
+# launcher started that does not come up is a broken RUN, not an optional test.
 #
 # Keycloak 8.0.1 is WildFly-based: the admin REST API is under the /auth base
 # path and the admin user comes from the side-car's KEYCLOAK_USER/PASSWORD.
@@ -3067,11 +3098,12 @@ configureKeycloakWsfed()
   done
   if [ -z "${KC_WSFED_TOKEN}" ] || [ "${KC_WSFED_TOKEN}" = "null" ];
   then
-    echo "WARNING: the WS-Federation side-car never answered at ${KC_WSFED} (waited $((WSFED_TRY * 3))s), so it" >&2
-    echo "         cannot be provisioned and the WS-Federation test will be SKIPPED. This is what a side-car" >&2
-    echo "         that was created and then exited looks like: 'docker compose up -d' succeeds either way." >&2
+    echo "ERROR: the WS-Federation side-car never answered at ${KC_WSFED} (waited $((WSFED_TRY * 3))s), so it" >&2
+    echo "       cannot be provisioned. This is what a side-car that was created and then exited, or that" >&2
+    echo "       booted 'with errors', looks like: 'docker compose up -d' succeeds either way. The run stops." >&2
     reportContainerLog "${WSFED_COMPOSE_FILE}" "keycloak-wsfed"
-    return 0
+    echo "Leaving configureKeycloakWsfed(). Side-car never answered."
+    return 1
   fi
 
   # THE REALM IS DELETED FIRST, for resetKeycloakRealm()'s two reasons and a
@@ -3156,8 +3188,9 @@ configureKeycloakWsfed()
   fi
   if [ -z "${WSFED_USER_ID}" ];
   then
-    echo "WARNING: could not create the WS-Fed test user — WS-Federation test will be skipped."
-    return 0
+    echo "ERROR: could not create the WS-Fed test user. The run stops." >&2
+    echo "Leaving configureKeycloakWsfed(). No test user."
+    return 1
   fi
   curl -s -X PUT \
     "${KC_WSFED}/admin/realms/${WSFED_REALM_NAME}/users/${WSFED_USER_ID}/reset-password" \
@@ -3179,12 +3212,13 @@ configureKeycloakWsfed()
     -H "Authorization: Bearer ${KC_WSFED_TOKEN}" | jq -r 'length' 2>/dev/null)
   if [ "${WSFED_CLIENT_COUNT}" != "1" ];
   then
-    echo "WARNING: the WS-Federation relying-party client '${WSFED_WTREALM}' was not created on realm" >&2
+    echo "ERROR: the WS-Federation relying-party client '${WSFED_WTREALM}' was not created on realm" >&2
     echo "         ${WSFED_REALM_NAME} (found: ${WSFED_CLIENT_COUNT:-none}). If the server rejected protocol" >&2
     echo "         \"wsfed\", the cloudtrust module is missing from the rcbj/keycloak-wsfed image — rebuild it" >&2
     echo "         with: docker compose -f <compose file> build --no-cache keycloak-wsfed" >&2
-    echo "         The WS-Federation test will be SKIPPED." >&2
-    return 0
+    echo "         The run stops." >&2
+    echo "Leaving configureKeycloakWsfed(). No relying-party client."
+    return 1
   fi
 
   # And the endpoint the test actually drives: the descriptor the module serves.
@@ -3194,11 +3228,12 @@ configureKeycloakWsfed()
   WSFED_DESCRIPTOR_CODE=$(curl -s -o /dev/null -m 20 -w '%{http_code}' "${WSFED_DESCRIPTOR_LOCAL}")
   if [ "${WSFED_DESCRIPTOR_CODE}" != "200" ];
   then
-    echo "WARNING: the WS-Federation descriptor at ${WSFED_DESCRIPTOR_LOCAL} answered HTTP" >&2
-    echo "         ${WSFED_DESCRIPTOR_CODE}, so the cloudtrust wsfed protocol is not being served even though" >&2
-    echo "         the realm and client provisioned. The WS-Federation test will be SKIPPED." >&2
+    echo "ERROR: the WS-Federation descriptor at ${WSFED_DESCRIPTOR_LOCAL} answered HTTP" >&2
+    echo "       ${WSFED_DESCRIPTOR_CODE}, so the cloudtrust wsfed protocol is not being served even though" >&2
+    echo "       the realm and client provisioned. The run stops." >&2
     reportContainerLog "${WSFED_COMPOSE_FILE}" "keycloak-wsfed"
-    return 0
+    echo "Leaving configureKeycloakWsfed(). Descriptor not served."
+    return 1
   fi
   echo "The WS-Federation side-car is provisioned: realm ${WSFED_REALM_NAME}, relying party ${WSFED_WTREALM}, user wsfed, descriptor HTTP 200."
 
