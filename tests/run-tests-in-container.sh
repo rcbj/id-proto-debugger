@@ -351,14 +351,13 @@ init()
         RFC9700_STS_URL="${RFC9700_STS_URL:-https://sts:8081/realm/rfc9700}"
         export RFC9700_STS_URL
       else
-        echo "The mock STS has no RFC 9700 trust realm, so the five RFC 9700"
-        echo "flow jobs will be SKIPPED. The likeliest causes are an sts/"
-        echo "submodule older than \`realmRuntime\` on oauth2.rfc9700 — before"
-        echo "that the mode could only be given to a whole process, which is"
-        echo "what the deleted sts-rfc9700 container was for — and a 401,"
-        echo "which is mintAdminApiToken() above having minted nothing. See"
-        echo "docs/rfc9700.md. (tests/rfc9700_client.js is unaffected — it"
-        echo "needs no service at all and runs either way.)"
+        # FATAL: the mock is part of this stack, so a realm it will not put
+        # into RFC 9700 mode is a broken stack, not five optional jobs.
+        echo "ERROR: the mock STS in this stack has no RFC 9700 trust realm," >&2
+        echo "so the five RFC 9700 flow jobs cannot run. The likeliest cause" >&2
+        echo "is a 401 — mintAdminApiToken() above having minted nothing. See" >&2
+        echo "docs/rfc9700.md. The run stops." >&2
+        exit 1
       fi
       ;;
   esac
@@ -461,7 +460,7 @@ check_return_code $?
 configureKeycloak
 check_return_code $?
 # Provision the WS-Federation side-car (no-op unless KEYCLOAK_WSFED_LOCALHOST_BASE_URL
-# is set by the run-tests compose; skips gracefully if it isn't reachable).
+# is set by the run-tests compose; FAILS the run if it is set and unusable).
 configureKeycloakWsfed
 check_return_code $?
 runReport

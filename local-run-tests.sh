@@ -829,13 +829,12 @@ startDocker()
     RFC9700_STS_URL=https://localhost:8081/realm/rfc9700
     export RFC9700_STS_URL
   else
-    echo "The mock STS has no RFC 9700 trust realm, so the five RFC 9700 flow"
-    echo "jobs will be SKIPPED. The likeliest cause is an sts/ submodule older"
-    echo "than \`realmRuntime\` on oauth2.rfc9700 — before that the mode could"
-    echo "only be given to a whole process, which is what the deleted"
-    echo "sts-rfc9700 container was for. See docs/rfc9700.md."
-    echo "(tests/rfc9700_client.js is unaffected — it needs no service at all"
-    echo "and runs either way.)"
+    # FATAL: this launcher started that mock, so a realm it will not put into
+    # RFC 9700 mode is a broken stack, not five optional jobs.
+    echo "ERROR: the mock STS this launcher started has no RFC 9700 trust" >&2
+    echo "realm, so the five RFC 9700 flow jobs cannot run. The run stops." >&2
+    echo "See the reason above, and docs/rfc9700.md." >&2
+    exit 1
   fi
 }
 
@@ -1752,6 +1751,7 @@ CONFIG_FILE=./env/local.js verifyComposeServicesRunning local-tests.yml
 # error that says nothing about the cause. The compose file is passed so that a
 # service which never comes up has its own log printed here.
 waitForWaltid local-tests.yml
+check_return_code $?
 # Same reason as in runSamlOnly(): the local stack is not torn down between
 # runs, so a debugger-testing realm from the previous one is still there and
 # every create below would 409. See resetKeycloakRealm() in common.sh.
@@ -1759,7 +1759,7 @@ resetKeycloakRealm
 check_return_code $?
 configureKeycloak
 check_return_code $?
-# Provision the WS-Federation side-car (no-op / skip if it isn't up). The compose
+# Provision the WS-Federation side-car (FAILS if it isn't usable). The compose
 # file is passed so that a side-car which is not running has its own log printed
 # here — `docker compose up -d` succeeds whether or not the container stayed up.
 configureKeycloakWsfed local-tests.yml
