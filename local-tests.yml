@@ -273,6 +273,16 @@ services:
       # https://localhost:3000; see the note on the same line in
       # docker-compose-run-tests.yml.
       - STS_CORS_ORIGINS=https://localhost:3000
+      # THE MOCK'S PLAIN-HTTP PKI LISTENER, MOVED OFF 8082. Since the sts
+      # submodule bump in #313 the mock binds a second, plain-HTTP listener
+      # for CRLs, OCSP and SCEP (pki.httpPort), defaulting to 8082 — and on
+      # host networking that is the WS-Federation side-car's port below. The
+      # mock starts first, so WildFly then booted "with errors" on "Address
+      # already in use /0.0.0.0:8082" and every WS-Federation job was skipped
+      # as "not provisioned" (21 of them, on the 2026-09-28 live runs). 8083
+      # is free on this stack; the mock names this port inside the
+      # certificates it issues, so it is moved rather than set to 0.
+      - PKI_HTTP_PORT=8083
       # THE MOCK STS'S LOG LEVEL, passed through from whoever ran the launcher
       # rather than given a value here.
       #
