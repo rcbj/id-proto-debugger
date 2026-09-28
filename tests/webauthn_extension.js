@@ -171,7 +171,12 @@ async function runCeremony(driver, username) {
   // reads exactly like a declined prompt. See waitForFocus() in
   // tests/wait_for.js.
   await waitForFocus(driver, waitTime * 8);
-  await driver.findElement(By.id("wa-go")).click();
+  // Through clickStable(): the sign-in ends on a redirect into this page, and
+  // a button located on the document it replaced fails with "Node with given
+  // id does not belong to the document" — which took this job out on
+  // 2026-09-28 (the Selenium run on 0dce948), from the fingerprint ceremony
+  // after the last section, where nothing caught it.
+  await clickStable(driver, By.id("wa-go"), "the ceremony button");
   // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
   // a scope already agreed to in this run, or one carried as a global consent
   // on the application's entry, draws no screen at all. What asserts the screen
