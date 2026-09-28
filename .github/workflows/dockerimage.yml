@@ -10,6 +10,8 @@ on:
 permissions:
   # write is needed to push the version tags back to the repo.
   contents: write
+  # and to publish the api and client images to ghcr.io (issue #154).
+  packages: write
 
 jobs:
   build:
@@ -73,12 +75,84 @@ jobs:
            GIT_COMMIT: ${{ steps.version.outputs.sha }}
          run: CONFIG_FILE=./env/local.js docker-compose -f docker-compose.yml build
 
+       # ---------------------------------------------------------------------
+       # PUBLISH THE TWO PROJECT IMAGES (issue #154), the api and the client
+       # this job just built, as PUBLIC packages:
+       #
+       #   ghcr.io/rcbj/id-proto-debugger-api
+       #   ghcr.io/rcbj/id-proto-debugger-client
+       #
+       # Tagged M.N.O — the SAME string as the git tag the next step puts on
+       # this commit, so an image names its commit and a commit names its
+       # image — and a floating tag per branch: `latest` from master, which is
+       # what a release is, and `develop` from develop.
+       #
+       # NOT ghcr.io/rcbj/id-proto-debugger/<name>. That namespace is the
+       # test stack's (tests.yml pushes it under the commit and the branch),
+       # it is PRIVATE, and those images are built with the test
+       # configuration; sharing a name would let one workflow overwrite the
+       # other's tag.
+       #
+       # Not from a pull request: its GITHUB_TOKEN may not write packages and
+       # its images are nobody's to keep.
+       #
+       # A NEW PACKAGE STARTS PRIVATE. The OCI `source` label in both
+       # Dockerfiles links it to this public repository, but ghcr.io still
+       # creates a first push as private, and no API can change that: make
+       # each package public ONCE, under Package settings -> Danger Zone ->
+       # Change visibility. Every later push keeps the setting.
+       # ---------------------------------------------------------------------
+       - name: Log in to GitHub Container Registry
+         if: ${{ github.event_name != 'pull_request' }}
+         run: echo "${{ secrets.GITHUB_TOKEN }}" |
+              docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+       - name: Publish images
+         id: publish
+         if: ${{ github.event_name != 'pull_request' }}
+         env:
+           VERSION: ${{ steps.version.outputs.version }}
+           BRANCH: ${{ github.ref_name }}
+         run: |
+           set -euo pipefail
+           case "${BRANCH}" in
+             master)  FLOAT=latest ;;
+             develop) FLOAT=develop ;;
+             *)       FLOAT="" ;;
+           esac
+           published=""
+           rows=""
+           for name in api client; do
+             src="rcbj/${name}"
+             dst="ghcr.io/rcbj/id-proto-debugger-${name}"
+             docker image inspect "${src}" >/dev/null
+             docker tag "${src}" "${dst}:${VERSION}"
+             docker push "${dst}:${VERSION}"
+             published="${published} ${dst}:${VERSION}"
+             if [ -n "${FLOAT}" ]; then
+               docker tag "${src}" "${dst}:${FLOAT}"
+               docker push "${dst}:${FLOAT}"
+             fi
+             digest="$(docker image inspect --format \
+                 '{{index .RepoDigests 0}}' "${dst}:${VERSION}")"
+             rows="${rows}| \`${dst}:${VERSION}\` | \`${digest#*@}\` |"$'\n'
+           done
+           echo "images=${published# }" >> "$GITHUB_OUTPUT"
+           {
+             echo ""
+             echo "### Published images${FLOAT:+ (also \`${FLOAT}\`)}"
+             echo ""
+             echo "| Image | Digest |"
+             echo "|---|---|"
+             printf '%s' "${rows}"
+           } >> "$GITHUB_STEP_SUMMARY"
+
        - name: Tag this build
          if: ${{ github.event_name != 'pull_request' }}
          env:
            VERSION: ${{ steps.version.outputs.version }}
            MAJOR_MINOR: ${{ steps.version.outputs.major_minor }}
            BUILD: ${{ steps.version.outputs.build }}
+           IMAGES: ${{ steps.publish.outputs.images }}
          run: |
            set -euo pipefail
            SHA="$(git rev-parse HEAD)"
@@ -88,7 +162,10 @@ jobs:
            if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
              echo "::warning::tag ${VERSION} already exists; leaving it as it is"
            else
-             git tag -a "${VERSION}" -m "Docker Image CI build ${BUILD} from ${SHA}"
+             # The message names the images, so the tag maps this commit to
+             # them from the git side as the image tag does from the other.
+             git tag -a "${VERSION}" -m "Docker Image CI build ${BUILD} from ${SHA}" \
+                 -m "Images: ${IMAGES}"
              git push origin "refs/tags/${VERSION}"
              echo "Tagged ${SHA} as ${VERSION}"
            fi

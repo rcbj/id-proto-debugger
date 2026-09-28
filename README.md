@@ -278,6 +278,45 @@ Running a single SAML test script by hand needs those variables in the environme
 
 To run this project you will need to install docker.
 
+## Running the published images
+
+The api and the client are published to the GitHub Container Registry on every
+build of `master` and `develop`, so they can be run without building anything:
+
+| Image | Tags |
+|---|---|
+| `ghcr.io/rcbj/id-proto-debugger-api` | `latest` (newest `master` build), `develop`, and one `M.N.O` per build |
+| `ghcr.io/rcbj/id-proto-debugger-client` | the same |
+
+`M.N.O` (for example `0.9.20260928070000`) is the build's version, and the git
+tag of the same name marks the commit that image was built from — so
+`git checkout 0.9.20260928070000` is the source of
+`ghcr.io/rcbj/id-proto-debugger-api:0.9.20260928070000`. The version is also in
+each running client's footer and in `/version.json`.
+
+Both services serve TLS and need the certificate pair `./generate-tls-cert.sh`
+writes, so that script is still run once, from a checkout. It needs Node.js
+and npm on the host (it installs the client's dependencies to issue the
+certificate with this project's own X.509 code) and `openssl`:
+
+```bash
+git clone https://github.com/rcbj/id-proto-debugger.git
+cd id-proto-debugger
+./generate-tls-cert.sh          # writes ./generated-tls; trust the root it prints
+for svc in api:4000 client:3000; do
+  docker run -d --name "${svc%%:*}" -p "${svc##*:}:${svc##*:}" \
+    -e CONFIG_FILE=./env/local.js -e TLS_ENABLED=true \
+    -e TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem \
+    -e TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem \
+    -v "$PWD/generated-tls:/etc/idptools/tls:ro" \
+    "ghcr.io/rcbj/id-proto-debugger-${svc%%:*}:latest"
+done
+```
+
+Then open `https://localhost:3000`. The images are built with the `local`
+configuration, which is what makes the client call the api at
+`https://localhost:4000`.
+
 ## Building the docker image
 ```bash
 yum install git

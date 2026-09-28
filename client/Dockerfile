@@ -236,6 +236,18 @@ RUN groupadd --gid 10001 appuser \
     && chown -R appuser:appuser /usr/src
 
 # Docker does NOT derive HOME from USER — see api/Dockerfile.
+# OCI metadata, read by ghcr.io. `source` is what LINKS the published package
+# (ghcr.io/rcbj/id-proto-debugger-client, pushed by .github/workflows/
+# dockerimage.yml — issue #154) to this repository, so it lists under the
+# repository's Packages and takes its access from it; `revision` is the commit
+# the image was built from, beside the build number version.json already
+# carries. A LABEL is metadata, not a layer.
+LABEL org.opencontainers.image.source="https://github.com/rcbj/id-proto-debugger" \
+      org.opencontainers.image.title="id-proto-debugger-client" \
+      org.opencontainers.image.description="id-proto-debugger: the web client (port 3000)" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.revision="${GIT_COMMIT}"
+
 ENV HOME=/home/appuser
 USER appuser
 
