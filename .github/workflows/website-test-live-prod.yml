@@ -53,6 +53,32 @@ jobs:
           # with `Cannot find module 'ldapjs'`, naming a package rather than a
           # submodule.
           submodules: recursive
+          # Full history, so the step below can check out whichever commit the
+          # site was built from.
+          fetch-depth: 0
+
+      # Test the commit idptools.com was BUILT FROM, not the one this run was
+      # handed — the same step the test-site workflow gained in d4ab242, for
+      # the same reason. A workflow_run or scheduled run is on master, which is
+      # what prod deploys from, so this is usually a no-op; a MANUAL dispatch
+      # on develop is not. Run 36376517213 was started on develop at 0cb27f1
+      # against a site built from master at 2d46301, and failed scim_page on a
+      # fix the site did not have yet. The site's own version.json is the one
+      # record of what it is.
+      - name: Check out the deployed commit
+        run: |
+          set -euo pipefail
+          url=https://idptools.com/version.json
+          commit="$(curl -fsSL "$url" | jq -r '.commit // empty')" || commit=""
+          if [ -z "$commit" ]; then
+            echo "::warning::$url named no commit; testing origin/master," \
+                 "which is the branch this site deploys from."
+            commit=origin/master
+          fi
+          echo "Deployed commit: $commit"
+          git checkout --detach "$commit"
+          git submodule update --init --recursive
+          git log -1 --oneline
 
       # The script runs run-report.js and the test scripts on the runner itself,
       # not in a container, so the runner needs the node the images use.
