@@ -280,13 +280,18 @@ To run this project you will need to install docker.
 
 ## Running the published images
 
-The api and the client are published to the GitHub Container Registry on every
-build of `master` and `develop`, so they can be run without building anything:
+The api and the client are published on every build of `master` and
+`develop`, to the GitHub Container Registry and to Docker Hub, so they can be
+run without building anything. Both registries get the same images with the
+same tags from the same build — use whichever you prefer:
 
-| Image | Tags |
+| GitHub Container Registry | Docker Hub |
 |---|---|
-| `ghcr.io/rcbj/id-proto-debugger-api` | `latest` (newest `master` build), `develop`, and one `M.N.O` per build |
-| `ghcr.io/rcbj/id-proto-debugger-client` | the same |
+| `ghcr.io/rcbj/id-proto-debugger-api` | `iyasec/id-proto-debugger-api` |
+| `ghcr.io/rcbj/id-proto-debugger-client` | `iyasec/id-proto-debugger-client` |
+
+Tags: `latest` (the newest `master` build), `develop` (the newest `develop`
+build), and one `M.N.O` per build.
 
 `M.N.O` (for example `0.9.20260928070000`) is the build's version, and the git
 tag of the same name marks the commit that image was built from — so
@@ -311,11 +316,17 @@ docker pull ghcr.io/rcbj/id-proto-debugger-client:0.9.20260928070000
 # Or the newest develop build
 docker pull ghcr.io/rcbj/id-proto-debugger-api:develop
 docker pull ghcr.io/rcbj/id-proto-debugger-client:develop
+
+# The same images from Docker Hub
+docker pull iyasec/id-proto-debugger-api:latest
+docker pull iyasec/id-proto-debugger-client:latest
 ```
 
-The tags a package has are listed at
+The tags are listed at
 <https://github.com/rcbj/id-proto-debugger/pkgs/container/id-proto-debugger-api>
-and `.../id-proto-debugger-client`.
+(and `.../id-proto-debugger-client`) and at
+<https://hub.docker.com/r/iyasec/id-proto-debugger-api> (and
+`.../id-proto-debugger-client`).
 
 ### The TLS certificate
 
@@ -386,6 +397,9 @@ DEBUGGER_TAG=0.9.20260928070000 docker compose up -d # or pin one build
 docker compose logs -f                               # follow the logs
 docker compose down                                  # stop and remove them
 ```
+
+To take the images from Docker Hub instead, replace `ghcr.io/rcbj/` with
+`iyasec/` in the two `image:` lines.
 
 This is not the repository's own `docker-compose.yml`, which BUILDS the images
 from source and also starts the mock STS used by the test suite.

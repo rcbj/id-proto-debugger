@@ -77,10 +77,11 @@ jobs:
 
        # ---------------------------------------------------------------------
        # PUBLISH THE TWO PROJECT IMAGES (issue #154), the api and the client
-       # this job just built, as PUBLIC packages:
+       # this job just built, as PUBLIC images, to TWO registries with the
+       # SAME tags from the SAME build:
        #
-       #   ghcr.io/rcbj/id-proto-debugger-api
-       #   ghcr.io/rcbj/id-proto-debugger-client
+       #   ghcr.io/rcbj/id-proto-debugger-api      docker.io/iyasec/id-proto-debugger-api
+       #   ghcr.io/rcbj/id-proto-debugger-client   docker.io/iyasec/id-proto-debugger-client
        #
        # Tagged M.N.O — the SAME string as the git tag the next step puts on
        # this commit, so an image names its commit and a commit names its
@@ -101,11 +102,35 @@ jobs:
        # creates a first push as private, and no API can change that: make
        # each package public ONCE, under Package settings -> Danger Zone ->
        # Change visibility. Every later push keeps the setting.
+       #
+       # DOCKER HUB, the iyasec organization, logs in with a personal access
+       # token held in two repository secrets: DOCKERHUB_USERNAME (the Docker
+       # Hub account the token belongs to, which must be able to push to
+       # iyasec) and DOCKERHUB_TOKEN (the token, Read & Write). A build that
+       # should publish and has neither FAILS rather than publishing to one
+       # registry of two, which would leave the tags disagreeing. A repository
+       # a first push creates takes the organization's default visibility —
+       # set iyasec's default to public, or create both repositories public
+       # before the first push.
        # ---------------------------------------------------------------------
        - name: Log in to GitHub Container Registry
          if: ${{ github.event_name != 'pull_request' }}
          run: echo "${{ secrets.GITHUB_TOKEN }}" |
               docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+       - name: Log in to Docker Hub
+         if: ${{ github.event_name != 'pull_request' }}
+         env:
+           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+         run: |
+           set -euo pipefail
+           if [ -z "${DOCKERHUB_USERNAME}" ] || [ -z "${DOCKERHUB_TOKEN}" ]; then
+             echo "::error::DOCKERHUB_USERNAME and DOCKERHUB_TOKEN must both be" \
+                  "set as repository secrets to publish to docker.io/iyasec."
+             exit 1
+           fi
+           echo "${DOCKERHUB_TOKEN}" |
+             docker login docker.io -u "${DOCKERHUB_USERNAME}" --password-stdin
        - name: Publish images
          id: publish
          if: ${{ github.event_name != 'pull_request' }}
@@ -114,6 +139,7 @@ jobs:
            BRANCH: ${{ github.ref_name }}
          run: |
            set -euo pipefail
+           REGISTRIES="ghcr.io/rcbj docker.io/iyasec"
            case "${BRANCH}" in
              master)  FLOAT=latest ;;
              develop) FLOAT=develop ;;
@@ -123,18 +149,24 @@ jobs:
            rows=""
            for name in api client; do
              src="rcbj/${name}"
-             dst="ghcr.io/rcbj/id-proto-debugger-${name}"
              docker image inspect "${src}" >/dev/null
-             docker tag "${src}" "${dst}:${VERSION}"
-             docker push "${dst}:${VERSION}"
-             published="${published} ${dst}:${VERSION}"
-             if [ -n "${FLOAT}" ]; then
-               docker tag "${src}" "${dst}:${FLOAT}"
-               docker push "${dst}:${FLOAT}"
-             fi
-             digest="$(docker image inspect --format \
-                 '{{index .RepoDigests 0}}' "${dst}:${VERSION}")"
-             rows="${rows}| \`${dst}:${VERSION}\` | \`${digest#*@}\` |"$'\n'
+             for registry in ${REGISTRIES}; do
+               dst="${registry}/id-proto-debugger-${name}"
+               docker tag "${src}" "${dst}:${VERSION}"
+               docker push "${dst}:${VERSION}"
+               published="${published} ${dst}:${VERSION}"
+               if [ -n "${FLOAT}" ]; then
+                 docker tag "${src}" "${dst}:${FLOAT}"
+                 docker push "${dst}:${FLOAT}"
+               fi
+               # One RepoDigests entry per registry now, so pick this one's.
+               # Docker records docker.io repositories without the host.
+               repo="${dst#docker.io/}"
+               digest="$(docker image inspect --format \
+                   '{{range .RepoDigests}}{{println .}}{{end}}' "${src}" |
+                   grep -m1 "^${repo}@" || true)"
+               rows="${rows}| \`${dst}:${VERSION}\` | \`${digest#*@}\` |"$'\n'
+             done
            done
            echo "images=${published# }" >> "$GITHUB_OUTPUT"
            {
