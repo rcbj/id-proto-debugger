@@ -72,6 +72,15 @@ const SSRF_GUARD = locate([
   path.join(__dirname, "ssrf_guard.js")]);
 const BUILD_JS = locate([path.join(__dirname, "..", "client", "build.js")]);
 
+// api/ssrf_guard.js takes `bunyan` from api/node_modules, which exists inside
+// the tests image and on a developer's machine but NOT on a host that has only
+// installed tests/ — remote-run-tests.sh on a GitHub runner, where this job
+// died with "Cannot find module 'bunyan'" before asserting anything. Putting
+// tests/node_modules on NODE_PATH resolves it from there instead, as
+// requireSharedModule() does for api_ssrf_guard.js; NODE_PATH is in
+// process.env, so the children spawned below inherit it too.
+require("./module_paths.js").addTestsModulesToResolutionPath();
+
 // A private directory for sockets. Kept short: a unix socket path is limited
 // to ~107 bytes, and a deep TMPDIR has pushed a path past it before.
 function socketDir() {

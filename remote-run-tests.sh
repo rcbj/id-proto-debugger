@@ -652,6 +652,9 @@ onExit()
 {
   local status=$?
   echo "Entering onExit()."
+  # The copy extractMockStsTree() made, and only that one: a MOCK_STS_DIR the
+  # caller supplied is somebody's working copy and is never deleted.
+  removeMockStsTree
   launcherExitStatus "${status}" "remote-run-tests.sh"
   exit "${status}"
 }
@@ -664,6 +667,13 @@ probeEdgeLandings
 check_return_code $?
 startKeycloak
 check_return_code $?
+# THE HOST-RUN JOBS THAT LOAD THE MOCK'S OWN MODULES need a compiled tree, and
+# since iya-sts #50 a checkout is not one: sts/ carries TypeScript, so
+# sts_jws_verification.js died on `Cannot find module './enrollment_profiles'`
+# (a .ts with no .js beside it) on the 2026-09-28 live run. The image the `up`
+# above just built has exactly that tree; see extractMockStsTree(). The same
+# call local-run-tests.sh makes, and best effort in the same way.
+extractMockStsTree
 resetKeycloakRealm
 check_return_code $?
 configureKeycloak

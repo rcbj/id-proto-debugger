@@ -1361,6 +1361,14 @@ function renderConfig() {
     rows += 1;
   });
   host.appendChild(table);
+  // The callPath row was just built afresh by radioPair(), and a fresh pair is
+  // ENABLED. Whether it may be is refreshCallPathControls()'s decision — no
+  // api on this build, or a browser-only scheme — and that ran against the
+  // table this one replaced. Without this, the first discovery on the hosted
+  // site handed back a BackEnd choice that callVia() then silently ignored:
+  // tests/scim_page.js set it to "api" there on 2026-09-28 and the page said
+  // it would call by "browser".
+  refreshCallPathControls();
   if (focused && el(focused) && typeof el(focused).focus === 'function') {
     el(focused).focus();
   }
