@@ -125,6 +125,48 @@ async function signIn(driver, username, url) {
 // Wait for the code to appear in the address bar. The page it lands on is a 404
 // from the STS, which is fine: this test is the relying party and reads the
 // authorization response off the URL.
+// THE CEREMONY BUTTON, CLICKED ONLY ONCE THE PAGE HOLDING IT HAS SETTLED.
+// signIn() ends on a redirect into the mock's WebAuthn step, and an element
+// located a moment too early belongs to a document that is then replaced: the
+// click fails with "Node with given id does not belong to the document" (a
+// stale reference, spelled by Chrome's inspector). It cost the prod live run
+// on 2026-09-28 one section, while the identical section after it passed only
+// because it read the <h1> first and so gave the page time. This waits for the
+// document to finish loading and for the button to be enabled, and re-finds it
+// and tries again if the page replaced it anyway.
+async function clickCeremonyButton(driver) {
+  log.debug("Entering clickCeremonyButton().");
+  const deadline = Date.now() + waitTime * 4;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      await driver.wait(async function () {
+        return (await driver.executeScript(
+            "return document.readyState;")) === "complete";
+      }, waitTime * 4);
+      const button = await driver.wait(until.elementLocated(By.id("wa-go")),
+          waitTime * 4);
+      await driver.wait(until.elementIsEnabled(button), waitTime * 4);
+      await button.click();
+      log.debug("Leaving clickCeremonyButton().");
+      return;
+    } catch (e) {
+      const stale = e.name === "StaleElementReferenceError" ||
+          /does not belong to the document|stale element/i.test(
+              e.message || "");
+      if (!stale) {
+        log.debug("Leaving clickCeremonyButton(). " + e.message);
+        throw e;
+      }
+      lastError = e;
+      log.info("the ceremony page was replaced under the click; " +
+          "finding the button again");
+    }
+  }
+  log.debug("Leaving clickCeremonyButton(). Gave up.");
+  throw lastError || new Error("the ceremony button never became clickable");
+}
+
 async function codeFromRedirect(driver) {
   log.debug("Entering codeFromRedirect().");
   // THE CONSENT SCREEN FIRST, if there is one. It is PASSED rather than
@@ -270,7 +312,7 @@ async function test() {
       assert.ok(/Enrol/i.test(heading),
         "with no key enrolled the step should register one; the " +
             "heading read: " + heading);
-      await driver.findElement(By.id("wa-go")).click();
+      await clickCeremonyButton(driver);
       const code = await codeFromRedirect(driver);
       return "code " + code.slice(0, 12) + "…";
     });
@@ -282,7 +324,7 @@ async function test() {
       await signOutInBrowser(driver, STS, By, until, waitTime * 4);
       await signIn(driver, MFA_USER, authorizeUrl("&acr_values=mfa"));
       await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
-      await driver.findElement(By.id("wa-go")).click();
+      await clickCeremonyButton(driver);
       const tokens = await exchange(await codeFromRedirect(driver));
       const claims = claimsOf(tokens.id_token);
       assert.deepStrictEqual(claims.amr, ["pwd", "hwk"],
@@ -306,7 +348,7 @@ async function test() {
         assert.ok(/Use your security key/i.test(heading),
           "the key enrolled earlier should now be asserted with, not " +
               "replaced; heading: " + heading);
-        await driver.findElement(By.id("wa-go")).click();
+        await clickCeremonyButton(driver);
         const tokens = await exchange(await codeFromRedirect(driver));
         assert.deepStrictEqual(claimsOf(tokens.id_token).amr, ["pwd", "hwk"],
           "an assertion is as much a second factor as the enrolment was");
