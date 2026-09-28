@@ -1774,8 +1774,22 @@ addTrustAnchor()
   # same anchor can arrive under two names (STACK_TLS_CA_FILE and
   # STACK_TLS_CERT_FILE are one file), and a byte comparison settles it
   # without another openssl invocation.
-  if [ -s "${TRUST_BUNDLE_FILE}" ] &&
-     grep -qFf "${pem}" "${TRUST_BUNDLE_FILE}" 2>/dev/null;
+  #
+  # The base64 BODY, flattened, searched for as one string. This was
+  # `grep -qFf pem bundle`, which takes every LINE of the PEM as a separate
+  # pattern and succeeds when any one matches — and every certificate has a
+  # `-----BEGIN CERTIFICATE-----` line. So once the bundle held one anchor,
+  # every later one was "already present" and never added. It surfaced on
+  # 2026-09-28 when mintAdminApiToken() became the first NODE caller of the
+  # mock STS on remote-run-tests.sh: the mock's self-signed certificate was
+  # skipped, node refused it, and both live-site runs stopped at
+  # "admin-api-token: ... fetch failed" before a single test. The browser had
+  # never noticed, because it trusts that certificate by SPKI pin instead.
+  local body
+  body="$(sed -n '/-----BEGIN/,/-----END/{/-----/d;p;}' "${pem}" |
+          tr -d '\r\n')"
+  if [ -n "${body}" ] && [ -s "${TRUST_BUNDLE_FILE}" ] &&
+     tr -d '\r\n' < "${TRUST_BUNDLE_FILE}" | grep -qF -- "${body}";
   then
     echo "That anchor is already in ${TRUST_BUNDLE_FILE}."
     export NODE_EXTRA_CA_CERTS="${TRUST_BUNDLE_FILE}"
