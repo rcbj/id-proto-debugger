@@ -173,6 +173,18 @@ RUN groupadd --gid 10001 appuser \
 # left behind, which is / or /root, and appuser can write to neither. npm puts
 # its cache and its error log there the moment anything goes wrong, so without
 # this a failure reports EACCES on a path nobody named instead of itself.
+# OCI metadata, read by ghcr.io. `source` is what LINKS the published package
+# (ghcr.io/rcbj/id-proto-debugger-api, pushed by .github/workflows/
+# dockerimage.yml — issue #154) to this repository, so it lists under the
+# repository's Packages and takes its access from it; `revision` is the commit
+# the image was built from, beside the build number version.json already
+# carries. A LABEL is metadata, not a layer.
+LABEL org.opencontainers.image.source="https://github.com/rcbj/id-proto-debugger" \
+      org.opencontainers.image.title="id-proto-debugger-api" \
+      org.opencontainers.image.description="id-proto-debugger: the api service (port 4000)" \
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.revision="${GIT_COMMIT}"
+
 ENV HOME=/home/appuser
 USER appuser
 
