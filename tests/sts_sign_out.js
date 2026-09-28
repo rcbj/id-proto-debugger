@@ -41,15 +41,41 @@ async function signOutInBrowser(driver, sts, By, until, timeoutMs) {
   log.debug("Entering signOutInBrowser().");
   const wait = timeoutMs || 8000;
   await driver.get(String(sts).replace(/\/+$/, "") + "/oauth2/logout");
-  const buttons = await driver.findElements(By.css(CONFIRM));
-  if (!buttons.length) {
-    log.debug("Leaving signOutInBrowser(). Not asked.");
-    return false;
+  // THE CLICK IS RETRIED ON A STALE REFERENCE. The page this lands on can be
+  // replaced between finding the button and pressing it, and the press then
+  // fails with "Node with given id does not belong to the document" — which
+  // is what took webauthn_oidc_mfa's password-only section out twice on
+  // 2026-09-28. On a stale reference the button is looked for again: present,
+  // it is pressed; gone, the page has already moved on, and there is no
+  // question left to answer.
+  const deadline = Date.now() + wait;
+  let pressed = null;
+  for (;;) {
+    const buttons = await driver.findElements(By.css(CONFIRM));
+    if (!buttons.length) {
+      log.debug("Leaving signOutInBrowser(). " +
+          (pressed ? "Confirmed." : "Not asked."));
+      return !!pressed;
+    }
+    try {
+      await buttons[0].click();
+      pressed = buttons[0];
+      break;
+    } catch (e) {
+      const stale = e.name === "StaleElementReferenceError" ||
+          /does not belong to the document|stale element/i.test(
+              e.message || "");
+      if (!stale || Date.now() > deadline) {
+        log.debug("Leaving signOutInBrowser(). " + e.message);
+        throw e;
+      }
+      log.info("the sign-out page was replaced under the click; looking " +
+          "for the button again");
+    }
   }
-  await buttons[0].click();
   // The answer is a page saying it is done (or a front-channel page on the
   // way there); what matters is that the question is gone.
-  await driver.wait(until.stalenessOf(buttons[0]), wait,
+  await driver.wait(until.stalenessOf(pressed), wait,
     "pressed Sign out on the mock's RP-Initiated Logout confirmation, and " +
     "the page never moved on");
   log.debug("Leaving signOutInBrowser(). Confirmed.");
