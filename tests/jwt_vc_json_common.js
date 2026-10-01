@@ -153,6 +153,28 @@ async function issuerMetadata(issuerBase) {
   return null;
 }
 
+// THE SCOPES A WALLET ASKS FOR (rcbj/id-proto-debugger#327): the `scope`
+// each credential configuration names in the issuer metadata, or only the
+// configurations `ids` names. OpenID4VCI 1.0 is OAuth 2.0 and a wallet needs
+// an ACCESS TOKEN, never an ID Token, so it asks for these and not for
+// `openid`; iya-sts refuses an ID Token, in product mode, to an application
+// that is not declared for OpenID Connect, and a wallet is declared for
+// oauth2 and oid4vci alone.
+function credentialScopes(meta, ids) {
+  log.debug("Entering credentialScopes().");
+  const configs = (meta && meta.credential_configurations_supported) || {};
+  const names = ids && ids.length ? [].concat(ids) : Object.keys(configs);
+  const scopes = [];
+  names.forEach(function (id) {
+    const scope = configs[id] && configs[id].scope;
+    if (scope && scopes.indexOf(scope) < 0) {
+      scopes.push(scope);
+    }
+  });
+  log.debug("Leaving credentialScopes(). " + scopes.join(" "));
+  return scopes;
+}
+
 // The credential_configuration_id this issuer offers in jwt_vc_json, or "" when
 // it offers none.
 //
@@ -579,15 +601,20 @@ async function holderAccessToken(issuerBase, holder) {
   const redirectUri = "https://wallet." + holder + ".example.test/cb";
   const password = "Holder-" + crypto.randomBytes(9).toString("base64url") +
                    "-Aa1!";
+  // The credential scopes, not `openid` (#327): see credentialScopes().
+  const scopes = credentialScopes(await issuerMetadata(issuerBase));
+  assert.ok(scopes.length,
+    "the issuer's metadata names no credential configuration scope, so a " +
+    "wallet has nothing to ask the authorization server for");
   await provisionWallet(issuerBase, {
     grantTypes: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
                  "authorization_code"],
-    redirectUris: [redirectUri], scopes: ["openid"],
+    redirectUris: [redirectUri], scopes: scopes,
     why: "the wallet a holder signs in to for an access token" });
   await registry.ensurePerson(stsBase, holder, password);
   const granted = await registry.authorizationCode(stsBase, {
     clientId: WALLET_CLIENT_ID, redirectUri: redirectUri, username: holder,
-    password: password, scope: "openid" });
+    password: password, scope: scopes.join(" ") });
   const tokenSet = await httpJson(stsBase + "/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -602,6 +629,7 @@ async function holderAccessToken(issuerBase, holder) {
 }
 
 module.exports = {
+  credentialScopes: credentialScopes,
   holderAccessToken: holderAccessToken,
   FORMAT: FORMAT,
   b64u: b64u,
