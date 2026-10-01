@@ -7,8 +7,9 @@
 // WHAT IT LOOKS LIKE
 //
 // A `driver.get()` — any navigation, on any page, in any job — never returns,
-// and chromedriver eventually gives up with its page-load timeout, which is
-// FIVE MINUTES by default and which nothing here sets:
+// and chromedriver eventually gives up with its page-load timeout, which was
+// FIVE MINUTES by default until 2026-09-28 and is now two minutes, set by
+// browser_flags.js section (7) from webdriver_deadline.js:
 //
 //   TimeoutError: timeout: Timed out receiving message from renderer: 299.995
 //     (Session info: chrome=121.0.6167.85)

@@ -96,6 +96,11 @@ COPY tests/expectation.js ./
 # before a single test was spawned. See tests/renderer_wedge.js.
 COPY tests/renderer_wedge.js ./
 
+# THE DEADLINE ON EVERY WEBDRIVER COMMAND, required by browser_flags.js — so
+# by every browser test here. A missing line fails every one of them at load
+# with MODULE_NOT_FOUND naming browser_flags.js. See tests/webdriver_deadline.js.
+COPY tests/webdriver_deadline.js ./
+
 # THE APPLICATIONS REGISTRY CLIENT, required by every job that presents an
 # identifier to the mock STS — which since 2026-08-27 is most of them: the OAuth
 # and OIDC jobs, the OID4VC family, WS-Trust, WS-Federation, both SAML profiles,
