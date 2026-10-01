@@ -776,6 +776,24 @@ function buildJobs() {
       env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL },
     });
   }
+  // The Auth Style radios (POST / Header) on the token and refresh panes,
+  // issue #328: a confidential client declaring client_secret_basic, once per
+  // initiation, because the browser and the api build the Basic header in
+  // different processes. The back-end job needs the api, so it rides
+  // LDAP_AVAILABLE — the suite's "this target has a backend" fact — rather
+  // than running against a static site where the page disables that radio.
+  if (env.WSTRUST_STS_URL) {
+    const authStyleEnds = env.LDAP_AVAILABLE === "false" ?
+        ["front"] : ["front", "back"];
+    for (const AUTH_STYLE_INITIATE of authStyleEnds) {
+      jobs.push({
+        name: "OAuth2 Auth Style: Header (client_secret_basic), " +
+            AUTH_STYLE_INITIATE + "-end initiated — mock STS",
+        script: "oauth2_auth_style.js",
+        env: { WSTRUST_STS_URL: env.WSTRUST_STS_URL, AUTH_STYLE_INITIATE },
+      });
+    }
+  }
   if (env.OIDC_ALL_FLOWS_PUBLIC_DISCOVERY_ENDPOINT) {
     jobs.push({
       name: "OIDC UserInfo through all three token sets — Keycloak",

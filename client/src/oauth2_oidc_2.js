@@ -193,6 +193,9 @@ function tokenButtonClick() {
       .then(function (headers) {
         var url = localStorage.getItem("token_endpoint");
         var sentBody = convertToOAuth2Format(formData);
+        // convertToOAuth2Format() leaves the client credentials out of the
+        // body for the Header auth style; this is where they go instead.
+        headers = $.extend({}, headers, clientBasicAuthHeader(formData));
         // Recorded for the HTTP tab before the request goes, so that a call
         // which never comes back still shows what left. The headers are the
         // ones this page CHOSE: the browser adds Origin, Referer and
@@ -2100,6 +2103,9 @@ function refreshButtonClick() {
   if(useRefreshFrontEnd) {
     var refreshUrl = localStorage.getItem("token_endpoint");
     var refreshBody = convertToOAuth2Format(formData);
+    // convertToOAuth2Format() leaves the client credentials out of the body
+    // for the Header auth style; this is where they go instead.
+    var refreshHeaders = clientBasicAuthHeader(formData);
     // Recorded for the HTTP tab before the request goes, so that a call which
     // never comes back still shows what left. The headers are the ones this
     // page CHOSE: the browser adds Origin, Referer and User-Agent itself,
@@ -2109,7 +2115,8 @@ function refreshButtonClick() {
       via: "browser",
       method: "POST",
       url: refreshUrl,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: $.extend({
+        "Content-Type": "application/x-www-form-urlencoded" }, refreshHeaders),
       body: refreshBody,
       bodyNote: "The browser adds Origin, Referer, User-Agent and the rest " +
           "of its own headers to this request and does not disclose them to " +
@@ -2121,6 +2128,7 @@ function refreshButtonClick() {
       url: refreshUrl,
       data: refreshBody,
       contentType: "application/x-www-form-urlencoded",
+      headers: refreshHeaders,
       success: successfulInternalRefreshAPICall,
       error: errorInternalRefreshAPICall
     });
@@ -2863,12 +2871,18 @@ function loadValuesFromLocalStorage()
   $("#tokenNumberCustomParameters")
     .val(localStorage.getItem("tokenNumberCustomParameters")?
     localStorage.getItem("tokenNumberCustomParameters"): 1);
-  if (getLSBooleanItem("token_post_auth_style")) {
-    $("#token_postAuthStyleCheckToken").prop("checked", true);
-    $("#token_headerAuthStyleCheckToken").prop("checked", false);
-  } else {
-    $("#refresh_postAuthStyleCheckToken").prop("checked", false);
-    $("#refresh_headerAuthStyleCheckToken").prop("checked", true);
+  // Each pane restores its OWN choice. resetUI() has already put both back to
+  // POST, so a pane left alone here is a Header choice silently lost — and
+  // the next writeValuesToLocalStorage() then records POST over it.
+  if (localStorage.getItem("token_post_auth_style") !== null) {
+    var tokenPost = getLSBooleanItem("token_post_auth_style");
+    $("#token_postAuthStyleCheckToken").prop("checked", tokenPost);
+    $("#token_headerAuthStyleCheckToken").prop("checked", !tokenPost);
+  }
+  if (localStorage.getItem("refresh_post_auth_style") !== null) {
+    var refreshPost = getLSBooleanItem("refresh_post_auth_style");
+    $("#refresh_postAuthStyleCheckToken").prop("checked", refreshPost);
+    $("#refresh_headerAuthStyleCheckToken").prop("checked", !refreshPost);
   }
 
   currentRefreshToken = localStorage.getItem("refresh_refresh_token");
@@ -3330,52 +3344,57 @@ function recalculateTokenRequestDescription()
   if (!!ta1)
   {
     var grant_type = $("#token_grant_type").val();
-    if(grant_type == "authorization_code")
-    {
-      $("#display_token_request_form_textarea1")
-        .val(                 DOMPurify.sanitize("POST " + $("#token_endpoint")
-        .val() + "\n" +
-								      "Message Body:\n" +
-                                                                      "grant_type=" + $("#token_grant_type").val() + "&" + "\n" +
-                                                                      "code=" + $("#code").val() + "&" + "\n" +
-                                                                      "client_id=" + $("#token_client_id").val() + "&" + "\n" +
-                                                                      "redirect_uri=" + $("#token_redirect_uri").val() + "&" +"\n" +
-                                                                      "scope=" + $("#token_scope").val()));
-      if(usePKCE) {
-        $("#display_token_request_form_textarea1")
-          .val( $("#display_token_request_form_textarea1").val() +"&\n" +
-          "code_verifier=" + $("#token_pkce_code_verifier").val());
-      }
+    var clientId = $("#token_client_id").val();
+    var clientSecret = $("#token_client_secret").val();
+    // The radio rather than token_post_auth_style: storage is only written
+    // when the button is pressed, and the preview is of what pressing it now
+    // would send.
+    var postAuthStyle = $("#token_postAuthStyleCheckToken").is(":checked");
+    var secretInBody = postAuthStyle && !!clientSecret;
+    // The body lines, in the shape convertToOAuth2Format() gives them — which
+    // is what decides where the client credentials go for each grant.
+    var bodyLines = ["grant_type=" + grant_type];
+    if (grant_type == "authorization_code") {
+      bodyLines.push("code=" + $("#code").val());
+      bodyLines.push("client_id=" + clientId);
+      bodyLines.push("redirect_uri=" + $("#token_redirect_uri").val());
     } else if (grant_type == "client_credentials") {
-      $("#display_token_request_form_textarea1")
-        .val(		      DOMPurify.sanitize("POST " + $("#token_endpoint").val() +
-        "\n" +
-                                                                      "Message Body:\n" +
-                                                                      "grant_type=" + $("#token_grant_type").val() + "&" + "\n" +
-                                                                      "client_id=" + $("#token_client_id").val() + "&" + "\n" +
-                                                                      "client_secret=" + $("#token_client_secret").val() + "&" + "\n" +
-                                                                      "redirect_uri=" + $("#token_redirect_uri").val() + "&" +"\n" +
-                                                                      "scope=" + $("#token_scope").val()));
+      if (postAuthStyle) {
+        bodyLines.push("client_id=" + clientId);
+      }
+      bodyLines.push("redirect_uri=" + $("#token_redirect_uri").val());
     } else if (grant_type == "password") {
-      $("#display_token_request_form_textarea1")
-        .val(                 DOMPurify.sanitize("POST " + $("#token_endpoint")
-        .val() + "\n" +
-                                                                      "Message Body:\n" +
-                                                                      "grant_type=" + $("#token_grant_type").val() + "&" + "\n" +
-                                                                      "client_id=" + $("#token_client_id").val() + "&" + "\n" +
-                                                                      "client_secret=" + $("#token_client_secret").val() + "&" + "\n" +
-                                                                      "username=" + $("#token_username").val() + "&" + "\n" +
-                                                                      "password=" + $("#token_password").val() + "&" + "\n" +
-                                                                      "scope=" + $("#token_scope").val()));
-    } else if (grant_type == "urn:ietf:params:oauth:grant-type:device_code") {
-      $("#display_token_request_form_textarea1")
-        .val(                 DOMPurify.sanitize("POST " + $("#token_endpoint")
-        .val() + "\n" +
-                                                                      "Message Body:\n" +
-                                                                      "grant_type=" + $("#token_grant_type").val() + "&" + "\n" +
-                                                                      "device_code=" + $("#device_code").val() + "&" + "\n" +
-                                                                      "client_id=" + $("#token_client_id").val()));
+      if (postAuthStyle) {
+        bodyLines.push("client_id=" + clientId);
+      }
+      bodyLines.push("username=" + $("#token_username").val());
+      bodyLines.push("password=" + $("#token_password").val());
+    } else if (grant_type ==
+               "urn:ietf:params:oauth:grant-type:device_code") {
+      bodyLines.push("device_code=" + $("#device_code").val());
+      bodyLines.push("client_id=" + clientId);
     }
+    if (secretInBody) {
+      bodyLines.push("client_secret=" + clientSecret);
+    }
+    if (grant_type != "urn:ietf:params:oauth:grant-type:device_code") {
+      bodyLines.push("scope=" + $("#token_scope").val());
+    }
+    if (grant_type == "authorization_code" && usePKCE) {
+      bodyLines.push("code_verifier=" + $("#token_pkce_code_verifier").val());
+    }
+    // RFC 6749 section 2.3.1: the Header auth style moves the secret out of
+    // the body and into HTTP Basic, which clientBasicAuthHeader() builds.
+    var headerLine = "";
+    if (!postAuthStyle && !!clientSecret) {
+      headerLine = "Authorization: Basic base64(" + clientId +
+          ":<client_secret>)\n";
+    }
+    $("#display_token_request_form_textarea1")
+      .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() + "\n" +
+                              headerLine +
+                              "Message Body:\n" +
+                              bodyLines.join("&\n")));
     if ( resourceComponent.length > 0) {
        $("#display_token_request_form_textarea1")
          .val( $("#display_token_request_form_textarea1").val() + "&\n" +
@@ -3419,26 +3438,34 @@ function recalculateRefreshRequestDescription()
     var grant_type = $("#refresh_grant_type").val();
     if( grant_type == "refresh_token")
     {
-      var client_secret = $("#refresh_client_secret").val();
-      if(!!client_secret)
-      {
-        $("#display_refresh_request_form_textarea1")
-          .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() + "\n" +
-                                                                      "Message Body:\n" +
-                                                                      "grant_type=" + $("#refresh_grant_type").val() + "&" + "\n" +
-                                                                      "refresh_token=" + $("#refresh_refresh_token").val() + "&" + "\n" +
-                                                                      "client_id=" + $("#refresh_client_id").val() + "&" + "\n" +
-                                                                      "client_secret=" + $("#refresh_client_secret").val() + "&" + "\n" +
-                                                                      "scope=" + $("#refresh_scope").val() + "\n"));
-      } else {
-        $("#display_refresh_request_form_textarea1")
-          .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() + "\n" +
-                                                                      "Message Body:\n" +
-                                                                      "grant_type=" + $("#refresh_grant_type").val() + "&" + "\n" +
-                                                                      "refresh_token=" + $("#refresh_refresh_token").val() + "&" + "\n" +
-                                                                      "client_id=" + $("#refresh_client_id").val() + "&" + "\n" +
-                                                                      "scope=" + $("#refresh_scope").val() + "\n"));
+      var clientId = $("#refresh_client_id").val();
+      var clientSecret = $("#refresh_client_secret").val();
+      if (clientSecret == "undefined") {
+        clientSecret = "";
       }
+      // The radio, for the reason recalculateTokenRequestDescription() reads
+      // its own.
+      var postAuthStyle =
+          $("#refresh_postAuthStyleCheckToken").is(":checked");
+      var headerLine = "";
+      if (!postAuthStyle && !!clientSecret) {
+        headerLine = "Authorization: Basic base64(" + clientId +
+            ":<client_secret>)\n";
+      }
+      var bodyLines = [
+        "grant_type=" + grant_type,
+        "refresh_token=" + $("#refresh_refresh_token").val(),
+        "client_id=" + clientId
+      ];
+      if (postAuthStyle && !!clientSecret) {
+        bodyLines.push("client_secret=" + clientSecret);
+      }
+      bodyLines.push("scope=" + $("#refresh_scope").val());
+      $("#display_refresh_request_form_textarea1")
+        .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() + "\n" +
+                                headerLine +
+                                "Message Body:\n" +
+                                bodyLines.join("&\n") + "\n"));
     }
   }
   log.debug("Leaving recalculateRefreshRequestDescription().");
@@ -5603,6 +5630,25 @@ function usePKCERFC()
   log.debug("Leaving usePKCERFC().");
 }
 
+// The HTTP Basic client authentication of RFC 6749 section 2.3.1, for a Token
+// or Refresh Request the browser sends itself — the api adds its own for the
+// proxied ones. Empty for the POST auth style, and for a client with no secret
+// (a public client has nothing to put in the header). The id and secret are
+// form-encoded before base64, as that section requires; encodeURIComponent()
+// output is ASCII, so btoa() cannot throw on it.
+function clientBasicAuthHeader(formData) {
+  log.debug("Entering clientBasicAuthHeader().");
+  if (formData.auth_style || !formData.client_secret) {
+    log.debug("Leaving clientBasicAuthHeader(). No header.");
+    return {};
+  }
+  var header = { "Authorization": "Basic " +
+      btoa(encodeURIComponent(formData.client_id || "") + ":" +
+           encodeURIComponent(formData.client_secret)) };
+  log.debug("Leaving clientBasicAuthHeader().");
+  return header;
+}
+
 function getLSBooleanItem(key)
 {
   log.debug("Entering getLSBooleanItem().");
@@ -5615,6 +5661,7 @@ function setPostAuthStyleCheckToken() {
   $("#token_postAuthStyleCheckToken").prop("checked", true);
   $("#token_headerAuthStyleCheckToken").prop("checked", false);
   localStorage.setItem("token_post_auth_style", true);
+  recalculateTokenRequestDescription();
   log.debug("Leaving setPostAuthStyleCheckToken(): token_post_auth_style=" +
             localStorage.getItem("token_post_auth_style") + ".");
   return false;
@@ -5625,6 +5672,7 @@ function setHeaderAuthStyleCheckToken() {
   $("#token_postAuthStyleCheckToken").prop("checked", false);
   $("#token_headerAuthStyleCheckToken").prop("checked", true);
   localStorage.setItem("token_post_auth_style", false);
+  recalculateTokenRequestDescription();
   log.debug("Leaving setHeaderAuthStyleCheckToken(): token_post_auth_style=" +
             localStorage.getItem("token_post_auth_style") + ".");
   return false;
@@ -5635,6 +5683,7 @@ function setPostAuthStyleRefreshToken() {
   $("#refresh_postAuthStyleCheckToken").prop("checked", true);
   $("#refresh_headerAuthStyleCheckToken").prop("checked", false);
   localStorage.setItem("refresh_post_auth_style", true);
+  recalculateRefreshRequestDescription();
   log.debug("Leaving setPostAuthStyleRefreshToken(): token_post_auth_style=" +
             localStorage.getItem("refresh_post_auth_style") + ".");
   return false;
@@ -5645,6 +5694,7 @@ function setHeaderAuthStyleRefreshToken() {
   $("#refresh_postAuthStyleCheckToken").prop("checked", false);
   $("#refresh_headerAuthStyleCheckToken").prop("checked", true);
   localStorage.setItem("refresh_post_auth_style", false);
+  recalculateRefreshRequestDescription();
   log.debug("Leaving setHeaderAuthStyleRefreshToken(): " +
             "refresh_post_auth_style=" +
             localStorage.getItem("refresh_post_auth_style") + ".");
