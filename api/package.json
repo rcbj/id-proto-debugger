@@ -11,7 +11,7 @@
     "@grpc/grpc-js": "^1.14.4",
     "@grpc/proto-loader": "^0.8.1",
     "@xmldom/xmldom": "^0.9.12",
-    "axios": "^1.16.0",
+    "axios": "^1.20.0",
     "body-parser": "^2.2.2",
     "bunyan": "latest",
     "cors": "latest",
