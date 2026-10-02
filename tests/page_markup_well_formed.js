@@ -224,8 +224,12 @@ function formsAndFieldsetsNest() {
   const files = htmlFilesUnder(PUBLIC_DIR);
   const findings = [];
   for (const file of files) {
-    const source = fs.readFileSync(file, "utf8").replace(
-      /<!--[\s\S]*?-->|<script\b[\s\S]*?<\/script>|<style\b[\s\S]*?<\/style>/gi,
+    // An end tag is closed the way a browser closes it: `</script >` and
+    // `</script foo>` both end the element, and a comment may end `--!>`.
+    const source = fs.readFileSync(file, "utf8").replace(new RegExp(
+      "<!--[\\s\\S]*?--!?>|" +
+      "<script\\b[\\s\\S]*?<\\/script\\b[^>]*>|" +
+      "<style\\b[\\s\\S]*?<\\/style\\b[^>]*>", "gi"),
       function (block) {
         return block.replace(/[^\n]/g, " ");
       });
