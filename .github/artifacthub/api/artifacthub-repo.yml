@@ -1,0 +1,8 @@
+# Artifact Hub repository metadata for
+#   oci://ghcr.io/rcbj/id-proto-debugger-api
+# Not read from git: .github/workflows/dockerimage.yml pushes it to that image
+# repository as the special tag `artifacthub.io`, which is where Artifact Hub
+# looks for it. A matching repositoryID is what earns the Verified Publisher
+# badge. The ID is Artifact Hub's, shown in its control panel and public in
+# https://artifacthub.io/api/v1/repositories/search?kind=12&name=id-proto
+repositoryID: 2f338bae-8c03-4b66-932f-cf9163465004
