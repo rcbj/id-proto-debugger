@@ -664,9 +664,15 @@ function dbgSetAllPanes(expand) {
 </div>
 
 <div class="step2 dbg-pane" id="step2">
-  <form name="auth_step" id="auth_step">
-    <legend class="dbg-legend" id="authz_expand_button" onclick="return oauth2_oidc_1.onClickShowGenericFieldSet('authz_fieldset');"><span id="h2_title_1" name="">Request Authorization Code</span></legend>
+  <!-- Both forms are INSIDE the fieldset, so collapsing the pane hides the
+       Authorize button and the Request box with everything else. The
+       auth_step form used to open outside the fieldset and close inside it;
+       browsers recover from that one way and the static build's minifier
+       another, which left those two on screen under a collapsed pane on the
+       deployed sites. tests/page_markup_well_formed.js holds the nesting. -->
+  <legend class="dbg-legend" id="authz_expand_button" onclick="return oauth2_oidc_1.onClickShowGenericFieldSet('authz_fieldset');"><span id="h2_title_1" name="">Request Authorization Code</span></legend>
   <fieldset id="authz_fieldset" name="authz_fieldset" style="display: none;">
+    <form name="auth_step" id="auth_step">
     <table>
       <tbody>
         <div class="form-group">

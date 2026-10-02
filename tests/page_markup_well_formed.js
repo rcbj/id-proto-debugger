@@ -203,6 +203,78 @@ function everyEncryptionPaneHasItsFields() {
   log.debug("Leaving everyEncryptionPaneHasItsFields().");
 }
 
+// The third construct, and the one that hid nothing and showed too much:
+// a <form> and a <fieldset> that OVERLAP rather than nest. oauth2_oidc_1.html
+// opened `<form id="auth_step">` before the Request Authorization Code
+// pane's `<fieldset id="authz_fieldset">` and closed it inside, just above the
+// second form that holds the Authorize button and the Request box. Chrome
+// keeps that second form inside the fieldset; the static build's minifier
+// closes the fieldset at the `</form>` instead, so on idptools.com and
+// test.idptools.com collapsing the pane hid every field but those two. Same
+// lesson as the header: a page that relies on one recovery and ships through
+// another behaves differently deployed.
+//
+// Only form and fieldset are tracked. They are the two elements whose extent
+// decides what a pane hides and what a submit sends, and a full nesting
+// validator would be a second HTML parser to keep right. Comments, scripts
+// and styles are blanked first, keeping their newlines so the line numbers
+// stay true.
+function formsAndFieldsetsNest() {
+  log.debug("Entering formsAndFieldsetsNest().");
+  const files = htmlFilesUnder(PUBLIC_DIR);
+  const findings = [];
+  for (const file of files) {
+    const source = fs.readFileSync(file, "utf8").replace(
+      /<!--[\s\S]*?-->|<script\b[\s\S]*?<\/script>|<style\b[\s\S]*?<\/style>/gi,
+      function (block) {
+        return block.replace(/[^\n]/g, " ");
+      });
+    const name = path.relative(PUBLIC_DIR, file);
+    const open = [];
+    const tags = /<(\/?)(form|fieldset)\b[^>]*>/gi;
+    let match;
+    while ((match = tags.exec(source)) !== null) {
+      const line = source.slice(0, match.index).split("\n").length;
+      const tag = match[2].toLowerCase();
+      if (!match[1]) {
+        open.push({ tag: tag, line: line });
+        continue;
+      }
+      const top = open[open.length - 1];
+      if (!top) {
+        findings.push(name + ":" + line + ": </" + tag + "> with nothing " +
+          "open");
+        continue;
+      }
+      if (top.tag !== tag) {
+        findings.push(name + ":" + line + ": </" + tag + "> closes across " +
+          "the <" + top.tag + "> opened on line " + top.line);
+        const at = open.map(function (one) {
+          return one.tag;
+        }).lastIndexOf(tag);
+        if (at >= 0) {
+          open.splice(at, 1);
+        }
+        continue;
+      }
+      open.pop();
+    }
+    open.forEach(function (one) {
+      findings.push(name + ":" + one.line + ": <" + one.tag + "> is never " +
+        "closed");
+    });
+  }
+  assert.deepStrictEqual(findings, [],
+    "These forms and fieldsets overlap instead of nesting:\n  " +
+    findings.join("\n  ") + "\n" +
+    "A browser and the static build's minifier recover from that " +
+    "differently, so what a collapsed pane hides, or what a form submits, " +
+    "differs between this suite and the deployed site.");
+  log.info("OK — " + files.length + " page(s), every form and fieldset " +
+    "nests.");
+  log.debug("Leaving formsAndFieldsetsNest().");
+}
+
 async function test() {
   log.debug("Entering test().");
   if (!isCheckout()) {
@@ -218,6 +290,7 @@ async function test() {
   }
   everyAttributeValueIsClosed();
   everyEncryptionPaneHasItsFields();
+  formsAndFieldsetsNest();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }
