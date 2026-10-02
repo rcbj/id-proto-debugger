@@ -241,12 +241,18 @@ RUN groupadd --gid 10001 appuser \
 # dockerimage.yml — issue #154) to this repository, so it lists under the
 # repository's Packages and takes its access from it; `revision` is the commit
 # the image was built from, beside the build number version.json already
-# carries. A LABEL is metadata, not a layer.
+# carries. A LABEL is metadata, not a layer. The io.artifacthub.* labels
+# are what artifacthub.io reads when it indexes the published image;
+# readme-url is the one it refuses the package without.
 LABEL org.opencontainers.image.source="https://github.com/rcbj/id-proto-debugger" \
       org.opencontainers.image.title="id-proto-debugger-client" \
       org.opencontainers.image.description="id-proto-debugger: the web client (port 3000)" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.revision="${GIT_COMMIT}"
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      io.artifacthub.package.readme-url="https://raw.githubusercontent.com/rcbj/id-proto-debugger/master/README.md" \
+      io.artifacthub.package.logo-url="https://raw.githubusercontent.com/rcbj/id-proto-debugger/master/docs/images/oauth2oidcdebugger+iyasec-logo-transparent.png" \
+      io.artifacthub.package.license="MIT" \
+      io.artifacthub.package.keywords="oauth2,oidc,saml,ws-federation,kerberos,ldap,scim,spiffe,identity,debugger"
 
 ENV HOME=/home/appuser
 USER appuser

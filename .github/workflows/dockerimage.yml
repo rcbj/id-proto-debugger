@@ -178,6 +178,35 @@ jobs:
              printf '%s' "${rows}"
            } >> "$GITHUB_STEP_SUMMARY"
 
+       # ARTIFACT HUB'S VERIFIED PUBLISHER BADGE. For a container-image
+       # repository Artifact Hub does not read git: it looks for its
+       # repository metadata file in the IMAGE repository, under the special
+       # tag `artifacthub.io`, as an OCI artifact with its own media types.
+       # Its repositoryID matching the one Artifact Hub assigned is the proof
+       # of ownership. ghcr.io only — that is where both Artifact Hub
+       # repositories point. Idempotent, so every publishing build re-pushes
+       # it; the per-image metadata (readme-url and the rest) is the
+       # io.artifacthub.* LABELs in each Dockerfile, not this file.
+       - name: Install oras
+         if: ${{ github.event_name != 'pull_request' }}
+         uses: oras-project/setup-oras@v1
+       - name: Publish Artifact Hub repository metadata
+         if: ${{ github.event_name != 'pull_request' }}
+         run: |
+           set -euo pipefail
+           for name in api client; do
+             # oras takes the path as given into the layer's title, so push
+             # from the file's own directory and it is named
+             # artifacthub-repo.yml, as Artifact Hub expects.
+             (
+               cd ".github/artifacthub/${name}"
+               oras push \
+                 "ghcr.io/rcbj/id-proto-debugger-${name}:artifacthub.io" \
+                 --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+                 artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+             )
+           done
+
        - name: Tag this build
          if: ${{ github.event_name != 'pull_request' }}
          env:
