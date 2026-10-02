@@ -85,8 +85,14 @@ jobs:
        #
        # Tagged M.N.O — the SAME string as the git tag the next step puts on
        # this commit, so an image names its commit and a commit names its
-       # image — and a floating tag per branch: `latest` from master, which is
-       # what a release is, and `develop` from develop.
+       # image — and `latest`, because a master build is what a release is.
+       #
+       # FROM MASTER ONLY (2026-10-02). develop used to publish too, under a
+       # floating `develop` tag and its own M.N.O, and that put every
+       # half-finished integration on two public registries. develop and pull
+       # requests still BUILD the images, so a Dockerfile that breaks is still
+       # caught there; only the push waits for master. A workflow_dispatch run
+       # publishes only when it is dispatched on master.
        #
        # NOT ghcr.io/rcbj/id-proto-debugger/<name>. That namespace is the
        # test stack's (tests.yml pushes it under the commit and the branch),
@@ -94,7 +100,7 @@ jobs:
        # configuration; sharing a name would let one workflow overwrite the
        # other's tag.
        #
-       # Not from a pull request: its GITHUB_TOKEN may not write packages and
+       # Never from a pull request: its GITHUB_TOKEN may not write packages and
        # its images are nobody's to keep.
        #
        # A NEW PACKAGE STARTS PRIVATE. The OCI `source` label in both
@@ -114,11 +120,11 @@ jobs:
        # before the first push.
        # ---------------------------------------------------------------------
        - name: Log in to GitHub Container Registry
-         if: ${{ github.event_name != 'pull_request' }}
+         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
          run: echo "${{ secrets.GITHUB_TOKEN }}" |
               docker login ghcr.io -u "${{ github.actor }}" --password-stdin
        - name: Log in to Docker Hub
-         if: ${{ github.event_name != 'pull_request' }}
+         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
          env:
            DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
            DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -133,7 +139,7 @@ jobs:
              docker login docker.io -u "${DOCKERHUB_USERNAME}" --password-stdin
        - name: Publish images
          id: publish
-         if: ${{ github.event_name != 'pull_request' }}
+         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
          env:
            VERSION: ${{ steps.version.outputs.version }}
            BRANCH: ${{ github.ref_name }}
@@ -142,7 +148,6 @@ jobs:
            REGISTRIES="ghcr.io/rcbj docker.io/iyasec"
            case "${BRANCH}" in
              master)  FLOAT=latest ;;
-             develop) FLOAT=develop ;;
              *)       FLOAT="" ;;
            esac
            published=""
@@ -188,10 +193,10 @@ jobs:
        # it; the per-image metadata (readme-url and the rest) is the
        # io.artifacthub.* LABELs in each Dockerfile, not this file.
        - name: Install oras
-         if: ${{ github.event_name != 'pull_request' }}
+         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
          uses: oras-project/setup-oras@v1
        - name: Publish Artifact Hub repository metadata
-         if: ${{ github.event_name != 'pull_request' }}
+         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
          run: |
            set -euo pipefail
            for name in api client; do

@@ -423,7 +423,29 @@ function valuesOf(value) {
   }
   var list = Array.isArray(value) ? value : [value];
   log.debug("Leaving valuesOf(). " + list.length + " value(s).");
-  return list.map(String);
+  // A CLIENT SECRET IS A RECORD since iya-sts 2dc251b4 (an application may
+  // hold several, each with an id, a creation time and an expiry), so the
+  // entry answers `[{id, secret, created, expires}]` where it used to answer
+  // the string. The registry hands each record back SERIALIZED, a JSON string
+  // per value, so it is parsed here; an object is accepted too. What a job
+  // presents is the secret, so that is the value compared — the record as a
+  // whole would never equal it and would report a secret that is there as
+  // missing.
+  return list.map(function (one) {
+    var record = one;
+    if (typeof one === "string" && one.charAt(0) === "{") {
+      try {
+        record = JSON.parse(one);
+      } catch (e) {
+        record = one;
+      }
+    }
+    if (record !== null && typeof record === "object" &&
+        typeof record.secret === "string") {
+      return record.secret;
+    }
+    return String(one);
+  });
 }
 
 // ---------------------------------------------------------------------------
