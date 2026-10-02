@@ -204,7 +204,9 @@ async function test() {
     grantTypes: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
                  "authorization_code", "refresh_token"],
     redirectUris: [REDIRECT_URI],
-    scopes: ["openid"],
+    // The configuration's scope, not `openid` (#327): a wallet needs an
+    // access token, never an ID Token.
+    scopes: common.credentialScopes(meta, [LDP_CONFIG_ID]),
     why: "the wallet whose refresh token this job spends twice" });
 
   // --- the credential the wallet already holds ------------------------------
@@ -213,7 +215,8 @@ async function test() {
   await registry.ensurePerson(stsBase, HOLDER, HOLDER_PASSWORD);
   const granted = await registry.authorizationCode(stsBase, {
     clientId: CLIENT_ID, redirectUri: REDIRECT_URI, username: HOLDER,
-    password: HOLDER_PASSWORD, scope: "openid" });
+    password: HOLDER_PASSWORD,
+    scope: common.credentialScopes(meta, [LDP_CONFIG_ID]).join(" ") });
   const initial = await common.httpJson(issuerBase + "/oauth2/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
