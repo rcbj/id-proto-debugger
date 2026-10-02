@@ -595,17 +595,43 @@ async function reconcile(base, identifier, protocols, fields) {
 // WHAT AN ENTRY HOLDS, AS THE STRINGS A JOB PROVISIONED. A client secret is
 // a RECORD since rcbj/iya-sts@2dc251b4 — `{id, secret, created, expires}`,
 // several per application — where it was the bare string, so a record is
-// read as its `secret`. A plain string, which an sts before that change
-// returns, is read as itself, so one file runs against both.
+// read as its `secret`. The management API answers each record as its JSON
+// TEXT (the stored value, opened where it was sealed), so a string that
+// parses as an object carrying `secret` is a record too. A plain string,
+// which an sts before that change returns, is read as itself, so one file
+// runs against both.
+function recordOf(one) {
+  log.debug("Entering recordOf().");
+  if (one && typeof one === "object") {
+    log.debug("Leaving recordOf().");
+    return one;
+  }
+  if (typeof one !== "string" || one.charAt(0) !== "{") {
+    log.debug("Leaving recordOf().");
+    return null;
+  }
+  try {
+    var parsed = JSON.parse(one);
+    log.debug("Leaving recordOf().");
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (e) {
+    // Not JSON: an ordinary value that happens to start with a brace.
+    log.debug("Caught in recordOf(): " + ((e && e.message) || e));
+    log.debug("Leaving recordOf().");
+    return null;
+  }
+}
+
 function heldValues(value) {
   log.debug("Entering heldValues().");
   var list = value === undefined || value === null ? [] :
     (Array.isArray(value) ? value : [value]);
   log.debug("Leaving heldValues().");
   return list.map(function (one) {
-    return one && typeof one === "object" &&
-           Object.prototype.hasOwnProperty.call(one, "secret") ?
-      one.secret : one;
+    var record = recordOf(one);
+    return record &&
+           Object.prototype.hasOwnProperty.call(record, "secret") ?
+      record.secret : one;
   });
 }
 
