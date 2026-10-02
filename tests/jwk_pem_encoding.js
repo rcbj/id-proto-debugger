@@ -994,6 +994,35 @@ function testsImageHasNoCollidingFilenames() {
 // conservative direction: the check then asks for a COPY that may not be
 // needed rather than missing one that is.
 // ---------------------------------------------------------------------------
+// A TypeScript source as JavaScript acorn can parse, so stsRequiresIn() can
+// tell a lazy require from a load-time one in a module the image takes
+// compiled from the mock's own image. Without this every require in a .ts
+// file read as load-time, and on the 2026-10-02 bump that demanded the LDAP
+// server, authn and logout for cell_sessions.ts, which reaches them only
+// inside functions. TRANSFORM mode, not strip-only: the mock writes
+// `import x = require("./y")`, which strip-only mode refuses, and transform
+// mode turns into the require it is. Node 22.13+ has the function; on an
+// older node the source is returned as it is and the conservative
+// everything-is-load-time fallback in stsRequiresIn() applies, as before.
+function typeScriptAsJavaScript(file, source) {
+  log.debug("Entering typeScriptAsJavaScript(). file=" + file);
+  const strip = require("module").stripTypeScriptTypes;
+  if (!/\.ts$/.test(file) || typeof strip !== "function") {
+    log.debug("Leaving typeScriptAsJavaScript(). Unchanged.");
+    return source;
+  }
+  try {
+    const js = strip(source, { mode: "transform" });
+    log.debug("Leaving typeScriptAsJavaScript(). Transformed.");
+    return js;
+  } catch (e) {
+    log.warn("[closure] " + file + " did not transform (" + e.message +
+             "); reading it as it is.");
+    log.debug("Leaving typeScriptAsJavaScript(). Untransformed.");
+    return source;
+  }
+}
+
 function stsRequiresIn(file, source) {
   log.debug("Entering stsRequiresIn().");
   const acorn = require("acorn");
@@ -1085,6 +1114,9 @@ const LAZY_STS_REQUIRES = {
     // TypeScript-only since the 2026-09-27 bump, in the listener pass beside
     // tls_server.js above and for the same reason.
     "tls/client_hello.js": true,
+    // Since the 2026-10-02 bump; the SPIFFE listener, started in the same
+    // pass and for the same reason. See the block at the end of this table.
+    "spiffe/spiffe_server.js": true,
   },
   // TYPESCRIPT-ONLY, so this one is not a judgement call the way the two
   // above are: `common/account_state.ts` has no .js beside it in a CHECKOUT
@@ -1106,6 +1138,10 @@ const LAZY_STS_REQUIRES = {
     // the running service is about to issue.
     "risk/risk_engine.js": true,
     "common/device_recognition.js": true,
+    // Since the 2026-10-02 bump: the XACML verdicts on a scope and on a
+    // transfer, asked by the same running service at the same point.
+    "xacml/xacml_scope_verdicts.js": true,
+    "xacml/xacml_transfer_verdicts.js": true,
   },
   // THE 2026-09-27 BUMP (iya-sts 6d18941c) AND THE TYPESCRIPT CONVERSION.
   // Every entry below is a module that exists only as .ts in a checkout, is
@@ -1134,7 +1170,6 @@ const LAZY_STS_REQUIRES = {
   },
   "oauth-oidc/client_auth.js": { "oauth-oidc/client_attestation.js": true },
   "oauth-oidc/client_jwks.js": { "federation/federation_http.js": true },
-  "persistence/persistence.js": { "risk/risk_store.js": true },
   "persistence/persistence_replication.js": { "cluster/scheduler.js": true },
   "persistence/persistence_minted.js": { "cluster/scheduler.js": true },
   "common/pki_revocation.js": { "cluster/scheduler.js": true },
@@ -1148,6 +1183,40 @@ const LAZY_STS_REQUIRES = {
   "cluster/cluster.js": { "cluster/scheduler.js": true },
   "cluster/cluster_claims.js": { "cluster/scheduler.js": true },
   "cluster/cluster_counters.js": { "cluster/scheduler.js": true },
+  // THE 2026-10-02 BUMP (iya-sts develop 544a65a). The first that
+  // typeScriptAsJavaScript() reads properly, so these are lazy BY THE PARSE
+  // of the TypeScript, not by assumption. Each is down a path only a RUNNING
+  // service takes: moving a session or a placement between cells and
+  // delivering what that tells the other cells, the sign-in, sign-out and
+  // LDAP listeners a session hand-off reaches, the scheduler and a
+  // synchronous query a full persistence start opens, the Postgres directory
+  // codec and sealed settings, the SPIFFE server a request pool starts, and
+  // the XACML verdicts a token endpoint asks for. The same six in-process
+  // jobs as above ran in the containerized suite against an image holding
+  // exactly what tests/Dockerfile copies, and all six pass.
+  "common/cell_placement.js": {
+    "common/cell_channel.js": true,
+    "common/cell_routing.js": true,
+    "common/cell_transfer.js": true,
+  },
+  "common/cell_sessions.js": {
+    "authn/authn.js": true,
+    "common/cell_channel.js": true,
+    "common/cell_deliveries.js": true,
+    "common/cell_transfer.js": true,
+    "ldap/ldap_server.js": true,
+    "logout/logout.js": true,
+  },
+  "persistence/persistence.js": {
+    "risk/risk_store.js": true,
+    "cluster/scheduler.js": true,
+    "common/sync_query.js": true,
+    "persistence/directory_codec.js": true,
+    "persistence/sealed_settings.js": true,
+  },
+  "persistence/persistence_postgres.js": {
+    "persistence/directory_codec.js": true,
+  },
 };
 
 function stsModuleClosureIsCopied(dockerfile) {
@@ -1228,7 +1297,7 @@ function stsModuleClosureIsCopied(dockerfile) {
     // COPY could satisfy. Stripping comment lines dealt with that; a parse
     // deals with it and with the second reason too, which is knowing whether a
     // require runs at LOAD or only when somebody calls the function it is in.
-    const src = fs.readFileSync(file, "utf8");
+    const src = typeScriptAsJavaScript(file, fs.readFileSync(file, "utf8"));
     // Both `./x` and `../dir/x`, resolved against the requiring file's own
     // directory and normalised back to a path relative to the mock's root —
     // which is the form the COPY sources above are in.

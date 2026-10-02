@@ -144,91 +144,99 @@ jobs:
   # levers that would actually work are SPLITTING job 109, or a runner with
   # more cores. Fix one of those before touching this again.
 
-  coverage:
-    needs: mirror
-    runs-on: ubuntu-latest
-    env:
-      # Its own tag: these images are built with COVERAGE=true, so they are
-      # not the same images as the test job's under the same names.
-      IMAGE_TAG: ${{ github.sha }}-coverage
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v7
-        with:
-          # The mock STS submodule — see the test job above. This run uses
-          # --abort-on-container-exit, so a service that cannot be built takes the
-          # whole coverage run down with it.
-          # `recursive`, not `true`, and the difference is load-bearing: there
-          # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP
-          # library the api's client uses, and sts/node-ldapjs is the same
-          # library inside the mock STS, which its embedded directory is built
-          # on. `true` stops one level short of the second, and an uninitialised
-          # submodule is an EMPTY DIRECTORY — so the sts image builds, npm
-          # installs a package with no main, and the container dies at startup
-          # with `Cannot find module 'ldapjs'`, naming a package rather than a
-          # submodule.
-          submodules: recursive
-      - name: Install docker-compose
-        uses: KengoTODA/actions-setup-docker-compose@v1
-        with:
-          version: '5.2.0'
-      # THE IMAGE MIRROR AND THE BUILT IMAGES ARE PRIVATE PACKAGES on ghcr.io.
-      # GITHUB_TOKEN carries packages: write (above), and a package this
-      # repository's workflows created grants it access. Compose runs WITHOUT
-      # sudo on a runner, so this login is the one it uses.
-      - name: Log in to GitHub Container Registry
-        run: echo "${{ secrets.GITHUB_TOKEN }}" |
-             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - name: Run test suite with coverage
-        # `info`, not the mock's own default of `debug`. That log is the record
-        # of everything the mock issued and is why debug is the default for a
-        # run somebody is watching — but nobody reads a passing CI run's log,
-        # and run-coverage.sh's own header measures what it costs: about half
-        # of that service's CPU, 156MB written in sixteen seconds, and `info`
-        # roughly doubles what one instance can answer with several jobs
-        # driving it. The variable outranks whatever env/docker-tests.js says,
-        # so nothing on this machine or anybody else's changes with it.
-        #
-        # THE api AND THE CLIENT ARE AT `info` TOO NOW, and not through a
-        # variable — issue #269's second half was a decision rather than a
-        # knob. Their level comes from the config file alone and the client's
-        # is compiled into the browser bundle by browserify, so no runtime
-        # variable can reach either; `api/env/docker-tests.js` changed on
-        # 2026-08-31 and `client/src/env/docker-tests.js` on 2026-09-01, each
-        # saying so beside the key. `env/local.js` stays at `debug` on both,
-        # which is the stack somebody watches. The client's mattered most:
-        # that one is what every PAGE logs at, in Chrome, while this job is
-        # serving Istanbul-instrumented bundles to a pool of jobs whose every
-        # browser wait is two seconds.
-        env:
-          STS_LOG_LEVEL: info
-        run: ./run-coverage.sh
-      - name: Push built images
-        if: (success() || failure()) && github.event_name != 'pull_request'
-        run: .github/scripts/push-stack-images.sh
-             "${{ github.ref_name }}-coverage"
-      # coverage/ and tests/report are written as root inside the containers.
-      - name: Normalize coverage permissions
-        if: always()
-        run: sudo chown -R "$(id -u):$(id -g)" coverage tests/report || true
-      - name: Upload coverage report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-report
-          path: coverage/
-          if-no-files-found: warn
-          retention-days: 30
-      # Distinct artifact name from the test job (artifact names must be unique
-      # across a workflow run).
-      - name: Upload Test Report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: coverage-test-report
-          path: tests/report/latest
-          if-no-files-found: warn
-          retention-days: 30
+  # THE COVERAGE JOB IS SWITCHED OFF (2026-10-02). On run 36984561174 the
+  # hosted runner lost contact with GitHub about a third of the way through
+  # the instrumented suite and was failed an hour later, with no step after
+  # the suite run. The plain test job on the same commit passed. A
+  # standard ubuntu-latest runner cannot be given more memory or cores, so
+  # until this job has a larger runner, run ./run-coverage.sh locally when
+  # a coverage report is wanted. To restore it, uncomment the block below.
+
+#   coverage:
+#     needs: mirror
+#     runs-on: ubuntu-latest
+#     env:
+#       # Its own tag: these images are built with COVERAGE=true, so they are
+#       # not the same images as the test job's under the same names.
+#       IMAGE_TAG: ${{ github.sha }}-coverage
+#     steps:
+#       - name: Checkout Repository
+#         uses: actions/checkout@v7
+#         with:
+#           # The mock STS submodule — see the test job above. This run uses
+#           # --abort-on-container-exit, so a service that cannot be built takes the
+#           # whole coverage run down with it.
+#           # `recursive`, not `true`, and the difference is load-bearing: there
+#           # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP
+#           # library the api's client uses, and sts/node-ldapjs is the same
+#           # library inside the mock STS, which its embedded directory is built
+#           # on. `true` stops one level short of the second, and an uninitialised
+#           # submodule is an EMPTY DIRECTORY — so the sts image builds, npm
+#           # installs a package with no main, and the container dies at startup
+#           # with `Cannot find module 'ldapjs'`, naming a package rather than a
+#           # submodule.
+#           submodules: recursive
+#       - name: Install docker-compose
+#         uses: KengoTODA/actions-setup-docker-compose@v1
+#         with:
+#           version: '5.2.0'
+#       # THE IMAGE MIRROR AND THE BUILT IMAGES ARE PRIVATE PACKAGES on ghcr.io.
+#       # GITHUB_TOKEN carries packages: write (above), and a package this
+#       # repository's workflows created grants it access. Compose runs WITHOUT
+#       # sudo on a runner, so this login is the one it uses.
+#       - name: Log in to GitHub Container Registry
+#         run: echo "${{ secrets.GITHUB_TOKEN }}" |
+#              docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+#       - name: Run test suite with coverage
+#         # `info`, not the mock's own default of `debug`. That log is the record
+#         # of everything the mock issued and is why debug is the default for a
+#         # run somebody is watching — but nobody reads a passing CI run's log,
+#         # and run-coverage.sh's own header measures what it costs: about half
+#         # of that service's CPU, 156MB written in sixteen seconds, and `info`
+#         # roughly doubles what one instance can answer with several jobs
+#         # driving it. The variable outranks whatever env/docker-tests.js says,
+#         # so nothing on this machine or anybody else's changes with it.
+#         #
+#         # THE api AND THE CLIENT ARE AT `info` TOO NOW, and not through a
+#         # variable — issue #269's second half was a decision rather than a
+#         # knob. Their level comes from the config file alone and the client's
+#         # is compiled into the browser bundle by browserify, so no runtime
+#         # variable can reach either; `api/env/docker-tests.js` changed on
+#         # 2026-08-31 and `client/src/env/docker-tests.js` on 2026-09-01, each
+#         # saying so beside the key. `env/local.js` stays at `debug` on both,
+#         # which is the stack somebody watches. The client's mattered most:
+#         # that one is what every PAGE logs at, in Chrome, while this job is
+#         # serving Istanbul-instrumented bundles to a pool of jobs whose every
+#         # browser wait is two seconds.
+#         env:
+#           STS_LOG_LEVEL: info
+#         run: ./run-coverage.sh
+#       - name: Push built images
+#         if: (success() || failure()) && github.event_name != 'pull_request'
+#         run: .github/scripts/push-stack-images.sh
+#              "${{ github.ref_name }}-coverage"
+#       # coverage/ and tests/report are written as root inside the containers.
+#       - name: Normalize coverage permissions
+#         if: always()
+#         run: sudo chown -R "$(id -u):$(id -g)" coverage tests/report || true
+#       - name: Upload coverage report
+#         if: always()
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: coverage-report
+#           path: coverage/
+#           if-no-files-found: warn
+#           retention-days: 30
+#       # Distinct artifact name from the test job (artifact names must be unique
+#       # across a workflow run).
+#       - name: Upload Test Report
+#         if: always()
+#         uses: actions/upload-artifact@v7
+#         with:
+#           name: coverage-test-report
+#           path: tests/report/latest
+#           if-no-files-found: warn
+#           retention-days: 30
 
 
 

@@ -3387,14 +3387,16 @@ function recalculateTokenRequestDescription()
     // the body and into HTTP Basic, which clientBasicAuthHeader() builds.
     var headerLine = "";
     if (!postAuthStyle && !!clientSecret) {
-      headerLine = "Authorization: Basic base64(" + clientId +
-          ":<client_secret>)\n";
+      // <client_secret> is a placeholder, not markup, so this line is
+      // added AFTER DOMPurify.sanitize() below, which would delete it as an
+      // unknown tag; only the client id in it came from the user.
+      headerLine = "Authorization: Basic base64(" +
+          DOMPurify.sanitize(clientId) + ":<client_secret>)\n";
     }
     $("#display_token_request_form_textarea1")
-      .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() + "\n" +
-                              headerLine +
-                              "Message Body:\n" +
-                              bodyLines.join("&\n")));
+      .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() + "\n") +
+           headerLine +
+           DOMPurify.sanitize("Message Body:\n" + bodyLines.join("&\n")));
     if ( resourceComponent.length > 0) {
        $("#display_token_request_form_textarea1")
          .val( $("#display_token_request_form_textarea1").val() + "&\n" +
@@ -3449,8 +3451,10 @@ function recalculateRefreshRequestDescription()
           $("#refresh_postAuthStyleCheckToken").is(":checked");
       var headerLine = "";
       if (!postAuthStyle && !!clientSecret) {
-        headerLine = "Authorization: Basic base64(" + clientId +
-            ":<client_secret>)\n";
+        // Added after sanitizing, as recalculateTokenRequestDescription()
+        // explains.
+        headerLine = "Authorization: Basic base64(" +
+            DOMPurify.sanitize(clientId) + ":<client_secret>)\n";
       }
       var bodyLines = [
         "grant_type=" + grant_type,
@@ -3462,10 +3466,11 @@ function recalculateRefreshRequestDescription()
       }
       bodyLines.push("scope=" + $("#refresh_scope").val());
       $("#display_refresh_request_form_textarea1")
-        .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() + "\n" +
-                                headerLine +
-                                "Message Body:\n" +
-                                bodyLines.join("&\n") + "\n"));
+        .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() +
+                                "\n") +
+             headerLine +
+             DOMPurify.sanitize("Message Body:\n" + bodyLines.join("&\n") +
+                                "\n"));
     }
   }
   log.debug("Leaving recalculateRefreshRequestDescription().");

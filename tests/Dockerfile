@@ -655,7 +655,11 @@ COPY sts/common/crypto.js ./sts/common/
 # THEY ARE ON THIS LINE RATHER THAN ON TWO NEW ONES because a COPY is a layer
 # and everyDockerfileStaysUnderTheLayerLimit() in tests/jwk_pem_encoding.js
 # counts them. Nothing else about the grouping means anything.
-COPY sts/common/pq_jose.js sts/common/worker.js sts/common/worker_pool.js ./sts/common/
+#
+# THEY LEFT AGAIN at the 2026-10-02 bump: iya-sts #363 (c386f1af) runs the
+# post-quantum operations on node's own OpenSSL and deleted the pool and its
+# worker, so pq_jose.js travels alone.
+COPY sts/common/pq_jose.js ./sts/common/
 COPY sts/common/vendored/xmldsig.js ./sts/common/vendored/
 COPY sts/common/realms.js sts/common/delegation.js ./sts/common/
 # ---------------------------------------------------------------------------
@@ -798,6 +802,32 @@ COPY sts/common/pki_cloud_anchors.json ./sts/common/
 COPY sts/common/pki_device_anchors.json ./sts/common/
 COPY sts/oauth-oidc/client_jwks.js sts/oauth-oidc/fapi.js ./sts/oauth-oidc/
 COPY --from=mocksts /usr/src/sts/common/enrollment_profiles.js ./sts/common/
+# ---------------------------------------------------------------------------
+# THE EIGHTH recomputation (2026-10-02), for the gitlink move to iya-sts
+# develop 544a65a — about 470 commits, and the largest set yet, because two
+# features of the mock reached modules this image already carries.
+#
+# Post-quantum signing moved onto node's own OpenSSL (iya-sts #363), which
+# deleted worker.js and worker_pool.js (see the pq_jose.js line above) and
+# added pq_native.js, which crypto.js, pq_jose.js and both vendored PQC
+# modules now require at load.
+#
+# The mock's CELLS (a deployment split into cells, with sessions and
+# placement per cell) put cell_placement and cell_sessions at the top of
+# app.js, cells under persistence.js, and a worker_channel under cluster.js,
+# cache_registry.js and request_pool.js. Those seven are TypeScript-only, so
+# they come compiled out of the mock's image, as enrollment_profiles.js
+# does. tiers.js, persistence_tiered.js and directory_queries.js are
+# ordinary .js. Every one of the eleven needs only bunyan and node builtins.
+#
+# The set was computed over the COMPILED tree in the mock's image (a parse
+# of each load-time require, from every module this file carries), not one
+# missing module at a time; stsModuleClosureIsCopied() now reads a
+# TypeScript source through node's own type stripping, so it agrees.
+# ---------------------------------------------------------------------------
+COPY sts/common/pq_native.js ./sts/common/
+COPY sts/persistence/tiers.js sts/persistence/persistence_tiered.js sts/persistence/directory_queries.js ./sts/persistence/
+COPY --from=mocksts /usr/src/sts/common/cells.js /usr/src/sts/common/cell_locator.js /usr/src/sts/common/cell_placement.js /usr/src/sts/common/cell_sessions.js /usr/src/sts/common/process_memory.js /usr/src/sts/common/sourced_attributes.js /usr/src/sts/common/worker_channel.js ./sts/common/
 # The mock's manifest, read by the final stage for the Express version these
 # modules are written against. Flat and renamed on purpose; see the RUN that
 # installs it.
