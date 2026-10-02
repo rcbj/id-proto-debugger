@@ -1,0 +1,28 @@
+# GitHub Pages (https://rcbj.github.io/id-proto-debugger/), the site every
+# debugger page's header and footer links to as "Documentation". The Pages
+# source is the legacy one (branch `master`, path `/`), so Jekyll builds the
+# whole repository and checks out its SUBMODULES with it.
+#
+# THE SUBMODULES ARE EXCLUDED (2026-10-02). sts/ is rcbj/iya-sts, which has a
+# Jekyll docs site of its own on the minima theme. Its
+# docs/assets/main.scss does `@import "minima"` (iya-sts 818207f0,
+# 2026-09-22), and this site builds on the default primer theme, so Sass
+# could not find the import and every Pages build on master failed from the
+# moment the sts/ pin crossed that commit. The site stayed frozen at the
+# 2026-09-15 build. api/node-ldapjs is the same kind of thing: somebody
+# else's repository and somebody else's docs. Neither was ever published
+# here, and nothing here links into either.
+#
+# Jekyll 3 REPLACES its default exclude list with this one rather than
+# adding to it, so the defaults are listed again below.
+theme: jekyll-theme-primer
+exclude:
+  - sts
+  - api/node-ldapjs
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor/bundle/
+  - vendor/cache/
+  - vendor/gems/
+  - vendor/ruby/
