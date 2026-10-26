@@ -1293,9 +1293,13 @@ async function theKeyExchangeIsReportedSeparately() {
       return;
     }
 
-    // Node cannot NAME the hybrid group — its API has no case for an ML-KEM
-    // one — so the assertion is exactly that: the handshake completed, and
-    // the report says node could not name what was used rather than guessing.
+    // Whether node can NAME the hybrid group depends on the release: through
+    // 24.16 its API had no case for an ML-KEM one and answered {}, and from
+    // 24.22.1 it answers `{ type: 'TLSGroup', name: 'X25519MLKEM768' }`. So
+    // the assertion follows what THIS node did: a name must be the group
+    // asked for and the note must then say the connection IS protected; no
+    // name must be reported as exactly that, with the note explaining the
+    // two things an absent name can mean rather than guessing.
     const hybrid = (await probe.connect({
       host: "127.0.0.1", port: listener.port, servername: "probe.example.test",
       trustCertificates: [built.ourRoot.cert.pem], groups: HYBRID_GROUP
@@ -1303,15 +1307,26 @@ async function theKeyExchangeIsReportedSeparately() {
     assert.strictEqual(hybrid.connected, true,
       HYBRID_GROUP + " was refused by an OpenSSL that has it: " +
       JSON.stringify(hybrid.error));
-    assert.strictEqual(hybrid.postQuantum.ephemeralKey, null,
-      "node named the hybrid group — if a release has taught " +
-      "getEphemeralKeyInfo() about ML-KEM, this report should use the name " +
-      "rather than explaining its absence");
     assert.strictEqual(hybrid.postQuantum.requestedGroups, HYBRID_GROUP,
       "the group asked for is not echoed back, so a reader cannot tell " +
       "which connection this report describes");
-    assert.ok(/ML-KEM hybrid/.test(hybrid.postQuantum.keyExchangeNote),
-      "the note does not explain what an unnamed group means");
+    if (hybrid.postQuantum.ephemeralKey) {
+      log.info("[key exchange] node " + process.versions.node + " names " +
+          "the hybrid group: " +
+          JSON.stringify(hybrid.postQuantum.ephemeralKey));
+      assert.strictEqual(hybrid.postQuantum.ephemeralKey.name, HYBRID_GROUP,
+        "node named a group other than the one asked for");
+      assert.ok(/IS protected/.test(hybrid.postQuantum.keyExchangeNote),
+        "node named the ML-KEM hybrid and the note does not say the " +
+        "connection is protected: " + hybrid.postQuantum.keyExchangeNote);
+    } else {
+      log.info("[key exchange] node " + process.versions.node + " cannot " +
+          "name the hybrid group; the report explains the absence.");
+      assert.ok(/ML-KEM hybrid/.test(hybrid.postQuantum.keyExchangeNote),
+        "the note does not explain what an unnamed group means");
+    }
+    assert.ok(!/NOT protected/.test(hybrid.postQuantum.keyExchangeNote),
+      "an ML-KEM hybrid key exchange was reported as NOT protected");
   } finally {
     listener.close();
   }

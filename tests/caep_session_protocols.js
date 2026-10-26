@@ -379,7 +379,7 @@ async function signIn(who) {
   const posted = await authnSignin.signIn(stsUrl,
       new URL(location, stsUrl).href,
       { action: 'login', username: who, password: 'x' });
-  const cookie = posted.next === 'redirect' ? cookieOf(posted) : '';
+  let cookie = posted.next === 'redirect' ? cookieOf(posted) : '';
   if (!cookie) {
     log.debug("Leaving signIn(). No cookie.");
     return { ok: false, why: 'the sign-in screen answered ' + posted.status +
@@ -392,7 +392,38 @@ async function signIn(who) {
   // session-presented milliseconds after its session-established and the event
   // that means SINGLE SIGN-ON HAPPENED would mean nothing.
   const back = new URL(posted.location || start, stsUrl).href;
-  await call('GET', back, null, { Cookie: cookie });
+  const returned = await call('GET', back, null, { Cookie: cookie });
+  // THE CONSENT SCREEN, where the application asks for one (OAuth2/OIDC on
+  // this stack; the other four draw none). Since iya-sts 2446cbe1 the
+  // authorization endpoint HOLDS the session's next presentation as it sends
+  // a request to that screen, so the trip back from it is the sign-in's own
+  // and not a single sign-on. Left unanswered, that hold was being spent by
+  // the re-presentation in run() instead — and the session-presented that
+  // means SINGLE SIGN-ON HAPPENED never came, for this protocol alone. So
+  // the screen is answered here the way a person answers it, and the trip
+  // back is made, which leaves the session where a finished sign-in leaves
+  // it: with nothing held.
+  const onward = returned.headers.get('location') || '';
+  if (/consent/.test(onward)) {
+    const consented = await authnSignin.consentFor(
+        new URL(onward, stsUrl).href, cookie);
+    if (consented.next !== 'redirect' || !consented.location) {
+      log.debug("Leaving signIn(). Consent not given.");
+      return { ok: false, why: 'the sign-in sent the browser to the ' +
+        'consent screen (' + onward + ') and answering it did not send it ' +
+        'back: ' + consented.status + ' (' + consented.next + ') ' +
+        JSON.stringify(consented.errors || []) };
+    }
+    const rotatedAtConsent = cookieOf(consented);
+    if (rotatedAtConsent && rotatedAtConsent !== cookie) {
+      log.info("[session] the consent screen rotated the session cookie.");
+      cookie = rotatedAtConsent;
+    }
+    await call('GET', new URL(consented.location, stsUrl).href, null,
+               { Cookie: cookie });
+    log.info("[session] the sign-in asked for consent; it was given and " +
+             "the trip back to the authorization endpoint was made.");
+  }
   log.debug("Leaving signIn(). Signed in.");
   return { ok: true, cookie: cookie, start: start };
 }
