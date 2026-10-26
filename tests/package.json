@@ -32,7 +32,7 @@
     "selenium-webdriver": "latest",
     "xml-crypto": "^6.0.0",
     "xml-encryption": "^3.1.0",
-    "zod": "^4.5.4"
+    "zod": "^4.6.6"
   },
   "optionalDependencies": {
     "libxmljs2": "^0.37.0"
