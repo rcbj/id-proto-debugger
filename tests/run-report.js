@@ -1450,6 +1450,19 @@ function buildJobs() {
     env: {},
   });
 
+  // The media type comparison behind the RFC 9068 "typ" checks on two pages,
+  // in node, and the next job of that shape. A check that compares strings
+  // for equality accepts some subset of the spellings RFC 9068 itself uses —
+  // Figure 2's "at+JWT" — and a page round trip cannot see that, because it
+  // checks the comparison against itself. So the matrix lives here, against
+  // the RFC's own spellings.
+  jobs.push({
+    name: "Media type engine (RFC 7515 §4.1.9 / RFC 9068 §2.1, §4 and " +
+        "Figure 2 — the JOSE typ comparison, in node)",
+    script: "media_type_engine.js",
+    env: {},
+  });
+
   // SAML Assertion Tool. Another fully client-side page needing no IdP: compose
   // an assertion for each SAML version (2.0 / 1.1 / 1.0) with its
   // version-specific structure, toggle the optional elements, add typed +

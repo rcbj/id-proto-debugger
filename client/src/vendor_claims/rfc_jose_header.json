@@ -17,7 +17,7 @@
     "url": "https://www.rfc-editor.org/rfc/rfc7515#section-4.1.1"
   },
   "typ": {
-    "description": "Type. Used by JWS/JWT applications to declare the media type of this complete JWT. Intended to disambiguate among different kinds of objects in application data structures. Ignored by JWT implementations; processed only by the application. Use is OPTIONAL. In a JWT context (RFC 7519 §5.1), the RECOMMENDED value is 'JWT'; RFC 9068 requires 'at+JWT' for OAuth 2.0 access tokens. The 'application/' prefix may be omitted when no '/' appears in the value — recipients MUST prepend it in that case.",
+    "description": "Type. Used by JWS/JWT applications to declare the media type of this complete JWT. Intended to disambiguate among different kinds of objects in application data structures. Ignored by JWT implementations; processed only by the application. Use is OPTIONAL. In a JWT context (RFC 7519 §5.1), the RECOMMENDED value is 'JWT'; RFC 9068 requires 'at+jwt' for OAuth 2.0 access tokens. The 'application/' prefix may be omitted when no '/' appears in the value — recipients MUST prepend it in that case.",
     "url": "https://www.rfc-editor.org/rfc/rfc7515#section-4.1.9"
   }
 }

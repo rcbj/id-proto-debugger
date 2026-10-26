@@ -16,6 +16,12 @@ var $ = require("jquery");
 // either page. It is one module now, checked in node against OpenSSL and
 // `jsonwebtoken` by tests/jws_engine.js.
 var jwsLib = require("./jws");
+// The RFC 9068 "typ" comparison is media_type.js's for the same reason the
+// JWS above is jws.js's: this page and jwt_tools.js each spelled it
+// differently, and two readings of one RFC is two chances to be wrong about
+// the same thing. tests/media_type_engine.js holds it against the RFC's own
+// spellings.
+var mediaType = require("./media_type");
 // DOMParser is the browser-native global here (token_detail runs only in the
 // browser). Do not bundle an xmldom implementation: besides being redundant,
 // strict parsers throw on the non-XML body returned when /claimdescription is
@@ -369,14 +375,17 @@ async function validateClaims() {
     pass('alg', header.alg);
   }
 
-  // typ — RFC 9068 requires "at+JWT"
+  // typ — RFC 9068 §2.1 RECOMMENDS "at+jwt" (the "application/" prefix
+  // optional per RFC 7515 §4.1.9, which also makes media type names
+  // case-insensitive), so Figure 2's "at+JWT" and section 4's
+  // "application/at+jwt" are the same media type and must pass.
   if (purpose === 'oauth2_access_token') {
     if (!header.typ) {
-      fail('typ', 'Missing — must be "at+JWT" (RFC 9068 §2.1)');
-    } else if (header.typ !== 'at+JWT') {
-      fail('typ', '"' + header.typ + '" — expected "at+JWT" (RFC 9068 §2.1)');
+      fail('typ', 'Missing — must be "at+jwt" (RFC 9068 §2.1)');
+    } else if (mediaType.matchesMediaType(header.typ, 'at+jwt')) {
+      pass('typ', '"' + header.typ + '"');
     } else {
-      pass('typ', '"at+JWT"');
+      fail('typ', '"' + header.typ + '" — expected "at+jwt" (RFC 9068 §2.1)');
     }
   } else if (header.typ !== undefined) {
     pass('typ', '"' + header.typ + '"');

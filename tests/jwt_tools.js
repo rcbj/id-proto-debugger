@@ -211,6 +211,56 @@ async function jwtToolsActivities(driver) {
             "RFC 9068 compliance reported a FAIL:\n" + rfc9068);
   log.info("RFC 9068 compliance passed with no FAIL entries.");
 
+  // ---- Pane 1 continued: the typ spellings RFC 9068 itself uses ------------
+  // Section 4 accepts "at+jwt" or "application/at+jwt" and rejects anything
+  // else, and section 2.1 (citing RFC 7515 §4.1.9 for the prefix rule) makes
+  // media type names case-insensitive — so Figure 2's "at+JWT" must pass
+  // here as well. An exact compare failed exactly that spelling.
+  log.info("RFC 9068 typ: Figure 2's \"at+JWT\" must pass.");
+  await setInput(driver, By.id("jwt_tools_header"),
+                 JSON.stringify({ alg: 'RS256', typ: 'at+JWT' }));
+  await click(driver, onclickBtn("checkRfc9068Compliance"));
+  var fig2Output = await waitForValue(driver, By.id("compliance_output"),
+    function (v) { return v !== rfc9068; },
+    "RFC 9068 compliance did not re-run for the Figure 2 header.");
+  log.info("Figure 2 typ output:\n" + fig2Output);
+  assert.ok(fig2Output.indexOf("PASS  typ") !== -1,
+            "Figure 2's typ \"at+JWT\" must pass: media type names are " +
+            "case-insensitive (RFC 7515 §4.1.9), so it is the same media " +
+            "type — output:\n" + fig2Output);
+
+  log.info("RFC 9068 typ: section 4's \"application/at+jwt\" must pass.");
+  await setInput(driver, By.id("jwt_tools_header"),
+                 JSON.stringify({ alg: 'RS256', typ: 'application/at+jwt' }));
+  await click(driver, onclickBtn("checkRfc9068Compliance"));
+  var prefixedOutput = await waitForValue(driver, By.id("compliance_output"),
+    function (v) { return v !== fig2Output; },
+    "RFC 9068 compliance did not re-run for the prefixed header.");
+  log.info("Prefixed typ output:\n" + prefixedOutput);
+  assert.ok(prefixedOutput.indexOf("PASS  typ") !== -1,
+            "Section 4's typ \"application/at+jwt\" must pass — output:\n" +
+            prefixedOutput);
+
+  log.info("RFC 9068 typ: \"JWT\" must fail.");
+  await setInput(driver, By.id("jwt_tools_header"),
+                 JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
+  await click(driver, onclickBtn("checkRfc9068Compliance"));
+  var jwtTypOutput = await waitForValue(driver, By.id("compliance_output"),
+    function (v) { return v !== prefixedOutput; },
+    "RFC 9068 compliance did not re-run for the JWT header.");
+  log.info("JWT typ output:\n" + jwtTypOutput);
+  assert.ok(jwtTypOutput.indexOf("FAIL  typ") !== -1,
+            "typ \"JWT\" is not this profile's media type and must fail " +
+            "(RFC 9068 §4) — output:\n" + jwtTypOutput);
+
+  // Leave the pane where the earlier checks left it: the sample token
+  // restored, so every step below starts from the state it did before.
+  log.info("Regenerate the RFC 9068 sample token.");
+  await click(driver, onclickBtn("generateRfc9068Token"));
+  await waitForValue(driver, By.id("jwt_tools_header"),
+    function (v) { return v.indexOf('"at+jwt"') !== -1; },
+    "Generate RFC 9068 Token did not restore the sample header.");
+
   // ---- Pane 2: signing (JWS) ----------------------------------------------
   log.info("Generate signing keys.");
   await click(driver, onclickBtn("generateSigningKeys"));

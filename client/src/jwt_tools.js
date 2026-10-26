@@ -35,6 +35,11 @@ var x509 = require("./x509");
 // What stayed here is what is genuinely this page's: which key material the
 // fields hold, and how the panes read.
 var jwsLib = require("./jws");
+// The RFC 9068 "typ" comparison is media_type.js's for the same reason the
+// JWS above is jws.js's: two pages spelling one RFC is two chances to be
+// wrong about the same thing, and tests/media_type_engine.js holds this one
+// against the RFC's own spellings.
+var mediaType = require("./media_type");
 var log = bunyan.createLogger({ name: 'jwt_tools',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -479,8 +484,10 @@ function checkCompliance() {
 
 // Validate the composed header/payload as an OAuth 2.0 JWT access token per
 // RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens). Output goes to the same
-// Compliance Output box. Header (§2.1): typ MUST be "at+jwt" and the token MUST
-// be signed (alg present, not "none"). Required claims (§2.2): iss, exp, aud,
+// Compliance Output box. Header (§2.1): typ MUST be "at+jwt" — compared
+// case-insensitively, with or without the "application/" prefix, per RFC
+// 7515 §4.1.9, which §2.1 cites — and the token MUST be signed (alg present,
+// not "none"). Required claims (§2.2): iss, exp, aud,
 // sub, client_id, iat, jti. scope is conditionally recommended (§2.2.3);
 // auth_time/acr/amr are optional (§2.2.1) and only type-checked if present.
 function checkRfc9068Compliance() {
@@ -520,13 +527,15 @@ function checkRfc9068Compliance() {
 
   results.push('RFC 9068 — OAuth 2.0 JWT Access Token');
 
-  // ---- Header (RFC 9068 §2.1) ---- typ is REQUIRED and MUST be "at+jwt" (the
-  // "application/" prefix is allowed).
+  // ---- Header (RFC 9068 §2.1) ---- typ is REQUIRED and MUST be "at+jwt" —
+  // compared case-insensitively, with or without the "application/" prefix,
+  // per RFC 7515 §4.1.9, which §2.1 cites. Figure 2's "at+JWT" is the same
+  // media type as section 4's "application/at+jwt"; "JWT" is not.
   if (header.typ === undefined) {
     fail('typ', 'Missing — MUST be "at+jwt" (RFC 9068 §2.1)');
   } else if (typeof header.typ !== 'string') {
     fail('typ', '"typ" must be a string');
-  } else if (header.typ === 'at+jwt' || header.typ === 'application/at+jwt') {
+  } else if (mediaType.matchesMediaType(header.typ, 'at+jwt')) {
     pass('typ', '"' + header.typ + '"');
   } else {
     fail('typ', '"' + header.typ + '" — MUST be "at+jwt" (RFC 9068 §2.1)');

@@ -271,6 +271,32 @@ async function tokenDetailPage(driver, type)
     // made on its contents.
     log.info("Claims validation completed.");
 
+    // The purpose dropdown's third option is RFC 9068's profile, and the
+    // access token this page is showing was minted by the mock STS with
+    // "typ": "at+jwt" (iya-sts#442) — section 2.1's RECOMMENDED spelling,
+    // which section 4 tells a resource server to accept. So run that
+    // profile's check and hold the typ line to it: the old exact compare
+    // failed the very spelling the RFC recommends.
+    if (type === "access_token") {
+      log.info("Validate Claims as an RFC 9068 access token.");
+      await new Select(await driver.findElement(By.id("jwt_purpose")))
+                       .selectByValue("oauth2_access_token");
+      await validateClaimsBtn.click();
+      await wait(2000);
+      const rfc9068Validation =
+          await driver.findElement(By.id("jwt_claims_validation_output"))
+          .getAttribute("value");
+      log.info("RFC 9068 claims validation output:\n" + rfc9068Validation);
+      assert.ok(rfc9068Validation.indexOf("PASS  typ") !== -1,
+                "the access token carries typ \"at+jwt\" — RFC 9068 §2.1's " +
+                "RECOMMENDED spelling, which §4 tells a resource server to " +
+                "accept — so the typ check must pass — output:\n" +
+                rfc9068Validation);
+      assert.ok(rfc9068Validation.indexOf("FAIL  typ") === -1,
+                "the typ check failed:\n" + rfc9068Validation);
+      log.info("RFC 9068 access token typ check passed.");
+    }
+
     // Return to the debugger.
     log.info("Find return to debugger link.");
     returnToDebugger = By.partialLinkText('Return to debugger');
