@@ -35,7 +35,7 @@ RUN apt-get update \
         tar
 
 ENV NVM_DIR /usr/local/nvm
-ENV NODE_VERSION=24.16.0
+ENV NODE_VERSION=24.22.1
 RUN mkdir -p ${NVM_DIR}
 RUN set -o pipefail && curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash
 RUN source $NVM_DIR/nvm.sh \

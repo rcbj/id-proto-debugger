@@ -4625,7 +4625,7 @@ function buildJobs() {
   // 3.0 there are no post-quantum algorithms at all, so an ML-DSA certificate
   // comes back as `X509_PUBKEY_get0:decode error`, a statement about OpenSSL
   // rather than about the certificate. Node's OpenSSL moves with the node
-  // version, which every image here PINS at 24.16 (OpenSSL 3.5.6), so the
+  // version, which every image here PINS at 24.22.1 (OpenSSL 3.5.9), so the
   // assertions go through node's crypto module (tests/openssl35.js) and are
   // the same everywhere. The HYBRID cases go back to the binary deliberately,
   // whichever it is, because their whole claim is that a validator which does

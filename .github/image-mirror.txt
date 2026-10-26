@@ -27,8 +27,8 @@
 #
 # upstream                               mirror path
 ubuntu:latest                            ubuntu:latest
-node:24-alpine                           node:24-alpine
-node:24.16.0-bookworm-slim               node:24.16.0-bookworm-slim
+node:24.22.1-alpine                      node:24.22.1-alpine
+node:24.22.1-bookworm-slim               node:24.22.1-bookworm-slim
 eclipse-temurin:11-jdk                   eclipse-temurin:11-jdk
 postgres:18                              postgres:18
 quay.io/keycloak/keycloak:26.6.4         keycloak/keycloak:26.6.4

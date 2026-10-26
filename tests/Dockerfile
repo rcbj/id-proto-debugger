@@ -605,8 +605,8 @@ COPY api/tls_probe.js ./
 COPY tests/pki_x509.js tests/pki_key_formats.js tests/api_tls_probe.js ./
 # tests/openssl35.js is the post-quantum ORACLE, and it is a module rather than
 # a copy inside each test because two of them need it: the `openssl` binary in
-# this image is 3.0 and has no ML-DSA, SLH-DSA or ML-KEM, while node 24.16's own
-# OpenSSL is 3.5.6 and has all three. Its header explains the split.
+# this image is 3.0 and has no ML-DSA, SLH-DSA or ML-KEM, while node 24.22.1's
+# own OpenSSL is 3.5.9 and has all three. Its header explains the split.
 COPY tests/pki_pqc_x509.js tests/openssl35.js ./
 COPY tests/pki_page.js tests/pki_mutual_tls.js ./
 # The WebAuthn decoder, loaded directly by tests/webauthn_decode.js: the CBOR
@@ -1015,7 +1015,7 @@ WORKDIR /usr/src/app
 
 # Install NVM
 ENV NVM_DIR /usr/local/nvm
-ENV NODE_VERSION=24.16.0
+ENV NODE_VERSION=24.22.1
 RUN mkdir -p ${NVM_DIR}
 RUN set -o pipefail && curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash
 

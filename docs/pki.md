@@ -884,7 +884,7 @@ about the certificate — so a test asserting through the binary would pass or
 fail on the base image's release date.
 
 Node's OpenSSL moves with the **node** version, which every image here pins:
-24.16 is linked against **OpenSSL 3.5.6**, the release that added all three
+24.22.1 is linked against **OpenSSL 3.5.9**, the line that added all three
 families. So `tests/pki_pqc_x509.js` reaches the same library through
 `crypto.createPublicKey()` and `crypto.verify()` (see `tests/openssl35.js`) and
 gets the same answer on every machine. The **hybrid** cases go back to the

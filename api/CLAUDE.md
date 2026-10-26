@@ -504,7 +504,7 @@ questions.** `groups` (OpenSSL's supported-groups list, which node calls
 `ecdhCurve`) decides the KEY EXCHANGE, and therefore whether a RECORDING of this
 connection survives a quantum computer; `sigalgs` decides what the peer may
 authenticate with, and therefore whether it can be IMPERSONATED by one. OpenSSL
-3.5 — which is what node 24.16 is linked against — offers `X25519MLKEM768`
+3.5 — which is what node 24.22.1 is linked against — offers `X25519MLKEM768`
 first and both ends usually take it with nobody asking, so naming it is how a
 caller PROVES it rather than assuming it. Neither is checked against a list of
 known names: OpenSSL's spelling changes between releases and a hard-coded

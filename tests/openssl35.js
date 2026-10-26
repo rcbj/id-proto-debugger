@@ -20,7 +20,7 @@
 //     statement about the certificate. A test that asserted through the
 //     binary would therefore pass or fail on the base image's release date.
 //   * node's OpenSSL moves with the NODE version, and every image here pins
-//     that: 24.16 is linked against OpenSSL 3.5.6, the release that added
+//     that: 24.22.1 is linked against OpenSSL 3.5.9, the line that added
 //     ML-KEM, ML-DSA and SLH-DSA. `crypto.createPublicKey()` reads their
 //     SubjectPublicKeyInfo, `crypto.createPrivateKey()` reads all three arms
 //     of their PKCS#8, and `crypto.verify(null, ...)` verifies their
@@ -109,7 +109,8 @@ function unavailableReason() {
   log.debug("Leaving unavailableReason().");
   return "node's OpenSSL is " + process.versions.openssl + ", which has no " +
       "ML-DSA/SLH-DSA/ML-KEM. The cross-checks against another " +
-      "implementation are skipped; the images pin node 24.16 (OpenSSL 3.5), " +
+      "implementation are skipped; the images pin node 24.22.1 (OpenSSL " +
+      "3.5), " +
       "so this only happens on a development machine running an older node.";
 }
 

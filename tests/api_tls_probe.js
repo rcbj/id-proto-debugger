@@ -1168,8 +1168,8 @@ function limitsArePublished() {
 // This is the case the PKI page's whole post-quantum half exists to reach: a
 // certificate authority built in a browser, an ML-DSA server certificate, and
 // a real TLS 1.3 handshake against it. It works because every image here pins
-// node 24.16, whose OpenSSL is 3.5.6 — the release that added ML-DSA, SLH-DSA
-// and ML-KEM.
+// node 24.22.1, whose OpenSSL is 3.5.9 — the 3.5 line that added ML-DSA,
+// SLH-DSA and ML-KEM.
 //
 // THE THREE ANSWERS, and the middle one is the interesting one:
 //
