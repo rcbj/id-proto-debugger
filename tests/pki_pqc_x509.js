@@ -507,6 +507,40 @@ async function compositeCertificatesNeedBothHalves() {
     assert.strictEqual(await pqx.verify(algId, breakTrad, message, pub), false,
       algId + ": a broken traditional half verified — this is the check a " +
       "composite exists for");
+
+    // #351: the one composite whose traditional half runs past 127 bytes, so
+    // its DER SEQUENCE needs the long form. @noble/curves 1.4.0 wrote that
+    // half with a one-byte length (30 87 ...), which is not DER — OpenSSL
+    // and every strict reader refuse it — and refused the correct long form
+    // (30 81 87 ...) coming from any other implementation, so a certificate
+    // signed here verified against nothing but itself. The upgraded noble
+    // must carry the long form, and OpenSSL must accept the half as an
+    // ECDSA-P-521-SHA512 signature over M', the message representative the
+    // composite scheme defines, which is what the traditional half signs.
+    if (cfg.trad.kind === "ec" && cfg.trad.curve === "P-521") {
+      const crypto = require("crypto");
+      assert.ok(sigHalves.trad[0] === 0x30 && sigHalves.trad[1] === 0x81,
+        algId + ": the P-521 half of the composite signature is not " +
+        "long-form DER (expected 30 81 ...), got " +
+        Buffer.from(sigHalves.trad).slice(0, 4).toString("hex"));
+      // The traditional public half is the raw uncompressed point
+      // (04 || X || Y, 133 bytes), so OpenSSL gets it as a JWK rather than
+      // a PEM. The oracle's one-shot verify passes null — the key's own
+      // built-in hashing, which ML-DSA/SLH-DSA/Ed25519 use — and ECDSA needs
+      // the digest named, so this check talks to node's OpenSSL directly.
+      const point = Buffer.from(halves.trad);
+      const p521Key = crypto.createPublicKey({ key: {
+        kty: "EC", crv: "P-521",
+        x: point.slice(1, 67).toString("base64url"),
+        y: point.slice(67).toString("base64url")
+      }, format: "jwk" });
+      assert.ok(
+        crypto.verify("sha512",
+            Buffer.from(pqx.compositeMessage(cfg, message)), p521Key,
+            Buffer.from(sigHalves.trad)),
+        algId + ": OpenSSL refuses the P-521 half of the composite " +
+        "signature");
+    }
     // And the domain separation: the same key over the same message under a
     // DIFFERENT composite algorithm must not verify, which is what the label
     // in M' and in the ML-DSA context is there to guarantee.
