@@ -21,6 +21,10 @@ name: Deploy Static Site (test.idptools.com)
 
 on:
   # Run after the Selenium Tests suite completes for a develop push.
+  # A pull_request run's head branch is its HEAD ref, so the Selenium run of
+  # a develop -> master promotion PR reports head_branch 'develop' too;
+  # the job guards below keep only push runs, which a merged develop PR
+  # also produces, so no develop content loses its deploy.
   workflow_run:
     workflows: ["Selenium Tests"]
     types: [completed]
@@ -36,12 +40,17 @@ jobs:
   # ---- Apply the TEST infrastructure first ----
   terraform:
     runs-on: ubuntu-latest
-    # For a workflow_run trigger, only proceed if the suite succeeded on develop.
-    # Manual dispatch always proceeds.
+    # For a workflow_run trigger, only proceed if the suite succeeded on a
+    # push to develop. head_branch alone matches the develop -> master
+    # promotion PR's pull_request run as well (2026-10-23: every promotion
+    # started two deploy runs about 30s apart, e.g. 40041262827 from the push
+    # run and 40041216423 from the pull_request run), so the event type is
+    # required too. Manual dispatch always proceeds.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
           (github.event.workflow_run.conclusion == 'success' &&
-           github.event.workflow_run.head_branch == 'develop') }}
+           github.event.workflow_run.head_branch == 'develop' &&
+           github.event.workflow_run.event == 'push') }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
@@ -69,12 +78,15 @@ jobs:
   deploy:
     needs: terraform
     runs-on: ubuntu-latest
-    # For a workflow_run trigger, only deploy if Terraform succeeded on develop.
-    # Manual dispatch always proceeds.
+    # For a workflow_run trigger, only deploy if Terraform succeeded on a push
+    # to develop; same event == 'push' requirement as the terraform job, so a
+    # promotion PR cannot start a second deploy of the commit the push run is
+    # already deploying. Manual dispatch always proceeds.
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
           (github.event.workflow_run.conclusion == 'success' &&
-           github.event.workflow_run.head_branch == 'develop') }}
+           github.event.workflow_run.head_branch == 'develop' &&
+           github.event.workflow_run.event == 'push') }}
     steps:
       # THE TAGS BELOW NEED A TOKEN WITH `workflows` PERMISSION, which
       # GITHUB_TOKEN can never have. GitHub sometimes refuses to let

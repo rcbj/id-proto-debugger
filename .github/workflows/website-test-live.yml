@@ -42,6 +42,15 @@ on:
 permissions:
   contents: read
 
+# One live suite at a time. The runs that reach this workflow (a deploy
+# finishing, the nightly schedule, a manual dispatch) test whatever
+# version.json names, so the last run to start is always the freshest
+# verdict; an older in-flight run is cancelled rather than left racing
+# the newer one against the same deployed site.
+concurrency:
+  group: live-site-test
+  cancel-in-progress: true
+
 jobs:
   live-test:
     runs-on: ubuntu-latest
