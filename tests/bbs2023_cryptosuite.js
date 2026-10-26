@@ -12,7 +12,7 @@
 // The exchange deliberately crosses implementations at every step:
 //
 //   the STS issues        with @digitalbazaar/bbs-signatures
-//                        (sts/common/vendored/bbs2023.js)
+//                        (sts/common/crypto_impl/bbs2023.js)
 //   the wallet derives    with our own BBS      (client/src/bbs2023.js)
 //   the STS verifies      the wallet's proof
 //
@@ -58,8 +58,8 @@ const stsSuite = paths.requireSharedModule(
   // The tests image's flattened copy first, then wherever the submodule keeps
   // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
   // ("Reorganizing source code.") moved every module into a subdirectory, and
-  // this one is in common/vendored/. mockStsModule() is the single place that
-  // answers that question — see tests/module_paths.js.
+  // this one is in common/crypto_impl/. mockStsModule() is the single place
+  // that answers that question — see tests/module_paths.js.
   [path.join(__dirname, "sts_bbs2023.js"),
    paths.mockStsModule("bbs2023.js") || ""],
   "the STS's bbs-2023 cryptosuite");

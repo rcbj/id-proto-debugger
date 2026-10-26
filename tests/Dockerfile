@@ -339,9 +339,9 @@ COPY tests/bbs_vectors.json ./
 # The STS's copy comes out of the sts/ SUBMODULE
 # (https://github.com/rcbj/iya-sts.git) — the one place outside the compose files
 # where this repository reaches into it. An uninitialised submodule fails this
-# build with "COPY sts/common/vendored/bbs2023.js: not found", which says nothing
-# about the cause; the launchers run requireMockStsCheckout() (common/common.sh)
-# before building so it is explained before it happens.
+# build with "COPY sts/common/crypto_impl/bbs2023.js: not found", which says
+# nothing about the cause; the launchers run requireMockStsCheckout()
+# (common/common.sh) before building so it is explained before it happens.
 #
 # NOTE THE PATH. Every module in that repository sat in its root until iya-sts
 # 0f986b3 ("Reorganizing source code."), which moved them into subdirectories —
@@ -350,7 +350,7 @@ COPY tests/bbs_vectors.json ./
 # FLAT and renamed, because it is loaded on its own and has no relative
 # requires; the ones below cannot be, and say why.
 COPY client/src/bbs2023.js ./
-COPY sts/common/vendored/bbs2023.js ./sts_bbs2023.js
+COPY sts/common/crypto_impl/bbs2023.js ./sts_bbs2023.js
 COPY client/src/contexts ./contexts
 # The wallet's side of OID4VCI, loaded directly by tests/ldp_vc_issuance.js so
 # that it covers what the PAGE does with a Credential Response and not only what
@@ -529,7 +529,7 @@ COPY tests/captures ./captures
 FROM ubuntu:latest AS files2
 WORKDIR /usr/src/app
 
-COPY sts/common/vendored/bbs2023.js ./sts/common/vendored/
+COPY sts/common/crypto_impl/bbs2023.js ./sts/common/crypto_impl/
 COPY sts/kerberos/krb5_primitives.js sts/kerberos/krb5_asn1.js sts/kerberos/krb5_crypto.js sts/kerberos/krb5_messages.js sts/kerberos/krb5_gss.js ./sts/kerberos/
 # krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
 # minting a PAC. **This line is the one the paragraph above is about**: it cannot build
@@ -551,7 +551,7 @@ COPY sts/env ./sts/env
 # ldp_vc_issuance, ldp_vc_refresh, bbs2023_cryptosuite). The in-process
 # iya-sts KDC jobs that needed most of what used to be copied out of sts/ here
 # moved to iya-sts's own suite on 2026-10-23, and that copy set went with them.
-COPY sts/common/vendored/contexts ./sts/common/vendored/contexts
+COPY sts/common/crypto_impl/contexts ./sts/common/crypto_impl/contexts
 # The Kerberos relay's modules, loaded directly by tests/api_krb5_relay.js: it
 # drives them rather than going over HTTP, so every refusal can be checked with no
 # running service. Copied FLAT, like api/ssrf_guard.js below, and the test resolves
