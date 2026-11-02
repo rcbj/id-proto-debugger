@@ -668,7 +668,7 @@ prepTestEnv()
 {
   npm install --prefix tests
   # And the mock STS's own dependencies, because four tests run on the HOST and
-  # load sts/common/vendored/bbs2023.js from the submodule in place:
+  # load sts/common/crypto_impl/bbs2023.js from the submodule in place:
   # bbs2023_cryptosuite.js,
   # ldp_vc_issuance.js, ldp_vc_refresh.js and vc_did.js, each of which compares
   # the issuer's cryptosuite with the wallet's. That module reaches

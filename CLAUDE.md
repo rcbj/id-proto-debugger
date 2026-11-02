@@ -353,7 +353,7 @@ Third-party images: `quay.io/keycloak/keycloak` already declares `USER 1000`;
 `postgres` **must not** be given a `user:` (its entrypoint is root only long
 enough to create and chown PGDATA on a fresh volume, then drops to `postgres`
 with gosu — pin a user and `initdb` fails on a directory it cannot write); the
-two walt.id images and the two `node:24-alpine` CORS proxies get a `user:` in
+two walt.id images and the two `node:24.22.1-alpine` CORS proxies get a `user:` in
 the compose files, since Jib and the node image both default to root.
 
 ## Running Tests

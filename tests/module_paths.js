@@ -109,7 +109,8 @@ function requireSharedModule(candidates, what) {
 // question. That commit moved all of them into subdirectories — `common/`,
 // `kerberos/`, `oauth-oidc/`, `oid4vc/`, `saml/`, `scim/`, `authn/`, `ldap/`,
 // `tls/`, `ws-trust/`, `ws-federation/`, `mgmt-api/`, `admin-ui/`, `spiffe/`
-// and `common/vendored/` — and a resolver that only looked in the root then
+// and `common/vendored/` (`common/crypto_impl/` since iya-sts b09958f3, on
+// 2026-10-25) — and a resolver that only looked in the root then
 // found NOTHING, in four Kerberos tests at once, each of which reports it as
 // "could not find the mock KDC" and blames the gitlink.
 //
@@ -118,9 +119,10 @@ function requireSharedModule(candidates, what) {
 // layout, kept in this repository, and it would be wrong again the next time
 // that layout moved — which is exactly the failure being fixed here. The
 // search is bounded to the root, its immediate subdirectories and
-// `common/vendored` (one level deeper, and the only place a two-level module
-// lives), so it cannot wander into `node_modules` and cannot cost more than a
-// couple of readdirs.
+// `common/crypto_impl` (one level deeper, and the only place a two-level
+// module lives; `common/vendored` is the same directory's name before that
+// move, and is still searched for a gitlink from before it), so it cannot
+// wander into `node_modules` and cannot cost more than a couple of readdirs.
 //
 // It also still finds the OLD flat layout, because the root is searched first —
 // which matters for the tests image, where the files are copied in under
@@ -148,6 +150,9 @@ function mockStsSearchDirs(root) {
   }
   // The one module directory that is two levels down: the mock's vendored
   // copies of this project's own client modules (bbs2023.js and friends).
+  // `common/crypto_impl` since iya-sts b09958f3; `common/vendored` before
+  // it, kept so an older gitlink still resolves.
+  dirs.push(path.join(root, "common", "crypto_impl"));
   dirs.push(path.join(root, "common", "vendored"));
   return dirs;
 }

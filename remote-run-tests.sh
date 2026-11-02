@@ -405,9 +405,9 @@ prepTestEnv()
 {
   npm install --prefix tests
   # The mock STS's own dependencies: the four host-run tests that load
-  # sts/common/vendored/bbs2023.js in place reach @digitalbazaar/bbs-signatures
-  # through a dynamic
-  # import(), which resolves from that file's own directory and ignores NODE_PATH.
+  # sts/common/crypto_impl/bbs2023.js in place reach
+  # @digitalbazaar/bbs-signatures through a dynamic import(), which resolves
+  # from that file's own directory and ignores NODE_PATH.
   # See the fuller note in local-run-tests.sh. `npm ci` so the submodule's
   # committed lock is not rewritten under it, and `--omit=dev` spelled out
   # because npm reads .npmrc from the CURRENT directory rather than from

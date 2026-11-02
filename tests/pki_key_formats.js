@@ -30,9 +30,9 @@
 // The `openssl` binary's version is whatever the base image or the developer's
 // machine ships, and 3.0 — Ubuntu 22.04's — has no ML-DSA, SLH-DSA or ML-KEM.
 // Node's OpenSSL moves with the node version, which every image here pins at
-// 24.16 (OpenSSL 3.5.6), so the generation and PEM/DER rows for those keys are
-// checked through tests/openssl35.js — the same library, a different door, and
-// the same answer on every machine. See its header.
+// 24.22.1 (OpenSSL 3.5.9), so the generation and PEM/DER rows for those keys
+// are checked through tests/openssl35.js — the same library, a different door,
+// and the same answer on every machine. See its header.
 //
 // PKCS#12 is where that runs out. The container is read by the 3.0 binary
 // perfectly — it verifies the MAC with the password and prints the certificate

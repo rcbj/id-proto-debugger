@@ -175,7 +175,7 @@ services:
   # issuer's baseUrl names, because every URL walt.id publishes is built from it.
   # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
   waltid-issuer:
-    image: node:24-alpine
+    image: node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -228,7 +228,7 @@ services:
   # URL it hands the wallet (the request_uri it fetches, the response_uri it POSTs
   # to) is one the browser can use.
   waltid-verifier:
-    image: node:24-alpine
+    image: node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.

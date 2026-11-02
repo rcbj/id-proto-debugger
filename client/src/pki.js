@@ -2048,9 +2048,12 @@ function renderTlsReport(json) {
     pqTable.className = 'saml-table';
     pqTable.id = 'pki_tls_pq_table';
     var pqBody = document.createElement('tbody');
+    // A group node 24.22.1 names as a TLSGroup (an ML-KEM hybrid) carries
+    // no size; the ECDH and DH cases always did.
     pqBody.appendChild(detailRow('Key exchange', pq.ephemeralKey
-      ? (pq.ephemeralKey.name + ' (' + pq.ephemeralKey.type + ', ' +
-         pq.ephemeralKey.size + ' bits)')
+      ? (pq.ephemeralKey.name + ' (' + pq.ephemeralKey.type +
+         (pq.ephemeralKey.size ? ', ' + pq.ephemeralKey.size + ' bits' : '') +
+         ')')
       : 'not named by node'));
     pqBody.appendChild(detailRow('What that means', pq.keyExchangeNote || ''));
     if (pq.requestedGroups) {

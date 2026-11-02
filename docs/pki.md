@@ -847,10 +847,15 @@ rather than of this code, and `tests/api_tls_probe.js` asserts each:
 * **Composite certificates do not either**, for the plainer reason that no
   released OpenSSL implements the draft.
 
-**Node cannot name a hybrid group.** `getEphemeralKeyInfo()` describes ECDH and
-DH and returns an empty object for anything else, which under OpenSSL 3.5 means
-an ML-KEM hybrid — *or* a resumed session. The report says both readings rather
-than guessing between them.
+**Whether node can name a hybrid group depends on the release.** Through node
+24.16 `getEphemeralKeyInfo()` described ECDH and DH and returned an empty
+object for anything else, which under OpenSSL 3.5 means an ML-KEM hybrid — *or*
+a resumed session — and the report said both readings rather than guessing
+between them. Node 24.22.1 (the pin since 2026-10-26) names the group as
+`{ type: 'TLSGroup', name: 'X25519MLKEM768' }`, with no size, and the report
+then says the connection IS protected against recording; the unnamed reading
+is kept for an older node. `tests/api_tls_probe.js` asserts whichever the node
+it runs on does.
 
 **All three of those results need an OpenSSL that HAS the algorithms, so on an
 older node they are skipped rather than asserted.** That is the same argument
@@ -884,7 +889,7 @@ about the certificate — so a test asserting through the binary would pass or
 fail on the base image's release date.
 
 Node's OpenSSL moves with the **node** version, which every image here pins:
-24.16 is linked against **OpenSSL 3.5.6**, the release that added all three
+24.22.1 is linked against **OpenSSL 3.5.9**, the line that added all three
 families. So `tests/pki_pqc_x509.js` reaches the same library through
 `crypto.createPublicKey()` and `crypto.verify()` (see `tests/openssl35.js`) and
 gets the same answer on every machine. The **hybrid** cases go back to the

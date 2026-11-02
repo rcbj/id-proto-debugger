@@ -55,7 +55,7 @@ uncommitted work is in the build, as it would be in a `docker build`. It sets
 
 **`Dockerfile`** — build context is the repo root, classic builder only (no
 BuildKit on the machines this runs on, so no `# syntax`, `--mount` or
-`--build-context`), Node 24.16.0 installed as the other images do, and a final
+`--build-context`), Node 24.22.1 installed as the other images do, and a final
 `FROM scratch` stage holding exactly `/debugger/ui`, `/debugger/api`,
 `/debugger/common` and `/debugger/version.json`. Tag it
 `rcbj/id-proto-debugger-embedded:<tag>`; the mock STS's Dockerfile does

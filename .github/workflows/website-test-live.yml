@@ -104,7 +104,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.22.1'
 
       # xmllint is what the WS-Trust schema test validates with when the optional
       # native libxmljs2 binding is unusable. The tests image installs

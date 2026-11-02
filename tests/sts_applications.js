@@ -525,6 +525,26 @@ async function provision(base, spec) {
     await forget(base, identifier);
   }
 
+  // `oauthConfidential` IS DERIVED since iya-sts #466 (2026-10-25): the
+  // registry writes it from oauthTokenEndpointAuthMethod — `none`, or no
+  // method, is FALSE and any other method is TRUE — it is no longer in the
+  // `editable` table, and a supplied value that disagrees with the method is
+  // refused (STS-REG-0363). A job still STATES it, because "this client is
+  // public" is part of what the job is about to present; so where the
+  // registry no longer takes it, it is kept out of the write and asserted on
+  // the READBACK instead, against what the method the job declared made.
+  // An sts from before #466 lists it as editable and is written as before.
+  var statedConfidential = null;
+  if (Object.prototype.hasOwnProperty.call(fields, "oauthConfidential") &&
+      !(await registryEditable(base, "oauthConfidential"))) {
+    statedConfidential = valuesOf(fields.oauthConfidential)[0];
+    delete fields.oauthConfidential;
+    log.info("[registry] \"" + identifier + "\": oauthConfidential=" +
+             statedConfidential + " is derived by this mock STS from the " +
+             "token endpoint authentication method, so it is checked on " +
+             "the readback rather than written.");
+  }
+
   var created = await adminPost(base, "/applications/create", {
     identifier: identifier,
     name: spec.name || identifier,
@@ -558,6 +578,19 @@ async function provision(base, spec) {
     identifier + "\" after this test created it, so the create answered ok " +
     "for something that did not happen.");
   assertMatches(entry, identifier, protocols, fields);
+  if (statedConfidential !== null) {
+    var derived = valuesOf(heldValues((entry.fields || {})
+                                      .oauthConfidential))[0];
+    assert.strictEqual(derived, statedConfidential,
+      "\"" + identifier + "\" states oauthConfidential=" +
+      statedConfidential + " and the registry derived " + derived +
+      " from the token endpoint authentication method it was given (" +
+      JSON.stringify(valuesOf(heldValues((entry.fields || {})
+                              .oauthTokenEndpointAuthMethod))) +
+      "). Since iya-sts #466 the flag IS the method's determination — " +
+      "declare `none` for a public client and a secret or key method " +
+      "for a confidential one, rather than stating the flag alone.");
+  }
   log.info("[registry] \"" + identifier + "\": declared for " +
            ((entry.allowedProtocols || []).join(", ") || "(nothing)") +
            ", " + Object.keys(fields).length + " attribute(s) configured.");
@@ -591,9 +624,10 @@ async function reconcile(base, identifier, protocols, fields) {
       "\"" + name + "\" is not an editable attribute of the mock STS's " +
       "application registry — its `editable` table names " +
       Object.keys(modes).length + " and not this one. A DERIVED attribute (a " +
-      "counter, a sighting, appProtocol, appRedirectUriObserved) is refused " +
-      "by name rather than written, because an entry created with one would " +
-      "be asserting a past it does not have.");
+      "counter, a sighting, appProtocol, appRedirectUriObserved, and since " +
+      "iya-sts #466 oauthConfidential, which provision() keeps out of the " +
+      "write) is refused by name rather than written, because an entry " +
+      "created with one would be asserting a past it does not have.");
     var values = valuesOf(fields[name]);
     if (mode === "set") {
       assert.strictEqual(values.length, 1,

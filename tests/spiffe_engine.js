@@ -653,16 +653,21 @@ const MOCK_ONLY_PROTOS = {
 function testProtoSync() {
   log.debug("Entering testProtoSync().");
   const mine = protoDir();
-  // Located via the mock's own `spiffe_grpc.js` rather than by naming
+  // Located via the mock's own `spiffe_grpc` module rather than by naming
   // `spiffe/protos` here, for the reason module_paths.js gives about searching
   // for a module by NAME: the mock moved every module into folders on
   // 2026-08-23 and a path written down in this repository would have broken.
   // `protos` is in that searcher's skip list — it looks for JS — so the
   // directory is derived from the module that reads it, which is the file that
-  // would have to move with it.
-  const grpcModule = paths.mockStsModule('spiffe_grpc.js', function (say) {
+  // would have to move with it. Both spellings, because iya-sts writes that
+  // module in TypeScript since the sts/ bump of 2026-10-26 and the protos
+  // still sit beside it; asking for `.js` alone turned this whole comparison
+  // into a skip that named an uninitialised submodule.
+  const warn = function (say) {
     log.warn(say);
-  });
+  };
+  const grpcModule = paths.mockStsModule('spiffe_grpc.js', warn) ||
+    paths.mockStsModule('spiffe_grpc.ts', warn);
   const theirsRoot = grpcModule
     ? path.join(path.dirname(grpcModule), 'protos', 'workloadapi.proto')
     : null;

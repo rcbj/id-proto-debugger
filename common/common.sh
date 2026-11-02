@@ -992,10 +992,10 @@ renderWaltidConfig()
 #
 #   * four compose files build the image with `context: ./sts`, and compose says
 #     "failed to read dockerfile" — a message about a path, not about a submodule;
-#   * tests/Dockerfile copies sts/common/vendored/bbs2023.js into the tests image so that
-#     tests/bbs2023_cryptosuite.js can check the wallet's cryptosuite against the
-#     issuer's, and the build says
-#     "COPY sts/common/vendored/bbs2023.js: not found".
+#   * tests/Dockerfile copies sts/common/crypto_impl/bbs2023.js into the tests
+#     image so that tests/bbs2023_cryptosuite.js can check the wallet's
+#     cryptosuite against the issuer's, and the build says
+#     "COPY sts/common/crypto_impl/bbs2023.js: not found".
 #
 # A `git clone` without --recurse-submodules leaves exactly that state: sts/
 # present and EMPTY. So this initialises it when it is missing and refuses the run

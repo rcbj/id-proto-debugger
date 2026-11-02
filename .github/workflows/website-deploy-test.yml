@@ -16,6 +16,13 @@ name: Deploy Static Site (test.idptools.com)
 #
 # The Selenium Tests suite runs once (in its own workflow) and gates this one.
 #
+# ONLY A PUSH MAY DEPLOY. Selenium Tests also runs on pull requests, and for a
+# pull request from a fork workflow_run.head_branch is the FORK's branch name,
+# which anybody can call develop. Without the event == 'push' check below, a
+# fork's passing pull request would start this workflow, check out its own code
+# (head_sha) and run it with the AWS keys and TAG_PUSH_TOKEN. A fork cannot push
+# here, so a push run is always this repository's own develop.
+#
 # NOTE: workflow_run triggers only fire from the workflow file on the DEFAULT
 # branch (master) — keep this file updated there.
 
@@ -41,6 +48,7 @@ jobs:
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
           (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push' &&
            github.event.workflow_run.head_branch == 'develop') }}
     steps:
       - name: Checkout Repository
@@ -74,6 +82,7 @@ jobs:
     if: >-
       ${{ github.event_name == 'workflow_dispatch' ||
           (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push' &&
            github.event.workflow_run.head_branch == 'develop') }}
     steps:
       # THE TAGS BELOW NEED A TOKEN WITH `workflows` PERMISSION, which

@@ -29,7 +29,7 @@
 # ---------------------------------------------------------------------------
 x-mirror-contexts: &mirror-contexts
   ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
-  "node:24.16.0-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.16.0-bookworm-slim
+  "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
   "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
 services:
   postgres:
@@ -448,7 +448,7 @@ services:
       # The submodule's own root: see docker-compose.yml for why the context is
       # ./sts rather than this repository with dockerfile: sts/Dockerfile.
       context: ./sts
-      # Its FROMs are ubuntu:latest and node:24.16.0-bookworm-slim; the
+      # Its FROMs are ubuntu:latest and node:24.22.1-bookworm-slim; the
       # contexts send both to the mirror without touching the submodule.
       additional_contexts: *mirror-contexts
     # https, and `rejectUnauthorized:false` — the certificate is self-signed and
@@ -521,7 +521,7 @@ services:
   # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
   waltid-issuer:
     container_name: waltid-issuer
-    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -582,7 +582,7 @@ services:
   # urlPrefix names, so every URL it hands the wallet is one the browser can use.
   waltid-verifier:
     container_name: waltid-verifier
-    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.

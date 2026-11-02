@@ -176,13 +176,13 @@ var PREFIX_RULES = {
 //
 //   sts_bbs2023.js is the mock STS's vendored copy, renamed by tests/
 //   Dockerfile so it can sit beside this repository's own bbs2023.js
-//   (`COPY sts/common/vendored/bbs2023.js ./sts_bbs2023.js`). Nothing in this
-//   tree is called that, so no search can find it; mapping it to the path it
-//   came from is also what puts it behind the `sts/` exclusion, where it
-//   belongs.
+//   (`COPY sts/common/crypto_impl/bbs2023.js ./sts_bbs2023.js`). Nothing in
+//   this tree is called that, so no search can find it; mapping it to the
+//   path it came from is also what puts it behind the `sts/` exclusion,
+//   where it belongs.
 var OVERRIDES = {
   "api:version.js": "client/version.js",
-  "node:sts_bbs2023.js": "sts/common/vendored/bbs2023.js"
+  "node:sts_bbs2023.js": "sts/common/crypto_impl/bbs2023.js"
 };
 
 // ---------------------------------------------------------------------------

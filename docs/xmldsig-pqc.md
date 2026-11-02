@@ -238,6 +238,6 @@ derivation, and the two refusals.
 ## Keeping the two copies in step
 
 `common/xmldsig.js` is vendored into the mock STS as
-`sts/common/vendored/xmldsig.js`, **byte-identical**, so both ends of a SAML
+`sts/common/crypto_impl/xmldsig.js`, **byte-identical**, so both ends of a SAML
 exchange canonicalize with the same code. A change here is copied there in the
-same commit; `sts/common/vendored/CLAUDE.md` carries the rule.
+same commit; `sts/common/crypto_impl/CLAUDE.md` carries the rule.

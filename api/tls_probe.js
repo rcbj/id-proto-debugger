@@ -612,13 +612,16 @@ function createProbe(appconfig, guard, log, deps) {
   // normal state of the world in 2026, and it is protected against recording
   // and not against a future forger. The report says both, separately.
   //
-  // NODE CANNOT NAME THE NEGOTIATED GROUP, and that is a fact about node's API
-  // rather than about the connection. `getEphemeralKeyInfo()` predates the
-  // hybrid groups: it describes ECDH and DH and returns an EMPTY OBJECT for a
-  // group it has no case for, which under OpenSSL 3.5 means an ML-KEM hybrid
-  // (or a resumed session, which has no ephemeral key of its own). So this
-  // reports what node said and what that means, and does not claim a name it
-  // cannot see.
+  // WHETHER NODE CAN NAME THE NEGOTIATED GROUP DEPENDS ON THE RELEASE, and
+  // that is a fact about node's API rather than about the connection.
+  // `getEphemeralKeyInfo()` predates the hybrid groups: through node 24.16 it
+  // described ECDH and DH and returned an EMPTY OBJECT for a group it had no
+  // case for, which under OpenSSL 3.5 means an ML-KEM hybrid (or a resumed
+  // session, which has no ephemeral key of its own). Node 24.22.1 names such
+  // a group as `{ type: 'TLSGroup', name: 'X25519MLKEM768' }` with no size.
+  // So this reports what node said and what that means: a name when there
+  // is one, and otherwise the two things an absent name can mean, without
+  // guessing between them.
   const PQ_SIGNATURE_OIDS = {
     '2.16.840.1.101.3.4.3.17': 'ML-DSA-44',
     '2.16.840.1.101.3.4.3.18': 'ML-DSA-65',
@@ -875,15 +878,19 @@ function createProbe(appconfig, guard, log, deps) {
   // The post-quantum reading of one completed handshake.
   //
   // `ephemeralKey` is reported verbatim and interpreted only as far as it can
-  // honestly be: node returns {} for a group its API has no case for, which
-  // with OpenSSL 3.5 means a hybrid ML-KEM group — but ALSO means a resumed
-  // session, so the two are not distinguished here and the report says why.
+  // honestly be: a node before 24.22 returns {} for a group its API has no
+  // case for, which with OpenSSL 3.5 means a hybrid ML-KEM group — but ALSO
+  // means a resumed session, so the two are not distinguished here and the
+  // report says why. Node 24.22.1 names the group (`type: 'TLSGroup'`), and
+  // a name containing MLKEM is the one case this report can call protected.
   function describePostQuantum(socket, options, chain) {
     logger.debug("Entering describePostQuantum().");
     const ephemeral = typeof socket.getEphemeralKeyInfo === 'function'
       ? (socket.getEphemeralKeyInfo() || {})
       : {};
     const named = !!(ephemeral && ephemeral.name);
+    const namedPostQuantum = named &&
+      /MLKEM|ML-KEM|KYBER/i.test(String(ephemeral.name));
     const leaf = (chain || [])[0] || null;
     const anyPostQuantumCertificate = (chain || []).some(function (one) {
       return one && one.algorithms && (one.algorithms.signatureIsPostQuantum ||
@@ -895,7 +902,14 @@ function createProbe(appconfig, guard, log, deps) {
       ephemeralKey: named ? ephemeral : null,
       // The interpretation, spelled out rather than reduced to a boolean this
       // service cannot actually justify.
-      keyExchangeNote: named
+      keyExchangeNote: namedPostQuantum
+        ? 'The negotiated group is ' + ephemeral.name + ', an ML-KEM hybrid ' +
+          'named by node ' + process.versions.node + ' (' + ephemeral.type +
+          ') — so this connection IS protected against a recorded-now, ' +
+          'decrypted-later attack. Whether the server can be impersonated ' +
+          'by a quantum computer is the certificate\'s question, answered ' +
+          'separately below.'
+        : named
         ? 'The negotiated group is ' + ephemeral.name + ', which node can ' +
           'name — so it is one of the classical ECDH or DH groups and this ' +
           'connection is NOT protected against a recorded-now, ' +
