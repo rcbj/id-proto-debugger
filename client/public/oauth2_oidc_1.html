@@ -837,7 +837,15 @@ function dbgSetAllPanes(expand) {
         <tbody>
           <tr>
             <td>&nbsp;</td>
-            <td><p>Create, read, update, and delete a client on the Identity Provider using the OIDC Dynamic Client Registration protocol. See the <a rel="noopener noreferrer" href="https://openid.net/specs/openid-connect-registration-1_0.html" onclick="return oauth2_oidc_1.clickLink();">OIDC Registration spec</a> (and <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7591" onclick="return oauth2_oidc_1.clickLink();">RFC 7591</a> / <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7592" onclick="return oauth2_oidc_1.clickLink();">RFC 7592</a>).</p></td>
+            <td><p>Create, read, update, and delete a client on the Identity Provider using the OIDC Dynamic Client Registration protocol. See the <a rel="noopener noreferrer" href="https://openid.net/specs/openid-connect-registration-1_0.html" onclick="return oauth2_oidc_1.clickLink();">OIDC Registration spec</a> (and <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7591" onclick="return oauth2_oidc_1.clickLink();">RFC 7591</a> / <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7592" onclick="return oauth2_oidc_1.clickLink();">RFC 7592</a>).</p>
+              <p><a rel="noopener noreferrer"
+                  href="https://openid.net/specs/openid-connect-rp-metadata-choices-1_0-final.html"
+                  onclick="return oauth2_oidc_1.clickLink();">OpenID
+                Connect RP Metadata Choices 1.0</a> sends each value
+                this client supports as an array, with the preferred
+                value in the single-valued partner. Apply RP metadata
+                choices writes that request. The line under the metadata
+                checks it before anything is sent.</p></td>
           </tr>
           <tr>
             <td>
@@ -864,6 +872,17 @@ function dbgSetAllPanes(expand) {
             </td>
             <td>
               <textarea id="dcr_client_metadata" name="dcr_client_metadata" rows="14" cols="70"></textarea>
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <input class="btn2" type="button"
+                  value="Apply RP metadata choices"
+                  onclick="return oauth2_oidc_1.applyRpMetadataChoices();" />
+            </td>
+            <td>
+              <div id="dcr_choices_verdict"
+                  style="white-space: pre-wrap;"></div>
             </td>
           </tr>
           <tr>
@@ -916,6 +935,14 @@ function dbgSetAllPanes(expand) {
             </td>
             <td>
               <textarea id="dcr_response_textarea" name="dcr_response_textarea" rows="14" cols="70" readonly></textarea>
+            </td>
+          </tr>
+          <tr>
+            <td>&nbsp;</td>
+            <td>
+              <div id="dcr_choices_response_note"
+                  style="white-space: pre-wrap;"></div>
+              <div id="dcr_choices_result"></div>
             </td>
           </tr>
         </tbody>

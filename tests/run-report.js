@@ -1232,6 +1232,17 @@ function buildJobs() {
     },
   });
 
+  // OpenID Connect RP Metadata Choices 1.0, in node with no browser
+  // and no network. The registration request and the reading of a
+  // registration response are this client's obligations. A provider's
+  // behaviour is not an input, so the job never skips and takes no env.
+  jobs.push({
+    name: "RP Metadata Choices (OpenID Connect RP Metadata Choices " +
+        "1.0, in node)",
+    script: "rp_metadata_choices.js",
+    env: {},
+  });
+
   // OIDC Dynamic Client Registration (OpenID Connect Registration 1.0 /
   // RFC 7591 / RFC 7592). Creates a client using an initial access token, then
   // reads, updates, and deletes it via the client configuration endpoint.
