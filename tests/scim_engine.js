@@ -810,6 +810,29 @@ function everySchemeInSection2IsSupported() {
         'A DPoP-bound token needs BOTH the Authorization header and the ' +
         'proof in its own DPoP header.');
     assert.strictEqual(
+        scim.applyAuth(request, { scheme: 'bearer', token: 'Bearer T' })
+          .headers.Authorization, 'Bearer T',
+        'A token pasted as RFC 6750 credentials must not be prefixed ' +
+        'again.');
+    assert.strictEqual(
+        scim.applyAuth(request, { scheme: 'dpop', token: 'DPoP T',
+                                  proof: 'P' }).headers.Authorization,
+        'DPoP T');
+    assert.strictEqual(
+        scim.applyAuth(request, { scheme: 'dpop', token: 'Bearer T',
+                                  proof: 'P' }).headers.Authorization,
+        'DPoP T',
+        'The page scheme wins: Bearer credentials pasted into a DPoP ' +
+        'field are sent as DPoP.');
+    assert.strictEqual(
+        scim.applyAuth(request,
+            { scheme: 'bearer', token: 'Authorization: Bearer T' })
+          .headers.Authorization, 'Bearer T');
+    assert.strictEqual(
+        scim.applyAuth(request, { scheme: 'bearer', token: 'not a token' })
+          .headers.Authorization, 'Bearer not a token',
+        'A value that is not credentials keeps the old prefix.');
+    assert.strictEqual(
         scim.applyAuth(request, { scheme: 'cookie' }).credentials, 'include',
         'A cookie rides on the request only if the call is made with ' +
         'credentials. Without that the browser sends nothing and the 401 ' +

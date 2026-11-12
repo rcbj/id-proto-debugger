@@ -83,6 +83,8 @@ const PUBLIC = path.join(REPO, "client", "public");
 const paths = require("./module_paths.js");
 const rfc9700 = paths.requireSharedModule([path.join(SRC, "rfc9700.js")],
                                           "client/src/rfc9700.js");
+const rfc6750 = paths.requireSharedModule(
+    [path.join(SRC, "rfc6750.js")], "client/src/rfc6750.js");
 
 function read(file) {
   log.debug("Entering read(). file=" + file);
@@ -117,6 +119,21 @@ function code(file) {
     .join("\n");
   log.debug("Leaving code().");
   return stripped;
+}
+
+// The body of one top-level function, comments already stripped. The
+// next top-level `function` is the boundary, which is how this file's
+// mode-off check scopes a call too.
+function functionBody(text, name) {
+  log.debug("Entering functionBody(). name=" + name);
+  var start = text.indexOf("function " + name);
+  if (start < 0) {
+    log.debug("Leaving functionBody(). Missing.");
+    return "";
+  }
+  var next = text.indexOf("\nfunction ", start + 1);
+  log.debug("Leaving functionBody().");
+  return text.slice(start, next === -1 ? text.length : next);
 }
 
 // The subject of every fabricated ID Token below. Nothing here reaches a
@@ -990,6 +1007,117 @@ function run() {
           tag.slice(0, 160));
       });
     });
+  });
+
+  // RFC 6750 section 2.1 is what Copy Token writes. RFC 9700 section
+  // 4.3.2 is why that is the header form. The compliance switch does
+  // not gate it, so the check lives with the other always-on posture.
+  check("RFC 6750 — credentials are the header form, and only that",
+        function () {
+    var example = "mF_9.B5f-4.1JqM";
+    assert.strictEqual(rfc6750.credentials(example),
+        "Bearer " + example,
+        "RFC 6750 section 2.1's own example.");
+    assert.strictEqual(rfc6750.credentials(example).indexOf("?"), -1,
+        "Credentials are not a query string. RFC 9700 section 4.3.2 " +
+        "forbids the RFC 6750 section 2.3 method.");
+    assert.strictEqual(rfc6750.credentials("ab="), "Bearer ab=");
+    assert.strictEqual(rfc6750.credentials(
+        "eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.sig"),
+        "Bearer eyJhbGciOiJub25lIn0.eyJzdWIiOiIxIn0.sig");
+    assert.strictEqual(rfc6750.credentials("a+b/c"), "Bearer a+b/c");
+    [" ", "a b", "a,b", "a\"b", "", "=", "===", "ab=cd", "caf\u00e9"]
+      .forEach(function (token) {
+        assert.strictEqual(rfc6750.credentials(token), null,
+            "Not a b64token, so there are no credentials to copy: " +
+            JSON.stringify(token));
+      });
+    assert.strictEqual(rfc6750.credentials(example, "bearer"),
+        "Bearer " + example);
+    assert.strictEqual(rfc6750.credentials(example, "BEARER"),
+        "Bearer " + example);
+    assert.strictEqual(rfc6750.credentials(example, "dpop"),
+        "DPoP " + example);
+    assert.strictEqual(rfc6750.credentials(example, "DPOP"),
+        "DPoP " + example);
+    assert.strictEqual(rfc6750.credentials(example, "MAC"), null,
+        "An unknown token_type must not be labelled Bearer.");
+    assert.strictEqual(rfc6750.credentials(null), null);
+    assert.strictEqual(rfc6750.credentials(1), null);
+    assert.strictEqual(rfc6750.schemeName(null), "Bearer");
+    assert.strictEqual(rfc6750.schemeName(undefined), "Bearer");
+    assert.strictEqual(rfc6750.schemeName(""), "Bearer");
+    assert.strictEqual(rfc6750.schemeName("   "), "Bearer");
+    assert.strictEqual(rfc6750.schemeName("MAC"), null);
+    assert.strictEqual(rfc6750.schemeName("raw"), null);
+    assert.strictEqual(rfc6750.schemeName("refused"), null);
+    assert.strictEqual(rfc6750.credentials("Bearer " + example),
+        "Bearer " + example);
+    assert.strictEqual(rfc6750.credentials("bearer " + example, "DPoP"),
+        "Bearer " + example,
+        "A value that is already credentials keeps its scheme.");
+    assert.strictEqual(rfc6750.credentials("DPoP\t" + example),
+        "DPoP " + example);
+    assert.strictEqual(rfc6750.credentials("Bearer   " + example),
+        "Bearer " + example);
+    assert.strictEqual(
+        rfc6750.credentials("Authorization: Bearer " + example),
+        "Bearer " + example);
+    assert.strictEqual(rfc6750.credentials("  " + example + "  "),
+        "Bearer " + example);
+    assert.strictEqual(rfc6750.tokenValue("Bearer " + example), example);
+    assert.strictEqual(rfc6750.tokenValue("bearer " + example), example);
+    assert.strictEqual(
+        rfc6750.tokenValue("Authorization: DPoP " + example), example);
+    assert.strictEqual(rfc6750.tokenValue("  " + example + "  "),
+        example);
+    assert.strictEqual(rfc6750.tokenValue("not a token"), "not a token");
+    assert.strictEqual(rfc6750.tokenValue("  not a token  "),
+        "  not a token  ");
+    assert.strictEqual(rfc6750.tokenValue(null), "");
+    assert.strictEqual(rfc6750.tokenValue(1), "");
+  });
+
+  check("Copy Token writes those credentials for an access token only",
+        function () {
+    var text = code(path.join(SRC, "oauth2_oidc_2.js"));
+    var copy = functionBody(text, "onClickCopyToken");
+    assert.ok(copy.indexOf("function onClickCopyToken") === 0,
+        "onClickCopyToken is missing.");
+    assert.ok(/rfc6750\.credentials\(/.test(copy),
+        "onClickCopyToken does not format an access token with " +
+        "rfc6750.credentials.");
+    assert.ok(/data-token-field/.test(copy),
+        "onClickCopyToken does not read data-token-field. A refresh " +
+        "token and an ID token are copied unchanged.");
+    assert.ok(/!== "access"/.test(copy),
+        "onClickCopyToken does not treat a non-access field as raw.");
+    assert.ok(/"raw"/.test(copy),
+        "onClickCopyToken does not honour data-auth-scheme raw.");
+    assert.ok(/"refused"/.test(copy),
+        "onClickCopyToken does not refuse a token_type that is " +
+        "neither Bearer nor DPoP.");
+    assert.ok(!/rfc9700\.enabled\(/.test(copy),
+        "Copy Token must not wait on the RFC 9700 checkbox.");
+    assert.ok(!/[?&]access_token=/.test(copy),
+        "Copy Token must not build a query parameter.");
+    var mark = functionBody(text, "markAccessTokenScheme");
+    assert.ok(mark.indexOf("function markAccessTokenScheme") === 0,
+        "markAccessTokenScheme is missing.");
+    assert.ok(/data-auth-scheme", scheme\)/.test(mark),
+        "data-auth-scheme must be the closed scheme, not token_type.");
+    assert.ok(/"raw"/.test(mark) && /"refused"/.test(mark),
+        "markAccessTokenScheme must keep the raw and refused sentinels.");
+    var issued = functionBody(text, "copyIssuedAsBearer");
+    assert.ok(issued.indexOf("function copyIssuedAsBearer") === 0,
+        "copyIssuedAsBearer is missing.");
+    ["refresh_token", "id_token", "saml"].forEach(function (kind) {
+      assert.ok(issued.indexOf(kind) >= 0,
+          "An issued " + kind + " must not be copied as Bearer.");
+    });
+    assert.ok(/value="Copy Token"/.test(text),
+        "The Copy Token button label is what the implicit-flow test " +
+        "selects.");
   });
 
   log.debug("Leaving run().");

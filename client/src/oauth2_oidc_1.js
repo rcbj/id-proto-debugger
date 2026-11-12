@@ -18,6 +18,9 @@ var urlSafety = require("./url_safety");
 // checkbox at the top of the Configuration Parameters pane is ticked; see
 // the note at the top of that module for why it has to be.
 var rfc9700 = require("./rfc9700");
+// RFC 6750 section 2.1. The registration proxy's api adds "Bearer "
+// itself, so a token copied as credentials has to be stripped here.
+var rfc6750 = require("./rfc6750");
 var $ = require("jquery");
 console.log("logLevel: " + appconfig.logLevel);
 var log = bunyan.createLogger({ name: 'oauth2_oidc_1',
@@ -2771,6 +2774,11 @@ function callRegistrationProxy(method, url, bearerToken, metadataObj,
     log.debug("Leaving callRegistrationProxy().");
     return false;
   }
+  // The api prefixes "Bearer ". A value copied from the token pane is
+  // already credentials, and a raw token is left as it is.
+  if (typeof bearerToken === "string") {
+    bearerToken = rfc6750.tokenValue(bearerToken);
+  }
   var payload = {
     method: method,
     url: url,
@@ -2976,7 +2984,8 @@ function recalculateDcrRequestDescription() {
   }
   var endpoint = $("#dcr_registration_endpoint").val() ||
       $("#registration_endpoint").val() || "";
-  var token = $("#dcr_initial_access_token").val();
+  var token = rfc6750.tokenValue(
+      $("#dcr_initial_access_token").val() || "");
   var request = "POST " + endpoint + "\n";
   if (!!token) {
     request += "Authorization: Bearer " + token + "\n";
