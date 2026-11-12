@@ -85,6 +85,42 @@
       <input type="submit" value="RFC 9068 Compliance" onclick="return jwt_tools.checkRfc9068Compliance();" title="Validate as an OAuth 2.0 JWT access token (RFC 9068)." />
     </div>
     <div class="jt-field">
+      <label title="Off until checked. Uses pane 4's key.">
+        <input type="checkbox" id="jwt_rfc9068_verify"
+               name="jwt_rfc9068_verify" />
+        Verify the signature as part of this check
+      </label>
+    </div>
+    <div class="jt-field">
+      <label title="Off until checked. Opens a JWE with pane 5's key.">
+        <input type="checkbox" id="jwt_rfc9068_decrypt"
+               name="jwt_rfc9068_decrypt" />
+        Decrypt an encrypted access token before the claim checks
+      </label>
+    </div>
+    <div class="jt-field">
+      <label title="Off until checked. iss, aud, and client_id.">
+        <input type="checkbox" id="jwt_rfc9068_workflow"
+               name="jwt_rfc9068_workflow" />
+        Compare iss, aud, and client_id with the workflow
+      </label>
+    </div>
+    <div class="jt-field">
+      <label title="Off until checked. Absent is a skip.">
+        <input type="checkbox" id="jwt_rfc9068_authz_claims"
+               name="jwt_rfc9068_authz_claims" />
+        Check groups, roles, and entitlements
+      </label>
+    </div>
+    <div class="jt-field">
+      <label title="Off until checked. Matches the original token.">
+        <input type="checkbox" id="jwt_rfc9068_auth_context"
+               name="jwt_rfc9068_auth_context" />
+        Compare auth_time, acr, and amr with the original access
+        token
+      </label>
+    </div>
+    <div class="jt-field">
       <label>Compliance Output</label>
       <textarea rows="5" id="compliance_output" name="compliance_output" readonly></textarea>
     </div>

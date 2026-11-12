@@ -49,6 +49,13 @@ Both tabs have the same verification block.
 | **Client ID** | empty | Checked as `azp` for an ID token and as `client_id` for an RFC 9068 access token. |
 | **Required Scope(s)** | empty | Space-separated. Every one must be in `scope`. Blank skips the check. |
 | **Clock Skew Tolerance (seconds)** | 30 | Applied to `exp`, `nbf`, and `iat`. |
+| **RFC 9068 on open** | unchecked | When this page opens an access token, JWT Purpose becomes OAuth2 Access Token (RFC 9068). The choice is stored. Opening the page leaves the stored purpose as it was. |
+| **Workflow comparison** | unchecked | Compares `iss` with the discovered issuer, `aud` with the resource parameter that was sent, and `client_id` with the workflow's client id. A blank value is a skip. The token request's resource is used when that request sent one. |
+| **Signature** | unchecked | Verifies with the key above and includes the result in this report. The verification output is updated as well. |
+| **Decrypt first** | unchecked | Opens a five-segment JWE with the private key below, then checks the inner JWT. A three-segment token is a skip. |
+| **Decryption key** | empty | PEM or JWK. Kept for this visit only. |
+| **Authorization claims** | unchecked | `groups`, `roles`, and `entitlements`. Absent is a skip. Present must be an array of strings, or of objects with a string `value`. |
+| **Authentication context** | unchecked | `auth_time`, `acr`, and `amr` must match the workflow's original access token. The original token itself is a skip. |
 | **Validate Claims** | | Writes the claim-check output under the button. |
 
 **Return to debugger** goes back to step 2.

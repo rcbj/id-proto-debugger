@@ -278,7 +278,12 @@
             <td>The <a href="/token_detail.html">token detail</a> and
               <a href="/jwt_tools.html">JWT tools</a> pages recognise the
               <code>at+jwt</code> type and check the claims the profile
-              requires.</td>
+              requires. The same pages can verify the signature, decrypt
+              a JWE, check <code>groups</code>, <code>roles</code> and
+              <code>entitlements</code>, and compare
+              <code>auth_time</code>, <code>acr</code> and
+              <code>amr</code> with the original access token. Each of
+              those checks stays off until its checkbox is set.</td>
           </tr>
           <tr>
             <td><a href="https://www.rfc-editor.org/rfc/rfc9101"
