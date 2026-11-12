@@ -271,14 +271,26 @@ async function tokenDetailPage(driver, type)
     // made on its contents.
     log.info("Claims validation completed.");
 
-    // The purpose dropdown's third option is RFC 9068's profile, and the
-    // access token this page is showing was minted by the mock STS with
-    // "typ": "at+jwt" (iya-sts#442) — section 2.1's RECOMMENDED spelling,
-    // which section 4 tells a resource server to accept. So run that
-    // profile's check and hold the typ line to it: the old exact compare
-    // failed the very spelling the RFC recommends.
+    // The purpose dropdown's third option is RFC 9068's profile. What its typ
+    // line must say depends on the TOKEN, not on which service this job ran
+    // against: iya-sts mints access tokens with "typ": "at+jwt" (iya-sts#442),
+    // section 2.1's RECOMMENDED spelling, which section 4 tells a resource
+    // server to accept — while Keycloak's say "typ": "JWT", which RFC 9068
+    // does not allow, so the profile's check is RIGHT to fail them. So the
+    // header is read here, and the page is held to the RFC either way: every
+    // spelling the RFC uses passes (the old exact compare failed the very one
+    // it recommends), and anything else fails.
     if (type === "access_token") {
       log.info("Validate Claims as an RFC 9068 access token.");
+      let headerTyp = "";
+      try {
+        headerTyp = String(JSON.parse(Buffer.from(String(token).split(".")[0],
+          "base64url").toString("utf8")).typ || "");
+      } catch (e) {
+        log.warn("Could not read the access token's JOSE header: " +
+                 e.message);
+      }
+      const rfc9068Typ = /^(application\/)?at\+jwt$/i.test(headerTyp);
       await new Select(await driver.findElement(By.id("jwt_purpose")))
                        .selectByValue("oauth2_access_token");
       await validateClaimsBtn.click();
@@ -286,15 +298,26 @@ async function tokenDetailPage(driver, type)
       const rfc9068Validation =
           await driver.findElement(By.id("jwt_claims_validation_output"))
           .getAttribute("value");
-      log.info("RFC 9068 claims validation output:\n" + rfc9068Validation);
-      assert.ok(rfc9068Validation.indexOf("PASS  typ") !== -1,
-                "the access token carries typ \"at+jwt\" — RFC 9068 §2.1's " +
-                "RECOMMENDED spelling, which §4 tells a resource server to " +
-                "accept — so the typ check must pass — output:\n" +
-                rfc9068Validation);
-      assert.ok(rfc9068Validation.indexOf("FAIL  typ") === -1,
-                "the typ check failed:\n" + rfc9068Validation);
-      log.info("RFC 9068 access token typ check passed.");
+      log.info("RFC 9068 claims validation output (token typ \"" +
+               headerTyp + "\"):\n" + rfc9068Validation);
+      if (rfc9068Typ) {
+        assert.ok(rfc9068Validation.indexOf("PASS  typ") !== -1 &&
+                  rfc9068Validation.indexOf("FAIL  typ") === -1,
+                  "the access token carries typ \"" + headerTyp + "\", a " +
+                  "spelling RFC 9068 uses (section 2.1 RECOMMENDS at+jwt " +
+                  "and section 4 says to accept the media type form), so " +
+                  "the typ check must pass — output:\n" + rfc9068Validation);
+        log.info("RFC 9068 access token typ check passed for \"" +
+                 headerTyp + "\".");
+      } else {
+        assert.ok(rfc9068Validation.indexOf("FAIL  typ") !== -1,
+                  "the access token carries typ \"" + headerTyp + "\", " +
+                  "which RFC 9068 does not allow, so the profile's typ " +
+                  "check must FAIL it rather than accept anything — " +
+                  "output:\n" + rfc9068Validation);
+        log.info("RFC 9068 typ check correctly refused \"" + headerTyp +
+                 "\" (this provider is not issuing RFC 9068 tokens).");
+      }
     }
 
     // Return to the debugger.
