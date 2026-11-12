@@ -227,6 +227,8 @@ COPY client/Dockerfile ./client_Dockerfile
 # compares nothing is the exact shape of bug it is here to catch.
 COPY tests/compose_env_forwarding.js ./
 COPY docker-compose-run-tests.yml ./
+COPY docker-compose-run-tests-external-sts.yml ./
+COPY docker-compose-run-tests-no-host-ports.yml ./
 COPY docker-compose-coverage.yml ./
 COPY docker-compose.yml ./
 COPY local-tests.yml ./
@@ -350,7 +352,11 @@ COPY tests/bbs_vectors.json ./
 # FLAT and renamed, because it is loaded on its own and has no relative
 # requires; the ones below cannot be, and say why.
 COPY client/src/bbs2023.js ./
-COPY sts/common/crypto_impl/bbs2023.js ./sts_bbs2023.js
+# (iya-sts's copy is NOT flattened here any more. It was, as ./sts_bbs2023.js,
+# on the grounds that it had no relative requires; since iya-sts v1.0.0 it
+# reads its JSON-LD contexts from ./contexts beside itself, which a flat copy
+# cannot have. It is loaded from the iya-sts tree copied into ./sts in stage
+# 2, where its contexts and its own node_modules are where it expects them.)
 COPY client/src/contexts ./contexts
 # The wallet's side of OID4VCI, loaded directly by tests/ldp_vc_issuance.js so
 # that it covers what the PAGE does with a Credential Response and not only what
@@ -529,29 +535,31 @@ COPY tests/captures ./captures
 FROM ubuntu:latest AS files2
 WORKDIR /usr/src/app
 
-COPY sts/common/crypto_impl/bbs2023.js ./sts/common/crypto_impl/
-COPY sts/kerberos/krb5_primitives.js sts/kerberos/krb5_asn1.js sts/kerberos/krb5_crypto.js sts/kerberos/krb5_messages.js sts/kerberos/krb5_gss.js ./sts/kerberos/
-# krb5_ndr.js and krb5_pac.js joined that vendored set in phase 4, when the KDC started
-# minting a PAC. **This line is the one the paragraph above is about**: it cannot build
-# until the sts/ gitlink points at an iya-sts commit that has both files.
-COPY sts/kerberos/krb5_ndr.js sts/kerberos/krb5_pac.js ./sts/kerberos/
-# The RFC 4178 codec, vendored into iya-sts from common/krb5 like the seven
-# above; tests/krb5_codec_sync.js compares the copies.
-COPY sts/kerberos/krb5_spnego.js ./sts/kerberos/
+# ---------------------------------------------------------------------------
+# IYA STS ITSELF, AS ITS RELEASE IMAGE SHIPS IT (2026-11-12).
+#
+# Several jobs load iya-sts's own modules in process: the Kerberos codec
+# cross-check (krb5_codec_sync.js), the bbs-2023 cryptosuite comparisons
+# (bbs2023_cryptosuite, vc_did, ldp_vc_issuance, ldp_vc_refresh), and the
+# WebAuthn cross-implementation check. This used to copy each module they need
+# out of the sts/ checkout file by file, and every gitlink bump moved that set:
+# at v1.0.0 webauthn.js started loading common/helpers — most of the service —
+# and bbs2023.js started reading its contexts from beside itself, so the
+# hand-kept list could no longer be kept by hand.
+#
+# So the whole runnable tree comes from the image the stack RUNS
+# (docker-compose-run-tests.yml names it as the `iyasts` build context, from
+# the same IYA_STS_IMAGE), compiled, with its own node_modules. A module
+# loaded out of ./sts resolves its requires against ./sts/node_modules and
+# finds its siblings where it expects them, so there is no closure to
+# maintain. ./docker-run-tests.sh has already checked that image is the
+# release the sts/ gitlink pins (requireIyaStsImageMatchesCheckout()).
+# ---------------------------------------------------------------------------
+COPY --from=iyasts /usr/src/sts ./sts
 # The mock's manifest, read by the final stage for the Express version these
 # modules are written against. Flat and renamed on purpose; see the RUN that
 # installs it.
 COPY sts/package.json ./sts_package.json
-# And the submodule's own env/. A module loaded out of sts/ that requires
-# process.env.CONFIG_FILE resolves a relative path against its own directory,
-# so it means sts/env/<file> here rather than the tests' copy.
-COPY sts/env ./sts/env
-# ...and the JSON-LD contexts bbs2023.js reads at load time, for the jobs that
-# check the debugger's bbs-2023 cryptosuite against iya-sts's (vc_did,
-# ldp_vc_issuance, ldp_vc_refresh, bbs2023_cryptosuite). The in-process
-# iya-sts KDC jobs that needed most of what used to be copied out of sts/ here
-# moved to iya-sts's own suite on 2026-10-23, and that copy set went with them.
-COPY sts/common/crypto_impl/contexts ./sts/common/crypto_impl/contexts
 # The Kerberos relay's modules, loaded directly by tests/api_krb5_relay.js: it
 # drives them rather than going over HTTP, so every refusal can be checked with no
 # running service. Copied FLAT, like api/ssrf_guard.js below, and the test resolves
@@ -627,7 +635,9 @@ COPY client/src/cbor.js client/src/cose.js client/src/webauthn.js ./
 # (It falls back to a silent logger when ./helpers is absent, which it is here —
 # staging the service's helpers.js instead would drag in its CONFIG_FILE, read
 # relative to ITS directory, and the service's dependencies with it.)
-COPY sts/authn/webauthn.js ./sts/authn/webauthn.js
+# (iya-sts's webauthn.js comes with the whole iya-sts tree in stage 2, at
+# ./sts/authn/webauthn.js — it requires common/helpers and most of the service
+# since v1.0.0, which no per-file copy here could keep up with.)
 COPY tests/webauthn_decode.js tests/webauthn_vectors.json tests/webauthn_analyzer_page.js tests/webauthn_lab_page.js tests/webauthn_cross_impl.js tests/webauthn_oidc_mfa.js tests/webauthn_extension.js ./
 # The browser extension's CI build, side-loaded by tests/webauthn_extension.js.
 # It is GENERATED, not committed: build.js stamps the version in and bakes the
@@ -923,6 +933,28 @@ COPY tests/env ./env
 # configures the mock, with a 401 that names a credential rather than a COPY.
 # ---------------------------------------------------------------------------
 COPY tests/tools ./tools
+
+# ---------------------------------------------------------------------------
+# A COMPLETE copy of client/src and common/, for the source sweeps.
+#
+# xml_parse_inert.js reads EVERY module under client/src and common/ (every
+# DOMParser call asks for application/xml; the shared XML engine writes no
+# markup; nothing adopts a parsed node into the live page). The partial mirror
+# at /usr/src/client/src cannot serve it — that holds the Kerberos bundles the
+# two pane tests need and nothing else — so the job used to skip itself here
+# and ran only on a host. It is now the one thing the containerized suite
+# could not check, which is backwards for a job that needs no service at all.
+#
+# A directory of its OWN, /usr/src/source-tree, rather than completing the
+# mirror: several tests decide "is this a checkout?" by client/package.json
+# beside ../client/src (jwk_pem_encoding.js, static_site_exclusions.js), and
+# putting one there would flip them into sweeps that also want client/public
+# and client/node_modules. Here the manifest marks THIS tree as complete, and
+# only a test that asks for /usr/src/source-tree by name ever reads it.
+# ---------------------------------------------------------------------------
+COPY client/package.json /usr/src/source-tree/client/package.json
+COPY client/src /usr/src/source-tree/client/src
+COPY common /usr/src/source-tree/common
 
 # ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers

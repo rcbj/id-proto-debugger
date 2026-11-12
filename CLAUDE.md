@@ -136,7 +136,7 @@ The project is split into two independent Node.js services:
   HTTP and offer secp256k1 and Ed448, and a Web Crypto one that exists so the
   four workflows it absorbed emit exactly the bytes they emitted before.
   `tests/jws_engine.js` holds the two backends to producing identical output.
-- **`/common/krb5/`** — the **Kerberos v5** codec and crypto, shared by the browser bundles, the api's frame checks and the test suite, because one wire codec must not exist twice. It is the only protocol implementation here that is not under `client/src/`, and eight of its modules are additionally **vendored** into the `sts/` submodule (a Docker build cannot COPY from outside its context) with `tests/krb5_codec_sync.js` keeping the copies honest. `krb5_spnego.js` (RFC 4178) is the newest of them and the one with most to lose from drift — the browser encodes what the mock decodes and the mock encodes what the browser decodes, so every field crosses between the two copies in both directions. See `docs/kerberos.md` and `docs/spnego.md`.
+- **`/common/krb5/`** — the **Kerberos v5** codec and crypto, shared by the browser bundles, the api's frame checks and the test suite, because one wire codec must not exist twice. It is the only protocol implementation here that is not under `client/src/`, and eight of its modules have a counterpart in the `sts/` submodule's `kerberos/`. **They were vendored copies until 2026-11-12 and are not any more**: iya-sts #1280 made them that service's own (BUSL-1.1), the two evolve independently, `common/krb5/sync-to-mock-sts.sh` is retired, and nothing here copies files into iya-sts. Both repositories keep the files as they are. `tests/krb5_codec_sync.js` still round-trips messages between the two and fails when they stop agreeing **on the wire**; it no longer compares their text. `krb5_spnego.js` (RFC 4178) is the one with most to lose from that disagreement — the browser encodes what iya-sts decodes and iya-sts encodes what the browser decodes, so every field crosses between the two implementations in both directions. See `docs/kerberos.md` and `docs/spnego.md`.
 - **`/client/src/crypto_bytes.js`, `/client/src/symmetric_crypto.js` and `/client/src/pk_encryption.js`** — the **encryption** engines, and the second place in this tree where cryptography was pulled *out* of a page rather than written for one. `crypto_bytes.js` is the bytes/base64/base64url/hex/PEM set that `jose_jwe.js`, `digital_signature.js` and `key_material.js` each had a copy of; `symmetric_crypto.js` is the block and stream ciphers plus the MAC constructions the Digital Signature page's three MAC panes were built on — Poly1305 forced that move, because ChaCha20-Poly1305 needs the same RFC 8439 section 2.5 implementation and two readings of it can agree with each other and be wrong together; `pk_encryption.js` is RSA, ECIES, ML-KEM and the finite-field family. **None of the three has a DOM**, which is what lets `tests/crypto_engines.js` drive every one of them in node against the RFCs' own vectors and against OpenSSL — the only kind of check that catches an AEAD tag which is self-consistent and interoperates with nothing. The DOM half is `client/src/tool_panes.js`, shared with the Digital Signature page. See `docs/encryption.md`.
 - **`/client/src/hash_tools.js`** — **the** hash registry, the third engine pulled out of a page rather than written for one, and the one that is here because of what a browser CANNOT do: `crypto.subtle` has no SHA-3 in any browser — not one of FIPS 202's six functions, and none of SP 800-185's four — so the Hashing / Encoding Tools page could compute the SHA-2 family and nothing that any of the three post-quantum standards is actually built from. It now holds all of them (FIPS 180-4, FIPS 202, SP 800-185, plus the pre-FIPS Keccak padding that is not SHA-3 and is constantly mistaken for it) together with the security and post-quantum ROLE of each, which is the half a `sha3sum` alias does not give you: SHA3-256 is ML-KEM's H, SHAKE256 is the whole of SLH-DSA-SHAKE, and only one of those two names appears in FIPS 203. Moving off Web Crypto also ended a silent defect rather than only enabling a feature — `crypto.subtle` does not exist outside a secure context, so on the containerized test origin that pane had no cryptography at all and the suite passed a flag to conceal it. **No DOM**, so `tests/hash_engine.js` drives every function in node against OpenSSL, against `openssl mac`'s KMAC and against SP 800-185's own sample values. See `docs/hashing.md`.
 - **`/client/src/hbs.js`** — **LMS/HSS (RFC 8554, RFC 9858) and XMSS/XMSS^MT (RFC 8391, SP 800-208)**, the two STATEFUL hash-based signature schemes NIST approves, and the only signature implementation in this tree written FROM THE SPECIFICATIONS rather than taken from a library — there is no LMS or XMSS in `@noble`, in Web Crypto or in node. That is a different class of risk from every other algorithm here, because a hash-based signature is simple to implement and unforgiving to get wrong: a dropped domain separator, a chain address written into the word the LEAF index lives in (which happened here, and only the reference vectors caught it), or SP 800-208's four-byte padding for the 192-bit parameter sets each produce a scheme that signs and verifies against ITSELF perfectly and interoperates with nothing. So `tests/hbs_signatures.js` asserts against RFC 8554's and RFC 9858's own test cases, one verification vector for each of the 21 XMSS parameter sets, the XMSS reference implementation's key generation vectors and eight signatures that must not verify. **The private key changes every time it is used**, which nothing else on that page does: spending one one-time key twice hands an attacker the material to forge a third message, so the pane keeps the index in the private key box, rewrites it on every Sign, and has a button that does the forbidden thing on purpose. **No DOM.** See `docs/hbs.md`.
@@ -407,7 +407,17 @@ TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
 # fail. Forwarded past sudo and into compose exactly as the two above are.
 TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 
-# Tests from local shell, dependencies still in containers
+# Tests from local shell, dependencies still in containers. BEING RETIRED:
+# since 2026-11-12 every option it has is also an option of
+# ./docker-run-tests.sh, which is what the commands below now use. The focused
+# modes there do not re-implement the jobs — each names a subset of the jobs
+# tests/run-report.js already builds (TEST_SELECT, `selectJobs()` there), starts
+# only the services that subset needs (`--wait`ed, `--no-deps`), runs the
+# tests container with `compose run`, and LEAVES THE STACK UP. Also new there:
+# --keep-stack (the full suite, left up), --saml-dev and --sts-url=<base>
+# (docker-compose-run-tests-external-sts.yml). A browser on the HOST reaches
+# iya-sts at https://localhost:8081, but the debugger's pages are built for
+# the compose names and need `127.0.0.1 client api sts keycloak` in /etc/hosts.
 ./local-run-tests.sh
 
 # Against a site that is ALREADY DEPLOYED, with everything on the other side
@@ -430,9 +440,11 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # mechanisms (password, webauthn), less the one `=single` already drives, so
 # FORTY-NINE points. It has its own pair of realms (federation-matrix-1 and
 # -2) and shares nothing with the two above. `=matrix:<app>/<fed>/<mech>` runs
-# ONE point, which is how a failing combination is reproduced — add -b to
-# watch it. The ordinary suite runs those forty-nine as pooled jobs;
-# this loop runs them in order, for a live stack to look at afterwards.
+# ONE point, which is how a failing combination is reproduced (the browser
+# is headless in the tests container; to WATCH one, run
+# tests/federation_matrix_sso.js -b by hand against the kept stack). The
+# ordinary suite runs those forty-nine as pooled jobs; this mode runs them in
+# order (TEST_CONCURRENCY=1), for a live stack to look at afterwards.
 # SPNEGO is deliberately not a third mechanism yet, and since the 2026-08-27
 # sts/ bump the reason has NARROWED to one: the acceptor IS wired to a
 # session now (/authn/spnego calls startSession(), and a relationship can
@@ -445,8 +457,8 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # performed are visible: /admin on any of them. The single-hop case replaced
 # the mock's own three-container `federation-e2e/` on 2026-08-26 — trust
 # realms made the extra containers unnecessary.
-./local-run-tests.sh --federation-only[=single|chain|both|matrix]
-./local-run-tests.sh --federation-only=matrix:wsfed/oauth2/webauthn
+./docker-run-tests.sh --federation-only[=single|chain|choice|both|matrix]
+./docker-run-tests.sh --federation-only=matrix:wsfed/oauth2/webauthn
 
 # The containerized stack again, under Istanbul/c8 instrumentation
 ./run-coverage.sh
@@ -454,7 +466,11 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # Just the WS-Federation test, against BOTH its identity providers, with only
 # api + client + the mock STS + the Keycloak side-car. `=sts` or `=keycloak`
 # narrows it to one; `=sts` skips the twenty-second WildFly boot entirely.
-./local-run-tests.sh --wsfed-only[=keycloak|sts|both]
+./docker-run-tests.sh --wsfed-only[=keycloak|sts|both]
+
+# The SAML 2.0 SSO and Single Logout jobs against Keycloak, iya-sts or both;
+# the sts half adds the four SAML 1.1 jobs.
+./docker-run-tests.sh --saml-only[=keycloak|sts|both]
 
 # The three-tier delegation chains — a sign-in, then two hops through a middle
 # tier — with only api + client + the mock STS. THE SAME SCENARIO IN TWO
@@ -468,13 +484,13 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # <wst:OnBehalfOf> (impersonation) and once <wst14:ActAs> (composite
 # delegation). `=both` is the default; the two use different people and
 # different applications, so the pictures stay separate. It all LEAVES THE
-# DELEGATION MAPS BEHIND as SVG under tests/report/delegation/, which is the
+# DELEGATION MAPS BEHIND as SVG under tests/report/<run>/delegation/, which is the
 # only way to see those pictures at all: the mock's delegation register is in
 # memory and dies with the container.
-./local-run-tests.sh --delegation-only[=oauth|wstrust|both]
+./docker-run-tests.sh --delegation-only[=oauth|wstrust|both]
 
 # Kerberos against a REAL Windows Server 2025 domain controller, spun up on AWS
-# and destroyed afterwards. Needs AWS credentials and NOTHING else — no docker,
+# and destroyed afterwards. Needs AWS credentials and node — no docker,
 # no local stack, because the test loads the api's relay modules in-process and
 # opens the socket itself. `=capture` refreshes the recorded exchange that
 # tests/krb5_windows_vectors.js asserts offline on every ordinary run; `=both`
@@ -482,7 +498,7 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # MONEY — it is not free tier, because a forest promotion needs more than the
 # 1 GiB a t3.micro has. Teardown is on an EXIT trap and runs even when the test
 # fails. See infra/terraform-krb5/README.md.
-./local-run-tests.sh --krb5-real-dc[=test|capture|both]
+./docker-run-tests.sh --krb5-real-dc[=test|capture|both]
 ```
 
 `tests/CLAUDE.md` describes what each test file covers, what gates or skips it, and the environment hazards every browser test has to handle — Web Crypto's secure-context requirement, `--headless=new`, waiting on content rather than elements, and the rest. **Read it before writing or changing a test**; each of those hazards has already cost a run, and each fails in a way that names something other than itself.
@@ -520,7 +536,7 @@ The active config is selected via the `CONFIG_FILE` environment variable. For lo
 
 ## Versioning
 
-The app version is **M.N.O**: `M.N` comes from the repo-root `VERSION` file (currently `0.9`), and `O` is a per-build number generated by `client/version.js` (the UTC build instant, `YYYYMMDDHHMMSS`, or `BUILD_NUMBER` if set). It is stamped at build time — `client/Dockerfile` runs `node version.js --stamp public`, and `client/build.js` writes `dist/version.json` — then substituted into the `{{VERSION}}` / `{{BUILD_INFO}}` placeholders in the footer partial and the error pages (by `build.js` at build time, by `server.js` at request time). The four `package.json` files (`api`, `client`, `tests`, `sts`) carry the same M.N as `M.N.0` (semver requires three parts). Bump a release by editing `VERSION`, then `node client/version.js --sync-manifests`; `--check-manifests` reports drift and `build.js` warns about it.
+The app version is **M.N.O**: `M.N` comes from the repo-root `VERSION` file (currently `0.9`), and `O` is a per-build number generated by `client/version.js` (the UTC build instant, `YYYYMMDDHHMMSS`, or `BUILD_NUMBER` if set). It is stamped at build time — `client/Dockerfile` runs `node version.js --stamp public`, and `client/build.js` writes `dist/version.json` — then substituted into the `{{VERSION}}` / `{{BUILD_INFO}}` placeholders in the footer partial and the error pages (by `build.js` at build time, by `server.js` at request time). The three `package.json` files (`api`, `client`, `tests`) carry the same M.N as `M.N.0` (semver requires three parts). `sts/package.json` is NOT one of them since the submodule was pinned to iya-sts's `v1.0.0` tag on 2026-11-12: that repository versions its own releases, so its manifest says which IYA STS release is pinned, and `--sync-manifests` must not rewrite it. Bump a release by editing `VERSION`, then `node client/version.js --sync-manifests`; `--check-manifests` reports drift and `build.js` warns about it.
 
 ## Style Notes
 

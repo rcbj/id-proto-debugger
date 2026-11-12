@@ -54,18 +54,60 @@ async function getJson(url) {
 
 // One setting's value off GET /admin-api/config, whose rows are under
 // groups[].settings.
+//
+// A MASKED SETTING IS ABSENT, NOT ITS MASK. Since iya-sts v1.0.0 the secret
+// settings — krb5.servicePassword, krb5.userPassword,
+// krb5.autoServicePassword, krb5.krbtgtPassword — answer
+// `"value":"********","masked":true`. Taken at face value that is a password
+// of eight asterisks, and a ticket "opened" with it simply never opens, which
+// is how kerberos_spnego_page.js failed on the bump. So a masked row reads as
+// undefined, and principalsDocument() below supplies the value another way.
 function settingOf(config, key) {
   log.debug("Entering settingOf(). " + key);
   var found;
   ((config && config.groups) || []).forEach(function (group) {
     (group.settings || []).forEach(function (row) {
-      if (row.key === key && found === undefined) {
+      if (row.key === key && found === undefined && !row.masked) {
         found = row.value !== undefined ? row.value : row.text;
       }
     });
   });
   log.debug("Leaving settingOf().");
   return found;
+}
+
+// The three Kerberos passwords these jobs need, which iya-sts no longer
+// publishes (masked, above). Each comes from the job's environment when the
+// launcher or a person set one — which is what a run against a deployment with
+// its own secrets has to do — and otherwise from iya-sts's SHIPPED DEFAULTS
+// (its env/defaults.js), which is what every stack this repository starts
+// runs with: none of them overrides these.
+var SHIPPED_KRB5_PASSWORDS = {
+  "krb5.servicePassword": { env: "KRB5_SERVICE_PASSWORD",
+                            dflt: "service-account-password" },
+  "krb5.userPassword": { env: "KRB5_USER_PASSWORD", dflt: "password!" },
+  "krb5.autoServicePassword": { env: "KRB5_AUTO_SERVICE_PASSWORD",
+                                dflt: "auto-service-password" }
+};
+
+function passwordSetting(config, key) {
+  log.debug("Entering passwordSetting(). " + key);
+  var published = settingOf(config, key);
+  if (published !== undefined) {
+    log.debug("Leaving passwordSetting(). Published.");
+    return published;
+  }
+  var known = SHIPPED_KRB5_PASSWORDS[key];
+  var fromEnv = known && process.env[known.env];
+  if (fromEnv) {
+    log.debug("Leaving passwordSetting(). From " + known.env + ".");
+    return fromEnv;
+  }
+  log.info(key + " is masked by iya-sts, so this job uses its shipped " +
+           "default; set " + (known ? known.env : "it") + " if the service " +
+           "was started with another.");
+  log.debug("Leaving passwordSetting(). Shipped default.");
+  return known ? known.dflt : undefined;
 }
 
 // The document, as a fetch-shaped answer.
@@ -90,8 +132,9 @@ async function principalsDocument(stsUrl) {
   }
   var config = (await getJson(base + "/config")).body || {};
   var policy = Object.assign({}, view.accountPolicy || {});
-  policy.userPassword = settingOf(config, "krb5.userPassword");
-  policy.autoServicePassword = settingOf(config, "krb5.autoServicePassword");
+  policy.userPassword = passwordSetting(config, "krb5.userPassword");
+  policy.autoServicePassword = passwordSetting(config,
+      "krb5.autoServicePassword");
   var doc = {
     realm: view.realm,
     kdcPort: Number(settingOf(config, "krb5.kdcPort") || 88),
@@ -103,7 +146,7 @@ async function principalsDocument(stsUrl) {
     // settings unless an operator stored a random key over it.
     serviceAccountSettings: {
       principal: settingOf(config, "krb5.servicePrincipal"),
-      password: settingOf(config, "krb5.servicePassword"),
+      password: passwordSetting(config, "krb5.servicePassword"),
       salt: settingOf(config, "krb5.serviceSalt")
     },
     kerberos: view.kerberos || null

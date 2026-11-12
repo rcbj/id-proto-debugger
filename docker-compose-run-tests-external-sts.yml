@@ -1,0 +1,38 @@
+# Layered over docker-compose-run-tests.yml by
+# `./docker-run-tests.sh --sts-url=<base>` and by nothing else.
+#
+# IYA-STS IS SOMEBODY ELSE'S ON THAT RUN — a deployed one, such as
+# https://test-idp.iyasec.io — so the `sts` service is never started, and this
+# file removes what docker-compose-run-tests.yml assumes about it:
+#
+#   * every `depends_on: sts`, which would otherwise make compose start a
+#     LOCAL iya-sts as a dependency — and a job that fell back to the compose
+#     name would then pass against that one instead of the deployment;
+#   * the api's STS_CERT_URL, the local iya-sts's certificate fetched into the
+#     api's truststore. A deployed service presents a certificate a public CA
+#     issued, which the api already trusts;
+#   * the companion's idea of where iya-sts is, which becomes the deployment.
+#
+# The launcher starts each service with --no-deps as well, so the depends_on
+# overrides are belt and braces; they are what keeps a hand-typed
+# `docker compose -f ... -f this up` from starting a local iya-sts.
+#
+# `!override` and `!reset` need Docker Compose 2.24 or later.
+services:
+  api:
+    depends_on: !override
+      keycloak:
+        condition: service_healthy
+    environment:
+      - STS_CERT_URL=
+  companion:
+    depends_on: !reset []
+    environment:
+      - COMPANION_STS_URL=${STS_EXTERNAL_URL}
+      - COMPANION_STS_PUBLIC_URL=${STS_EXTERNAL_URL}
+  tests:
+    depends_on: !override
+      client:
+        condition: service_healthy
+      api:
+        condition: service_healthy

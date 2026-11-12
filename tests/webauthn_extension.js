@@ -159,12 +159,49 @@ async function buildDriver(withExtension) {
 // Runs the STS's MFA sign-in to completion and returns what the ceremony
 // produced, read from the authenticator data rather than from any page's report
 // of it.
+// Type into a field that the page may re-render: found afresh on every try,
+// and done only when the field really holds the text — a type that landed in
+// a node the page then replaced leaves the new field empty and throws
+// nothing.
+async function typeStable(driver, locator, text, what) {
+  log.debug("Entering typeStable(). " + what);
+  const deadline = Date.now() + waitTime * 4;
+  let last = null;
+  while (Date.now() < deadline) {
+    try {
+      const field = await driver.findElement(locator);
+      await field.clear();
+      await field.sendKeys(text);
+      if ((await field.getAttribute("value")) === text) {
+        log.debug("Leaving typeStable(). Typed.");
+        return;
+      }
+      last = new Error("the field did not keep what was typed");
+    } catch (e) {
+      // Stale or detached: the page is mid-render.
+      last = e;
+    }
+    await driver.sleep(150);
+  }
+  log.debug("Leaving typeStable(). Gave up.");
+  throw new Error("Could not type into " + what + " — the page kept " +
+                  "changing underneath it. Last: " +
+                  (last ? String(last.message).split("\n")[0] : "(none)"));
+}
+
 async function runCeremony(driver, username) {
   log.debug("Entering runCeremony().");
   await driver.get(authorizeUrl());
   await driver.wait(until.elementLocated(By.id("username")), waitTime * 4);
-  await driver.findElement(By.id("username")).sendKeys(username);
-  await driver.findElement(By.id("kc-login")).click();
+  // The sign-in screen is DRAWN IN THE BROWSER since iya-sts #575 (from the
+  // state in data-sts-state), so the field found in the served markup can be
+  // replaced a moment later, and typing into or clicking the one found first
+  // fails with "Node with given id does not belong to the document". That
+  // took this job out on 2026-11-12, after every section had passed, from the
+  // fingerprint ceremony where nothing catches it. Same remedy as the
+  // ceremony button below: find afresh, and retry while the page settles.
+  await typeStable(driver, By.id("username"), username, "the username field");
+  await clickStable(driver, By.id("kc-login"), "the sign-in button");
   await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
   // A headless window is neither focused nor visible for its first second or
   // so, and WebAuthn refuses on such a page with a bare NotAllowedError that

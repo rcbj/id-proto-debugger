@@ -676,11 +676,17 @@ async function theUserAndGroupAreDeleted() {
   assertRefused(await call("/ldap/delete", removeUser), 32,
     "deleting " + userDn + " a second time");
 
-  // THE DANGLING MEMBER. The group still lists the DN that is gone, and that is
-  // correct: referential integrity is a directory feature, not a protocol rule
-  // — OpenLDAP needs an overlay for it and Active Directory does it in the DSA.
-  // Asserted so that "tidying it away" is a deliberate change rather than an
-  // accident, because tidying it away hides the thing worth seeing.
+  // THE MEMBER THAT WOULD DANGLE. Referential integrity is a directory
+  // feature, not a protocol rule — OpenLDAP needs an overlay for it and Active
+  // Directory does it in the DSA — so what happens to the group is a property
+  // of the server, and this asserts the one iya-sts has.
+  //
+  // It used to be "the group still lists the DN that is gone". iya-sts #1612
+  // (with #1624, "no dangling members") changed that on purpose: a deleted
+  // person, group or application now leaves every group too. Asserted either
+  // way so that a change in it is a decision someone made rather than an
+  // accident. (iya-sts's /ldap service description still publishes
+  // `referentialIntegrity: false`, which that change made out of date.)
   const readGroup = connection();
   readGroup.baseDn = groupDn;
   readGroup.scope = "base";
@@ -690,11 +696,12 @@ async function theUserAndGroupAreDeleted() {
   assertSucceeded(after, "reading " + groupDn + " after the delete");
   const remaining = (after.body.entries[0].attributes.member || [])
     .map(function (v) { return String(v).toLowerCase(); });
-  assert.ok(remaining.includes(userDn.toLowerCase()),
-    "the group must STILL list the deleted user as a member. Referential " +
-    "integrity is not part of RFC 4511, and a directory that quietly removed " +
-    "the value would be teaching a behaviour most real directories do not " +
-    "have. Got " + JSON.stringify(remaining));
+  assert.ok(!remaining.includes(userDn.toLowerCase()),
+    "the group should no longer list the deleted user: since iya-sts #1612 a " +
+    "deleted person leaves every group. RFC 4511 does not require that, so " +
+    "if iya-sts has gone back to leaving the member dangling it is a change " +
+    "on that side to look at, not a defect in the debugger's LDAP client. " +
+    "Got " + JSON.stringify(remaining));
 
   const removeGroup = connection();
   removeGroup.dn = groupDn;

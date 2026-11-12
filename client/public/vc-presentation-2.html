@@ -91,6 +91,33 @@ function vpSetAllPanes(expand) {
   </fieldset>
 </div>
 
+<!-- ============ The JSON-LD contexts an ldp_vc needs ============ -->
+<div class="step0 dbg-pane" id="pane_contexts">
+  <legend class="dbg-legend" id="contexts_expand_button" onclick="return vcpresentation2.togglePane('contexts_fieldset');">JSON-LD Contexts</legend>
+  <fieldset name="contexts_fieldset" id="contexts_fieldset" style="display: block;">
+    <p class="vc-note">An ldp_vc is canonicalized against the JSON-LD contexts it names, and this wallet never
+    fetches one: it uses the standard contexts it ships, and any context you add here. An issuer's own vocabulary
+    is not shipped, so a credential that names one cannot be presented until its context is added &mdash; paste
+    the URL the credential names in its <code>@context</code> and the document served at it. Added contexts are
+    kept in this browser.</p>
+    <table class="vc-table" id="vp_contexts_list"><tbody></tbody></table>
+    <table class="vc-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label>Context URL</label><span class="tooltiptext">Exactly as it appears in the credential's @context.</span></div></td>
+          <td><input type="text" id="vp_context_url" size="60" /></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>Context document</label><span class="tooltiptext">The JSON-LD document, with its "@context" member.</span></div></td>
+          <td><textarea class="vc-token" rows="6" id="vp_context_json"></textarea></td>
+        </tr>
+      </tbody>
+    </table>
+    <input class="btn2" id="vp_context_add_button" type="button" value="Add Context" onclick="return vcpresentation2.addSuppliedContext();" />
+    <div class="vc-status" id="vp_context_status">&nbsp;</div>
+  </fieldset>
+</div>
+
 <!-- ============ Pane 2: the choice ============ -->
 <div class="step0 dbg-pane" id="pane_choose">
   <legend class="dbg-legend" id="choose_expand_button" onclick="return vcpresentation2.togglePane('choose_fieldset');">Choose What To Disclose</legend>

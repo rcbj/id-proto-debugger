@@ -42,7 +42,6 @@
 // No browser and no services: node only.
 // ---------------------------------------------------------------------------
 const assert = require("assert");
-const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
@@ -161,10 +160,6 @@ function findVendoredDir() {
   }
   log.debug("Leaving findVendoredDir().");
   return null;
-}
-
-function sha256(file) {
-  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
 // ---------------------------------------------------------------------------
@@ -603,35 +598,24 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
 }
 
 // ---------------------------------------------------------------------------
-// The file comparison.
+// The file comparison — RETIRED on 2026-11-12, with the move of sts/ to
+// iya-sts's v1.0.0 tag.
+//
+// This used to assert the eight files were BYTE-IDENTICAL to common/krb5, on
+// the grounds that they were vendored copies and a divergence left in place
+// eventually stops being cosmetic. iya-sts #1280 ended the premise: those
+// modules are that service's OWN now — they carry its SPDX lines (BUSL-1.1),
+// its style rules and its logging — so there is no longer one file in two
+// places for a hash to hold together, and common/krb5/sync-to-mock-sts.sh,
+// which that assertion told you to run, would overwrite somebody else's
+// licensed source with this repository's.
+//
+// What remains is the check that was always the point: the two
+// IMPLEMENTATIONS still agree on the wire, cross-wise, above. Two codecs that
+// are separately maintained are worth more for that check rather than less —
+// it is the "two readings of one specification" argument this suite makes for
+// SSF's subject grammar.
 // ---------------------------------------------------------------------------
-function theFilesAreIdentical(vendoredDir, what) {
-  log.debug("Entering theFilesAreIdentical().");
-  const differences = [];
-  MODULES.forEach(function (module) {
-    const canonical = path.join(CANONICAL_DIR, module);
-    const vendored = path.join(vendoredDir, module);
-    const a = sha256(canonical);
-    const b = sha256(vendored);
-    if (a !== b) {
-      differences.push(module + " (common/krb5 " + a.slice(0, 12) + ", " +
-          what + " " + b.slice(0, 12) + ")");
-    }
-  });
-  assert.deepStrictEqual(differences, [],
-    "the vendored codec has drifted from common/krb5:\n  " +
-        differences.join("\n  ") +
-    "\n\nRun common/krb5/sync-to-mock-sts.sh, then commit and push in " +
-        "iya-sts and bump this " +
-    "repository's sts/ gitlink. Note that the behavioural cross-check above " +
-        "may still have PASSED " +
-    "— two copies can differ in comments or formatting and agree on the wire " +
-        "— but a divergence " +
-    "left in place is one that eventually stops being cosmetic.");
-  log.info("all " + MODULES.length + " vendored files are byte-identical to " +
-      "common/krb5.");
-  log.debug("Leaving theFilesAreIdentical().");
-}
 
 async function test() {
   log.debug("Entering test().");
@@ -661,7 +645,6 @@ async function test() {
   log.info("comparing common/krb5 against " + vendored.what + " (" +
       vendored.dir + ")");
   await theTwoCopiesAgreeOnTheWire(vendored.dir);
-  theFilesAreIdentical(vendored.dir, vendored.what);
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }
@@ -669,8 +652,8 @@ async function test() {
 const program = new Command();
 program
   .name("krb5_codec_sync")
-  .description("Verify that the vendored Kerberos codec in the mock STS " +
-      "still agrees with common/krb5.")
+  .description("Verify that iya-sts's Kerberos codec still agrees with " +
+      "common/krb5 on the wire.")
   // Accepted and ignored: run-report.js passes --url to every job.
   .addOption(new Option("-u, --url <url>", "base url (unused: this test " +
       "needs no browser)"))

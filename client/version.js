@@ -190,9 +190,17 @@ function load(dir) {
 // Every project in the repo carries the same M.N in its package.json version,
 // with the semver patch component pinned to 0 (the real build number lives in
 // VERSION / version.json, and package.json must hold a valid semver). These
-// helpers keep the four in step with VERSION — a bump that updates only VERSION
-// would otherwise leave them silently stale.
-const MANIFESTS = ['api', 'client', 'tests', 'sts'];
+// helpers keep the three in step with VERSION — a bump that updates only
+// VERSION would otherwise leave them silently stale.
+//
+// `sts` IS NOT ONE OF THEM, and was until the submodule moved to iya-sts's
+// v1.0.0 tag (2026-11-12). That repository versions its own releases now
+// (its common/version.js, #1298/#1317), so sts/package.json says which release
+// of IYA STS is pinned rather than which release of this debugger it is pinned
+// into — and --sync-manifests rewriting it would be an edit to somebody
+// else's checkout that undoes their release. iya-sts's version.js names this
+// conflict and leaves it to this side to settle; this is the settlement.
+const MANIFESTS = ['api', 'client', 'tests'];
 
 function manifestVersion() {
   log.debug("Entering manifestVersion().");

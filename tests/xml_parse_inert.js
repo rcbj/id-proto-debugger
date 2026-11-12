@@ -54,8 +54,30 @@ log.info("Log initialized. logLevel=" + log.level());
 // about — and for a day it was the one file none of the three checks could
 // see. A root that is swept for parseFromString must be swept for the sinks as
 // well, which is why both checks below walk the same list.
-const SRC_DIRS = [path.join(__dirname, "..", "client", "src"),
-                  path.join(__dirname, "..", "common")];
+//
+// WHERE THOSE ROOTS ARE. In a checkout, beside tests/. In the tests image, the
+// COMPLETE copy tests/Dockerfile stages at /usr/src/source-tree — which is
+// ../source-tree from /usr/src/app — because the image's ../client/src is a
+// partial mirror (see isCheckout() below). The first candidate holding
+// client/package.json wins; none means neither layout, and the job skips.
+const SOURCE_ROOT_CANDIDATES = [path.join(__dirname, ".."),
+                                path.join(__dirname, "..", "source-tree")];
+
+function sourceRoot() {
+  log.debug("Entering sourceRoot().");
+  for (const root of SOURCE_ROOT_CANDIDATES) {
+    if (fs.existsSync(path.join(root, "client", "package.json"))) {
+      log.debug("Leaving sourceRoot(). " + root);
+      return root;
+    }
+  }
+  log.debug("Leaving sourceRoot(). None.");
+  return null;
+}
+
+const SOURCE_ROOT = sourceRoot() || path.join(__dirname, "..");
+const SRC_DIRS = [path.join(SOURCE_ROOT, "client", "src"),
+                  path.join(SOURCE_ROOT, "common")];
 
 // "That directory exists" is not "this is a checkout", and the difference is
 // what this test skips on. The tests image stages most borrowed modules FLAT
@@ -70,12 +92,15 @@ const SRC_DIRS = [path.join(__dirname, "..", "client", "src"),
 // client/package.json is what separates the two: it is outside client/src
 // entirely, so no mirror of that directory can ever contain it, and a checkout
 // cannot lack it. Ask for a file only a checkout has, never for the directory.
+//
+// Since 2026-11-12 the image ALSO carries a complete tree with that manifest
+// at /usr/src/source-tree, so this asks whether EITHER layout is here — a
+// checkout, or the image's full copy — and sourceRoot() says which.
 function isCheckout() {
   log.debug("Entering isCheckout().");
-  const manifest = path.join(__dirname, "..", "client", "package.json");
-  const present = fs.existsSync(manifest);
-  log.debug("Leaving isCheckout(). " + manifest + " present=" + present);
-  return present;
+  const root = sourceRoot();
+  log.debug("Leaving isCheckout(). root=" + root);
+  return root !== null;
 }
 
 // The shared XML/crypto engine. It is the module every XML page reaches for, so
@@ -87,7 +112,7 @@ function isCheckout() {
 // failed with "missing — this test needs updating", which is the message you
 // are reading the fix for.
 const XML_ENGINE = "common/xmldsig.js";
-const XML_ENGINE_FILE = path.join(__dirname, "..", "common", "xmldsig.js");
+const XML_ENGINE_FILE = path.join(SOURCE_ROOT, "common", "xmldsig.js");
 
 // Writing markup, as opposed to writing text.
 const HTML_SINKS = [
@@ -317,13 +342,15 @@ async function test() {
     // A genuine ABSENCE and so a skip — but a RECORDED one since 2026-09-02,
     // rather than an exit 0 the runner counted as a pass. See
     // tests/expectation.js.
-    declineToRun(log, "no client/package.json in this layout, so this is " +
-                 "the tests image (which carries only a partial mirror of " +
-                 "client/src) rather than a checkout; this check runs in a " +
-                 "checkout, where the sources are present.");
+    declineToRun(log, "no client/package.json in any of " +
+                 SOURCE_ROOT_CANDIDATES.join(", ") + ", so this is neither " +
+                 "a checkout nor a tests image carrying the complete " +
+                 "source tree (tests/Dockerfile stages one at " +
+                 "/usr/src/source-tree).");
     log.debug("Leaving test().");
     return;
   }
+  log.info("Sweeping the sources under " + SOURCE_ROOT + ".");
   everyParseIsXml();
   xmlEngineHasNoHtmlSink();
   parsedNodesStayDetached();

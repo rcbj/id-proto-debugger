@@ -231,10 +231,21 @@ function prepareLdpStatements() {
               " statement(s).");
     return true;
   }).catch(function (e) {
-    log.error("could not canonicalize the credential: " + e.message);
+    // jsonld wraps a document loader's refusal in an error of its own whose
+    // message is generic ("Dereferencing a URL did not result in a valid
+    // JSON-LD object..."); the loader's reason — which context, and where to
+    // supply it — is its details.cause. Both are shown.
+    var cause = e && e.details && e.details.cause;
+    var why = e.message + (cause && cause.message ? " — " + cause.message
+                                                 : "");
+    // WARN, not error: this is a credential the wallet cannot process yet —
+    // typically an issuer's context nobody has supplied — and it is reported
+    // to the person on the status line with what to do. An error-level line
+    // would be a console error on a page that is behaving correctly.
+    log.warn("could not canonicalize the credential: " + why);
     status("vp_present_status", "This credential could not be canonicalized, " +
            "so no bbs-2023 proof can " +
-      "be derived from it: " + e.message, "vc-bad");
+      "be derived from it: " + why, "vc-bad");
     return false;
   });
 }
@@ -796,6 +807,62 @@ function refuse() {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// The JSON-LD contexts pane. bbs2023.js ships only the standard contexts and
+// this project's own; an issuer's vocabulary is supplied here, and kept in
+// this browser. Adding one RELOADS the page, because canonicalization happens
+// on load and a context added after it changes what the statements are.
+// ---------------------------------------------------------------------------
+function renderSuppliedContexts() {
+  log.debug("Entering renderSuppliedContexts().");
+  var supplied = bbs2023.suppliedContexts();
+  var urls = Object.keys(supplied).sort();
+  var rows = urls.length
+    ? urls.map(function (url) {
+      return '<tr><td><code>' + esc(url) + '</code></td><td>' +
+        '<input class="btn2" type="button" value="Remove" ' +
+        'data-context-url="' + esc(url) + '" ' +
+        'onclick="return vcpresentation2.removeSuppliedContext(' +
+        'this.getAttribute(\'data-context-url\'));" /></td></tr>';
+    }).join('')
+    : '<tr><td>None added. The standard W3C credentials contexts are ' +
+      'built in.</td></tr>';
+  var table = el("vp_contexts_list");
+  if (table) {
+    setHtml("vp_contexts_list", '<tbody>' + rows + '</tbody>');
+  }
+  log.debug("Leaving renderSuppliedContexts(). " + urls.length + ".");
+}
+
+function addSuppliedContext() {
+  log.debug("Entering addSuppliedContext().");
+  var url = (el("vp_context_url") || {}).value || "";
+  var text = (el("vp_context_json") || {}).value || "";
+  try {
+    var added = bbs2023.addContext(url, text);
+    status("vp_context_status", "Added " + added + ". Reloading so the " +
+           "credential is canonicalized with it…", "vc-ok");
+    renderSuppliedContexts();
+    setTimeout(function () {
+      window.location.reload();
+    }, 300);
+  } catch (e) {
+    log.warn("addSuppliedContext(): " + e.message);
+    status("vp_context_status", e.message, "vc-bad");
+  }
+  log.debug("Leaving addSuppliedContext().");
+  return false;
+}
+
+function removeSuppliedContext(url) {
+  log.debug("Entering removeSuppliedContext(). " + url);
+  bbs2023.removeContext(url);
+  renderSuppliedContexts();
+  status("vp_context_status", "Removed " + url + ".", "vc-ok");
+  log.debug("Leaving removeSuppliedContext().");
+  return false;
+}
+
 function togglePane(id) {
   log.debug("Entering togglePane().");
   var fs = el(id);
@@ -953,6 +1020,7 @@ function onload() {
   // early when there is no verifier request, and a wallet holding a credential
   // should still be able to see which key binds it.
   renderDpopNote();
+  renderSuppliedContexts();
   // ldp_vc needs its canonical statements before anything can be selected or
   // derived, and that is async. The issuer's BBS key is fetched from the
   // credential's own verificationMethod — the credential says where its key is.
@@ -978,14 +1046,27 @@ function onload() {
       }
       state.issuerBbsKey = bbs2023.multibaseToBytes(multibase);
       return prepareLdpStatements();
-    }).then(function () {
+    }).then(function (prepared) {
+      // NOT on a failure. prepareLdpStatements() has already said why on the
+      // status line; building now would find no statements and replace that
+      // reason with "Canonicalizing the credential…", which is what a
+      // credential the wallet cannot canonicalize used to look like — a step
+      // that never finished, rather than one that refused.
+      if (prepared === false) {
+        return;
+      }
       renderDisclosureTable();
       buildPresentation();
     }).catch(function (e) {
       log.error("could not prepare the ldp_vc presentation: " + e.message);
-      status("vp_present_status",
-             "Could not resolve the issuer's BBS key from " + vm + ": " +
-             e.message,
+      // Two different failures arrive here, and the message has to say which:
+      // the issuer's key could not be resolved, or the credential could not
+      // be canonicalized — which, for a context nobody supplied, is fixed in
+      // the JSON-LD Contexts pane rather than at the issuer.
+      status("vp_present_status", state.issuerBbsKey
+        ? "Could not canonicalize the credential: " + e.message
+        : "Could not resolve the issuer's BBS key from " + vm + ": " +
+          e.message,
              "vc-bad");
     });
   }
@@ -1052,5 +1133,7 @@ module.exports = {
   present: present,
   refuse: refuse,
   togglePane: togglePane,
+  addSuppliedContext: addSuppliedContext,
+  removeSuppliedContext: removeSuppliedContext,
   onload: onload
 };

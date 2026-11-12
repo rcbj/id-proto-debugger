@@ -259,6 +259,10 @@ check_return_code $?
 # login the build fails on a pull error that names neither; this says which.
 requireGhcrMirror
 check_return_code $?
+# iya-sts runs from its published release image while the tests image reads
+# the sts/ checkout; see requireIyaStsImageMatchesCheckout() in common.sh.
+requireIyaStsImageMatchesCheckout "${CURRENT_DIR}" docker-compose-run-tests.yml
+check_return_code $?
 
 # THE BIND MOUNTS, CREATED HERE AND MADE WRITABLE BY ANY UID.
 #

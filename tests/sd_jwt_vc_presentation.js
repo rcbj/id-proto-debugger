@@ -75,7 +75,11 @@ var stsUrl = process.env.WSTRUST_STS_URL || "https://localhost:8081/sts";
 var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 var VCI_CONFIG_ID = process.env.OID4VCI_CONFIG_ID || "IdentityCredential";
-var EXPECTED_VCT = "urn:idptools:sd-jwt-vc:identity";
+// The vct iya-sts's IdentityCredential configuration mints. It was
+// urn:idptools:sd-jwt-vc:identity until iya-sts #663 took this project's old
+// name out of the credentials that service issues.
+var EXPECTED_VCT = process.env.OID4VCI_EXPECTED_VCT ||
+    "urn:iya:sts:sd-jwt-vc:identity";
 // What the mock verifier asks for. Two of the six claims the credential
 // carries, which is what makes the selective part of selective disclosure
 // observable.
@@ -623,8 +627,9 @@ async function presentThroughThePages(driver, held, byReference) {
   // ---- step 0 -------------------------------------------------------------
   await planCredentialIntoWallet(driver, held);
   var holding = await text(driver, "vp_credential_state");
-  assert.ok(/Holding a urn:idptools/.test(holding),
-    "step 0 should say what the wallet is holding. Got: " + holding);
+  assert.ok(holding.indexOf("Holding a " + EXPECTED_VCT) !== -1,
+    "step 0 should say what the wallet is holding, by the vct it carries (" +
+    EXPECTED_VCT + "). Got: " + holding);
   assert.ok(/can be presented/.test(holding),
     "and that it has the key it is bound to. Got: " + holding);
   var cards = await driver.executeScript(

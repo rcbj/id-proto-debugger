@@ -1,6 +1,8 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var $ = require("jquery");
+// A pasted access token may already be RFC 6750 credentials.
+var rfc6750 = require("./rfc6750");
 var log = bunyan.createLogger({name: 'introspection',
     level: appconfig.logLevel});
 log.info("Log initialized. logLevel=" + log.level());
@@ -103,7 +105,7 @@ function callIntrospectionEndpoint() {
         "Authorization": introspection_authentication_type == "basic_auth" ?
           "Basic " + btoa(introspection_client_id + ":" +
               introspection_client_secret) :
-          "Bearer " + introspection_bearer_token,
+          "Bearer " + rfc6750.tokenValue(introspection_bearer_token),
         "Content-Type": "application/json"
   };
   var body = {

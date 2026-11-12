@@ -27,8 +27,11 @@
 // ---------------------------------------------------------------------------
 // THE BOOTSTRAP HOLE, AND WHY A LAUNCHER HAS TO PIN A SECRET.
 //
-// The token comes from the seeded `sts-management-api` client with
-// `client_credentials`. That client's secret is minted at every start of the
+// The token comes from the seeded `sts-api-client` client with
+// `client_credentials` — `sts-management-api` until iya-sts #1139, which made
+// that identifier the management API's own RESOURCE object, refused as a
+// client at every endpoint with STS-OAUTH-0985 `invalid_client`. That
+// client's secret is minted at every start of the
 // mock and is readable only THROUGH the API it unlocks — so a service that has
 // started is a service nobody can get a token for. `adminApi.clientSecret`
 // (env `ADMIN_API_CLIENT_SECRET` on that container) pins it, and the launchers
@@ -57,10 +60,11 @@ var log = bunyan.createLogger({
   })(),
 });
 
-// The client the mock seeds for this purpose, and the two scopes its access
+// The client iya-sts seeds for this purpose, and the two scopes its access
 // policy asks for. `common/roles.js` over there turns them into the built-in
-// ADMIN_READ and ADMIN_WRITE roles.
-const CLIENT_ID = "sts-management-api";
+// ADMIN_READ and ADMIN_WRITE roles. Its secret is still the one
+// `adminApi.clientSecret` pins; only the identifier moved (#1139).
+const CLIENT_ID = "sts-api-client";
 const SCOPES = "admin:read admin:write";
 
 // What `aud` has to name. The mock's `adminApi.audience` is empty on every

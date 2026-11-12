@@ -66,12 +66,15 @@ header is the bare word.
 
 **The acceptor was one file until the 2026-08-27 `sts/` bump and is three now**, which matters here only because the table above names them: `spnego_exchange.js` holds the negotiation, `spnego.js` the page that advertises it, and `spnego_authn.js` a THIRD thing this workflow does not touch — `/authn/spnego`, where the same verified ticket becomes a browser session the mock's own `/oauth2/authorize`, `/wsfed` and `/saml2/sso` read. The debugger still drives `/spnego/protected`, which authenticates and deliberately hands back no session, because what this page exists to show is the exchange rather than what an intranet does with the result. See `docs/mock-sts.md`.
 
-`krb5_spnego.js` is **vendored into the mock STS** like the other seven codec
-modules (`common/krb5/sync-to-mock-sts.sh`), and it is the module with the most
-to lose from drift: the browser encodes a NegTokenInit the mock decodes and the
-mock encodes a NegTokenResp the browser decodes, so every field crosses between
-the two copies in both directions. `tests/krb5_codec_sync.js` checks byte
-identity *and* cross-encodes both messages.
+`krb5_spnego.js` has a counterpart in iya-sts like the other seven codec
+modules. It was a vendored copy until 2026-11-12; since iya-sts #1280 that
+counterpart is iya-sts's own and the two evolve independently (nothing here
+copies into iya-sts, and `common/krb5/sync-to-mock-sts.sh` is retired). It is
+the module with the most to lose from disagreement: the browser encodes a
+NegTokenInit iya-sts decodes and iya-sts encodes a NegTokenResp the browser
+decodes, so every field crosses between the two implementations in both
+directions. `tests/krb5_codec_sync.js` cross-encodes both messages; it no
+longer checks byte identity.
 
 The dependency runs **one way**: `krb5_spnego.js` requires `krb5_gss.js` (for
 the mechanism OID and for GSS_GetMIC) and `krb5_gss.js` knows nothing about
