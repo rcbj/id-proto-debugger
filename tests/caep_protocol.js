@@ -798,10 +798,8 @@ async function autoEmitOffStopsIt() {
 // 5. EVERY ONE OF THE EIGHT, BY HAND.
 // ---------------------------------------------------------------------------
 async function everyEventEmittedByHand() {
-  log.info("[emit] All eight through POST /admin-api/caep/emit. Five of them " +
-      "have no act here that could cause them — no device reports " +
-      "compliance to this service and no risk engine talks to it — so this " +
-      "is the only way they are ever produced.");
+  log.info("[emit] All eight through POST /admin-api/caep/emit, " +
+      "on the session just signed in.");
   const signed = await signIn();
   if (!signed.ok) {
     skip('emitting by hand', signed.why);

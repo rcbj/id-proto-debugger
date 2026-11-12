@@ -1322,6 +1322,24 @@ function theVocabularyIsSsfsTwoAndSaysWhatIsMissing() {
           'an event type this build does not know is still PLACED by its ' +
           'prefix. "Unknown" would read as broken; "a RISC event this build ' +
           'does not implement" reads as a transmitter that is ahead.');
+      assert.strictEqual(aheadRows[0].errors.length, 0,
+          'an unknown type is printed, not refused. validateEvent() is ' +
+          'what refuses to BUILD one.');
+      assert.strictEqual(aheadRows[0].document,
+          JSON.stringify(ahead, null, 2));
+      const vendor = {};
+      vendor['urn:vendor:secevent:event-type:example'] = {
+        realm: 'one', note: 'as it arrived'
+      };
+      const vendorRows = events.describeEvents(vendor);
+      assert.strictEqual(vendorRows[0].known, false);
+      assert.strictEqual(vendorRows[0].family, '');
+      assert.strictEqual(vendorRows[0].document,
+          JSON.stringify(vendor, null, 2),
+          'a type outside SSF, CAEP and RISC is printed as the events-map ' +
+          'entry that arrived. The catalogue does not gain a row for it.');
+      assert.ok(!events.EVENT_BY_URI[
+        'urn:vendor:secevent:event-type:example']);
     });
   log.info("[events] OK.");
 }

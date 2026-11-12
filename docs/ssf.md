@@ -7,8 +7,9 @@ receiver, or any of the four `tests/*ssf*.js`.
 **OpenID Shared Signals Framework 1.0**, approved as a Final Specification on
 2 September 2025, over **RFC 8417** (Security Event Tokens), **RFC 9493**
 (Subject Identifiers), **RFC 8935** (push delivery) and **RFC 8936** (poll
-delivery). The transmitter this workflow is built against is the mock STS's
-`/ssf`, whose own notes are in `sts/ssf/CLAUDE.md`.
+delivery). The page accepts a Security Event Token from any compliant
+transmitter. The suite drives the mock STS's `/ssf`; that service's own
+notes are in `sts/ssf/CLAUDE.md`.
 
 **This is part one of three, and all three have landed.** SSF is the plumbing;
 **CAEP** and **RISC** are two different vocabularies spoken over it. CAEP has
@@ -538,6 +539,12 @@ than one boolean, and the page draws them that way. A single *"valid: true"* ove
 a token whose `aud` is somebody else is the most dangerous thing this page could
 say.
 
+An event type this catalogue does not name is printed and not interpreted.
+The message history shows that one `events` entry as JSON, key and payload,
+as it arrived. The type is not added to the menu, and **Build** still
+refuses to sign one. A transmitter's own event type can be read here
+without this tool learning its members.
+
 ---
 
 ## Post-quantum, and why a SET is the document that most wants it
@@ -720,14 +727,12 @@ has to say why.
 
 ## What this workflow deliberately does not do
 
-* **It generates no event on its own — and THE MOCK NOW DOES.** Every SET this
-  page sends was asked for at the verification endpoint, built by hand in the
-  Transmit pane, or built by the CAEP pane from a session you are simulating.
-  That asymmetry is the point rather than an inconsistency: one end of every
-  exchange has to be the one under test. On the mock, `caep.autoEmit` makes a
-  sign-in, a single sign-on and a sign-out each emit a Security Event Token
-  with nobody having asked — which is what CAEP is, and it is the sentence
-  that had to change when the second vocabulary arrived. See `docs/caep.md`.
+* **The page generates no event on its own.** Every SET this page sends was
+  asked for at the verification endpoint, built by hand in the Transmit
+  pane, or built by the CAEP or RISC pane from a session or an account you
+  are simulating. A transmitter may send an event with nobody having asked,
+  on a stream that agreed to the type. This page accepts that token from
+  any compliant transmitter. See `docs/caep.md` and `docs/risc.md`.
 * **It does not retry a failed push.** `sts/ssf/ssf_http.js` argues it: a mock
   that retried would make a receiver's one-shot failure invisible, because a
   client answering 500 then 202 looks from its own logs like a client that works.

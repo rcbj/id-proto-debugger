@@ -10,8 +10,9 @@ Signals pipe that `docs/ssf.md` describes. **This is part three of three, and
 the last.** SSF was the plumbing; CAEP is what happened to a **session**; RISC
 is what happened to an **account**.
 
-The transmitter this workflow is built against is the mock STS's `/ssf` and
-`/admin/risc`, whose own notes are in `sts/ssf/CLAUDE.md`.
+The page accepts a Security Event Token from any compliant transmitter.
+The suite drives the mock STS's `/ssf` and `/admin/risc`; that service's
+own notes are in `sts/ssf/CLAUDE.md`.
 
 ---
 
@@ -246,41 +247,22 @@ leave behind:
 
 ---
 
-## The mock's half
+## Receiving the fourteen, from any transmitter
 
-`sts/ssf/risc.js` is `caep.js`'s sibling on the other side, and the differences
-are the same three. Its own notes are in `sts/ssf/CLAUDE.md`; what matters from
-this side:
+RISC is a vocabulary a transmitter speaks about an account. This debugger
+does not decide which acts that transmitter observes. It accepts each of
+the fourteen, checks the members the specification defines, and shows the
+Security Event Token that arrived.
 
-**It emits when its own DIRECTORY changes, which is a different observer from
-CAEP's.** CAEP watches `authn.js` — the authentication layer. RISC watches
-`ldap/ldap_server.js` — the provisioning layer:
+Eleven of the fourteen carry no payload members. The subject is the
+message. `sessions-revoked` is deprecated by RISC in favour of CAEP's
+`session-revoked`. The page can still build it, because a receiver may
+be sent one.
 
-| Act | Event | Reached over |
-|---|---|---|
-| a person is deleted | `account-purged` | SCIM, LDAP, the console |
-| `active` goes false | `account-disabled` | the same |
-| `active` goes true | `account-enabled` | the same |
-| `mail` or a number moves | `identifier-changed` | the same |
-
-The observer sits on the STORE and not on a door, which is why it has five call
-sites. A RISC feature that only noticed the SCIM one would report a
-deprovisioning done with a PATCH and stay silent about one done with an
-`ldapmodify` — which is not a smaller feature, it is a transmitter that lies by
-omission about half its own traffic, and it is precisely the defect CAEP
-shipped with for one revision.
-
-**One directory write can be two events**, which is why the mock's `observe()`
-answers with a list where CAEP's answers with one event: a `PUT /Users/:id`
-that sets `active` false AND changes a mail address is two RISC events about
-one act.
-
-**And `active` still deactivates nobody there.** No endpoint reads it, no bind
-is refused and no token is withheld; `/admin/scim` says so, because a mock that
-silently pretended would teach a provisioning client that its deprovisioning
-path works. What changed is that the service now SAYS so, over RISC — which is
-exactly the division the profile draws: a transmitter reports and a receiver
-decides.
+A type this catalogue does not name is printed as the JSON that arrived.
+It is not added to the menu, and **Build** still refuses to sign one.
+How a transmitter decided that the act happened stays with that
+transmitter. This page reads the event.
 
 ### Monitoring → RISC accounts
 

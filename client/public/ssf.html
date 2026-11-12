@@ -535,10 +535,10 @@ are about</legend>
        WHICH SIGN-IN THIS SESSION CAME FROM.
 
        CAEP is a vocabulary about SESSIONS and says nothing about the
-       protocol that minted one — which is why the mock emits for every
-       browser sign-in it has, through one funnel. This pane read an ID
-       Token and nothing else until 2026-09-03, which made the whole
-       workflow look like an OAuth2 / OIDC feature it never was.
+       protocol that minted one. This pane takes a session from any of
+       the sign-in workflows, so the event is not tied to one protocol.
+       It read an ID Token and nothing else until 2026-09-03, which made
+       the whole workflow look like an OAuth2 / OIDC feature it never was.
 
        The options are built from `session_handoff.js`'s own table so a
        sixth protocol is a row there rather than an edit here.
@@ -694,13 +694,13 @@ are about</legend>
   <details class="ssf-more">
     <summary>What each button sends, and which of them a real transmitter
       sends on its own</summary>
-    <p class="ssf-note">Three of the eight describe things a transmitter can
-    actually observe &mdash; a session starting, being presented and ending
-    &mdash; and this stack&rsquo;s mock sends those <strong>by itself</strong>
-    when you sign in, sign in again and sign out. The other five describe
-    things nothing observes for you: no device reports compliance to a mock and
-    no risk engine talks to one. Every button here builds the event this page
-    would send as the <em>transmitter</em>, whichever half you are testing.</p>
+    <p class="ssf-note">A transmitter sends one of these when it observes
+    the act, on a stream that asked for the type. This page does not
+    assume which acts a given transmitter observes. Every button here
+    builds the event this page would send as the
+    <em>transmitter</em>. A type this catalogue does not name is printed
+    in the message history as the JSON that arrived, and it is not added
+    to the menu.</p>
   </details>
   <div class="ssf-buttons" id="caep_simulate"></div>
   <p class="ssf-status" id="caep_simulate_status"></p>
@@ -912,13 +912,13 @@ are about</legend>
   <details class="ssf-more">
     <summary>What each button sends, and the two that are not what they
       look like</summary>
-    <p class="ssf-note">Four of the fourteen describe things a transmitter can
-    actually observe in its own directory &mdash; a person deleted, an account
-    marked inactive or active again, an identifier moving &mdash; and this
-    stack&rsquo;s mock sends those <strong>by itself</strong> when the
-    directory changes over SCIM, over LDAP or from its console. That is a
-    <em>different</em> observer from CAEP&rsquo;s, watching the provisioning
-    layer rather than the authentication one.</p>
+    <p class="ssf-note">A transmitter sends a RISC event when it observes
+    the account act the specification describes, on a stream that asked
+    for the type. This page does not assume which of those acts a given
+    transmitter observes. Every button here still builds any of the
+    fourteen. A type this catalogue does not name is printed in the
+    message history as the JSON that arrived, and it is not added to
+    the menu.</p>
     <p class="ssf-note"><strong>The four opt-out buttons ARE state
     transitions</strong>, not reports of one: RISC section 2.8 words each as
     <em>the account is in this state</em>, so pressing one moves the account
