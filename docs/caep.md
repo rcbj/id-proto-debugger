@@ -11,8 +11,9 @@ Specification on 2 September 2025, spoken over the Shared Signals pipe that
 CAEP is what happened to a **session**; RISC — what happened to an **account**
 — is part three and landed on 2026-09-04. See `docs/risc.md`.
 
-The transmitter this workflow is built against is the mock STS's `/ssf` and
-`/admin/caep`, whose own notes are in `sts/ssf/CLAUDE.md`.
+The page accepts a Security Event Token from any compliant transmitter.
+The suite drives the mock STS's `/ssf` and `/admin/caep`; that service's
+own notes are in `sts/ssf/CLAUDE.md`.
 
 ---
 
@@ -213,9 +214,8 @@ few* are two different questions.
 the whole workflow look like an OAuth2 / OIDC feature. It never was. CAEP is a
 vocabulary about **sessions**: nothing in `session-revoked` names a token
 endpoint, and the profile exists precisely because SAML and OpenID Connect both
-authenticate at one instant and leave a session good for hours afterwards. The
-mock made the same point from the other end all along — every browser sign-in
-there reaches ONE funnel, `authn.startSession()`, and every one of them emits.
+authenticate at one instant and leave a session good for hours afterwards.
+The pane therefore takes a session from any of the five sign-in workflows.
 
 `client/src/session_handoff.js` is the route. It is a **sibling** of
 `token_handoff.js` and not a generalization of it, for a reason that decided
@@ -304,50 +304,19 @@ transmitter and says so.
 
 ---
 
-## The mock's half: the first event nobody asked for
+## Receiving the eight, from any transmitter
 
-**`GET /ssf`'s list of what this service deliberately does not do used to lead
-with "it generates no event on its own".** That was honest while the only
-vocabulary was the pipe's own: SSF defines no event about a session, so a
-transmitter that emitted one would have been inventing a vocabulary. CAEP *is*
-that vocabulary, and the sentence had to go.
+CAEP is a vocabulary a transmitter speaks. This debugger does not decide
+which acts that transmitter observes, and it does not require any of the
+eight to arrive unasked. It accepts each one, checks the members the
+specification defines, and shows the Security Event Token that arrived.
 
-Three acts the mock can actually observe now emit on their own:
+A type this catalogue does not name is printed as the JSON that arrived.
+It is not added to the menu, and **Build** still refuses to sign one.
 
-| Act | Event | Where |
-|---|---|---|
-| a session is created | `session-established` | `authn.startSession()` — the ONE funnel every browser SSO profile there reaches |
-| a session is presented and honoured | `session-presented` | `authn.notePresented()`, from **all four** browser SSO endpoints |
-| a session ends | `session-revoked` | `authn.dropSession()`, which every sign-out door reaches |
-
-**`session-presented` was emitted from the OAuth2 authorization endpoint ALONE
-until 2026-09-03, and that was the one real gap in this feature.** The other
-two were protocol-independent from the day CAEP landed, because both go through
-a funnel; a presentation has no funnel — it is a thing each protocol endpoint
-decides it is doing — and only `oauth-oidc/oauth2.js` said so. `saml2_sso.js`,
-`saml11_sso.js` and `wsfed.js` each called `sessionOf(req)` to answer a request
-out of an existing session, which *is* single sign-on, and reported nothing.
-
-A receiver watching a SAML session therefore saw it start and end with every
-single sign-on between the two missing — **silently**, because the evidence was
-a count of zero, and in this protocol a count of zero is also what *nobody
-asked for that type* looks like. The three calls are in place now and
-`sts/tests/caep_presented_every_protocol.js` holds them there, in the
-submodule, asserting both that `notePresented()` is protocol-independent and
-that every browser SSO profile actually calls it.
-
-`caep.autoEmit` puts the old behaviour back rather than leaving it only in the
-history of the file.
-
-**The first presentation of a brand-new session is not reported.** Every
-sign-in ends with the browser coming back to the authorization endpoint, which
-*is* a presentation — so without that rule `session-established` and
-`session-presented` would arrive milliseconds apart on every flow, and the
-event that is supposed to mean *single sign-on happened* would mean nothing.
-
-The other five events describe things nothing there does — no device reports
-compliance to a mock and no risk engine talks to one — so they are emitted by
-hand from `/admin/caep` or `POST /admin-api/caep/emit`.
+The buttons on this page build any of the eight, so a receiver can be
+shown an event whether or not the transmitter under test sends it on its
+own.
 
 ### Monitoring → CAEP sessions
 
@@ -373,9 +342,9 @@ notice of that.
 * **It implements no CAEP Interoperability Profile conformance.** That draft
   pins required event types, endpoint attributes and OAuth authorization, and
   claiming it while it is a draft would be an idle claim.
-* **It generates no event on its own.** The *page* is a transmitter you drive;
-  the mock is the thing that emits without being asked, and that asymmetry is
-  the point — one end of every exchange has to be the one under test.
+* **The page generates no event on its own.** It is a transmitter you drive.
+  A transmitter at the far end may send an event with nobody having asked.
+  This page accepts that token from any compliant transmitter.
 
 ---
 
@@ -409,8 +378,9 @@ job's sign-ins, and the event naming THIS session is the one the checks read.
 **Five jobs, one per sign-in protocol**, each signing in over its own protocol
 and then driving **all eight event types** over the session that produced —
 three by really doing the thing (a sign-in, a single sign-on, a sign-out) and
-five through `POST /admin-api/caep/emit`, because no device reports compliance
-to a mock and no risk engine talks to one.
+five through `POST /admin-api/caep/emit`, so the subject is the session
+this sign-in just made. The page accepts the same five from any compliant
+transmitter that sends them.
 
 It is one job per protocol rather than one per combination — the opposite of
 the federation grid next door — and the difference is where the cost is. There

@@ -260,8 +260,7 @@ function seedFrom(claims, previous) {
 // this pane while the only sign-in the Shared Signals workflow could reach was
 // the OAuth2 / OIDC one. That was never a property of CAEP: **the profile is a
 // vocabulary about SESSIONS and says nothing about the protocol that minted
-// one** — which is exactly why the mock emits `session-established` for a SAML
-// 2.0 sign-in through the same funnel it uses for an OIDC one.
+// one.** A session from any of the five sign-in workflows is a valid subject.
 //
 // So this takes what `session_handoff.js` carries, from any of the five
 // browser sign-in protocols, and produces the same `{ session, problems }` the

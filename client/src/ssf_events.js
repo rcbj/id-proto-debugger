@@ -304,8 +304,7 @@ var CAEP_EVENTS = [
           'hold an inventory of what is open and cannot notice a sign-in it ' +
           'did not expect.',
     howItIsAsked: 'Nobody asks. A transmitter sends it at the moment ' +
-          'somebody signs in. This stack\'s mock does exactly that unless ' +
-          'caep.autoEmit is turned off over there.',
+          'somebody signs in.',
     members: withCommonMembers([
       { name: 'fp_ua', required: false, type: 'string',
         what: 'A fingerprint of the user agent, computed by the ' +
@@ -1483,19 +1482,24 @@ function generateEvent(uri, values) {
 // What an arriving SET's `events` map says, one row per type. A token may
 // carry several — that is what the map is FOR — and a page that showed only
 // the first would be dropping events silently.
+//
+// A type this catalogue does not name is still a document. `document` is
+// that one events-map entry, pretty-printed. The catalogue is not extended
+// to name it, and validateEvent() still refuses to build one.
 function describeEvents(events) {
   log.debug("Entering describeEvents().");
   var map = (events && typeof events === 'object') ? events : {};
   var rows = Object.keys(map).map(function (uri) {
     var row = EVENT_BY_URI[uri];
     var verdict = row ? validateEvent(uri, map[uri])
-      : { ok: false, errors: [], warnings: [] };
+      : { ok: true, errors: [], warnings: [] };
     return {
       uri: uri,
       name: row ? row.name : uri,
       family: row ? row.family : familyOf(uri),
       known: !!row,
       payload: map[uri],
+      document: row ? '' : printEventDocument(uri, map[uri]),
       what: row ? row.what : '',
       errors: verdict.errors,
       warnings: verdict.warnings
@@ -1503,6 +1507,23 @@ function describeEvents(events) {
   });
   log.debug("Leaving describeEvents(). " + rows.length + " event(s).");
   return rows;
+}
+
+// One unknown events-map entry, as JSON. The key is the type URI and the
+// value is the payload that arrived, including a payload that is not an
+// object. Nothing here names members or fills defaults.
+function printEventDocument(uri, payload) {
+  log.debug("Entering printEventDocument().");
+  var doc = {};
+  doc[uri] = payload;
+  var text;
+  try {
+    text = JSON.stringify(doc, null, 2);
+  } catch (e) {
+    text = String(payload);
+  }
+  log.debug("Leaving printEventDocument().");
+  return text;
 }
 
 // Which vocabulary a type belongs to, by prefix. An unknown type is still

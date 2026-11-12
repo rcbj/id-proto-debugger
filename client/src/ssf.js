@@ -96,13 +96,13 @@ var BACKEND_AVAILABLE = appconfig.backendAvailable !== false;
 // say, and the specification defines no scope names to guess at.
 //
 // `ssf.read` and `ssf.manage` are the OpenID CAEP Interoperability
-// Profile's names, and what this stack's mock transmitter uses (it used
-// `ssf:read` and `ssf:write` until 2026-10). Read gets a stream, its status
-// and its poll queue; manage creates, updates, deletes, adds and removes
-// subjects, and triggers a verification event — and the profile says manage
-// INCLUDES read. Holding only read and trying to change a stream is a 403
-// naming a scope, which is the most common way this workflow fails for a
-// reason that has nothing to do with SSF.
+// Profile's names, offered here as a starting point. Read gets a
+// stream, its status and its poll queue; manage creates, updates,
+// deletes, adds and removes subjects, and triggers a verification
+// event — and the profile says manage INCLUDES read. Holding only
+// read and trying to change a stream is a 403 naming a scope, which
+// is the most common way this workflow fails for a reason that has
+// nothing to do with SSF.
 //
 // `openid` is here for a different reason and is not the transmitter's
 // business at all: this pane names the authenticated user, and an access
@@ -911,8 +911,8 @@ function startTokenHandoff() {
   setText('ssf_token_handoff_note', 'Going to the OAuth2 / OIDC workflow, ' +
     'asking for "' + HANDOFF_SCOPES + '". Those scopes are added to the ' +
     'scope field there rather than replacing what is in it, and they are ' +
-    'editable — a transmitter other than this stack\'s mock may name them ' +
-    'differently, since SSF 1.0 defines none.');
+    'editable — SSF 1.0 defines no scope names, so a transmitter may ' +
+    'name them differently.');
   window.location.href = '/oauth2_oidc_1.html';
   log.debug("Leaving startTokenHandoff().");
   return false;
@@ -2183,14 +2183,16 @@ function takeReceivedToken(token, via, streamId, extra) {
     });
   }
   ssfEvents.describeEvents(parsed.claims.events).forEach(function (row) {
+    var text = row.known
+      ? row.name + ' (' + row.uri + ')'
+      : 'This build does not implement "' + row.uri + '"' +
+        (row.family ? ', a ' + row.family.toUpperCase() +
+          ' type this catalogue does not name' : '') +
+        '. The event is printed below as it arrived.';
     verdicts.push({
       level: row.known ? 'note' : 'warn',
-      text: row.known
-        ? row.name + ' (' + row.uri + ')'
-        : 'This build does not implement "' + row.uri + '"' +
-          (row.family ? ' — it is a ' + row.family.toUpperCase() +
-            ' event, which is a later part of this work' : '') +
-          '. The payload is shown as it arrived.'
+      text: text,
+      document: row.document || ''
     });
     row.errors.forEach(function (text) {
       verdicts.push({ level: 'error', text: text });
@@ -2684,6 +2686,14 @@ function renderMessages() {
       box.appendChild(node('p', 'ssf-finding ssf-finding-' +
         (one.level === 'error' ? 'error'
           : (one.level === 'warn' ? 'warn' : 'note')), mark + one.text));
+      if (one.document) {
+        var printed = node('textarea', 'ssf-field ssf-mono');
+        var lines = String(one.document).split('\n').length;
+        printed.rows = lines > 12 ? 12 : (lines < 3 ? 3 : lines);
+        printed.readOnly = true;
+        printed.value = one.document;
+        box.appendChild(printed);
+      }
     });
     if (row.claims) {
       var claims = node('textarea', 'ssf-field ssf-mono');

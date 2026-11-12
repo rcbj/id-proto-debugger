@@ -31,23 +31,22 @@
 // in `report.xml` rather than being one row of forty.
 //
 // ---------------------------------------------------------------------------
-// WHY THE THREE AUTOMATIC EVENTS ARE DRIVEN DIFFERENTLY FROM THE OTHER FIVE.
+// WHY THREE OF THE EIGHT ARE DRIVEN BY THE SIGN-IN, AND FIVE BY HAND.
 //
 // This is the one workflow in this tree where the far end SENDS SOMETHING
-// NOBODY ASKED FOR, and the three that do it can only be produced by REALLY
-// DOING THE THING:
+// NOBODY ASKED FOR. The three session events are produced here by REALLY
+// DOING THE THING, so the subject is the session this job just made:
 //
-//   | event               | what produces it                            |
+//   | event               | what produces it here                       |
 //   |---------------------|---------------------------------------------|
 //   | session-established | signing in — over the protocol under test   |
 //   | session-presented   | presenting that session again: single       |
 //   |                     | sign-on, at the SAME protocol's endpoint    |
 //   | session-revoked     | signing out                                 |
 //
-// So this job signs in, comes back, and signs out, over the protocol it was
-// given — and the other five, which describe things nothing in a mock does
-// (no device reports compliance to it and no risk engine talks to it), are
-// emitted through `POST /admin-api/caep/emit`.
+// The other five are requested from the transmitter through
+// `POST /admin-api/caep/emit`, still about this session. The page
+// accepts the same five from any compliant transmitter.
 //
 // **The order is load-bearing and is not alphabetical.** `session-revoked` is
 // LAST, because the model's one hard refusal is an event about a session that
@@ -770,15 +769,15 @@ async function run() {
     return;
   }
 
-  // --- the five that nothing here does on its own -----------------------
+  // --- the five this job asks the transmitter for, so the subject is
+  // this session.
   const byHand = SHORTS.filter(function (short) {
     return AUTOMATIC.indexOf(short) < 0;
   });
   for (const short of byHand) {
     const sent = await emitByHand(row.sessionId, short);
-    check(short + ' can be emitted by hand about a ' + protocol + ' session ' +
-        '— five of the eight describe things nothing in a mock does, so this ' +
-        'is the only way they are ever produced', function () {
+    check(short + ' can be emitted by hand about a ' + protocol +
+        ' session', function () {
           assert.ok(sent.status < 300, 'the mock answered ' + sent.status +
             ': ' + sent.text.slice(0, 200));
         });
