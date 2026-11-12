@@ -1,0 +1,31 @@
+# Layered over docker-compose-run-tests.yml by ./docker-run-tests.sh when the
+# run publishes nothing to the host: with --no-host-ports, or on its own when
+# a port the stack would publish is already held on this machine.
+#
+# NOTHING IN THE SUITE NEEDS A HOST PORT. The tests container reaches every
+# service by its compose name on the stack's private network — client:3000,
+# api:4000, sts:8081, keycloak:8080 — so the published ports exist only for a
+# person looking from the host. Dropping them is what lets this stack run
+# beside another one on the same machine (an iya-sts development stack on
+# 8081/8082/88, a docs preview on 4000) without either being stopped. A bind
+# that fails is not a container that misbehaves: `up` refuses the whole stack
+# with "port is already allocated", naming a port and nothing else.
+#
+# `!reset` needs Docker Compose 2.24 or later.
+services:
+  postgres:
+    ports: !reset []
+  keycloak:
+    ports: !reset []
+  api:
+    ports: !reset []
+  client:
+    ports: !reset []
+  sts:
+    ports: !reset []
+  waltid-issuer:
+    ports: !reset []
+  waltid-verifier:
+    ports: !reset []
+  keycloak-wsfed:
+    ports: !reset []

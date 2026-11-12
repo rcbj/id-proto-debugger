@@ -40,6 +40,9 @@ set -x
 MODE=suite
 MODE_WHAT=""
 KEEP_STACK=0
+# auto: publish no host ports when one the stack wants is already held;
+# 1: never publish (--no-host-ports).
+NO_HOST_PORTS=auto
 SAML_SIG_VALIDATION=true
 KRB5_REAL_DC_WHAT=test
 STS_EXTERNAL_URL="${STS_EXTERNAL_URL:-}"
@@ -51,6 +54,15 @@ Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
 
   (no mode)    Build the whole containerized stack, provision it, run the full
                suite in the tests container, and tear it all down.
+
+  --no-host-ports
+               Publish none of the stack's ports to this host. Nothing in
+               the suite needs them — the tests container reaches every
+               service by its compose name — so this is what lets the stack
+               run beside another that holds 8081, 4000 and the rest. It is
+               turned on by itself when one of those ports is already held,
+               and says which. A kept stack is then reachable only from
+               inside the compose network.
 
   --keep-stack The full suite as above, but LEFT UP afterwards (the run is
                made with \`docker compose run\` rather than \`up
@@ -147,6 +159,7 @@ do
     --krb5-real-dc=*) setMode "$1" krb5-real-dc "${1#*=}" ;;
     --sts-url=*) STS_EXTERNAL_URL="${1#*=}" ;;
     --keep-stack) KEEP_STACK=1 ;;
+    --no-host-ports) NO_HOST_PORTS=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
@@ -532,6 +545,62 @@ then
   export STS_EXTERNAL_URL
 fi
 
+# ---------------------------------------------------------------------------
+# THE HOST PORTS, AND RUNNING BESIDE A STACK THAT HOLDS THEM.
+#
+# The stack publishes 3000, 4000, 8080, 8081, 8082, 7003, 7005 and 5432 for a
+# person looking from the host; the suite itself uses none of them. When one
+# is already held — an iya-sts development stack on 8081, a docs preview on
+# 4000 — `up` refuses the whole stack with "port is already allocated", and
+# the only alternative was to stop somebody else's containers. So publishing
+# is dropped instead (docker-compose-run-tests-no-host-ports.yml), and nothing
+# outside this stack is touched. The ports are read from the merged
+# configuration rather than listed here, so a port added to the compose file
+# is covered without an edit.
+# ---------------------------------------------------------------------------
+heldHostPorts()
+{
+  echo "Entering heldHostPorts()." >&2
+  local wanted held="" port
+  # The JSON is cut to its outermost braces in node: compose ends it with no
+  # newline, so docker_compose()'s own "Leaving docker_compose()." line is
+  # glued to the closing brace and a line filter cannot remove it.
+  wanted="$(docker_compose "${COMPOSE_ARGS[@]}" config --format json \
+              2>/dev/null | grep -v '^Entering\|^Leaving' |
+            node -e 'let r="";process.stdin.on("data",d=>r+=d).on("end",
+              ()=>{try{const c=JSON.parse(r.slice(r.indexOf("{"),
+                r.lastIndexOf("}")+1));const out=[];
+              for(const s of Object.values(c.services||{}))
+                for(const p of (s.ports||[]))
+                  if(p.published)out.push(p.published);
+              console.log(out.join(" "))}catch(e){}})' 2>/dev/null)"
+  for port in ${wanted};
+  do
+    if ss -Hltn "sport = :${port}" 2>/dev/null | grep -q .;
+    then
+      held="${held} ${port}"
+    fi
+  done
+  echo "Leaving heldHostPorts().${held:- none}" >&2
+  echo "${held# }"
+}
+
+if [ "${NO_HOST_PORTS}" = "auto" ];
+then
+  HELD_PORTS="$(heldHostPorts)"
+  if [ -n "${HELD_PORTS}" ];
+  then
+    echo "Host port(s) ${HELD_PORTS} are already held by something outside" \
+         "this stack, so it will publish no host ports at all and leave" \
+         "those alone (--no-host-ports). The suite does not need them."
+    NO_HOST_PORTS=1
+  fi
+fi
+if [ "${NO_HOST_PORTS}" = "1" ];
+then
+  COMPOSE_ARGS+=(-f docker-compose-run-tests-no-host-ports.yml)
+fi
+
 # Always tear the stack down, even if the tests fail, so the next run starts clean.
 teardown()
 {
@@ -560,6 +629,12 @@ Stop it with:
   docker compose ${COMPOSE_ARGS[*]} down -v
 ============================================================================
 KEPT
+  if [ "${NO_HOST_PORTS}" = "1" ];
+  then
+    echo "NOTE: this run published no host ports (--no-host-ports), so the" \
+         "addresses above do not answer from this host; reach the stack from" \
+         "inside it, e.g. docker exec -it client sh."
+  fi
   case "${MODE}:${MODE_WHAT}" in
     federation-only:single|federation-only:both)
       cat <<FEDERATION
@@ -660,7 +735,7 @@ trap onExit EXIT
 # 'debugger-testing' realm, so re-provisioning 409s ("Failed to create SAML
 # user"). -v also guarantees a fresh DB. This likewise sidesteps a docker-compose
 # v1 recreate bug ("KeyError: 'ContainerConfig'") pre-existing containers trigger.
-docker_compose -f "${COMPOSE_FILE}" down -v --remove-orphans 2>/dev/null || true
+docker_compose "${COMPOSE_ARGS[@]}" down -v --remove-orphans 2>/dev/null || true
 
 # And tear down the LOCAL stack's containers as well, because several services —
 # keycloak-wsfed among them — carry the same hard-coded `container_name` in both
@@ -880,7 +955,7 @@ fi
 # would tear the entire stack down mid-suite and the exit status would be
 # attributed to the tests container. Failing here instead names the cause and
 # prints the container's own log.
-docker_compose -f "${COMPOSE_FILE}" up --build -d keycloak-wsfed
+docker_compose "${COMPOSE_ARGS[@]}" up --build -d keycloak-wsfed
 check_return_code $?
 requireComposeServiceRunning "${COMPOSE_FILE}" keycloak-wsfed
 check_return_code $?
@@ -891,7 +966,8 @@ check_return_code $?
 # this script) exit with the tests container's status. The side-car started above
 # is left alone: compose does not recreate a service whose configuration is
 # unchanged.
-docker_compose -f "${COMPOSE_FILE}" up --build --abort-on-container-exit --exit-code-from tests
+docker_compose "${COMPOSE_ARGS[@]}" up --build --abort-on-container-exit \
+  --exit-code-from tests
 check_return_code $?
 
 # The banner is printed by the EXIT trap, after the teardown, so it is the last

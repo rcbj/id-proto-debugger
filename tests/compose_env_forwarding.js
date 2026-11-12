@@ -78,6 +78,7 @@ function locate(candidates) {
 const COMPOSE_FILE_NAMES = [
   "docker-compose-run-tests.yml",
   "docker-compose-run-tests-external-sts.yml",
+  "docker-compose-run-tests-no-host-ports.yml",
   "docker-compose-coverage.yml",
   "docker-compose.yml",
   "local-tests.yml",
