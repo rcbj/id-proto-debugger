@@ -252,6 +252,102 @@
         </tr>
         <tr>
           <td>
+            <div class="tooltip"><label>RFC 9068 on
+                open:</label><span class="tooltiptext">When this page
+                opens an access token, select OAuth2 Access Token
+                (RFC 9068). Off until checked. Stored with the
+                form.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="rfc9068_select_on_access"
+                   name="rfc9068_select_on_access" />
+            When this page opens an access token, select OAuth2
+            Access Token (RFC 9068)
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Workflow
+                comparison:</label><span class="tooltiptext">Compare
+                iss with the discovered issuer, aud with the resource
+                that was sent, and client_id with the workflow client
+                id. Off until checked.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="rfc9068_workflow"
+                   name="rfc9068_workflow" />
+            Compare iss, aud, and client_id with the workflow
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Signature:</label><span
+                class="tooltiptext">Verify with the key above and
+                include the result in this report. Off until
+                checked.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="rfc9068_verify"
+                   name="rfc9068_verify" />
+            Verify the signature as part of this check
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Decrypt
+                first:</label><span class="tooltiptext">Open a
+                five-segment JWE with the key below, then check the
+                inner JWT. Off until checked. The key stays in this
+                visit.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="rfc9068_decrypt"
+                   name="rfc9068_decrypt" />
+            Decrypt an encrypted access token before the claim checks
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Decryption
+                key:</label><span class="tooltiptext">PEM or JWK
+                private key for the checkbox above. Kept for this
+                visit only.</span></div>
+          </td>
+          <td>
+            <textarea rows="4" cols="50" id="rfc9068_decryption_key"
+                      name="rfc9068_decryption_key"></textarea>
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Authorization
+                claims:</label><span class="tooltiptext">groups,
+                roles, and entitlements. Absent is a skip. Present
+                must be an array of strings, or of objects with a
+                string value. Off until checked.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="rfc9068_authz_claims"
+                   name="rfc9068_authz_claims" />
+            Check groups, roles, and entitlements
+          </td>
+        </tr>
+        <tr>
+          <td>
+            <div class="tooltip"><label>Authentication
+                context:</label><span class="tooltiptext">auth_time,
+                acr, and amr must match the workflow's original
+                access token. Off until checked.</span></div>
+          </td>
+          <td>
+            <input type="checkbox" id="rfc9068_auth_context"
+                   name="rfc9068_auth_context" />
+            Compare auth_time, acr, and amr with the original
+            access token
+          </td>
+        </tr>
+        <tr>
+          <td>
             <input class="btn2" type="submit" value="Validate Claims" onclick="return token_detail.validateClaims();" />
           </td>
           <td>&nbsp;</td>

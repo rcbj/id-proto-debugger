@@ -36,7 +36,7 @@ those jobs were not re-run for this pass.
 | **Add Custom Claim** | **Name**, **value**, **value type** (String, Number, Boolean, JSON), and **target** (Payload or Header). **Add** inserts it. |
 | **Generate RFC 9068 Token** | Replaces the three boxes with an unsigned sample access token, `typ` `at+jwt`. Sign it in pane 2. |
 | **JWT RFC Compliance** | Checks the token against RFC 7519 and RFC 7515. The report is **Compliance Output**. |
-| **RFC 9068 Compliance** | The same, as an OAuth 2.0 JWT access token. |
+| **RFC 9068 Compliance** | The same, as an OAuth 2.0 JWT access token. `typ` of `at+jwt` or `application/at+jwt` passes in any case. Five checkboxes under the button ship clear: verify the signature with pane 4's key, decrypt a JWE with pane 5's key before the claim checks, compare `iss` / `aud` / `client_id` with the workflow, check `groups` / `roles` / `entitlements`, and compare `auth_time` / `acr` / `amr` with the workflow's original access token. Decrypting leaves the compose boxes as they are and checks the inner JWT. |
 
 A status line under the boxes reports the sync, or a JSON parse error.
 

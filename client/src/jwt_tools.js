@@ -35,6 +35,7 @@ var x509 = require("./x509");
 // What stayed here is what is genuinely this page's: which key material the
 // fields hold, and how the panes read.
 var jwsLib = require("./jws");
+var rfc9068 = require("./rfc9068");
 var log = bunyan.createLogger({ name: 'jwt_tools',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -477,13 +478,239 @@ function checkCompliance() {
   return false;
 }
 
+// Checkbox ids for the optional RFC 9068 steps. Distinct from the token
+// detail page so the two forms do not share a stored choice. Each ships
+// clear. The decryption key is pane 5's field, which this page already
+// refuses to store.
+var JWT_RFC9068_BOXES = [
+  'jwt_rfc9068_verify',
+  'jwt_rfc9068_decrypt',
+  'jwt_rfc9068_workflow',
+  'jwt_rfc9068_authz_claims',
+  'jwt_rfc9068_auth_context'
+];
+
+function restoreRfc9068Boxes() {
+  log.debug("Entering restoreRfc9068Boxes().");
+  var i;
+  for (i = 0; i < JWT_RFC9068_BOXES.length; i++) {
+    var id = JWT_RFC9068_BOXES[i];
+    var stored = null;
+    try {
+      stored = localStorage.getItem(id);
+    } catch (e) {
+      log.debug("restoreRfc9068Boxes: " + e.message);
+    }
+    if (stored === '1') setChecked(id, true);
+  }
+  log.debug("Leaving restoreRfc9068Boxes().");
+}
+
+function persistRfc9068Box(id) {
+  log.debug("Entering persistRfc9068Box().");
+  try {
+    localStorage.setItem(id, isChecked(id) ? '1' : '0');
+  } catch (e) {
+    log.debug("persistRfc9068Box: " + e.message);
+  }
+  log.debug("Leaving persistRfc9068Box().");
+}
+
+function bindRfc9068Boxes() {
+  log.debug("Entering bindRfc9068Boxes().");
+  var i;
+  for (i = 0; i < JWT_RFC9068_BOXES.length; i++) {
+    var el = document.getElementById(JWT_RFC9068_BOXES[i]);
+    if (el) {
+      el.addEventListener('change', function () {
+        persistRfc9068Box(this.id);
+      });
+    }
+  }
+  log.debug("Leaving bindRfc9068Boxes().");
+}
+
+function pushRfc9068(results, rows) {
+  log.debug("Entering pushRfc9068().");
+  var i;
+  for (i = 0; i < rows.length; i++) {
+    results.push(rfc9068.formatFinding(rows[i]));
+  }
+  log.debug("Leaving pushRfc9068().");
+}
+
+function rfc9068Compact() {
+  log.debug("Entering rfc9068Compact().");
+  var compact = val('jwt_tools_encoded').trim();
+  if (!compact) compact = val('jwe_decrypt_input').trim();
+  log.debug("Leaving rfc9068Compact().");
+  return compact;
+}
+
+// The token request's resource wins when that request sent one. The
+// authorization request's resource is the fallback. A field that was
+// not sent contributes nothing.
+function rfc9068WorkflowExpectation() {
+  log.debug("Entering rfc9068WorkflowExpectation().");
+  var issuer = '';
+  var clientId = '';
+  var authzSent = false;
+  var authzValue = '';
+  var tokenSent = false;
+  var tokenValue = '';
+  try {
+    issuer = localStorage.getItem('issuer') || '';
+    clientId = localStorage.getItem('client_id') || '';
+    authzSent = localStorage.getItem('yesResourceCheck') === 'true';
+    authzValue = localStorage.getItem('resource') || '';
+    tokenSent = localStorage.getItem('yesResourceCheckToken') === 'true';
+    tokenValue = localStorage.getItem('token_resource') || '';
+  } catch (e) {
+    log.debug("rfc9068WorkflowExpectation: " + e.message);
+  }
+  var resource = rfc9068.requestedResource(
+      { sent: authzSent, value: authzValue },
+      { sent: tokenSent, value: tokenValue });
+  log.debug("Leaving rfc9068WorkflowExpectation().");
+  return {
+    issuer: String(issuer).trim(),
+    clientId: String(clientId).trim(),
+    resource: resource
+  };
+}
+
+// Five segments are a JWE. Three are a JWS, and the header and payload
+// boxes stay the source. Anything else stops: the outer header is not
+// the access token's claims.
+async function decryptRfc9068Token(results, compact) {
+  log.debug("Entering decryptRfc9068Token().");
+  var count = rfc9068.segmentCount(compact);
+  if (count === 5) {
+    var key = val('jwe_private_key').trim();
+    if (!key) {
+      results.push('FAIL  decrypt: No decryption private key.');
+      log.debug("Leaving decryptRfc9068Token().");
+      return { stop: true };
+    }
+    try {
+      var opened = await jose.decryptCompact({ jwe: compact, key: key });
+      var inner = rfc9068.decodeCompact(opened.plaintext);
+      if (!inner) {
+        results.push('FAIL  decrypt: The inner token is not a ' +
+            'compact JWS.');
+        log.debug("Leaving decryptRfc9068Token().");
+        return { stop: true };
+      }
+      results.push('PASS  decrypt: Decrypted the access token. The ' +
+          'checks below use the inner JWT. The compose boxes were ' +
+          'left as they are.');
+      log.debug("Leaving decryptRfc9068Token().");
+      return {
+        stop: false,
+        header: inner.header,
+        payload: inner.payload,
+        compact: opened.plaintext
+      };
+    } catch (e) {
+      results.push('FAIL  decrypt: ' + e.message);
+      log.debug("Leaving decryptRfc9068Token().");
+      return { stop: true };
+    }
+  }
+  if (count === 3) {
+    results.push('SKIP  decrypt: The access token is a compact JWS, ' +
+        'so decryption does not apply.');
+    log.debug("Leaving decryptRfc9068Token().");
+    return { stop: false };
+  }
+  results.push('FAIL  decrypt: Expected a compact JWE (5 segments) ' +
+      'or a compact JWS (3 segments).');
+  log.debug("Leaving decryptRfc9068Token().");
+  return { stop: true };
+}
+
+async function appendRfc9068Signature(results, compact) {
+  log.debug("Entering appendRfc9068Signature().");
+  if (rfc9068.segmentCount(compact) !== 3) {
+    results.push('FAIL  signature: No compact JWS to verify ' +
+        '(RFC 9068 §4).');
+    log.debug("Leaving appendRfc9068Signature().");
+    return;
+  }
+  var type = val('jwt_verification_type');
+  var key = val('jwt_verification_key');
+  try {
+    var keyInput;
+    if (type === 'jwks_url') {
+      var response = await fetch(key);
+      if (!response.ok) {
+        throw new Error('Failed to fetch JWKS.');
+      }
+      keyInput = { jwks: await response.json() };
+    } else if (type === 'hmac' || type === 'x509' || type === 'jwks') {
+      keyInput = verificationKeyInput(type, key);
+    } else {
+      throw new Error('Unsupported verification method.');
+    }
+    var result = await jwsLib.verifyJwsAsync({
+      jws: compact, publicKey: keyInput, backend: 'webcrypto'
+    });
+    var first = result.signatures[0] || {};
+    if (result.valid) {
+      results.push('PASS  signature: Verified (RFC 9068 §4).');
+    } else {
+      results.push('FAIL  signature: ' +
+          (first.reason || 'signature invalid') + ' (RFC 9068 §4).');
+    }
+  } catch (err) {
+    log.error('appendRfc9068Signature: ' + err.message);
+    results.push('FAIL  signature: ' + err.message + ' (RFC 9068 §4).');
+  }
+  log.debug("Leaving appendRfc9068Signature().");
+}
+
+function appendRfc9068AuthContext(results, payload, compact) {
+  log.debug("Entering appendRfc9068AuthContext().");
+  var original = '';
+  try {
+    original = localStorage.getItem('token_access_token') || '';
+  } catch (e) {
+    log.debug("appendRfc9068AuthContext: " + e.message);
+  }
+  if (!original) {
+    results.push('SKIP  authentication context: No original access ' +
+        'token is stored from the workflow.');
+    log.debug("Leaving appendRfc9068AuthContext().");
+    return;
+  }
+  if (compact && original === compact) {
+    results.push('SKIP  authentication context: This is the ' +
+        'original access token.');
+    log.debug("Leaving appendRfc9068AuthContext().");
+    return;
+  }
+  var decoded = rfc9068.decodeCompact(original);
+  if (!decoded) {
+    results.push('SKIP  authentication context: The stored access ' +
+        'token is opaque.');
+    log.debug("Leaving appendRfc9068AuthContext().");
+    return;
+  }
+  pushRfc9068(results, rfc9068.compareAuthenticationContext(
+      payload, decoded.payload));
+  log.debug("Leaving appendRfc9068AuthContext().");
+}
+
 // Validate the composed header/payload as an OAuth 2.0 JWT access token per
-// RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens). Output goes to the same
-// Compliance Output box. Header (§2.1): typ MUST be "at+jwt" and the token MUST
-// be signed (alg present, not "none"). Required claims (§2.2): iss, exp, aud,
-// sub, client_id, iat, jti. scope is conditionally recommended (§2.2.3);
-// auth_time/acr/amr are optional (§2.2.1) and only type-checked if present.
-function checkRfc9068Compliance() {
+// RFC 9068. Output goes to the Compliance Output box. typ accepts
+// "at+jwt" or "application/at+jwt" in any case (section 4). The token
+// must be signed (alg present, not "none"). Required claims (section
+// 2.2): iss, exp, aud, sub, client_id, iat, jti. scope is conditionally
+// recommended (section 2.2.3). auth_time, acr and amr are type-checked
+// when present. The checkboxes below add the signature, decryption,
+// workflow, authorization-claim and authentication-context steps, and
+// each stays off until it is checked.
+async function checkRfc9068Compliance() {
   log.debug("Entering checkRfc9068Compliance().");
   var results = [];
   function pass(c, m) {
@@ -502,34 +729,52 @@ function checkRfc9068Compliance() {
     log.debug("Leaving skip().");
   }
 
-  var header, payload;
-  try {
-    header = parseJson('jwt_tools_header', 'JWT Header');
-  } catch (e) {
-    setVal('compliance_output', 'FAIL  header: ' + e.message);
-    log.debug("Leaving checkRfc9068Compliance().");
-    return false;
+  var header = null;
+  var payload = null;
+  var compact = rfc9068Compact();
+  if (isChecked('jwt_rfc9068_decrypt')) {
+    var opened = await decryptRfc9068Token(results, compact);
+    if (opened.stop) {
+      setVal('compliance_output', results.join('\n'));
+      log.debug("Leaving checkRfc9068Compliance().");
+      return false;
+    }
+    if (opened.header) {
+      header = opened.header;
+      payload = opened.payload;
+      compact = opened.compact;
+    }
   }
-  try {
-    payload = parseJson('jwt_tools_payload', 'JWT Payload');
-  } catch (e) {
-    setVal('compliance_output', 'FAIL  payload: ' + e.message);
-    log.debug("Leaving checkRfc9068Compliance().");
-    return false;
+  if (!header) {
+    try {
+      header = parseJson('jwt_tools_header', 'JWT Header');
+    } catch (e) {
+      setVal('compliance_output', 'FAIL  header: ' + e.message);
+      log.debug("Leaving checkRfc9068Compliance().");
+      return false;
+    }
+    try {
+      payload = parseJson('jwt_tools_payload', 'JWT Payload');
+    } catch (e) {
+      setVal('compliance_output', 'FAIL  payload: ' + e.message);
+      log.debug("Leaving checkRfc9068Compliance().");
+      return false;
+    }
   }
 
   results.push('RFC 9068 — OAuth 2.0 JWT Access Token');
 
-  // ---- Header (RFC 9068 §2.1) ---- typ is REQUIRED and MUST be "at+jwt" (the
-  // "application/" prefix is allowed).
-  if (header.typ === undefined) {
-    fail('typ', 'Missing — MUST be "at+jwt" (RFC 9068 §2.1)');
-  } else if (typeof header.typ !== 'string') {
-    fail('typ', '"typ" must be a string');
-  } else if (header.typ === 'at+jwt' || header.typ === 'application/at+jwt') {
-    pass('typ', '"' + header.typ + '"');
+  if (isChecked('jwt_rfc9068_verify')) {
+    await appendRfc9068Signature(results, compact);
+  }
+
+  // typ — RFC 9068 §4 accepts "at+jwt" or "application/at+jwt",
+  // compared case-insensitively, so the example's "at+JWT" passes.
+  var typRow = rfc9068.typFinding(header.typ);
+  if (typRow.level === 'pass') {
+    pass(typRow.claim, typRow.message);
   } else {
-    fail('typ', '"' + header.typ + '" — MUST be "at+jwt" (RFC 9068 §2.1)');
+    fail(typRow.claim, typRow.message);
   }
 
   // The token MUST be signed; alg is REQUIRED and MUST NOT be "none".
@@ -611,6 +856,17 @@ function checkRfc9068Compliance() {
         return typeof a === 'string'; })) pass('amr', payload.amr.length +
         ' value(s)');
     else fail('amr', 'Must be an array of strings');
+  }
+
+  if (isChecked('jwt_rfc9068_workflow')) {
+    pushRfc9068(results, rfc9068.checkWorkflow(payload,
+        rfc9068WorkflowExpectation()));
+  }
+  if (isChecked('jwt_rfc9068_authz_claims')) {
+    pushRfc9068(results, rfc9068.checkAuthorizationClaims(payload));
+  }
+  if (isChecked('jwt_rfc9068_auth_context')) {
+    appendRfc9068AuthContext(results, payload, compact);
   }
 
   setVal('compliance_output', results.join('\n'));
@@ -1638,6 +1894,8 @@ window.onload = function () {
   log.debug("Entering onload().");
   log.debug('Entering onload function.');
   setReturnLink();
+  restoreRfc9068Boxes();
+  bindRfc9068Boxes();
   annotateUnsupportedJweOptions().catch(function (e) {
     // Not being able to probe is not a reason to fail the page; the options
     // stay as they are and an attempt will report its own error.

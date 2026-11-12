@@ -1232,6 +1232,16 @@ function buildJobs() {
     },
   });
 
+  // RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens), in node with
+  // no browser and no network. The checks are a reading of a token
+  // the debugger already holds. A provider's behaviour is not an
+  // input, so the job never skips and takes no env.
+  jobs.push({
+    name: "RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens, in node)",
+    script: "rfc9068.js",
+    env: {},
+  });
+
   // OpenID Connect RP Metadata Choices 1.0, in node with no browser
   // and no network. The registration request and the reading of a
   // registration response are this client's obligations. A provider's
