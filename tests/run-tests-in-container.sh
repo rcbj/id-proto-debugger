@@ -11,6 +11,92 @@ set -x
 # and lets compose invoke this script inside the tests container.
 #
 
+# Is $1 one of the services the launcher started? Always yes on the ordinary
+# run, which sets no TEST_STACK_SERVICES.
+stackHas()
+{
+  if [ -z "${TEST_STACK_SERVICES:-}" ];
+  then
+    return 0
+  fi
+  case " ${TEST_STACK_SERVICES} " in
+    *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# ./docker-run-tests.sh --sts-url=<base>: every address the jobs are handed,
+# rebased from this stack's iya-sts onto a DEPLOYED one. The browser-facing
+# URLs init() built all begin https://sts:8081 and are substituted; the rest
+# are the addresses run-report.js otherwise DEFAULTS to the compose name `sts`,
+# which on that run is a service that was never started. The api, the browser
+# and this container all reach the deployment by the same public name, so
+# there is one view here rather than the two (api's, this container's) the
+# SPIFFE_TEST_* and KRB5_TEST_* pairs exist for.
+# ---------------------------------------------------------------------------
+useExternalSts()
+{
+  echo "Entering useExternalSts(). base=${STS_EXTERNAL_URL}"
+  local base="${STS_EXTERNAL_URL%/}"
+  local host="${base#*://}"
+  host="${host%%/*}"
+  host="${host%%:*}"
+  local v
+  for v in WSTRUST_STS_URL WSFED_STS_METADATA_URL SAML_STS_METADATA_URL \
+           SAML11_METADATA_URL STS_TLS_URL;
+  do
+    eval "${v}=\"\${${v}/https:\/\/sts:8081/${base//\//\\/}}\""
+    export "${v}"
+  done
+  STS_BASE_URL="${base}"
+  STS_URL="${base}"
+  API_STS_URL="${base}"
+  SSF_TRANSMITTER_URL="${base}"
+  SCIM_BASE_URL="${base}/scim/v2"
+  KRB5_KDC_HOST="${host}"
+  KRB5_TEST_KDC_HOST="${host}"
+  KRB5_SPNEGO_URL="${base}/spnego/protected"
+  LDAP_URL="ldap://${host}:389"
+  SPIFFE_WORKLOAD_ADDRESS="${host}:8092"
+  SPIFFE_SERVER_ADDRESS="${host}:8181"
+  SPIFFE_TEST_WORKLOAD_ADDRESS="${host}:8092"
+  SPIFFE_TEST_SERVER_ADDRESS="${host}:8181"
+  SPIFFE_BUNDLE_URL="${base}/spiffe/bundle"
+  SPIFFE_TRUST_DOMAIN="${SPIFFE_TRUST_DOMAIN:-${host#*.}}"
+  # No shared volume reaches a deployment's Unix socket.
+  SPIFFE_SERVER_SOCKET=""
+  export STS_URL API_STS_URL SSF_TRANSMITTER_URL SCIM_BASE_URL KRB5_KDC_HOST \
+         KRB5_TEST_KDC_HOST KRB5_SPNEGO_URL LDAP_URL \
+         SPIFFE_WORKLOAD_ADDRESS SPIFFE_SERVER_ADDRESS \
+         SPIFFE_TEST_WORKLOAD_ADDRESS SPIFFE_TEST_SERVER_ADDRESS \
+         SPIFFE_BUNDLE_URL SPIFFE_TRUST_DOMAIN SPIFFE_SERVER_SOCKET
+  echo "  WSTRUST_STS_URL=${WSTRUST_STS_URL}"
+  echo "  SAML_STS_METADATA_URL=${SAML_STS_METADATA_URL}"
+  echo "  KRB5_KDC_HOST=${KRB5_KDC_HOST} LDAP_URL=${LDAP_URL}"
+  echo "  SPIFFE ${SPIFFE_WORKLOAD_ADDRESS} ${SPIFFE_SERVER_ADDRESS}" \
+       "trust domain ${SPIFFE_TRUST_DOMAIN}"
+  echo "Leaving useExternalSts()."
+}
+
+# The deployment's side of --sts-url: this stack's browser origin allowed by
+# CORS, since the debugger's pages call that service from DEBUGGER_BASE_URL.
+# Not fatal — the browser jobs will fail on it and say CORS.
+allowDebuggerOriginOnSts()
+{
+  echo "Entering allowDebuggerOriginOnSts()."
+  if ! curl -sS --fail -o /dev/null -X POST \
+       -H "Authorization: Bearer ${STS_ADMIN_API_TOKEN}" \
+       -H "Content-Type: application/json" \
+       -d '{"key":"global.corsOrigins","value":"'"${DEBUGGER_BASE_URL}"'"}' \
+       "${STS_BASE_URL}/admin-api/config/set";
+  then
+    echo "WARNING: could not allow ${DEBUGGER_BASE_URL} by CORS on" \
+         "${STS_BASE_URL}; the browser jobs will fail on it." >&2
+  fi
+  echo "Leaving allowDebuggerOriginOnSts()."
+}
+
 init()
 {
   # Defaults target the fully-containerized stack (client + keycloak on the
@@ -268,6 +354,31 @@ init()
   KEYCLOAK_WSFED_BASE_URL="${KEYCLOAK_WSFED_BASE_URL:-}"
   KEYCLOAK_WSFED_LOCALHOST_BASE_URL="${KEYCLOAK_WSFED_LOCALHOST_BASE_URL:-}"
   export KEYCLOAK_WSFED_BASE_URL KEYCLOAK_WSFED_LOCALHOST_BASE_URL
+  # WHICH SERVICES THE LAUNCHER STARTED. ./docker-run-tests.sh's focused modes
+  # (--saml-only=sts, --wsfed-only, --federation-only, ...) bring up only part
+  # of the stack and say which part here; unset means the whole stack, which
+  # is the ordinary run. Only Keycloak and its WS-Federation side-car are
+  # consulted — the mock STS, the api and the client are in every subset.
+  # A service that is absent is not waited for and not provisioned, so its
+  # jobs are left to TEST_SELECT to leave out rather than to fail on.
+  if [ -n "${TEST_STACK_SERVICES:-}" ];
+  then
+    echo "Partial stack: ${TEST_STACK_SERVICES}"
+    if ! stackHas keycloak-wsfed;
+    then
+      KEYCLOAK_WSFED_BASE_URL=""
+      KEYCLOAK_WSFED_LOCALHOST_BASE_URL=""
+    fi
+  fi
+  # THE MOCK STS'S BASE, as THIS container reaches it. The compose name on
+  # the containerized stack; a deployed iya-sts with
+  # ./docker-run-tests.sh --sts-url=<base>, in which case every STS address
+  # above is rebased onto it.
+  STS_BASE_URL=https://sts:8081
+  if [ -n "${STS_EXTERNAL_URL:-}" ];
+  then
+    useExternalSts
+  fi
   CONFIG_FILE="${CONFIG_FILE:-./env/local.js}"
   CURRENT_DIR=`echo "$(dirname "$(realpath "$0")")"`
   COMMON_SH=${CURRENT_DIR}/common.sh
@@ -329,7 +440,16 @@ init()
 
   case "${DEBUGGER_BASE_URL}" in
     https://client:*|http://client:*)
-      trustStsCertificate https://sts:8081 || true
+      if [ -n "${STS_EXTERNAL_URL:-}" ];
+      then
+        # Somebody else's deployment: it presents a certificate a public CA
+        # issued, so there is no anchor to fetch, and it has to be told to
+        # allow this stack's browser origin before any page calls it.
+        requireStsReachable https "${STS_BASE_URL}/healthcheck" sts
+        check_return_code $?
+      else
+        trustStsCertificate "${STS_BASE_URL}" || true
+      fi
       # THE MANAGEMENT API TOKEN, BEFORE ANYTHING CONFIGURES THE MOCK.
       #
       # configureStsRfc9700Realm() below is curl, and the mock closed
@@ -345,10 +465,14 @@ init()
       # is needed and cannot be had, and says nothing at all when the API is
       # open (adminApi.authRequired=false), which is a stack this repository
       # did not configure.
-      mintAdminApiToken https://sts:8081
-      if configureStsRfc9700Realm https://sts:8081;
+      mintAdminApiToken "${STS_BASE_URL}"
+      if [ -n "${STS_EXTERNAL_URL:-}" ];
       then
-        RFC9700_STS_URL="${RFC9700_STS_URL:-https://sts:8081/realm/rfc9700}"
+        allowDebuggerOriginOnSts
+      fi
+      if configureStsRfc9700Realm "${STS_BASE_URL}";
+      then
+        RFC9700_STS_URL="${RFC9700_STS_URL:-${STS_BASE_URL}/realm/rfc9700}"
         export RFC9700_STS_URL
       else
         # FATAL: the mock is part of this stack, so a realm it will not put
@@ -448,21 +572,35 @@ waitForSts()
 
 init
 check_return_code $?
-waitForKeycloak
-check_return_code $?
 waitForSts
-# Delete any pre-existing debugger-testing realm so provisioning is idempotent.
-# docker-run-tests.sh's startup `down -v` is meant to give us a fresh DB, but it
-# is best-effort (swallowed under docker-compose v1); if a stale realm survives,
-# configureKeycloak would 409 ("Failed to create SAML user"). See common.sh.
-resetKeycloakRealm
-check_return_code $?
-configureKeycloak
-check_return_code $?
+# Keycloak only when the launcher started it: a focused run against the mock
+# alone (./docker-run-tests.sh --saml-only=sts, --federation-only, ...) has no
+# Keycloak to wait for, and waiting would end the run.
+if stackHas keycloak;
+then
+  waitForKeycloak
+  check_return_code $?
+  # Delete any pre-existing debugger-testing realm so provisioning is
+  # idempotent. docker-run-tests.sh's startup `down -v` is meant to give us a
+  # fresh DB, but it is best-effort (swallowed under docker-compose v1); if a
+  # stale realm survives, configureKeycloak would 409 ("Failed to create SAML
+  # user"). See common.sh.
+  resetKeycloakRealm
+  check_return_code $?
+  configureKeycloak
+  check_return_code $?
+fi
 # Provision the WS-Federation side-car (no-op unless KEYCLOAK_WSFED_LOCALHOST_BASE_URL
 # is set by the run-tests compose; FAILS the run if it is set and unusable).
 configureKeycloakWsfed
 check_return_code $?
+# ./docker-run-tests.sh --saml-dev: provision and stop. The stack stays up for
+# a person with a browser, and no job runs.
+if [ "${TEST_PROVISION_ONLY:-}" = "1" ];
+then
+  echo "Provisioned (TEST_PROVISION_ONLY=1); not running the suite."
+  exit 0
+fi
 runReport
 check_return_code $?
 node --version

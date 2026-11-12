@@ -5863,6 +5863,97 @@ function reportJobsThatDidNotRun(results) {
 }
 
 // ---------------------------------------------------------------------------
+// TEST_SELECT: run a NAMED SUBSET of the jobs below and nothing else.
+//
+// This is what ./docker-run-tests.sh's focused modes (--saml-only,
+// --wsfed-only, --delegation-only, --federation-only) are built on. They used
+// to be loops in ./local-run-tests.sh that called the scripts by hand with an
+// environment of their own, which was a second copy of what each job here
+// already knows about its identity provider. Selecting the jobs instead means
+// a focused run drives exactly the jobs the full suite does, with the same
+// environment, the same locks and the same report.
+//
+// The value is whitespace-separated SELECTORS, and a job runs when any one of
+// them matches it:
+//
+//   saml11_sso.js                     every job of that script
+//   saml_sso.js?SAML_IDP=sts          ...whose env has SAML_IDP=sts
+//   federation_matrix_sso.js?FEDERATION_APP_PROTOCOL=wsfed&FEDERATION_MECHANISM=webauthn
+//
+// Unset or empty runs everything, which is the ordinary suite.
+//
+// A SELECTION THAT MATCHES NOTHING IS A FAILURE, not an empty pass. A typo in
+// a selector — a federation grid point spelt `oauth` for `oauth2` — would
+// otherwise run nothing and report success, which is the "test that quietly
+// does nothing" this suite keeps finding.
+// ---------------------------------------------------------------------------
+function parseTestSelect(text) {
+  log.debug("Entering parseTestSelect().");
+  const selectors = String(text || "")
+    .split(/\s+/)
+    .filter(function (word) {
+      return word.length > 0;
+    })
+    .map(function (word) {
+      const q = word.indexOf("?");
+      const script = q === -1 ? word : word.slice(0, q);
+      const want = {};
+      if (q !== -1) {
+        word.slice(q + 1).split("&").forEach(function (pair) {
+          const eq = pair.indexOf("=");
+          if (eq > 0) {
+            want[pair.slice(0, eq)] = pair.slice(eq + 1);
+          }
+        });
+      }
+      return { text: word, script: script, env: want };
+    });
+  log.debug("Leaving parseTestSelect(). " + selectors.length +
+            " selector(s).");
+  return selectors;
+}
+
+function selectJobs(jobs) {
+  log.debug("Entering selectJobs().");
+  const selectors = parseTestSelect(env.TEST_SELECT);
+  if (selectors.length === 0) {
+    log.debug("Leaving selectJobs(). No TEST_SELECT; every job runs.");
+    return jobs;
+  }
+  const matches = function (job, sel) {
+    if (job.script !== sel.script) {
+      return false;
+    }
+    const jobEnv = job.env || {};
+    return Object.keys(sel.env).every(function (k) {
+      return String(jobEnv[k]) === sel.env[k];
+    });
+  };
+  const chosen = jobs.filter(function (job) {
+    return selectors.some(function (sel) {
+      return matches(job, sel);
+    });
+  });
+  selectors.forEach(function (sel) {
+    const n = jobs.filter(function (job) {
+      return matches(job, sel);
+    }).length;
+    log.info("TEST_SELECT " + sel.text + " matched " + n + " job(s).");
+  });
+  if (chosen.length === 0) {
+    log.error("TEST_SELECT matched no job at all: " + env.TEST_SELECT);
+    log.error("A selector is <script>[?NAME=value&NAME=value], matched " +
+              "against each job's script and its env. Nothing has run.");
+    log.debug("Leaving selectJobs(). Nothing matched.");
+    process.exit(1);
+  }
+  log.info("TEST_SELECT chose " + chosen.length + " of " + jobs.length +
+           " job(s).");
+  log.debug("Leaving selectJobs(). " + chosen.length + " chosen.");
+  return chosen;
+}
+
+// ---------------------------------------------------------------------------
 // THE ACCESS TOKEN EVERY JOB DRIVES THE MOCK STS'S `/admin-api` WITH.
 //
 // That API required no credential at all until the 2026-09-09 submodule bump;
@@ -5943,7 +6034,7 @@ async function main() {
     results = demoResults();
     log.info("Writing SAMPLE report (--demo); no tests executed.");
   } else {
-    const jobs = buildJobs();
+    const jobs = selectJobs(buildJobs());
     // Filled BY INDEX rather than pushed: with a pool the jobs finish out of
     // order, and the report is written in the order they were built.
     results = new Array(jobs.length);

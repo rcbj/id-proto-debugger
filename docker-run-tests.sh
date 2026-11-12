@@ -7,11 +7,14 @@ set -x
 # (docker-compose-run-tests.yml): postgres + keycloak + api + client + tests.
 # The tests container runs the Selenium suite (tests/run-tests-in-container.sh)
 # and compose exits when it does; this script's exit code reflects whether the
-# tests passed (--exit-code-from tests). The stack is always torn down at the end.
+# tests passed (--exit-code-from tests). On that default run the stack is
+# always torn down at the end.
 #
-# This is the command CLAUDE.md documents. To run the suite from a local shell
-# with only the dependencies in containers, use ./local-run-tests.sh instead;
-# to run against an already-deployed site, use ./remote-run-tests.sh.
+# This is the command CLAUDE.md documents. It also carries every option
+# ./local-run-tests.sh had — the focused loops, --saml-dev, --sts-url and
+# --krb5-real-dc — which that launcher is being retired in favour of; see
+# usage() below. To run against an already-deployed site, use
+# ./remote-run-tests.sh.
 #
 # Usage:
 #   ./docker-run-tests.sh
@@ -19,7 +22,239 @@ set -x
 #   STS_LOG_LEVEL=info ./docker-run-tests.sh   # quieten the mock STS; see below
 #   TEST_CONCURRENCY=6 ./docker-run-tests.sh   # jobs at once; see below
 #   TEST_CONCURRENCY=1 ./docker-run-tests.sh   # sequential, live output
+#   ./docker-run-tests.sh --help                # the options
 #
+# ---------------------------------------------------------------------------
+# THE OPTIONS, parsed before anything else is done so that a typo costs no
+# build.
+#
+# The focused modes do NOT carry a second copy of the jobs they run. Each one
+# names a subset of the jobs tests/run-report.js already builds (TEST_SELECT,
+# see selectJobs() there), so a focused run drives exactly what the full suite
+# drives — the same environment per identity provider, the same locks, the
+# same HTML/JUnit report under tests/report/. What differs is the stack: only
+# the services that subset needs are started, and the stack is LEFT UP
+# afterwards, because for several of these (the delegation maps, the
+# federation realms) what the run leaves behind is the point.
+# ---------------------------------------------------------------------------
+MODE=suite
+MODE_WHAT=""
+KEEP_STACK=0
+SAML_SIG_VALIDATION=true
+KRB5_REAL_DC_WHAT=test
+STS_EXTERNAL_URL="${STS_EXTERNAL_URL:-}"
+
+usage()
+{
+  cat <<USAGE
+Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
+
+  (no mode)    Build the whole containerized stack, provision it, run the full
+               suite in the tests container, and tear it all down.
+
+  --keep-stack The full suite as above, but LEFT UP afterwards (the run is
+               made with \`docker compose run\` rather than \`up
+               --abort-on-container-exit\`). Every focused mode below keeps
+               the stack anyway.
+
+  --saml-dev   Bring up the whole stack, provision Keycloak with SAML
+               AuthnRequest signature validation DISABLED, run no test, and
+               leave it up — for manual SAML work with a browser-generated SP
+               key. The pages are built for this stack's compose names, so
+               the host needs them in /etc/hosts:
+                 127.0.0.1 client api sts keycloak
+
+  --saml-only[=keycloak|sts|both]
+               The SAML 2.0 Web Browser SSO jobs (tests/saml_sso.js over all
+               three bindings, tests/saml_logout.js) against the Keycloak
+               realm, iya-sts, or both (default). The sts half adds the four
+               SAML 1.1 jobs (saml11_sso.js per binding, saml11_options.js),
+               which have no Keycloak half. =sts starts no Keycloak at all.
+
+  --wsfed-only[=keycloak|sts|both]
+               Every tests/wsfed_sso.js job against the Keycloak 8.0.1 + wsfed
+               side-car, iya-sts, or both (default). =sts skips the WildFly
+               boot entirely.
+
+  --delegation-only[=oauth|wstrust|both]
+               The three-tier delegation chains against iya-sts:
+               oauth2_delegation_chain.js (oauth), wstrust_delegation_chain.js
+               for OnBehalfOf and ActAs (wstrust), or all three (default). The
+               delegation maps land as SVG under
+               tests/report/<run>/delegation/.
+
+  --federation-only[=single|chain|choice|both|matrix|matrix:<app>/<fed>/<mech>]
+               The federated sign-ins across trust realms of iya-sts.
+               single = federation_sso.js, chain = federation_chain_sso.js,
+               choice = federation_choice_sso.js, both (default) = all three,
+               matrix = the forty-nine federation_matrix_sso.js points,
+               matrix:<app>/<fed>/<mech> = one of them, each of <app> and
+               <fed> one of oidc, oauth2, saml2, saml11, wsfed and <mech> one
+               of password, webauthn. The realms are left configured on the
+               running stack, at https://localhost:8081/realm/<id>/admin/.
+
+  --krb5-real-dc[=test|capture|both]
+               Create a Windows Server 2025 domain controller on AWS, run
+               tests/krb5_real_dc.js (test, the default), refresh
+               tests/captures/windows-server-2025.json (capture), or both,
+               then destroy everything it made (infra/krb5-test.sh). Needs AWS
+               credentials and node on the host; no docker. THIS COSTS MONEY —
+               it is not free tier. KRB5_KEEP=1 keeps the instance.
+
+  --sts-url=<base>
+               Use a DEPLOYED iya-sts at <base> (for example
+               https://test-idp.iyasec.io) instead of starting one: the \`sts\` service is not started
+               (docker-compose-run-tests-external-sts.yml), every STS address
+               the jobs are handed is rebased onto <base>, and Kerberos, LDAP
+               and SPIFFE dial its host. Set ADMIN_API_CLIENT_SECRET to that
+               deployment's sts-management-api secret, and optionally
+               SPIFFE_TRUST_DOMAIN (default: <base>'s host minus its first
+               label). It allows https://client:3000 by CORS there and creates
+               its rfc9700 realm. Combines with the default run and with every
+               focused mode.
+
+  The focused modes run their jobs one at a time (TEST_CONCURRENCY=1) unless
+  TEST_CONCURRENCY says otherwise, and leave the stack up. Stop it with
+  \`docker compose -f docker-compose-run-tests.yml down -v\`, or by running this
+  script again, which always starts from a clean stack.
+USAGE
+}
+
+setMode()
+{
+  if [ "${MODE}" != "suite" ];
+  then
+    echo "--${MODE} and $1 each run one thing; pick one." >&2
+    exit 1
+  fi
+  MODE="$2"
+  MODE_WHAT="$3"
+}
+
+while [ $# -gt 0 ];
+do
+  case "$1" in
+    --saml-dev) setMode "$1" saml-dev "" ;;
+    --saml-only) setMode "$1" saml-only both ;;
+    --saml-only=*) setMode "$1" saml-only "${1#*=}" ;;
+    --wsfed-only) setMode "$1" wsfed-only both ;;
+    --wsfed-only=*) setMode "$1" wsfed-only "${1#*=}" ;;
+    --delegation-only) setMode "$1" delegation-only both ;;
+    --delegation-only=*) setMode "$1" delegation-only "${1#*=}" ;;
+    --federation-only) setMode "$1" federation-only both ;;
+    --federation-only=*) setMode "$1" federation-only "${1#*=}" ;;
+    --krb5-real-dc) setMode "$1" krb5-real-dc test ;;
+    --krb5-real-dc=*) setMode "$1" krb5-real-dc "${1#*=}" ;;
+    --sts-url=*) STS_EXTERNAL_URL="${1#*=}" ;;
+    --keep-stack) KEEP_STACK=1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+  shift
+done
+STS_EXTERNAL_URL="${STS_EXTERNAL_URL%/}"
+
+# Each mode's value, checked here, and turned into the subset of jobs and of
+# services it needs. TEST_SELECT is read by tests/run-report.js; the selectors
+# name a script and, where one script serves two identity providers, the env
+# value that tells its jobs apart. A matrix point that matches nothing fails
+# there rather than here, with every point's spelling in the message.
+TEST_SELECT=""
+NEED_KEYCLOAK=0
+NEED_WSFED=0
+case "${MODE}" in
+  saml-only)
+    case "${MODE_WHAT}" in
+      keycloak|sts|both) ;;
+      *) echo "Unknown --saml-only identity provider: ${MODE_WHAT}" >&2
+         usage; exit 1 ;;
+    esac
+    if [ "${MODE_WHAT}" != "sts" ];
+    then
+      NEED_KEYCLOAK=1
+      TEST_SELECT="${TEST_SELECT} saml_sso.js?SAML_IDP=keycloak"
+      TEST_SELECT="${TEST_SELECT} saml_logout.js?SAML_IDP=keycloak"
+    fi
+    if [ "${MODE_WHAT}" != "keycloak" ];
+    then
+      TEST_SELECT="${TEST_SELECT} saml_sso.js?SAML_IDP=sts"
+      TEST_SELECT="${TEST_SELECT} saml_logout.js?SAML_IDP=sts"
+      TEST_SELECT="${TEST_SELECT} saml11_sso.js saml11_options.js"
+    fi
+    ;;
+  wsfed-only)
+    case "${MODE_WHAT}" in
+      keycloak|sts|both) ;;
+      *) echo "Unknown --wsfed-only identity provider: ${MODE_WHAT}" >&2
+         usage; exit 1 ;;
+    esac
+    if [ "${MODE_WHAT}" != "sts" ];
+    then
+      NEED_WSFED=1
+      TEST_SELECT="${TEST_SELECT} wsfed_sso.js?WSFED_IDP=keycloak"
+    fi
+    if [ "${MODE_WHAT}" != "keycloak" ];
+    then
+      TEST_SELECT="${TEST_SELECT} wsfed_sso.js?WSFED_IDP=sts"
+    fi
+    ;;
+  delegation-only)
+    case "${MODE_WHAT}" in
+      oauth) TEST_SELECT="oauth2_delegation_chain.js" ;;
+      wstrust) TEST_SELECT="wstrust_delegation_chain.js" ;;
+      both) TEST_SELECT="oauth2_delegation_chain.js"
+            TEST_SELECT="${TEST_SELECT} wstrust_delegation_chain.js" ;;
+      *) echo "Unknown --delegation-only family: ${MODE_WHAT}" >&2
+         usage; exit 1 ;;
+    esac
+    ;;
+  federation-only)
+    case "${MODE_WHAT}" in
+      single) TEST_SELECT="federation_sso.js" ;;
+      chain) TEST_SELECT="federation_chain_sso.js" ;;
+      choice) TEST_SELECT="federation_choice_sso.js" ;;
+      both) TEST_SELECT="federation_sso.js federation_chain_sso.js"
+            TEST_SELECT="${TEST_SELECT} federation_choice_sso.js" ;;
+      matrix) TEST_SELECT="federation_matrix_sso.js" ;;
+      matrix:*/*/*)
+        _point="${MODE_WHAT#matrix:}"
+        _app="${_point%%/*}"
+        _mech="${_point##*/}"
+        _fed="${_point#*/}"
+        _fed="${_fed%/*}"
+        TEST_SELECT="federation_matrix_sso.js?FEDERATION_APP_PROTOCOL=${_app}"
+        TEST_SELECT="${TEST_SELECT}&FEDERATION_FED_PROTOCOL=${_fed}"
+        TEST_SELECT="${TEST_SELECT}&FEDERATION_MECHANISM=${_mech}"
+        ;;
+      *) echo "Unknown --federation-only depth: ${MODE_WHAT}" >&2
+         usage; exit 1 ;;
+    esac
+    ;;
+  krb5-real-dc)
+    case "${MODE_WHAT}" in
+      test|capture|both) KRB5_REAL_DC_WHAT="${MODE_WHAT}" ;;
+      *) echo "Unknown --krb5-real-dc value: ${MODE_WHAT}" >&2
+         usage; exit 1 ;;
+    esac
+    if [ -n "${STS_EXTERNAL_URL}" ];
+    then
+      echo "--krb5-real-dc starts no stack, so --sts-url means nothing" \
+           "there." >&2
+      exit 1
+    fi
+    ;;
+  saml-dev)
+    SAML_SIG_VALIDATION=false
+    NEED_KEYCLOAK=1
+    NEED_WSFED=1
+    ;;
+esac
+TEST_SELECT="${TEST_SELECT# }"
+case "${MODE}" in
+  saml-only|wsfed-only|delegation-only|federation-only|saml-dev)
+    KEEP_STACK=1
+    ;;
+esac
 
 # CONFIG_FILE selects the api/client build-time config baked into their images.
 # The whole stack runs on a private compose network, so the browser (running
@@ -132,6 +367,91 @@ else
   exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# --krb5-real-dc: the Kerberos interoperability work, against AWS.
+#
+# The one mode that starts NO stack and needs no docker: tests/krb5_real_dc.js
+# loads the api's relay and SSRF guard as modules and opens the socket itself,
+# so there is no api, no client, no Keycloak and no iya-sts in this path —
+# just node on this host and a domain controller in us-west-2. That is also
+# why it runs here rather than in the tests container: the AWS credentials
+# and the CLI are the host's.
+#
+# The apply / wait-for-the-forest / teardown logic is NOT duplicated here. It
+# lives once, in infra/krb5-test.sh, because the teardown is the only thing
+# standing between a failed run and a Windows instance billing until somebody
+# notices. All this does is decide which scripts run against the live DC.
+# ---------------------------------------------------------------------------
+runKrb5RealDc()
+{
+  echo "Entering runKrb5RealDc(). what=${KRB5_REAL_DC_WHAT}"
+  local scripts=""
+  case "${KRB5_REAL_DC_WHAT}" in
+    test)    scripts="krb5_real_dc.js" ;;
+    capture) scripts="krb5_capture_real_dc.js" ;;
+    # The test first: a capture taken from a broken run is worse than none,
+    # because krb5_windows_vectors.js would then assert the breakage.
+    both)    scripts="krb5_real_dc.js krb5_capture_real_dc.js" ;;
+  esac
+  if ! command -v aws >/dev/null 2>&1;
+  then
+    echo "ERROR: --krb5-real-dc needs the AWS CLI on PATH." >&2
+    echo "Leaving runKrb5RealDc(). rc=1"
+    return 1
+  fi
+  if ! aws sts get-caller-identity >/dev/null 2>&1;
+  then
+    echo "ERROR: --krb5-real-dc needs working AWS credentials; none" \
+         "resolved. Sign in, then re-run. Nothing has been created." >&2
+    echo "Leaving runKrb5RealDc(). rc=1"
+    return 1
+  fi
+  if ! command -v node >/dev/null 2>&1;
+  then
+    echo "ERROR: --krb5-real-dc runs its test on this host and needs node." >&2
+    echo "Leaving runKrb5RealDc(). rc=1"
+    return 1
+  fi
+  echo "AWS account: $(aws sts get-caller-identity --query Account \
+    --output text 2>/dev/null)"
+  cat <<'WARNING'
+============================================================================
+This creates a Windows Server 2025 domain controller on AWS. It is NOT free
+tier (a forest promotion needs more than the 1 GiB a t3.micro has), it costs
+a few cents an hour, and everything it makes is destroyed at the end by an
+EXIT trap that runs even if the test fails.
+
+Set KRB5_KEEP=1 to keep the instance for debugging instead.
+============================================================================
+WARNING
+  # The test's own dependencies, on this host. The containerized suite never
+  # needs them here, so they may well be absent.
+  if ! npm install --prefix "${CURRENT_DIR}/tests";
+  then
+    echo "ERROR: npm install --prefix tests failed." >&2
+    echo "Leaving runKrb5RealDc(). rc=1"
+    return 1
+  fi
+  # The TESTS' configuration, resolved against tests/ — not the api/client
+  # build configuration CONFIG_FILE names on the rest of this script.
+  KRB5_TEST_SCRIPTS="${scripts}" \
+    CONFIG_FILE=./env/local.js \
+    "${CURRENT_DIR}/infra/krb5-test.sh"
+  local rc=$?
+  echo "Leaving runKrb5RealDc(). rc=${rc}"
+  return ${rc}
+}
+
+if [ "${MODE}" = "krb5-real-dc" ];
+then
+  trap 'launcherExitStatus $? docker-run-tests.sh' EXIT
+  runKrb5RealDc
+  check_return_code $?
+  echo "Kerberos real-DC work passed (${KRB5_REAL_DC_WHAT})."
+  SUITE_PASSED=1
+  exit 0
+fi
+
 # walt.id's issuer, and the identity provider it authenticates End-Users at.
 # These are the addresses the BROWSER uses: every URL walt.id publishes in its
 # metadata is built from WALTID_BASE_URL, and the authorize redirect goes to
@@ -198,21 +518,132 @@ EXTENSION_AUTOARM_ORIGINS="https://sts:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # the browser runs inside the compose network
 check_return_code $?
 
+# The compose files this run is made of: the stack, and with --sts-url the
+# override that takes iya-sts out of it.
+COMPOSE_ARGS=(-f "${COMPOSE_FILE}")
+if [ -n "${STS_EXTERNAL_URL}" ];
+then
+  COMPOSE_ARGS+=(-f docker-compose-run-tests-external-sts.yml)
+  export STS_EXTERNAL_URL
+fi
+
 # Always tear the stack down, even if the tests fail, so the next run starts clean.
 teardown()
 {
-  docker_compose -f "${COMPOSE_FILE}" down
+  docker_compose "${COMPOSE_ARGS[@]}" down
+}
+
+# What a kept stack holds and how to reach it, printed by the EXIT trap so it
+# is the last thing on the screen before the status line.
+printKeptStack()
+{
+  echo "Entering printKeptStack()."
+  local sts="${STS_EXTERNAL_URL:-https://localhost:8081}"
+  cat <<KEPT
+============================================================================
+The stack is still UP. From this host:
+  iya-sts   : ${sts}  (its /admin console takes a session from /authn/login)
+  Keycloak  : http://localhost:8080   (admin: keycloak / keycloak)
+  api       : https://localhost:4000
+  debugger  : https://client:3000 — the pages are built for the compose
+              names, so a browser here needs
+                127.0.0.1 client api sts keycloak
+              in /etc/hosts, and the stack's root CA
+              (generated-tls-ca/stack-tls-root.pem) trusted.
+  report    : tests/report/latest/report.html
+Stop it with:
+  docker compose ${COMPOSE_ARGS[*]} down -v
+============================================================================
+KEPT
+  case "${MODE}:${MODE_WHAT}" in
+    federation-only:single|federation-only:both)
+      cat <<FEDERATION
+The single-hop realms:
+  ${sts}/realm/federation-realm-1/admin/federation
+      the relationship, its counters and its last error
+  ${sts}/realm/federation-realm-1/admin/users
+      somebody who has never had a credential checked in that realm
+  ${sts}/realm/federation-realm-2/admin/users
+      the same person, in the realm where a name was actually typed
+FEDERATION
+      ;;
+  esac
+  case "${MODE}:${MODE_WHAT}" in
+    federation-only:chain|federation-only:both)
+      cat <<CHAIN
+The three realms of the N-layer chain, where the middle one is the bridge:
+  ${sts}/realm/federation-realm-4/admin/federation
+      TWO relationships, one in each direction — WS-Federation in from
+      realm 5, SAML 2.0 out to realm 3; the identity-provider-side one
+      carries fedAuthnMechanism=federation
+  ${sts}/realm/federation-realm-5/admin/users
+      the only realm of the three that ever drew a password field
+  ${sts}/realm/federation-realm-3/admin/users
+      the same person, two hops and two protocols away
+CHAIN
+      ;;
+  esac
+  case "${MODE}:${MODE_WHAT}" in
+    federation-only:choice|federation-only:both)
+      cat <<CHOICE
+The pair where one application has TWO identity providers:
+  ${sts}/realm/federation-choice-1/admin/applications
+      webapp-sso-1, whose appFederationRelationship names both partners
+  ${sts}/realm/federation-choice-1/admin/federation
+      the SAML 2.0 and the OpenID Connect relationship, one sign-in each
+  ${sts}/realm/federation-choice-2/admin/users
+      the two people, in the realm where both names were typed
+To see the chooser itself, start an authorization request for webapp-sso-1 at
+  ${sts}/realm/federation-choice-1/oauth2/authorize
+in a browser with no session for that realm.
+CHOICE
+      ;;
+  esac
+  case "${MODE}:${MODE_WHAT}" in
+    federation-only:matrix*)
+      cat <<MATRIX
+The grid's two realms hold one application, two relationships and one person
+PER COMBINATION:
+  ${sts}/realm/federation-matrix-1/admin/federation
+  ${sts}/realm/federation-matrix-2/admin/federation
+      the second carries the fedAuthnMechanism that decided each point
+  ${sts}/realm/federation-matrix-1/admin/users
+MATRIX
+      ;;
+  esac
+  if [ "${MODE}" = "delegation-only" ];
+  then
+    echo "The delegation maps (SVG) are in" \
+         "tests/report/latest/delegation/:"
+    ls -l tests/report/latest/delegation/ 2>/dev/null || true
+  fi
+  if [ "${MODE}" = "saml-dev" ];
+  then
+    echo "SAML AuthnRequest signature validation is DISABLED on the" \
+         "Keycloak SAML client, so a browser-generated (unregistered) SP key" \
+         "can drive the SAML flow. No test was run."
+  fi
+  echo "Leaving printKeptStack()."
 }
 # The EXIT trap tears down FIRST and reports LAST: the banner (on a pass) and
 # the status this script exits with, so neither is buried under the teardown's
 # container shutdown output. `$?` is captured as the first statement, before
 # the teardown overwrites it, and handed back to `exit` explicitly. See
 # launcherExitStatus() in common/common.sh.
+#
+# A focused mode, --saml-dev and --keep-stack LEAVE IT UP instead, failing
+# or passing, and say how to stop it. The next run of this script starts
+# with a `down -v` either way.
 onExit()
 {
   local status=$?
   echo "Entering onExit()."
-  teardown
+  if [ "${KEEP_STACK}" = "1" ];
+  then
+    printKeptStack
+  else
+    teardown
+  fi
   launcherExitStatus "${status}" "docker-run-tests.sh"
   exit "${status}"
 }
@@ -265,6 +696,174 @@ fi
 # `sudo rm -rf tests/report coverage` — and saying so beats aborting the suite.
 mkdir -p tests/report || true
 chmod 0777 tests/report || true
+
+# ---------------------------------------------------------------------------
+# THE PARTIAL / KEPT STACK: every run that is not the plain default one.
+#
+# The default run below is one `up --abort-on-container-exit`, which starts
+# every service the tests container depends on and stops them all when it
+# exits. Neither half suits these runs: a focused mode needs only part of the
+# stack, and every one of them keeps it afterwards. So this path starts the
+# services in dependency order, each stage with `--wait` (which blocks on the
+# healthchecks the compose file already declares, and fails on a container
+# that exits or never becomes healthy) and `--no-deps` (so that, say, the api's
+# declared dependency on Keycloak does not start a Keycloak nobody asked for),
+# and then runs the tests container with `compose run`, whose exit status is
+# the suite's.
+# ---------------------------------------------------------------------------
+
+# Is $1 in the space-separated list $2?
+inList()
+{
+  case " $2 " in
+    *" $1 "*) return 0 ;;
+  esac
+  return 1
+}
+
+# `up -d --wait` for a stage of services, and on a failure the log of every
+# one of them that is not running — `--wait` names the service and not why.
+composeUpAndWait()
+{
+  echo "Entering composeUpAndWait(). $*"
+  if docker_compose "${COMPOSE_ARGS[@]}" up -d --wait "$@";
+  then
+    echo "Leaving composeUpAndWait(). rc=0"
+    return 0
+  fi
+  echo "ERROR: a service in this stage did not come up healthy: $*" >&2
+  local s
+  for s in "$@";
+  do
+    case "${s}" in
+      --*) continue ;;
+    esac
+    reportContainerLog "${COMPOSE_FILE}" "${s}"
+  done
+  echo "Leaving composeUpAndWait(). rc=1"
+  return 1
+}
+
+runPartialStack()
+{
+  echo "Entering runPartialStack(). mode=${MODE} what=${MODE_WHAT}"
+  # WHICH SERVICES. The whole stack for the default run with --keep-stack and
+  # for --saml-dev; for a focused mode, iya-sts, the api and the client, plus
+  # whichever of the two Keycloaks that mode drives. iya-sts is in every subset
+  # even where the mode drives Keycloak alone, because the api fetches its
+  # certificate at startup and the RFC 9700 realm the tests container creates
+  # is on it; it starts in seconds.
+  local services
+  if [ "${MODE}" = "suite" ] || [ "${MODE}" = "saml-dev" ];
+  then
+    services="$(docker_compose "${COMPOSE_ARGS[@]}" config --services \
+                  2>/dev/null | grep -xE '[a-z0-9_-]+' | grep -vx tests |
+                tr '\n' ' ')"
+  else
+    services="sts api client"
+    [ "${NEED_KEYCLOAK}" = "1" ] && services="postgres keycloak ${services}"
+    [ "${NEED_WSFED}" = "1" ] && services="${services} keycloak-wsfed"
+  fi
+  if [ -n "${STS_EXTERNAL_URL}" ];
+  then
+    # A deployed iya-sts: none of ours. The companion stays, pointed at the
+    # deployment by the override file.
+    local s rest=""
+    for s in ${services};
+    do
+      [ "${s}" = "sts" ] || rest="${rest} ${s}"
+    done
+    services="${rest# }"
+  fi
+  echo "Services for this run: ${services}"
+
+  # BUILD. The tests image is always built, and so is iya-sts's even when it
+  # is not started: the tests Dockerfile copies files out of it (the
+  # `mocksts: service:sts` context), so there is no tests image without it.
+  local builds="sts tests" s
+  for s in api client keycloak-wsfed companion;
+  do
+    inList "${s}" "${services}" && builds="${builds} ${s}"
+  done
+  docker_compose "${COMPOSE_ARGS[@]}" build ${builds}
+  check_return_code $?
+
+  # START, in the order the compose file's depends_on describes.
+  if inList keycloak "${services}";
+  then
+    composeUpAndWait postgres keycloak
+    check_return_code $?
+  fi
+  if inList sts "${services}";
+  then
+    # No requireStsReachable() / requireStsSpiffeListeners() here, unlike
+    # ./local-run-tests.sh: those guard against a stranger holding a HOST
+    # port under host networking, and on this bridge network every listener
+    # is in the container's own namespace — a squatter on the host can only
+    # make the port PUBLISH fail, which `up` reports itself.
+    composeUpAndWait --no-deps sts
+    check_return_code $?
+  fi
+  local middle=""
+  for s in ${services};
+  do
+    case "${s}" in
+      postgres|keycloak|sts|api|client) ;;
+      *) middle="${middle} ${s}" ;;
+    esac
+  done
+  if [ -n "${middle}" ];
+  then
+    composeUpAndWait --no-deps ${middle}
+    check_return_code $?
+  fi
+  composeUpAndWait --no-deps api client
+  check_return_code $?
+
+  # RUN. The values a focused run needs are handed to the tests container on
+  # the command line rather than through the compose file, so the plain
+  # default run's environment is exactly what it was. --use-aliases gives the
+  # run container the service's own name on the network, which is what
+  # SSF_RECEIVER_HOST (an RFC 8935 push from iya-sts to the tests container)
+  # resolves.
+  local run_env=(-e "TEST_STACK_SERVICES=${services}")
+  [ -n "${TEST_SELECT}" ] && run_env+=(-e "TEST_SELECT=${TEST_SELECT}")
+  if [ -n "${STS_EXTERNAL_URL}" ];
+  then
+    run_env+=(-e "STS_EXTERNAL_URL=${STS_EXTERNAL_URL}")
+    [ -n "${SPIFFE_TRUST_DOMAIN:-}" ] &&
+      run_env+=(-e "SPIFFE_TRUST_DOMAIN=${SPIFFE_TRUST_DOMAIN}")
+  fi
+  if [ "${MODE}" = "saml-dev" ];
+  then
+    run_env+=(-e TEST_PROVISION_ONLY=1)
+    run_env+=(-e "SAML_SIG_VALIDATION=${SAML_SIG_VALIDATION}")
+  fi
+  docker_compose "${COMPOSE_ARGS[@]}" run --rm -T --no-deps --use-aliases \
+    "${run_env[@]}" tests
+  local rc=$?
+  echo "Leaving runPartialStack(). rc=${rc}"
+  return ${rc}
+}
+
+if [ "${MODE}" != "suite" ] || [ "${KEEP_STACK}" = "1" ] ||
+   [ -n "${STS_EXTERNAL_URL}" ];
+then
+  # A focused run is one job at a time unless asked otherwise, as the loops it
+  # replaces were: the output streams live and a failure reads in order.
+  if [ "${MODE}" != "suite" ] && [ -z "${TEST_CONCURRENCY:-}" ];
+  then
+    TEST_CONCURRENCY=1
+  fi
+  runPartialStack
+  check_return_code $?
+  # --saml-dev ran no test, so no banner.
+  if [ "${MODE}" != "saml-dev" ];
+  then
+    SUITE_PASSED=1
+  fi
+  exit 0
+fi
 
 # Start the WS-Federation side-car FIRST, on its own, and stop here if it does not
 # stay up.

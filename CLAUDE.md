@@ -407,7 +407,17 @@ TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
 # fail. Forwarded past sudo and into compose exactly as the two above are.
 TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 
-# Tests from local shell, dependencies still in containers
+# Tests from local shell, dependencies still in containers. BEING RETIRED:
+# since 2026-11-12 every option it has is also an option of
+# ./docker-run-tests.sh, which is what the commands below now use. The focused
+# modes there do not re-implement the jobs — each names a subset of the jobs
+# tests/run-report.js already builds (TEST_SELECT, `selectJobs()` there), starts
+# only the services that subset needs (`--wait`ed, `--no-deps`), runs the
+# tests container with `compose run`, and LEAVES THE STACK UP. Also new there:
+# --keep-stack (the full suite, left up), --saml-dev and --sts-url=<base>
+# (docker-compose-run-tests-external-sts.yml). A browser on the HOST reaches
+# iya-sts at https://localhost:8081, but the debugger's pages are built for
+# the compose names and need `127.0.0.1 client api sts keycloak` in /etc/hosts.
 ./local-run-tests.sh
 
 # Against a site that is ALREADY DEPLOYED, with everything on the other side
@@ -430,9 +440,11 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # mechanisms (password, webauthn), less the one `=single` already drives, so
 # FORTY-NINE points. It has its own pair of realms (federation-matrix-1 and
 # -2) and shares nothing with the two above. `=matrix:<app>/<fed>/<mech>` runs
-# ONE point, which is how a failing combination is reproduced — add -b to
-# watch it. The ordinary suite runs those forty-nine as pooled jobs;
-# this loop runs them in order, for a live stack to look at afterwards.
+# ONE point, which is how a failing combination is reproduced (the browser
+# is headless in the tests container; to WATCH one, run
+# tests/federation_matrix_sso.js -b by hand against the kept stack). The
+# ordinary suite runs those forty-nine as pooled jobs; this mode runs them in
+# order (TEST_CONCURRENCY=1), for a live stack to look at afterwards.
 # SPNEGO is deliberately not a third mechanism yet, and since the 2026-08-27
 # sts/ bump the reason has NARROWED to one: the acceptor IS wired to a
 # session now (/authn/spnego calls startSession(), and a relationship can
@@ -445,8 +457,8 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # performed are visible: /admin on any of them. The single-hop case replaced
 # the mock's own three-container `federation-e2e/` on 2026-08-26 — trust
 # realms made the extra containers unnecessary.
-./local-run-tests.sh --federation-only[=single|chain|both|matrix]
-./local-run-tests.sh --federation-only=matrix:wsfed/oauth2/webauthn
+./docker-run-tests.sh --federation-only[=single|chain|choice|both|matrix]
+./docker-run-tests.sh --federation-only=matrix:wsfed/oauth2/webauthn
 
 # The containerized stack again, under Istanbul/c8 instrumentation
 ./run-coverage.sh
@@ -454,7 +466,11 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # Just the WS-Federation test, against BOTH its identity providers, with only
 # api + client + the mock STS + the Keycloak side-car. `=sts` or `=keycloak`
 # narrows it to one; `=sts` skips the twenty-second WildFly boot entirely.
-./local-run-tests.sh --wsfed-only[=keycloak|sts|both]
+./docker-run-tests.sh --wsfed-only[=keycloak|sts|both]
+
+# The SAML 2.0 SSO and Single Logout jobs against Keycloak, iya-sts or both;
+# the sts half adds the four SAML 1.1 jobs.
+./docker-run-tests.sh --saml-only[=keycloak|sts|both]
 
 # The three-tier delegation chains — a sign-in, then two hops through a middle
 # tier — with only api + client + the mock STS. THE SAME SCENARIO IN TWO
@@ -468,13 +484,13 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # <wst:OnBehalfOf> (impersonation) and once <wst14:ActAs> (composite
 # delegation). `=both` is the default; the two use different people and
 # different applications, so the pictures stay separate. It all LEAVES THE
-# DELEGATION MAPS BEHIND as SVG under tests/report/delegation/, which is the
+# DELEGATION MAPS BEHIND as SVG under tests/report/<run>/delegation/, which is the
 # only way to see those pictures at all: the mock's delegation register is in
 # memory and dies with the container.
-./local-run-tests.sh --delegation-only[=oauth|wstrust|both]
+./docker-run-tests.sh --delegation-only[=oauth|wstrust|both]
 
 # Kerberos against a REAL Windows Server 2025 domain controller, spun up on AWS
-# and destroyed afterwards. Needs AWS credentials and NOTHING else — no docker,
+# and destroyed afterwards. Needs AWS credentials and node — no docker,
 # no local stack, because the test loads the api's relay modules in-process and
 # opens the socket itself. `=capture` refreshes the recorded exchange that
 # tests/krb5_windows_vectors.js asserts offline on every ordinary run; `=both`
@@ -482,7 +498,7 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # MONEY — it is not free tier, because a forest promotion needs more than the
 # 1 GiB a t3.micro has. Teardown is on an EXIT trap and runs even when the test
 # fails. See infra/terraform-krb5/README.md.
-./local-run-tests.sh --krb5-real-dc[=test|capture|both]
+./docker-run-tests.sh --krb5-real-dc[=test|capture|both]
 ```
 
 `tests/CLAUDE.md` describes what each test file covers, what gates or skips it, and the environment hazards every browser test has to handle — Web Crypto's secure-context requirement, `--headless=new`, waiting on content rather than elements, and the rest. **Read it before writing or changing a test**; each of those hazards has already cost a run, and each fails in a way that names something other than itself.

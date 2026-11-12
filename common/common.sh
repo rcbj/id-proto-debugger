@@ -164,6 +164,10 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} ADMIN_API_CLIENT_SECRET"
 # would silently fall back to them, which is the failure this list exists for.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_MIRROR IMAGE_REGISTRY"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_TAG"
+# A DEPLOYED iya-sts, for `./docker-run-tests.sh --sts-url=<base>`.
+# docker-compose-run-tests-external-sts.yml substitutes it into the
+# companion's environment, so it has to cross sudo like the rest.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_EXTERNAL_URL"
 
 
 # ---------------------------------------------------------------------------

@@ -227,6 +227,7 @@ COPY client/Dockerfile ./client_Dockerfile
 # compares nothing is the exact shape of bug it is here to catch.
 COPY tests/compose_env_forwarding.js ./
 COPY docker-compose-run-tests.yml ./
+COPY docker-compose-run-tests-external-sts.yml ./
 COPY docker-compose-coverage.yml ./
 COPY docker-compose.yml ./
 COPY local-tests.yml ./
