@@ -926,6 +926,28 @@ COPY tests/env ./env
 COPY tests/tools ./tools
 
 # ---------------------------------------------------------------------------
+# A COMPLETE copy of client/src and common/, for the source sweeps.
+#
+# xml_parse_inert.js reads EVERY module under client/src and common/ (every
+# DOMParser call asks for application/xml; the shared XML engine writes no
+# markup; nothing adopts a parsed node into the live page). The partial mirror
+# at /usr/src/client/src cannot serve it — that holds the Kerberos bundles the
+# two pane tests need and nothing else — so the job used to skip itself here
+# and ran only on a host. It is now the one thing the containerized suite
+# could not check, which is backwards for a job that needs no service at all.
+#
+# A directory of its OWN, /usr/src/source-tree, rather than completing the
+# mirror: several tests decide "is this a checkout?" by client/package.json
+# beside ../client/src (jwk_pem_encoding.js, static_site_exclusions.js), and
+# putting one there would flip them into sweeps that also want client/public
+# and client/node_modules. Here the manifest marks THIS tree as complete, and
+# only a test that asks for /usr/src/source-tree by name ever reads it.
+# ---------------------------------------------------------------------------
+COPY client/package.json /usr/src/source-tree/client/package.json
+COPY client/src /usr/src/source-tree/client/src
+COPY common /usr/src/source-tree/common
+
+# ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers
 # count against the 125 the header describes.
 # ---------------------------------------------------------------------------
