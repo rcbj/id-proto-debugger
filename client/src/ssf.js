@@ -74,6 +74,8 @@ var opHistory = require("./op_history");
 // taken from the module that owns it rather than written out again here.
 var opMetadata = require("./op_metadata");
 var jws = require("./jws");
+// A pasted access token may already be RFC 6750 credentials.
+var rfc6750 = require("./rfc6750");
 
 var log = bunyan.createLogger({ name: 'ssf', level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -587,7 +589,7 @@ function authHeaders() {
   var headers = {};
   var scheme = val('ssf_auth_scheme');
   if (scheme === 'bearer') {
-    var token = val('ssf_access_token').trim();
+    var token = rfc6750.tokenValue(val('ssf_access_token').trim());
     if (token) {
       headers.Authorization = 'Bearer ' + token;
     }

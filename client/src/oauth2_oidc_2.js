@@ -24,6 +24,10 @@ const { convertToOAuth2Format  } = require('./data.js');
 // behind the checkbox at the top of the Configuration Parameters pane; with
 // the box clear nothing in this file consults it.
 const rfc9700 = require("./rfc9700");
+// RFC 6750 section 2.1 credentials. Copy Token writes this form for an
+// access token. RFC 9700 section 4.3.2 is why it is the header and not
+// a query parameter; the compliance checkbox does not gate it.
+const rfc6750 = require("./rfc6750");
 
 const TOKEN_HISTORY_LIMIT = 1000;
 const OPERATION_HISTORY_LIMIT = 1000;
@@ -1866,11 +1870,13 @@ function successfulInternalTokenAPICall(data, textStatus, request)
                                       "</fieldset>" +
                                       "</div>";
       localStorage.setItem("token_access_token", data.access_token);
+      rememberAccessTokenType(data.token_type);
       localStorage.setItem("token_refresh_token", data.refresh_token);
       localStorage.setItem("token_id_token", data.id_token);
       rememberAuthorizationDetails(data);
       saveTokenSetToHistory(data.access_token, data.refresh_token,
-                            data.id_token, 'token', tokenExchangeKept);
+                            data.id_token, 'token', tokenExchangeKept,
+                            data.token_type);
     } else {
       log.debug("Displaying Access Token. No OIDC ID Token: " +
                 "data.access_token=" + data.access_token);
@@ -1914,12 +1920,13 @@ function successfulInternalTokenAPICall(data, textStatus, request)
                                     "</div>";
       localStorage.setItem("token_access_token",
                            DOMPurify.sanitize(data.access_token));
+      rememberAccessTokenType(data.token_type);
       localStorage.setItem("token_refresh_token",
                            DOMPurify.sanitize(data.refresh_token));
       rememberAuthorizationDetails(data);
       saveTokenSetToHistory(DOMPurify.sanitize(data.access_token),
                             DOMPurify.sanitize(data.refresh_token), null,
-                            'token', tokenExchangeKept);
+                            'token', tokenExchangeKept, data.token_type);
     }
     $("#token_endpoint_result").html(token_endpoint_result_html);
     // The pane was just rebuilt, so its HTTP tab has to be put back
@@ -1948,6 +1955,7 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     fillGeneratedFields("#token_endpoint_result", {
       access: data.access_token, refresh: currentRefreshToken, id: data.id_token
     });
+    markAccessTokenScheme("#token_endpoint_result", data.token_type);
     expandPane("#token_endpoint_result");
     $("#refresh_refresh_token").val(currentRefreshToken);
     $("#refresh_client_id").val($("#token_client_id").val());
@@ -2236,10 +2244,11 @@ function successfulInternalRefreshAPICall(data, textStatus, request) {
     log.debug("Setting new ID Token.");
     currentIDToken = data.id_token;
   }
-  saveTokenSetToHistory(currentAccessToken, currentRefreshToken, currentIDToken,
-                        'refresh', refreshExchangeKept);
+  saveTokenSetToHistory(currentAccessToken, currentRefreshToken,
+                        currentIDToken, 'refresh', refreshExchangeKept,
+                        data.token_type);
   recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
-                              currentIDToken);
+                              currentIDToken, data.token_type);
   saveOperationToHistory('Token Endpoint (Refresh)', {
     client_id: $("#refresh_client_id").val(),
     tokenHistoryIndex: getLatestTokenHistoryIndex()
@@ -2249,7 +2258,7 @@ function successfulInternalRefreshAPICall(data, textStatus, request) {
 }
 
 function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
-                                     currentIDToken) {
+                                     currentIDToken, tokenType) {
   log.debug("Entering recreateRefreshTokenDisplay().");
   log.debug("Entering recreateRefreshTokenDisplay().");
   var refresh_endpoint_result_html = "";
@@ -2346,13 +2355,15 @@ function recreateRefreshTokenDisplay(currentRefreshToken, currentAccessToken,
   fillGeneratedFields("#refresh_endpoint_result", {
     access: currentAccessToken, refresh: currentRefreshToken, id: currentIDToken
   });
+  markAccessTokenScheme("#refresh_endpoint_result", tokenType);
   // Update refresh token field in the refresh token grant pane
   $("#refresh_refresh_token").val(currentRefreshToken);
   // Store new tokens in local storage
   if (!!currentAccessToken) {
     localStorage.setItem("refresh_access_token", currentAccessToken );
     offerTokenToHandoff(currentAccessToken, 'a Refresh Token grant', {
-      idToken: currentIDToken, refreshToken: currentRefreshToken });
+      idToken: currentIDToken, refreshToken: currentRefreshToken,
+      tokenType: tokenType });
   }
   if (!!currentRefreshToken) {
     localStorage.setItem("refresh_refresh_token", currentRefreshToken );
@@ -3175,6 +3186,8 @@ function renderAuthorizationEndpointResults(expected, returned) {
   fillGeneratedFields("#authorization_endpoint_result", {
     access: returned.access_token, id: returned.id_token
   });
+  markAccessTokenScheme("#authorization_endpoint_result",
+      returned.token_type);
   expandPane("#authorization_endpoint_result");
   // An Implicit or Hybrid flow's access token arrives HERE and never at the
   // token endpoint, so a handoff that only watched that endpoint would leave
@@ -3231,7 +3244,7 @@ function recreateUniqueGrantFlowElements()
   // had its own copy of the markup, and they had drifted: two rendered the
   // token beside a bare "access_token" label with no links at all.
   var expectedTokens = authorizationResponseTokenTypes(agt);
-  var returnedTokens = { access_token: "", id_token: "" };
+  var returnedTokens = { access_token: "", id_token: "", token_type: "" };
   if ( (expectedTokens.access || expectedTokens.id) &&
        pathname == "/oauth2_oidc_2.html")
   {
@@ -3241,6 +3254,9 @@ function recreateUniqueGrantFlowElements()
     returnedTokens.id_token =
       expectedTokens.id ? authorizationResponseToken("id_token",
           "token_id_token") : "";
+    // No storage key. A saved type belongs to an earlier token, and an
+    // implicit response carries token_type in the fragment.
+    returnedTokens.token_type = authorizationResponseToken("token_type");
     log.debug("Authorization response carried: access_token=" +
               returnedTokens.access_token +
               ", id_token=" + returnedTokens.id_token);
@@ -3259,6 +3275,7 @@ function recreateUniqueGrantFlowElements()
     // saved token is the one being redisplayed.
     if (returnedTokens.access_token) {
       localStorage.setItem("token_access_token", returnedTokens.access_token);
+      rememberAccessTokenType(returnedTokens.token_type);
     }
     if (returnedTokens.id_token) {
       // Stored, not merely displayed: /token_detail.html?type=id reads this
@@ -3655,6 +3672,7 @@ $(document).ready(function() {
     log.debug("Detected page load for new grant/flow workflow. Clearing all " +
               "existing tokens.");
     localStorage.setItem("token_access_token", "");
+    rememberAccessTokenType();
     localStorage.setItem("token_id_token", "");
     localStorage.setItem("token_refresh_token", "");
     localStorage.setItem("refresh_access_token", "");
@@ -3807,11 +3825,10 @@ $(document).ready(function() {
       if (authorizationResponseTokenSet &&
           (authorizationResponseTokenSet.access_token ||
            authorizationResponseTokenSet.id_token)) {
-        tokenHistoryIndex =
-            saveTokenSetToHistory(authorizationResponseTokenSet.access_token,
-                                                  '',
-                                                  authorizationResponseTokenSet.id_token,
-                                                  'authorization');
+        tokenHistoryIndex = saveTokenSetToHistory(
+            authorizationResponseTokenSet.access_token, '',
+            authorizationResponseTokenSet.id_token, 'authorization',
+            null, authorizationResponseTokenSet.token_type);
         // Drawn again now that the entry exists, so the pane's links name it by
         // generation instead of the current-token slots — which a hybrid flow's
         // code exchange is about to overwrite with a different token.
@@ -4878,7 +4895,7 @@ function writeTokenHistory(history) {
 // build before this one — both of which the Currently Viewing pane's HTTP tab
 // says out loud rather than showing an empty panel.
 function saveTokenSetToHistory(access_token, refresh_token, id_token, source,
-                               exchange) {
+                               exchange, tokenType) {
   log.debug("Entering saveTokenSetToHistory().");
   var history = [];
   try { 
@@ -4918,6 +4935,9 @@ function saveTokenSetToHistory(access_token, refresh_token, id_token, source,
   if (exchange) {
     entry.http_exchange = exchange;
   }
+  if (tokenType) {
+    entry.token_type = String(tokenType);
+  }
   history.push(entry);
   writeTokenHistory(history);
   renderTokenHistory();
@@ -4944,6 +4964,7 @@ function selectTokenSet(index) {
   }
   var entry = history[index];
   localStorage.setItem('token_access_token', entry.access_token);
+  rememberAccessTokenType(entry.token_type);
   localStorage.setItem('token_refresh_token', entry.refresh_token);
   localStorage.setItem('token_id_token', entry.id_token);
   localStorage.setItem('token_history_active_index', index);
@@ -5046,6 +5067,7 @@ function renderCurrentlyViewing(index, entry) {
         id: entry.id_token,
     nonce: entry.nonce, sid: entry.sid
   });
+  markAccessTokenScheme('#currently-viewing-panel', entry.token_type);
   expandPane('#currently-viewing-panel');
   log.debug("Leaving renderCurrentlyViewing().");
 }
@@ -5273,6 +5295,8 @@ function recreateTokenDisplay()
         refresh: refreshToken,
         id: localStorage.getItem("token_id_token")
       });
+      markAccessTokenScheme("#token_endpoint_result",
+          localStorage.getItem("token_access_token_type"));
   log.debug("Leaving recreateTokenDisplay().");
 }
 
@@ -5724,10 +5748,148 @@ function setHeaderAuthStyleRefreshToken() {
   return false;
 }
 
+// The scheme Copy Token will use for an access-token field. "raw" and
+// "refused" are this page's sentinels, never a server token_type: "raw"
+// copies the textarea unchanged, and "refused" means token_type is
+// neither Bearer nor DPoP. The attribute is only those two literals or
+// schemeName()'s closed set.
+function markAccessTokenScheme(container, tokenType) {
+  log.debug("Entering markAccessTokenScheme().");
+  var scheme;
+  var title;
+  if (tokenType === "raw") {
+    scheme = "raw";
+    title = "Copies this token unchanged. RFC 6750 applies to an " +
+        "access token.";
+  } else if (tokenType && rfc6750.schemeName(tokenType) === null) {
+    scheme = "refused";
+    title = "token_type is not Bearer or DPoP, so there is no RFC " +
+        "6750 credentials syntax to copy.";
+  } else {
+    scheme = rfc6750.schemeName(tokenType) || "Bearer";
+    title = "Copies RFC 6750 credentials: " + scheme + " <token>.";
+  }
+  $(container).find('textarea[data-token-field="access"]')
+    .each(function () {
+      var field = $(this);
+      field.attr("data-auth-scheme", scheme);
+      field.attr("title", title);
+      field.closest("tr").find('form input[type="submit"]')
+        .attr("title", title);
+    });
+  log.debug("Leaving markAccessTokenScheme().");
+}
+
+// RFC 8693 puts whatever was issued in access_token. Absent, or a type
+// that is not a refresh token, an ID token or SAML, is an access token.
+function copyIssuedAsBearer(issuedTokenType) {
+  log.debug("Entering copyIssuedAsBearer().");
+  if (!issuedTokenType) {
+    log.debug("Leaving copyIssuedAsBearer(). No issued type.");
+    return true;
+  }
+  var text = String(issuedTokenType).toLowerCase();
+  if (text.indexOf("refresh_token") !== -1 ||
+      text.indexOf("id_token") !== -1 ||
+      text.indexOf("saml") !== -1) {
+    log.debug("Leaving copyIssuedAsBearer(). Not an access token.");
+    return false;
+  }
+  log.debug("Leaving copyIssuedAsBearer().");
+  return true;
+}
+
+// Kept beside token_access_token. Absent removes the key, so the next
+// token does not inherit a DPoP type from the one before it.
+function rememberAccessTokenType(tokenType) {
+  log.debug("Entering rememberAccessTokenType().");
+  if (tokenType) {
+    localStorage.setItem("token_access_token_type", String(tokenType));
+  } else {
+    localStorage.removeItem("token_access_token_type");
+  }
+  log.debug("Leaving rememberAccessTokenType().");
+}
+
+function flashCopyButton(field, label) {
+  log.debug("Entering flashCopyButton().");
+  var button = $(field).closest("tr")
+    .find('form input[type="submit"]');
+  if (!button.length) {
+    log.debug("Leaving flashCopyButton(). No button.");
+    return;
+  }
+  if (!button.attr("data-copy-label")) {
+    button.attr("data-copy-label", button.val());
+  }
+  button.val(label);
+  var original = button.attr("data-copy-label");
+  setTimeout(function () {
+    button.val(original);
+  }, 1500);
+  log.debug("Leaving flashCopyButton().");
+}
+
+function writeClipboard(field, text) {
+  log.debug("Entering writeClipboard().");
+  if (!navigator.clipboard ||
+      typeof navigator.clipboard.writeText !== "function") {
+    flashCopyButton(field, "Copy failed");
+    log.debug("Leaving writeClipboard(). No clipboard.");
+    return;
+  }
+  try {
+    navigator.clipboard.writeText(text)
+      .then(function () {
+        flashCopyButton(field, "Copied");
+      })
+      .catch(function (e) {
+        log.error("clipboard.writeText failed: " + e);
+        flashCopyButton(field, "Copy failed");
+      });
+  } catch (e) {
+    log.error("clipboard.writeText threw: " + e);
+    flashCopyButton(field, "Copy failed");
+  }
+  log.debug("Leaving writeClipboard().");
+}
+
+// The textarea keeps the raw token. An access token is copied as RFC
+// 6750 section 2.1 credentials. A refresh token, an ID token, and an
+// issued token marked raw are copied unchanged. Returns false so the
+// form around the button does not submit.
 function onClickCopyToken(field) {
   log.debug("Entering onClickCopyToken().");
   var copyText = $(field);
-  navigator.clipboard.writeText(copyText.val());
+  var value = copyText.val();
+  if (value === null || value === undefined) {
+    value = "";
+  }
+  var kind = copyText.attr("data-token-field");
+  var scheme = copyText.attr("data-auth-scheme");
+  if (kind !== "access" || scheme === "raw") {
+    writeClipboard(field, value);
+    log.debug("Leaving onClickCopyToken(). Unchanged.");
+    return false;
+  }
+  if (scheme === "refused") {
+    flashCopyButton(field, "Cannot copy");
+    log.debug("Leaving onClickCopyToken(). Refused.");
+    return false;
+  }
+  var formatted = rfc6750.credentials(value,
+      scheme === "DPoP" ? "DPoP" : undefined);
+  if (formatted === null) {
+    var why = "This value is not an RFC 6750 b64token, so it " +
+        "cannot be copied as Authorization credentials.";
+    copyText.attr("title", why);
+    copyText.closest("tr").find('form input[type="submit"]')
+      .attr("title", why);
+    flashCopyButton(field, "Cannot copy");
+    log.debug("Leaving onClickCopyToken(). Not credentials.");
+    return false;
+  }
+  writeClipboard(field, formatted);
   log.debug("Leaving onClickCopyToken().");
   return false;
 }
@@ -6675,6 +6837,14 @@ function displayTokenExchangeResult(message, isError, tokens) {
     token_type: issued.token_type,
     expires_in: issued.expires_in,
     scope: issued.scope });
+  // The issued token arrives in access_token whatever it is. A refresh
+  // token, an ID token or a SAML assertion is not RFC 6750 credentials.
+  if (copyIssuedAsBearer(issued.issued_token_type)) {
+    markAccessTokenScheme("#tokenexchange_endpoint_result",
+        issued.token_type);
+  } else {
+    markAccessTokenScheme("#tokenexchange_endpoint_result", "raw");
+  }
   rememberTokenExchangeTokens(tokens);
   expandPane("#tokenexchange_endpoint_result");
   log.debug("Leaving displayTokenExchangeResult().");

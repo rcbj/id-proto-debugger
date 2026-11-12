@@ -178,7 +178,13 @@ Each token comes with buttons and links:
 * **Introspect Token** sends it to the introspection endpoint (RFC 7662).
 * **Get UserInfo Data** calls the UserInfo endpoint with the access token.
 * **Revoke Token** sends it to the revocation endpoint (RFC 7009).
-* **Copy Token** copies it to the clipboard.
+* **Copy Token** copies an access token as RFC 6750 credentials
+  (`Bearer <token>`, or `DPoP <token>` when that response's token type
+  is DPoP). That is the Authorization header value from RFC 6750
+  section 2.1. RFC 9700 section 4.3.2 forbids putting the token in a
+  query string. A refresh token and an ID token are copied unchanged.
+  The textarea still shows the raw token, which is what a field on
+  another page stores. Those fields also accept the credentials form.
 
 ## After the flow
 

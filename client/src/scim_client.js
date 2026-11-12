@@ -85,6 +85,10 @@ var bunyan = require("bunyan");
 var forge = require("node-forge");
 var nobleSha256 = require("@noble/hashes/sha256").sha256;
 var nobleSha512_256 = require("@noble/hashes/sha512").sha512_256;
+// RFC 6750 section 2.1. A pasted access token may already be
+// "Bearer <token>" or "DPoP <token>", because Copy Token writes
+// credentials. tokenValue() returns the b64token either way.
+var rfc6750 = require("./rfc6750");
 
 // A node consumer (tests/scim_engine.js and tests/scim_protocol.js load this
 // module directly) may have no CONFIG_FILE, so fall back to info rather than
@@ -1155,14 +1159,16 @@ function applyAuth(request, auth) {
     return out;
   }
   if (scheme.id === 'bearer') {
-    out.headers.Authorization = 'Bearer ' + String(auth.token || '');
+    var bearerToken = rfc6750.tokenValue(String(auth.token || ''));
+    out.headers.Authorization = 'Bearer ' + bearerToken;
     out.note = 'Authorization: Bearer, ' +
-        String(auth.token || '').length + ' characters.';
+        bearerToken.length + ' characters.';
     log.debug("Leaving applyAuth(). Bearer.");
     return out;
   }
   if (scheme.id === 'dpop') {
-    out.headers.Authorization = 'DPoP ' + String(auth.token || '');
+    var dpopToken = rfc6750.tokenValue(String(auth.token || ''));
+    out.headers.Authorization = 'DPoP ' + dpopToken;
     if (auth.proof) {
       out.headers.DPoP = String(auth.proof);
     }
