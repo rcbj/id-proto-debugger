@@ -924,6 +924,15 @@ COPY tests/env ./env
 # ---------------------------------------------------------------------------
 COPY tests/tools ./tools
 
+# The JOSE `typ` media type comparison (RFC 7515 section 4.1.9, RFC 9068)
+# behind the RFC 9068 checks on the JWT tools and token detail pages, and its
+# node job. run-report.js schedules media_type_engine.js, so the image must
+# carry it — jwk_pem_encoding.js's testsImageHasNoCollidingFilenames() fails
+# the run otherwise — and the module lands FLAT beside it, which is the
+# test's second candidate when ../client/src is not a checkout.
+COPY tests/media_type_engine.js ./
+COPY client/src/media_type.js ./
+
 # ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers
 # count against the 125 the header describes.
