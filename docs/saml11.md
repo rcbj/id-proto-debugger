@@ -4,6 +4,8 @@ Scope: the **Protocol Version** selector on `saml_request.html` and everything
 that follows from choosing **SAML 1.1** — what is sent, what comes back, which
 settings stop applying, and what the four tests hold it to. SAML 2.0 is the
 workflow's default and is not described here except where the two differ.
+How to drive that sign-in, including every field this note only mentions
+where the two versions differ, is in [Using the SAML workflow](saml.md).
 
 Read this before touching `client/src/saml_request.js`,
 `client/src/saml_response.js`, `POST /samlartifactctx` or `handleSamlAcs()` in

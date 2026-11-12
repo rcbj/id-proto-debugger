@@ -4,9 +4,51 @@ title: "Dynamic client registration"
 
 # Dynamic client registration
 
-The registration pane on `oauth2_oidc_1.html` (`#dcr_fieldset`) creates,
-reads, updates and deletes a client. **Apply RP metadata choices** is
-part of that pane.
+The **OIDC Dynamic Client Registration** card opens
+`oauth2_oidc_1.html#dcr_fieldset`. The same pane is on step 1 of the
+[OAuth2 / OIDC workflow](index.md), under the legend **OIDC Dynamic Client
+Registration**. The fieldset starts collapsed. Click the legend to open it.
+
+The pane speaks OpenID Connect Dynamic Client Registration 1.0, which is
+[RFC 7591](https://www.rfc-editor.org/rfc/rfc7591) for the create call and
+[RFC 7592](https://www.rfc-editor.org/rfc/rfc7592) for read, update, and
+delete. **Apply RP metadata choices** on the same pane speaks
+[OpenID Connect RP Metadata Choices 1.0](https://openid.net/specs/openid-connect-rp-metadata-choices-1_0-final.html).
+
+This page has no screenshot. The pictures in the
+[workflow guide](index.md) come from the Selenium jobs, and those jobs were
+not re-run for this pass.
+
+## Before you register
+
+Load the provider's metadata first, the way the
+[workflow guide](index.md#step-1-load-the-providers-metadata) describes, and
+click **Populate Meta Data**. That copies `registration_endpoint` into both
+**Registration Endpoint** fields: the one in Configuration Parameters and
+the one in this pane. They stay in sync. You can also type the URL.
+
+Set **Redirect URL** on the authorization pane to the URI you want the
+client metadata to advertise. **Populate Meta Data** fills the metadata
+JSON from that redirect URI, from the scopes discovery advertises, and
+from the [choice pairs](#rp-metadata-choices) this client can use. Edit
+the JSON before you register if the provider requires more members
+(`grant_types`, and so on).
+
+[iya-sts](https://rcbj.github.io/iya-sts/) is at
+`https://localhost:8081`. Its registration endpoint is whatever
+`registration_endpoint` says in
+`https://localhost:8081/.well-known/openid-configuration`.
+
+## Create
+
+| Field or button | Default | Stored | What it does |
+|---|---|---|---|
+| **Registration Endpoint** | empty until discovery | yes | POST target for **Register New Client**. |
+| **Initial Access Token** | empty | no | Optional bearer token. Leave it empty for open registration. A provider that requires an initial access token rejects a blank one. This value is not written to `localStorage`. |
+| **Client Metadata (JSON)** | filled by **Populate Meta Data** | no | The body of the create (POST) and of the update (PUT). |
+| **Apply RP metadata choices** | | | Rewrites the six choice pairs in the metadata. See [RP metadata choices](#rp-metadata-choices). |
+| **Request** | rebuilt as you edit | no | The POST **Register New Client** will send. Read-only. |
+| **Register New Client** | | | Sends that POST. |
 
 ## RP metadata choices
 
@@ -82,14 +124,29 @@ use:
 `introspection_endpoint_auth_methods_supported` are not client
 metadata. The verdict names section 3, and Apply removes them.
 
-After **Register New Client**, **Read Client** or **Update Client**,
-the table under the response shows the member, the values that were
-offered, the preferred value, the returned value and the value kept.
-The metadata box becomes that kept request, so the next update sends
-section 4 input again. A returned partner that sits in the offered
-array is kept, including one that differs from the preference. A
-returned partner outside that array is not kept. Choice arrays in the
-response are not kept: a response carries the selected partner. The
-response box still shows the raw body.
+## Read, update, delete
 
-This page has no screenshot.
+A successful create fills the two fields below from the response.
+
+| Field or button | Stored | What it does |
+|---|---|---|
+| **Registration Client URI** | yes | `registration_client_uri`. You can paste one from an earlier registration. |
+| **Registration Access Token** | yes | `registration_access_token`, sent as a bearer token (RFC 7592). |
+| **Read Client** | | GET of the client URI. |
+| **Update Client** | | PUT of **Client Metadata (JSON)** to the client URI. |
+| **Delete Client** | | DELETE of the client URI. |
+| **Response** | no | The last response body. Read-only. |
+
+After **Register New Client**, **Read Client**, or **Update Client**,
+the table under the response shows each choice member, the values that
+were offered, the preferred value, the returned value, and the value
+kept. The metadata box becomes that kept request, so the next update
+sends section 4 input again. A returned partner that sits in the
+offered array is kept, including one that differs from the preference.
+A returned partner outside that array is not kept. Choice arrays in
+the response are not kept: a response carries the selected partner.
+The response box still shows the raw body.
+
+**Read Client**, **Update Client**, and **Delete Client** all present the
+registration access token. A create that returned no token cannot be
+managed from this pane until you paste one.
