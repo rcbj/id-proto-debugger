@@ -24,6 +24,10 @@
             url: /docs/oauth2-oidc/oauth2-grants.html }
         - { title: OpenID Connect flows,
             url: /docs/oauth2-oidc/oidc-flows.html }
+        - { title: Dynamic client registration,
+            url: /docs/oauth2-oidc/dynamic-client-registration.html }
+        - { title: Token detail and related tools,
+            url: /docs/oauth2-oidc/related-tools.html }
 
 - section: OAuth 2.0 and OpenID Connect
   items:
@@ -34,8 +38,12 @@
 
 - section: SAML and WS-*
   items:
+    - { title: Using the SAML workflow, url: /docs/saml.html }
     - { title: SAML 1.1, url: /docs/saml11.html }
+    - { title: SAML Assertion Tool, url: /docs/saml-assertion.html }
+    - { title: SAML decoders, url: /docs/saml-decoders.html }
     - { title: WS-Federation, url: /docs/wsfed.html }
+    - { title: Using the WS-Trust workflow, url: /docs/wstrust.html }
     - { title: Post-quantum XML Signature, url: /docs/xmldsig-pqc.html }
 
 - section: Verifiable credentials
@@ -68,6 +76,8 @@
     - { title: PKI and TLS, url: /docs/pki.html }
     - { title: Encryption / Decryption, url: /docs/encryption.html }
     - { title: Hashing, url: /docs/hashing.html }
+    - { title: JWT Tools, url: /docs/jwt-tools.html }
+    - { title: Digital Signature, url: /docs/digital-signature.html }
     - { title: Stateful hash-based signatures, url: /docs/hbs.html }
 
 - section: Development

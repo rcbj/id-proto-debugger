@@ -24,9 +24,73 @@
 
 <p class="ds-return"><a id="return_link" href="/oauth2_oidc_1.html">&larr; Return to debugger</a> &nbsp;|&nbsp; <a href="/encryption_tools.html?from=digital_signature.html">Encryption / Decryption &rarr;</a></p>
 
-<p class="ds-intro">Generate key pairs, sign any value, and validate signatures &mdash; all in your browser. <strong>Three panes are post-quantum</strong>: pane 1 is <strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+), pane 4 is <strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium), and pane 5 is <strong>Composite ML-DSA</strong>, which pairs ML-DSA with ECDSA or EdDSA so that a break of either leaves the other holding. Panes 1 and 4 also offer the <em>context string</em> and the <em>pre-hash</em> variants (HashML-DSA / HashSLH-DSA), which are different algorithms rather than options. Pane 2 uses <strong>RSA</strong> (PKCS#1 v1.5 and PSS); pane 3 uses <strong>ECC</strong> (ECDSA over P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over secp256k1, and BLS over BLS12-381); pane 6 uses <strong>BBS</strong> over BLS12-381 (both ciphersuites), which signs a <em>list</em> of messages and can derive an unlinkable proof over any subset of them. Panes 7 and 8 are about an <em>envelope</em> rather than a primitive: pane 7 is <strong>JWS</strong> (RFC 7515) over a JSON payload &mdash; every registered algorithm including all eleven post-quantum ones, all three serializations, detached and unencoded payloads; pane 8 is the W3C <strong>XML Digital Signature</strong> &mdash; enveloped, enveloping and detached, four canonicalization methods, and a configurable transform chain. Both refuse to sign input that does not parse. The RSA and ECDSA panes let you pair the signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3, BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those eight panes are <strong>digital signature</strong> panes (the JWS and XML ones can also carry an HMAC, which is not one); the panes below them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC / keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash: Poly1305 / SipHash), labelled separately because a MAC uses a shared secret and is <em>not</em> a true digital signature. <strong>No key material is stored:</strong> keys live only in this page and are never written to local storage.</p>
+<p class="ds-intro">Generate key pairs, sign any value, and validate
+signatures &mdash; all in your browser. Twelve panes, in this order.
+<strong>Four of them are post-quantum signatures.</strong> Pane 1 is
+<strong>SLH-DSA</strong> (FIPS 205, formerly SPHINCS+). Pane 2 is
+<strong>LMS/HSS and XMSS/XMSS^MT</strong> (NIST SP 800-208): stateful,
+so the private key changes on every Sign. Pane 5 is
+<strong>ML-DSA</strong> (FIPS 204, formerly CRYSTALS-Dilithium). Pane 6
+is <strong>Composite ML-DSA</strong>, which pairs ML-DSA with ECDSA or
+EdDSA so that a break of either leaves the other holding. Panes 1 and 5
+also offer the <em>context string</em> and the <em>pre-hash</em>
+variants (HashSLH-DSA / HashML-DSA), which are different algorithms
+rather than options. Pane 3 uses <strong>RSA</strong> (PKCS#1 v1.5 and
+PSS); pane 4 uses <strong>ECC</strong> (ECDSA over
+P-256/P-384/P-521/secp256k1, EdDSA over Ed25519/Ed448, Schnorr over
+secp256k1, and BLS over BLS12-381); pane 7 uses <strong>BBS</strong>
+over BLS12-381 (both ciphersuites), which signs a <em>list</em> of
+messages and can derive an unlinkable proof over any subset of them.
+Panes 8 and 9 are about an <em>envelope</em> rather than a primitive:
+pane 8 is <strong>JWS</strong> (RFC 7515) over a JSON payload &mdash;
+the registered algorithms, plus the post-quantum ones on that menu
+(three ML-DSA, the two SLH-DSA sets that draft registers, and six
+composites), all three serializations, and detached and unencoded
+payloads; pane 9 is the W3C <strong>XML Digital Signature</strong>
+&mdash; enveloped, enveloping and detached, four canonicalization
+methods, a configurable transform chain, and, once the page has loaded,
+the sixteen draft post-quantum SignatureMethods. Both refuse to sign
+input that does not parse. The RSA and ECDSA panes let you pair the
+signature with a wide range of hash algorithms &mdash; SHA-2, SHA-3,
+BLAKE2b, BLAKE3, and the legacy RIPEMD-160 / SHA-1 / MD5. Those nine
+panes are <strong>digital signature</strong> panes (the JWS and XML
+ones can also carry an HMAC, which is not one); the three panes below
+them are <strong>symmetric MACs</strong> (keyed-hash: HMAC / KMAC /
+keyed-BLAKE; block-cipher: AES-CMAC / CBC-MAC / GMAC; universal-hash:
+Poly1305 / SipHash), labelled separately because a MAC uses a shared
+secret and is <em>not</em> a true digital signature. <strong>No key
+material is stored:</strong> keys live only in this page and are never
+written to local storage.</p>
 
-<p class="ds-intro ds-standards-note"><strong>Which of these is actually standardised, and which is a draft.</strong> Post-quantum cryptography is not one thing yet, and this page marks the difference rather than blurring it. <strong>Published:</strong> the primitives ML-DSA (FIPS 204), SLH-DSA (FIPS 205) and their pre-hash variants, and ML-DSA&rsquo;s JOSE binding, <strong>RFC 9964</strong>. <strong>Draft:</strong> SLH-DSA in JOSE (draft-ietf-cose-sphincs-plus-10, which registers only two of the twelve parameter sets) and the composite algorithms (draft-ietf-jose-pq-composite-sigs-03). Every pane resting on a draft carries a red <span class="ds-badge ds-draft">Draft standard</span> badge and names the revision it implements. <strong>Absent, for two different reasons.</strong> <strong>FN-DSA</strong> (Falcon) <em>has</em> a specification &mdash; draft-ietf-cose-falcon-04 registers <code>FN-DSA-512</code> and <code>FN-DSA-1024</code> &mdash; but no implementation this page can load: the library that provides Falcon is ESM-only and this client is bundled as CommonJS, and the alternative on npm is an unmaintained WASM wrapper not worth adding to a security tool for an algorithm whose FIPS 206 is still unpublished. <strong>HQC</strong>, which NIST selected in March 2025 as the backup KEM, has the opposite problem: no draft FIPS, no IETF binding and no implementation at all, so adding it would mean inventing a wire format &mdash; the one thing a debugger must never do. Also absent: any post-quantum <em>XML Signature</em>, because no algorithm URI has been registered for one.</p>
+<p class="ds-intro ds-standards-note"><strong>Which of these is
+actually standardised, and which is a draft.</strong> Post-quantum
+cryptography is not one thing yet, and this page marks the difference
+rather than blurring it. <strong>Published:</strong> the primitives
+ML-DSA (FIPS 204), SLH-DSA (FIPS 205) and their pre-hash variants,
+LMS/HSS (RFC 8554, RFC 9858) and XMSS/XMSS^MT (RFC 8391, SP 800-208),
+and ML-DSA&rsquo;s JOSE binding, <strong>RFC 9964</strong>.
+<strong>Draft:</strong> SLH-DSA in JOSE
+(draft-ietf-cose-sphincs-plus-10, which registers only two of the
+twelve parameter sets), the composite algorithms
+(draft-ietf-jose-pq-composite-sigs-03), and the XML
+<code>SignatureMethod</code> URIs
+(draft-eastlake-rfc9231bis-xmlsec-uris-09: three ML-DSA, twelve
+SLH-DSA, and HSS-LMS). The XML menu grows that group when the page
+loads, and every label in it says <em>draft</em>. Every pane resting
+on a draft carries a red <span class="ds-badge ds-draft">Draft
+standard</span> badge and names the revision it implements.
+<strong>Absent, for two different reasons.</strong>
+<strong>FN-DSA</strong> (Falcon) <em>has</em> a specification &mdash;
+draft-ietf-cose-falcon-04 registers <code>FN-DSA-512</code> and
+<code>FN-DSA-1024</code> &mdash; but no implementation this page can
+load: the library that provides Falcon is ESM-only and this client is
+bundled as CommonJS, and the alternative on npm is an unmaintained WASM
+wrapper not worth adding to a security tool for an algorithm whose
+FIPS 206 is still unpublished. <strong>HQC</strong>, which NIST
+selected in March 2025 as the backup KEM, has the opposite problem: no
+draft FIPS, no IETF binding and no implementation at all, so adding it
+would mean inventing a wire format &mdash; the one thing a debugger
+must never do.</p>
 
 <p class="ds-controls">
   <label class="ds-toggle" title="Expand or collapse every pane.">
@@ -944,7 +1008,18 @@
   <fieldset id="pane_xml_signature">
     <legend>XML Digital Signature <span class="ds-badge ds-asym">Asymmetric</span> <span class="ds-badge ds-sym">or MAC</span></legend>
 
-    <p class="ds-note" title="This absence is a fact about XMLDSIG, not an omission here.">&#9432; <strong>No post-quantum algorithms are offered here, and that is not a gap in this page.</strong> The panes above sign with ML-DSA, SLH-DSA, FN-DSA and the PQ/T composites, and the JWS pane offers all thirteen as <code>alg</code> values &mdash; but <strong>no post-quantum algorithm URI has been registered for XML Signature</strong> by W3C or IANA, and none is proposed in any draft. There is therefore nothing to put in a <code>&lt;SignatureMethod Algorithm="&hellip;"&gt;</code>, and inventing one would produce a document that no other implementation could ever read. When such a URI is registered it belongs here; until then this pane stops at RSASSA-PSS.</p>
+    <p class="ds-note"
+        title="Draft SignatureMethods, added on load.">&#9432;
+    <strong>Post-quantum SignatureMethods are on this menu, and
+    every one of them is a draft.</strong> When the page loads it
+    appends an optgroup, <strong>Post-quantum &mdash;
+    draft-eastlake-rfc9231bis-xmlsec-uris</strong>: ML-DSA at three
+    parameter sets, all twelve SLH-DSA sets, and HSS-LMS. The draft
+    is <code>draft-eastlake-rfc9231bis-xmlsec-uris-09</code>. W3C
+    has registered none of these URIs. A signature made with one of
+    them is readable by an implementation of that draft. The list
+    built into the page, above that group, is unchanged: RSA,
+    RSASSA-PSS, ECDSA, and HMAC.</p>
 
     <p class="ds-note" title="Almost everything below is written into the document a verifier reads back.">W3C <strong>XMLDSIG</strong> (RFC 3275) over an XML document, using the same in-browser engine the SAML, WS-Trust and WS-Federation workflows sign with. All three signature types are here &mdash; <strong>enveloped</strong> (the Signature goes inside the document), <strong>enveloping</strong> (the document goes inside a <code>ds:Object</code> in the Signature), <strong>detached</strong> (the Signature stands alone and names what it covers). <strong>Sign refuses XML that is not well-formed</strong>, and nothing here rewrites your input: a signature covers the exact octets that get canonicalized, so any "cleaning" would invalidate what it is about to produce. The transforms are an <em>ordered chain</em> and are applied in the order shown below the fields &mdash; a canonicalization ends the chain. <code>HMAC-*</code> is a MAC with a shared secret, not a digital signature. C14N 1.1 is not offered: its whole difference from 1.0 is <code>xml:base</code> inheritance, which this engine does not implement, and naming a method it does not perform would be worse than leaving it out.</p>
 
