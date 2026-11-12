@@ -21,6 +21,10 @@ var rfc9700 = require("./rfc9700");
 // RFC 6750 section 2.1. The registration proxy's api adds "Bearer "
 // itself, so a token copied as credentials has to be stripped here.
 var rfc6750 = require("./rfc6750");
+// OpenID Connect RP Metadata Choices 1.0. The registration request's
+// choice arrays and the reading of a registration response live here,
+// with no DOM of their own.
+var rpMetadataChoices = require("./rp_metadata_choices");
 var $ = require("jquery");
 console.log("logLevel: " + appconfig.logLevel);
 var log = bunyan.createLogger({ name: 'oauth2_oidc_1',
@@ -1184,6 +1188,7 @@ function onload() {
   $("#dcr_client_metadata").on("input", function () {
     recalculateDcrRequestDescription();
     writeDcrValuesToLocalStorage();
+    refreshChoicesVerdict();
   });
 
   // Set initial values in case this is the first time the page was hit
@@ -2678,35 +2683,14 @@ function buildDefaultClientMetadata() {
     default_max_age: 3600,
     require_auth_time: true
   };
-  if (discoveryInfo) {
-    if (discoveryInfo.token_endpoint_auth_methods_supported &&
-        discoveryInfo.token_endpoint_auth_methods_supported.length) {
-      // Prefer a secret-based method that works without extra material (a JWKS
-      // for private_key_jwt, a cert for tls_client_auth). Fall back to whatever
-      // the provider lists first.
-      var methods = discoveryInfo.token_endpoint_auth_methods_supported;
-      var preferred = ["client_secret_basic", "client_secret_post",
-          "client_secret_jwt"];
-      var chosen =
-          preferred.filter(function (m) { return methods.indexOf(m) >= 0; })[0];
-      md.token_endpoint_auth_method = chosen || methods[0];
-    }
-    if (discoveryInfo.subject_types_supported &&
-        discoveryInfo.subject_types_supported.length) {
-      md.subject_type = discoveryInfo.subject_types_supported[0];
-    }
-    if (discoveryInfo.id_token_signing_alg_values_supported &&
-        discoveryInfo.id_token_signing_alg_values_supported.length) {
-      var algs = discoveryInfo.id_token_signing_alg_values_supported;
-      var nonNone = algs.filter(function (a) { return a !== "none"; });
-      md.id_token_signed_response_alg = algs.indexOf("RS256") >= 0 ?
-          "RS256" : (nonNone[0] || algs[0]);
-    }
-    if (discoveryInfo.scopes_supported &&
-        discoveryInfo.scopes_supported.length) {
-      md.scope = discoveryInfo.scopes_supported.join(" ");
-    }
+  if (discoveryInfo && discoveryInfo.scopes_supported &&
+      discoveryInfo.scopes_supported.length) {
+    md.scope = discoveryInfo.scopes_supported.join(" ");
   }
+  // The three partners above are the client's own preferences.
+  // applyChoices overwrites them, together with the arrays section 4
+  // sends beside them. Discovery stays on the Configuration pane.
+  md = rpMetadataChoices.applyChoices(md);
   log.debug("Leaving buildDefaultClientMetadata().");
   return md;
 }
@@ -2723,6 +2707,7 @@ function populateClientMetadataFromDiscovery() {
     null, 2));
   writeDcrValuesToLocalStorage();
   recalculateDcrRequestDescription();
+  refreshChoicesVerdict();
   log.debug("Leaving populateClientMetadataFromDiscovery().");
   return false;
 }
@@ -2739,6 +2724,185 @@ function parseDcrMetadata() {
     log.debug("Leaving parseDcrMetadata().");
     return null;
   }
+}
+
+// The same parse as parseDcrMetadata, without the error pane. A read does
+// not send the editor, and a keystroke has already said the JSON is bad.
+function parseDcrMetadataQuiet() {
+  log.debug("Entering parseDcrMetadataQuiet().");
+  try {
+    var parsed = JSON.parse($("#dcr_client_metadata").val());
+    log.debug("Leaving parseDcrMetadataQuiet().");
+    return parsed;
+  } catch (e) {
+    log.debug("Leaving parseDcrMetadataQuiet(). Not JSON.");
+    return null;
+  }
+}
+
+// checkRequest into the line under the metadata. Text, not HTML: the
+// findings quote values the user typed.
+function refreshChoicesVerdict() {
+  log.debug("Entering refreshChoicesVerdict().");
+  var el = document.getElementById("dcr_choices_verdict");
+  var raw;
+  var parsed;
+  var findings;
+  if (!el) {
+    log.debug("Leaving refreshChoicesVerdict(). No verdict element.");
+    return;
+  }
+  raw = $("#dcr_client_metadata").val();
+  if (!raw || !String(raw).trim()) {
+    el.textContent = "";
+    el.className = "";
+    log.debug("Leaving refreshChoicesVerdict(). Empty.");
+    return;
+  }
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    el.className = "dbg-warn";
+    el.textContent = "Client Metadata is not valid JSON.";
+    log.debug("Leaving refreshChoicesVerdict(). Not JSON.");
+    return;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    el.className = "dbg-warn";
+    el.textContent = "Client Metadata must be a JSON object.";
+    log.debug("Leaving refreshChoicesVerdict(). Not an object.");
+    return;
+  }
+  findings = rpMetadataChoices.checkRequest(parsed);
+  if (!findings.length) {
+    el.className = "dbg-ok";
+    el.textContent = "RP Metadata Choices: this registration request " +
+        "meets the specification.";
+    log.debug("Leaving refreshChoicesVerdict(). Clean.");
+    return;
+  }
+  el.className = "dbg-warn";
+  el.textContent = findings.map(function (item) {
+    return item.member + " (" + item.rule + "): " + item.message;
+  }).join("\n");
+  log.debug("Leaving refreshChoicesVerdict(). findings=" +
+      findings.length);
+}
+
+function choicesCell(value) {
+  log.debug("Entering choicesCell().");
+  var text;
+  if (value === null || typeof value === "undefined") {
+    text = "";
+  } else if (Array.isArray(value)) {
+    text = value.join(", ");
+  } else {
+    text = String(value);
+  }
+  log.debug("Leaving choicesCell().");
+  return text;
+}
+
+function clearChoicesTable() {
+  log.debug("Entering clearChoicesTable().");
+  var host = document.getElementById("dcr_choices_result");
+  var note = document.getElementById("dcr_choices_response_note");
+  if (host) {
+    host.textContent = "";
+  }
+  if (note) {
+    note.textContent = "";
+  }
+  log.debug("Leaving clearChoicesTable().");
+}
+
+// Member, offered, preferred, returned, adopted. Cells are text nodes.
+function renderChoicesTable(result) {
+  log.debug("Entering renderChoicesTable().");
+  var host = document.getElementById("dcr_choices_result");
+  var note = document.getElementById("dcr_choices_response_note");
+  var table;
+  var head;
+  var headRow;
+  var body;
+  var labels = ["Member", "Offered", "Preferred", "Returned", "Adopted"];
+  if (!host) {
+    log.debug("Leaving renderChoicesTable(). No host.");
+    return;
+  }
+  host.textContent = "";
+  if (note) {
+    note.textContent = "";
+  }
+  if (!result || !result.rows || !result.rows.length) {
+    log.debug("Leaving renderChoicesTable(). No rows.");
+    return;
+  }
+  if (note && result.findings && result.findings.length) {
+    note.textContent = result.findings.map(function (item) {
+      return item.member + " (" + item.rule + "): " + item.message;
+    }).join("\n");
+  }
+  table = document.createElement("table");
+  table.setAttribute("border", "1");
+  head = document.createElement("thead");
+  headRow = document.createElement("tr");
+  labels.forEach(function (label) {
+    var cell = document.createElement("th");
+    cell.textContent = label;
+    headRow.appendChild(cell);
+  });
+  head.appendChild(headRow);
+  table.appendChild(head);
+  body = document.createElement("tbody");
+  result.rows.forEach(function (row) {
+    var tr = document.createElement("tr");
+    [row.member, row.offered, row.preferred, row.returned,
+        row.adopted].forEach(function (value) {
+      var cell = document.createElement("td");
+      cell.textContent = choicesCell(value);
+      tr.appendChild(cell);
+    });
+    body.appendChild(tr);
+  });
+  table.appendChild(body);
+  host.appendChild(table);
+  log.debug("Leaving renderChoicesTable().");
+}
+
+// Replace the editor with the metadata the next request should send.
+// The response textarea keeps the raw body.
+function adoptRegistrationResponse(sent, received) {
+  log.debug("Entering adoptRegistrationResponse().");
+  var result = rpMetadataChoices.readResponse(sent, received);
+  $("#dcr_client_metadata").val(JSON.stringify(result.metadata, null, 2));
+  writeDcrValuesToLocalStorage();
+  recalculateDcrRequestDescription();
+  refreshChoicesVerdict();
+  renderChoicesTable(result);
+  log.debug("Leaving adoptRegistrationResponse().");
+}
+
+// Apply RP metadata choices writes the section 4 pairs into the editor.
+function applyRpMetadataChoices() {
+  log.debug("Entering applyRpMetadataChoices().");
+  var md = parseDcrMetadata();
+  var next;
+  if (!md || typeof md !== "object" || Array.isArray(md)) {
+    if (md) {
+      displayDcrError(null, "Client Metadata must be a JSON object.");
+    }
+    log.debug("Leaving applyRpMetadataChoices(). Not an object.");
+    return false;
+  }
+  next = rpMetadataChoices.applyChoices(md);
+  $("#dcr_client_metadata").val(JSON.stringify(next, null, 2));
+  writeDcrValuesToLocalStorage();
+  recalculateDcrRequestDescription();
+  refreshChoicesVerdict();
+  clearChoicesTable();
+  log.debug("Leaving applyRpMetadataChoices().");
+  return false;
 }
 
 // Capture the client configuration endpoint and the (possibly rotated)
@@ -2838,6 +3002,7 @@ function registerClient() {
       if (localStorage && typeof data.client_secret !== "undefined") {
         localStorage.setItem("client_secret", data.client_secret);
       }
+      adoptRegistrationResponse(md, data);
     });
 }
 
@@ -2846,14 +3011,17 @@ function registerClient() {
 function readClient() {
   log.debug("Entering readClient().");
   writeDcrValuesToLocalStorage();
+  // The body is not sent on a read. A quiet parse keeps the request that
+  // produced this registration available to readResponse, without raising
+  // the JSON error a keystroke in the editor already shows.
+  var sent = parseDcrMetadataQuiet();
   log.debug("Leaving readClient().");
   return callRegistrationProxy("GET", $("#registration_client_uri").val(),
     $("#registration_access_token").val(), null, function (data) {
-      // Reflect the current registration back into the metadata editor and pick
-      // up any rotated registration access token.
+      // Reflect the adopted registration back into the metadata editor
+      // and pick up any rotated registration access token.
       captureRegistrationArtifacts(data);
-      $("#dcr_client_metadata").val(JSON.stringify(data, null, 2));
-      recalculateDcrRequestDescription();
+      adoptRegistrationResponse(sent, data);
     });
 }
 
@@ -2870,10 +3038,9 @@ function updateClient() {
   log.debug("Leaving updateClient().");
   return callRegistrationProxy("PUT", $("#registration_client_uri").val(),
     $("#registration_access_token").val(), md, function (data) {
-      // Reflect the updated registration and pick up any rotated token.
+      // Reflect the adopted registration and pick up any rotated token.
       captureRegistrationArtifacts(data);
-      $("#dcr_client_metadata").val(JSON.stringify(data, null, 2));
-      recalculateDcrRequestDescription();
+      adoptRegistrationResponse(md, data);
     });
 }
 
@@ -2968,6 +3135,7 @@ function loadDcrValuesFromLocalStorage() {
     $("#dcr_client_metadata").val(clientMetadata);
     localStorage.setItem("dcr_client_metadata", clientMetadata);
   }
+  refreshChoicesVerdict();
   log.debug("Leaving loadDcrValuesFromLocalStorage().");
 }
 
@@ -3287,5 +3455,6 @@ module.exports = {
   registerClient,
   readClient,
   updateClient,
-  deleteClient
+  deleteClient,
+  applyRpMetadataChoices
 };

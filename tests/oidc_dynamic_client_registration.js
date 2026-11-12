@@ -72,6 +72,66 @@ async function setFieldValueViaScript(driver, id, value) {
   log.debug("Leaving setFieldValueViaScript().");
 }
 
+// Same write, then the input event the choices verdict listens for.
+// setFieldValueViaScript sets .value and fires nothing.
+async function setFieldValueAndInput(driver, id, value) {
+  log.debug("Entering setFieldValueAndInput().");
+  await driver.executeScript(
+      "var el = document.getElementById(arguments[0]);" +
+      "el.value = arguments[1];" +
+      "el.dispatchEvent(new Event('input', { bubbles: true }));",
+      id, value);
+  log.debug("Leaving setFieldValueAndInput().");
+}
+
+// The six pairs this client emits, and the thirteen it must omit. The
+// names are written here so the page is checked, not the engine's list.
+function assertChoicesDocument(metadata) {
+  log.debug("Entering assertChoicesDocument().");
+  var pairs = [
+    ["subject_types_supported", "subject_type"],
+    ["id_token_signing_alg_values_supported",
+        "id_token_signed_response_alg"],
+    ["userinfo_signing_alg_values_supported",
+        "userinfo_signed_response_alg"],
+    ["userinfo_encryption_alg_values_supported",
+        "userinfo_encrypted_response_alg"],
+    ["userinfo_encryption_enc_values_supported",
+        "userinfo_encrypted_response_enc"],
+    ["token_endpoint_auth_methods_supported",
+        "token_endpoint_auth_method"]
+  ];
+  var omitted = [
+    "id_token_encryption_alg_values_supported",
+    "id_token_encryption_enc_values_supported",
+    "request_object_signing_alg_values_supported",
+    "request_object_encryption_alg_values_supported",
+    "request_object_encryption_enc_values_supported",
+    "token_endpoint_auth_signing_alg_values_supported",
+    "backchannel_authentication_request_signing_alg_values_supported",
+    "authorization_signing_alg_values_supported",
+    "authorization_encryption_alg_values_supported",
+    "authorization_encryption_enc_values_supported",
+    "introspection_signing_alg_values_supported",
+    "introspection_encryption_alg_values_supported",
+    "introspection_encryption_enc_values_supported"
+  ];
+  var i;
+  for (i = 0; i < pairs.length; i++) {
+    assert(Array.isArray(metadata[pairs[i][0]]),
+        pairs[i][0] + " was not an array.");
+    assert(metadata[pairs[i][0]].indexOf(metadata[pairs[i][1]]) >= 0,
+        pairs[i][1] + " is not inside " + pairs[i][0] + ".");
+  }
+  assert.deepStrictEqual(metadata.token_endpoint_auth_methods_supported,
+      ["client_secret_basic"]);
+  for (i = 0; i < omitted.length; i++) {
+    assert(!Object.prototype.hasOwnProperty.call(metadata, omitted[i]),
+        omitted[i] + " was written into the registration request.");
+  }
+  log.debug("Leaving assertChoicesDocument().");
+}
+
 async function getFieldValue(driver, id) {
   log.debug("Entering getFieldValue().");
   log.debug("Leaving getFieldValue().");
@@ -188,6 +248,48 @@ async function test() {
     assert(metadata_json && metadata_json.trim().length > 0,
       "Client Metadata was not populated from the discovery metadata.");
     log.info("registration_endpoint=" + registration_endpoint);
+
+    // RP Metadata Choices 1.0. Populate already applied the pairs.
+    // Apply is idempotent. The discovery inputs above the fieldset are
+    // the provider's metadata and must stay as Populate left them.
+    const discoveryIds = [
+      "subject_types_supported",
+      "id_token_signing_alg_values_supported",
+      "token_endpoint_auth_methods_supported"
+    ];
+    const discoveryBefore = {};
+    for (const id of discoveryIds) {
+      discoveryBefore[id] = await getFieldValue(driver, id);
+    }
+    await clickButtonByValue(driver, "Apply RP metadata choices");
+    const applied = JSON.parse(await getFieldValue(driver,
+        "dcr_client_metadata"));
+    assertChoicesDocument(applied);
+    for (const id of discoveryIds) {
+      assert.strictEqual(await getFieldValue(driver, id),
+          discoveryBefore[id],
+          id + " changed when RP metadata choices were applied.");
+    }
+    const cleanVerdict = await driver.findElement(
+        By.id("dcr_choices_verdict")).getText();
+    assert(cleanVerdict.indexOf("meets the specification") >= 0,
+        "Expected a clean choices verdict, got: " + cleanVerdict);
+
+    // A hand edit that puts the partner outside its array is reported
+    // before anything is sent. Apply again so the CRUD steps below
+    // register a clean request.
+    applied.id_token_signed_response_alg = "none";
+    await setFieldValueAndInput(driver, "dcr_client_metadata",
+        JSON.stringify(applied, null, 2));
+    await driver.wait(async () => {
+      const text = await driver.findElement(By.id("dcr_choices_verdict"))
+          .getText();
+      return text.indexOf("id_token_signed_response_alg") >= 0;
+    }, waitTime, "The choices verdict did not report " +
+        "id_token_signed_response_alg.");
+    await clickButtonByValue(driver, "Apply RP metadata choices");
+    assertChoicesDocument(JSON.parse(await getFieldValue(driver,
+        "dcr_client_metadata")));
 
     if (initial_access_token) {
       await setFieldValue(driver, "dcr_initial_access_token",
