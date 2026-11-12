@@ -70,6 +70,13 @@ const MIRROR_PREFIX = "${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/";
 const BUILT_PREFIXES = [
   "${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/",
   "${STS_IMAGE:-${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/",
+  // iya-sts's own RELEASE image (2026-11-12), which the stack runs instead of
+  // building sts/Dockerfile. It is not mirrored because it does not need to
+  // be: the mirror exists to keep this suite off Docker Hub, and this is a
+  // first-party package on ghcr.io already, published by iya-sts's pipeline.
+  // Named exactly, so that a different upstream behind the same variable is
+  // still caught.
+  "${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:",
 ];
 
 function locate(repoPath, flatName) {

@@ -67,6 +67,120 @@ var CONTEXTS = {
       "./contexts/idptools_identity_v1.json")
 };
 
+// ---------------------------------------------------------------------------
+// CONTEXTS SUPPLIED AT RUN TIME (2026-11-12).
+//
+// The set above is what this wallet SHIPS, and it holds only standard
+// contexts plus this project's own. An issuer's own vocabulary is not shipped:
+// a wallet that baked in each issuer's context would be a wallet built for
+// those issuers. So a context an issuer uses is HANDED to the wallet — pasted
+// on the presentation page, or given to addContext() by a caller — and kept in
+// localStorage so that it survives the page loads of one workflow.
+//
+// It is still never FETCHED, for the reason the loader below gives: what this
+// wallet canonicalizes against is exactly the document somebody supplied, and
+// the person who supplied it can see it. A supplied context never replaces a
+// shipped one of the same URL.
+// ---------------------------------------------------------------------------
+var SUPPLIED_CONTEXTS_KEY = "vc_jsonld_contexts";
+var suppliedInMemory = {};
+
+function storage() {
+  log.debug("Entering storage().");
+  try {
+    if (typeof localStorage !== "undefined" && localStorage) {
+      log.debug("Leaving storage(). localStorage.");
+      return localStorage;
+    }
+  } catch (e) {
+    // Storage refused (a sandboxed frame, a private window's quota).
+    log.debug("storage(): " + e.message);
+  }
+  log.debug("Leaving storage(). None; memory only.");
+  return null;
+}
+
+function storedContexts() {
+  log.debug("Entering storedContexts().");
+  var store = storage();
+  if (!store) {
+    log.debug("Leaving storedContexts(). No storage.");
+    return {};
+  }
+  try {
+    var parsed = JSON.parse(store.getItem(SUPPLIED_CONTEXTS_KEY) || "{}");
+    log.debug("Leaving storedContexts().");
+    return (parsed && typeof parsed === "object") ? parsed : {};
+  } catch (e) {
+    log.debug("Leaving storedContexts(). Unreadable: " + e.message);
+    return {};
+  }
+}
+
+// Every supplied context, url -> document: the stored ones, then the ones
+// handed in this process (which win, being the more recent statement).
+function suppliedContexts() {
+  log.debug("Entering suppliedContexts().");
+  log.debug("Leaving suppliedContexts().");
+  return Object.assign({}, storedContexts(), suppliedInMemory);
+}
+
+// Record a context for `url`. `document` is the JSON-LD document itself, as an
+// object or as JSON text, and must carry an "@context". Answers the URL.
+function addContext(url, document) {
+  log.debug("Entering addContext(). " + url);
+  var name = String(url || "").trim();
+  // No quote or angle bracket either: a context URL is an IRI, and the
+  // presentation page writes it into markup.
+  if (!/^https?:\/\/[^\s"'<>`]+$/.test(name)) {
+    log.debug("Leaving addContext(). Not a URL.");
+    throw new Error("A context is identified by the http(s) URL a " +
+        "credential names it by in its @context; got " +
+        JSON.stringify(url) + ".");
+  }
+  if (CONTEXTS[name]) {
+    log.debug("Leaving addContext(). Shipped already.");
+    throw new Error(name + " is a context this wallet ships; a supplied " +
+        "document cannot replace it.");
+  }
+  var doc = document;
+  if (typeof doc === "string") {
+    try {
+      doc = JSON.parse(doc);
+    } catch (e) {
+      log.debug("Leaving addContext(). Not JSON.");
+      throw new Error("The context for " + name + " is not JSON: " +
+          e.message);
+    }
+  }
+  if (!doc || typeof doc !== "object" || !doc["@context"]) {
+    log.debug("Leaving addContext(). No @context.");
+    throw new Error("The document for " + name + " has no \"@context\" " +
+        "member, so it is not a JSON-LD context.");
+  }
+  suppliedInMemory[name] = doc;
+  var store = storage();
+  if (store) {
+    var all = storedContexts();
+    all[name] = doc;
+    store.setItem(SUPPLIED_CONTEXTS_KEY, JSON.stringify(all));
+  }
+  log.debug("Leaving addContext().");
+  return name;
+}
+
+function removeContext(url) {
+  log.debug("Entering removeContext(). " + url);
+  delete suppliedInMemory[url];
+  var store = storage();
+  if (store) {
+    var all = storedContexts();
+    delete all[url];
+    store.setItem(SUPPLIED_CONTEXTS_KEY, JSON.stringify(all));
+  }
+  log.debug("Leaving removeContext().");
+}
+
 function documentLoader(url) {
   log.debug("Entering documentLoader().");
   if (CONTEXTS[url]) {
@@ -74,13 +188,21 @@ function documentLoader(url) {
     return Promise.resolve({ contextUrl: null, documentUrl: url,
                            document: CONTEXTS[url] });
   }
-  // Deliberately not fetched. A context this workflow does not ship is a
-  // context whose canonical form cannot be guaranteed to match the other
-  // side's.
+  var supplied = suppliedContexts();
+  if (supplied[url]) {
+    log.debug("Leaving documentLoader(). Supplied.");
+    return Promise.resolve({ contextUrl: null, documentUrl: url,
+                           document: supplied[url] });
+  }
+  // Deliberately not fetched. A context this workflow does not ship, and
+  // nobody supplied, is a context whose canonical form cannot be guaranteed
+  // to match the other side's.
   log.debug("Leaving documentLoader().");
   return Promise.reject(new Error(
-    "bbs-2023 here will only sign documents using a context it ships: " +
-    Object.keys(CONTEXTS).join(", ") + ". Asked for: " + url));
+    "bbs-2023 here will only use a JSON-LD context it ships (" +
+    Object.keys(CONTEXTS).join(", ") + ") or one it has been given. It " +
+    "was asked for " + url + ", which is neither: add that context's " +
+    "document on the presentation page (JSON-LD Contexts) and try again."));
 }
 
 // The canonical N-Quad statements of a document, one string per statement.
@@ -323,5 +445,9 @@ module.exports = {
   bytesToB64u: bytesToB64u,
   b64uToBytes: b64uToBytes,
   multibaseToBytes: multibaseToBytes,
-  documentLoader: documentLoader
+  documentLoader: documentLoader,
+  addContext: addContext,
+  removeContext: removeContext,
+  suppliedContexts: suppliedContexts,
+  SUPPLIED_CONTEXTS_KEY: SUPPLIED_CONTEXTS_KEY
 };

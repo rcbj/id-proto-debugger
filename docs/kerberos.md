@@ -140,7 +140,7 @@ Two consequences worth knowing before proposing a change:
 
 `krb5_describe.js` returning a plain document rather than markup is what lets `tests/krb5_describe_output.js` check every fact the page shows with no browser. Every value it returns is **already a string**: the renderer never formats and never interprets, which is what keeps hostile bytes out of anything but `textContent`.
 
-**Eight of these are vendored into the mock STS** and the copies are byte-identical — see *The mock KDC* below.
+**Eight of these have a counterpart in iya-sts.** They were byte-identical vendored copies until 2026-11-12; since iya-sts #1280 they are that service's own and evolve independently, and `tests/krb5_codec_sync.js` holds the two to agreeing on the wire rather than in text — see *The mock KDC* below.
 
 ---
 
@@ -187,7 +187,7 @@ For forwarding, the one enforceable control is `NOT_DELEGATED` ("account is sens
 
 ## The mock KDC, and the two things about it that are deliberate
 
-It lives in the `sts/` **submodule** (`docs/mock-sts.md` has the detail, including why five codec modules are vendored there and how `tests/krb5_codec_sync.js` keeps the copies honest). Two design points matter when reading its tests:
+It lives in the `sts/` **submodule** (`docs/mock-sts.md` has the detail, including why the codec modules were once vendored there; since 2026-11-12 they are iya-sts's own, and `tests/krb5_codec_sync.js` checks only that the two implementations agree on the wire). Two design points matter when reading its tests:
 
 **Its principals are misconfigured on purpose.** `locked`, `expired`, `aesonly` (a hardened account offering no RC4), `rc4only` (the legacy account a 2025 baseline breaks), `noreauth` (answered in **one** message rather than two), a computer account for the host-shaped salt, `sensitive` (flagged `NOT_DELEGATED`), and four service accounts differing by one delegation attribute each. The whole point is producing failures deliberately, and each account's PAC records the same misconfiguration its behaviour shows.
 

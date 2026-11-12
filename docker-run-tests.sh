@@ -107,7 +107,7 @@ Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
                (docker-compose-run-tests-external-sts.yml), every STS address
                the jobs are handed is rebased onto <base>, and Kerberos, LDAP
                and SPIFFE dial its host. Set ADMIN_API_CLIENT_SECRET to that
-               deployment's sts-management-api secret, and optionally
+               deployment's sts-api-client secret, and optionally
                SPIFFE_TRUST_DOMAIN (default: <base>'s host minus its first
                label). It allows https://client:3000 by CORS there and creates
                its rfc9700 realm. Combines with the default run and with every
@@ -490,6 +490,11 @@ check_return_code $?
 # login the build fails on a pull error that names neither; this says which.
 requireGhcrMirror
 check_return_code $?
+# iya-sts runs from its published release image (docker-compose-run-tests.yml,
+# IYA_STS_IMAGE) while tests/Dockerfile and the companion read the sts/
+# checkout, so the two have to be the same release before anything builds.
+requireIyaStsImageMatchesCheckout "${CURRENT_DIR}" "${COMPOSE_FILE}"
+check_return_code $?
 
 # The walt.id issuer's configuration is rendered before compose brings the stack
 # up: the container mounts the result, and the signing key it contains is
@@ -777,10 +782,9 @@ runPartialStack()
   fi
   echo "Services for this run: ${services}"
 
-  # BUILD. The tests image is always built, and so is iya-sts's even when it
-  # is not started: the tests Dockerfile copies files out of it (the
-  # `mocksts: service:sts` context), so there is no tests image without it.
-  local builds="sts tests" s
+  # BUILD. The tests image is always built. iya-sts is not built at all: the
+  # stack runs its published release image (IYA_STS_IMAGE), which `up` pulls.
+  local builds="tests" s
   for s in api client keycloak-wsfed companion;
   do
     inList "${s}" "${services}" && builds="${builds} ${s}"

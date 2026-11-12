@@ -149,7 +149,8 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STACK_TLS_SPKI_PIN"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_CONFIG_FILE TESTS_CONFIG_FILE"
 # THE MOCK STS'S MANAGEMENT API CREDENTIAL (2026-09-09). The submodule bump of
 # that date closed /admin-api: it takes an OAuth 2.0 access token now, minted by
-# the seeded `sts-management-api` client with client_credentials. That client's
+# the seeded `sts-api-client` client (`sts-management-api` until iya-sts
+# #1139) with client_credentials. That client's
 # secret is generated at every start of the mock and is readable only THROUGH
 # the API it unlocks — a bootstrap hole — so `adminApi.clientSecret` exists to
 # pin it, and this is the value the compose files hand that container as
@@ -168,6 +169,9 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_TAG"
 # docker-compose-run-tests-external-sts.yml substitutes it into the
 # companion's environment, so it has to cross sudo like the rest.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_EXTERNAL_URL"
+# Which iya-sts image docker-compose-run-tests.yml runs. Defaulted in that
+# file to the release the sts/ gitlink pins; set it to try a candidate.
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IYA_STS_IMAGE"
 
 
 # ---------------------------------------------------------------------------
@@ -1140,6 +1144,84 @@ requireGhcrMirror()
   echo "       .github/scripts/mirror-images.sh missing (write:packages)." >&2
   echo "Leaving requireGhcrMirror(). ${probe} is not readable."
   return 1
+}
+
+# ---------------------------------------------------------------------------
+# THE iya-sts IMAGE AND THE sts/ CHECKOUT MUST BE THE SAME RELEASE.
+#
+# docker-compose-run-tests.yml runs iya-sts's published release image
+# (IYA_STS_IMAGE, defaulted there to ghcr.io/rcbj/iya-sts:<version>) rather
+# than building sts/Dockerfile. Everything that READS iya-sts's files still
+# reads the submodule — tests/Dockerfile copies modules out of it, the
+# companion is built from it, krb5_codec_sync.js and spiffe_engine.js compare
+# against it — so an image from one release and a checkout from another is a
+# run in which the jobs drive one service and load another's code. That fails
+# naming a protocol, never a version.
+#
+# So the image is pulled here and its org.opencontainers.image.revision label
+# compared with the commit sts/ is checked out at. A mismatch is fatal, and
+# the message says both ways to fix it. An image with no revision label
+# cannot be checked and is allowed with a warning: that is a candidate
+# somebody built by hand and asked for by name.
+#
+# $1 the repository root; $2 the compose file the default is read from.
+# ---------------------------------------------------------------------------
+requireIyaStsImageMatchesCheckout()
+{
+  echo "Entering requireIyaStsImageMatchesCheckout()."
+  local root="$1"
+  local compose_file="${2:-docker-compose-run-tests.yml}"
+  local image="${IYA_STS_IMAGE:-}"
+  if [ -z "${image}" ];
+  then
+    image="$(sed -n 's/.*\${IYA_STS_IMAGE:-\([^}]*\)}.*/\1/p' \
+               "${root}/${compose_file}" | head -1)"
+  fi
+  if [ -z "${image}" ];
+  then
+    echo "ERROR: ${compose_file} names no IYA_STS_IMAGE default." >&2
+    echo "Leaving requireIyaStsImageMatchesCheckout(). No image."
+    return 1
+  fi
+  resolveDockerSudo
+  local docker_cmd="docker"
+  if [ -n "${DOCKER_SUDO}" ];
+  then
+    docker_cmd="sudo docker"
+  fi
+  if ! ${docker_cmd} pull -q "${image}" >/dev/null;
+  then
+    echo "ERROR: could not pull ${image}. It is a PRIVATE package on" \
+         "ghcr.io; the login requireGhcrMirror() describes covers it." >&2
+    echo "Leaving requireIyaStsImageMatchesCheckout(). Pull failed."
+    return 1
+  fi
+  local revision head
+  revision="$(${docker_cmd} image inspect --format \
+    '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
+    "${image}" 2>/dev/null)"
+  head="$(git -C "${root}/sts" rev-parse HEAD 2>/dev/null)"
+  if [ -z "${revision}" ] || [ "${revision}" = "<no value>" ];
+  then
+    echo "WARNING: ${image} carries no org.opencontainers.image.revision" \
+         "label, so it cannot be checked against sts/ (${head:0:9})." >&2
+    echo "Leaving requireIyaStsImageMatchesCheckout(). Unlabelled."
+    return 0
+  fi
+  if [ "${revision}" != "${head}" ];
+  then
+    echo "ERROR: ${image} was built from iya-sts ${revision:0:9}, but sts/" \
+         "is checked out at ${head:0:9}." >&2
+    echo "       The suite runs the image and reads the checkout, so the two" \
+         "must be the same release. Either move the gitlink to the image's" \
+         "tag (git -C sts checkout <tag>), or point IYA_STS_IMAGE at the" \
+         "image of the commit sts/ is at." >&2
+    echo "Leaving requireIyaStsImageMatchesCheckout(). Mismatch."
+    return 1
+  fi
+  echo "Leaving requireIyaStsImageMatchesCheckout(). ${image} is" \
+       "${revision:0:9}, the commit sts/ is at."
+  return 0
 }
 
 # ---------------------------------------------------------------------------

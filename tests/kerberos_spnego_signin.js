@@ -108,6 +108,7 @@ const kerberosPrincipals = require("./kerberos_principals.js");
 const browserFlags = require("./browser_flags.js");
 const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
+const adminApiToken = require("./tools/admin-api-token.js");
 const { loadUrl } = require("./page_load.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -395,19 +396,67 @@ async function theDoorIsPublishedAndOpen(ready) {
 // 2. THE APPLICATION, AND ITS MECHANISM.
 //
 // Registered before anything connects, the way every job in this suite now
-// does it — and this one has a reason of its own beyond the convention:
-// `appAuthnMechanism` is what makes Kerberos an application's OWN way of
+// does it — and this one has a reason of its own beyond the convention: the
+// application's authentication policy is what makes Kerberos its OWN way of
 // signing people in, and it can only be asserted against an entry that exists.
 //
-// `spnego` on the entry is HOME REALM DISCOVERY BY CONFIGURATION: an
+// SINCE iya-sts #1148 THAT IS A NAMED POLICY, NOT A FIELD. The entry used to
+// carry `appAuthnMechanism: spnego` itself; now a named authentication policy
+// in the realm holds the mechanism list (here `spnego` alone) and the entry
+// names it with `appAuthnPolicy`. A policy listing ONE mechanism still routes
+// the sign-in straight to that mechanism's door, which is what this section
+// asserts — so the behaviour under test is unchanged and only the spelling of
+// the configuration moved.
+//
+// `spnego` as the only mechanism is HOME REALM DISCOVERY BY CONFIGURATION: an
 // authorization request for this client, with no session, goes straight to the
 // Kerberos door and the password screen is never drawn. That is the second of
 // the three ways in that the mock's spnego_authn.js describes, and it is the
 // one a deployment actually uses.
 // ---------------------------------------------------------------------------
+// The named authentication policy the application points at. Saved on every
+// run: `save-named-authn-policy` creates or REPLACES, so a re-run against a
+// live stack writes the same one-element list again.
+const SPNEGO_POLICY = "krb5-spnego-only";
+
+// A SECURITY ADMINISTRATOR'S CHANGE. Since iya-sts #645 an authentication
+// policy, AND an application's choice of one (appAuthnPolicy), are guarded by
+// admin:security on a subject holding SECURITY_ADMIN; Admin Write does not
+// reach either. So the shared token every job is given (admin:read
+// admin:write) is refused for both, and widening that one for every job would
+// be the wrong fix. The seeded sts-api-client holds the grant, so these calls
+// mint a token that asks for it, through the same tool that mints the shared
+// one. Answers the parsed reply.
+async function securityPost(path, body) {
+  log.debug("Entering securityPost(). " + path);
+  const token = await adminApiToken.tokenFor(stsUrl,
+    { scope: "admin:read admin:write admin:security" });
+  const response = await fetch(stsUrl + "/admin-api" + path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json",
+               Accept: "application/json",
+               Authorization: "Bearer " + token },
+    body: JSON.stringify(body || {})
+  });
+  const parsed = await response.json().catch(function () {
+    return { ok: false, status: response.status };
+  });
+  log.debug("Leaving securityPost(). ok=" + parsed.ok);
+  return parsed;
+}
+
 async function theApplicationNamesKerberosAsItsMechanism() {
   log.debug("Entering theApplicationNamesKerberosAsItsMechanism().");
   log.info("=== The application, before it connects ===");
+  const saved = await securityPost("/policies/save-named-authn-policy", {
+    name: SPNEGO_POLICY,
+    description: "Kerberos only: the debugger's SPNEGO sign-in job",
+    mechanisms: ["spnego"]
+  });
+  assert.ok(saved && saved.ok,
+    "iya-sts refused the named authentication policy " + SPNEGO_POLICY +
+    " that this application is about to name: " + JSON.stringify(saved) +
+    ". Without it the application cannot say Kerberos is its way in.");
   const entry = await registry.provision(registry.baseOf(stsUrl), {
     identifier: clientId,
     name: "Kerberos SPNEGO sign-in",
@@ -419,24 +468,32 @@ async function theApplicationNamesKerberosAsItsMechanism() {
       oauthGrantType: ["authorization_code"],
       oauthScope: ["openid", "profile", "email"],
       oauthTokenEndpointAuthMethod: "none",
-      oauthConfidential: "FALSE",
-      // THE POINT OF THIS SECTION.
-      appAuthnMechanism: "spnego"
+      oauthConfidential: "FALSE"
     },
     why: "the application whose people authenticate with a Kerberos ticket"
   });
   assert.ok(entry, "the application could not be registered, so nothing " +
     "below would be judged against a configuration at all.");
-  assert.strictEqual(registry.valuesOf(entry.fields.appAuthnMechanism)[0],
-    "spnego",
-    "the entry should name spnego as this application's authentication " +
-    "mechanism and holds " +
-    JSON.stringify(entry.fields.appAuthnMechanism) + ".");
+  // THE POINT OF THIS SECTION, set apart from the registration because it is
+  // the Security Administrator's change (securityPost(), above).
+  const pointed = await securityPost("/applications/set", {
+    application: clientId, attribute: "appAuthnPolicy", value: SPNEGO_POLICY
+  });
+  assert.ok(pointed && pointed.ok,
+    "iya-sts would not point " + clientId + " at the " + SPNEGO_POLICY +
+    " policy: " + JSON.stringify(pointed));
+  const named = await registry.entryOf(registry.baseOf(stsUrl), clientId);
+  assert.strictEqual(registry.valuesOf(((named || {}).fields || {})
+    .appAuthnPolicy)[0],
+    SPNEGO_POLICY,
+    "the entry should name the " + SPNEGO_POLICY + " authentication policy " +
+    "and holds " + JSON.stringify(((named || {}).fields || {})
+      .appAuthnPolicy) + ".");
 
   // AND IT MUST ACTUALLY DECIDE SOMETHING. An attribute that is written and
   // read by nothing is the failure mode of every declaration in this registry —
-  // `appAllowedProtocol` is documented as exactly that — so `appAuthnMechanism`
-  // is checked by driving an authorization request with NO session and reading
+  // `appAllowedProtocol` is documented as exactly that — so the policy is
+  // checked by driving an authorization request with NO session and reading
   // where the service sends it. This is done with fetch rather than a browser
   // because what is being read is one Location header.
   const authorize = stsUrl + "/oauth2/authorize?response_type=code&client_id=" +
@@ -454,7 +511,7 @@ async function theApplicationNamesKerberosAsItsMechanism() {
   const landingUrl = landing.headers.get("location") || location;
   assert.ok(/\/authn\/spnego/.test(location) ||
             /\/authn\/spnego/.test(landingUrl),
-    "with appAuthnMechanism=spnego on the application entry, an " +
+    "with the application naming a policy that allows spnego alone, an " +
     "authorization request with no session must go to the Kerberos door and " +
     "not to the password screen — that is what the attribute is FOR, and an " +
     "attribute nothing reads is a record of intent rather than a " +

@@ -32,6 +32,7 @@ const companionUrl = (process.env.COMPANION_URL || "http://localhost:9700")
     .replace(/\/+$/, "");
 const { Command, Option } = require("commander");
 const { loadUrl } = require("./page_load.js");
+const paths = require("./module_paths.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -84,6 +85,82 @@ const waitForContent = require("./wait_for.js");
 // here. waitForPageBundle() in tests/wait_for.js reads the page's own script
 // tags, so this needs no table of global names, and its note records what the
 // missing wait cost.
+// THE ISSUER'S JSON-LD CONTEXTS, SUPPLIED THROUGH THE PAGE. The wallet ships
+// only the standard contexts and this project's own; a context an issuer
+// coins is added on step 2's JSON-LD Contexts pane, which is what a person
+// would do. iya-sts names its own since its #663, so this finds every
+// context the held credential names that the wallet does not ship, asks
+// iya-sts's OWN loader for the document, and adds it through the pane —
+// neither the URL nor the document is written down in this repository.
+// Answers the contexts it added.
+function contextsTheWalletLacks(credential) {
+  log.debug("Entering contextsTheWalletLacks().");
+  const ROOT = path.join(__dirname, "..");
+  const wallet = paths.requireSharedModule(
+    [path.join(__dirname, "bbs2023.js"),
+     path.join(ROOT, "client", "src", "bbs2023.js")],
+    "the wallet's bbs-2023 cryptosuite");
+  const names = [].concat((credential || {})["@context"] || [])
+    .filter(function (one) {
+      return typeof one === "string";
+    });
+  log.debug("Leaving contextsTheWalletLacks().");
+  return Promise.all(names.map(function (url) {
+    return wallet.documentLoader(url).then(function () {
+      return null;
+    }, function () {
+      return url;
+    });
+  })).then(function (all) {
+    return all.filter(Boolean);
+  });
+}
+
+async function addTheIssuersContexts(driver, credential) {
+  log.debug("Entering addTheIssuersContexts().");
+  const lacking = await contextsTheWalletLacks(credential);
+  if (!lacking.length) {
+    log.info("the wallet ships every context this credential names.");
+    log.debug("Leaving addTheIssuersContexts(). None needed.");
+    return [];
+  }
+  const issuerSuite = paths.requireSharedModule(
+    [paths.mockStsModule("bbs2023.js") || ""],
+    "iya-sts's bbs-2023 cryptosuite, for the contexts it issues under");
+  // Without the context the page must say what is missing AND where it is
+  // supplied — a message naming the issuer's key would send a person to the
+  // wrong service.
+  await waitForStatus(driver, "vp_present_status",
+    function (s) {
+      return /JSON-LD Contexts/.test(s);
+    },
+    "with " + lacking.join(", ") + " missing, step 2 should say so and " +
+        "point at the JSON-LD Contexts pane", stepWait);
+  let url;
+  for (url of lacking) {
+    const loaded = await issuerSuite.documentLoader(url);
+    await driver.executeScript(
+      "document.getElementById('vp_context_url').value = arguments[0];" +
+      "document.getElementById('vp_context_json').value = arguments[1];",
+      url, JSON.stringify(loaded.document));
+    await driver.findElement(By.id("vp_context_add_button")).click();
+    await waitForStatus(driver, "vp_context_status",
+      function (s) {
+        return /Added/.test(s);
+      }, "the page did not accept the context " + url, stepWait);
+    // Adding reloads the page so the credential is canonicalized with it.
+    await driver.sleep(800);
+    await pageBundleReady(driver);
+    const listed = await driver.findElement(By.id("vp_contexts_list"))
+      .getText();
+    assert.ok(listed.indexOf(url) !== -1,
+      "the context just added should be listed on the pane: " + listed);
+    log.info("added iya-sts's context " + url + " on the page.");
+  }
+  log.debug("Leaving addTheIssuersContexts().");
+  return lacking;
+}
+
 async function pageBundleReady(driver) {
   log.debug("Entering pageBundleReady().");
   await waitForContent.waitForPageBundle(driver,
@@ -332,6 +409,7 @@ async function test() {
     log.info("=== Step 2: selection is over canonical statements ===");
     await loadUrl(driver, baseUrl + "/vc-presentation-2.html");
     await pageBundleReady(driver);
+    await addTheIssuersContexts(driver, held.credential);
     await driver.wait(until.elementLocated(By.id("vp_presentation")), stepWait);
     const envelope = await waitForValue(driver, "vp_presentation",
       function (v) { return v.trim().length > 100; },

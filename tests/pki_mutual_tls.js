@@ -79,6 +79,8 @@ const nodeCrypto = require("crypto");
 const browserFlags = require("./browser_flags.js");
 const { declineToRun } = require("./expectation.js");
 const { loadUrl } = require("./page_load.js");
+const registry = require("./sts_applications.js");
+const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -322,6 +324,63 @@ async function trustTheIssuer(pem) {
              }).join("; "));
   log.debug("Leaving trustTheIssuer().");
   return result;
+}
+
+// AND WHO THE CERTIFICATE IS. Since iya-sts #1061 a certificate from an
+// outside certificate authority — which this page's freshly made Root is —
+// signs nobody in merely by verifying: it names the ONE entry that stores it
+// in `userCertificate`, and nothing else. Before that bump `GET /tls/sign-in`
+// started a session for any verified certificate. So the leaf is stored on a
+// person of this run's own before the run that expects a session, and removed
+// again afterwards: storing one certificate on a second entry is refused
+// (STS-ADMIN-0899), so a leftover would be somebody else's problem.
+let storedCertificates = [];
+
+function sha256HexOfPem(pem) {
+  log.debug("Entering sha256HexOfPem().");
+  const der = Buffer.from(String(pem)
+    .replace(/-----[^-]+-----/g, "").replace(/\s+/g, ""), "base64");
+  log.debug("Leaving sha256HexOfPem().");
+  return nodeCrypto.createHash("sha256").update(der).digest("hex");
+}
+
+async function storeOnAPersonOfThisRun(pem) {
+  log.debug("Entering storeOnAPersonOfThisRun().");
+  const user = usernameFor("pki-mtls");
+  await registry.ensurePerson(stsBaseUrl, user,
+    "Pw-" + nodeCrypto.randomBytes(12).toString("hex") + "!9");
+  const result = await stsJson("/admin-api/users/add-certificate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ user: user, certificate: pem })
+  });
+  assert.ok(result.ok,
+    "iya-sts would not store the client certificate on " + user + ", so " +
+    "it can verify and still sign nobody in: " + JSON.stringify(result));
+  storedCertificates.push({ user: user, sha256: sha256HexOfPem(pem) });
+  log.info("stored the client certificate on " + user + ", the one entry " +
+           "it now names.");
+  log.debug("Leaving storeOnAPersonOfThisRun().");
+  return user;
+}
+
+async function unstoreWhatThisRunStored() {
+  log.debug("Entering unstoreWhatThisRunStored().");
+  const stored = storedCertificates.slice();
+  storedCertificates = [];
+  let one;
+  for (one of stored) {
+    const result = await stsJson("/admin-api/users/remove-certificate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user: one.user, sha256: one.sha256 })
+    });
+    assert.ok(result.ok,
+      "iya-sts would not remove the certificate this run stored on " +
+      one.user + ": " + JSON.stringify(result));
+  }
+  log.debug("Leaving unstoreWhatThisRunStored(). removed=" + stored.length);
+  return stored.length;
 }
 
 async function untrustWhatThisRunAdded() {
@@ -614,6 +673,7 @@ async function theServerReportsWhatThisPageIssued(driver, ports, tlsHost) {
   // report again. One configuration change on the far end is the whole
   // difference between the two runs. ---
   await trustTheIssuer(root.certificatePem);
+  const signedInAs = await storeOnAPersonOfThisRun(leaf.certificatePem);
   const after = await runTlsTest(driver, {
     host: tlsHost, port: ports.optional, servername: tlsHost,
     trustPem: trustPem, clientSubject: "Mutual TLS Client",
@@ -666,8 +726,9 @@ async function theServerReportsWhatThisPageIssued(driver, ports, tlsHost) {
   // reaching either deleted listener at all.
   assert.ok(/whether that signed anyone in\s*yes/i.test(serverText),
     "the far end verified the certificate and started no session for it. " +
-    "`GET /tls/sign-in` signs the holder of a verified certificate in, so " +
-    "this is a certificate that verified and was worth nothing:\n" +
+    "`GET /tls/sign-in` signs in the holder of a verified certificate " +
+    "stored on their entry, and this one is stored on " + signedInAs +
+    ", so this is a certificate that verified and was worth nothing:\n" +
     after.serverView);
   log.debug("Leaving theServerReportsWhatThisPageIssued().");
 }
@@ -944,6 +1005,12 @@ async function test() {
     // service other tests share, and a CA left in it would make the next run's
     // "before trusting" case pass for the wrong reason — which is exactly the
     // kind of test that quietly stops asserting.
+    try {
+      await unstoreWhatThisRunStored();
+    } catch (e) {
+      log.warn("could not remove the certificate this run stored on a " +
+               "person: " + e.message);
+    }
     try {
       await untrustWhatThisRunAdded();
     } catch (e) {

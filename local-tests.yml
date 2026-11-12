@@ -258,7 +258,7 @@ services:
       # THE MANAGEMENT API'S CLIENT SECRET, PINNED FOR THIS RUN.
       #
       # `/admin-api` takes an OAuth 2.0 access token since the 2026-09-09
-      # submodule bump, minted by the seeded `sts-management-api` client with
+      # submodule bump, minted by the seeded `sts-api-client` (`sts-management-api` until #1139) with
       # client_credentials. That client's secret is generated at every start
       # of this service and is readable only THROUGH the API it unlocks — a
       # bootstrap hole — so `adminApi.clientSecret` exists to pin it, and

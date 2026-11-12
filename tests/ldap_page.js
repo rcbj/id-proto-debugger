@@ -860,20 +860,23 @@ async function theEntriesAreDeletedAndTheMemberDangles(driver) {
     "deleting " + userDn + " should have succeeded. Got: " +
     JSON.stringify(deletedUser));
 
-  // The group STILL lists the DN that is gone. Referential integrity is a
-  // directory feature, not a protocol rule, and the dangling member is the
-  // thing this page exists to show rather than tidy away.
+  // What the group lists now is the SERVER's answer, read through the page.
+  // Referential integrity is a directory feature, not a protocol rule; iya-sts
+  // has done it on delete since its #1612 (a deleted person leaves every
+  // group), so the page must show the member GONE — it used to show it
+  // dangling, against the iya-sts that did not. The page reports; it never
+  // tidies, and this is what proves it reports the server's state.
   await clearStatus(driver, "ldap_search_status");
   await click(driver, "btn_ldap_preset_group_members");
   await waitForValue(driver, "ldap_search_status", /succeeded|refused|HTTP/,
     30000, "reading the group after the delete produced no status");
   const members = await driver.findElement(
     By.id("ldap_search_results")).getText();
-  assert.ok(members.indexOf(userDn) !== -1,
-    "the group must STILL list the deleted user as a member. Nothing in RFC " +
-    "4511 requires referential integrity — OpenLDAP needs an overlay for it " +
-    "and Active Directory does it in the DSA — so a page that showed the " +
-    "value gone would be teaching a behaviour most directories do not have. " +
+  assert.ok(members.indexOf(userDn) === -1,
+    "the group should no longer list the deleted user: iya-sts removes a " +
+    "deleted person from every group since its #1612, and this page shows " +
+    "what the server holds. A member still listed means either the page is " +
+    "showing something stale or iya-sts went back to leaving it dangling. " +
     "Got: " + JSON.stringify(members.slice(0, 400)));
 
   const deletedGroup = await operate(driver, "btn_ldap_delete_group",

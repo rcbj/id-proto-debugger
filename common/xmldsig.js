@@ -888,8 +888,40 @@ function encryptXml(xml, opts) {
 // element ids): the caller passes the SOAP string and the signing material, so
 // this is unit-testable against an external verifier (xml-crypto).
 //
-// opts: { privateKeyPem, certPem, sigAlg, signTimestamp }
+// opts: { privateKeyPem, certPem, sigAlg, signTimestamp, keyReference }
+//
+// keyReference says how the signature names its certificate:
+//
+//   'bst' (the default)  the X.509 Token Profile 1.1 shape: the certificate
+//                        as a wsse:BinarySecurityToken (#X509v3) in the
+//                        Security header, and a KeyInfo holding a
+//                        wsse:SecurityTokenReference/wsse:Reference to it.
+//                        What Apache CXF and WCF send and expect, and what
+//                        iya-sts requires since v1.0.0 — it refuses a bare
+//                        X509Data KeyInfo as naming no certificate "in a form
+//                        the X.509 Token Profile 1.1 gives a requester".
+//   'x509data'           the plain XML Signature shape this produced until
+//                        2026-11-12: <ds:KeyInfo><ds:X509Data> with the
+//                        certificate inline. Valid XMLDSIG, and not a
+//                        WS-Security token reference.
+//   'both'               the token and its reference as 'bst' does, AND the
+//                        certificate inline in the same KeyInfo — XMLDSIG
+//                        lets a KeyInfo name its key more than one way. For a
+//                        receiver that reads one form for the signature and
+//                        the other for something else: iya-sts 1.0.0 checks
+//                        the signature by the token reference but finds the
+//                        certificate it encrypts a token to by looking for an
+//                        inline ds:X509Certificate (rcbj/iya-sts#1668).
+//
+// Neither changes what is SIGNED: KeyInfo is outside SignedInfo here, and the
+// BinarySecurityToken is not one of the references.
 var WSU_NS = 'http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd';
+var WSSE_NS = 'http://docs.oasis-open.org/wss/2004/01/' +
+    'oasis-200401-wss-wssecurity-secext-1.0.xsd';
+var WSS_X509V3 = 'http://docs.oasis-open.org/wss/2004/01/' +
+    'oasis-200401-wss-x509-token-profile-1.0#X509v3';
+var WSS_BASE64 = 'http://docs.oasis-open.org/wss/2004/01/' +
+    'oasis-200401-wss-soap-message-security-1.0#Base64Binary';
 function firstByLocal(root, name) {
   log.debug("Entering firstByLocal().");
   var els = root.getElementsByTagNameNS('*', name);
@@ -961,15 +993,32 @@ function signWsSecurity(soapXml, opts) {
   }
   // A post-quantum signer has no certificate — the draft defines no X.509
   // profile — so its KeyInfo is the caller's DEREncodedKeyValue. WS-Security's
-  // BinarySecurityToken reference is the shape a real STS expects for a
-  // certificate and there is no equivalent registered for one of these, which
-  // is worth knowing before pointing this at Apache CXF: what goes out is a
-  // valid XMLDSIG KeyInfo and not a WS-Security token reference.
-  var keyInfoXml = pqSpec
-    ? '<ds:KeyInfo>' + (opts.keyInfoXml || '') + '</ds:KeyInfo>'
-    : '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
+  // BinarySecurityToken reference, which a certificate gets below, is the
+  // shape a real STS expects, and there is no equivalent registered for one
+  // of these keys, which is worth knowing before pointing this at Apache CXF:
+  // what goes out is a valid XMLDSIG KeyInfo and not a WS-Security token
+  // reference.
+  var keyReference = opts.keyReference || 'bst';
+  var byToken = !pqSpec && (keyReference === 'bst' || keyReference === 'both');
+  var alsoInline = !pqSpec && keyReference === 'both';
+  var tokenId = byToken
+    ? 'X509-' + forge.util.bytesToHex(forge.random.getBytesSync(8)) : '';
+  var keyInfoXml;
+  if (pqSpec) {
+    keyInfoXml = '<ds:KeyInfo>' + (opts.keyInfoXml || '') + '</ds:KeyInfo>';
+  } else if (byToken) {
+    keyInfoXml = '<ds:KeyInfo><wsse:SecurityTokenReference xmlns:wsse="' +
+      WSSE_NS + '"><wsse:Reference URI="#' + tokenId + '" ValueType="' +
+      WSS_X509V3 + '"/></wsse:SecurityTokenReference>' +
+      (alsoInline ? '<ds:X509Data><ds:X509Certificate>' +
+         certPemToB64(opts.certPem) + '</ds:X509Certificate></ds:X509Data>'
+                  : '') +
+      '</ds:KeyInfo>';
+  } else {
+    keyInfoXml = '<ds:KeyInfo><ds:X509Data><ds:X509Certificate>' +
       certPemToB64(opts.certPem) +
       '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>';
+  }
 
   var signature = '<ds:Signature xmlns:ds="' + DS_NS + '">' + signedInfo +
     '<ds:SignatureValue>' + sigVal + '</ds:SignatureValue>' +
@@ -978,6 +1027,18 @@ function signWsSecurity(soapXml, opts) {
   var sigNode = doc.importNode(new DOMParser().parseFromString(signature,
       'application/xml').documentElement, true);
   security.insertBefore(sigNode, security.firstChild);
+  if (byToken) {
+    // The token goes BEFORE the signature that references it: WS-Security
+    // processes a header's children in order, and a receiver meeting the
+    // reference first has nothing yet to resolve it against.
+    var bst = '<wsse:BinarySecurityToken xmlns:wsse="' + WSSE_NS +
+      '" xmlns:wsu="' + WSU_NS + '" wsu:Id="' + tokenId +
+      '" ValueType="' + WSS_X509V3 + '" EncodingType="' + WSS_BASE64 + '">' +
+      certPemToB64(opts.certPem) + '</wsse:BinarySecurityToken>';
+    var bstNode = doc.importNode(new DOMParser().parseFromString(bst,
+        'application/xml').documentElement, true);
+    security.insertBefore(bstNode, sigNode);
+  }
   log.debug("Leaving signWsSecurity().");
   return new XMLSerializer().serializeToString(doc);
 }

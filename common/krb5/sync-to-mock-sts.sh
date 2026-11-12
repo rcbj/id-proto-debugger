@@ -32,6 +32,28 @@
 # than as modified files — so the sibling checkout is preferred and is what the
 # development loop uses: edit here, sync, push iya-sts, then bump the gitlink.
 # ---------------------------------------------------------------------------
+#
+# ---------------------------------------------------------------------------
+# RETIRED on 2026-11-12. Nothing in this repository copies files into iya-sts
+# any more.
+#
+# iya-sts #1280 made these eight modules that service's OWN — its SPDX lines
+# (BUSL-1.1), its style rules, its logging — and the two codecs now have
+# reasons to evolve independently. Running the copy below would overwrite
+# somebody else's licensed source with this repository's, so the script
+# refuses and does nothing. What still holds the two together is
+# tests/krb5_codec_sync.js, which round-trips messages between them and
+# fails when they stop agreeing ON THE WIRE; a difference in their text is
+# expected and is no longer checked. A change one side needs from the other
+# is made in that side's own repository.
+#
+# The body is left below as a record of what it did.
+# ---------------------------------------------------------------------------
+echo "sync-to-mock-sts: RETIRED. iya-sts owns its Kerberos codec since" \
+     "iya-sts #1280, and nothing in this repository copies files into it" \
+     "any more. tests/krb5_codec_sync.js checks the two still agree on the" \
+     "wire. Nothing was written." >&2
+exit 1
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

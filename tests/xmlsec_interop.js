@@ -174,6 +174,46 @@ function signatureTests() {
   });
   const rb = verifyWithXmlCrypto(bodyOnly, kp.certPem);
   check("sign Body-only (rsa-sha256) verifies", rb.ok, rb.detail);
+
+  // HOW THE CERTIFICATE IS NAMED. Since 2026-11-12 the default is the X.509
+  // Token Profile 1.1 shape — a #X509v3 BinarySecurityToken in the Security
+  // header and a KeyInfo SecurityTokenReference to it — because iya-sts
+  // refuses the bare X509Data KeyInfo this used to send, and so do Apache CXF
+  // and WCF. xml-crypto above is handed the certificate, so it cannot see
+  // this; checked here on the text.
+  const token = new RegExp('<wsse:BinarySecurityToken[^>]*wsu:Id="([^"]+)"' +
+      '[^>]*ValueType="[^"]*#X509v3"').exec(bodyOnly);
+  const reference = new RegExp('<wsse:SecurityTokenReference[^>]*>' +
+      '<wsse:Reference URI="#([^"]+)"').exec(bodyOnly);
+  check("the certificate travels as an X509v3 BinarySecurityToken",
+        !!token, bodyOnly.slice(0, 300));
+  check("KeyInfo references THAT token by its wsu:Id",
+        !!(token && reference && token[1] === reference[1]),
+        "token " + (token && token[1]) + ", reference " +
+        (reference && reference[1]));
+  check("and KeyInfo no longer carries the certificate inline",
+        !/<ds:KeyInfo><ds:X509Data>/.test(bodyOnly), "X509Data still there");
+  const legacy = xd.signWsSecurity(buildSoap(), {
+    privateKeyPem: kp.privateKeyPem, certPem: kp.certPem,
+    sigAlg: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+    keyReference: "x509data"
+  });
+  const both = xd.signWsSecurity(buildSoap(), {
+    privateKeyPem: kp.privateKeyPem, certPem: kp.certPem,
+    sigAlg: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+    keyReference: "both"
+  });
+  check("keyReference: 'both' carries the token, its reference AND the " +
+        "certificate inline in the KeyInfo",
+        /<wsse:BinarySecurityToken/.test(both) &&
+        new RegExp("<ds:KeyInfo><wsse:SecurityTokenReference[\\s\\S]*?" +
+          "</wsse:SecurityTokenReference><ds:X509Data><ds:X509Certificate>")
+          .test(both), both.slice(0, 400));
+  const rboth = verifyWithXmlCrypto(both, kp.certPem);
+  check("and it still verifies", rboth.ok, rboth.detail);
+  check("keyReference: 'x509data' still produces the inline shape",
+        /<ds:KeyInfo><ds:X509Data>/.test(legacy) &&
+        !/BinarySecurityToken/.test(legacy), legacy.slice(0, 300));
   log.debug("Leaving signatureTests().");
 }
 

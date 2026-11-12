@@ -131,7 +131,11 @@ var VCI_CONFIG_ID = process.env.OID4VCI_CONFIG_ID || "IdentityCredential";
 // Whoever signs in at the mock authorization server; no password is checked,
 // and the username becomes the identity in the tokens.
 var MOCK_AS_USER = "authz.details.user";
-var EXPECTED_VCT = "urn:idptools:sd-jwt-vc:identity";
+// The vct iya-sts's IdentityCredential configuration mints. It was
+// urn:idptools:sd-jwt-vc:identity until iya-sts #663 took this project's old
+// name out of the credentials that service issues.
+var EXPECTED_VCT = process.env.OID4VCI_EXPECTED_VCT ||
+    "urn:iya:sts:sd-jwt-vc:identity";
 var SD_JWT_VC_TYP = "dc+sd-jwt";
 // OID4VCI's pre-authorized code grant, used by the cross-device use cases.
 var PRE_AUTHORIZED_GRANT =

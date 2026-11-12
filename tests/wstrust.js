@@ -121,6 +121,15 @@ async function configureAndSend(driver, stsUrl, op, opts) {
   }
 
   if (opts.sign) {
+    // THE SIGNATURE IS THE CREDENTIAL on a signed request, so no
+    // UsernameToken rides beside it. Since iya-sts v1.0.0 a request carrying
+    // both must have them name the same requester, and they cannot here: the
+    // page's generated certificate is `ws-trust-debugger-client` and the
+    // UsernameToken above is `wstrust`. Sending the signature alone is the
+    // X.509 Token Profile's own arrangement — the requester is whoever the
+    // certificate names — and it is what iya-sts's own signed-request job
+    // sends.
+    await setField(driver, "wst_cred_mode", "none");
     // Enable signing FIRST so the signing section (and its "Generate Keys"
     // button) is revealed — clickByValue waits for visibility, and the section
     // is hidden while signing is off.

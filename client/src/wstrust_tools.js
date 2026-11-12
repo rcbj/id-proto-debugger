@@ -665,7 +665,15 @@ function signWsSecurity(soapXml) {
         }),
         keyInfoXml: xd.derEncodedKeyValueXml(
             pqHexToBytes(val('wst_sp_cert'))) }
-    : { privateKeyPem: priv, certPem: val('wst_sp_cert') };
+    : { privateKeyPem: priv, certPem: val('wst_sp_cert'),
+        // The certificate as a BinarySecurityToken with a reference to it
+        // (the X.509 Token Profile 1.1 shape) AND inline in the KeyInfo.
+        // INTERIM, for iya-sts 1.0.0: it verifies a signature by the token
+        // reference but finds the certificate it encrypts an issued token to
+        // (?encrypt=1) only as an inline ds:X509Certificate, so no single
+        // form satisfies both (rcbj/iya-sts#1668). Back to 'bst' once a
+        // release reads the token for both.
+        keyReference: 'both' };
   log.debug("Leaving signWsSecurity().");
   return xd.signWsSecurity(soapXml, Object.assign({
     sigAlg: val('wst_sig_alg') || xd.SIG_ALG_RSA_SHA256,

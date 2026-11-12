@@ -70,8 +70,31 @@ const enc = function (s) {
   return new TextEncoder().encode(s);
 };
 
+// THE ISSUER'S CONTEXT, HANDED TO THE WALLET. iya-sts issues under a JSON-LD
+// context of its own (IDENTITY_CONTEXT_URL — https://iyasec.io/contexts/...
+// since its #663), and the wallet ships only the standard ones and this project's —
+// an issuer's vocabulary is supplied to it at run time (bbs2023.addContext(),
+// the presentation page's JSON-LD Contexts pane), never baked in. So the
+// document is asked of iya-sts's OWN loader and handed over here: neither the
+// URL nor the document is written down anywhere in this repository.
+async function supplyTheIssuersContext() {
+  log.debug("Entering supplyTheIssuersContext().");
+  const url = stsSuite.IDENTITY_CONTEXT_URL;
+  const loaded = await stsSuite.documentLoader(url);
+  try {
+    walletSuite.addContext(url, loaded.document);
+    log.info("gave the wallet iya-sts's context " + url + ".");
+  } catch (e) {
+    // The wallet ships it already: an iya-sts still on this project's old
+    // context, which is fine and needs nothing supplied.
+    log.info("the wallet did not take " + url + ": " + e.message);
+  }
+  log.debug("Leaving supplyTheIssuersContext().");
+}
+
 async function test() {
   log.debug("Entering test().");
+  await supplyTheIssuersContext();
   log.info("=== The STS issues an ldp_vc credential with a bbs-2023 base " +
            "proof ===");
   const keys = await stsSuite.generateKeyPair();
