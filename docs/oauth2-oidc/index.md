@@ -17,6 +17,11 @@ These pages show how to use it:
 * **[OpenID Connect authentication flows](oidc-flows.md)**: the Authorization
   Code flow, both Implicit flows, all three Hybrid flows, and DPoP-bound
   tokens.
+* **[Dynamic client registration](dynamic-client-registration.md)**: the
+  registration pane on step 1.
+* **[Token detail, introspection, UserInfo, and JWKS](related-tools.md)**:
+  the pages step 2 opens for a token you already hold, and the logout
+  status page.
 
 This page covers the parts every grant and flow have in common. Read it first.
 
@@ -26,7 +31,8 @@ Selenium job that drives that grant or flow (see
 authorization server in them is the project's mock STS
 ([`rcbj/iya-sts`](https://rcbj.github.io/iya-sts/)), running at
 `https://localhost:8081`. It is the same server the test suite uses, and it
-signs anybody in with any password, so you can repeat every step here exactly.
+signs anybody in with any password except the literal `invalid`, so you can
+repeat every step here and still reach a refusal.
 To follow along against your own identity provider, use its discovery URL,
 client IDs and secrets in place of the ones shown.
 
@@ -117,6 +123,7 @@ request:
 | **RFC 9700 compliance mode** | Makes the debugger refuse to send anything the OAuth 2.0 Security Best Current Practice forbids. Off by default, so you can test providers that do not comply. See [RFC 9700 compliance mode](../rfc9700.md). |
 | **Authorization Grant** | Chooses the grant or flow. The rest of both pages changes to match it. |
 | **Endpoints** | Authorization, token, introspection, revocation, registration, UserInfo and JWKS. Filled in by **Populate Meta Data**. |
+| **Device Authorization Endpoint** | The RFC 8628 endpoint. The row stays hidden until discovery advertises `device_authorization_endpoint`, or until a value saved earlier is restored. **Populate Meta Data** fills it and shows the row. |
 | **Provider metadata** | The rest of the discovery document, for reference. |
 | **Display OIDC Related Artifacts?** | Shows or hides the ID token, nonce and UserInfo controls. |
 | **SSL Certificate Validation** | Set to **No** when the provider uses a self-signed certificate and token requests go through the back end. |
@@ -171,10 +178,11 @@ Results appear in panes below the token request:
 
 Each token comes with buttons and links:
 
-* **The token's name** (for example *Access Token*) opens the token detail
-  page. It decodes the JWT, explains each claim using the IANA registry, and
-  lets you verify the signature with a shared secret, a certificate or the
-  provider's JWKS.
+* **The token's name** (for example *Access Token*) opens the
+  [token detail page](related-tools.md#token-detail). It decodes the JWT,
+  explains each claim using the IANA registry, and lets you verify the
+  signature with a shared secret, a certificate, or the provider's JWKS.
+  JWKS verification is by `kid` and is not limited to RSA.
 * **Introspect Token** sends it to the introspection endpoint (RFC 7662).
 * **Get UserInfo Data** calls the UserInfo endpoint with the access token.
 * **Revoke Token** sends it to the revocation endpoint (RFC 7009).
