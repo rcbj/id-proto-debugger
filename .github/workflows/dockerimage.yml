@@ -75,13 +75,34 @@ jobs:
            GIT_COMMIT: ${{ steps.version.outputs.sha }}
          run: CONFIG_FILE=./env/local.js docker-compose -f docker-compose.yml build
 
+       # THE EMBEDDED BUILD (rcbj/iya-sts#1717): the UI and api built for
+       # IYA STS to serve, from embedded/Dockerfile — a FROM scratch image
+       # holding /debugger/{ui,api,common} and version.json, which that
+       # service's Dockerfile takes with COPY --from. Built on every run like
+       # the other two, published beside them from master only. The same
+       # build number, so its version.json names the same M.N.O as the tag.
+       - name: build embedded
+         env:
+           BUILD_NUMBER: ${{ steps.version.outputs.build }}
+           GIT_COMMIT: ${{ steps.version.outputs.sha }}
+         run: |
+           docker build -f embedded/Dockerfile \
+             --build-arg BUILD_NUMBER="${BUILD_NUMBER}" \
+             --build-arg GIT_COMMIT="${GIT_COMMIT}" \
+             -t rcbj/embedded .
+
        # ---------------------------------------------------------------------
-       # PUBLISH THE TWO PROJECT IMAGES (issue #154), the api and the client
-       # this job just built, as PUBLIC images, to TWO registries with the
-       # SAME tags from the SAME build:
+       # PUBLISH THE THREE PROJECT IMAGES (issue #154; the third since
+       # rcbj/iya-sts#1717), the api, the client and the embedded build this
+       # job just built, as PUBLIC images, to TWO registries with the SAME
+       # tags from the SAME build:
        #
-       #   ghcr.io/rcbj/id-proto-debugger-api      docker.io/iyasec/id-proto-debugger-api
-       #   ghcr.io/rcbj/id-proto-debugger-client   docker.io/iyasec/id-proto-debugger-client
+       #   ghcr.io/rcbj/id-proto-debugger-api        docker.io/iyasec/id-proto-debugger-api
+       #   ghcr.io/rcbj/id-proto-debugger-client     docker.io/iyasec/id-proto-debugger-client
+       #   ghcr.io/rcbj/id-proto-debugger-embedded   docker.io/iyasec/id-proto-debugger-embedded
+       #
+       # The embedded image is what IYA STS's Dockerfile takes its debugger
+       # from (`DEBUGGER_IMAGE`), pinned to an M.N.O tag.
        #
        # Tagged M.N.O — the SAME string as the git tag the next step puts on
        # this commit, so an image names its commit and a commit names its
@@ -103,8 +124,8 @@ jobs:
        # Never from a pull request: its GITHUB_TOKEN may not write packages and
        # its images are nobody's to keep.
        #
-       # A NEW PACKAGE STARTS PRIVATE. The OCI `source` label in both
-       # Dockerfiles links it to this public repository, but ghcr.io still
+       # A NEW PACKAGE STARTS PRIVATE. The OCI `source` label in each
+       # Dockerfile links it to this public repository, but ghcr.io still
        # creates a first push as private, and no API can change that: make
        # each package public ONCE, under Package settings -> Danger Zone ->
        # Change visibility. Every later push keeps the setting.
@@ -116,7 +137,7 @@ jobs:
        # should publish and has neither FAILS rather than publishing to one
        # registry of two, which would leave the tags disagreeing. A repository
        # a first push creates takes the organization's default visibility —
-       # set iyasec's default to public, or create both repositories public
+       # set iyasec's default to public, or create each repository public
        # before the first push.
        # ---------------------------------------------------------------------
        - name: Log in to GitHub Container Registry
@@ -152,7 +173,7 @@ jobs:
            esac
            published=""
            rows=""
-           for name in api client; do
+           for name in api client embedded; do
              src="rcbj/${name}"
              docker image inspect "${src}" >/dev/null
              for registry in ${REGISTRIES}; do
