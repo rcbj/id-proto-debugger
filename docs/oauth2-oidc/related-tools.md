@@ -74,7 +74,7 @@ it with the token filled in.
 | **Token Type Hint** | empty | Also `access_token` and `refresh_token`. |
 | **OAuth2 Authentication Type** | Basic Auth | Or Bearer Token. |
 | **OAuth2 Client ID** | empty, stored | With **Client Secret**, for Basic Auth. |
-| **OAuth2 Client Secret** | empty, stored | The field is a text input and it is stored with the rest of the form. |
+| **OAuth2 Client Secret** | empty | Not stored. It is a password, so it is gone when the page reloads, and any copy left in local storage is removed on load. |
 | **OAuth2 Bearer Token** | empty, stored | Used when the authentication type is Bearer Token. |
 | **Introspect Token** | | The response is **Introspection Endpoint Results**. |
 

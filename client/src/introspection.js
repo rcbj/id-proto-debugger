@@ -188,9 +188,29 @@ function introspectionSuccess(data, textStatus, jqXHR) {
   log.debug("Leaving introspectionSuccess().");
 }
 
+// The client secret is a password, and CLAUDE.md keeps passwords out of
+// localStorage. This page never wrote it, but its field carried the
+// `stored` class, which said otherwise; the key is removed on every load so
+// that no copy written by anything else outlives the page either.
+var PURGED_SECRET_KEYS = ["introspection_client_secret"];
+
+function purgeStoredSecrets() {
+  log.debug("Entering purgeStoredSecrets().");
+  PURGED_SECRET_KEYS.forEach(function (key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (e) {
+      log.debug("purgeStoredSecrets(): could not remove " + key + ": " +
+          e.message);
+    }
+  });
+  log.debug("Leaving purgeStoredSecrets().");
+}
+
 function loadValuesFromLocalStorage() {
   log.debug("Entering loadValuesFromLocalStorage().");
   if(localStorage) {
+    purgeStoredSecrets();
     document.getElementById("introspection_endpoint").value =
                             localStorage.getItem("introspection_endpoint");
 
