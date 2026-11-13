@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: api_ldap.js
 //
 // The api's LDAP client (api/ldap_client.js and the eight POST /ldap/*

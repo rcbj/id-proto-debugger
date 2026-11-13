@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_codec.js
 //
 // common/krb5/krb5_asn1.js and krb5_messages.js — Kerberos v5's DER encoding and

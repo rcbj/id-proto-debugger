@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: yubihsm_auth.js
 //
 // The YubiKey applet that authenticates TO a YubiHSM 2 (yubikit

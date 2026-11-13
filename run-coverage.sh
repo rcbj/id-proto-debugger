@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Runs the full Selenium test suite with code-coverage collection enabled and
 # renders the reports. Frontend (browser) coverage is gathered from

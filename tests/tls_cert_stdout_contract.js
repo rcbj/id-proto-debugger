@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: tls_cert_stdout_contract.js
 //
 // THE STACK TLS CERTIFICATE IS HANDED FROM A NODE SCRIPT TO A SHELL FUNCTION

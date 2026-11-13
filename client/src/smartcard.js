@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: smartcard.js
 //
 // The smart-card page. The codecs have no DOM. This file is the

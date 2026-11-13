@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: piv.js
 //
 // PIV, NIST SP 800-73-4, plus the Yubico commands a YubiKey adds

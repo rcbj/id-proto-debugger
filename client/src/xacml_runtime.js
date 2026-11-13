@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xacml_runtime.js
 //
 // Logger and XML escape for the XACML engine copied into this tree.

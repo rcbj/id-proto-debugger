@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oath.js
 //
 // HOTP (RFC 4226) and TOTP (RFC 6238), and the YKOATH applet that

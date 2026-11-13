@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 variable "aws_region" {
   description = "Region for the VPC, the instance and the artifacts bucket."
   type        = string

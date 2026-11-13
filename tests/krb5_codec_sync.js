@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_codec_sync.js
 //
 // The Kerberos codec exists TWICE, and this is the test that makes that safe.

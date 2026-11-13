@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_pac.js
 //
 // common/krb5/krb5_pac.js and krb5_ndr.js — the Windows PAC, [MS-PAC].

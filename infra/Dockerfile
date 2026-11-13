@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Terraform runner image for the idptools infrastructure.
 #
 # Same base pattern as deploy/Dockerfile (Ubuntu + AWS CLI v2), plus a pinned

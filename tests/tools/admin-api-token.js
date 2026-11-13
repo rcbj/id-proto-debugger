@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: tools/admin-api-token.js
 //
 // MINT THE ACCESS TOKEN THIS SUITE DRIVES THE MOCK STS'S `/admin-api` WITH.

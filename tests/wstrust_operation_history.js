@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wstrust_operation_history.js
 //
 // Operations History pane on the WS-Trust pages (wstrust_tools.html and

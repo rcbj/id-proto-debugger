@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: download_dir_pinned.js
 //
 // No browser test may leave a file in the developer's home directory.

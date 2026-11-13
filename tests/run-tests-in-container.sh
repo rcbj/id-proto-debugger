@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 set -x
 #
 # IN-CONTAINER entrypoint for the tests image (tests/Dockerfile CMD). It runs

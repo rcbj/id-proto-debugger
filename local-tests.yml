@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Compose format 2.4: docker-compose (v1) honors `depends_on: condition:
 # service_healthy` only in 2.x files. In v3 that condition is silently ignored
 # (start-order only), which lets Keycloak start before Postgres is accepting

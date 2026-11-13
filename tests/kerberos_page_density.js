@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: kerberos_page_density.js
 //
 // The Kerberos workflow's SIX pages, measured: does the control each page

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: build.js — emits the three unpacked builds from one source tree.
 //
 //   dist/chrome    what a user loads through chrome://extensions

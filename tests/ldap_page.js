@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: ldap_page.js
 //
 // client/public/ldap.html — the LDAP Protocol Debugger, driven through its own

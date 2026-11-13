@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: bridge.js  —  ISOLATED world, on the DEBUGGER's own origins only.
 //
 // How captures reach the debugger's pages. The page cannot talk to an extension

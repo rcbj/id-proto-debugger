@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Remove EVERY container, image, volume, network and build cache entry on this
 # host -- not just this project's. After it runs, the next

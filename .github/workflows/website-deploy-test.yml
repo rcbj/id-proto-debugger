@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 name: Deploy Static Site (test.idptools.com)
 
 # Automatic develop pipeline, chained after the Selenium Tests suite:

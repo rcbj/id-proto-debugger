@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Removes everything in this working tree that a build, a test run or an
 # `npm install` PUT there. Nothing it deletes is authored: every path below is

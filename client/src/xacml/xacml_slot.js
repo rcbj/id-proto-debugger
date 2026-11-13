@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xacml_slot.js
 //
 // The one-instance holder the editor and the ALFA reader were written

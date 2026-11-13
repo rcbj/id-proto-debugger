@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: otp_verify.js
 //
 // What POST /otp/verify will and will not send. It decides; server.js

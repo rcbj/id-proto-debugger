@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 var config = {
   apiUrl: "https://api.tools.test.idptools.io",
   uiUrl: "https://tools.test.idptools.io",

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 var appconfig = require(process.env.CONFIG_FILE);
 // OpenID Provider Metadata (Discovery 1.0 s3) — the table and its
 // defaults/persistence/populate helpers, shared with oauth2_oidc_2.js.

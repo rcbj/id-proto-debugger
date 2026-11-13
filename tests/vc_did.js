@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: vc_did.js
 //
 // The issuer named by a DECENTRALIZED IDENTIFIER, end to end, for both formats

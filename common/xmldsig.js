@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xmldsig.js
 //
 // Shared in-browser XML security primitives used by the WS-Trust workflow

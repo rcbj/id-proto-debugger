@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 name: Live Site Test (test.idptools.com)
 
 # Runs the full Selenium suite against the DEPLOYED test.idptools.com site by

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: background.js  —  the service worker.
 //
 // Owns three things: the capture buffer, the ARM state, and the disarm ladder.

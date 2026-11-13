@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # ---------------------------------------------------------------------------
 # Where the instance puts what the test needs.
 #

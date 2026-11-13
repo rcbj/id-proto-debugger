@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # --- Reuse the existing parent hosted zone (no new zone for a subdomain) ---
 
 data "aws_route53_zone" "parent" {

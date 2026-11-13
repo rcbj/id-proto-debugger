@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var $ = require("jquery");

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Layered over docker-compose-run-tests.yml by ./docker-run-tests.sh when the
 # run publishes nothing to the host: with --no-host-ports, or on its own when
 # a port the stack would publish is already held on this machine.

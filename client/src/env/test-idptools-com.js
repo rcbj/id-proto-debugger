@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // Test-environment config for the static test.idptools.com deployment.
 //
 // Static site (no api backend), so token calls must be made client-side.

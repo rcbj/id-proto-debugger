@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: jose_jwe.js
 //
 // The shared in-browser JWE implementation (client/src/jose_jwe.js), tested

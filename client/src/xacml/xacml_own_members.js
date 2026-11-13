@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xacml_own_members.js
 //
 // Own-member reads and writes for names a policy, a request or an ALFA

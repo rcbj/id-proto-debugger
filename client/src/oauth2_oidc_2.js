@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 const appconfig = require(process.env.CONFIG_FILE);
 // OpenID Provider Metadata (Discovery 1.0 s3) — shared with oauth2_oidc_1.js
 // so both Configuration Parameters panes carry the same fields and defaults.

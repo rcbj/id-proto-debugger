@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: dpop_workflow.js
 //
 // DPoP (RFC 9449) through the VC Issuance pages, in a browser.

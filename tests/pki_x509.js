@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: pki_x509.js
 //
 // client/src/x509.js — certificate authoring, checked against OpenSSL.

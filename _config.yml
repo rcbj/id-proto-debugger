@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # GitHub Pages (https://rcbj.github.io/id-proto-debugger/), the site every
 # debugger page's header and footer links to as "Documentation". The Pages
 # source is the legacy one (branch `master`, path `/`), so Jekyll builds the

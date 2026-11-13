@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: api_krb5_relay.js
 //
 // api/krb5_relay.js and api/krb5_frame.js — the guarded byte relay behind

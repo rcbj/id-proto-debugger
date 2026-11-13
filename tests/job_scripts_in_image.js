@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: job_scripts_in_image.js
 //
 // Every script a job in run-report.js names must reach the tests image.

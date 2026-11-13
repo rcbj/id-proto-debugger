@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
 /* Shared styling for the SAML Test Tools pages (saml_tools, saml_cert,
    saml_response). Compact, bordered panes that echo the digital-signature /
    encoding-tools look. Loaded last so it overrides common.css/bootstrap. */

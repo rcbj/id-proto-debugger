@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
 /* SAML Assertion Tool — page-specific additions on top of saml_common.css
    (loaded after it, so the pane / field / button look and feel is shared with
    the rest of the SAML pages and only the extras below are new). */

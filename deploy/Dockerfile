@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Build + deploy image for the static idptools.com site.
 #
 # Follows the same base pattern as client/Dockerfile (Ubuntu + NVM + Node),

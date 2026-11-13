@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Opt-in code-coverage overlay for the test stack.
 #
 # Layer it on top of the base test compose file. The simplest way is the

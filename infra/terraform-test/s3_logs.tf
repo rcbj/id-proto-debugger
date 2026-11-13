@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # --- Dedicated CloudFront access-log bucket for the test site ---
 
 data "aws_canonical_user_id" "current" {}

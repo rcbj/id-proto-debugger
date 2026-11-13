@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 variable "domain" {
   description = "Fully-qualified hostname for the test site (a subdomain of the parent zone)."
   type        = string

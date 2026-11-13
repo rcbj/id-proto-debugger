@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oidc_dpop_optional.js
 //
 // DPoP (RFC 9449) is OPTIONAL on the OAuth2 / OIDC workflow, and this is what

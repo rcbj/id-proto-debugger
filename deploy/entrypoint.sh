@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Container entrypoint: build the static client content, then deploy it to
 # S3 and invalidate CloudFront. Runs identically locally and in CI.

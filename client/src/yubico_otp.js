@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: yubico_otp.js
 //
 // Yubico OTP. A token is modhex. The current form is 44 characters:

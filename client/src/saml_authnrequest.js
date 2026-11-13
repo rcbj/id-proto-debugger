@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: saml_authnrequest.js
 //
 // The SAML Request Decoder: take an AuthnRequest off the wire and read it.

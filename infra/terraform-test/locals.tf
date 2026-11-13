@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 locals {
   # For the test subdomain the content bucket is named for the hostname itself
   # (e.g. "test.idptools.com"), served as a single alias (no www).

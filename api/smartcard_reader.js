@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: smartcard_reader.js
 //
 // The optional PC/SC transmit path. A browser cannot open CCID.

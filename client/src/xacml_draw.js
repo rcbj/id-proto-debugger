@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xacml_draw.js
 //
 // HTML for the policy editor and the decision result. No DOM of its

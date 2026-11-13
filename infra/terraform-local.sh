@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Run Terraform for the idptools infrastructure — entirely inside Docker.
 # Nothing but Docker (and the AWS CLI, for auth) runs on your host.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: saml_message.js
 //
 // READING a SAML protocol message off the wire — the half of the SAML pages

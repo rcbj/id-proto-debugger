@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Default provider — all regional resources (S3, CloudFront is global but
 # managed here, Route 53 is global) use this region.
 provider "aws" {

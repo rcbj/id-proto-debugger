@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: sd_jwt_vc_engine.js
 //
 // ---------------------------------------------------------------------------

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 set -x
 #
 # Runs the Selenium test suite against a debugger UI at an ARBITRARY base URL —

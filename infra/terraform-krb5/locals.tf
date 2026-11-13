@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 locals {
   # Everything this stack creates carries this prefix, so a stray resource is
   # identifiable by name alone and not only by tag.

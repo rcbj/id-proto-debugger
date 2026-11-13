@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: image_mirror_coverage.js
 //
 // Every image the containerized test stack PULLS, and every base image a

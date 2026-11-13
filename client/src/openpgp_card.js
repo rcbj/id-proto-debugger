@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: openpgp_card.js
 //
 // OpenPGP card 3.4. The application id starts with D27600012401.

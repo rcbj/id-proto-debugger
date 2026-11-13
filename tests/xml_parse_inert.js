@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xml_parse_inert.js
 //
 // The invariant behind CodeQL alert #147 and its eleven siblings
