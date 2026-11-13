@@ -557,6 +557,21 @@ async function pivCertificates() {
   assert.ok(rowText(pin.rows).indexOf("not shown") >= 0);
   assert.ok(rowText(pin.rows).indexOf("123456") < 0,
       "the PIN was copied into the description");
+  // SP 800-73-4 Part 2 3.2.1: FF-padded to 8 bytes. The YubiKey
+  // default PIN 123456 is 313233343536FFFF on the wire.
+  assert.strictEqual(piv.verifyApdu("123456").toString("hex"),
+      "0020008008313233343536ffff");
+  assert.ok(pin.summary.indexOf("PIV card application PIN") >= 0,
+      pin.summary);
+  throws(function () {
+    piv.verifyApdu("12345");
+  }, "A PIV PIN is 6 to 8 characters.");
+  // yubikit: ORIGIN_GENERATED = 1, ORIGIN_IMPORTED = 2; retries is
+  // total then remaining.
+  var meta = rowText(piv.describeResponse(
+      fromHex("010111 02020102 030101 06020302 9000")).rows);
+  assert.ok(meta.indexOf("Origin=generated") >= 0, meta);
+  assert.ok(meta.indexOf("Retries=2 of 3 remaining") >= 0, meta);
   var failed = piv.describeResponse(Buffer.from([0x69, 0x82]));
   assert.ok(failed.summary.indexOf("6982") >= 0, failed.summary);
   assert.strictEqual(failed.certificate, null);
@@ -888,6 +903,19 @@ function oathVectors() {
   var putText = rowText(oath.describeCommand(put).rows);
   assert.ok(putText.indexOf("not shown") >= 0);
   assert.ok(putText.indexOf("12345678901234567890") < 0);
+  // The property is tag 78 and one byte with NO length (yubikit's
+  // struct.pack(">BB", TAG_PROPERTY, prop)); a short key is padded
+  // to 14 bytes, as yubikit does.
+  var touchPut = oath.putApdu({
+    name: "t", secret: Buffer.from("0102030405", "hex"), type: "HOTP",
+    digits: 6, touch: true, counter: 5
+  });
+  assert.strictEqual(touchPut.toString("hex"),
+      "00010000" + "1d" + "710174" + "7310" + "1106" +
+      "0102030405" + "00".repeat(9) + "7802" + "7a0400000005");
+  var touchText = rowText(oath.describeCommand(touchPut).rows);
+  assert.ok(touchText.indexOf("touch required") >= 0, touchText);
+  assert.ok(touchText.indexOf("Initial counter") >= 0, touchText);
   assert.strictEqual(oath.resetApdu().toString("hex"), "0004dead");
   var listed = iso.encodeTlv(0x72, Buffer.concat([
     Buffer.from([0x21]), Buffer.from("demo", "utf8")
@@ -913,10 +941,23 @@ async function openpgpKeys() {
   assert.strictEqual(rsaAttr.modulusBits, 2048);
   assert.strictEqual(rsaAttr.exponentBits, 17);
   var oid = Buffer.from("2a8648ce3d030107", "hex");
-  var ecc = pgp.parseAlgorithmAttributes(Buffer.concat([
-    Buffer.from([0x13, oid.length]), oid
-  ]));
+  // OpenPGP card 3.4 4.4.3.9: the OID follows the algorithm ID with
+  // no length byte. These are the bytes gpg writes for C1.
+  var ecc = pgp.parseAlgorithmAttributes(
+      fromHex("13 2a 86 48 ce 3d 03 01 07"));
   assert.strictEqual(ecc.curve, "P-256");
+  var ed = pgp.parseAlgorithmAttributes(
+      fromHex("16 2b 06 01 04 01 da 47 0f 01"));
+  assert.strictEqual(ed.curve, "Ed25519");
+  var withImport = pgp.parseAlgorithmAttributes(
+      fromHex("12 2b 06 01 04 01 97 55 01 05 01 ff"));
+  assert.strictEqual(withImport.curve, "X25519");
+  assert.strictEqual(withImport.importFormat, 0xff);
+  var counted = pgp.describeData(iso.encodeTlv(0x7a,
+      iso.encodeTlv(0x93, Buffer.from([0, 1, 2]))));
+  assert.ok(counted.rows.some(function (row) {
+    return row.label === "Signature counter" && row.value === "258";
+  }), "the counter inside 7A is read");
 
   var rsa = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   var rsaJwk = rsa.publicKey.export({ format: "jwk" });
@@ -1210,9 +1251,32 @@ async function readerExchanges() {
   await reader.transmit("Fake Reader 00", [fromHex("00a40400")],
       { factory: factory });
   assert.deepStrictEqual(opened, [1, 2]);
+
+  // GET RESPONSE keeps the channel and nothing else, in both CLA
+  // ranges: 13 (chained, channel 3) -> 03, 51 (further, channel 5)
+  // -> 41, 71 (further, chained) -> 41.
+  assert.strictEqual(reader.responseCla(0x13), 0x03);
+  assert.strictEqual(reader.responseCla(0x51), 0x41);
+  assert.strictEqual(reader.responseCla(0x71), 0x41);
+  // YKOATH answers 61xx and wants SEND REMAINING (A5), not C0.
+  var oathCard = scriptedCard([
+    ["00a4040007a000000527210100", "79030500009000"],
+    ["00a1000000", "7205216465616d6f6110"],
+    ["00a5000010", "720521626262626290" + "00"]
+  ]);
+  var oathRun = await reader.runSequence(oathCard.send, [
+    fromHex("00a4040007a000000527210100"), fromHex("00a1000000")
+  ], true);
+  assert.strictEqual(oathRun.length, 2);
+  assert.strictEqual(oathRun[1].status, "9000", oathCard.sent.join());
+  assert.strictEqual(reader.describeTransmit({ reader: "R",
+      apdu: "00a1000000", remainingIns: "a5" }).remainingIns, 0xa5);
+  assert.strictEqual(reader.describeTransmit({ reader: "R",
+      apdu: "00a1000000", remainingIns: "b0" }).ok, false);
   log.info("OK — 61xx is followed by GET RESPONSE on the same channel, " +
       "6Cxx is resent with the Le asked for, a sequence stops at a " +
-      "failure and runs on one exclusive connection.");
+      "failure and runs on one exclusive connection, and YKOATH gets " +
+      "SEND REMAINING.");
   log.debug("Leaving readerExchanges().");
 }
 
