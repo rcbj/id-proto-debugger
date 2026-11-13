@@ -25,6 +25,9 @@ var rfc6750 = require("./rfc6750");
 // choice arrays and the reading of a registration response live here,
 // with no DOM of their own.
 var rpMetadataChoices = require("./rp_metadata_choices");
+// What a token request and a registration may ask for. scopes_supported
+// is shown; it is not the default those two send. See oauth_scope.js.
+var oauthScope = require("./oauth_scope");
 var $ = require("jquery");
 console.log("logLevel: " + appconfig.logLevel);
 var log = bunyan.createLogger({ name: 'oauth2_oidc_1',
@@ -2147,8 +2150,14 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   var issuer = discoveryInfo["issuer"];
   var jwksUri = discoveryInfo["jwks_uri"];
   var responseTypesSupported = discoveryInfo["response_types_supported"];
-  var scopesSupported =
-      discoveryInfo["scopes_supported"].toString().replace(/,/g, " ");
+  // The authorization request's scope stays the advertisement, so the
+  // reader can see every name and narrow it. The token request does
+  // not: RFC 6749 section 4.1.3 defines no scope parameter on a code
+  // exchange, and client credentials or password take the
+  // authorization-step scope or the OIDC basics, never the whole list.
+  var rawScopes = discoveryInfo["scopes_supported"];
+  var scopesSupported = rawScopes == null ? "" :
+      oauthScope.joinAdvertised(rawScopes);
   var subjectTypesSupported = discoveryInfo["subject_types_supported"];
   var tokenEndpoint = discoveryInfo["token_endpoint"];
   var tokenEndpointAuthMethodsSupported =
@@ -2196,7 +2205,9 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
     $("#device_authorization_endpoint").closest('tr').hide();
   }
 
-  $("#scope").val(scopesSupported);
+  if (rawScopes != null) {
+    $("#scope").val(scopesSupported);
+  }
   $("#oidc_userinfo_endpoint").val(userInfoEndpoint);
   $("#jwks_endpoint").val(jwksUri);
   // Every remaining OpenID Provider Metadata member (Discovery 1.0 section 3).
@@ -2231,8 +2242,24 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
         localStorage.setItem("device_authorization_endpoint", "" );
       }
 
-      localStorage.setItem("scope", scopesSupported);
-      localStorage.setItem("token_scope", scopesSupported );
+      if (rawScopes != null) {
+        localStorage.setItem("scope", scopesSupported);
+      }
+      // Overwrite a previously seeded token_scope. Page 2 restores
+      // this key into #token_scope, so leaving the advertisement here
+      // is the request that fails with invalid_scope.
+      var tokenScope = oauthScope.tokenRequestScope(
+          $("#authorization_grant_type").val(),
+          "",
+          $("#scope").val(),
+          rawScopes);
+      localStorage.setItem("token_scope", tokenScope);
+      var refreshScope = oauthScope.tokenRequestScope(
+          "refresh_token",
+          localStorage.getItem("refresh_scope"),
+          $("#scope").val(),
+          rawScopes);
+      localStorage.setItem("refresh_scope", refreshScope);
       localStorage.setItem("jwks_endpoint", jwksUri);
       localStorage.setItem("end_session_endpoint", endSessionEndpoint);
       localStorage.setItem("debugger_initialized", true);
@@ -2274,7 +2301,8 @@ function clearConfigurationStorage() {
    "revocation_endpoint", "device_authorization_endpoint",
        "registration_endpoint",
    "oidc_userinfo_endpoint", "jwks_endpoint", "oidc_discovery_endpoint",
-   "client_id", "scope", "resource", "redirect_uri",
+   "client_id", "scope", "token_scope", "refresh_scope", "resource",
+   "redirect_uri",
    "registration_client_uri", "registration_access_token",
    "dcr_initial_access_token", "dcr_client_metadata"].forEach(function (key) {
     localStorage.setItem(key, "");
@@ -2683,9 +2711,19 @@ function buildDefaultClientMetadata() {
     default_max_age: 3600,
     require_auth_time: true
   };
+  // The intersection, not the advertisement. A registration that asks
+  // for every scopes_supported value asks for privileges no client
+  // should request by default. An empty intersection means the server
+  // advertised none of the OIDC basics, so scope is omitted.
   if (discoveryInfo && discoveryInfo.scopes_supported &&
       discoveryInfo.scopes_supported.length) {
-    md.scope = discoveryInfo.scopes_supported.join(" ");
+    var basicScope = oauthScope.registrationScope(
+        discoveryInfo.scopes_supported);
+    if (basicScope) {
+      md.scope = basicScope;
+    } else {
+      delete md.scope;
+    }
   }
   // The three partners above are the client's own preferences, not
   // discovery's. The section 4 choice arrays are NOT added here: a
