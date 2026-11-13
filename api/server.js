@@ -1453,9 +1453,14 @@ function resolveArtifact(artifact, relayState) {
       timeout: CALL_TIMEOUT,
       maxContentLength: MAX_CONTENT_LENGTH,
       maxRedirects: MAX_REDIRECTS,
+      // SOAPAction: SAML 1.1's SOAP binding (saml-bindings-1.1 section 3.1)
+      // gives requesters http://www.oasis-open.org/committees/security as
+      // the value to send, and a responder must not depend on it. 2.0 keeps
+      // the empty value it has always sent.
       headers: withUserAgent({
         'Content-Type': 'text/xml; charset=utf-8',
-        'SOAPAction': '""'
+        'SOAPAction': ctx.samlVersion === '1.1'
+          ? '"http://www.oasis-open.org/committees/security"' : '""'
       }),
       httpAgent: outboundHttpAgent(),
       httpsAgent: outboundHttpsAgent(false),
@@ -1540,6 +1545,12 @@ function handleSamlAcs(req, res) {
 }
 app.post('/samlacs', handleSamlAcs);
 app.get('/samlacs', handleSamlAcs);
+// SAML 1.1's Browser/Artifact consumer, at a location of its own. A SAML 1.1
+// service provider picks the browser profile by which assertion consumer its
+// shire names (the profile bound to that AssertionConsumerService in its
+// metadata), so POST and artifact cannot share /samlacs. Same handler: what
+// arrives here is a SAMLart and TARGET on a GET.
+app.get('/samlacs/artifact', handleSamlAcs);
 
 // Single Logout service. Receives the IdP's LogoutResponse (or an IdP-initiated
 // LogoutRequest) and shows it on the results page. Reuses the ACS handler,

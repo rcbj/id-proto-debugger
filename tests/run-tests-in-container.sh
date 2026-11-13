@@ -115,6 +115,11 @@ init()
   # SAML: must match the client bundle's baked env (service DNS names).
   API_BASE_URL="${API_BASE_URL:-https://api:4000}"
   SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-https://client:3000/saml/sp}"
+  # Exported HERE, not only by configureKeycloak() (common.sh's declare -gx):
+  # a focused run with no Keycloak in its stack (--saml-only=sts) never calls
+  # that, and every SAML job then died with "SAML_SP_ENTITY_ID environment
+  # variable is not set".
+  export SAML_SP_ENTITY_ID
   # THE api AND THE MOCK STS AS THIS CONTAINER REACHES THEM, and neither is
   # API_BASE_URL above. That one is the SAML / WS-Federation variable — the
   # address the identity provider is told to POST to, which common.sh registers

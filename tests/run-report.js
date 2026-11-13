@@ -4250,11 +4250,15 @@ function buildJobs() {
   // same device the SAML 2.0 job's `SAML_STS_METADATA_URL` is and computed the
   // same way. Nothing has to be provisioned: that service accepts any
   // identifier and mints the document on the ask.
-  for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
+  //
+  // ONE JOB PER BROWSER PROFILE (#307). The SAML 1.1 request is always a GET
+  // (Shibboleth's AuthnRequest profile defines no form POST), so the old
+  // "Redirect" and "POST" jobs were the same flow; the profile is chosen by
+  // which assertion consumer the shire names.
+  for (const SAML_BINDING of ["post", "artifact"]) {
     const job = {
-      name: `SAML 1.1 SSO — HTTP ${SAML_BINDING === 'post' ?
-          'POST' : SAML_BINDING === 'artifact' ?
-          'Artifact' : 'Redirect'} binding (mock STS)`,
+      name: `SAML 1.1 SSO — Browser/${SAML_BINDING === 'artifact' ?
+          'Artifact' : 'POST'} profile (iya-sts)`,
       script: "saml11_sso.js",
       env: {
         SAML_BINDING,

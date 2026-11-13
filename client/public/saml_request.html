@@ -203,6 +203,11 @@ function samlSetAllPanes(expand) {
       <input class="stored" type="text" id="saml_acs_url" name="saml_acs_url" />
       <div class="saml-note" id="saml_acs_url_note"></div>
     </div>
+    <div class="saml-field saml-hidden" id="saml11_artifact_acs_field">
+      <label class="saml-has-copy" for="saml11_artifact_acs_url" title="SAML 1.1 only. The Browser/Artifact assertion consumer, at its own location: the shire a SAML 1.1 request sends picks the browser profile by which consumer it names, so the two cannot share one.">Artifact ACS URL (SAML 1.1) <button type="button" class="saml-copy" onclick="return saml_request.copyField('saml11_artifact_acs_url');">Copy</button></label>
+      <input class="stored" type="text" id="saml11_artifact_acs_url" name="saml11_artifact_acs_url" />
+      <div class="saml-note">Sent as shire when the response binding is Browser/Artifact. Its AssertionConsumerService in the SP metadata is bound to artifact-01.</div>
+    </div>
 
     <div class="saml-field saml-check" id="saml_sign_field">
       <input class="stored" type="checkbox" id="saml_sign_request" name="saml_sign_request" checked="checked" onchange="return saml_request.onSignChange();" />

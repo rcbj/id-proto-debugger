@@ -33,30 +33,31 @@
 // inter-site transfer service carrying a `TARGET`. What a real SAML 1.1 service
 // provider actually sends is Shibboleth's request profile — identified by
 // `urn:mace:shibboleth:1.0:profiles:AuthnRequest`, four query parameters
-// (`TARGET`, `shire`, `providerId`, `time`), not a standard, and the one every
-// deployment used. That is what this page sends, and it is why five settings in
-// the SP / Request pane are greyed out and switched off when 1.1 is selected:
-// there is nothing to sign, nothing to encrypt, nowhere to put a subject hint,
-// and SAML 1.1 has no Single Logout at all. See applyVersionAvailability(),
-// which is the one place that decision is written down.
+// (`providerId`, `shire`, `target`, `time`, in that spelling), and the one
+// every deployment used. That is what this page sends — exactly those four,
+// built by saml_message.saml11AuthnRequestParams() — and it is why five
+// settings in the SP / Request pane are greyed out and switched off when 1.1
+// is selected: there is nothing to sign, nothing to encrypt, nowhere to put a
+// subject hint, and SAML 1.1 has no Single Logout at all. See
+// applyVersionAvailability(), which is the one place that decision is written
+// down.
 //
-// The three binding choices keep their meanings and get 1.1 spellings:
+// The request is ALWAYS a top-level GET to the inter-site transfer service:
+// the profile defines no form-POST request, so the request binding selector
+// is disabled on 1.1. The response binding is the browser profile, and it is
+// chosen the only way SAML 1.1 allows — by WHICH assertion consumer the
+// `shire` names. The service provider's metadata lists two, at different
+// locations, each bound to its profile:
 //
-//   redirect  the Shibboleth request as a top-level GET to the inter-site
-//             transfer service; the response comes back on Browser/POST.
-//   post      the same parameters as a form POST to that endpoint; the response
-//             again on Browser/POST. (SAML 1.1 defines no POST-bound request —
-//             this is the same non-standard request delivered the other way,
-//             which the mock STS accepts and a Shibboleth IdP would not.)
-//   artifact  the request as a GET, and the response on Browser/Artifact: a
-//             `SAMLart` on a redirect to the assertion consumer, resolved by
-//             the API over the SOAP binding at the IdP's SAML responder.
+//   Browser/POST      shire = the ACS URL; the response is a form POST.
+//   Browser/Artifact  shire = the artifact ACS URL; the response is a
+//                     `SAMLart` on a redirect there, resolved by the API over
+//                     the SOAP binding at the IdP's SAML responder.
 //
-// Two of the parameters this page sends are NON-SPEC and are marked as such
-// wherever they appear: `profile=post|artifact`, because nothing in SAML 1.1
-// lets a relying party choose between the two browser profiles, and `format`,
-// because nothing lets it ask for a NameIdentifier format either. Both are
-// ignored by an identity provider that does not know them.
+// Until #307 this page also sent `profile=post|artifact` and `format`, which
+// no specification defines, and spelled the relay value `TARGET`, which is
+// the response's name for it rather than the request profile's. All three are
+// gone; see saml_message.saml11AuthnRequestParams().
 //
 // SAML 1.0 remains reference-only: it is 1.1 with a MinorVersion of 0 and
 // nothing here has an implementation to point at.
@@ -95,6 +96,9 @@ var urlSafety = require("./url_safety");
 // EncryptedData it builds around the shared encryption pieces.
 // ---------------------------------------------------------------------------
 var xmldsig = require("./xmldsig");
+// The SAML 1.1 request's parameters: one builder for this page and the node
+// tests (tests/saml_message_engine.js).
+var samlMessage = require("./saml_message");
 // The post-quantum SignatureMethods and the bridge to the engines that
 // perform them. See docs/xmldsig-pqc.md.
 var xdPqc = require("./xmldsig_pqc");
@@ -215,8 +219,31 @@ function isReferenceOnly() {
 // ---------------------------------------------------------------------------
 function requestBinding() {
   log.debug("Entering requestBinding().");
+  // SAML 1.1's request is a GET and nothing else: Shibboleth's AuthnRequest
+  // profile defines no form POST. The selector keeps its (2.0) value.
+  if (isSaml11()) {
+    log.debug("Leaving requestBinding(). SAML 1.1 is always a GET.");
+    return 'redirect';
+  }
   log.debug("Leaving requestBinding().");
   return val('saml_binding') === 'post' ? 'post' : 'redirect';
+}
+
+// SAML 1.1's two assertion consumers. The browser profile is chosen by
+// which one the shire names, so they must be different locations; the
+// artifact one is its own field, defaulted from the ACS URL.
+function saml11ArtifactAcsUrl() {
+  log.debug("Entering saml11ArtifactAcsUrl().");
+  log.debug("Leaving saml11ArtifactAcsUrl().");
+  return val('saml11_artifact_acs_url');
+}
+
+function saml11Shire() {
+  log.debug("Entering saml11Shire().");
+  var shire = responseBinding() === 'artifact' ? saml11ArtifactAcsUrl() :
+      val('saml_acs_url');
+  log.debug("Leaving saml11Shire().");
+  return shire;
 }
 function responseBinding() {
   log.debug("Entering responseBinding().");
@@ -917,9 +944,15 @@ function applyVersionAvailability() {
   relabelOptions('saml_binding', {
     redirect: isEleven ? 'HTTP Redirect (GET to the inter-site transfer ' +
         'service)' : 'HTTP-Redirect (GET)',
-    post: isEleven ? 'HTTP POST (form POST to the inter-site transfer ' +
-        'service)' : 'HTTP-POST'
+    post: isEleven ? 'HTTP POST (not defined for SAML 1.1)' : 'HTTP-POST'
   });
+  // The request is always a GET on 1.1 (requestBinding()), so the selector
+  // is switched off there; its stored value is the 2.0 preference.
+  var bindingSel = el('saml_binding');
+  if (bindingSel) {
+    bindingSel.disabled = isEleven;
+  }
+  show('saml11_artifact_acs_field', isEleven);
   relabelOptions('saml_response_binding', {
     post: isEleven ? 'Browser/POST (section 4.2)' : 'HTTP-POST',
     artifact: isEleven ? 'Browser/Artifact (section 4.1)' : 'HTTP-Artifact'
@@ -934,12 +967,13 @@ function applyVersionAvailability() {
       'SAML ' + v + ' has no Single Logout. There is no message for one and ' +
       'nothing publishes an endpoint, so these fields do not apply.');
   setText('saml_sp_entity_id_note', isEleven ?
-      'Sent as the non-standard providerId parameter, which is the only ' +
-      'way a SAML 1.1 relying party can name itself. It becomes the ' +
-      'assertion\'s audience restriction.' : '');
+      'Sent as providerId, the Shibboleth AuthnRequest profile\'s name for ' +
+      'the service provider and the only way a SAML 1.1 relying party can ' +
+      'name itself. It becomes the assertion\'s audience restriction.' : '');
   setText('saml_acs_url_note', isEleven ?
-      'Sent as Shibboleth\'s shire parameter. It is where the identity ' +
-      'provider POSTs the Response, or redirects with a SAMLart.' : '');
+      'Sent as shire for Browser/POST: where the identity provider POSTs ' +
+      'the Response. Its AssertionConsumerService in the SP metadata is ' +
+      'bound to browser-post.' : '');
   // Note the wording: the checkbox above is DISABLED and still shows whatever
   // it was ticked to, because its state is the SAML 2.0 preference and is
   // persisted — unticking it here would mean a reload on 1.1 silently turned
@@ -1021,8 +1055,9 @@ function versionNote(v) {
       'identity-provider-initiated, and what this page sends is ' +
       'Shibboleth\'s request profile ' +
       '(urn:mace:shibboleth:1.0:profiles:AuthnRequest): the ' +
-      'query parameters TARGET, shire, providerId and time, plus the ' +
-      'non-standard profile and format. Nothing in that is signed or ' +
+      'query parameters providerId, shire, target and time, sent as a ' +
+      'GET. The browser profile is chosen by which assertion consumer the ' +
+      'shire names. Nothing in that is signed or ' +
       'encrypted, there is no subject hint to send, and the protocol has no ' +
       'Single Logout — so those settings are switched off below rather than ' +
       'ignored. Keycloak has not spoken SAML 1.1 for years; the mock STS ' +
@@ -1050,11 +1085,11 @@ function bindingNote(v) {
     return '';
   }
   log.debug("Leaving bindingNote(). 1.1.");
-  return 'Redirect and POST differ only in how the request reaches the ' +
-    'inter-site transfer service; which browser profile answers is the ' +
-    'response binding below. Note that SAML 1.1 defines no POST-bound ' +
-    'request at all; that option sends the same non-standard parameters as ' +
-    'a form and needs an identity provider that reads one.';
+  return 'The SAML 1.1 request is always a GET to the inter-site transfer ' +
+    'service: Shibboleth\'s AuthnRequest profile defines no form POST, so ' +
+    'this selector does not apply. Which browser profile answers is the ' +
+    'response binding below, and it is chosen by the shire: the ACS URL ' +
+    'for Browser/POST, the artifact ACS URL for Browser/Artifact.';
 }
 
 // What the selected response binding needs, and whether the loaded metadata
@@ -1329,14 +1364,22 @@ function buildSpMetadata() {
   // binding into the profile, which is what Shibboleth's own metadata does. A
   // 1.1 document that advertised the 2.0 HTTP-POST binding URI here describes
   // an endpoint no SAML 1.1 identity provider will use.
+  //
+  // In SAML 1.1 the two must also be at DIFFERENT locations: the shire a
+  // request sends has to match one of these, and the profile bound to the
+  // one it matches is how the identity provider answers. Two profiles at one
+  // location would leave the shire saying nothing.
   var eleven = isSaml11();
+  var artifactAcs = eleven ? saml11ArtifactAcsUrl() : acs;
   var acsSvc = acs
     ? '\n    <md:AssertionConsumerService Binding="' +
         (eleven ? SAML11.post : BINDING.post) +
         '" Location="' + xmlEscape(acs) + '" index="0" isDefault="true"/>' +
-      '\n    <md:AssertionConsumerService Binding="' +
-        (eleven ? SAML11.artifact : BINDING.artifact) +
-          '" Location="' + xmlEscape(acs) + '" index="1"/>'
+      (artifactAcs && !(eleven && artifactAcs === acs)
+        ? '\n    <md:AssertionConsumerService Binding="' +
+            (eleven ? SAML11.artifact : BINDING.artifact) +
+              '" Location="' + xmlEscape(artifactAcs) + '" index="1"/>'
+        : '')
     : '';
   // SAML 1.1 has no Single Logout and no request to sign, so a descriptor for
   // it carries neither the SingleLogoutService endpoints nor
@@ -1403,36 +1446,26 @@ function ssoDestination(binding) {
 // ---------------------------------------------------------------------------
 // THE SAML 1.1 REQUEST, WHICH IS NOT A DOCUMENT.
 //
-// Shibboleth's AuthnRequest profile: four parameters, unsigned, on the query
-// string of a top-level GET (or, for the POST binding here, as form fields).
-// Two more are NON-SPEC and are named as such everywhere they appear —
-// `profile`, because nothing in SAML 1.1 lets a relying party choose between
-// the two browser profiles, and `format`, because nothing lets it ask for a
-// NameIdentifier format. An identity provider that does not know them ignores
-// them, which is why sending them costs nothing.
+// Shibboleth's AuthnRequest profile: providerId, shire, target and time,
+// unsigned, on the query string of a top-level GET — exactly those, built by
+// saml_message.saml11AuthnRequestParams(), which refuses a request with no
+// providerId or no shire. The shire is the assertion consumer for the
+// selected browser profile (saml11Shire()).
 //
-// `TARGET` is the relay state. The profile intends it as the URL of the
-// resource the person was trying to reach, and what the binding actually
-// GUARANTEES is that it comes back byte for byte — which is what this page
-// needs it for, exactly as RelayState is used on the 2.0 side: the artifact
-// flow carries the API's `art:<id>` context handle in it, and there is nowhere
-// else in the protocol to put one.
+// `target` is the relay value, returned on the response as TARGET. The
+// profile intends it as the URL of the resource the person was trying to
+// reach, and what the binding GUARANTEES is that it comes back byte for byte
+// — which is what this page needs it for, exactly as RelayState is used on
+// the 2.0 side: the artifact flow carries the API's `art:<id>` context handle
+// in it, and there is nowhere else in the protocol to put one.
 // ---------------------------------------------------------------------------
 function saml11RequestParams(target) {
   log.debug("Entering saml11RequestParams().");
-  var out = [];
-  out.push(['TARGET', target || '']);
-  var acs = val('saml_acs_url');
-  if (acs) out.push(['shire', acs]);
-  var sp = val('saml_sp_entity_id');
-  if (sp) out.push(['providerId', sp]);
-  // Seconds since the epoch, which is what Shibboleth sends. Not checked by
-  // anything here; it is in the profile and a service provider that omitted it
-  // would be sending a request no Shibboleth identity provider recognises.
-  out.push(['time', String(Math.floor(Date.now() / 1000))]);
-  out.push(['profile', responseBinding()]);
-  var fmt = val('saml_nameid_format');
-  if (fmt) out.push(['format', fmt]);
+  var out = samlMessage.saml11AuthnRequestParams({
+    providerId: val('saml_sp_entity_id'),
+    shire: saml11Shire(),
+    target: target || ''
+  });
   log.debug("Leaving saml11RequestParams(). " + out.length + " parameters.");
   return out;
 }
@@ -1448,22 +1481,11 @@ function saml11QueryString(params) {
   return parts.join('&');
 }
 
-// The request as it will actually be sent, for the read-only box on the page.
-// A URL for the two GET bindings; the endpoint and the form fields for the POST
-// one, because there is no URL to show — the parameters are in the body.
+// The request as it will actually be sent, for the read-only box on the page:
+// the inter-site transfer URL with the four parameters on it.
 function saml11RequestText(dest, params) {
   log.debug("Entering saml11RequestText().");
   var qs = saml11QueryString(params);
-  if (requestBinding() === 'post') {
-    var lines = ['POST ' + (dest || '(no inter-site transfer service — ' +
-                 'load metadata)'),
-                 'Content-Type: application/x-www-form-urlencoded', ''];
-    for (var i = 0; i < params.length; i++) {
-      lines.push(params[i][0] + '=' + params[i][1]);
-    }
-    log.debug("Leaving saml11RequestText(). A form POST.");
-    return lines.join('\n');
-  }
   log.debug("Leaving saml11RequestText(). A URL.");
   return dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') + qs) : qs;
 }
@@ -1538,8 +1560,14 @@ function buildAuthnRequest() {
   // fields. buildRequestUi() and callIdp() both compose it from the same
   // saml11RequestParams(), so what is shown is what is sent.
   if (version === '1.1') {
-    log.debug("Leaving buildAuthnRequest(). SAML 1.1 sends no document.");
-    return saml11RequestText(dest, saml11RequestParams('saml_request'));
+    try {
+      var text11 = saml11RequestText(dest, saml11RequestParams('saml_request'));
+      log.debug("Leaving buildAuthnRequest(). SAML 1.1 sends no document.");
+      return text11;
+    } catch (e) {
+      log.debug("Leaving buildAuthnRequest(). SAML 1.1 refused.");
+      return '(not built: ' + e.message + ')';
+    }
   }
 
   if (version !== '2.0') {
@@ -1932,8 +1960,7 @@ function buildRequestUi() {
   if (isSaml11()) {
     var dest11 = ssoDestination(requestBinding());
     setStatus('saml_call_status', dest11
-      ? ('Built the SAML 1.1 ' + (requestBinding() === 'post' ?
-         'form POST' : 'inter-site transfer request') + ' for the ' +
+      ? ('Built the SAML 1.1 inter-site transfer request for the ' +
          (responseBinding() === 'artifact' ? 'Browser/Artifact' :
           'Browser/POST') + ' profile. Nothing in it is signed — SAML 1.1 ' +
          'has no request document.')
@@ -2281,17 +2308,27 @@ function callIdpSaml11() {
     return opFailure('Send AuthnRequest',
                      'no inter-site transfer service address.');
   }
-  if (!val('saml_acs_url')) {
-    // shire is what tells the identity provider where the assertion goes. With
-    // no request message there is no other way to say it, and an IdP that has
-    // to guess sends the response to its own mock relying party — which looks
-    // exactly like this page never being answered.
-    setStatus('saml_call_status', 'Set the ACS URL first — SAML 1.1 has no ' +
-              'request message, so the shire parameter is the only way to ' +
-              'say where the assertion should go.');
+  if (!saml11Shire()) {
+    // shire is what tells the identity provider where the assertion goes, and
+    // which of the two consumers it names is how it picks the browser profile.
+    // With no request message there is no other way to say either.
+    var which = responseBinding() === 'artifact' ? 'artifact ACS URL' :
+        'ACS URL';
+    setStatus('saml_call_status', 'Set the ' + which + ' first — SAML 1.1 ' +
+              'has no request message, so the shire parameter is the only ' +
+              'way to say where the assertion should go.');
     log.debug("Leaving callIdpSaml11().");
     return opFailure('Send AuthnRequest',
-                     'no ACS URL to send as the shire parameter.');
+                     'no ' + which + ' to send as the shire parameter.');
+  }
+  // The rest of the profile's required parameters, refused here rather than
+  // sent without: saml11AuthnRequestParams() throws on a missing providerId.
+  try {
+    saml11RequestParams('saml_request');
+  } catch (e) {
+    setStatus('saml_call_status', e.message);
+    log.debug("Leaving callIdpSaml11(). Refused by the profile.");
+    return opFailure('Send AuthnRequest', e.message);
   }
 
   if (responseBinding() === 'artifact') {
@@ -2314,21 +2351,6 @@ function callIdpSaml11() {
         var params = saml11RequestParams(ctx.relayState);
         setVal('saml_authn_request', saml11RequestText(dest, params));
         artifactSent = true;
-        if (binding === 'post') {
-          var form = {};
-          for (var k = 0; k < params.length; k++) {
-            form[params[k][0]] = params[k][1];
-          }
-          var formId = opSent('Send AuthnRequest', 'sent to ' + dest +
-                              ' (form POST, Browser/Artifact)');
-          try {
-            submitPostForm(dest, form);
-          } catch (e) {
-            opFailed(formId, e.message);
-            throw e;
-          }
-          return;
-        }
         var url = dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
             saml11QueryString(params);
         var id = opSent('Send AuthnRequest', 'sent to ' + dest +
@@ -2353,24 +2375,6 @@ function callIdpSaml11() {
   var postParams = saml11RequestParams('saml_request');
   setVal('saml_authn_request', saml11RequestText(dest, postParams));
   saveState();
-
-  if (binding === 'post') {
-    var form = {};
-    for (var i = 0; i < postParams.length; i++) {
-      form[postParams[i][0]] = postParams[i][1];
-    }
-    var postId = opSent('Send AuthnRequest', 'sent to ' + dest +
-                        ' (form POST, Browser/POST profile)');
-    try {
-      submitPostForm(dest, form);
-    } catch (e) {
-      setStatus('saml_call_status', 'Send failed: ' + e.message);
-      log.debug("Leaving callIdpSaml11().");
-      return opFailed(postId, e.message);
-    }
-    log.debug("Leaving callIdpSaml11(). Form POST.");
-    return false;
-  }
 
   var redirectUrl = dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
       saml11QueryString(postParams);
@@ -2816,6 +2820,13 @@ window.onload = function () {
     ? appconfig.acsUrl
     : (window.location.origin + '/saml_response.html');
   if (!val('saml_acs_url') && acsDefault) setVal('saml_acs_url', acsDefault);
+  // SAML 1.1's Browser/Artifact consumer, at its own location so the shire
+  // can tell the two profiles apart. The api answers it beside /samlacs.
+  if (!val('saml11_artifact_acs_url') && hasSamlLanding() &&
+      appconfig.acsUrl) {
+    setVal('saml11_artifact_acs_url',
+           String(appconfig.acsUrl).replace(/\/+$/, '') + '/artifact');
+  }
   // Configuration Parameters: fall back to the dummy defaults declared in the
   // HTML (input value / textarea content) when restore left a field blank — so
   // the sample endpoints/cert show on a fresh page even if an earlier visit
