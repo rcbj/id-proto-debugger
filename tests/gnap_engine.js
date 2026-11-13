@@ -3,9 +3,14 @@
 // ---------------------------------------------------------------------------
 // The GNAP client instance, driven in node. The signature checks use
 // node's own crypto, which is a second implementation of the same
-// bytes. The live half posts one signed grant to iya-sts and reads
-// the answer. It does not register a client and it does not change
-// that server. A continuation token, when one is issued, is deleted.
+// bytes. The live half must get a GRANT out of iya-sts for each of
+// httpsig, jwsd and jws, continue one and revoke all three. In
+// development mode iya-sts creates an application for an unseen key
+// and then refuses the sample's `ssf` access as its own protected
+// scope; that refusal is not a pass. The job declares `ssf.read` on
+// that entry through /admin-api, asks again, and forgets the entry at
+// the end. In product mode an unprovisioned key cannot be granted
+// anything, and the job checks the proofs only and says so.
 //
 // NOTE ON OPTIONS: run-report.js spawns every job as
 // `node <script>.js --url <BASE_URL>`. This job parses no arguments,
@@ -384,51 +389,136 @@ function tamper(prepared) {
   };
 }
 
-async function revokeIfIssued(record, json) {
-  log.debug("Entering revokeIfIssued().");
-  var cont = json && json.continue;
-  if (!cont || !cont.uri) {
-    log.debug("Leaving revokeIfIssued(). No continuation.");
-    return;
-  }
-  var token = cont.access_token && cont.access_token.value;
-  var prepared = await gnap.prepare(record, "DELETE", cont.uri, {
-    token: token,
-    proof: "httpsig"
-  });
-  var gone = await post(prepared);
-  log.info("Revoked the continuation. HTTP " + gone.status);
-  log.debug("Leaving revokeIfIssued().");
+// RFC 7638 thumbprint of the client key. iya-sts names the application
+// it creates for an unseen key in development mode `gnap-jkt-<this>`,
+// so finding it in a refusal shows the AS verified THIS key.
+function thumbprint(publicJwk) {
+  log.debug("Entering thumbprint().");
+  var members = publicJwk.kty === "OKP"
+    ? { crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x }
+    : (publicJwk.kty === "RSA"
+      ? { e: publicJwk.e, kty: publicJwk.kty, n: publicJwk.n }
+      : { crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x,
+        y: publicJwk.y });
+  var out = crypto.createHash("sha256")
+    .update(JSON.stringify(members)).digest("base64url");
+  log.debug("Leaving thumbprint().");
+  return out;
 }
 
-function proved(answer) {
-  log.debug("Entering proved().");
+// iya-sts's management API. tools/attach-admin-token.js, which
+// run-report.js preloads into every job, adds the bearer token when
+// the run minted one.
+async function adminPost(base, route, body) {
+  log.debug("Entering adminPost(). " + route);
+  var answer = await post({
+    method: "POST",
+    url: base + "/admin-api" + route,
+    headers: { "Content-Type": "application/json",
+      Accept: "application/json" },
+    body: JSON.stringify(body)
+  });
+  log.debug("Leaving adminPost(). HTTP " + answer.status);
+  return answer;
+}
+
+// What the AS made of one signed grant request. Exactly three answers
+// are acceptable, and only one of them is a grant:
+//   issued     — a pending grant, with an interaction and a
+//                continuation (or, with no interaction, a token).
+//   product    — product mode: the proof verified and the key is
+//                unregistered (STS-GNAP-0082). No grant is possible
+//                without provisioning, so the caller says so.
+//   protected  — development mode: the proof verified, iya-sts made
+//                an application for THIS key, and then refused the
+//                sample's `ssf` access as its own protected scope
+//                (STS-GNAP-0719). The caller declares the scope and
+//                asks again; this is not an answer to stop at.
+function classify(answer, app) {
+  log.debug("Entering classify().");
+  var json = answer.json || {};
   var err = errorOf(answer.json);
-  var issued = answer.json && (answer.json.continue ||
-    answer.json.interact || answer.json.access_token);
-  if (issued && answer.status >= 200 && answer.status < 300) {
-    log.debug("Leaving proved(). Issued.");
-    return;
+  if (answer.status >= 200 && answer.status < 300 && !err.code &&
+      (json.continue || json.access_token)) {
+    log.debug("Leaving classify(). Issued.");
+    return "issued";
   }
-  assert.ok(answer.status >= 400 && answer.status < 500,
-    "expected a grant or a client error, got " + answer.status +
-    " " + answer.text.slice(0, 500));
-  // Past the proof, an AS may still refuse: an unregistered key, or
-  // (RFC 9635 section 3.6) request_denied because the access asked for
-  // is not this client's to have — iya-sts 1.0.0 registers the key and
-  // then refuses "ssf" as its own protected scope. Either way the
-  // signature verified; a bad proof is invalid_client instead, which
-  // the tampered and unsigned cases below hold the AS to.
-  if (err.code === "request_denied") {
-    log.info("Signature verified; the AS denied the access: " +
-      String(err.description).slice(0, 200));
-    log.debug("Leaving proved(). Denied after verification.");
-    return;
+  if (answer.status === 401 && err.code === "invalid_client" &&
+      /not registered/.test(err.description) &&
+      /product mode/.test(err.description)) {
+    log.debug("Leaving classify(). Product mode.");
+    return "product";
   }
-  assert.ok(/not registered/.test(err.description),
-    "a signature that verified is refused as an unregistered key; " +
-    "got " + answer.text.slice(0, 500));
-  log.debug("Leaving proved(). Unregistered.");
+  if (answer.status === 403 && err.code === "request_denied" &&
+      err.description.indexOf(app) >= 0 &&
+      /protected scope/.test(err.description)) {
+    log.debug("Leaving classify(). Protected scope.");
+    return "protected";
+  }
+  log.debug("Leaving classify(). Unexpected.");
+  throw new assert.AssertionError({
+    message: "expected a grant, a product-mode refusal of an " +
+      "unregistered key, or the protected-scope refusal naming " + app +
+      "; got HTTP " + answer.status + " " + answer.text.slice(0, 500)
+  });
+}
+
+// The answer must be a grant, and it must carry what RFC 9635 section
+// 3 says this request asked for: an interaction (the sample asks for
+// redirect and user_code with a redirect finish) and a continuation.
+function assertGrant(answer, proof) {
+  log.debug("Entering assertGrant(). proof=" + proof);
+  var json = answer.json || {};
+  assert.ok(answer.status >= 200 && answer.status < 300,
+    proof + ": expected a grant, got HTTP " + answer.status + " " +
+    answer.text.slice(0, 500));
+  assert.ok(json.continue && json.continue.uri &&
+    json.continue.access_token && json.continue.access_token.value,
+    proof + ": the grant has no continuation (RFC 9635 section 3.1): " +
+    answer.text.slice(0, 500));
+  assert.ok(json.interact && /^https?:\/\//.test(json.interact.redirect),
+    proof + ": the grant has no redirect interaction: " +
+    answer.text.slice(0, 500));
+  assert.strictEqual(typeof json.interact.finish, "string",
+    proof + ": the grant has no finish nonce (RFC 9635 section 3.3.5)");
+  log.debug("Leaving assertGrant().");
+}
+
+// Section 5: continue once (iya-sts asks for a wait, so too_fast is
+// the expected answer, and it hands over a fresh continuation token),
+// then section 5.4: revoke with whichever token is current.
+async function continueAndRevoke(record, json, proof, tryContinue) {
+  log.debug("Entering continueAndRevoke(). proof=" + proof);
+  var uri = json.continue.uri;
+  var token = json.continue.access_token.value;
+  if (tryContinue) {
+    var again = await post(await gnap.prepare(record, "POST", uri, {
+      token: token,
+      proof: proof
+    }));
+    var againErr = errorOf(again.json);
+    assert.ok((again.status >= 200 && again.status < 300) ||
+      againErr.code === "too_fast",
+      proof + ": continuing the grant failed: HTTP " + again.status +
+      " " + again.text.slice(0, 500));
+    var next = again.json && again.json.continue;
+    if (next && next.access_token && next.access_token.value) {
+      token = next.access_token.value;
+      uri = next.uri || uri;
+    }
+    log.info("Continued the grant (" + proof + "): HTTP " +
+      again.status + (againErr.code ? " " + againErr.code : "") + ".");
+  }
+  var gone = await post(await gnap.prepare(record, "DELETE", uri, {
+    token: token,
+    proof: proof
+  }));
+  assert.ok(gone.status >= 200 && gone.status < 300,
+    proof + ": revoking the grant failed: HTTP " + gone.status + " " +
+    gone.text.slice(0, 500));
+  log.info("Revoked the grant (" + proof + "): HTTP " + gone.status +
+    ".");
+  log.debug("Leaving continueAndRevoke().");
 }
 
 async function liveGrant() {
@@ -448,6 +538,7 @@ async function liveGrant() {
     .indexOf("httpsig") >= 0, "discovery does not offer httpsig");
   var grantUrl = discovery.json.grant_request_endpoint;
   var record = await gnap.generateKey("ES256", "debugger-live");
+  var app = "gnap-jkt-" + thumbprint(record.publicJwk);
   var display = {
     name: "GNAP debugger",
     uri: "https://client.example/gnap.html"
@@ -460,44 +551,90 @@ async function liveGrant() {
     log.debug("Leaving grantJson().");
     return json;
   }
-  var prepared = await gnap.prepare(record, "POST", grantUrl, {
-    json: grantJson("httpsig"),
-    proof: "httpsig"
-  });
-  var answer = await post(prepared);
-  proved(answer);
-  await revokeIfIssued(record, answer.json);
-  var broken = await post(tamper(prepared));
-  var brokenErr = errorOf(broken.json);
-  assert.ok(/does not verify/.test(brokenErr.description),
-    "a tampered signature should be refused as a bad proof; got " +
-    broken.text.slice(0, 500));
-  var unsigned = await gnap.prepare(record, "POST", grantUrl, {
-    json: grantJson("httpsig"),
-    sign: false
-  });
-  var bare = await post(unsigned);
-  var bareErr = errorOf(bare.json);
-  assert.strictEqual(bareErr.code, "invalid_client");
-  assert.ok(!/not registered/.test(bareErr.description),
-    "an unsigned request was treated as a verified key: " +
-    bare.text.slice(0, 500));
-  var detached = await gnap.prepare(record, "POST", grantUrl, {
-    json: grantJson("jwsd"),
-    proof: "jwsd"
-  });
-  var detachedAnswer = await post(detached);
-  proved(detachedAnswer);
-  await revokeIfIssued(record, detachedAnswer.json);
-  var attached = await gnap.prepare(record, "POST", grantUrl, {
-    json: grantJson("jws"),
-    proof: "jws"
-  });
-  var attachedAnswer = await post(attached);
-  proved(attachedAnswer);
-  await revokeIfIssued(record, attachedAnswer.json);
-  log.info("OK — iya-sts accepted httpsig, jwsd and jws, and " +
-    "refused a tampered signature and an unsigned request.");
+  async function ask(proof) {
+    log.debug("Entering ask(). proof=" + proof);
+    var answer = await post(await gnap.prepare(record, "POST", grantUrl,
+      { json: grantJson(proof), proof: proof }));
+    log.debug("Leaving ask().");
+    return answer;
+  }
+  var declared = false;
+  try {
+    var first = await ask("httpsig");
+    var kind = classify(first, app);
+    if (kind === "protected") {
+      var added = await adminPost(base, "/applications/add", {
+        application: app,
+        attribute: "oauthAllowedScope",
+        value: "ssf.read"
+      });
+      assert.ok(added.status === 200 && added.json && added.json.ok,
+        "declaring ssf.read on " + app + " was refused: HTTP " +
+        added.status + " " + added.text.slice(0, 500));
+      declared = true;
+      log.info("iya-sts verified the key and created " + app + "; " +
+        "declared ssf.read on it so the grant can be issued.");
+      first = await ask("httpsig");
+      kind = classify(first, app);
+      assert.strictEqual(kind, "issued", "after declaring ssf.read the " +
+        "grant was still refused: " + first.text.slice(0, 500));
+    }
+    if (kind === "issued") {
+      assertGrant(first, "httpsig");
+      await continueAndRevoke(record, first.json, "httpsig", true);
+    } else {
+      log.warn("iya-sts is in product mode and this key is not " +
+        "provisioned, so no grant was issued. Only the proofs were " +
+        "checked; continuation and revocation were not.");
+    }
+    var tampered = await post(tamper(await gnap.prepare(record, "POST",
+      grantUrl, { json: grantJson("httpsig"), proof: "httpsig" })));
+    var tamperedErr = errorOf(tampered.json);
+    assert.strictEqual(tamperedErr.code, "invalid_client",
+      "a tampered signature should be invalid_client; got " +
+      tampered.text.slice(0, 500));
+    assert.ok(/does not verify/.test(tamperedErr.description),
+      "a tampered signature should be refused as a bad proof; got " +
+      tampered.text.slice(0, 500));
+    var unsigned = await gnap.prepare(record, "POST", grantUrl, {
+      json: grantJson("httpsig"),
+      sign: false
+    });
+    var bare = await post(unsigned);
+    var bareErr = errorOf(bare.json);
+    assert.strictEqual(bareErr.code, "invalid_client",
+      "an unsigned request should be invalid_client; got " +
+      bare.text.slice(0, 500));
+    assert.ok(!/not registered/.test(bareErr.description),
+      "an unsigned request was treated as a verified key: " +
+      bare.text.slice(0, 500));
+    var proofs = ["jwsd", "jws"];
+    var i;
+    for (i = 0; i < proofs.length; i++) {
+      var answer = await ask(proofs[i]);
+      var got = classify(answer, app);
+      assert.strictEqual(got, kind, proofs[i] + " was answered " + got +
+        " where httpsig was answered " + kind + ": " +
+        answer.text.slice(0, 500));
+      if (got === "issued") {
+        assertGrant(answer, proofs[i]);
+        await continueAndRevoke(record, answer.json, proofs[i], false);
+      }
+    }
+  } finally {
+    if (declared) {
+      var forgot = await adminPost(base, "/applications/forget",
+        { application: app });
+      log.info("Forgot " + app + ": HTTP " + forgot.status + ".");
+    }
+  }
+  log.info(kind === "issued"
+    ? "OK — iya-sts issued a grant for httpsig, jwsd and jws; each " +
+      "was revoked, and a tampered signature and an unsigned request " +
+      "were refused."
+    : "OK (product mode) — iya-sts verified httpsig, jwsd and jws and " +
+      "refused the unregistered key; a tampered signature and an " +
+      "unsigned request were refused as bad proofs. No grant issued.");
   log.debug("Leaving liveGrant().");
 }
 
