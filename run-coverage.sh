@@ -244,14 +244,10 @@ EXTENSION_AUTOARM_ORIGINS="https://sts:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # same stack as docker-run-tests.sh
 check_return_code $?
 
-# The mock STS is a submodule (https://github.com/rcbj/iya-sts.git): the same
-# class of hazard as the walt.id render above, and for the same reason it is
-# checked here rather than left to the build. This run uses --abort-on-container-
-# exit, so a service that cannot be built or started takes the whole run down.
-requireMockStsCheckout "${CURRENT_DIR}"
-# The api needs node-ldapjs too — the same library on the client side of
-# the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
-# the mock's, because npm resolves a `file:` dependency's own requires from
+# The api needs node-ldapjs — the same library iya-sts's directory is built
+# on, here on the client side of
+# the LDAP exchange, pinned as api/node-ldapjs (this repository's one
+# submodule), because npm resolves a `file:` dependency's own requires from
 # where the real directory lives, so a copy outside api/ never reaches
 # api/node_modules. Uninitialised, the image builds fine and the service
 # dies at startup with `Cannot find module 'ldapjs'`.
@@ -262,9 +258,11 @@ check_return_code $?
 # login the build fails on a pull error that names neither; this says which.
 requireGhcrMirror
 check_return_code $?
-# iya-sts runs from its published release image while the tests image reads
-# the sts/ checkout; see requireIyaStsImageMatchesCheckout() in common.sh.
-requireIyaStsImageMatchesCheckout "${CURRENT_DIR}" docker-compose-run-tests.yml
+# iya-sts runs from its published release image, and the tests image copies
+# its tree out of the same one; see requireIyaStsImage() in common.sh. This
+# run uses --abort-on-container-exit, so a service that cannot be started
+# takes the whole run down — better here, naming the image.
+requireIyaStsImage "${CURRENT_DIR}"
 check_return_code $?
 
 # THE BIND MOUNTS, CREATED HERE AND MADE WRITABLE BY ANY UID.

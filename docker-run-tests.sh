@@ -488,14 +488,10 @@ export WALTID_BASE_URL WALTID_KEYCLOAK_AUTHORIZE_URL WALTID_KEYCLOAK_TOKEN_URL
 export WALTID_KEYCLOAK_CLIENT_ID WALTID_KEYCLOAK_CLIENT_SECRET
 export WALTID_VERIFIER_BASE_URL WALTID_VERIFIER_CLIENT_ID
 
-# The mock STS is a submodule, so its source is fetched rather than committed
-# here. Checked before the build for the same reason the walt.id render below
-# happens before it: without the checkout, compose reports a missing Dockerfile
-# and the tests image a missing COPY, neither of which mentions a submodule.
-requireMockStsCheckout "${CURRENT_DIR}"
-# The api needs node-ldapjs too — the same library on the client side of
-# the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
-# the mock's, because npm resolves a `file:` dependency's own requires from
+# The api needs node-ldapjs — the same library iya-sts's directory is built
+# on, here on the client side of
+# the LDAP exchange, pinned as api/node-ldapjs (this repository's one
+# submodule), because npm resolves a `file:` dependency's own requires from
 # where the real directory lives, so a copy outside api/ never reaches
 # api/node_modules. Uninitialised, the image builds fine and the service
 # dies at startup with `Cannot find module 'ldapjs'`.
@@ -507,9 +503,10 @@ check_return_code $?
 requireGhcrMirror
 check_return_code $?
 # iya-sts runs from its published release image (docker-compose-run-tests.yml,
-# IYA_STS_IMAGE) while tests/Dockerfile and the companion read the sts/
-# checkout, so the two have to be the same release before anything builds.
-requireIyaStsImageMatchesCheckout "${CURRENT_DIR}" "${COMPOSE_FILE}"
+# IYA_STS_IMAGE), and tests/Dockerfile copies its tree out of the same image,
+# so it is pulled here, before anything builds, where a failure can say which
+# image and why.
+requireIyaStsImage "${CURRENT_DIR}"
 check_return_code $?
 
 # The walt.id issuer's configuration is rendered before compose brings the stack

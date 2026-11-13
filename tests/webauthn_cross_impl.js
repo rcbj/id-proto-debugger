@@ -47,57 +47,25 @@ function shared(file, what) {
 }
 const webauthn = shared("webauthn.js", "the wallet's WebAuthn decoder");
 
-// The STS's copy. Three layouts: staged into the tests image under sts/ (a
-// directory of its own, because unlike bbs2023.js it has a relative require);
-// the sts/ submodule in a checkout; and the sibling development clone, for the
-// window between writing the STS side and bumping the gitlink. The last one is
-// why this test says WHERE it found the module in its log line — running
-// against a stale submodule while editing the clone would otherwise look like a
-// pass.
+// The STS's copy, out of iya-sts's release image (IYA_STS_IMAGE): the tests
+// image carries that tree at ./sts, a host run copies it out of the image
+// into a cache, and MOCK_STS_DIR names a working copy instead. All three go
+// through mockStsModule(), which throws, naming the image, when no tree can
+// be had. iya-sts 0f986b3 ("Reorganizing source code.") moved every module
+// into a subdirectory — this one is in authn/ — and mockStsModule() searches
+// for it by name, so the path is not written out again here. This test says
+// WHERE it found the module in its log line, because a MOCK_STS_DIR run
+// against an unreleased tree would otherwise look like a pass.
 //
-// All three go through mockStsModule() rather than being spelled out here.
-// iya-sts 0f986b3 ("Reorganizing source code.") moved every module into a
-// subdirectory — this one is in authn/ — and it searches all three layouts in
-// that order anyway, so writing the paths out again here would be a second
-// copy of an answer that has already moved once.
+// The whole tree is there, so the module's relative requires (./helpers and,
+// since v1.0.0, most of the service) resolve where it expects them.
 const STS_CANDIDATES = [
   paths.mockStsModule("webauthn.js", function (message) { log.warn(message); })
 ].filter(Boolean);
 const stsWhich =
     STS_CANDIDATES.filter(function (p) { return fs.existsSync(p); })[0];
-
-// Load it ourselves rather than letting module_paths' generic error stand. That
-// error ends "run `npm install` in tests/", which is right for a module missing
-// a PACKAGE and badly wrong for this one: the only way this fails is the STS
-// module still requiring ./helpers, i.e. the submodule predating the fix that
-// made it self-contained. Being told to run npm install sends you nowhere.
-let sts;
-try {
-  sts = paths.requireSharedModule(STS_CANDIDATES,
-      "the STS's WebAuthn verifier");
-} catch (e) {
-  if (/Cannot find module '\.\/helpers'/.test(e.message)) {
-    log.error(
-      "The STS's WebAuthn verifier at " + stsWhich +
-          " still does `require('./helpers')`, so it " +
-      "cannot be loaded outside the service — and it is loaded outside the " +
-          "service here, and in " +
-      "the tests image, where only that one file is staged. The fix is in " +
-          "the module itself (a " +
-      "silent-logger fallback when ./helpers is absent); staging the " +
-          "service's helpers.js instead " +
-      "does not work, because it reads process.env.CONFIG_FILE relative to " +
-          "ITS directory. If that " +
-      "fix is already in the iya-sts working tree, it has not been " +
-          "committed and the sts/ gitlink " +
-      "has not been bumped — see docs/webauthn-plan.md on the submodule " +
-          "ordering.");
-    process.exitCode = 1;
-    module.exports = {};
-    return;
-  }
-  throw e;
-}
+const sts = paths.requireSharedModule(STS_CANDIDATES,
+    "the STS's WebAuthn verifier");
 
 const VECTORS = JSON.parse(
   fs.readFileSync(path.join(__dirname, "webauthn_vectors.json"), "utf8"));

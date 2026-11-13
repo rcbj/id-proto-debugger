@@ -13,7 +13,7 @@
 // tests/krb5_capture_real_dc.js) with no AWS, no network and no services, so
 // the evidence survives into every ordinary run.
 //
-// WHAT THIS CATCHES THAT THE MOCK CANNOT. The mock KDC in the sts/ submodule
+// WHAT THIS CATCHES THAT THE MOCK CANNOT. iya-sts's KDC (rcbj/iya-sts)
 // was written from the same reading of RFC 4120 and [MS-PAC] as the client it
 // checks, so the two agree by construction and a shared misreading is invisible
 // to both. These bytes came from software this project did not write. If a

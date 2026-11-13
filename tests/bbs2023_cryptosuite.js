@@ -58,8 +58,8 @@ const walletSuite = paths.requireSharedModule(
    "bbs2023.js")],
   "the wallet's bbs-2023 cryptosuite");
 const stsSuite = paths.requireSharedModule(
-  // The tests image's flattened copy first, then wherever the submodule keeps
-  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
+  // The tests image's flattened copy first, then wherever iya-sts's tree
+  // keeps it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
   // ("Reorganizing source code.") moved every module into a subdirectory, and
   // this one is in common/crypto_impl/. mockStsModule() is the single place
   // that answers that question — see tests/module_paths.js.

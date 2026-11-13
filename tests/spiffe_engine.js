@@ -663,9 +663,9 @@ function testProtoSync() {
   // `protos` is in that searcher's skip list — it looks for JS — so the
   // directory is derived from the module that reads it, which is the file that
   // would have to move with it. Both spellings, because iya-sts writes that
-  // module in TypeScript since the sts/ bump of 2026-10-26 and the protos
-  // still sit beside it; asking for `.js` alone turned this whole comparison
-  // into a skip that named an uninitialised submodule.
+  // module in TypeScript since iya-sts's 2026-10-26 release and the protos
+  // still sit beside it. The tree is iya-sts's release image's (module_paths,
+  // iyaStsRoot()), which throws, naming the image, when it cannot be had.
   const warn = function (say) {
     log.warn(say);
   };
@@ -675,14 +675,13 @@ function testProtoSync() {
     ? path.join(path.dirname(grpcModule), 'protos', 'workloadapi.proto')
     : null;
   if (!theirsRoot || !fs.existsSync(theirsRoot)) {
-    // Skipped rather than passed, and it says why. The mock STS is a submodule
-    // and an uninitialised one is an empty directory.
-    log.warn('SKIPPING the proto comparison: the mock STS checkout does not ' +
-             'carry workloadapi.proto. Run `git submodule update --init ' +
-             '--recursive` — an uninitialised submodule is an EMPTY ' +
-             'DIRECTORY, so nothing here fails, it simply stops checking.');
-    log.debug("Leaving testProtoSync(). Skipped.");
-    return;
+    // FAILED, not skipped. The tree was found (iyaStsRoot() threw otherwise),
+    // so a missing proto is that release moving or dropping it, which is
+    // exactly what this comparison exists to notice.
+    log.debug("Leaving testProtoSync(). No protos.");
+    throw new Error('iya-sts\'s tree (' + paths.iyaStsRoot(warn) + ') ' +
+      'carries no spiffe_grpc module with protos/workloadapi.proto beside ' +
+      'it, so the vendored protos cannot be compared with it.');
   }
   const theirs = path.dirname(theirsRoot);
   const files = listProtos(mine).map(function (one) {

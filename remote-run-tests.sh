@@ -154,7 +154,7 @@ init()
       #
       # This switches off the PAGE job only. tests/api_ldap.js is deliberately
       # left running: it speaks HTTP to the api and the mock rather than loading
-      # anything out of the sts/ submodule, so it does not acquire the spurious
+      # anything out of iya-sts's tree, so it does not acquire the spurious
       # CONFIG_FILE failure the Kerberos jobs did here — and it skips with its
       # own, more specific reason when either service is absent. Set this to
       # true for a remote target that IS api-backed.
@@ -325,13 +325,14 @@ init()
   fi
   common_setup
   check_return_code $?
-  # The mock STS is a submodule, so its source is fetched rather than committed
-  # here. This launcher builds it too (keycloak-tests.yml), so the checkout has to
-  # exist before compose runs.
-  requireMockStsCheckout "${CURRENT_DIR}"
-  # The api needs node-ldapjs too — the same library on the client side of
-  # the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
-  # the mock's, because npm resolves a `file:` dependency's own requires from
+  # iya-sts runs from its release image (keycloak-tests.yml, IYA_STS_IMAGE),
+  # pulled here so a failure names the image rather than a compose step.
+  requireIyaStsImage "${CURRENT_DIR}"
+  check_return_code $?
+  # The api needs node-ldapjs — the same library iya-sts's directory is built
+  # on, here on the client side of
+  # the LDAP exchange, pinned as api/node-ldapjs (this repository's one
+  # submodule), because npm resolves a `file:` dependency's own requires from
   # where the real directory lives, so a copy outside api/ never reaches
   # api/node_modules. Uninitialised, the image builds fine and the service
   # dies at startup with `Cannot find module 'ldapjs'`.
@@ -407,20 +408,8 @@ init()
 prepTestEnv()
 {
   npm install --prefix tests
-  # The mock STS's own dependencies: the four host-run tests that load
-  # sts/common/crypto_impl/bbs2023.js in place reach
-  # @digitalbazaar/bbs-signatures through a dynamic import(), which resolves
-  # from that file's own directory and ignores NODE_PATH.
-  # See the fuller note in local-run-tests.sh. `npm ci` so the submodule's
-  # committed lock is not rewritten under it, and `--omit=dev` spelled out
-  # because npm reads .npmrc from the CURRENT directory rather than from
-  # --prefix, so the submodule's own copy of that setting is invisible here —
-  # without the flag this installs the devDependencies of its `file:` ldapjs
-  # dependency on every run.
-  if [ -f sts/package.json ];
-  then
-    npm ci --omit=dev --prefix sts
-  fi
+  # (iya-sts's own dependencies come with its tree out of the image; see
+  # warmIyaStsTree() below.)
 }
 
 # ---------------------------------------------------------------------------
@@ -662,9 +651,6 @@ onExit()
 {
   local status=$?
   echo "Entering onExit()."
-  # The copy extractMockStsTree() made, and only that one: a MOCK_STS_DIR the
-  # caller supplied is somebody's working copy and is never deleted.
-  removeMockStsTree
   launcherExitStatus "${status}" "remote-run-tests.sh"
   exit "${status}"
 }
@@ -677,13 +663,14 @@ probeEdgeLandings
 check_return_code $?
 startKeycloak
 check_return_code $?
-# THE HOST-RUN JOBS THAT LOAD THE MOCK'S OWN MODULES need a compiled tree, and
-# since iya-sts #50 a checkout is not one: sts/ carries TypeScript, so
+# THE HOST-RUN JOBS THAT LOAD iya-sts'S OWN MODULES need its compiled tree,
+# which only its image carries (since iya-sts #50 its sources are TypeScript:
 # sts_jws_verification.js died on `Cannot find module './enrollment_profiles'`
-# (a .ts with no .js beside it) on the 2026-09-28 live run. The image the `up`
-# above just built has exactly that tree; see extractMockStsTree(). The same
-# call local-run-tests.sh makes, and best effort in the same way.
-extractMockStsTree
+# on the 2026-09-28 live run, loading a checkout). Copied out of the image the
+# stack runs, once, into a cache; see warmIyaStsTree(). Fatal when it cannot
+# be had, as local-run-tests.sh's is.
+warmIyaStsTree "${CURRENT_DIR}"
+check_return_code $?
 resetKeycloakRealm
 check_return_code $?
 configureKeycloak

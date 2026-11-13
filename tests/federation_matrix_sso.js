@@ -1915,7 +1915,7 @@ async function test() {
   const known = await mockKnowsTheAttributes(stsBase);
   mustBeAbleTo(known.ok,
     "The mock STS at " + stsBase + " is reachable, but",
-    known.why + ". Either the sts/ submodule predates the attribute (bump " +
+    known.why + ". Either the iya-sts image predates the attribute (bump " +
     "it) or the schema endpoint has moved again.");
   mustBeAbleTo(await mockRoutesWsFedThroughTheFunnel(stsBase),
     "The mock STS at " + stsBase + " is reachable, but",
@@ -1927,7 +1927,7 @@ async function test() {
      : "as its federation protocol, so realm 2 would honour no " +
        "fedAuthnMechanism and sign the person in with a password whatever " +
        "the relationship configured") +
-    ". Bump the sts/ submodule.");
+    ". Bump IYA_STS_IMAGE.");
 
   const spBase = stsBase + "/realm/" + SP_REALM;
   const idpBase = stsBase + "/realm/" + IDP_REALM;

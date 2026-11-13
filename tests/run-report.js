@@ -446,8 +446,8 @@ function buildJobs() {
   // WHERE THE STACK'S IMAGES COME FROM. docker-compose-run-tests.yml takes
   // every third-party image, and every base image it builds FROM, from a
   // private mirror on ghcr.io — and a FROM the mirror does not cover is not
-  // an error, it is a pull from Docker Hub. This fails on one, including a
-  // submodule bump that moves sts/Dockerfile to a new tag. Node only.
+  // an error, it is a pull from Docker Hub. This fails on one, and on compose
+  // files that name different iya-sts releases. Node only.
   jobs.push({
     name: "Image mirror coverage (every pulled and FROM image is on ghcr.io)",
     script: "image_mirror_coverage.js",
@@ -2363,10 +2363,10 @@ function buildJobs() {
     env: {},
   });
 
-  // The Kerberos codec exists TWICE — common/krb5 for the browser and the api, and
-  // a vendored copy in the sts/ submodule for the KDC, because compose builds that
-  // service with `context: ./sts` and a Docker build cannot COPY from outside its
-  // context. This is the test that makes that safe.
+  // The Kerberos codec exists TWICE — common/krb5 for the browser and the api,
+  // and iya-sts's own for its KDC (separately maintained since iya-sts #1280,
+  // loaded here out of its release image's tree). This is the test that keeps
+  // the two agreeing.
   //
   // A file comparison alone would not be enough. The failure mode of a vendored
   // wire codec is not "one copy is broken" — it is that BOTH copies are
@@ -2374,18 +2374,15 @@ function buildJobs() {
   // passing, and the symptom is an integrity failure indistinguishable from a wrong
   // password. So the copies are cross-checked behaviourally: messages built by one
   // and read by the other, and — the assertion nothing else can make — one copy
-  // ENCRYPTS and the other DECRYPTS. The file comparison that used to follow
-  // was retired on 2026-11-12 (iya-sts #1280 made its copy that service's
-  // own), and the script it named was deleted on 2026-11-13.
+  // ENCRYPTS and the other DECRYPTS. (The files are no longer compared: the two
+  // are separate implementations now, and only the wire has to agree.)
   //
   // Proved against five real drift scenarios, each caught by a different assertion:
   // a key usage number, a MAC over the ciphertext instead of the plaintext, a
   // context tag, and a reader silently dropping a field.
-  // With no iya-sts codec to be found it DECLARES A SKIP (declineToRun()) —
-  // an uninitialised submodule is an EMPTY DIRECTORY, which is neither a codec
-  // failure nor a comparison that happened. Node only. Every launcher
-  // initialises sts/ and the tests image copies it, so a skip here means a
-  // hand-run from a bare checkout.
+  // When iya-sts's tree cannot be had (no docker, an image that will not pull)
+  // it FAILS naming the image: a comparison that did not happen is not a pass.
+  // Node only, never skipped.
   jobs.push({
     name: "Kerberos codec sync (common/krb5 against the mock STS's vendored copy, cross-wise)",
     script: "krb5_codec_sync.js",
@@ -4898,7 +4895,7 @@ function buildJobs() {
   // they are misleading, which is what happened on 2026-08-15 and 2026-08-16:
   // remote-run-tests.sh sets CONFIG_FILE=./env/test-idptools-com.js, and
   // sts/helpers.js resolves a relative CONFIG_FILE against sts/ rather than
-  // tests/ — where no such file exists, the submodule shipping only local.js,
+  // tests/ — where no such file exists, iya-sts shipping only local.js,
   // docker-tests.js and test.js. Both mock-KDC jobs died with "Cannot find
   // module './env/test-idptools-com.js'", naming a config file, on a run whose
   // target has nothing to do with the mock. Two red tests, twice, for a
@@ -4915,7 +4912,7 @@ function buildJobs() {
       "landing cards are greyed out. The codec and mock-KDC jobs are skipped " +
       "here too: they exercise local code and report nothing about the " +
       "deployed site, so running them adds noise and, when the run's " +
-      "CONFIG_FILE does not resolve inside the sts/ submodule, spurious " +
+      "CONFIG_FILE does not resolve inside iya-sts's tree, spurious " +
       "failures. Run them against the containerized stack " +
       "(./docker-run-tests.sh) or a local dev server. Set " +
       "KERBEROS_AVAILABLE=true for a remote target that IS api-backed.";
@@ -5823,9 +5820,9 @@ function coverageExcludes(jobs) {
   // matched against. It fails silently — the report simply lists the test
   // scripts as though they were product code.
   //
-  // The mock STS is somebody else's checkout (a submodule), and node-ldapjs is
-  // vendored unmodified. A test that starts either one in-process would
-  // otherwise drag its files into this repository's report.
+  // iya-sts is somebody else's code (its release image's tree), and
+  // node-ldapjs is vendored unmodified. A test that starts either one
+  // in-process would otherwise drag its files into this repository's report.
   const out = Array.from(names).sort().map((name) => "**/" + name)
     .concat(["**/node_modules/**", "**/sts/**", "**/node-ldapjs/**"]);
   log.debug("Leaving coverageExcludes(). " + out.length + " pattern(s).");

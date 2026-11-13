@@ -24,7 +24,8 @@
 //
 // WHICH KDC. KRB5_DELEG_TARGET selects it:
 //
-//   mock     (default) the KDC in the sts/ submodule, started in-process on an
+//   mock     (default) iya-sts's KDC, out of its release image's tree
+//            (module_paths.js, iyaStsRoot()), started in-process on an
 //            ephemeral port. No AWS, no network, no services.
 //   windows  a real Windows Server domain controller, described by the JSON the
 //            bootstrap uploaded — KRB5_DC_JSON names the file that
@@ -99,17 +100,16 @@ async function mockTarget() {
   const kdcPath = paths.mockStsModule("krb5_kdc.js", function (m) {
     log.warn(m);
   });
-  assert.ok(kdcPath, "could not find the mock KDC " +
-    "(sts/kerberos/krb5_kdc.js). The " +
-    "sts/ directory is a submodule; run `git submodule update --init sts`.");
+  assert.ok(kdcPath, "could not find iya-sts's KDC (kerberos/krb5_kdc.js) " +
+    "in its tree at " + paths.iyaStsRoot() + ". That release has moved or " +
+    "dropped it.");
   let kdcModule;
   try {
     kdcModule = require(kdcPath);
   } catch (e) {
     throw new Error("the mock KDC loaded but one of its own dependencies did " +
-      "not: " + e.message + ". tests/Dockerfile copies the sts/ modules " +
-      "individually, and that set has to be recomputed when one grows a new " +
-      "require.");
+      "not: " + e.message + ". The tree it was loaded from is " +
+      paths.iyaStsRoot() + ", which should carry its own node_modules.");
   }
   kdcListeners = kdcModule.listen(0);
   await kdcListeners.whenReady;

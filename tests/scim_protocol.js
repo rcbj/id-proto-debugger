@@ -471,9 +471,8 @@ async function theMockHasScim() {
     log.debug("Leaving theMockHasScim(). 404.");
     return { present: false, why: 'the mock STS at ' + scimBaseUrl +
         ' answers 404 there. The SCIM endpoints arrived in rcbj/iya-sts ' +
-        'AFTER this repository\'s sts/ gitlink was last moved, so a ' +
-        'checkout whose submodule predates them has no /scim/v2 routes. ' +
-        'Bump the gitlink (git add sts) and rebuild the sts image.' };
+        'AFTER some of its releases, so an IYA_STS_IMAGE that predates ' +
+        'them has no /scim/v2 routes. Bump IYA_STS_IMAGE.' };
   }
   if (result.status !== 200) {
     log.debug("Leaving theMockHasScim(). status=" + result.status);
@@ -2459,7 +2458,7 @@ async function test() {
   // all" — so reaching this line means the launcher expected the api and a
   // SCIM server behind it. See tests/expectation.js.
   mustBeAbleTo(present.present, "The SCIM server this job was pointed at",
-    "cannot be used: " + present.why + ". Either the sts/ submodule " +
+    "cannot be used: " + present.why + ". Either the iya-sts image " +
     "predates /scim/v2 (bump it), or the stack is not up.");
   // ---------------------------------------------------------------------
   // THE SCIM CLIENT, IN THE REGISTRY, BEFORE THE FIRST CREDENTIAL IS SENT.

@@ -302,7 +302,7 @@ async function preconditions() {
     log.debug("Leaving preconditions(). The mock has no directory.");
     return { ok: false, why: "the mock STS has no embedded LDAP directory (" +
       stsUrl + "/admin-api/ldap/service answered " + directory.status +
-      ") — the sts/ gitlink probably predates it" };
+      ") — the iya-sts image (IYA_STS_IMAGE) probably predates it" };
   }
   const described = await directory.json();
   // The HTTP view answers 200 whether or not the socket bound — 389 is
@@ -1357,7 +1357,7 @@ async function theSameDirectoryAnswersOverLdaps(described) {
   if (!described.tls || typeof described.tls !== "object") {
     log.warn("SKIP (LDAPS): this mock publishes tls=" +
              JSON.stringify(described.tls) + " on GET /ldap, which is the shape " +
-             "it had before it offered LDAPS — the sts/ gitlink predates it.");
+             "it had before it offered LDAPS — IYA_STS_IMAGE predates it.");
     log.debug("Leaving theSameDirectoryAnswersOverLdaps(). No LDAPS in the mock.");
     return;
   }

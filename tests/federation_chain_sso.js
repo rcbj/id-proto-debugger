@@ -1064,7 +1064,7 @@ async function test() {
     "it does not publish fedAuthnMechanism in the federation schema at GET " +
     "/admin-api/ldap/federations, so no relationship can authenticate " +
     "through another and the bridge realm this test is about cannot exist. " +
-    "Either the sts/ submodule predates the attribute (bump it) or that " +
+    "Either the iya-sts image predates the attribute (bump it) or that " +
     "endpoint has moved again.");
   const appBase = stsBase + "/realm/" + APP_REALM;
   const bridgeBase = stsBase + "/realm/" + BRIDGE_REALM;
