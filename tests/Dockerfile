@@ -766,6 +766,10 @@ COPY client/public/css/xacml.css /usr/src/client/public/css/xacml.css
 COPY tests/gnap_engine.js ./
 COPY client/public/css/gnap.css /usr/src/client/public/css/gnap.css
 COPY api/gnap_proxy.js ./
+# gnap_live.js is the helper the live GNAP jobs share (application
+# names, /admin-api, a client certificate from the openssl above,
+# approval in a browser).
+COPY tests/gnap_live.js ./
 # ISO 7816 command and response APDUs, and BER-TLV, in node. Like
 # hash_engine.js it loads client/src/iso7816.js out of the tree the
 # COPY client/src line above staged, so this script must not also get

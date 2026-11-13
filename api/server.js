@@ -3542,7 +3542,8 @@ app.post('/smartcard/transmit', function (req, res) {
  * thing this workflow can put on the screen.
  * ---------------------------------------------------------------------------
  * @route POST /ssf/call
- * @param {object} request.body - url, method, headers, body, sslValidate
+ * @param {object} request.body - url, method, headers, body, sslValidate,
+ *     and for the mtls proof clientCertificatePem and clientKeyPem
  * @returns {object} 200 - the transmitter's answer, whatever its status
  * @returns {object} 400 - this service refused to send it
  * @returns {object} 502 - the transmitter could not be reached
@@ -3636,6 +3637,27 @@ app.get('/ssf/limits', function (req, res) {
  * @returns {object} 400 - this service refused to send it
  * @returns {object} 502 - the authorization server could not be reached
  */
+/**
+ * The https agent for one mtls-proved GNAP call. It is the guard's
+ * agent, so the address policy is the shared one, with the connect
+ * deadline every other outbound agent has.
+ * @param {object} described - gnapProxy.describeRequest()'s answer
+ * @returns {https.Agent} an agent to destroy after the call
+ */
+function gnapClientCertificateAgent(described) {
+  log.debug('Entering gnapClientCertificateAgent().');
+  var agent = connectTimeout.withConnectTimeout(
+      guard.createAgent('https', {
+        keepAlive: false,
+        timeout: OUTBOUND_IDLE_SOCKET_TIMEOUT,
+        rejectUnauthorized: described.sslValidate !== false,
+        cert: described.clientCertificatePem,
+        key: described.clientKeyPem
+      }), CONNECTION_TIMEOUT, log);
+  log.debug('Leaving gnapClientCertificateAgent().');
+  return agent;
+}
+
 app.post('/gnap/call', function (req, res) {
   log.debug('Entering POST /gnap/call.');
   var described = gnapProxy.describeRequest(req.body || {}, appconfig);
@@ -3645,6 +3667,11 @@ app.post('/gnap/call', function (req, res) {
   }
   var sink = {};
   var sentHeaders = withUserAgent(described.headers);
+  // THE mtls PROOF: an agent of its own, made by the same guard and the
+  // same connect deadline as the shared ones, never cached (it holds the
+  // caller's private key) and never kept alive, and destroyed below.
+  var clientAgent = described.clientCertificatePem
+    ? gnapClientCertificateAgent(described) : null;
   axios({
     method: described.method.toLowerCase(),
     url: described.url,
@@ -3661,9 +3688,15 @@ app.post('/gnap/call', function (req, res) {
     validateStatus: function () {
       return true; },
     httpAgent: outboundHttpAgent(),
-    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    httpsAgent: clientAgent ||
+        outboundHttpsAgent(described.sslValidate),
     headers: sentHeaders
   })
+    .finally(function () {
+      if (clientAgent) {
+        clientAgent.destroy();
+      }
+    })
     .then(function (response) {
       var answer = gnapProxy.readResponse(response.status,
           traceHeaders(response.headers), sink.raw);
