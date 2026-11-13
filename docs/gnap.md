@@ -106,10 +106,24 @@ before the key was looked up. A signature that does not verify is a
 different sentence, and it names the signature.
 
 In development mode the same key creates an application on first
-sight. This page does not register a client, and it does not change
-the authorization server's settings. Name the display so the entry
-is recognisable, and revoke the continuation when the grant is no
+sight, named `gnap-jkt-` and the key's RFC 7638 thumbprint. The
+sample request is then still refused: `ssf.read` is iya-sts's own
+protected scope, so the answer is `request_denied` until an
+administrator declares `ssf.read` in that entry's
+`oauthAllowedScope` (`POST /admin-api/applications/add`). That
+refusal also means the signature verified, but it is not a grant.
+This page does not register a client, and it does not change the
+authorization server's settings. Name the display so the entry is
+recognisable, and revoke the continuation when the grant is no
 longer needed.
+
+`tests/gnap_engine.js` does the administrator's step itself. It
+declares the scope, requires a grant for each of `httpsig`, `jwsd`
+and `jws`, continues one (iya-sts answers `too_fast` with a fresh
+continuation token), revokes all three, and forgets the entry. A
+denial is not accepted as a pass. Against a product-mode server the
+key is unprovisioned, so only the proofs are checked, and the job
+logs that no grant was issued.
 
 ## What this page does not do
 

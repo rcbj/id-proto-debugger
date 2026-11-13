@@ -1352,11 +1352,12 @@ function buildJobs() {
   });
 
   // GNAP client instance. The signature checks need no network. The
-  // live half posts one signed grant to iya-sts. A product-mode
-  // server refuses an unregistered key after the signature verifies.
-  // A development-mode server may issue a continuation token, which
-  // the job deletes. The job does not register a client and does not
-  // change the server.
+  // live half must obtain a grant from iya-sts with each of httpsig,
+  // jwsd and jws. In development mode that takes declaring ssf.read
+  // on the application iya-sts created for the job's key (through
+  // /admin-api); the job forgets that entry afterwards. A product-mode
+  // server refuses the unprovisioned key, and only the proofs are
+  // checked there.
   jobs.push({
     name: "GNAP client (RFC 9635 proofs, and one grant against iya-sts)",
     script: "gnap_engine.js",
