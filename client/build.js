@@ -213,6 +213,7 @@ const BUNDLES = [
   ['scim', 'scim'],
   ['spiffe', 'spiffe'],
   ['ssf', 'ssf'],
+  ['xacml', 'xacml'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>

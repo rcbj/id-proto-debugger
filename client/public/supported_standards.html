@@ -136,6 +136,7 @@
           <li><a href="#crypto">Cryptographic algorithms and key
               formats</a></li>
           <li><a href="#encoding">Encoding, registries and infrastructure</a></li>
+          <li><a href="#xacml">XACML 3.0</a></li>
           <li><a href="#notimpl">Named here, and deliberately not
               implemented</a></li>
         </ul>
@@ -1622,6 +1623,35 @@
             <td>Parsed inertly &mdash; no external entities, no DTD, no network
               fetch &mdash; because a SAML response is a document from
               somebody you are still deciding whether to trust.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== XACML ===================== -->
+        <h2 id="xacml">XACML 3.0</h2>
+        <p>The <a href="/xacml.html">XACML page</a>: a policy editor and
+        a decision test. Both run in the browser. The repository is
+        stored in the browser. The attributes in the request are the
+        only ones the decision sees.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/xacml/3.0/xacml-3.0-core-spec-os-en.html"
+                   target="_blank" rel="noopener noreferrer">XACML 3.0</a>
+              <span class="std-where">OASIS</span></td>
+            <td>Author a Policy or a PolicySet, and evaluate a request
+              against it. The result shows the decision, the applicable
+              policies, obligations, advice, status, and both PEP
+              biases. An obligation this page cannot discharge turns a
+              Permit into a refusal.</td>
+          </tr>
+          <tr>
+            <td><a href="https://docs.oasis-open.org/xacml/xacml-json-http/v1.1/xacml-json-http-v1.1.html"
+                   target="_blank" rel="noopener noreferrer">JSON Profile
+              of XACML 3.0</a>
+              <span class="std-where">OASIS</span></td>
+            <td>A pasted request. The profile has no policy syntax, so
+              policies stay XML, or ALFA, which the editor also reads
+              and writes.</td>
           </tr>
         </table>
 
