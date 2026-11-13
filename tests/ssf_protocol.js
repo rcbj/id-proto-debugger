@@ -1147,8 +1147,11 @@ async function emitWithASubject(streamId, pollUrl) {
   const sent = await call('POST', adminUrl + '/risc/emit',
       { type: 'account-disabled', account_id: account }, {});
   const aboutAccount = function (claims) {
-    return !!claims && (claims.sub === account ||
+    log.debug("Entering aboutAccount().");
+    const about = !!claims && (claims.sub === account ||
       JSON.stringify(claims.sub_id || {}).indexOf(account) >= 0);
+    log.debug("Leaving aboutAccount(). " + about);
+    return about;
   };
   let claims = null;
   ((sent.body && sent.body.reports) || []).forEach(function (report) {
