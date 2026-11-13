@@ -134,6 +134,9 @@ var config = {
   ssfReceiverMaxInboxes: 20,
   ssfReceiverMaxEvents: 200,
   ssfReceiverMaxEventBytes: 65536,
+  // The most one inbox holds in total, oldest dropped first. Without it
+  // the three caps above multiply out to a quarter of a gigabyte.
+  ssfReceiverMaxInboxBytes: 1048576,
   tlsAllowedPorts: "any",
   spiffeAllowedPorts: [8081, 8092, 8181],
   spiffeAllowedSocketPaths: ["/tmp/spire-agent/", "/tmp/spire-server/"],

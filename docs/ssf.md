@@ -458,7 +458,9 @@ than a gate:
 3. the counts are capped — inboxes, events per inbox, and the OLDEST event goes
    when the ring fills, because a receiver that has stopped draining most wants
    what has happened lately;
-4. each event is size-capped;
+4. each event is size-capped, and so is each inbox in total
+   (`ssfReceiverMaxInboxBytes`, 1 MiB), oldest dropped first — the counts
+   alone multiply out to a quarter of a gigabyte;
 5. `ssfReceiverEnabled` turns the whole thing off, and it is false wherever
    there is no api at all.
 

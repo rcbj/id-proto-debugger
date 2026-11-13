@@ -230,6 +230,9 @@ var config = {
   ssfReceiverMaxInboxes: 20,
   ssfReceiverMaxEvents: 200,
   ssfReceiverMaxEventBytes: 65536,
+  // The most one inbox holds in total, oldest dropped first. Without it
+  // the three caps above multiply out to a quarter of a gigabyte.
+  ssfReceiverMaxInboxBytes: 1048576,
   // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
   // TLS test the PKI page (client/public/pki.html) runs.
   //
