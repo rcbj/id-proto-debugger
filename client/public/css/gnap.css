@@ -1,0 +1,64 @@
+/* The GNAP page. Loaded last so it wins over bootstrap and common.css. */
+
+.container {
+  width: 96%;
+  max-width: 1100px;
+}
+
+.gnap-return {
+  font-size: 0.85em;
+  margin: 4px 0 2px;
+}
+
+.gnap-intro {
+  font-size: 0.9em;
+  line-height: 1.4;
+  color: #333;
+}
+
+fieldset {
+  border: 1px solid #aaa;
+  border-radius: 6px;
+  padding: 8px 12px 12px;
+  margin: 12px 0;
+}
+
+.gnap-row {
+  margin: 6px 0;
+}
+
+.gnap-row label,
+.gnap-field label {
+  margin-right: 10px;
+}
+
+.gnap-field {
+  margin: 6px 0;
+}
+
+.gnap-field input,
+.gnap-mono,
+.gnap-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.gnap-mono {
+  font-family: monospace;
+  font-size: 0.85em;
+}
+
+.gnap-note {
+  color: #135;
+  min-height: 1.2em;
+}
+
+.gnap-warn {
+  color: #8a1f1f;
+  min-height: 1.2em;
+}
+
+#gnap_redirect,
+#gnap_user_code_uri {
+  word-break: break-all;
+}

@@ -1235,15 +1235,17 @@ async function driveApplicationTier(driver, spBase, callbackUri) {
 //
 // The screen is `authn.js`'s, whichever protocol asked for it and whichever
 // realm is showing it — it reuses Keycloak's field ids, which is why every test
-// in this suite drives it the same way. It checks no password, so the username
-// typed here is the identity every artifact downstream describes.
+// in this suite drives it the same way. Development checks no password, so
+// the dummy typed below is the identity. Product checks it, and `password`
+// is the one prepareFederatedSignIn() set; null keeps the dummy. On the
+// passwordless path the field is still filled and the service ignores it.
 //
 // WHAT MAKES THIS THE ASSERTION AND NOT A STEP: a relationship whose
 // `fedAuthnMechanism` never reached the screen produces the ORDINARY password
 // box, and the flow then completes perfectly. So a WebAuthn point requires the
 // ceremony page and a password point requires its absence, and each says why.
 // ---------------------------------------------------------------------------
-async function signInAtIdp(driver, user, idpBase) {
+async function signInAtIdp(driver, user, idpBase, password) {
   log.debug("Entering signInAtIdp(). mechanism=" + MECHANISM);
   const username = By.id("username");
   try {
@@ -1313,11 +1315,12 @@ async function signInAtIdp(driver, user, idpBase) {
   await driver.findElement(username).sendKeys(user);
   const passwordBoxes = await driver.findElements(By.id("password"));
   if (passwordBoxes.length) {
-    // Typed on both paths, and ignored on both: this service checks no
-    // password, and on the passwordless path `handleLogin()` never looks at
-    // the field. Filling it in anyway keeps the two paths one code path here.
+    // Typed on both paths. Development ignores it. Product checks it on the
+    // password path; on the passwordless path `handleLogin()` never looks
+    // at the field. Filling it either way keeps the two paths one code path.
     await passwordBoxes[0].clear();
-    await passwordBoxes[0].sendKeys("no password is checked here");
+    await passwordBoxes[0].sendKeys(password ||
+                                    "no password is checked here");
   }
   await driver.findElement(By.id("kc-login")).click();
 
@@ -1910,12 +1913,31 @@ async function test() {
   // then be testing whatever the mock happened to be configured with.
   // ---------------------------------------------------------------------
   await createRealms(stsBase);
+  // Product refuses passkey enrolment on first use (STS-AUTHN-0206) before
+  // the ceremony page. This point depends on that enrolment. Password
+  // points still run. Development still enrols on first use.
+  if (MECHANISM === "webauthn" && await admin.realmIsProduct(idpBase)) {
+    declineToRun(log, IDP_REALM + " is in product mode, which refuses " +
+      "passkey enrolment on first use (STS-AUTHN-0206). This point " +
+      "depends on that enrolment. Password points still run.");
+    log.debug("Leaving test(). Skipped.");
+    return;
+  }
   await trustRealm2BackChannel(spBase);
   await registerApplication(spBase, callbackUri);
   await registerPartnerAtIdp(idpBase, spBase, partnerAppId);
   const partner = await readPartnerMetadata(idpBase, partnerAppId);
   await createRelationship(spBase, partner, partnerAppId, callbackUri);
   await createIdpRelationship(idpBase, partnerAppId);
+  // Product links the person and returns the password to type. Development
+  // returns null. An OAuth 2.0 or OpenID Connect hop's subject is the IdP's
+  // urn:uuid; every other protocol here sends a NameID.
+  const prepared = await admin.prepareFederatedSignIn({
+    spBase: spBase, idpBase: idpBase, relationship: RELATIONSHIP,
+    username: user,
+    subjectKind: (FED_PROTOCOL === "oidc" || FED_PROTOCOL === "oauth2")
+      ? "partner-subject" : "nameid"
+  });
   const localIssuer = await readLocalIssuer(spBase);
 
   // THE ADDRESS THE CONSOLE TELLS AN OPERATOR TO GIVE THE PARTNER must be the
@@ -1973,7 +1995,7 @@ async function test() {
     await driver.manage().deleteAllCookies();
 
     const sent = await driveApplicationTier(driver, spBase, callbackUri);
-    await signInAtIdp(driver, user, idpBase);
+    await signInAtIdp(driver, user, idpBase, prepared.password);
 
     // ---------------------------------------------------------------------
     // WHO REALM 1 NOW CALLS THE PERSON TYPED AT REALM 2. Everything below

@@ -220,6 +220,14 @@ var config = {
   // carry 80, 443 and every alternate somebody runs a service on.
   ssfMaxRequestBytes: 262144,
   // ---------------------------------------------------------------------------
+  // GNAP (client/public/gnap.html, docs/gnap.md).
+  //
+  // POST /gnap/call forwards one request the page has already signed.
+  // This bounds that request body. maxContentLength bounds the
+  // response. There is no gnapAllowedPorts: GNAP is HTTP, and the
+  // address policy on the shared axios instance already covers it.
+  gnapMaxRequestBytes: 262144,
+  // ---------------------------------------------------------------------------
   // THE PUSH RECEIVER, WHICH IS THE ONE THING IN THIS WORKFLOW A BROWSER
   // GENUINELY CANNOT DO — and not for CORS or a certificate. RFC 8935 push
   // delivery is the transmitter POSTing each event to a URL the receiver gave

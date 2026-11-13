@@ -751,6 +751,14 @@ COPY tests/hash_engine.js ./
 # twice. The stylesheet is not in that HTML copy, so it is named.
 COPY tests/xacml_engine.js ./
 COPY client/public/css/xacml.css /usr/src/client/public/css/xacml.css
+# The GNAP client instance, in node, and one signed grant against
+# iya-sts. The stylesheet is not in the HTML copy above. The proxy
+# decides and has no axios, so it is copied flat beside the test:
+# this image has no api tree. Do not also flat-copy gnap_client.js.
+# The job loads that module from the client/src tree staged above.
+COPY tests/gnap_engine.js ./
+COPY client/public/css/gnap.css /usr/src/client/public/css/gnap.css
+COPY api/gnap_proxy.js ./
 # ISO 7816 command and response APDUs, and BER-TLV, in node. Like
 # hash_engine.js it loads client/src/iso7816.js out of the tree the
 # COPY client/src line above staged, so this script must not also get

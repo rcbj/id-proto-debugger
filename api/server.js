@@ -2927,6 +2927,9 @@ const scimProxy = require('./scim_proxy.js');
 // and every cap with no listener and no transmitter.
 const ssfProxy = require('./ssf_proxy.js');
 const ssfReceiver = require('./ssf_receiver.js');
+// GNAP signs in the browser. This module only decides what may be
+// forwarded. The private key never arrives here. See api/gnap_proxy.js.
+const gnapProxy = require('./gnap_proxy.js');
 // YubiCloud verification posts a form the page already signed. The
 // decision half has no axios, same as the SCIM proxy.
 const otpVerify = require('./otp_verify.js');
@@ -3602,6 +3605,80 @@ app.get('/ssf/limits', function (req, res) {
   log.debug('Leaving GET /ssf/limits.');
   return res.status(STATUS_200).json(
       ssfProxy.limits(appconfig, ssfReceiver.limits(appconfig)));
+});
+
+/**
+ * One signed GNAP request, forwarded as the page built it.
+ *
+ * The proof covers the URL and the body. This handler sends that URL
+ * and that body string. A GNAP error is a 200 carrying the status,
+ * because the error code is the thing the page is here to show. A
+ * refusal by this service is a 400. A network failure is a 502.
+ * @route POST /gnap/call
+ * @param {object} request.body - url, method, headers, body, sslValidate
+ * @returns {object} 200 - the authorization server's answer
+ * @returns {object} 400 - this service refused to send it
+ * @returns {object} 502 - the authorization server could not be reached
+ */
+app.post('/gnap/call', function (req, res) {
+  log.debug('Entering POST /gnap/call.');
+  var described = gnapProxy.describeRequest(req.body || {}, appconfig);
+  if (!described.ok) {
+    log.debug('Leaving POST /gnap/call. Refused: ' + described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  var sink = {};
+  var sentHeaders = withUserAgent(described.headers);
+  axios({
+    method: described.method.toLowerCase(),
+    url: described.url,
+    data: described.body === null ? undefined : described.body,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    // The body is the string the page signed. Leave it alone.
+    transformRequest: [function (data) {
+      return data;
+    }],
+    transformResponse: [captureRawBody(sink)],
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      var answer = gnapProxy.readResponse(response.status,
+          traceHeaders(response.headers), sink.raw);
+      log.debug('Leaving POST /gnap/call. Answered ' + answer.status +
+          (answer.error ? ' ' + answer.error : '') + '.');
+      return res.status(STATUS_200).json(answer);
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message
+          : String(error);
+      log.warn('POST /gnap/call to ' + described.url + ' failed: ' +
+          message);
+      log.debug('Leaving POST /gnap/call. 502.');
+      return res.status(502).json({
+        error: 'The authorization server could not be reached: ' +
+            message,
+        code: (error && error.code) || ''
+      });
+    });
+});
+
+/**
+ * What the GNAP relay will forward. A static deployment gets no answer
+ * here, and the page then calls the authorization server itself.
+ * @route GET /gnap/limits
+ * @returns {object} 200 - methods, refused headers and caps
+ */
+app.get('/gnap/limits', function (req, res) {
+  log.debug('Entering GET /gnap/limits.');
+  log.debug('Leaving GET /gnap/limits.');
+  return res.status(STATUS_200).json(gnapProxy.limits(appconfig));
 });
 
 /**

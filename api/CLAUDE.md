@@ -337,6 +337,35 @@ directly and needs no network. The SCHEME check (`file:`, `data:`) is not
 configurable and is on either way. `tests/api_ssf.js` drives the routes;
 `tests/ssf_engine.js` drives both modules with no listener. See `docs/ssf.md`.
 
+## GNAP: the page signs, and this service forwards the signed request
+
+`POST /gnap/call` (`api/gnap_proxy.js`) performs one GNAP request on the
+caller's behalf. The page is a client instance. It builds the body and
+the proof (`httpsig`, `jwsd` or `jws`) in the browser, and this endpoint
+sends that URL, those headers and that body string. The private key
+never arrives here. A signature covers the body, so re-encoding it
+would make a valid proof fail at the authorization server.
+
+**THE THREE OUTCOMES ARE THE SAME THREE.** A refusal by this service is
+a **400**. A network failure is a **502**. A GNAP error from the
+authorization server is a **200** carrying that status and the error
+code, whether the error is a string or `{code, description}`. An
+`invalid_client` on a key the server has not seen is the authorization
+server answering, and it is the answer the page is here to show.
+
+**The address policy is not re-implemented here.** This is an axios
+call, so the guard installed once on the shared instance already covers
+it, redirects included. There is no `gnapAllowedPorts`. The setting is
+**`gnapMaxRequestBytes`** (default 262144), a cap on the request beside
+`maxContentLength` on the response. `GET` and `OPTIONS` refuse a body.
+The hop-by-hop headers are refused, including `Content-Length`, because
+the length is a property of the body this service sends. `GET
+/gnap/limits` publishes the methods, the refused headers and the caps,
+and it is how the page learns there is an api at all. A static
+deployment has no api. The page can then call the authorization server
+from the browser, which works when that server allows the origin. See
+`docs/gnap.md`.
+
 ## SPIFFE: gRPC, and the only endpoint here that dials a filesystem path
 
 `POST /spiffe/call` (`api/spiffe_client.js`) carries **both** of SPIFFE's gRPC
