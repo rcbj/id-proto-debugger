@@ -93,10 +93,10 @@
    * widths, and landingFitsOnOneScreen() measures the viewport the suite
    * actually runs at.
    */
-  grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
   gap: 10px;
   align-items: stretch;
-  max-width: 1070px;
+  max-width: 1142px;
   margin: 0 auto;
 }
 
@@ -197,12 +197,22 @@
    8+8, which is the same two rows and the same height as 8+7. Measured, not
    assumed.
 
-   So the SEVENTEENTH is the next expensive one, and the arithmetic is the same
-   as it has been every time: n columns fit when n*min + (n-1)*gap <= 1070, so
-   nine need min <= 110 at the current 10px gap (9*110 + 8*10 = 1070). Anything
-   larger fails SILENTLY by staying at eight, with the height as the only
-   symptom — which is how every previous step went wrong first. */
+   So the SEVENTEENTH was predicted to need nine columns at min <= 110
+   inside the 1070px grid (9*110 + 8*10 = 1070). That min makes every
+   description wrap again. The container is already 1170px here, so the
+   grid widened instead of the cards shrinking that far.
+
+   The SEVENTEENTH card (XACML) is that step. The container at a 1200px
+   viewport is 1170px, and .landing's horizontal padding takes 24px of
+   it, so the grid has 1146px. Nine columns fit when
+   9*min + 8*10 <= 1146, so min <= 118 (9*118 + 8*10 = 1142). 119px is
+   1151 and drops back to eight, which lays seventeen cards out as
+   8+8+1 and puts the third row below the fold. The max-width is 1142
+   for the same sum. Measured at 1366x768: nine and eight, the lowest
+   card ending at 597px of a 625px headless viewport, inside the 640px
+   budget. */
 .landing-card:nth-child(16) .landing-icon { color: #7a3f5f; }
+.landing-card:nth-child(17) .landing-icon { color: #3a6ea5; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

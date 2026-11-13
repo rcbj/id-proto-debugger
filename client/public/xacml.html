@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Identity Protocol Debugger &mdash; XACML</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/xacml.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/xacml.js">
+</script>
+
+<p class="xacml-return">
+  <a id="return_link" href="/">&larr; Return to debugger</a>
+</p>
+
+<h3>XACML Editor</h3>
+
+<p class="xacml-intro">Edit an XACML 3.0 Policy or PolicySet and ask
+the same document for a decision. The repository lives in this
+browser. Nothing is sent to a server, and there is no directory
+behind the decision: the attributes in the request are the only
+ones the PDP sees. An empty deny-unless-permit policy denies every
+request until a rule permits one. ALFA on this page is written in
+the <code>example</code> namespace. A document pasted from anywhere
+else still imports.</p>
+
+<p id="xacml_status" class="xacml-note"></p>
+
+<fieldset>
+  <legend>Repository</legend>
+  <div class="xacml-row">
+    <label>Name
+      <input id="xacml_name" size="24" value="policy">
+    </label>
+    <label>Kind
+      <select id="xacml_kind">
+        <option value="policy">Policy</option>
+        <option value="policyset">PolicySet</option>
+      </select>
+    </label>
+    <button type="button"
+            onclick="return xacml.createBlank();">Create blank</button>
+    <button type="button"
+            onclick="return xacml.loadSample();">Load sample</button>
+  </div>
+  <div class="xacml-field">
+    <label for="xacml_import_name">Import as</label>
+    <input id="xacml_import_name" size="24"
+           placeholder="defaults to the policy id">
+  </div>
+  <div class="xacml-field">
+    <label for="xacml_import">XACML XML or ALFA</label>
+    <textarea id="xacml_import" rows="6"></textarea>
+  </div>
+  <div class="xacml-row">
+    <button type="button"
+            onclick="return xacml.importPolicy();">Import</button>
+  </div>
+  <div class="xacml-row">
+    <label>Open
+      <select id="xacml_open"
+              onchange="return xacml.openPolicy();"></select>
+    </label>
+    <label>
+      <input type="checkbox" id="xacml_enabled"
+             onchange="return xacml.toggleEnabled();">
+      Enabled
+    </label>
+    <span id="xacml_is_root"></span>
+    <button type="button"
+            onclick="return xacml.makeRoot();">Make decision root</button>
+    <button type="button"
+            onclick="return xacml.removePolicy();">Remove</button>
+  </div>
+</fieldset>
+
+<div id="xacml_editor"></div>
+
+<fieldset>
+  <legend>Try a decision</legend>
+  <p class="xacml-note">The subject, the action, the resource and any
+  extra rows below are the whole request. A pasted XACML Request, or
+  a JSON Profile request, is used instead of those fields when the
+  box is not empty. The policy is the one named here, or the decision
+  root when the list says the root.</p>
+  <div class="xacml-row">
+    <label>Policy
+      <select id="xacml_decide_policy"></select>
+    </label>
+    <label>Subject
+      <input id="xacml_subject" size="16" value="alice">
+    </label>
+    <label>Action
+      <input id="xacml_action" size="8" value="GET">
+    </label>
+    <label>Resource
+      <input id="xacml_resource" size="28"
+             value="https://example.com/a">
+    </label>
+  </div>
+  <div id="xacml_attributes"></div>
+  <div class="xacml-row">
+    <button type="button"
+            onclick="return xacml.addAttribute();">Add attribute</button>
+  </div>
+  <div class="xacml-field">
+    <label for="xacml_request">Request XML or JSON Profile</label>
+    <textarea id="xacml_request" rows="5"></textarea>
+  </div>
+  <div class="xacml-row">
+    <button type="button"
+            onclick="return xacml.decide();">Ask</button>
+  </div>
+  <div id="xacml_decision"></div>
+</fieldset>
+
+<link rel="apple-touch-icon" sizes="57x57"
+      href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60"
+      href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72"
+      href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76"
+      href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114"
+      href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120"
+      href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144"
+      href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152"
+      href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180"
+      href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"
+      href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32"
+      href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96"
+      href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16"
+      href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

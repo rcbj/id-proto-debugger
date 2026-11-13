@@ -1330,6 +1330,15 @@ function buildJobs() {
     env: {},
   });
 
+  // XACML editor and decision test, in node with no browser and no
+  // network. The page evaluates a repository in the browser. A PDP
+  // at the far end is not an input, so the job never skips.
+  jobs.push({
+    name: "XACML editor and decision test (in node)",
+    script: "xacml_engine.js",
+    env: {},
+  });
+
   // Digital Signature page. A fully client-side page needing no IdP. For every
   // pane it sets a value, generates a key, produces a signature/MAC, confirms
   // it validates, and exercises the keystore downloads. Asymmetric: SLH-DSA (12

@@ -741,6 +741,12 @@ COPY client/server.js /usr/src/client/server.js
 # and which one the test loaded would depend on the resolution order rather
 # than on the change under test.
 COPY tests/hash_engine.js ./
+# The XACML editor and decision test, in node. Same shape as the
+# hashing job above: the subject is the client source tree this image
+# has just staged, and a flat copy would make the workbench exist
+# twice. The stylesheet is not in that HTML copy, so it is named.
+COPY tests/xacml_engine.js ./
+COPY client/public/css/xacml.css /usr/src/client/public/css/xacml.css
 # The stateful hash-based signature job and its vendored vectors. Like
 # hash_engine.js it needs no flat copy of its subject — it loads
 # client/src/hbs.js out of the tree the three COPY lines above stage — but the
