@@ -16,8 +16,11 @@
 #     `additional_contexts` below: BuildKit resolves `FROM ubuntu:latest`
 #     against a named context called `ubuntu` before it goes to any registry,
 #     so every stage, intermediate ones included, is built from the mirror.
-#     That is what covers the companion's Dockerfile, which is iya-sts's and
-#     is built from that repository's tag rather than edited here.
+#
+# A third kind of mirror image is BUILT rather than copied, because it has
+# no upstream: the Shibboleth side-car's archives and iya-sts's companion
+# (.github/image-mirror-builds.txt, .github/scripts/mirror-builds.sh). The
+# first is a named context below; the second is an `image:`.
 #     (`ubuntu`, not `ubuntu:latest`: BuildKit drops `:latest` when it looks a
 #     name up.)
 #
@@ -35,6 +38,10 @@ x-mirror-contexts: &mirror-contexts
   ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
   "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
   "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
+  # Not a copy of anything upstream: the Shibboleth side-car's two archives,
+  # built into an image by .github/scripts/mirror-builds.sh
+  # (.github/image-mirror-builds.txt) so that build downloads nothing.
+  "shibboleth-idp-dist:4.3.3": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/shibboleth-idp-dist:4.3.3
 services:
   postgres:
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/postgres:18
@@ -245,7 +252,7 @@ services:
     # THIS DEFAULT IS THE ONE PLACE THE RELEASE IS NAMED. The other compose
     # files repeat it because compose has no include for a default, and
     # tests/image_mirror_coverage.js fails when any of them disagrees — or
-    # when the companion's IYA_STS_COMPANION_CONTEXT tag is not this
+    # when the companion's IYA_STS_COMPANION_IMAGE tag is not this
     # version's. tests/module_paths.js and common/common.sh read it from here.
     #
     # IYA_STS_IMAGE overrides it, for a candidate image or a digest pin.
@@ -696,15 +703,16 @@ services:
   companion:
     container_name: id-proto-debugger-companion
     hostname: companion
-    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/companion:${IMAGE_TAG:-latest}
-    # BUILT FROM iya-sts'S RELEASE TAG, NOT FROM A CHECKOUT. iya-sts
+    # PULLED FROM THE MIRROR, BUILT ONCE PER RELEASE ELSEWHERE. iya-sts
     # publishes no image of the companion and its release image leaves the
-    # directory out, so the build context is the repository at the tag that
-    # made IYA_STS_IMAGE (a git URL `#<ref>:<dir>`, which BuildKit fetches
-    # itself). The repository is public, so no credential is involved.
-    build:
-      context: ${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v1.0.0:companion}
-      additional_contexts: *mirror-contexts
+    # directory out, so .github/scripts/mirror-builds.sh builds it from the
+    # iya-sts repository at the tag that made IYA_STS_IMAGE
+    # (.github/image-mirror-builds.txt), with the mirror contexts, and pushes
+    # it to the private mirror as iya-sts-companion:v<version>. A test run
+    # therefore fetches no source from GitHub. tests/image_mirror_coverage.js
+    # holds this tag to IYA_STS_IMAGE's release. IYA_STS_COMPANION_IMAGE
+    # overrides it, for a companion built by hand from a candidate tag.
+    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.0.0}
     environment:
       - COMPANION_PORT=9700
       - COMPANION_PUBLIC_URL=http://companion:9700

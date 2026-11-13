@@ -253,7 +253,7 @@ Everything the suite needs on the *other* side of a protocol — the WS-Trust ST
 | What | How |
 |---|---|
 | the `sts` service | `image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:<version>}` — the default in `docker-compose-run-tests.yml` is the one place the release is named, and `tests/image_mirror_coverage.js` fails when another compose file disagrees or the default is not the mirror's copy |
-| its companion (demo pages, SPNEGO page, Kerberos TCP service) | built from iya-sts's repository at the matching tag, `${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v<version>:companion}` |
+| its companion (demo pages, SPNEGO page, Kerberos TCP service) | built from iya-sts's repository at the matching tag into the private mirror by `.github/scripts/mirror-builds.sh`, and pulled as `${IYA_STS_COMPANION_IMAGE:-…/mirror/iya-sts-companion:v<version>}` |
 | tests that load iya-sts's code in process | the tests image copies the image's `/usr/src/sts`; a host run copies it once into `~/.cache/id-proto-debugger/iya-sts/` (`tests/module_paths.js`, `iyaStsTree()`) |
 
 Set `IYA_STS_IMAGE` to run a candidate image, or `MOCK_STS_DIR` to load a working copy of iya-sts's tree in the in-process tests. A checkout from before 2026-11-13 keeps an `sts/` directory after pulling; nothing reads it, and it can be deleted.
@@ -448,8 +448,13 @@ service consumes:
 git submodule update --init
 embedded/build.sh --out /path/to/tree          # without docker
 docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:dev \
+  --build-context ubuntu=docker-image://ghcr.io/rcbj/id-proto-debugger/mirror/ubuntu:latest \
   --build-arg GIT_COMMIT=$(git rev-parse --short=12 HEAD) .
 ```
+
+The `--build-context` takes `ubuntu:latest` from this repository's private
+image mirror rather than Docker Hub, as every build here does; it needs
+`docker login ghcr.io`, and dropping it builds from Docker Hub instead.
 
 Nothing about the standalone debugger changes. The contract — the tree, the
 `DEBUGGER_*` environment the api child reads, and the address allow-list it

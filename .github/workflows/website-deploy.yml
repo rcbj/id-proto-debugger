@@ -16,6 +16,8 @@ on:
 permissions:
   # write is needed to push the version tags back to the repo.
   contents: write
+  # Pulls ubuntu from the private image mirror.
+  packages: read
 
 jobs:
   deploy:
@@ -55,8 +57,20 @@ jobs:
             echo "| Commit | \`${SHA}\` |"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ubuntu:latest comes from the PRIVATE image mirror on ghcr.io, not
+      # Docker Hub (.github/image-mirror.txt): log in with this job's token
+      # (packages: read), and redirect the FROM with a named build context.
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
       - name: Build deploy image
-        run: docker build -t idptools-static-deploy -f deploy/Dockerfile .
+        env:
+          IMAGE_MIRROR: ghcr.io/rcbj/id-proto-debugger/mirror
+        run: >-
+          docker build
+          --build-context "ubuntu=docker-image://${IMAGE_MIRROR}/ubuntu:latest"
+          -t idptools-static-deploy -f deploy/Dockerfile .
 
       - name: Build static content and deploy PROD to S3 + CloudFront
         env:

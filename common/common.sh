@@ -151,13 +151,14 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_TAG"
 # docker-compose-run-tests-external-sts.yml substitutes it into the
 # companion's environment, so it has to cross sudo like the rest.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_EXTERNAL_URL"
-# Which iya-sts image every compose file runs, and which tag of the iya-sts
-# repository the companion is built from. Both are defaulted in the compose
-# files to the same release (docker-compose-run-tests.yml names it;
+# Which iya-sts image every compose file runs, and which companion image runs
+# beside it. Both are defaulted in the compose files to the mirror's copies
+# of the same release (docker-compose-run-tests.yml names it;
 # tests/image_mirror_coverage.js holds the others to it); set them to try a
-# candidate. There is no iya-sts checkout here to build either from.
+# candidate. There is no iya-sts checkout here to build either from; the
+# companion is built from iya-sts's tag by .github/scripts/mirror-builds.sh.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IYA_STS_IMAGE"
-COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IYA_STS_COMPANION_CONTEXT"
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IYA_STS_COMPANION_IMAGE"
 
 
 # ---------------------------------------------------------------------------

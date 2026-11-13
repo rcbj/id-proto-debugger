@@ -83,8 +83,10 @@ same tags — M.N.O and `latest` — as
 `ARG DEBUGGER_IMAGE` and does `COPY --from=<that image> /debugger/ …`; a
 release of it pins an M.N.O tag, so the debugger it ships is a tagged build of
 this repository rather than whatever a checkout held. A local build is still
-`docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:dev .`
-passed the same way.
+`docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:dev
+--build-context ubuntu=docker-image://ghcr.io/rcbj/id-proto-debugger/mirror/ubuntu:latest .`
+passed the same way — the `--build-context` takes its base from the private
+image mirror (after `docker login ghcr.io`), as `dockerimage.yml` does.
 
 ## B. The api child's environment
 

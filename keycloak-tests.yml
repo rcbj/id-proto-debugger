@@ -137,11 +137,9 @@ services:
   # docs/docker-compose.md does for a development stack.
   companion:
     container_name: idptools-kctest-companion
-    image: rcbj/companion
-    build:
-      # iya-sts's release tag; see docker-compose-run-tests.yml.
-      context: ${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v1.0.0:companion}
-      additional_contexts: *mirror-contexts
+    # iya-sts's release tag, built into the mirror; see
+    # docker-compose-run-tests.yml.
+    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.0.0}
     network_mode: "host"
     environment:
       - COMPANION_PORT=9700

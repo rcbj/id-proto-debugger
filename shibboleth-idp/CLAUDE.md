@@ -28,9 +28,12 @@ when the debugger is the compose `client`, and blanks it on a partial stack
 that did not start this service, so a focused mode skips that half rather
 than failing on it. No host-run launcher starts it.
 
-**What the image does at build.** Downloads both archives from their
-official locations (shibboleth.net, Maven Central) and checks each against a
-pinned SHA-256 in the Dockerfile; runs `bin/install.sh` non-interactively,
+**What the image does at build.** Copies both archives out of
+`shibboleth-idp-dist:4.3.3` — a FROM scratch image holding exactly the two
+files, built from `dist/Dockerfile` (`ADD --checksum` from shibboleth.net and
+Maven Central) into the private mirror by `.github/scripts/mirror-builds.sh`
+and reached through the compose file's named context of that name — so the
+build downloads nothing; checks each against its pinned SHA-256 again; runs `bin/install.sh` non-interactively,
 which **generates the signing, encryption and back-channel keys and the
 data sealer at build time** (every container of one image shares them, and
 nothing outside the stack trusts them); overlays the configuration below;
@@ -39,7 +42,11 @@ builds a Jetty base with the modules a V4 IdP needs and a context descriptor
 `appuser`, uid/gid 10001, like every image here. The base image comes from
 the ghcr.io mirror through `additional_contexts`, like the others.
 
-**Bumping a version** means a new SHA-256 for that archive. Shibboleth
+**Bumping a version** means a new URL and SHA-256 in `dist/Dockerfile`, the
+same digest in `Dockerfile`, a new tag for `shibboleth-idp-dist` in
+`Dockerfile`'s FROM, `.github/image-mirror-builds.txt` and the
+`x-mirror-contexts` of `docker-compose-run-tests.yml`, and a run of
+`.github/scripts/mirror-builds.sh missing` to put it in the mirror. Shibboleth
 publishes one beside the tarball (`.sha256`); Maven Central publishes only a
 SHA-1 for `jetty-home`, so compute the SHA-256 of a download whose SHA-1
 matches. Jetty must stay at 10: a V4 IdP is `javax.servlet`, Jetty 11 and
@@ -81,8 +88,14 @@ the Browser/POST form out of the page.
 ## Running it on its own
 
 ```bash
+M=ghcr.io/rcbj/id-proto-debugger/mirror
 docker build -f shibboleth-idp/Dockerfile -t shibidp-dev:local \
-  --build-context "eclipse-temurin:11-jdk=docker-image://ghcr.io/rcbj/id-proto-debugger/mirror/eclipse-temurin:11-jdk" .
+  --build-context "eclipse-temurin:11-jdk=docker-image://$M/eclipse-temurin:11-jdk" \
+  --build-context "shibboleth-idp-dist:4.3.3=docker-image://$M/shibboleth-idp-dist:4.3.3" .
+# Without the mirror's dist image, build it locally (it downloads the two
+# archives, checksum-pinned) and point the context at the local tag:
+#   docker build -t shibidp-dist:local shibboleth-idp/dist
+#   ... --build-context "shibboleth-idp-dist:4.3.3=docker-image://shibidp-dist:local"
 docker network create shibidp-dev-net
 docker run -d --name shibidp-dev-idp --network shibidp-dev-net shibidp-dev:local
 # then, from tests/, with no iya-sts base set:

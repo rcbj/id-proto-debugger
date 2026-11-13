@@ -68,6 +68,7 @@ var log = bunyan.createLogger({
 // tests/Dockerfile). Each entry is [repository path, flat name].
 const FILES = {
   list: [".github/image-mirror.txt", "image-mirror.txt"],
+  builds: [".github/image-mirror-builds.txt", "image-mirror-builds.txt"],
 };
 // The compose files that start a stack. Their flat names in the tests image
 // are their own (tests/Dockerfile COPYs each one). The overlays layered on
@@ -82,6 +83,67 @@ const DOCKERFILES = {
   "shibboleth-idp/Dockerfile": "shibboleth-idp_Dockerfile",
   "tests/Dockerfile": "tests_Dockerfile",
 };
+// Dockerfiles built OUTSIDE the compose files — by the deploy and image
+// workflows and two local scripts — whose FROMs must still be mirror
+// copies, and which the network-fetch check reads like the rest.
+const OTHER_DOCKERFILES = {
+  "infra/Dockerfile": "infra_Dockerfile",
+  "deploy/Dockerfile": "deploy_Dockerfile",
+  "embedded/Dockerfile": "embedded_Dockerfile",
+};
+// Where those three are built. Each `-f <dir>/Dockerfile` in these files
+// must sit in a command that redirects ubuntu to the mirror with
+// `--build-context ubuntu=docker-image://...`. Flat names are their own.
+const OTHER_BUILDERS = {
+  ".github/workflows/terraform.yml": "terraform.yml",
+  ".github/workflows/website-deploy-test.yml": "website-deploy-test.yml",
+  ".github/workflows/website-deploy.yml": "website-deploy.yml",
+  ".github/workflows/dockerimage.yml": "dockerimage.yml",
+  "deploy/deploy-local.sh": "deploy-local.sh",
+  "infra/terraform-local.sh": "terraform-local.sh",
+};
+
+// ---------------------------------------------------------------------------
+// NETWORK FETCHES IN A BUILD, AND THE ONES STILL ALLOWED.
+//
+// A RUN that downloads with curl, wget or `nvm install`, a `git clone`, or an
+// ADD of a URL reaches a host outside the mirror at build time, so it has
+// the same failure mode the mirror exists to remove. Package-manager
+// installs (apt-get, npm) are NOT counted: they are in every Dockerfile in
+// the tree, they resolve against their own registries' mirrors, and moving
+// them is a different piece of work.
+//
+// The rest must be in this list or the test fails, and an entry that no
+// longer matches anything fails too, so the list only ever shrinks. Each is
+// a fetch that predates this check; the way off it is the one the
+// Shibboleth side-car took — an image built into the mirror from the pinned
+// download (.github/image-mirror-builds.txt), COPY --from in the Dockerfile.
+// ---------------------------------------------------------------------------
+const NVM_SH = "https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/" +
+  "install.sh";
+const AWSCLI = "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip";
+const KNOWN_FETCHES = [
+  // nvm's installer and the node it installs (nodejs.org), in the five
+  // images that put node on ubuntu.
+  ["api/Dockerfile", NVM_SH], ["api/Dockerfile", "nvm install"],
+  ["client/Dockerfile", NVM_SH], ["client/Dockerfile", "nvm install"],
+  ["tests/Dockerfile", NVM_SH], ["tests/Dockerfile", "nvm install"],
+  ["deploy/Dockerfile", NVM_SH], ["deploy/Dockerfile", "nvm install"],
+  ["embedded/Dockerfile", NVM_SH], ["embedded/Dockerfile", "nvm install"],
+  // Chrome for Testing and its chromedriver, pinned by version.
+  ["tests/Dockerfile", "https://edgedl.me.gvt1.com/edgedl/chrome/" +
+    "chrome-for-testing"],
+  // The Keycloak 8.0.1 server distribution and the cloudtrust module.
+  ["keycloak-wsfed/Dockerfile", "https://downloads.jboss.org/keycloak/" +
+    "8.0.1/keycloak-8.0.1.tar.gz"],
+  ["keycloak-wsfed/Dockerfile", "https://github.com/cloudtrust/" +
+    "keycloak-wsfed/releases/download/8.0.1-1.0/" +
+    "keycloak-wsfed-8.0.1-1.0.tar.gz"],
+  // The AWS CLI and Terraform in the two deployment images.
+  ["infra/Dockerfile", AWSCLI],
+  ["infra/Dockerfile", "https://releases.hashicorp.com/terraform/"],
+  ["deploy/Dockerfile", AWSCLI],
+];
 
 const MIRROR_PREFIX = "${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/";
 // The names an image BUILT here goes by: under IMAGE_REGISTRY on the test
@@ -94,8 +156,13 @@ const BUILT_PREFIXES = [
   "rcbj/",
 ];
 // iya-sts's release image is named `${IYA_STS_IMAGE:-<default>}` so that a
-// candidate can be run instead; the DEFAULT is what is checked.
+// candidate can be run instead, and its companion
+// `${IYA_STS_COMPANION_IMAGE:-<default>}`; the DEFAULT is what is checked.
 const IYA_STS_OPEN = "${IYA_STS_IMAGE:-";
+const COMPANION_OPEN = "${IYA_STS_COMPANION_IMAGE:-";
+// Variables whose `${NAME:-default}` IS the mirror or registry prefix, and
+// so are part of a reference rather than a wrapper around one.
+const PREFIX_VARIABLES = ["IMAGE_MIRROR", "IMAGE_REGISTRY", "IMAGE_TAG"];
 
 function locate(repoPath, flatName) {
   log.debug("Entering locate().");
@@ -112,7 +179,10 @@ function locate(repoPath, flatName) {
   return found;
 }
 
-function mirrorPaths(source) {
+// The mirror paths a list names: the SECOND column of image-mirror.txt
+// (`upstream  mirror-path`), or the FIRST of image-mirror-builds.txt
+// (`mirror-path  source`), selected by `column`.
+function mirrorPaths(source, column) {
   log.debug("Entering mirrorPaths().");
   const paths = new Set();
   source.split("\n").forEach(function (line) {
@@ -122,8 +192,8 @@ function mirrorPaths(source) {
     }
     const cols = t.split(/\s+/);
     assert.strictEqual(cols.length, 2,
-      "image-mirror.txt: expected `upstream  mirror-path`, got: " + line);
-    paths.add(cols[1]);
+      "mirror list: expected two columns, got: " + line);
+    paths.add(cols[column === undefined ? 1 : column]);
   });
   log.debug("Leaving mirrorPaths(). " + paths.size + " paths.");
   return paths;
@@ -139,26 +209,30 @@ function codeLines(source) {
   });
 }
 
-// `${IYA_STS_IMAGE:-X}` -> X, matching braces, because X nests the mirror
-// default `${IMAGE_MIRROR:-...}`. Anything else is returned unchanged.
+// `${NAME:-X}` -> X, matching braces, for a variable that WRAPS a reference
+// (IYA_STS_IMAGE, IYA_STS_COMPANION_IMAGE, ...) rather than being a prefix
+// inside one; X itself nests `${IMAGE_MIRROR:-...}`. Anything else is
+// returned unchanged.
 function unwrapIyaStsImage(ref) {
   log.debug("Entering unwrapIyaStsImage().");
-  if (ref.indexOf(IYA_STS_OPEN) !== 0) {
+  const m = /^\$\{([A-Za-z_][A-Za-z0-9_]*):-/.exec(ref);
+  if (!m || PREFIX_VARIABLES.indexOf(m[1]) >= 0) {
     log.debug("Leaving unwrapIyaStsImage(). Not wrapped.");
     return ref;
   }
-  const inner = balancedDefault(ref, 0);
+  const inner = balancedDefault(ref, 0, m[0]);
   log.debug("Leaving unwrapIyaStsImage().");
   return inner === null ? ref : inner;
 }
 
-// The default inside the `${IYA_STS_IMAGE:-...}` that starts at `start`, read
-// up to ITS closing brace rather than the first one; null when unbalanced on
-// that line.
-function balancedDefault(text, start) {
+// The default inside the `${NAME:-...}` (open = "${NAME:-") that starts at
+// `start`, read up to ITS closing brace rather than the first one; null when
+// unbalanced on that line.
+function balancedDefault(text, start, open) {
   log.debug("Entering balancedDefault().");
+  const opener = open || IYA_STS_OPEN;
   var depth = 1;
-  for (var i = start + IYA_STS_OPEN.length; i < text.length; i++) {
+  for (var i = start + opener.length; i < text.length; i++) {
     if (text.startsWith("${", i)) {
       depth++;
       i++;
@@ -166,7 +240,7 @@ function balancedDefault(text, start) {
       depth--;
       if (depth === 0) {
         log.debug("Leaving balancedDefault(). Found.");
-        return text.slice(start + IYA_STS_OPEN.length, i);
+        return text.slice(start + opener.length, i);
       }
     } else if (text.charAt(i) === "\n") {
       break;
@@ -174,6 +248,49 @@ function balancedDefault(text, start) {
   }
   log.debug("Leaving balancedDefault(). Unbalanced.");
   return null;
+}
+
+// Every `${OPEN...}` default in `text`, each read by matching braces.
+function defaultsOf(name, text, open) {
+  log.debug("Entering defaultsOf(). " + name);
+  const found = [];
+  var at = text.indexOf(open);
+  while (at >= 0) {
+    const ref = balancedDefault(text, at, open);
+    assert.ok(ref !== null,
+      name + ": a " + open + "...} default has unbalanced braces.");
+    found.push({ file: name, ref: ref });
+    at = text.indexOf(open, at + open.length);
+  }
+  log.debug("Leaving defaultsOf(). " + found.length);
+  return found;
+}
+
+// A BUILD CONTEXT IS SOURCE, AND A REMOTE ONE IS FETCHED AT BUILD TIME.
+// `context:` must be this checkout (`.` or a path in it). A git URL or an
+// http(s) tarball is a test run reaching GitHub or a web server for its
+// source, which is what building the companion into the mirror ended.
+function noRemoteBuildContext(name, lines) {
+  log.debug("Entering noRemoteBuildContext(). " + name);
+  const bad = [];
+  var n = 0;
+  lines.forEach(function (line) {
+    const m = /^\s+context:\s*(\S+)\s*$/.exec(line);
+    if (!m) {
+      return;
+    }
+    n++;
+    const ref = unwrapIyaStsImage(m[1]);
+    if (/^(?:https?:|git@|git:|ssh:)|\.git(?:#|$)/.test(ref)) {
+      bad.push(ref);
+    }
+  });
+  assert.deepStrictEqual(bad, [],
+    name + " builds from a remote context, fetched at build time: " +
+    bad.join(", ") + ". Build it into the mirror instead " +
+    "(.github/image-mirror-builds.txt) and pull it as an `image:`.");
+  log.info(name + ": " + n + " build contexts, all local.");
+  log.debug("Leaving noRemoteBuildContext().");
 }
 
 // Service name -> whether its block has a `build:`. Services are the
@@ -369,11 +486,25 @@ function externalRefs(source) {
   return refs;
 }
 
-function everyFromHasAContext(name, names) {
+// The Dockerfiles one compose file builds, as DOCKERFILES keys.
+function builtDockerfiles(lines) {
+  log.debug("Entering builtDockerfiles().");
+  const files = [];
+  lines.forEach(function (line) {
+    const m = /^\s+dockerfile:\s*(\S+)\s*$/.exec(line);
+    if (m) {
+      files.push(m[1].replace(/^\.\//, ""));
+    }
+  });
+  log.debug("Leaving builtDockerfiles(). " + files.length);
+  return files;
+}
+
+function everyFromHasAContext(name, names, files) {
   log.debug("Entering everyFromHasAContext(). " + name);
   const bad = [];
   var n = 0;
-  Object.keys(DOCKERFILES).forEach(function (repoPath) {
+  files.forEach(function (repoPath) {
     const file = locate(repoPath, DOCKERFILES[repoPath]);
     externalRefs(fs.readFileSync(file, "utf8")).forEach(function (ref) {
       n++;
@@ -382,15 +513,227 @@ function everyFromHasAContext(name, names) {
       }
     });
   });
-  assert.ok(n > 0, "no FROM was parsed out of any Dockerfile.");
+  assert.ok(n > 0, name + ": no FROM was parsed out of its Dockerfiles.");
   assert.deepStrictEqual(bad, [],
     "These base images have no named context in " + name + "'s " +
     "x-mirror-contexts, so BuildKit would pull them from their upstream " +
     "registry. Add each to .github/image-mirror.txt and to every compose " +
     "file's x-mirror-contexts: " + bad.join(", "));
-  log.info(n + " external FROMs in " + Object.keys(DOCKERFILES).length +
+  log.info(name + ": " + n + " external FROMs in " + files.length +
            " Dockerfiles, each redirected to the mirror.");
   log.debug("Leaving everyFromHasAContext().");
+}
+
+// ---------------------------------------------------------------------------
+// WHAT A DOCKERFILE FETCHES WHILE IT BUILDS.
+// ---------------------------------------------------------------------------
+
+// Instructions with `\` continuations joined and comment lines dropped, and
+// each ARG's default substituted into the instructions after it, so a URL
+// held in an ARG is seen where it is used.
+function instructions(source) {
+  log.debug("Entering instructions().");
+  const out = [];
+  const args = {};
+  var current = "";
+  source.split("\n").forEach(function (line) {
+    if (/^\s*#/.test(line)) {
+      return;
+    }
+    if (/\\\s*$/.test(line)) {
+      current += line.replace(/\\\s*$/, " ");
+      return;
+    }
+    current += line;
+    var text = current.trim();
+    current = "";
+    if (!text) {
+      return;
+    }
+    Object.keys(args).forEach(function (name) {
+      text = text.split("${" + name + "}").join(args[name])
+        .split("$" + name).join(args[name]);
+    });
+    const arg = /^ARG\s+([A-Za-z_][A-Za-z0-9_]*)=(\S*)/.exec(text);
+    if (arg) {
+      args[arg[1]] = arg[2];
+    }
+    out.push(text);
+  });
+  log.debug("Leaving instructions(). " + out.length);
+  return out;
+}
+
+// Each network fetch in a Dockerfile: the URLs a RUN hands curl, wget or
+// `git clone`, an `nvm install`, and every ADD of a URL (with whether it
+// carries --checksum). apt-get and npm are deliberately not counted.
+function fetchesIn(source) {
+  log.debug("Entering fetchesIn().");
+  const found = [];
+  instructions(source).forEach(function (text) {
+    const urls = text.match(/https?:\/\/[^\s"'|;)]+/g) || [];
+    if (/^RUN\s/i.test(text)) {
+      if (/\b(?:curl|wget)\b[^&|;]*https?:\/\/|\bgit\s+clone\b/
+        .test(text) || /\b(?:curl|wget)\b[^&|;]*\$\{?[A-Za-z]/
+        .test(text) && urls.length) {
+        urls.forEach(function (url) {
+          found.push({ url: url, checksum: false });
+        });
+      }
+      if (/\bnvm\s+install\b/.test(text)) {
+        found.push({ url: "nvm install", checksum: false });
+      }
+    } else if (/^ADD\s/i.test(text) && urls.length) {
+      urls.forEach(function (url) {
+        found.push({ url: url, checksum: /--checksum=/.test(text) });
+      });
+    }
+  });
+  log.debug("Leaving fetchesIn(). " + found.length);
+  return found;
+}
+
+function noUnlistedNetworkFetch() {
+  log.debug("Entering noUnlistedNetworkFetch().");
+  const all = Object.assign({}, DOCKERFILES, OTHER_DOCKERFILES);
+  const bad = [];
+  const used = new Set();
+  var n = 0;
+  Object.keys(all).forEach(function (repoPath) {
+    const source = fs.readFileSync(locate(repoPath, all[repoPath]), "utf8");
+    fetchesIn(source).forEach(function (fetch) {
+      n++;
+      const known = KNOWN_FETCHES.findIndex(function (entry) {
+        return entry[0] === repoPath && fetch.url.indexOf(entry[1]) === 0;
+      });
+      if (known < 0) {
+        bad.push(repoPath + ": " + fetch.url);
+      } else {
+        used.add(known);
+      }
+    });
+  });
+  assert.deepStrictEqual(bad, [],
+    "These Dockerfiles download from outside the mirror while they build: " +
+    bad.join(", ") + ". Build the download into a mirror image " +
+    "(.github/image-mirror-builds.txt, ADD --checksum) and COPY --from it, " +
+    "as shibboleth-idp/Dockerfile does. apt-get and npm are not counted.");
+  const stale = KNOWN_FETCHES.filter(function (entry, i) {
+    return !used.has(i);
+  }).map(function (entry) {
+    return entry[0] + ": " + entry[1];
+  });
+  assert.deepStrictEqual(stale, [],
+    "KNOWN_FETCHES lists downloads no Dockerfile makes any more; delete " +
+    "them so the list only shrinks: " + stale.join(", "));
+  log.info(n + " network fetches in " + Object.keys(all).length +
+    " Dockerfiles, each one of the " + KNOWN_FETCHES.length +
+    " known ones.");
+  log.debug("Leaving noUnlistedNetworkFetch().");
+}
+
+// The three Dockerfiles built outside compose: every external FROM is a
+// name image-mirror.txt copies (so a --build-context can redirect it), and
+// every place that builds one passes that context for ubuntu.
+function otherDockerfilesUseTheMirror(upstreams) {
+  log.debug("Entering otherDockerfilesUseTheMirror().");
+  const bad = [];
+  Object.keys(OTHER_DOCKERFILES).forEach(function (repoPath) {
+    const source = fs.readFileSync(
+      locate(repoPath, OTHER_DOCKERFILES[repoPath]), "utf8");
+    externalRefs(source).forEach(function (ref) {
+      if (!upstreams.has(contextKey(ref))) {
+        bad.push(repoPath + ": FROM " + ref + " is not in image-mirror.txt");
+      } else if (contextKey(ref) !== "ubuntu") {
+        bad.push(repoPath + ": FROM " + ref + " — its builders redirect " +
+          "only ubuntu; add a --build-context for it there and here");
+      }
+    });
+  });
+  var builds = 0;
+  Object.keys(OTHER_BUILDERS).forEach(function (repoPath) {
+    const lines = fs.readFileSync(
+      locate(repoPath, OTHER_BUILDERS[repoPath]), "utf8").split("\n");
+    lines.forEach(function (line, i) {
+      const m = new RegExp("-f\\s+\"?(?:\\$\\{REPO_ROOT\\}/)?" +
+        "(infra|deploy|embedded)/Dockerfile").exec(line);
+      if (!m) {
+        return;
+      }
+      builds++;
+      const command = lines.slice(Math.max(0, i - 6), i + 3).join("\n");
+      if (!/--build-context\s+"?ubuntu=docker-image:\/\//.test(command)) {
+        bad.push(repoPath + ":" + (i + 1) + " builds " + m[1] +
+          "/Dockerfile without --build-context ubuntu=docker-image://...");
+      }
+    });
+  });
+  assert.ok(builds > 0, "no build of infra, deploy or embedded was found.");
+  assert.deepStrictEqual(bad, [],
+    "Dockerfiles built outside the compose files would pull from Docker " +
+    "Hub: " + bad.join("; "));
+  log.info(Object.keys(OTHER_DOCKERFILES).length + " Dockerfiles built " +
+    "outside compose, in " + builds + " places, each from the mirror.");
+  log.debug("Leaving otherDockerfilesUseTheMirror().");
+}
+
+// The images BUILT into the mirror: a local source is a Dockerfile whose
+// every ADD of a URL is pinned by --checksum, since that pin is the whole
+// of what makes the mirror copy trustworthy.
+function mirrorBuildsArePinned(builds) {
+  log.debug("Entering mirrorBuildsArePinned().");
+  const bad = [];
+  var n = 0;
+  builds.forEach(function (row) {
+    if (row.source.indexOf("./") !== 0) {
+      return;
+    }
+    const dir = row.source.slice(2).replace(/\/$/, "");
+    const flat = dir.replace(/\//g, "-") + "_Dockerfile";
+    const source = fs.readFileSync(locate(dir + "/Dockerfile", flat), "utf8");
+    fetchesIn(source).forEach(function (fetch) {
+      n++;
+      if (!fetch.checksum) {
+        bad.push(row.path + ": " + fetch.url);
+      }
+    });
+  });
+  assert.ok(n > 0, "no pinned download was parsed out of a mirror build.");
+  assert.deepStrictEqual(bad, [],
+    "These mirror builds download without ADD --checksum: " +
+    bad.join(", "));
+  log.info(n + " downloads in the mirror builds, each pinned by checksum.");
+  log.debug("Leaving mirrorBuildsArePinned().");
+}
+
+// The rows of image-mirror-builds.txt.
+function buildRows(source) {
+  log.debug("Entering buildRows().");
+  const rows = [];
+  source.split("\n").forEach(function (line) {
+    const t = line.trim();
+    if (!t || t.charAt(0) === "#") {
+      return;
+    }
+    const cols = t.split(/\s+/);
+    rows.push({ path: cols[0], source: cols[1] });
+  });
+  log.debug("Leaving buildRows(). " + rows.length);
+  return rows;
+}
+
+// The upstream names image-mirror.txt copies, as BuildKit looks them up.
+function upstreamNames(source) {
+  log.debug("Entering upstreamNames().");
+  const names = new Set();
+  source.split("\n").forEach(function (line) {
+    const t = line.trim();
+    if (t && t.charAt(0) !== "#") {
+      names.add(contextKey(t.split(/\s+/)[0]));
+    }
+  });
+  log.debug("Leaving upstreamNames(). " + names.size);
+  return names;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,26 +756,15 @@ function everyFromHasAContext(name, names) {
 // outside this repository's area, which is what this whole test forbids.
 // ---------------------------------------------------------------------------
 
-function iyaStsReleaseIsNamedOnce() {
+function iyaStsReleaseIsNamedOnce(builds) {
   log.debug("Entering iyaStsReleaseIsNamedOnce().");
-  const images = [];
-  const contexts = [];
+  var images = [];
+  var companions = [];
   COMPOSE_FILES.forEach(function (name) {
     const text = codeLines(fs.readFileSync(locate(name, name), "utf8"))
       .join("\n");
-    var at = text.indexOf(IYA_STS_OPEN);
-    while (at >= 0) {
-      const ref = balancedDefault(text, at);
-      assert.ok(ref !== null,
-        name + ": an ${IYA_STS_IMAGE:-...} default has unbalanced braces.");
-      images.push({ file: name, ref: ref });
-      at = text.indexOf(IYA_STS_OPEN, at + IYA_STS_OPEN.length);
-    }
-    (text.match(/\$\{IYA_STS_COMPANION_CONTEXT:-[^}]+\}/g) || [])
-      .forEach(function (m) {
-        contexts.push({ file: name,
-          ref: m.slice("${IYA_STS_COMPANION_CONTEXT:-".length, -1) });
-      });
+    images = images.concat(defaultsOf(name, text, IYA_STS_OPEN));
+    companions = companions.concat(defaultsOf(name, text, COMPANION_OPEN));
   });
   assert.ok(images.length > 0 && images[0].file === COMPOSE_FILES[0],
     "docker-compose-run-tests.yml names no ${IYA_STS_IMAGE:-...} default.");
@@ -455,29 +787,47 @@ function iyaStsReleaseIsNamedOnce() {
       return one.file === name;
     }), name + " does not run ${IYA_STS_IMAGE:-" + release + "}.");
   });
-  const wanted = "https://github.com/rcbj/iya-sts.git#v" + tag[1] +
-    ":companion";
-  assert.ok(contexts.length >= 3,
-    "expected the companion's IYA_STS_COMPANION_CONTEXT default in three " +
-    "compose files, found " + contexts.length + ".");
-  const stale = contexts.filter(function (one) {
+  // The companion: the mirror image of this release's tag, in every file
+  // that runs one, and built into the mirror from that same tag.
+  const companionPath = "iya-sts-companion:v" + tag[1];
+  const wanted = MIRROR_PREFIX + companionPath;
+  assert.ok(companions.length >= 3,
+    "expected the companion's IYA_STS_COMPANION_IMAGE default in three " +
+    "compose files, found " + companions.length + ".");
+  const stale = companions.filter(function (one) {
     return one.ref !== wanted;
   }).map(function (one) {
     return one.file + ": " + one.ref;
   });
   assert.deepStrictEqual(stale, [],
-    "The companion must be built from the tag of the iya-sts release the " +
+    "The companion must be the mirror's build of the iya-sts release the " +
     "stack runs (" + wanted + "): " + stale.join(", "));
+  const source = "https://github.com/rcbj/iya-sts.git#v" + tag[1] +
+    ":companion";
+  const row = builds.filter(function (one) {
+    return one.path === companionPath;
+  })[0];
+  assert.ok(row, "image-mirror-builds.txt does not build " + companionPath +
+    ", the companion of the release the stack runs.");
+  assert.strictEqual(row.source, source,
+    "image-mirror-builds.txt builds " + companionPath + " from " +
+    row.source + ", not from that release's tag (" + source + ").");
   log.info("iya-sts " + release + " is named the same way in " +
-    images.length + " places, and the companion is built from v" + tag[1] +
-    " in " + contexts.length + ".");
+    images.length + " places, and its companion " + companionPath +
+    " in " + companions.length + ", built from v" + tag[1] + ".");
   log.debug("Leaving iyaStsReleaseIsNamedOnce().");
 }
 
 function test() {
   log.debug("Entering test().");
-  const paths = mirrorPaths(fs.readFileSync(locate.apply(null, FILES.list),
-    "utf8"));
+  const list = fs.readFileSync(locate.apply(null, FILES.list), "utf8");
+  const buildList = fs.readFileSync(locate.apply(null, FILES.builds),
+    "utf8");
+  const builds = buildRows(buildList);
+  const paths = mirrorPaths(list);
+  mirrorPaths(buildList, 0).forEach(function (one) {
+    paths.add(one);
+  });
   assert.ok(paths.size > 0, "image-mirror.txt lists no images.");
   COMPOSE_FILES.forEach(function (name) {
     const compose = fs.readFileSync(locate(name, name), "utf8");
@@ -486,9 +836,13 @@ function test() {
     const names = mirrorContexts(name, lines, paths);
     everyBuildCarriesTheContexts(name, compose);
     everyBuiltDockerfileIsRead(name, lines);
-    everyFromHasAContext(name, names);
+    noRemoteBuildContext(name, lines);
+    everyFromHasAContext(name, names, builtDockerfiles(lines));
   });
-  iyaStsReleaseIsNamedOnce();
+  otherDockerfilesUseTheMirror(upstreamNames(list));
+  noUnlistedNetworkFetch();
+  mirrorBuildsArePinned(builds);
+  iyaStsReleaseIsNamedOnce(builds);
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

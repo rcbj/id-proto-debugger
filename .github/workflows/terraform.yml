@@ -34,6 +34,8 @@ on:
 
 permissions:
   contents: read
+  # Pulls ubuntu from the private image mirror.
+  packages: read
 
 # Serialize runs per environment so two applies never overlap (in addition to
 # the S3-native state lock). Do not cancel an in-flight apply.
@@ -51,8 +53,20 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v5
 
+      # ubuntu:latest comes from the PRIVATE image mirror on ghcr.io, not
+      # Docker Hub (.github/image-mirror.txt): log in with this job's token
+      # (packages: read), and redirect the FROM with a named build context.
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
       - name: Build terraform image
-        run: docker build -t idptools-terraform -f infra/Dockerfile .
+        env:
+          IMAGE_MIRROR: ghcr.io/rcbj/id-proto-debugger/mirror
+        run: >-
+          docker build
+          --build-context "ubuntu=docker-image://${IMAGE_MIRROR}/ubuntu:latest"
+          -t idptools-terraform -f infra/Dockerfile .
 
       - name: Terraform ${{ env.TF_ACTION }} (${{ env.TF_ENV }})
         env:

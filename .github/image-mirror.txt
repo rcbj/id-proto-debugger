@@ -18,9 +18,12 @@
 #   * an `image:` in the compose file, written as
 #       ${IMAGE_MIRROR:-...}/<mirror path>
 #   * a base image some Dockerfile names in a FROM, redirected by an entry in
-#     that service's build.additional_contexts — which is how the iya-sts
-#     companion's Dockerfile, built from that repository's release tag and
-#     not edited here, is covered.
+#     that service's build.additional_contexts (or a --build-context where a
+#     Dockerfile is built outside compose).
+#
+# Images with no upstream are BUILT into the same mirror instead, and listed
+# in .github/image-mirror-builds.txt rather than here: that list's columns
+# are a mirror path and a source, not an upstream.
 #
 # tests/image_mirror_coverage.js fails when a FROM or an `image:` in any of
 # those compose files is not covered here, so a new base image cannot silently go back to

@@ -88,8 +88,13 @@ if [ "${SKIP_DEPLOY:-false}" != "true" ]; then
   run_args+=(--env-file "${CREDS_ENV_FILE}")
 fi
 
+# ubuntu:latest comes from the PRIVATE image mirror on ghcr.io rather than
+# Docker Hub (.github/image-mirror.txt), so this needs `docker login ghcr.io`
+# with a token that can read packages. IMAGE_MIRROR overrides the prefix.
+IMAGE_MIRROR="${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}"
 echo "==> Building deploy image: ${IMAGE_NAME}"
 "${DOCKER_CMD[@]}" build -t "${IMAGE_NAME}" \
+  --build-context "ubuntu=docker-image://${IMAGE_MIRROR}/ubuntu:latest" \
   -f "${REPO_ROOT}/deploy/Dockerfile" "${REPO_ROOT}"
 
 echo "==> Running build + deploy in container"

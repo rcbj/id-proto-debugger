@@ -252,18 +252,6 @@ COPY docker-compose.yml ./
 COPY local-tests.yml ./
 COPY keycloak-tests.yml ./
 
-# Where the stacks' images come from: tests/image_mirror_coverage.js checks
-# that every image the four stack compose files (docker-compose-run-tests.yml,
-# docker-compose.yml, local-tests.yml, keycloak-tests.yml, all copied above)
-# pull, and every FROM in the six Dockerfiles they build, is covered by the
-# ghcr.io mirror — iya-sts's release image included. It needs the list and
-# those Dockerfiles, renamed flat because this directory is flat.
-# client/Dockerfile is already here as client_Dockerfile.
-COPY tests/image_mirror_coverage.js ./
-COPY .github/image-mirror.txt ./
-COPY api/Dockerfile ./api_Dockerfile
-COPY keycloak-wsfed/Dockerfile ./keycloak-wsfed_Dockerfile
-COPY shibboleth-idp/Dockerfile ./shibboleth-idp_Dockerfile
 COPY tests/Dockerfile ./tests_Dockerfile
 
 # Where a downloaded file lands. Several pages here have a Download button, and
@@ -686,6 +674,33 @@ COPY tests/schemas ./schemas
 # reason — its basename is also sts/mgmt-api/admin_api.js — and adding such a
 # file to the flat list without noticing is the collision
 # testsImageHasNoCollidingFilenames() exists to catch.
+
+# (Moved here from files1 on 2026-11-13, when that stage reached 105 layer
+# instructions against the budget of 100.)
+# Where the stacks' images come from: tests/image_mirror_coverage.js checks
+# that every image the four stack compose files (docker-compose-run-tests.yml,
+# docker-compose.yml, local-tests.yml, keycloak-tests.yml, all copied above)
+# pull, and every FROM in the six Dockerfiles they build, is covered by the
+# ghcr.io mirror — iya-sts's release image included. It needs the list and
+# those Dockerfiles, renamed flat because this directory is flat.
+# client/Dockerfile is already here as client_Dockerfile.
+COPY tests/image_mirror_coverage.js ./
+COPY .github/image-mirror.txt ./
+COPY api/Dockerfile ./api_Dockerfile
+COPY keycloak-wsfed/Dockerfile ./keycloak-wsfed_Dockerfile
+COPY shibboleth-idp/Dockerfile ./shibboleth-idp_Dockerfile
+# It also reads the images built INTO the mirror (and the Dockerfile of the
+# one built from this checkout), the three Dockerfiles built outside the
+# compose files, and the six places that build those — in one COPY where the
+# flat names are their own.
+COPY .github/image-mirror-builds.txt .github/workflows/terraform.yml \
+     .github/workflows/website-deploy-test.yml \
+     .github/workflows/website-deploy.yml .github/workflows/dockerimage.yml \
+     deploy/deploy-local.sh infra/terraform-local.sh ./
+COPY shibboleth-idp/dist/Dockerfile ./shibboleth-idp-dist_Dockerfile
+COPY infra/Dockerfile ./infra_Dockerfile
+COPY deploy/Dockerfile ./deploy_Dockerfile
+COPY embedded/Dockerfile ./embedded_Dockerfile
 
 # ---------------------------------------------------------------------------
 # Staging stage 3 of 3, split off `files2` on the 2026-09-15 bump, when that

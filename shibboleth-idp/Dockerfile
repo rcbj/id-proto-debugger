@@ -14,33 +14,37 @@
 # newest Jetty a V4 IdP runs on: it is javax.servlet, and Jetty 11 and
 # later are jakarta.servlet.
 #
-# Both archives are downloaded from their official locations and checked
-# against a pinned SHA-256. Shibboleth publishes that digest beside the
-# archive; Maven Central publishes only a SHA-1 for jetty-home, so the
-# SHA-256 below was computed from the archive whose SHA-1 matched it
-# (26e8e5b8bf3501798162303713463476c9db0614).
+# THE ARCHIVES COME OUT OF THE MIRROR, NOT OFF THE NETWORK. The two pinned
+# archives are carried by shibboleth-idp-dist:<IdP version>, a FROM scratch
+# image built from shibboleth-idp/dist/Dockerfile and pushed to the private
+# ghcr.io mirror by .github/scripts/mirror-builds.sh. This build reaches it
+# through the named context `shibboleth-idp-dist:4.3.3` in the compose
+# file's x-mirror-contexts, so it downloads nothing. Each archive is checked
+# against its pinned SHA-256 again here, because a mirror tag can be
+# overwritten. A version bump changes this FROM, the digests below, and
+# shibboleth-idp/dist/Dockerfile together.
+FROM shibboleth-idp-dist:4.3.3 AS dist
+
 FROM eclipse-temurin:11-jdk
 
 ARG IDP_VERSION=4.3.3
 ARG IDP_SHA256=815abe9c707c8741278eda8b9120be7d99f09238d2974ccc3a93b37d549cc149
-ARG IDP_URL=https://shibboleth.net/downloads/identity-provider/${IDP_VERSION}/shibboleth-identity-provider-${IDP_VERSION}.tar.gz
 ARG JETTY_VERSION=10.0.22
 ARG JETTY_SHA256=e4217cc1f9e501b7a17fd9a568858785925bcf5d490c3dac8a9f97123779cd8c
-ARG JETTY_URL=https://repo1.maven.org/maven2/org/eclipse/jetty/jetty-home/${JETTY_VERSION}/jetty-home-${JETTY_VERSION}.tar.gz
 
 ENV IDP_HOME=/opt/shibboleth-idp
 ENV JETTY_HOME=/opt/jetty-home
 ENV JETTY_BASE=/opt/jetty-base
 
-# curl downloads the archives and is the compose healthcheck's probe.
+# curl is the compose healthcheck's probe; nothing here downloads with it.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fSL --retry 5 --retry-all-errors -o /tmp/idp.tar.gz "${IDP_URL}" \
-    && echo "${IDP_SHA256}  /tmp/idp.tar.gz" | sha256sum -c - \
-    && curl -fSL --retry 5 --retry-all-errors -o /tmp/jetty.tar.gz \
-        "${JETTY_URL}" \
+COPY --from=dist /shibboleth-identity-provider-${IDP_VERSION}.tar.gz \
+    /tmp/idp.tar.gz
+COPY --from=dist /jetty-home-${JETTY_VERSION}.tar.gz /tmp/jetty.tar.gz
+RUN echo "${IDP_SHA256}  /tmp/idp.tar.gz" | sha256sum -c - \
     && echo "${JETTY_SHA256}  /tmp/jetty.tar.gz" | sha256sum -c - \
     && mkdir -p /tmp/idp-src "${JETTY_HOME}" \
     && tar xzf /tmp/idp.tar.gz -C /tmp/idp-src --strip-components=1 \

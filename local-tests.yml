@@ -422,18 +422,15 @@ services:
   # IYA-STS'S DEVELOPMENT COMPANION (iya-sts #594, #595): the issuer's and the
   # Verifier's websites the VC workflows start at, and the SPNEGO-protected
   # page and Kerberos TCP service the Kerberos jobs present tickets to. It is
-  # built from iya-sts's release tag (see docker-compose-run-tests.yml) and
-  # reaches iya-sts through
+  # pulled from the mirror, where it is built from iya-sts's release tag (see
+  # docker-compose-run-tests.yml), and reaches iya-sts through
   # /admin-api, registering itself with the management API secret this run
   # pins. Host networking, like everything here, so it is
   # http://localhost:9700 — which is every job's and client/src/env/local.js's
   # default — and its Kerberos service principal is HTTP/localhost.
   companion:
     container_name: id-proto-debugger-companion
-    image: rcbj/companion
-    build:
-      context: ${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v1.0.0:companion}
-      additional_contexts: *mirror-contexts
+    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.0.0}
     network_mode: "host"
     environment:
       - COMPANION_PORT=9700

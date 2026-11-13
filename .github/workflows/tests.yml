@@ -44,6 +44,11 @@ jobs:
              docker login ghcr.io -u "${{ github.actor }}" --password-stdin
       - name: Copy any image the mirror does not have yet
         run: .github/scripts/mirror-images.sh missing
+      # The images with no upstream (.github/image-mirror-builds.txt): the
+      # Shibboleth archives and iya-sts's companion. After the copies,
+      # because their FROMs resolve against the mirror.
+      - name: Build any mirror image the mirror does not have yet
+        run: .github/scripts/mirror-builds.sh missing
 
   # Plain suite: full battery in containers, no coverage. Wraps
   # ./docker-run-tests.sh, which builds the stack (docker-compose-run-tests.yml),
@@ -53,8 +58,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       # The name every image this job builds is tagged with, and pushed under
-      # (the api, the client, the companion, the tests and the WS-Federation
-      # side-car).
+      # (the api, the client, the tests, the WS-Federation side-car and the
+      # Shibboleth IdP; the companion is pulled from the mirror).
       IMAGE_TAG: ${{ github.sha }}
     steps:
       - name: Checkout Repository
