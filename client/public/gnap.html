@@ -30,11 +30,12 @@
 
 <p class="gnap-intro">Grant Negotiation and Authorization Protocol
 (RFC 9635). This page is a client instance. It builds a grant
-request, proves the client key with an HTTP message signature or a
-JWS, and shows what the authorization server answers. The private
-key stays in this browser. The API path forwards a request that is
-already signed. Mutual TLS is a property of the connection, so this
-page does not offer it.</p>
+request, proves the client key with an HTTP message signature, a
+JWS or a TLS client certificate, and shows what the authorization
+server answers. A signing key stays in this browser, and the API path
+forwards a request that is already signed. Mutual TLS is a property
+of the connection, which a browser cannot choose, so an mtls request
+goes through the API with the certificate and its key.</p>
 
 <p id="gnap_status" class="gnap-note"></p>
 
@@ -49,9 +50,11 @@ page does not offer it.</p>
         <option value="RS256">RS256</option>
       </select>
     </label>
-    <button type="button" onclick="return gnap.generate();">
+    <button type="button" id="gnap_generate"
+            onclick="return gnap.generate();">
       Generate</button>
-    <button type="button" onclick="return gnap.usePasted();">
+    <button type="button" id="gnap_use_pasted"
+            onclick="return gnap.usePasted();">
       Use pasted key</button>
     <label>
       <input type="checkbox" id="gnap_save_keypair" checked
@@ -71,6 +74,23 @@ page does not offer it.</p>
 </fieldset>
 
 <fieldset>
+  <legend>Client certificate (mtls)</legend>
+  <p class="gnap-intro">Used only when the proof is <code>mtls</code>
+  (RFC 9635 section 7.3.2). The grant request carries the certificate
+  as <code>client.key.cert</code>, and the API presents it, with this
+  key, in the TLS handshake of that one call. The PKI page issues one.
+  The key follows the save box above. Section 7.3.2.1 defines no key
+  rotation for mtls.</p>
+  <div class="gnap-field">
+    <label for="gnap_mtls_cert">Certificate (PEM)</label>
+    <textarea id="gnap_mtls_cert" class="gnap-mono" rows="6"></textarea>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_mtls_key">Private key (PEM)</label>
+    <textarea id="gnap_mtls_key" class="gnap-mono" rows="6"></textarea>
+  </div>
+</fieldset>
+<fieldset>
   <legend>Authorization server</legend>
   <div class="gnap-field">
     <label for="gnap_grant">Grant endpoint</label>
@@ -83,6 +103,7 @@ page does not offer it.</p>
         <option value="httpsig">httpsig</option>
         <option value="jwsd">jwsd</option>
         <option value="jws">jws</option>
+        <option value="mtls">mtls (through the API)</option>
       </select>
     </label>
     <label>Send
@@ -101,7 +122,8 @@ page does not offer it.</p>
     <input id="gnap_api" size="64">
   </div>
   <div class="gnap-row">
-    <button type="button" onclick="return gnap.discover();">
+    <button type="button" id="gnap_discover"
+            onclick="return gnap.discover();">
       Discover</button>
   </div>
   <div class="gnap-field">
@@ -126,9 +148,14 @@ page does not offer it.</p>
     <textarea id="gnap_request" class="gnap-mono" rows="12"></textarea>
   </div>
   <div class="gnap-row">
-    <button type="button" onclick="return gnap.fillSample();">
+    <button type="button" id="gnap_fill_sample"
+            onclick="return gnap.fillSample();">
       Fill a sample</button>
-    <button type="button" onclick="return gnap.sendGrant();">
+    <button type="button" id="gnap_fill_ssf_sample"
+            onclick="return gnap.fillSsfSample();">
+      Fill an SSF access sample</button>
+    <button type="button" id="gnap_send"
+            onclick="return gnap.sendGrant();">
       Send grant request</button>
   </div>
   <div class="gnap-field">
@@ -167,7 +194,8 @@ page does not offer it.</p>
     <input id="gnap_hash_expected" size="64" readonly>
   </div>
   <div class="gnap-row">
-    <button type="button" onclick="return gnap.checkFinish();">
+    <button type="button" id="gnap_check_hash"
+            onclick="return gnap.checkFinish();">
       Check interaction hash</button>
   </div>
 </fieldset>
@@ -183,9 +211,11 @@ page does not offer it.</p>
     <input id="gnap_continue_token" size="64">
   </div>
   <div class="gnap-row">
-    <button type="button" onclick="return gnap.continueGrant();">
+    <button type="button" id="gnap_continue"
+            onclick="return gnap.continueGrant();">
       Continue</button>
-    <button type="button" onclick="return gnap.revokeGrant();">
+    <button type="button" id="gnap_revoke_grant"
+            onclick="return gnap.revokeGrant();">
       Revoke grant</button>
   </div>
   <div class="gnap-field">
@@ -201,8 +231,15 @@ page does not offer it.</p>
     <input id="gnap_manage_token" size="64">
   </div>
   <div class="gnap-row">
-    <button type="button" onclick="return gnap.rotateKey();">
+    <button type="button" id="gnap_rotate_token"
+            onclick="return gnap.rotateToken();">
+      Rotate the access token</button>
+    <button type="button" id="gnap_rotate_key"
+            onclick="return gnap.rotateKey();">
       Rotate the client key</button>
+    <button type="button" id="gnap_revoke_token"
+            onclick="return gnap.revokeToken();">
+      Revoke the access token</button>
   </div>
 </fieldset>
 
@@ -222,8 +259,12 @@ page does not offer it.</p>
         <option>OPTIONS</option>
       </select>
     </label>
-    <button type="button" onclick="return gnap.fillIntrospect();">
+    <button type="button" id="gnap_fill_introspect"
+            onclick="return gnap.fillIntrospect();">
       Fill introspection</button>
+    <button type="button" id="gnap_fill_resource"
+            onclick="return gnap.fillResourceCall();">
+      Fill a Shared Signals call</button>
   </div>
   <div class="gnap-field">
     <label for="gnap_call_url">URL</label>
@@ -239,7 +280,8 @@ page does not offer it.</p>
     <textarea id="gnap_call_body" class="gnap-mono" rows="4"></textarea>
   </div>
   <div class="gnap-row">
-    <button type="button" onclick="return gnap.sendCall();">
+    <button type="button" id="gnap_send_call"
+            onclick="return gnap.sendCall();">
       Send</button>
   </div>
 </fieldset>

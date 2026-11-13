@@ -770,6 +770,13 @@ COPY client/public/css/xacml.css /usr/src/client/public/css/xacml.css
 COPY tests/gnap_engine.js ./
 COPY client/public/css/gnap.css /usr/src/client/public/css/gnap.css
 COPY api/gnap_proxy.js ./
+# The GNAP jobs that drive iya-sts: the whole grant lifecycle with a
+# browser approving the interaction, POST /gnap/call end to end, and
+# the page. gnap_live.js is their shared helper (application names,
+# /admin-api, a client certificate from the openssl above, approval in
+# a browser). They load gnap_client.js from the staged client/src too.
+COPY tests/gnap_live.js tests/gnap_protocol.js tests/api_gnap.js \
+     tests/gnap_page.js ./
 # ISO 7816 command and response APDUs, and BER-TLV, in node. Like
 # hash_engine.js it loads client/src/iso7816.js out of the tree the
 # COPY client/src line above staged, so this script must not also get

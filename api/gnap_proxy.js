@@ -18,6 +18,15 @@
 // This file has no axios and no network. The address policy is the one
 // on the shared agents in server.js. It is not re-implemented here.
 //
+// MUTUAL TLS (RFC 9635 section 7.3.2) is the one proof this service
+// takes part in. The key IS the TLS client certificate, and a browser
+// cannot choose which certificate a fetch presents, so the page sends
+// the certificate and its private key here and server.js presents them
+// on a connection opened for this one call (the way POST /tls/connect
+// does for the PKI page). The pair is checked here before anything is
+// sent: both or neither, PEM, a bounded size, a key that belongs to the
+// certificate, and an https URL. Neither is logged or kept.
+//
 // A refusal by this service is a 400. A network failure is a 502. A
 // GNAP error from the authorization server is a 200 carrying that
 // status and the error code. Those refusals are the answer the page
@@ -67,6 +76,12 @@ var REFUSED_HEADERS = {
 var TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 var DEFAULT_MAX_REQUEST_BYTES = 262144;
+
+// A certificate chain or a private key, in PEM. Large RSA keys and a
+// chain of a few certificates are well under this.
+var MAX_PEM_BYTES = 65536;
+
+var nodeCrypto = require("crypto");
 
 function maxRequestBytes(appconfig) {
   log.debug("Entering maxRequestBytes().");
@@ -118,6 +133,11 @@ function describeRequest(input, appconfig) {
     log.debug("Leaving describeRequest(). Body refused.");
     return bodyResult;
   }
+  var mtls = clientCertificate(given, url);
+  if (!mtls.ok) {
+    log.debug("Leaving describeRequest(). Client certificate refused.");
+    return mtls;
+  }
   var headers = headerResult.headers;
   if (bodyResult.body !== null && !hasHeader(headers, "content-type")) {
     headers["Content-Type"] = "application/json";
@@ -129,10 +149,65 @@ function describeRequest(input, appconfig) {
     headers: headers,
     body: bodyResult.body,
     sslValidate: !(given.sslValidate === false ||
-      given.sslValidate === "false")
+      given.sslValidate === "false"),
+    clientCertificatePem: mtls.certificatePem,
+    clientKeyPem: mtls.keyPem
   };
   log.debug("Leaving describeRequest(). " + out.method + " " + out.url);
   return out;
+}
+
+function clientCertificate(given, url) {
+  log.debug("Entering clientCertificate().");
+  var cert = given.clientCertificatePem;
+  var key = given.clientKeyPem;
+  var none = (cert === undefined || cert === null || cert === "") &&
+    (key === undefined || key === null || key === "");
+  if (none) {
+    log.debug("Leaving clientCertificate(). None.");
+    return { ok: true, certificatePem: null, keyPem: null };
+  }
+  if (typeof cert !== "string" || typeof key !== "string" || !cert ||
+      !key) {
+    log.debug("Leaving clientCertificate(). Half a pair.");
+    return { ok: false, error: "clientCertificatePem and clientKeyPem " +
+      "go together. The mtls proof (RFC 9635 section 7.3.2) is a TLS " +
+      "client certificate and the key that proves it." };
+  }
+  if (Buffer.byteLength(cert, "utf8") > MAX_PEM_BYTES ||
+      Buffer.byteLength(key, "utf8") > MAX_PEM_BYTES) {
+    log.debug("Leaving clientCertificate(). Too large.");
+    return { ok: false, error: "The client certificate and key are " +
+      "each limited to " + MAX_PEM_BYTES + " bytes of PEM." };
+  }
+  if (!/^https:\/\//i.test(url)) {
+    log.debug("Leaving clientCertificate(). Not https.");
+    return { ok: false, error: "A client certificate is presented in " +
+      "a TLS handshake, and an http:// URL has none. Use https://." };
+  }
+  var parsed;
+  var privateKey;
+  try {
+    parsed = new nodeCrypto.X509Certificate(cert);
+  } catch (e) {
+    log.debug("Leaving clientCertificate(). Not a certificate.");
+    return { ok: false, error: "clientCertificatePem is not a PEM " +
+      "certificate: " + e.message };
+  }
+  try {
+    privateKey = nodeCrypto.createPrivateKey(key);
+  } catch (e) {
+    log.debug("Leaving clientCertificate(). Not a key.");
+    return { ok: false, error: "clientKeyPem is not an unencrypted PEM " +
+      "private key: " + e.message };
+  }
+  if (!parsed.checkPrivateKey(privateKey)) {
+    log.debug("Leaving clientCertificate(). Not a pair.");
+    return { ok: false, error: "clientKeyPem is not the private key of " +
+      "the certificate in clientCertificatePem." };
+  }
+  log.debug("Leaving clientCertificate(). A pair.");
+  return { ok: true, certificatePem: cert, keyPem: key };
 }
 
 function hasHeader(headers, name) {
@@ -278,7 +353,15 @@ function limits(appconfig) {
     maxRedirects: (appconfig && appconfig.maxRedirects) === undefined
       ? null : appconfig.maxRedirects,
     sslValidateDefault: true,
-    proofs: ["httpsig", "jwsd", "jws"],
+    // Whether the address layers of api/ssrf_guard.js are on here. A
+    // stack whose authorization server is a private address turns them
+    // off, and a caller should be told so rather than infer it.
+    addressPolicyEnabled:
+      !!(appconfig && appconfig.blockPrivateNetworkCalls !== false),
+    proofs: ["httpsig", "jwsd", "jws", "mtls"],
+    mtls: "clientCertificatePem and clientKeyPem, presented on a " +
+      "connection opened for that one call. https only. At most " +
+      MAX_PEM_BYTES + " bytes each.",
     statusRule: "A refusal by this service is a 400. A network " +
       "failure is a 502. A GNAP error from the authorization server " +
       "is a 200 carrying that status and the error code."

@@ -6,14 +6,15 @@
 // ---------------------------------------------------------------------------
 // The GNAP client instance, driven in node. The signature checks use
 // node's own crypto, which is a second implementation of the same
-// bytes. The live half must get a GRANT out of iya-sts for each of
-// httpsig, jwsd and jws, continue one and revoke all three. In
-// development mode iya-sts creates an application for an unseen key
-// and then refuses the sample's `ssf` access as its own protected
-// scope; that refusal is not a pass. The job declares `ssf.read` on
-// that entry through /admin-api, asks again, and forgets the entry at
-// the end. In product mode an unprovisioned key cannot be granted
-// anything, and the job checks the proofs only and says so.
+// bytes. The mtls half checks what the client and the relay do with a
+// certificate, offline. The live half sends the page's default sample
+// (subject information, with an interaction) to iya-sts with httpsig,
+// jwsd and jws: development mode must GRANT it with no administrator
+// involved, and the job continues one grant and revokes all three. In
+// product mode an unprovisioned key cannot be granted anything, and the
+// job checks the proofs only and says so. The full lifecycle, with the
+// interaction approved in a browser and the token used and managed, is
+// gnap_protocol.js.
 //
 // NOTE ON OPTIONS: run-report.js spawns every job as
 // `node <script>.js --url <BASE_URL>`. This job parses no arguments,
@@ -64,6 +65,7 @@ function loadProxy() {
 
 const gnap = load("gnap_client.js");
 const proxy = loadProxy();
+const live = require("./gnap_live.js");
 var localInsecure = process.env.GNAP_TLS_INSECURE === "1";
 
 function stsBase() {
@@ -285,6 +287,41 @@ async function rotationCoversTheFirstSignature() {
   log.debug("Leaving rotationCoversTheFirstSignature().");
 }
 
+// RFC 9421 section 2.2.2. The vectors are the normalisations the
+// coordinator's issue names, and each is checked in the signature base
+// and in the URL the request is sent to, which must be the same.
+async function targetUriIsTheUriAsSent() {
+  log.debug("Entering targetUriIsTheUriAsSent().");
+  [
+    ["HTTPS://AS.Example:443", "https://as.example/"],
+    ["https://as.example:443/gnap?x=1#frag", "https://as.example/gnap?x=1"],
+    ["http://AS.example:80/a/../gnap", "http://as.example/gnap"],
+    ["https://as.example:8443/Gnap", "https://as.example:8443/Gnap"]
+  ].forEach(function (one) {
+    assert.strictEqual(gnap.targetUri(one[0]), one[1], one[0]);
+  });
+  var record = await gnap.generateKey("ES256", "target");
+  var prepared = await gnap.prepare(record, "POST",
+    "HTTPS://AS.Example:443", {
+      json: {}, proof: "httpsig",
+      httpsig: { created: 1700000000, nonce: "n", keyid: "target" }
+    });
+  assert.strictEqual(prepared.url, "https://as.example/");
+  assert.strictEqual(prepared.signatures[0].base.split("\n")[1],
+    "\"@target-uri\": https://as.example/");
+  var detached = await gnap.prepare(record, "GET",
+    "https://AS.example:443", { proof: "jwsd" });
+  var header = JSON.parse(Buffer.from(detached.headers["Detached-JWS"]
+    .split(".")[0], "base64url").toString("utf8"));
+  assert.strictEqual(header.uri, "https://as.example/");
+  assert.throws(function () {
+    gnap.targetUri("/gnap");
+  }, /absolute/);
+  log.info("OK — @target-uri, the JWS uri and the URL sent are the " +
+    "same normalised URI.");
+  log.debug("Leaving targetUriIsTheUriAsSent().");
+}
+
 function theProxyRefusesWhatItShould() {
   log.debug("Entering theProxyRefusesWhatItShould().");
   function refused(input) {
@@ -346,11 +383,18 @@ function pageWiring() {
    "gnap_hash", "gnap_hash_expected", "gnap_continue_uri",
    "gnap_continue_token", "gnap_token", "gnap_manage_uri",
    "gnap_call_method", "gnap_call_url", "gnap_signed",
-   "gnap_response"].forEach(function (id) {
+   "gnap_response", "gnap_mtls_cert", "gnap_mtls_key",
+   "gnap_manage_token", "gnap_call_token", "gnap_generate",
+   "gnap_fill_sample", "gnap_fill_ssf_sample", "gnap_send",
+   "gnap_check_hash", "gnap_continue", "gnap_revoke_grant",
+   "gnap_rotate_token", "gnap_rotate_key", "gnap_revoke_token",
+   "gnap_fill_resource", "gnap_send_call"].forEach(function (id) {
     assert.ok(html.indexOf('id="' + id + '"') >= 0,
       "gnap.html is missing #" + id);
   });
   assert.ok(html.indexOf('src="/js/gnap.js"') >= 0);
+  assert.ok(html.indexOf('<option value="mtls">') >= 0,
+    "the proof menu does not offer mtls");
   assert.ok(/already\s+signed/.test(html));
   assert.ok(html.indexOf('href="/css/gnap.css"') >= 0);
   ["gnap-note", "gnap-warn", "gnap-mono", "gnap-field",
@@ -395,54 +439,20 @@ function tamper(prepared) {
 // RFC 7638 thumbprint of the client key. iya-sts names the application
 // it creates for an unseen key in development mode `gnap-jkt-<this>`,
 // so finding it in a refusal shows the AS verified THIS key.
-function thumbprint(publicJwk) {
-  log.debug("Entering thumbprint().");
-  var members = publicJwk.kty === "OKP"
-    ? { crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x }
-    : (publicJwk.kty === "RSA"
-      ? { e: publicJwk.e, kty: publicJwk.kty, n: publicJwk.n }
-      : { crv: publicJwk.crv, kty: publicJwk.kty, x: publicJwk.x,
-        y: publicJwk.y });
-  var out = crypto.createHash("sha256")
-    .update(JSON.stringify(members)).digest("base64url");
-  log.debug("Leaving thumbprint().");
-  return out;
-}
-
-// iya-sts's management API. tools/attach-admin-token.js, which
-// run-report.js preloads into every job, adds the bearer token when
-// the run minted one.
-async function adminPost(base, route, body) {
-  log.debug("Entering adminPost(). " + route);
-  var answer = await post({
-    method: "POST",
-    url: base + "/admin-api" + route,
-    headers: { "Content-Type": "application/json",
-      Accept: "application/json" },
-    body: JSON.stringify(body)
-  });
-  log.debug("Leaving adminPost(). HTTP " + answer.status);
-  return answer;
-}
-
-// What the AS made of one signed grant request. Exactly three answers
-// are acceptable, and only one of them is a grant:
-//   issued     — a pending grant, with an interaction and a
-//                continuation (or, with no interaction, a token).
-//   product    — product mode: the proof verified and the key is
-//                unregistered (STS-GNAP-0082). No grant is possible
-//                without provisioning, so the caller says so.
-//   protected  — development mode: the proof verified, iya-sts made
-//                an application for THIS key, and then refused the
-//                sample's `ssf` access as its own protected scope
-//                (STS-GNAP-0719). The caller declares the scope and
-//                asks again; this is not an answer to stop at.
-function classify(answer, app) {
+// What the AS made of one signed grant request for the default sample
+// (subject information, with an interaction). Exactly two answers are
+// acceptable, and only one of them is a grant:
+//   issued   — development mode: a pending grant with an interaction
+//              and a continuation. No administrator is involved.
+//   product  — product mode: the proof verified and the key is not
+//              provisioned (STS-GNAP-0082). Nothing can be granted to
+//              a key made here, and the caller says so.
+function classify(answer) {
   log.debug("Entering classify().");
   var json = answer.json || {};
   var err = errorOf(answer.json);
   if (answer.status >= 200 && answer.status < 300 && !err.code &&
-      (json.continue || json.access_token)) {
+      json.continue) {
     log.debug("Leaving classify(). Issued.");
     return "issued";
   }
@@ -452,29 +462,20 @@ function classify(answer, app) {
     log.debug("Leaving classify(). Product mode.");
     return "product";
   }
-  if (answer.status === 403 && err.code === "request_denied" &&
-      err.description.indexOf(app) >= 0 &&
-      /protected scope/.test(err.description)) {
-    log.debug("Leaving classify(). Protected scope.");
-    return "protected";
-  }
   log.debug("Leaving classify(). Unexpected.");
   throw new assert.AssertionError({
-    message: "expected a grant, a product-mode refusal of an " +
-      "unregistered key, or the protected-scope refusal naming " + app +
-      "; got HTTP " + answer.status + " " + answer.text.slice(0, 500)
+    message: "expected a grant or a product-mode refusal of an " +
+      "unregistered key; got HTTP " + answer.status + " " +
+      answer.text.slice(0, 500)
   });
 }
 
-// The answer must be a grant, and it must carry what RFC 9635 section
-// 3 says this request asked for: an interaction (the sample asks for
-// redirect and user_code with a redirect finish) and a continuation.
+// The answer must be a grant, and it must carry what the sample asked
+// for: an interaction (redirect and user_code, with a redirect finish)
+// and a continuation (RFC 9635 section 3).
 function assertGrant(answer, proof) {
   log.debug("Entering assertGrant(). proof=" + proof);
   var json = answer.json || {};
-  assert.ok(answer.status >= 200 && answer.status < 300,
-    proof + ": expected a grant, got HTTP " + answer.status + " " +
-    answer.text.slice(0, 500));
   assert.ok(json.continue && json.continue.uri &&
     json.continue.access_token && json.continue.access_token.value,
     proof + ": the grant has no continuation (RFC 9635 section 3.1): " +
@@ -484,6 +485,8 @@ function assertGrant(answer, proof) {
     answer.text.slice(0, 500));
   assert.strictEqual(typeof json.interact.finish, "string",
     proof + ": the grant has no finish nonce (RFC 9635 section 3.3.5)");
+  assert.ok(!json.access_token, proof + ": an access token was issued " +
+    "for a request that asked for none");
   log.debug("Leaving assertGrant().");
 }
 
@@ -541,7 +544,6 @@ async function liveGrant() {
     .indexOf("httpsig") >= 0, "discovery does not offer httpsig");
   var grantUrl = discovery.json.grant_request_endpoint;
   var record = await gnap.generateKey("ES256", "debugger-live");
-  var app = "gnap-jkt-" + thumbprint(record.publicJwk);
   var display = {
     name: "GNAP debugger",
     uri: "https://client.example/gnap.html"
@@ -561,84 +563,144 @@ async function liveGrant() {
     log.debug("Leaving ask().");
     return answer;
   }
-  var declared = false;
-  try {
-    var first = await ask("httpsig");
-    var kind = classify(first, app);
-    if (kind === "protected") {
-      var added = await adminPost(base, "/applications/add", {
-        application: app,
-        attribute: "oauthAllowedScope",
-        value: "ssf.read"
-      });
-      assert.ok(added.status === 200 && added.json && added.json.ok,
-        "declaring ssf.read on " + app + " was refused: HTTP " +
-        added.status + " " + added.text.slice(0, 500));
-      declared = true;
-      log.info("iya-sts verified the key and created " + app + "; " +
-        "declared ssf.read on it so the grant can be issued.");
-      first = await ask("httpsig");
-      kind = classify(first, app);
-      assert.strictEqual(kind, "issued", "after declaring ssf.read the " +
-        "grant was still refused: " + first.text.slice(0, 500));
-    }
-    if (kind === "issued") {
-      assertGrant(first, "httpsig");
-      await continueAndRevoke(record, first.json, "httpsig", true);
-    } else {
-      log.warn("iya-sts is in product mode and this key is not " +
-        "provisioned, so no grant was issued. Only the proofs were " +
-        "checked; continuation and revocation were not.");
-    }
-    var tampered = await post(tamper(await gnap.prepare(record, "POST",
-      grantUrl, { json: grantJson("httpsig"), proof: "httpsig" })));
-    var tamperedErr = errorOf(tampered.json);
-    assert.strictEqual(tamperedErr.code, "invalid_client",
-      "a tampered signature should be invalid_client; got " +
-      tampered.text.slice(0, 500));
-    assert.ok(/does not verify/.test(tamperedErr.description),
-      "a tampered signature should be refused as a bad proof; got " +
-      tampered.text.slice(0, 500));
-    var unsigned = await gnap.prepare(record, "POST", grantUrl, {
-      json: grantJson("httpsig"),
-      sign: false
-    });
-    var bare = await post(unsigned);
-    var bareErr = errorOf(bare.json);
-    assert.strictEqual(bareErr.code, "invalid_client",
-      "an unsigned request should be invalid_client; got " +
-      bare.text.slice(0, 500));
-    assert.ok(!/not registered/.test(bareErr.description),
-      "an unsigned request was treated as a verified key: " +
-      bare.text.slice(0, 500));
-    var proofs = ["jwsd", "jws"];
-    var i;
-    for (i = 0; i < proofs.length; i++) {
-      var answer = await ask(proofs[i]);
-      var got = classify(answer, app);
-      assert.strictEqual(got, kind, proofs[i] + " was answered " + got +
-        " where httpsig was answered " + kind + ": " +
-        answer.text.slice(0, 500));
-      if (got === "issued") {
-        assertGrant(answer, proofs[i]);
-        await continueAndRevoke(record, answer.json, proofs[i], false);
-      }
-    }
-  } finally {
-    if (declared) {
-      var forgot = await adminPost(base, "/applications/forget",
-        { application: app });
-      log.info("Forgot " + app + ": HTTP " + forgot.status + ".");
+  var first = await ask("httpsig");
+  var kind = classify(first);
+  if (kind === "issued") {
+    assertGrant(first, "httpsig");
+    await continueAndRevoke(record, first.json, "httpsig", true);
+  } else {
+    log.warn("iya-sts is in product mode and this key is not " +
+      "provisioned, so no grant was issued. Only the proofs were " +
+      "checked here. gnap_protocol.js needs development mode.");
+  }
+  var tampered = await post(tamper(await gnap.prepare(record, "POST",
+    grantUrl, { json: grantJson("httpsig"), proof: "httpsig" })));
+  var tamperedErr = errorOf(tampered.json);
+  assert.strictEqual(tamperedErr.code, "invalid_client",
+    "a tampered signature should be invalid_client; got " +
+    tampered.text.slice(0, 500));
+  assert.ok(/does not verify/.test(tamperedErr.description),
+    "a tampered signature should be refused as a bad proof; got " +
+    tampered.text.slice(0, 500));
+  var bare = await post(await gnap.prepare(record, "POST", grantUrl, {
+    json: grantJson("httpsig"),
+    sign: false
+  }));
+  var bareErr = errorOf(bare.json);
+  assert.strictEqual(bareErr.code, "invalid_client",
+    "an unsigned request should be invalid_client; got " +
+    bare.text.slice(0, 500));
+  assert.ok(!/not registered/.test(bareErr.description),
+    "an unsigned request was treated as a verified key: " +
+    bare.text.slice(0, 500));
+  var proofs = ["jwsd", "jws"];
+  var i;
+  for (i = 0; i < proofs.length; i++) {
+    var answer = await ask(proofs[i]);
+    var got = classify(answer);
+    assert.strictEqual(got, kind, proofs[i] + " was answered " + got +
+      " where httpsig was answered " + kind + ": " +
+      answer.text.slice(0, 500));
+    if (got === "issued") {
+      assertGrant(answer, proofs[i]);
+      await continueAndRevoke(record, answer.json, proofs[i], false);
     }
   }
   log.info(kind === "issued"
-    ? "OK — iya-sts issued a grant for httpsig, jwsd and jws; each " +
-      "was revoked, and a tampered signature and an unsigned request " +
-      "were refused."
+    ? "OK — iya-sts issued a grant for the default sample with httpsig, " +
+      "jwsd and jws and no administrator involved; each was revoked, " +
+      "and a tampered signature and an unsigned request were refused."
     : "OK (product mode) — iya-sts verified httpsig, jwsd and jws and " +
       "refused the unregistered key; a tampered signature and an " +
       "unsigned request were refused as bad proofs. No grant issued.");
   log.debug("Leaving liveGrant().");
+}
+
+// RFC 9635 section 7.3.2. The mtls record signs nothing: the request
+// is the body, the key object is the certificate, and the certificate
+// and key ride beside the request for whoever opens the connection.
+// Section 7.3.2.1 defines no rotation, so the client refuses one.
+async function mtlsIsACertificateAndNoSignature() {
+  log.debug("Entering mtlsIsACertificateAndNoSignature().");
+  var pair = live.makeClientCertificate("gnap-engine-mtls");
+  var record = gnap.recordFromCertificate(pair.certificatePem,
+    pair.keyPem);
+  var der = new crypto.X509Certificate(pair.certificatePem).raw
+    .toString("base64");
+  var key = gnap.keyObject(record, "mtls");
+  assert.deepStrictEqual(key, { proof: "mtls", cert: der });
+  var prepared = await gnap.prepare(record, "POST",
+    "https://as.example/gnap", {
+      json: gnap.withClient(gnap.sampleRequest("https://c.example/",
+        "n"), record, "mtls"),
+      proof: "mtls",
+      token: "t"
+    });
+  assert.strictEqual(prepared.signatures.length, 0);
+  assert.strictEqual(prepared.headers.Signature, undefined);
+  assert.strictEqual(prepared.headers["Detached-JWS"], undefined);
+  assert.strictEqual(prepared.headers.Authorization, "GNAP t");
+  assert.strictEqual(JSON.parse(prepared.body).client.key.cert, der);
+  assert.strictEqual(prepared.mtls.certificatePem, pair.certificatePem);
+  assert.strictEqual(prepared.mtls.privateKeyPem, pair.keyPem);
+  await assert.rejects(gnap.prepare(record, "POST",
+    "https://as.example/token/x", { proof: "mtls", rotateTo: record,
+      json: {} }), /7\.3\.2\.1/);
+  var jwkRecord = await gnap.generateKey("ES256", "no-cert");
+  await assert.rejects(gnap.prepare(jwkRecord, "POST",
+    "https://as.example/gnap", { proof: "mtls", json: {} }),
+    /certificate/);
+  assert.throws(function () {
+    gnap.recordFromCertificate(pair.certificatePem, "");
+  }, /private key/);
+  assert.throws(function () {
+    gnap.recordFromCertificate("not pem", pair.keyPem);
+  }, /PEM certificate/);
+  var described = proxy.describeRequest({
+    url: "https://as.example/gnap",
+    clientCertificatePem: pair.certificatePem,
+    clientKeyPem: pair.keyPem
+  }, {});
+  assert.strictEqual(described.ok, true, JSON.stringify(described));
+  assert.strictEqual(described.clientCertificatePem, pair.certificatePem);
+  var other = live.makeClientCertificate("gnap-engine-other");
+  [
+    [{ clientCertificatePem: pair.certificatePem }, /go together/],
+    [{ clientKeyPem: pair.keyPem }, /go together/],
+    [{ url: "http://as.example/gnap", clientCertificatePem:
+      pair.certificatePem, clientKeyPem: pair.keyPem }, /https/],
+    [{ clientCertificatePem: "x", clientKeyPem: pair.keyPem },
+      /not a PEM certificate/],
+    [{ clientCertificatePem: pair.certificatePem, clientKeyPem: "x" },
+      /not an unencrypted PEM private key/],
+    [{ clientCertificatePem: pair.certificatePem,
+      clientKeyPem: other.keyPem }, /not the private key/]
+  ].forEach(function (one) {
+    var input = Object.assign({ url: "https://as.example/gnap" }, one[0]);
+    var out = proxy.describeRequest(input, {});
+    assert.strictEqual(out.ok, false, JSON.stringify(one[0]));
+    assert.ok(one[1].test(out.error), out.error);
+  });
+  log.info("OK — mtls carries the certificate, signs nothing, refuses " +
+    "rotation, and the relay checks the pair before it sends.");
+  log.debug("Leaving mtlsIsACertificateAndNoSignature().");
+}
+
+// The default sample asks for subject information only; the SSF one
+// asks for ssf.read too. Both carry an interaction with this page as
+// the redirect finish.
+function samplesAreWhatTheySay() {
+  log.debug("Entering samplesAreWhatTheySay().");
+  var plain = gnap.sampleRequest("https://c.example/gnap.html", "n1");
+  assert.strictEqual(plain.access_token, undefined);
+  assert.deepStrictEqual(plain.subject, { sub_id_formats: ["opaque"] });
+  assert.strictEqual(plain.interact.finish.uri,
+    "https://c.example/gnap.html");
+  var ssf = gnap.ssfSampleRequest("https://c.example/gnap.html", "n2");
+  assert.deepStrictEqual(ssf.access_token, { access: ["ssf.read"] });
+  assert.strictEqual(ssf.interact.finish.nonce, "n2");
+  log.info("OK — the two samples ask for what they say.");
+  log.debug("Leaving samplesAreWhatTheySay().");
 }
 
 async function main() {
@@ -647,7 +709,10 @@ async function main() {
   await ed25519AgreesWithNode();
   await digestAndHashAgree();
   await rotationCoversTheFirstSignature();
+  await targetUriIsTheUriAsSent();
   theProxyRefusesWhatItShould();
+  await mtlsIsACertificateAndNoSignature();
+  samplesAreWhatTheySay();
   pageWiring();
   try {
     await liveGrant();
