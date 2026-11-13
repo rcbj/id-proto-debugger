@@ -1339,6 +1339,18 @@ function buildJobs() {
     env: {},
   });
 
+  // GNAP client instance. The signature checks need no network. The
+  // live half posts one signed grant to iya-sts. A product-mode
+  // server refuses an unregistered key after the signature verifies.
+  // A development-mode server may issue a continuation token, which
+  // the job deletes. The job does not register a client and does not
+  // change the server.
+  jobs.push({
+    name: "GNAP client (RFC 9635 proofs, and one grant against iya-sts)",
+    script: "gnap_engine.js",
+    env: {},
+  });
+
   // ISO 7816 command and response APDUs and BER-TLV, in node, with no
   // browser and no reader. PIV, the OpenPGP card, OATH and YubiHSM Auth
   // share this one reader. The vectors are the short and extended

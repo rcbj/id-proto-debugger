@@ -116,9 +116,10 @@ async function checkFooterVersion(driver, where) {
 // remembered. tests/ldap_page.js makes the same check for that page directly.
 // `xacml` is listed for the same reason. The page ships on the static sites,
 // and tests/xacml_engine.js checks that xacml.css defines the classes the
-// page draws. The walk below does not open it.
+// page draws. The walk below does not open it. `gnap` is the same shape:
+// tests/gnap_engine.js checks gnap.css, and the walk does not open the page.
 
-var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki|ldap|xacml)-/;
+var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki|ldap|xacml|gnap)-/;
 
 async function checkStylesheetsLoaded(driver, where) {
   log.debug("Entering checkStylesheetsLoaded(). where=" + where);

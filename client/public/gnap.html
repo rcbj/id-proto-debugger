@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Identity Protocol Debugger &mdash; GNAP</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/gnap.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/gnap.js">
+</script>
+
+<p class="gnap-return">
+  <a id="return_link" href="/">&larr; Return to debugger</a>
+</p>
+
+<h3>GNAP</h3>
+
+<p class="gnap-intro">Grant Negotiation and Authorization Protocol
+(RFC 9635). This page is a client instance. It builds a grant
+request, proves the client key with an HTTP message signature or a
+JWS, and shows what the authorization server answers. The private
+key stays in this browser. The API path forwards a request that is
+already signed. Mutual TLS is a property of the connection, so this
+page does not offer it.</p>
+
+<p id="gnap_status" class="gnap-note"></p>
+
+<fieldset>
+  <legend>Client key</legend>
+  <div class="gnap-row">
+    <label>Algorithm
+      <select id="gnap_alg">
+        <option value="ES256">ES256</option>
+        <option value="ES384">ES384</option>
+        <option value="EdDSA">EdDSA</option>
+        <option value="RS256">RS256</option>
+      </select>
+    </label>
+    <button type="button" onclick="return gnap.generate();">
+      Generate</button>
+    <button type="button" onclick="return gnap.usePasted();">
+      Use pasted key</button>
+    <label>
+      <input type="checkbox" id="gnap_save_keypair" checked
+             onchange="return gnap.onSaveChange();">
+      Save the private key in this browser
+    </label>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_public">Public key</label>
+    <textarea id="gnap_public" class="gnap-mono" rows="6"
+              readonly></textarea>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_private">Private key</label>
+    <textarea id="gnap_private" class="gnap-mono" rows="6"></textarea>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Authorization server</legend>
+  <div class="gnap-field">
+    <label for="gnap_grant">Grant endpoint</label>
+    <input id="gnap_grant" size="64"
+           value="https://localhost:8081/gnap">
+  </div>
+  <div class="gnap-row">
+    <label>Proof
+      <select id="gnap_proof">
+        <option value="httpsig">httpsig</option>
+        <option value="jwsd">jwsd</option>
+        <option value="jws">jws</option>
+      </select>
+    </label>
+    <label>Send
+      <select id="gnap_via">
+        <option value="api">through the API</option>
+        <option value="browser">from this browser</option>
+      </select>
+    </label>
+    <label>
+      <input type="checkbox" id="gnap_insecure">
+      Skip certificate verification on the API path
+    </label>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_api">API base URL</label>
+    <input id="gnap_api" size="64">
+  </div>
+  <div class="gnap-row">
+    <button type="button" onclick="return gnap.discover();">
+      Discover</button>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_display">Display name</label>
+    <input id="gnap_display" size="32" value="GNAP debugger">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_class">class_id</label>
+    <input id="gnap_class" size="32"
+           placeholder="registered client, when this key is an instance">
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Grant request</legend>
+  <p class="gnap-intro">The client key is added when you send, unless
+  the JSON already names <code>client.key</code> or a string
+  <code>client</code>. The box below is the logical request. The
+  signed body is the one in the exchange.</p>
+  <div class="gnap-field">
+    <label for="gnap_request">Request JSON</label>
+    <textarea id="gnap_request" class="gnap-mono" rows="12"></textarea>
+  </div>
+  <div class="gnap-row">
+    <button type="button" onclick="return gnap.fillSample();">
+      Fill a sample</button>
+    <button type="button" onclick="return gnap.sendGrant();">
+      Send grant request</button>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_client_nonce">Client finish nonce</label>
+    <input id="gnap_client_nonce" size="40">
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Interaction</legend>
+  <p class="gnap-intro">Open the redirect, approve at the
+  authorization server, and come back. If the finish URI is this
+  page, the hash and interact_ref arrive in the query string.</p>
+  <p><a id="gnap_redirect" href=""></a></p>
+  <p>User code: <span id="gnap_user_code"></span></p>
+  <p><a id="gnap_user_code_uri" href=""></a></p>
+  <div class="gnap-field">
+    <label for="gnap_as_nonce">Authorization server nonce</label>
+    <input id="gnap_as_nonce" size="40">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_finish_url">Finish URL</label>
+    <input id="gnap_finish_url" size="64"
+           placeholder="paste the redirect back, if it did not land here">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_interact_ref">interact_ref</label>
+    <input id="gnap_interact_ref" size="40">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_hash">hash</label>
+    <input id="gnap_hash" size="64">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_hash_expected">Expected hash</label>
+    <input id="gnap_hash_expected" size="64" readonly>
+  </div>
+  <div class="gnap-row">
+    <button type="button" onclick="return gnap.checkFinish();">
+      Check interaction hash</button>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Continuation</legend>
+  <div class="gnap-field">
+    <label for="gnap_continue_uri">Continue URI</label>
+    <input id="gnap_continue_uri" size="64">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_continue_token">Continue token</label>
+    <input id="gnap_continue_token" size="64">
+  </div>
+  <div class="gnap-row">
+    <button type="button" onclick="return gnap.continueGrant();">
+      Continue</button>
+    <button type="button" onclick="return gnap.revokeGrant();">
+      Revoke grant</button>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_token">Access token</label>
+    <textarea id="gnap_token" class="gnap-mono" rows="3"></textarea>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_manage_uri">Token management URI</label>
+    <input id="gnap_manage_uri" size="64">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_manage_token">Management token</label>
+    <input id="gnap_manage_token" size="64">
+  </div>
+  <div class="gnap-row">
+    <button type="button" onclick="return gnap.rotateKey();">
+      Rotate the client key</button>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Signed call</legend>
+  <p class="gnap-intro">Any other request proved with the same key:
+  present the access token, introspect it as a resource server, or
+  read <code>/.well-known/gnap-as-rs</code>. Introspection is signed
+  by the resource server's key.</p>
+  <div class="gnap-row">
+    <label>Method
+      <select id="gnap_call_method">
+        <option>POST</option>
+        <option>GET</option>
+        <option>PATCH</option>
+        <option>DELETE</option>
+        <option>OPTIONS</option>
+      </select>
+    </label>
+    <button type="button" onclick="return gnap.fillIntrospect();">
+      Fill introspection</button>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_call_url">URL</label>
+    <input id="gnap_call_url" size="64">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_call_token">GNAP token</label>
+    <input id="gnap_call_token" size="64"
+           placeholder="bound into Authorization and, for a JWS, ath">
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_call_body">Body</label>
+    <textarea id="gnap_call_body" class="gnap-mono" rows="4"></textarea>
+  </div>
+  <div class="gnap-row">
+    <button type="button" onclick="return gnap.sendCall();">
+      Send</button>
+  </div>
+</fieldset>
+
+<fieldset>
+  <legend>Exchange</legend>
+  <div class="gnap-field">
+    <label for="gnap_signed">Signed request</label>
+    <textarea id="gnap_signed" class="gnap-mono" rows="10"
+              readonly></textarea>
+  </div>
+  <div class="gnap-field">
+    <label for="gnap_response">Response</label>
+    <textarea id="gnap_response" class="gnap-mono" rows="12"
+              readonly></textarea>
+  </div>
+</fieldset>
+
+    </div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"
+      href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+
+<div class="bottom">
+<!--#include file="/partials/bottom.html"-->
+</div>
+
+<div class="footer_style">
+<!--#include file="/partials/footer.html"-->
+</div>
+
+  </body>
+</html>

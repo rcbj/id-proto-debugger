@@ -215,6 +215,7 @@ const BUNDLES = [
   ['spiffe', 'spiffe'],
   ['ssf', 'ssf'],
   ['xacml', 'xacml'],
+  ['gnap', 'gnap'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>
