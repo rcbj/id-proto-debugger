@@ -285,15 +285,21 @@ class AlfaLanguage {
         const { log } = this.deps;
         log.debug("Entering AlfaLanguage.operatorFor().");
         const short = String(functionId).replace(/^.*:function:/, '');
+        // The LONGEST suffix wins. `-equal` is also the tail of
+        // `-greater-than-or-equal` and `-less-than-or-equal`, so taking the
+        // first match in table order wrote `integer-greater-than-or-equal`
+        // as `==`, and the parser read that back as `integer-equal`: a
+        // different policy, with no error anywhere.
+        let found = null;
         for (let i = 0; i < OPERATORS.length; i += 1) {
             if (short.slice(-OPERATORS[i].suffix.length) ===
-                OPERATORS[i].suffix) {
-                log.debug("Leaving AlfaLanguage.operatorFor().");
-                return OPERATORS[i].symbol;
+                OPERATORS[i].suffix &&
+                (!found || OPERATORS[i].suffix.length > found.suffix.length)) {
+                found = OPERATORS[i];
             }
         }
         log.debug("Leaving AlfaLanguage.operatorFor().");
-        return null;
+        return found ? found.symbol : null;
     }
     // The function a `<type> <symbol> <type>` comparison means. Resolved
     // through

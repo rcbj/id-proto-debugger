@@ -262,6 +262,37 @@ function alfaAndRequestsAgree() {
   log.debug("Leaving alfaAndRequestsAgree().");
 }
 
+function alfaKeepsEveryComparison() {
+  log.debug("Entering alfaKeepsEveryComparison().");
+  // Each ordering function written as ALFA and read back must be the same
+  // function. `-equal` is also the tail of `-greater-than-or-equal` and
+  // `-less-than-or-equal`, and an emitter that took the first suffix in
+  // its table wrote both as `==`, which reads back as integer-equal.
+  var names = ["equal", "greater-than", "greater-than-or-equal",
+               "less-than", "less-than-or-equal"];
+  names.forEach(function (name) {
+    var functionId = "urn:oasis:names:tc:xacml:1.0:function:integer-" + name;
+    var policy = "<Policy xmlns=\"" + model.NS_XACML + "\" " +
+      "PolicyId=\"cmp\" Version=\"1.0\" RuleCombiningAlgId=\"" +
+      "urn:oasis:names:tc:xacml:3.0:rule-combining-algorithm:" +
+      "deny-unless-permit\"><Target/><Rule RuleId=\"r\" " +
+      "Effect=\"Permit\"><Condition><Apply FunctionId=\"" + functionId +
+      "\"><Apply FunctionId=\"urn:oasis:names:tc:xacml:1.0:function:" +
+      "integer-one-and-only\"><AttributeDesignator AttributeId=\"age\" " +
+      "Category=\"" + model.CATEGORY.ACCESS_SUBJECT + "\" DataType=\"" +
+      model.TYPE.INTEGER + "\" MustBePresent=\"false\"/></Apply>" +
+      "<AttributeValue DataType=\"" + model.TYPE.INTEGER + "\">5" +
+      "</AttributeValue></Apply></Condition></Rule></Policy>";
+    var parsed = xmlEngine.parsePolicy(policy);
+    var back = alfa.parse(alfa.write(parsed));
+    var condition = back.rules[0].condition;
+    assert.strictEqual(condition.functionId, functionId,
+      "integer-" + name + " came back as " + condition.functionId);
+  });
+  log.info("OK — ALFA keeps every comparison operator.");
+  log.debug("Leaving alfaKeepsEveryComparison().");
+}
+
 function inheritedNamesAreUnknown() {
   log.debug("Entering inheritedNamesAreUnknown().");
   // A name a document chose is looked up as an own member. Before, an
@@ -343,6 +374,7 @@ function main() {
   referenceResolvesFromTheRepository();
   anUndischargeableObligationRefuses();
   alfaAndRequestsAgree();
+  alfaKeepsEveryComparison();
   inheritedNamesAreUnknown();
   pageWiring();
   log.info("xacml_engine: all checks passed.");
