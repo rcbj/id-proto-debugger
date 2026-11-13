@@ -26,12 +26,15 @@ var log = bunyan.createLogger({
 /**
  * Escapes text for XML content and attribute values.
  *
+ * A hot path, so it has no Entering/Leaving pair: the policy writer
+ * escapes every attribute value and text node through it, and the page
+ * writes the whole document back after every edit and every view of it as
+ * ALFA or XML. Its callers in xacml_xml.js log their own entry and exit.
+ *
  * @param {*} s - the value; null and undefined escape to ''
  * @returns {string} the escaped text
  */
 function xmlEscape(s) {
-  log.debug("Entering xmlEscape().");
-  log.debug("Leaving xmlEscape().");
   return String(s == null ? "" : s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
