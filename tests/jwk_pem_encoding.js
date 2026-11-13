@@ -872,7 +872,10 @@ function testsImageHasNoCollidingFilenames() {
     return;
   }
   const flat = {};
-  fs.readFileSync(dockerfile, "utf8").split("\n").forEach(function (line) {
+  // Join `\` continuations first: a COPY written across lines is one COPY,
+  // and reading it line by line missed every source after the first line.
+  fs.readFileSync(dockerfile, "utf8").replace(/\\\r?\n/g, " ")
+      .split("\n").forEach(function (line) {
     const text = line.trim();
     if (text.indexOf("COPY ") !== 0) return;
     const parts = text.slice(5).split(/\s+/).filter(Boolean);
@@ -899,43 +902,14 @@ function testsImageHasNoCollidingFilenames() {
     "code requires it. If the module wins, the test silently passes in ~30ms without running; " +
     "if the test wins, everything requiring that module breaks.");
 
-  // ...and every script run-report names must actually REACH the image. A job whose
-  // script was never COPYd fails with MODULE_NOT_FOUND in 0.0s, which reads as a broken
-  // test rather than a missing line in a Dockerfile — krb5_as_exchange.js was in the
-  // suite for four phases and in the image for none of them, passing on every host run.
-  const report = path.join(__dirname, "run-report.js");
-  if (fs.existsSync(report)) {
-    const copied = {};
-    Object.keys(flat).forEach(function (base) { copied[base] = true; });
-    // The image also copies whole globs (tests/oauth2_*, tests/oidc_*); expand them the
-    // same way Docker does, by prefix.
-    const globs = [];
-    fs.readFileSync(dockerfile, "utf8").replace(/COPY\s+([^\n]+)/g, function (_, rest) {
-      rest.split(/\s+/).forEach(function (src) {
-        if (src.indexOf("tests/") === 0 && src.indexOf("*") !== -1) {
-          globs.push(src.slice("tests/".length).replace("*", ""));
-        }
-      });
-      return _;
-    });
-    const scripts = [];
-    fs.readFileSync(report, "utf8").replace(/script:\s*"([^"]+)"/g, function (_, name) {
-      if (scripts.indexOf(name) === -1) scripts.push(name);
-      return _;
-    });
-    const absent = scripts.filter(function (name) {
-      if (copied[name]) return false;
-      return !globs.some(function (prefix) { return name.indexOf(prefix) === 0; });
-    });
-    assert.deepStrictEqual(absent, [],
-      "run-report.js schedules these scripts and tests/Dockerfile never copies them into the " +
-      "image, so each fails there with MODULE_NOT_FOUND in 0.0s while passing on every host " +
-      "run: " + absent.join(", "));
-  }
+  // Whether every script run-report names REACHES the image is
+  // tests/job_scripts_in_image.js's check now (and `run-report.js
+  // --check-scripts` at image build). This half read COPY lines one at a
+  // time and reported multi-line COPYs as missing.
 
   const total = Object.keys(flat).length;
   log.info("[collisions] OK — " + total + " files are copied flat into the tests image, every " +
-    "one has a unique name, and every script run-report schedules is among them.");
+    "one has a unique name.");
   stsModuleClosureIsCopied(dockerfile);
   testsImageCopiesTheRequireClosure(dockerfile);
   flatCopiedModulesHaveTheirPackages(dockerfile);
