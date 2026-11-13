@@ -176,16 +176,8 @@ var PREFIX_RULES = {
 //   api image has a real api/version.js on disk, gitignored, so the tracked-
 //   file rule below would reject BOTH candidates and fall through to
 //   precedence — which would name the generated copy.
-//
-//   sts_bbs2023.js is the mock STS's vendored copy, renamed by tests/
-//   Dockerfile so it can sit beside this repository's own bbs2023.js
-//   (`COPY sts/common/crypto_impl/bbs2023.js ./sts_bbs2023.js`). Nothing in
-//   this tree is called that, so no search can find it; mapping it to the
-//   path it came from is also what puts it behind the `sts/` exclusion,
-//   where it belongs.
 var OVERRIDES = {
-  "api:version.js": "client/version.js",
-  "node:sts_bbs2023.js": "sts/common/crypto_impl/bbs2023.js"
+  "api:version.js": "client/version.js"
 };
 
 // ---------------------------------------------------------------------------
@@ -312,9 +304,10 @@ function contentHash(rel) {
 //                       run-report.js); the api domain did not, and dropping
 //                       it moves that report from 66.6% to 70.8% with no test
 //                       written.
-//   sts/**              the mock STS, somebody else's checkout (a submodule).
-//                       Its own suite is in its own repository since
-//                       2026-08-28.
+//   sts/**              iya-sts, somebody else's code: its release image's
+//                       tree, which the tests image carries at ./sts for the
+//                       jobs that load it in process. Its own suite is in
+//                       its own repository since 2026-08-28.
 //   client/version.js   a BUILD script. It runs at image build time and its
 //                       coverage is whatever happened to execute at require
 //                       time in a container that never calls it — 36.6%, which
@@ -330,7 +323,7 @@ function contentHash(rel) {
 // ---------------------------------------------------------------------------
 var EXCLUSIONS = [
   { pattern: /^api\/node-ldapjs\//, why: "vendored ldapjs, used unmodified" },
-  { pattern: /^sts\//, why: "the mock STS, a submodule" },
+  { pattern: /^sts\//, why: "iya-sts's tree, not this repository's" },
   { pattern: /(^|\/)node_modules\//, why: "third-party" },
   { pattern: /^client\/version\.js$/, why: "a build script" },
   { pattern: /(^|\/)env\/[^/]+\.js$/, why: "configuration, not code" }

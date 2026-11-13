@@ -16,9 +16,10 @@
 #     `additional_contexts` below: BuildKit resolves `FROM ubuntu:latest`
 #     against a named context called `ubuntu` before it goes to any registry,
 #     so every stage, intermediate ones included, is built from the mirror.
-#     That is what covers sts/Dockerfile, which is the iya-sts submodule's
-#     and is not edited here. (`ubuntu`, not `ubuntu:latest`: BuildKit drops
-#     `:latest` when it looks a name up.)
+#     That is what covers the companion's Dockerfile, which is iya-sts's and
+#     is built from that repository's tag rather than edited here.
+#     (`ubuntu`, not `ubuntu:latest`: BuildKit drops `:latest` when it looks a
+#     name up.)
 #
 # The images built here are named under ${IMAGE_REGISTRY} (default
 # ghcr.io/rcbj/id-proto-debugger) with tag ${IMAGE_TAG} (default `latest`);
@@ -226,28 +227,25 @@ services:
     # IYA STS'S OWN RELEASE IMAGE, PULLED RATHER THAN BUILT (2026-11-12).
     #
     # iya-sts publishes a release image, ghcr.io/rcbj/iya-sts:<version>,
-    # built by its own pipeline from the tag the sts/ gitlink pins. This
-    # stack runs that image rather than building sts/Dockerfile itself: it is
-    # the artifact iya-sts ships, so a run here exercises what a deployment
-    # gets rather than this checkout's rebuild of it, and the five minutes of
-    # npm and tsc a cold build cost are gone.
+    # built by its own pipeline from its release tag. This stack runs that
+    # image: it is the artifact iya-sts ships, so a run here exercises what a
+    # deployment gets, and the five minutes of npm and tsc a cold build cost
+    # are gone.
     #
-    # THE SUBMODULE IS STILL NEEDED, for everything that READS iya-sts's
-    # files rather than running them: tests/Dockerfile copies modules out of
-    # the sts/ checkout for the in-process jobs, the companion below is built
-    # from sts/companion (iya-sts publishes no image of it), and the host-side
-    # checks (krb5_codec_sync.js, spiffe_engine.js) compare against it. So
-    # the image and the checkout must be the SAME RELEASE, and
-    # ./docker-run-tests.sh refuses to start when the image's
-    # org.opencontainers.image.revision label is not the commit sts/ is
-    # checked out at. Bump the two together: move the gitlink to the tag and
-    # this default to the version.
+    # THE IMAGE IS ALSO WHERE iya-sts'S CODE COMES FROM. This repository has
+    # no checkout of it (the sts/ submodule was removed on 2026-11-13).
+    # tests/Dockerfile copies the image's /usr/src/sts into the tests image
+    # (the `iyasts` context below), and a host run copies the same tree into a
+    # cache (tests/module_paths.js, iyaStsTree()), so the jobs that load
+    # iya-sts's modules in process load the release the stack is running.
+    #
+    # THIS DEFAULT IS THE ONE PLACE THE RELEASE IS NAMED. The other compose
+    # files repeat it because compose has no include for a default, and
+    # tests/image_mirror_coverage.js fails when any of them disagrees — or
+    # when the companion's IYA_STS_COMPANION_CONTEXT tag is not this
+    # version's. tests/module_paths.js and common/common.sh read it from here.
     #
     # IYA_STS_IMAGE overrides it, for a candidate image or a digest pin.
-    # (STS_IMAGE, which named a tag of this checkout's own build, is no
-    # longer read by this file: the machine-wide-tag hazard it existed for —
-    # two repositories building `rcbj/sts` from different trees — cannot arise
-    # for an image nothing here builds.)
     image: ${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:1.0.0}
     # ---------------------------------------------------------------------
     # THE SAME UID AS THE TESTS CONTAINER, BECAUSE THE SPIRE SOCKET IS
@@ -255,7 +253,7 @@ services:
     #
     # Every image this repository builds runs as uid 10001 (see the block at
     # the foot of each Dockerfile). This one is not this repository's image —
-    # sts/ is the iya-sts submodule — and it used to stay root because it
+    # it is iya-sts's release — and it used to stay root because it
     # binds 88 (the KDC, TCP and UDP), 389 and 636 (the directory), all
     # privileged. `net.ipv4.ip_unprivileged_port_start: 0` below removes
     # that reason without touching the image: the sysctl is per network
@@ -672,8 +670,13 @@ services:
     container_name: id-proto-debugger-companion
     hostname: companion
     image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/companion:${IMAGE_TAG:-latest}
+    # BUILT FROM iya-sts'S RELEASE TAG, NOT FROM A CHECKOUT. iya-sts
+    # publishes no image of the companion and its release image leaves the
+    # directory out, so the build context is the repository at the tag that
+    # made IYA_STS_IMAGE (a git URL `#<ref>:<dir>`, which BuildKit fetches
+    # itself). The repository is public, so no credential is involved.
     build:
-      context: ./sts/companion
+      context: ${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v1.0.0:companion}
       additional_contexts: *mirror-contexts
     environment:
       - COMPANION_PORT=9700

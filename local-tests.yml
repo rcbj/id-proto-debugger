@@ -239,22 +239,16 @@ services:
     # the DNS name every URL here uses) is still `sts`.
     container_name: id-proto-debugger-sts
     hostname: sts
-    # THE TAG IS MACHINE-WIDE AND THIS IS NOT THE ONLY REPOSITORY THAT BUILDS
-    # IT (2026-09-15). `sts/` is the iya-sts submodule and that repository
-    # builds its own stack from the same source; both wrote `rcbj/sts`, so
-    # whichever ran last owned the tag — and a run here then started a mock
-    # built from somebody else's working tree. It cost a run of this suite:
-    # seven jobs failed on two defects that had been fixed in the submodule
-    # this checkout points at, because the container was not built from it.
-    # The launchers set STS_IMAGE to a tag of their own (see common.sh);
-    # a bare `docker-compose up` still gets `rcbj/sts`, which is what the
-    # documentation names.
-    image: ${STS_IMAGE:-rcbj/sts}
-    # ROOT, and the only container here that is. It binds 88 (TCP and UDP),
-    # 389 and 636 — all privileged — so it needs uid 0 or
-    # CAP_NET_BIND_SERVICE; and sts/ is the iya-sts submodule, somebody
-    # else's checkout. Every image THIS repository builds now runs as an
-    # unprivileged user; see the block at the foot of each Dockerfile.
+    # iya-sts's RELEASE IMAGE, pulled rather than built — the same one
+    # docker-compose-run-tests.yml runs, where the release is named
+    # (IYA_STS_IMAGE; tests/image_mirror_coverage.js holds this default to
+    # that one). This repository has no iya-sts checkout to build from.
+    image: ${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:1.0.0}
+    # ROOT, and the only container here that is. The image runs as uid 10001
+    # and this service binds 88 (TCP and UDP), 389 and 636 — all privileged —
+    # on the HOST's network namespace, where the per-namespace sysctl the
+    # bridged stacks use to lower that bar cannot be set from a container.
+    user: "0:0"
     network_mode: "host"
     environment:
       # ---------------------------------------------------------------------
@@ -349,7 +343,7 @@ services:
       # `oid4vci.walletUrl` defaults to `http://localhost:3000`, which was
       # this client's address until it started serving TLS; left alone, a
       # Credential Offer would send the End-User to an http origin nothing is
-      # listening on. The submodule is somebody else's checkout, so the fix
+      # listening on. iya-sts is somebody else's release, so the fix
       # belongs on this side. `oid4vp.walletUrl` is DERIVED from this one (see
       # sts/common/config.js), so the verifier's hand-back follows.
       - OID4VCI_WALLET_URL=https://localhost:3000
@@ -401,10 +395,6 @@ services:
       - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
     volumes:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
-    build:
-      # The submodule's own root: see docker-compose.yml for why the context is
-      # ./sts rather than this repository with dockerfile: sts/Dockerfile.
-      context: ./sts
     # https, and `rejectUnauthorized:false` — the certificate is self-signed and
     # regenerated every start, so nothing in this container can have an anchor
     # for it. Liveness is this check's question, not trust.
@@ -417,7 +407,8 @@ services:
   # IYA-STS'S DEVELOPMENT COMPANION (iya-sts #594, #595): the issuer's and the
   # Verifier's websites the VC workflows start at, and the SPNEGO-protected
   # page and Kerberos TCP service the Kerberos jobs present tickets to. It is
-  # built from the submodule's own directory and reaches iya-sts through
+  # built from iya-sts's release tag (see docker-compose-run-tests.yml) and
+  # reaches iya-sts through
   # /admin-api, registering itself with the management API secret this run
   # pins. Host networking, like everything here, so it is
   # http://localhost:9700 — which is every job's and client/src/env/local.js's
@@ -426,7 +417,7 @@ services:
     container_name: id-proto-debugger-companion
     image: rcbj/companion
     build:
-      context: ./sts/companion
+      context: ${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v1.0.0:companion}
     network_mode: "host"
     environment:
       - COMPANION_PORT=9700

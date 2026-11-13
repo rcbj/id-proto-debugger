@@ -832,7 +832,7 @@ async function test() {
     "The mock STS at " + stsBase + " is reachable, but",
     "it does not publish appFederationRelationship in the application " +
     "schema at GET /admin-api/ldap/applications, so nothing here can tie " +
-    "an application to a federation relationship. Either the sts/ submodule " +
+    "an application to a federation relationship. Either the iya-sts image " +
     "predates the attribute (bump it) or that endpoint has moved again.");
   const spBase = stsBase + "/realm/" + SP_REALM;
   const idpBase = stsBase + "/realm/" + IDP_REALM;

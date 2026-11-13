@@ -25,19 +25,11 @@ jobs:
          with:
            # Tags are pushed from here; fetch them so an existing tag is seen.
            fetch-depth: 0
-           # docker-compose.yml builds the STS image from the sts/ submodule
-           # (https://github.com/rcbj/iya-sts.git), so this job cannot build
-           # without it: compose would report only a missing Dockerfile.
-           # `recursive`, not `true`, and the difference is load-bearing: there
-           # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP
-           # library the api's client uses, and sts/node-ldapjs is the same
-           # library inside the mock STS, which its embedded directory is built
-           # on. `true` stops one level short of the second, and an
-           # uninitialised submodule is an EMPTY DIRECTORY — so the sts image
-           # builds, npm installs a package with no main, and the container
-           # dies at startup with `Cannot find module 'ldapjs'`, naming a
-           # package rather than a submodule.
-           submodules: recursive
+           # api/node-ldapjs is a submodule, and the api image built here dies
+           # at startup with `Cannot find module 'ldapjs'` without it.
+           # iya-sts is not built here: docker-compose.yml runs its release
+           # image (IYA_STS_IMAGE).
+           submodules: true
        - name: Compute version
          id: version
          run: |

@@ -477,7 +477,7 @@ async function delegationJson(query) {
     "GET " + url + " should answer 200 and answered " + r.status + ". " +
     "That endpoint is the mock's delegation register and is NOT behind the " +
     "console's gate, so a refusal here is the service being too old for this " +
-    "test (bump the sts/ submodule) rather than a permission: " +
+    "test (bump IYA_STS_IMAGE) rather than a permission: " +
     String(r.raw).slice(0, 200));
   log.debug("Leaving delegationJson(). held=" + r.body.held);
   return r.body;
@@ -556,7 +556,7 @@ async function provisionApplication(app) {
       "POST /admin-api/applications/create refused " + app.identifier +
       " for a reason that is not \"it is already here\": " +
       JSON.stringify(errors) + ". If it names `oauthAudience`, this mock STS " +
-      "predates that attribute (added 2026-08-26) — bump the sts/ submodule.");
+      "predates that attribute (added 2026-08-26) — bump IYA_STS_IMAGE.");
     log.info("[registry] " + app.identifier + " is already in the registry, " +
              "so this run reconciles it rather than creating it.");
     for (let i = 0; i < DECLARED_PROTOCOLS.length; i++) {
@@ -579,7 +579,7 @@ async function provisionApplication(app) {
         "registering the audience " + app.audience + " on the existing " +
         app.identifier + " was refused: " + String(added.raw).slice(0, 200) +
         ". A refusal naming `oauthAudience` as unknown or not editable means " +
-        "this mock STS predates that attribute — bump the sts/ submodule.");
+        "this mock STS predates that attribute — bump IYA_STS_IMAGE.");
     }
   }
 

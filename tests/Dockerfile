@@ -31,7 +31,7 @@
 #  * A new COPY goes in `files1`, `files2` or `files3` — never in the final
 #    stage, which must stay at its dozen-odd layers. Put it where its
 #    neighbours are; the split points are arbitrary (between the client-side
-#    Kerberos files and the sts/ submodule block, and before the RFC 9700
+#    Kerberos files and the iya-sts block, and before the RFC 9700
 #    scripts) and carry no meaning.
 #  * ORDER STILL DECIDES COLLISIONS. This directory is flat, several COPYs
 #    deliberately land on paths an earlier one wrote, and the LAST one wins —
@@ -259,7 +259,6 @@ COPY .github/image-mirror.txt ./
 COPY api/Dockerfile ./api_Dockerfile
 COPY keycloak-wsfed/Dockerfile ./keycloak-wsfed_Dockerfile
 COPY tests/Dockerfile ./tests_Dockerfile
-COPY sts/Dockerfile ./sts_Dockerfile
 
 # Where a downloaded file lands. Several pages here have a Download button, and
 # the browser's default directory on a host run is the developer's ~/Downloads
@@ -352,20 +351,6 @@ COPY tests/bbs_vectors.json ./
 # so the STS's is renamed on the way in; the test resolves either layout.
 # client/src/bbs2023.js does require("./contexts/..."), so the vendored JSON-LD
 # contexts come too: canonicalization must never depend on fetching one.
-#
-# The STS's copy comes out of the sts/ SUBMODULE
-# (https://github.com/rcbj/iya-sts.git) — the one place outside the compose files
-# where this repository reaches into it. An uninitialised submodule fails this
-# build with "COPY sts/common/crypto_impl/bbs2023.js: not found", which says
-# nothing about the cause; the launchers run requireMockStsCheckout()
-# (common/common.sh) before building so it is explained before it happens.
-#
-# NOTE THE PATH. Every module in that repository sat in its root until iya-sts
-# 0f986b3 ("Reorganizing source code."), which moved them into subdirectories —
-# so every `COPY sts/…` line in this file names a folder now, and a bump across
-# that commit fails the build on the first of them. This one is still copied
-# FLAT and renamed, because it is loaded on its own and has no relative
-# requires; the ones below cannot be, and say why.
 COPY client/src/bbs2023.js ./
 # (iya-sts's copy is NOT flattened here any more. It was, as ./sts_bbs2023.js,
 # on the grounds that it had no relative requires; since iya-sts v1.0.0 it
@@ -438,9 +423,9 @@ COPY common/krb5/krb5_ndr.js common/krb5/krb5_pac.js ./
 # bundle source as well as test input.
 # The SPNEGO codec, loaded flat beside the tests by krb5_spnego_codec.js and
 # krb5_spnego_http.js — and, crucially, by krb5_codec_sync.js, which compares
-# this copy byte for byte against the vendored one under sts/. Miss it here and
-# that test reports the vendored codec as INCOMPLETE, which reads as a broken
-# submodule rather than a missing COPY.
+# this copy on the wire against iya-sts's own under ./sts. Miss it here and
+# that test fails to find the canonical copy, which reads as a broken codec
+# rather than a missing COPY.
 COPY common/krb5/krb5_spnego.js ./
 COPY common/krb5/krb5_ranges.js ./
 # The field-name table krb5_ranges.js requires. Same two readers: the test
@@ -557,7 +542,7 @@ WORKDIR /usr/src/app
 # cross-check (krb5_codec_sync.js), the bbs-2023 cryptosuite comparisons
 # (bbs2023_cryptosuite, vc_did, ldp_vc_issuance, ldp_vc_refresh), and the
 # WebAuthn cross-implementation check. This used to copy each module they need
-# out of the sts/ checkout file by file, and every gitlink bump moved that set:
+# out of the sts/ submodule file by file, and every gitlink bump moved that set:
 # at v1.0.0 webauthn.js started loading common/helpers — most of the service —
 # and bbs2023.js started reading its contexts from beside itself, so the
 # hand-kept list could no longer be kept by hand.
@@ -567,14 +552,17 @@ WORKDIR /usr/src/app
 # the same IYA_STS_IMAGE), compiled, with its own node_modules. A module
 # loaded out of ./sts resolves its requires against ./sts/node_modules and
 # finds its siblings where it expects them, so there is no closure to
-# maintain. ./docker-run-tests.sh has already checked that image is the
-# release the sts/ gitlink pins (requireIyaStsImageMatchesCheckout()).
+# maintain. This repository has no iya-sts checkout (the sts/ submodule was
+# removed on 2026-11-13), so this is the only way iya-sts's code reaches the
+# image, and testsImageTakesIyaStsWhole() in tests/jwk_pem_encoding.js fails
+# if a `COPY sts/...` line comes back.
+#
+# iya-sts's own Express (4) comes with it, in ./sts/node_modules, which node
+# reaches walking up from sts/common/app.js before it reaches this package's
+# Express 5 — the arrangement an `npm install --prefix sts express` in the
+# final stage used to make by hand.
 # ---------------------------------------------------------------------------
 COPY --from=iyasts /usr/src/sts ./sts
-# The mock's manifest, read by the final stage for the Express version these
-# modules are written against. Flat and renamed on purpose; see the RUN that
-# installs it.
-COPY sts/package.json ./sts_package.json
 # The Kerberos relay's modules, loaded directly by tests/api_krb5_relay.js: it
 # drives them rather than going over HTTP, so every refusal can be checked with no
 # running service. Copied FLAT, like api/ssrf_guard.js below, and the test resolves
@@ -588,7 +576,7 @@ COPY tests/api_krb5_relay.js ./
 # POST /ldap/* endpoints and the mock's GET /ldap views — rather than loading a
 # module in-process. That is deliberate, and it is what keeps the LDAP jobs out
 # of the class of failure the note above records: a test that loads a module out
-# of the sts/ submodule acquires that submodule's own CONFIG_FILE resolution and
+# of iya-sts's tree acquires that tree's own CONFIG_FILE resolution and
 # its dependency closure, both of which have broken this image before.
 #
 # These two lines are not optional and their absence is silent on every host
@@ -638,21 +626,10 @@ COPY tests/pki_page.js tests/pki_mutual_tls.js ./
 # by this image's own Chrome 121 via the WebDriver virtual authenticator, kept as
 # data so the test needs no browser and cannot flake.
 COPY client/src/cbor.js client/src/cose.js client/src/webauthn.js ./
-# The STS's WebAuthn verifier, for tests/webauthn_cross_impl.js. Renamed on the
-# way in because its basename collides with the client's module copied on the
-# line above — the same arrangement sts/bbs2023.js is in, and for the same
-# reason. It comes out of the sts/ SUBMODULE, so an uninitialised checkout fails
-# this build with "COPY sts/authn/webauthn.js: not found", which says nothing
-# about the
-# cause; requireMockStsCheckout() in common/common.sh explains it first.
-# NOT copied flat, unlike sts/bbs2023.js above: this module has a relative
-# require of its own, so it goes in a directory of its own and keeps its name.
-# (It falls back to a silent logger when ./helpers is absent, which it is here —
-# staging the service's helpers.js instead would drag in its CONFIG_FILE, read
-# relative to ITS directory, and the service's dependencies with it.)
-# (iya-sts's webauthn.js comes with the whole iya-sts tree in stage 2, at
-# ./sts/authn/webauthn.js — it requires common/helpers and most of the service
-# since v1.0.0, which no per-file copy here could keep up with.)
+# The STS's WebAuthn verifier, for tests/webauthn_cross_impl.js, is not
+# copied here: it comes with iya-sts's whole tree in stage 2, at
+# ./sts/authn/webauthn.js, where its relative requires (common/helpers and
+# most of the service since v1.0.0) resolve.
 COPY tests/webauthn_decode.js tests/webauthn_vectors.json tests/webauthn_analyzer_page.js tests/webauthn_lab_page.js tests/webauthn_cross_impl.js tests/webauthn_oidc_mfa.js tests/webauthn_extension.js ./
 # The browser extension's CI build, side-loaded by tests/webauthn_extension.js.
 # It is GENERATED, not committed: build.js stamps the version in and bakes the
@@ -1186,34 +1163,6 @@ RUN . $NVM_DIR/nvm.sh && npm install
 # forty-minute run; #405, #406 and #415 each merged that. See
 # checkJobScripts() in run-report.js.
 RUN . $NVM_DIR/nvm.sh && node run-report.js --check-scripts
-
-# ---------------------------------------------------------------------------
-# THE MOCK'S OWN EXPRESS, BESIDE THE MOCK'S COPIED MODULES.
-#
-# The in-process mock-KDC jobs load sts/common/app.js — the mock's shared
-# express app — and until the 2026-09-15 bump it resolved `express` from
-# /usr/src/app/node_modules, which is THIS package's, and that is Express 5.
-# The mock is written against Express 4 (`^4` in its package.json), and
-# iya-sts 2f9825f put the first line in app.js the two majors disagree on:
-# `app.options('*', ...)`. path-to-regexp 8, under Express 5, refuses a bare
-# `*` at REGISTRATION, so app.js threw at require time and four jobs died
-# with "Missing parameter name at index 1: *" — a message naming a regexp
-# library for what is a version mismatch.
-#
-# A host run never sees it: `npm ci --prefix sts` gives the mock its whole
-# own tree, so the same require finds Express 4 in sts/node_modules. This is
-# the image's version of that, for the one package where the majors differ:
-# node walks up from sts/common/app.js and finds sts/node_modules/express
-# before it reaches ours. The version is READ from the mock's package.json
-# (staged as sts_package.json, never as sts/package.json, because
-# `npm install <pkg>` beside a package.json would try to install every
-# dependency listed in it, including a `file:` submodule this image lacks).
-# ---------------------------------------------------------------------------
-RUN . $NVM_DIR/nvm.sh \
-    && mkdir -p sts/node_modules \
-    && npm install --prefix sts --no-save --no-package-lock --omit=dev \
-         "express@$(node -p "require('./sts_package.json').dependencies.express")" \
-    && node -p "'sts express ' + require('./sts/node_modules/express/package.json').version"
 
 # ---------------------------------------------------------------------------
 # NON-ROOT FROM HERE ON. See the same block in api/Dockerfile for why the UID

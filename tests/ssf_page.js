@@ -1256,7 +1256,7 @@ async function preconditions() {
       log.debug("Leaving preconditions(). No transmitter.");
       return { ok: false, why: "no SSF transmitter at " + stsUrl +
         " (/.well-known/ssf-configuration answered " + doc.status + ") — " +
-        "the sts/ gitlink probably predates it" };
+        "the iya-sts image (IYA_STS_IMAGE) probably predates it" };
     }
   } catch (e) {
     log.debug("Leaving preconditions(). " + e.message);
