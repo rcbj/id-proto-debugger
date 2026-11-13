@@ -472,7 +472,13 @@ function decodePivResponse() {
       showCertificate(cert.der, described.rows);
     } else if (cert && cert.deflated) {
       inflateGzip(cert.deflated).then(function (der) {
-        showCertificate(der, described.rows);
+        var extra = [];
+        try {
+          extra = piv.attestationRows(der);
+        } catch (e) {
+          extra = [];
+        }
+        showCertificate(der, described.rows.concat(extra));
       }).catch(function (e) {
         setStatus(e.message);
       });
@@ -800,7 +806,8 @@ function sendHid() {
   var slot = parseInt(valueOf("sc_hid_slot"), 16);
   var frame = null;
   try {
-    frame = otp.hidFrame(slot, hidBytes(valueOf("sc_hid_challenge")));
+    frame = otp.hidFrame(slot, hidBytes(valueOf("sc_hid_challenge")),
+        { variable: valueOf("sc_hid_hmac_mode") !== "fixed" });
   } catch (e) {
     setStatus(e.message);
     log.debug("Leaving sendHid(). Frame.");

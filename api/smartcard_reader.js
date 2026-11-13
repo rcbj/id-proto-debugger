@@ -273,15 +273,22 @@ function exchange(send, apdu, getResponse, remainingIns) {
   var data = Buffer.alloc(0);
   var retried = false;
   var fetches = 0;
+  // record(), step() and send() run once per APDU on the wire, at
+  // most MAX_SEQUENCE x (MAX_GET_RESPONSE + 2) times a request, which
+  // is not a hot path, so they log like everything else.
   function record(sent, answer) {
+    log.debug("Entering record().");
     steps.push({
       apdu: sent.toString("hex").toUpperCase(),
       data: answer.data.toString("hex"),
       status: Buffer.from([answer.sw1, answer.sw2]).toString("hex")
           .toUpperCase()
     });
+    log.debug("Leaving record().");
   }
   function step(sent) {
+    log.debug("Entering step().");
+    log.debug("Leaving step(). The answer is a promise.");
     return send(sent).then(function (buf) {
       var answer = splitStatus(Buffer.from(buf));
       record(sent, answer);
@@ -371,7 +378,9 @@ function listReaders() {
     var settled = false;
     var names = [];
     function finish(err, value) {
+      log.debug("Entering finish().");
       if (settled) {
+        log.debug("Leaving finish(). Already settled.");
         return;
       }
       settled = true;
@@ -381,6 +390,7 @@ function listReaders() {
       } else {
         resolve(value);
       }
+      log.debug("Leaving finish().");
     }
     try {
       pcsc = loaded.factory();
@@ -424,7 +434,9 @@ function transmit(readerName, apdus, opts) {
     var settled = false;
     var found = false;
     function finish(err, value) {
+      log.debug("Entering finish().");
       if (settled) {
+        log.debug("Leaving finish(). Already settled.");
         return;
       }
       settled = true;
@@ -434,6 +446,7 @@ function transmit(readerName, apdus, opts) {
       } else {
         resolve(value);
       }
+      log.debug("Leaving finish().");
     }
     try {
       pcsc = loaded.factory();
@@ -454,14 +467,22 @@ function transmit(readerName, apdus, opts) {
       reader.connect({ share_mode: share },
           function (connectErr, protocol) {
         if (connectErr) {
+          // pcsclite's own text names the PC/SC code (no card, card
+          // unpowered, sharing violation, ...), which is the diagnosis.
+          // A guess of ours in its place would hide it.
+          var said = (connectErr && connectErr.message) ?
+              connectErr.message : String(connectErr);
           finish(new Error(list.length > 1 ?
               "Could not open " + readerName + " exclusively. Is a " +
               "card in it, and is another process (scdaemon, pcscd " +
-              "clients) holding it? " + connectErr.message :
-              "No card in " + readerName + "."));
+              "clients) holding it? PC/SC said: " + said :
+              "Could not connect to " + readerName + ". PC/SC said: " +
+              said));
           return;
         }
         function send(apdu) {
+          log.debug("Entering send().");
+          log.debug("Leaving send(). The answer is a promise.");
           return new Promise(function (ok, bad) {
             reader.transmit(apdu, MAX_APDU_BYTES, protocol,
                 function (txErr, data) {

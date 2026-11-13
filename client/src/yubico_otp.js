@@ -454,8 +454,21 @@ function defaultVerifier(which) {
 // HMAC-SHA1 challenge-response is slot 0x30 or 0x38 and up to 64
 // bytes. The frame is what yubikit sends: the 64-byte payload, then
 // the slot and the CRC of the payload, then three zero bytes.
-function hidFrame(slot, challenge) {
+//
+// An HMAC slot is programmed fixed (the key HMACs all 64 bytes) or
+// variable (HMAC_LT64: the key first drops every trailing byte equal
+// to the last one, so the HMAC is over the challenge the caller
+// meant). ykman programs variable. For variable, yubikit pads with a
+// byte different from the challenge's last one, 01 after a 00 and 00
+// otherwise, so the key's stripping removes exactly the padding:
+//   challenge.ljust(SLOT_DATA_SIZE,
+//       b"\1" if challenge.endswith(b"\0") else b"\0")
+// For fixed, the 64 bytes ARE the challenge; a shorter one is zero
+// filled, and the HMAC is over that 64-byte block. opts.variable
+// defaults to true. It does not apply to the OTP slots.
+function hidFrame(slot, challenge, opts) {
   log.debug("Entering hidFrame().");
+  var options = opts || {};
   var known = slot === SLOT_OTP_1 || slot === SLOT_OTP_2 ||
       slot === SLOT_HMAC_1 || slot === SLOT_HMAC_2;
   if (!known) {
@@ -463,8 +476,8 @@ function hidFrame(slot, challenge) {
     reject("The slot is 20, 28, 30 or 38.");
   }
   var data = Buffer.from(challenge || []);
-  if ((slot === SLOT_OTP_1 || slot === SLOT_OTP_2) &&
-      data.length !== 6) {
+  var hmac = slot === SLOT_HMAC_1 || slot === SLOT_HMAC_2;
+  if (!hmac && data.length !== 6) {
     log.debug("Leaving hidFrame(). OTP challenge.");
     reject("An OTP challenge is 6 bytes.");
   }
@@ -472,7 +485,13 @@ function hidFrame(slot, challenge) {
     log.debug("Leaving hidFrame(). Long.");
     reject("A HID challenge does not fit in 64 bytes.");
   }
-  var payload = Buffer.alloc(SLOT_DATA_SIZE, 0);
+  var variable = options.variable !== false;
+  var fill = 0x00;
+  if (hmac && variable && data.length > 0 &&
+      data[data.length - 1] === 0x00) {
+    fill = 0x01;
+  }
+  var payload = Buffer.alloc(SLOT_DATA_SIZE, fill);
   data.copy(payload, 0);
   var crc = crc16(payload);
   var frame = Buffer.alloc(FRAME_SIZE, 0);
@@ -482,6 +501,25 @@ function hidFrame(slot, challenge) {
   frame[66] = (crc >> 8) & 0xff;
   log.debug("Leaving hidFrame().");
   return frame;
+}
+
+// What a slot computes for a challenge, so the page can show the
+// expected answer when it holds the HMAC key. Variable mode strips the
+// trailing run of the payload's last byte, as the key does.
+function hmacChallengeBytes(frame, variable) {
+  log.debug("Entering hmacChallengeBytes().");
+  var payload = Buffer.from(frame).slice(0, SLOT_DATA_SIZE);
+  if (variable === false) {
+    log.debug("Leaving hmacChallengeBytes(). Fixed.");
+    return payload;
+  }
+  var last = payload[SLOT_DATA_SIZE - 1];
+  var end = SLOT_DATA_SIZE;
+  while (end > 0 && payload[end - 1] === last) {
+    end -= 1;
+  }
+  log.debug("Leaving hmacChallengeBytes().");
+  return payload.slice(0, end);
 }
 
 // Feature reports are 8 bytes: 7 of the frame and a sequence byte.
@@ -642,6 +680,7 @@ module.exports = {
   parseValidationResponse: parseValidationResponse,
   defaultVerifier: defaultVerifier,
   hidFrame: hidFrame,
+  hmacChallengeBytes: hmacChallengeBytes,
   hidReports: hidReports,
   hidReportBytes: hidReportBytes,
   hidCanWrite: hidCanWrite,

@@ -358,6 +358,34 @@ function parseList(body) {
   return creds;
 }
 
+// The code a CALCULATE response element stands for. A truncated
+// answer (76) is the four bytes RFC 4226 section 5.3 calls DBC2's
+// source, so only its top bit is masked. A full answer (75) is the
+// whole HMAC (20, 32 or 64 bytes); the code is its dynamic truncation,
+// exactly as hotp() computes it from a secret.
+function codeFromResponse(tag, digits, raw) {
+  log.debug("Entering codeFromResponse().");
+  if (digits < 6 || digits > 8) {
+    log.debug("Leaving codeFromResponse(). Digits.");
+    return null;
+  }
+  var bin = null;
+  if (tag === 0x76 && raw.length === 4) {
+    bin = raw.readUInt32BE(0) & 0x7fffffff;
+  } else if (tag === 0x75 &&
+      (raw.length === 20 || raw.length === 32 || raw.length === 64)) {
+    var offset = raw[raw.length - 1] & 0x0f;
+    bin = raw.readUInt32BE(offset) & 0x7fffffff;
+  }
+  if (bin === null) {
+    log.debug("Leaving codeFromResponse(). Shape.");
+    return null;
+  }
+  var code = String(bin % Math.pow(10, digits)).padStart(digits, "0");
+  log.debug("Leaving codeFromResponse().");
+  return code;
+}
+
 function parseCalculate(body) {
   log.debug("Entering parseCalculate().");
   var nodes = iso.parseElements(body);
@@ -374,18 +402,52 @@ function parseCalculate(body) {
   }
   var digits = node.value[0];
   var raw = node.value.slice(1);
-  var code = null;
-  if (raw.length === 4 && digits >= 6 && digits <= 8) {
-    var bin = raw.readUInt32BE(0);
-    code = String(bin % Math.pow(10, digits)).padStart(digits, "0");
-  }
   log.debug("Leaving parseCalculate().");
   return {
     truncated: node.tag === 0x76,
     digits: digits,
     raw: raw,
-    code: code
+    code: codeFromResponse(node.tag, digits, raw)
   };
+}
+
+// CALCULATE ALL (YKOATH INS A4): a list of name (71) then response
+// pairs. 76 truncated and 75 full carry digits and a response; 77 is
+// an HOTP credential, which is not calculated, and 7C one that needs
+// a touch. Both of those carry the digit count alone.
+var CALCULATE_ALL_KINDS = {
+  "117": "full",
+  "118": "truncated",
+  "119": "HOTP, not calculated",
+  "124": "touch required, not calculated"
+};
+
+function parseCalculateAll(body) {
+  log.debug("Entering parseCalculateAll().");
+  var nodes = iso.parseElements(body);
+  var out = [];
+  var i = 0;
+  for (i = 0; i < nodes.length; i += 2) {
+    var name = nodes[i];
+    var answer = nodes[i + 1];
+    if (name.tag !== 0x71 || !answer ||
+        !CALCULATE_ALL_KINDS[String(answer.tag)] ||
+        answer.value.length < 1) {
+      log.debug("Leaving parseCalculateAll(). Pair.");
+      reject("A CALCULATE ALL response is name (71) and response " +
+          "(75, 76, 77 or 7C) pairs.");
+    }
+    var digits = answer.value[0];
+    var raw = answer.value.slice(1);
+    out.push({
+      name: name.value.toString("utf8"),
+      kind: CALCULATE_ALL_KINDS[String(answer.tag)],
+      digits: digits,
+      code: codeFromResponse(answer.tag, digits, raw)
+    });
+  }
+  log.debug("Leaving parseCalculateAll().");
+  return out;
 }
 
 function parseSelect(body) {
@@ -501,6 +563,15 @@ function describeResponse(input) {
           value: creds[i].type + " " + creds[i].algorithm });
     }
     summary = creds.length + " credential(s), " + summary;
+  } else if (response.data[0] === 0x71) {
+    var all = parseCalculateAll(response.data);
+    var k = 0;
+    for (k = 0; k < all.length; k++) {
+      rows.push({ label: all[k].name, value: (all[k].code ?
+          all[k].code + " (" + all[k].kind + ")" : all[k].kind) +
+          ", " + all[k].digits + " digits" });
+    }
+    summary = all.length + " code(s), " + summary;
   } else if (response.data[0] === 0x75 || response.data[0] === 0x76) {
     var calc = parseCalculate(response.data);
     rows.push({ label: "Digits", value: String(calc.digits) });
@@ -538,6 +609,7 @@ module.exports = {
   totpChallenge: totpChallenge,
   parseList: parseList,
   parseCalculate: parseCalculate,
+  parseCalculateAll: parseCalculateAll,
   parseSelect: parseSelect,
   describeCommand: describeCommand,
   describeResponse: describeResponse
