@@ -128,6 +128,7 @@ var config = {
   ldapMaxEntries: 1000,
   scimMaxRequestBytes: 1048576,
   ssfMaxRequestBytes: 262144,
+  gnapMaxRequestBytes: 262144,
   ssfReceiverEnabled: true,
   ssfReceiverTtlMs: 3600000,
   ssfReceiverMaxInboxes: 20,

@@ -12,7 +12,11 @@
 
 .landing {
   text-align: center;
-  padding: 10px 12px 18px;
+  /* 6px on the sides, not 12. Ten columns need the text inside each
+     card to stay as wide as the nine-column grid's, or every
+     description wraps again and the second row drops below the fold.
+     The 12px that used to sit here is now column width. */
+  padding: 10px 6px 12px;
 }
 .landing-title { font-size: 1.35em; margin: 0 0 3px; color: #333; }
 .landing-sub { font-size: .85em; color: #666; margin: 0 0 10px; }
@@ -92,11 +96,34 @@
    * ordinary responsive degradation this grid has always had at narrower
    * widths, and landingFitsOnOneScreen() measures the viewport the suite
    * actually runs at.
+   *
+   * TEN across as of the NINETEENTH card (GNAP). Nine columns of 118px
+   * hold eighteen as a filled 9+9. Nineteen are 9+9+1, and the third
+   * row is below the fold. The container at a 1200px viewport is
+   * 1170px and .landing's horizontal padding takes 24px, so the grid
+   * has 1146px. Ten columns fit when 10*min + 9*10 <= 1146, so
+   * min <= 105 (10*105 + 9*10 = 1140). 106px is 1150 and drops back
+   * to nine, which fails silently as height. The max-width is 1140
+   * for the same sum. Narrower cards wrap further. Measure.
+   *
+   * Measured at 105px and a 10px gap: the lowest card ended at 669px,
+   * past the 625px headless viewport and the 640px budget. The text
+   * column is what wraps. A 118px card with 8px of padding on each
+   * side gives 102px of text, and that grid ended at 597px. A 105px
+   * card with the same padding gives 89px, and the extra wraps are
+   * the 72px. .landing now keeps 6px on each side (the content box
+   * is 1158px) and the gap is 6px, so a card is 110px. 4px of
+   * horizontal padding puts the text back at 102px. min stays 105:
+   * 10*105 + 9*6 = 1104, and 11 columns need 1215, so the count
+   * does not change. The icon and the vertical padding below buy
+   * the headroom a container font has cost before. Measured at
+   * 1366x768: ten and nine, the lowest card ending at 573px of a
+   * 625px headless viewport, inside the 640px budget.
    */
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  gap: 6px;
   align-items: stretch;
-  max-width: 1142px;
+  max-width: 1158px;
   margin: 0 auto;
 }
 
@@ -105,12 +132,11 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  /* 10px/12px rather than 12px/14px, and like the icon below the pixels are
-     load-bearing rather than taste: padding costs its height once per ROW, so
-     four pixels here buy back eight over the two rows. Taken when the
-     thirteenth card forced seven columns and the extra wrapping put the grid
-     within five pixels of the fold. */
-  padding: 10px 8px 12px;
+  /* 8px/4px/8px. The vertical pixels are load-bearing: padding costs
+     its height once per ROW. The horizontal 4px is the other half of
+     the nineteenth-card fix in the grid note: it is what puts 102px
+     of text back into a 110px card. */
+  padding: 8px 4px 8px;
   border: 1px solid #ccc;
   border-radius: 12px;
   background: #fafafa;
@@ -148,8 +174,11 @@
    thirteenth card left the grid ending at 620px of 625. Four pixels off the
    icon and four off the card padding above end it at 597px, which is ~28px of
    headroom — more than the container/host difference that has cost a run
-   before. */
-.landing-icon svg { width: 30px; height: 30px; }
+   before.
+   26px for the nineteenth card. An icon costs its height once per row, so
+   four pixels here are eight across the two rows, on top of the wrapping
+   the grid note puts back. */
+.landing-icon svg { width: 26px; height: 26px; }
 .landing-card:nth-child(1) .landing-icon { color: #2680eb; }
 .landing-card:nth-child(2) .landing-icon { color: #5a2a8f; }
 .landing-card:nth-child(3) .landing-icon { color: #0a7d63; }
@@ -213,7 +242,14 @@
    budget. */
 .landing-card:nth-child(16) .landing-icon { color: #7a3f5f; }
 .landing-card:nth-child(17) .landing-icon { color: #3a6ea5; }
+/* The eighteenth card is XACML. Smart cards took the tenth place, so
+   the accent that used to sit on the seventeenth card colours Shared
+   Signals now. This olive is XACML's own. A card with no rule of its
+   own uses the body colour, and landingFitsOnOneScreen() fails that
+   card. */
 .landing-card:nth-child(18) .landing-icon { color: #5f7a3f; }
+/* The nineteenth card is GNAP. Ten columns, in the grid note above. */
+.landing-card:nth-child(19) .landing-icon { color: #0b6e4f; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

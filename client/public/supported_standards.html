@@ -137,6 +137,7 @@
               formats</a></li>
           <li><a href="#encoding">Encoding, registries and infrastructure</a></li>
           <li><a href="#xacml">XACML 3.0</a></li>
+          <li><a href="#gnap">GNAP</a></li>
           <li><a href="#notimpl">Named here, and deliberately not
               implemented</a></li>
         </ul>
@@ -1652,6 +1653,59 @@
             <td>A pasted request. The profile has no policy syntax, so
               policies stay XML, or ALFA, which the editor also reads
               and writes.</td>
+          </tr>
+        </table>
+
+        <!-- ===================== GNAP ===================== -->
+        <h2 id="gnap">GNAP</h2>
+        <p>The <a href="/gnap.html">GNAP page</a> is a client instance.
+        It signs a grant request and shows what the authorization
+        server answers. The private key stays in the browser.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9635"
+                   target="_blank" rel="noopener noreferrer">RFC 9635</a>
+              Grant Negotiation and Authorization Protocol
+              <span class="std-where">IETF</span></td>
+            <td>Request a grant, follow the interaction, continue,
+              rotate the client key, or revoke. The interaction hash
+              is section 4.2.3. The access token stays opaque. Mutual
+              TLS is a property of the connection, so this page does
+              not offer that proof.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9421"
+                   target="_blank" rel="noopener noreferrer">RFC 9421</a>
+              HTTP Message Signatures, and
+              <a href="https://www.rfc-editor.org/rfc/rfc9530"
+                 target="_blank" rel="noopener noreferrer">RFC 9530</a>
+              Digest Fields
+              <span class="std-where">IETF</span></td>
+            <td>The <code>httpsig</code> proof. The signature covers
+              the method, the target URI, the content digest when
+              there is a body, and the authorization header when a
+              token is bound.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc7515"
+                   target="_blank" rel="noopener noreferrer">RFC 7515</a>
+              JSON Web Signature
+              <span class="std-where">IETF</span></td>
+            <td>The <code>jwsd</code> and <code>jws</code> proofs of
+              RFC 9635 section 7.3. One is a detached signature over
+              the body. The other replaces the body with a compact
+              JWS.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc9767"
+                   target="_blank" rel="noopener noreferrer">RFC 9767</a>
+              GNAP resource servers
+              <span class="std-where">IETF</span></td>
+            <td>A signed call to an endpoint the resource server
+              published, including introspection. The page fills the
+              request. The resource server's key is the one that
+              signs it.</td>
           </tr>
         </table>
 
