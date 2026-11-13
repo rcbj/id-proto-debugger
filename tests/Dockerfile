@@ -72,9 +72,10 @@ COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js
 # Node-only engine tests that read client/src from /usr/src/source-tree. The
 # _engine suffix keeps them from colliding with client/src/rfc9068.js and
 # client/src/rp_metadata_choices.js in this flat directory.
-COPY tests/rfc9068_engine.js tests/rp_metadata_choices_engine.js ./
-COPY tests/oauth_scope_engine.js ./
-# Checks that every script a job in run-report.js names is in this image.
+COPY tests/rfc9068_engine.js tests/rp_metadata_choices_engine.js \
+     tests/oauth_scope_engine.js ./
+# Checks the scripts `run-report.js --check-scripts` cannot see: every
+# script literal, including jobs only scheduled under a non-default env.
 COPY tests/job_scripts_in_image.js ./
 # Merlin's published canonical forms, read by xmlsec_interop.js for
 # issue #304. The two signature documents and the expected octets.
@@ -1171,6 +1172,13 @@ RUN . $NVM_DIR/nvm.sh && npm install chromedriver
 
 # Install modules needed for the test scripts
 RUN . $NVM_DIR/nvm.sh && npm install
+
+# EVERY SCHEDULED SCRIPT IS IN THE IMAGE, or the build stops here naming the
+# ones that are not. A job added to run-report.js without a COPY above used to
+# build fine and then fail one job with MODULE_NOT_FOUND in 0.0s, deep in a
+# forty-minute run; #405, #406 and #415 each merged that. See
+# checkJobScripts() in run-report.js.
+RUN . $NVM_DIR/nvm.sh && node run-report.js --check-scripts
 
 # ---------------------------------------------------------------------------
 # THE MOCK'S OWN EXPRESS, BESIDE THE MOCK'S COPIED MODULES.

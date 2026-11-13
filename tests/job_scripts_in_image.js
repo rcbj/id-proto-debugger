@@ -27,6 +27,13 @@
 //    the half that fails before anybody builds an image.
 //  * in the IMAGE, it asserts every script exists beside it in /usr/src/app.
 //
+// What it adds to `node run-report.js --check-scripts`, the RUN step in
+// tests/Dockerfile that fails the image build on the same omission: that
+// step sees only the jobs buildJobs() schedules under the build's default
+// env (about two thirds of them). This reads every script literal in the
+// file, so a job scheduled only when a service or flag is configured is
+// held to the same rule, and it fails in a checkout before any build.
+//
 // No browser and no services: node only, so it never skips.
 // ---------------------------------------------------------------------------
 const assert = require("assert");
