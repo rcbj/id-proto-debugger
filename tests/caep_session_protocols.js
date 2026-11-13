@@ -88,10 +88,14 @@
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const zlib = require("zlib");
+const { spawnSync } = require("child_process");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
-const { mustBeReady, declineToRun } = require("./expectation.js");
+const { mustBeReady } = require("./expectation.js");
 const registry = require("./sts_applications.js");
 const authnSignin = require("./authn_signin.js");
 const { usernameFor } = require("./random_username.js");
@@ -132,6 +136,18 @@ var apiUrl = process.env.API_URL || "https://localhost:4000";
 var pushAvailable = process.env.SSF_PUSH_AVAILABLE !== "false";
 // Which sign-in this job is about. One value per job — see the header.
 var protocol = process.env.CAEP_SIGNIN_PROTOCOL || "oidc";
+// THE KDC, FOR THE SPNEGO JOB ONLY, as THIS PROCESS dials it — `kinit` opens
+// the socket itself, so these are KRB5_TEST_* and not KRB5_KDC_HOST, for the
+// reason krb5_mit_client.js gives at length: that variable is the API's view
+// of the KDC (a page types it and the relay resolves it), and `sts` means
+// nothing to a process on the host. run-tests-in-container.sh sets both to
+// the compose name for the bridge stack.
+var kdcHost = process.env.KRB5_TEST_KDC_HOST || "localhost";
+var kdcPort = process.env.KRB5_TEST_KDC_PORT || "88";
+var realm = process.env.KRB5_REALM || "EXAMPLE.COM";
+// One password for every USER account this KDC creates on first sight — a
+// published test credential from its own account policy, not a secret.
+var krbPassword = process.env.KRB5_PASSWORD || "password!";
 
 const P = events.CAEP_PREFIX;
 // The eight, with session-revoked LAST for the reason the header gives.
@@ -219,11 +235,23 @@ function basic(user) {
 // That sameness IS the point being tested. It is what makes
 // `session-established` protocol-independent at the mock, and the reason
 // `session-presented` had to be made so by hand.
+//
+// SPNEGO takes the same path with ONE step different: the pending sign-in is
+// answered at `/authn/spnego?authn=<id>` with a Kerberos ticket rather than
+// POSTed with a password, and the door's 303 back to the application is the
+// password screen's 303. RFC 4559 authenticates a request and has no request
+// message naming a relying party, so its application is an OIDC one — which
+// also makes the authorization endpoint the door its single sign-on is
+// presented at, for the reason the sign-out section below gives.
 // ---------------------------------------------------------------------------
 function startUrlFor(who) {
   log.debug("Entering startUrlFor(). " + protocol);
   let url = '';
-  if (protocol === 'oidc') {
+  // SPNEGO is reached the way a browser reaches it: an APPLICATION asks for
+  // a sign-in and the person answers it with a ticket instead of a password.
+  // It has no request message of its own (RFC 4559 authenticates one HTTP
+  // request and names no relying party), so the application is the OIDC one.
+  if (protocol === 'oidc' || protocol === 'spnego') {
     url = stsUrl + '/oauth2/authorize?response_type=code&client_id=' +
       encodeURIComponent(clientId()) + '&redirect_uri=' +
       encodeURIComponent('https://rp.example.com/cb') +
@@ -242,8 +270,6 @@ function startUrlFor(who) {
     url = stsUrl + '/wsfed?wa=wsignin1.0&wtrealm=' +
       encodeURIComponent(clientId()) + '&wreply=' +
       encodeURIComponent(WSFED_REPLY);
-  } else if (protocol === 'spnego') {
-    url = stsUrl + '/authn/spnego';
   }
   log.debug("Leaving startUrlFor(). " + url);
   return url;
@@ -255,7 +281,8 @@ const WSFED_REPLY = 'https://rp.example.com/wsfed';
 
 function clientId() {
   log.debug("Entering clientId().");
-  const id = protocol === 'oidc' ? 'webapp1' : ('urn:caep:' + protocol);
+  const id = (protocol === 'oidc' || protocol === 'spnego')
+    ? 'webapp1' : ('urn:caep:' + protocol);
   log.debug("Leaving clientId(). " + id);
   return id;
 }
@@ -377,11 +404,15 @@ async function signIn(who) {
       'authentication.' };
   }
   // The screen is a static surface over /authn-api since iya-sts #571, so
-  // the sign-in is the page's own act, sent the way the page sends it.
-  const posted = await authnSignin.signIn(stsUrl,
-      new URL(location, stsUrl).href,
-      { action: 'login', username: who, password: 'x' });
-  let cookie = posted.next === 'redirect' ? cookieOf(posted) : '';
+  // the sign-in is the page's own act, sent the way the page sends it — or,
+  // for SPNEGO, the same pending sign-in answered at the Negotiate door with
+  // a Kerberos ticket instead (negotiate(), above).
+  const posted = protocol === 'spnego'
+    ? negotiate(who, location)
+    : await authnSignin.signIn(stsUrl, new URL(location, stsUrl).href,
+        { action: 'login', username: who, password: 'x' });
+  let cookie = posted.next === 'redirect'
+    ? (posted.cookie || cookieOf(posted)) : '';
   if (!cookie) {
     log.debug("Leaving signIn(). No cookie.");
     return { ok: false, why: 'the sign-in screen answered ' + posted.status +
@@ -396,7 +427,8 @@ async function signIn(who) {
   const back = new URL(posted.location || start, stsUrl).href;
   const returned = await call('GET', back, null, { Cookie: cookie });
   // THE CONSENT SCREEN, where the application asks for one (OAuth2/OIDC on
-  // this stack; the other four draw none). Since iya-sts 2446cbe1 the
+  // this stack, and so SPNEGO, whose application is OIDC; the other three
+  // draw none). Since iya-sts 2446cbe1 the
   // authorization endpoint HOLDS the session's next presentation as it sends
   // a request to that screen, so the trip back from it is the sign-in's own
   // and not a single sign-on. Left unanswered, that hold was being spent by
@@ -609,38 +641,261 @@ async function preconditions() {
 }
 
 // ---------------------------------------------------------------------------
-// SPNEGO IS DEFERRED RATHER THAN FAKED, and this is the same deferral
-// tests/CLAUDE.md already records for the federation grid's twenty-five
-// missing points — for the same reason and with the same half of it now
-// closed.
+// SPNEGO, ANSWERED WITH A REAL KERBEROS TICKET.
 //
-// The MOCK side is real: `/authn/spnego` calls `startSession()` like every
-// other door there, so a SPNEGO sign-in DOES produce a CAEP session and DOES
-// emit. What is missing is this end. `GET /authn/spnego` answers
-// `401 WWW-Authenticate: Negotiate`, and answering that needs a Kerberos
-// service ticket for the acceptor — which means a KDC, a keytab and a
-// credential cache. `krb5_mit_client.js` is the one job here that has all
-// three, because it drives MIT Kerberos itself and the image installs
-// `krb5-user` for it.
+// `/authn/spnego` calls `startSession()` like every other door at the mock,
+// so a SPNEGO sign-in produces a CAEP session and emits. What it asks for is
+// a ticket: the door answers `401 WWW-Authenticate: Negotiate`, and the only
+// acceptable reply is an AP-REQ for the acceptor's principal, wrapped in
+// SPNEGO. The mock is its own KDC on this stack, so the ticket comes from
+// there, obtained the way any workstation obtains one:
 //
-// So this SKIPS with a reason naming exactly what it would need, rather than
-// failing (which would report a defect that is not there) or asserting
-// nothing (which is the "a test that does not run is not a passing test"
-// failure this directory has a whole section about). `declineToRun()` makes it
-// an amber SKIP with its reason in `report.xml` rather than a silent pass.
+//   1. `kinit <who>` — an AS exchange for a TGT. The KDC creates an account
+//      for any name on first sight (its `accountPolicy`), so the person this
+//      job signs in is a name generated for this run, exactly as for the
+//      other four protocols, and the CAEP row is found by that name.
+//   2. `curl --negotiate` at `/authn/spnego?authn=<the interrupted sign-in>`
+//      — GSSAPI asks the KDC for a service ticket for `HTTP/<host>` (the TGS
+//      exchange) and answers the 401 with it. The door accepts it, starts
+//      the session and sends the browser back to the application with a 303,
+//      which is the same shape the password screen ends in.
+//
+// MIT Kerberos and a GSSAPI-capable curl are what `krb5_mit_client.js` uses,
+// and `tests/Dockerfile` installs both (`krb5-user`, and Ubuntu's curl, which
+// is built with GSS-API). It is a client nobody here wrote, which is the right
+// thing to hold the mock's acceptor to. Their ABSENCE IS A FAILURE and not a
+// skip: they are a package install, not money or hardware, and a job that
+// declines to run where a package is missing is a job that never runs.
+//
+// Everything Kerberos touches lives in a temporary directory of this run's
+// own — `KRB5_CONFIG` and `KRB5CCNAME` point into it — so nothing reads or
+// writes `/etc/krb5.conf` or the machine's own credential cache, and the
+// directory is removed in cleanUp() whatever happened.
 // ---------------------------------------------------------------------------
-function spnegoNeedsATicket() {
-  log.debug("Entering spnegoNeedsATicket().");
-  const why = 'SPNEGO cannot be driven from this job yet. The mock side is ' +
-    'ready — /authn/spnego calls startSession() like every other door there, ' +
-    'so a SPNEGO sign-in does produce a CAEP session and does emit — but ' +
-    'that endpoint answers 401 WWW-Authenticate: Negotiate, and answering it ' +
-    'needs a Kerberos service ticket: a KDC, a keytab and a credential ' +
-    'cache. tests/krb5_mit_client.js is the only job here that has them, ' +
-    'because it drives MIT Kerberos itself and the image installs ' +
-    'krb5-user for it. Giving this job the same would close it.';
-  log.debug("Leaving spnegoNeedsATicket().");
-  return why;
+var krbDir = null;
+var krbConfig = null;
+var krbTools = { kinit: '', curl: '' };
+// curl's view of the mock's certificate. Node trusts it through
+// NODE_EXTRA_CA_CERTS; curl is a separate program and has to be told.
+var curlTls = [];
+
+function toolPath(name) {
+  log.debug("Entering toolPath(). " + name);
+  const found = spawnSync("sh", ["-c", "command -v " + name],
+      { encoding: "utf8" });
+  const resolved = String(found.stdout || "").trim();
+  log.debug("Leaving toolPath(). " + (resolved || "(absent)"));
+  return resolved;
+}
+
+// One MIT or curl command, inside this run's Kerberos directory. spawnSync
+// with an argument list, so nothing is shell-quoted, and the password goes
+// in on stdin, so it is on no process listing.
+function krbRun(command, args, input) {
+  log.debug("Entering krbRun(). " + path.basename(command));
+  const result = spawnSync(command, args, {
+    input: input || "",
+    encoding: "utf8",
+    timeout: 60000,
+    env: Object.assign({}, process.env, {
+      KRB5_CONFIG: krbConfig,
+      KRB5CCNAME: "FILE:" + path.join(krbDir, "ccache")
+    })
+  });
+  const answer = { status: result.status,
+    stdout: String(result.stdout || ""),
+    stderr: String(result.stderr || "") };
+  log.debug("Leaving krbRun(). status=" + answer.status);
+  return answer;
+}
+
+function hostOf(url) {
+  log.debug("Entering hostOf().");
+  let host = String(url);
+  try {
+    host = new URL(String(url)).hostname;
+  } catch (e) {
+    log.debug("Leaving hostOf(). Unparseable.");
+    return host;
+  }
+  log.debug("Leaving hostOf(). " + host);
+  return host;
+}
+
+// THE CONFIGURATION, the same settings krb5_mit_client.js writes and for the
+// reasons it records beside each one. The three that cost runs are the ones
+// that stop MIT rewriting the HOSTNAME before it derives the SPN — forward
+// and reverse canonicalization, and qualifying a short name with the
+// resolver's search domain, which on the compose network turned `sts` into
+// `sts.<host's domain>`: a principal the KDC does not have, a TGS refusal,
+// and curl sending NO Authorization header at all — so the door's ordinary
+// bare 401 is what a test then sees, naming nothing about DNS.
+function writeKrb5Config() {
+  log.debug("Entering writeKrb5Config().");
+  krbDir = fs.mkdtempSync(path.join(os.tmpdir(),
+      "caep-spnego-" + process.pid + "-"));
+  krbConfig = path.join(krbDir, "krb5.conf");
+  const host = hostOf(stsUrl);
+  fs.writeFileSync(krbConfig, [
+    "[libdefaults]",
+    "    default_realm = " + realm,
+    "    dns_lookup_kdc = false",
+    "    dns_lookup_realm = false",
+    "    dns_canonicalize_hostname = false",
+    "    rdns = false",
+    // The quotes are syntax: a bare `qualify_shortname =` is a parse error.
+    "    qualify_shortname = \"\"",
+    "    udp_preference_limit = 1",
+    "    default_tkt_enctypes = aes256-cts-hmac-sha1-96 " +
+    "aes128-cts-hmac-sha1-96",
+    "    default_tgs_enctypes = aes256-cts-hmac-sha1-96 " +
+    "aes128-cts-hmac-sha1-96",
+    "    permitted_enctypes = aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96",
+    "",
+    "[realms]",
+    "    " + realm + " = {",
+    "        kdc = " + kdcHost + ":" + kdcPort,
+    "    }",
+    "",
+    "[domain_realm]",
+    "    " + host + " = " + realm,
+    "    ." + host + " = " + realm,
+    ""
+  ].join("\n"), "utf8");
+  log.info("[kerberos] this run's configuration is " + krbConfig +
+      ", pointing at " + kdcHost + ":" + kdcPort + " for " + realm + ".");
+  log.debug("Leaving writeKrb5Config().");
+}
+
+// Everything the SPNEGO sign-in needs before the door is asked, and a TGT
+// for `who` at the end of it. Every way this can go wrong is a FAILURE with
+// a sentence naming what was missing — see the section header for why none
+// of them is a skip.
+function kerberosReady(who) {
+  log.debug("Entering kerberosReady(). " + who);
+  krbTools.kinit = toolPath("kinit");
+  krbTools.curl = toolPath("curl");
+  if (!krbTools.kinit || !krbTools.curl) {
+    log.debug("Leaving kerberosReady(). Tools missing.");
+    return { ok: false, why: 'the SPNEGO sign-in needs MIT Kerberos\'s ' +
+      'kinit and a curl built with GSS-API, and this machine has ' +
+      (krbTools.kinit ? '' : 'no kinit ') + (krbTools.curl ? '' : 'no curl') +
+      '. Install `krb5-user` and curl — tests/Dockerfile does, so the ' +
+      'containerized suite always has them.' };
+  }
+  const banner = spawnSync(krbTools.curl, ["-V"], { encoding: "utf8" });
+  if (!/GSS-API/.test(String(banner.stdout)) ||
+      !/SPNEGO/.test(String(banner.stdout))) {
+    log.debug("Leaving kerberosReady(). curl without GSS-API.");
+    return { ok: false, why: 'this curl was built without GSS-API/SPNEGO, ' +
+      'so --negotiate would send no Authorization header and the door ' +
+      'would read it as nobody answering its challenge. Use a curl built ' +
+      'with GSS-API (Ubuntu\'s is; tests/Dockerfile installs it).' };
+  }
+  // The bundle node verifies this job's own fetches against, so the two
+  // halves of the sign-in trust the same thing; STS_CA_FILE where only that
+  // is set, as krb5_mit_client.js reads it.
+  const anchor = process.env.NODE_EXTRA_CA_CERTS || process.env.STS_CA_FILE;
+  if (/^https:/i.test(stsUrl)) {
+    if (anchor && fs.existsSync(anchor)) {
+      curlTls = ["--cacert", anchor];
+    } else {
+      // The node half of this job verifies the mock through
+      // NODE_EXTRA_CA_CERTS; with neither variable set there is no anchor to
+      // hand curl, and refusing the sign-in for a TLS reason would fail a
+      // job about CAEP. Said out loud, for this one hop only.
+      curlTls = ["-k"];
+      log.warn("[kerberos] neither NODE_EXTRA_CA_CERTS nor STS_CA_FILE " +
+          "names a certificate, so curl will NOT verify the mock's TLS " +
+          "certificate for the SPNEGO request.");
+    }
+  }
+  writeKrb5Config();
+  const got = krbRun(krbTools.kinit, [who + "@" + realm], krbPassword + "\n");
+  if (got.status !== 0) {
+    log.debug("Leaving kerberosReady(). kinit refused.");
+    return { ok: false, why: 'kinit could not get a TGT for ' + who + '@' +
+      realm + ' from the KDC at ' + kdcHost + ':' + kdcPort + ': ' +
+      got.stderr.trim().slice(0, 300) + '. This KDC creates any account ' +
+      'on first sight unless accountPolicy.anyUsernameAuthenticates is off; ' +
+      'KRB5_TEST_KDC_HOST / KRB5_TEST_KDC_PORT say where it is.' };
+  }
+  log.info("[kerberos] kinit got a TGT for " + who + "@" + realm + ".");
+  log.debug("Leaving kerberosReady(). Ready.");
+  return { ok: true, why: '' };
+}
+
+// The value of one header out of curl's `-D -` block, case-insensitively, and
+// every occurrence: Set-Cookie may repeat.
+function headerValues(block, name) {
+  log.debug("Entering headerValues(). " + name);
+  const wanted = String(name).toLowerCase();
+  const found = String(block).split(/\r?\n/).map(function (line) {
+    const at = line.indexOf(":");
+    if (at < 0 || line.slice(0, at).trim().toLowerCase() !== wanted) {
+      return null;
+    }
+    return line.slice(at + 1).trim();
+  }).filter(function (one) {
+    return one !== null;
+  });
+  log.debug("Leaving headerValues(). " + found.length);
+  return found;
+}
+
+// ANSWERING THE SIGN-IN SCREEN WITH A TICKET rather than a password. The
+// screen's address carries the interrupted request (`?authn=`), and the
+// SPNEGO door takes the same parameter — so the door completes the same
+// pending sign-in the password screen would have, and its 303 goes back to
+// the application. Returns the shape authn_signin.js's signIn() does, with
+// the session cookie already read out of curl's headers.
+//
+// The FINAL response's headers are the ones read: curl prints every hop's
+// block, and the first is the bare 401 that challenged it.
+function negotiate(who, screen) {
+  log.debug("Entering negotiate(). " + who);
+  const ready = kerberosReady(who);
+  if (!ready.ok) {
+    log.debug("Leaving negotiate(). Not ready.");
+    return { status: 0, next: 'error', errors: [ready.why] };
+  }
+  const pending = new URL(screen, stsUrl).searchParams.get('authn') || '';
+  const door = stsUrl + '/authn/spnego' +
+      (pending ? '?authn=' + encodeURIComponent(pending) : '');
+  const result = krbRun(krbTools.curl, ["-s", "-S", "-D", "-", "-o",
+    "/dev/null"].concat(curlTls).concat(["--negotiate", "-u", ":", door]));
+  const blocks = result.stdout.split(/\r?\n\r?\n/).filter(function (one) {
+    return /^HTTP\//.test(one);
+  });
+  const last = blocks[blocks.length - 1] || '';
+  const status = Number((/^HTTP\/[\d.]+ (\d+)/.exec(last) || [])[1] || 0);
+  const location = headerValues(last, 'location')[0] || '';
+  let cookie = '';
+  headerValues(last, 'set-cookie').forEach(function (one) {
+    const found = /sts_session=([^;]+)/.exec(one);
+    if (found) {
+      cookie = 'sts_session=' + found[1];
+    }
+  });
+  log.info("[kerberos] " + door + " answered " + status + " (" +
+      blocks.length + " response(s) shown)" +
+      (cookie ? ", setting a session." : "."));
+  if (status !== 303 || !cookie) {
+    log.debug("Leaving negotiate(). Refused.");
+    return { status: status, next: 'error',
+      errors: ['the SPNEGO door answered ' + status + ' (' +
+        blocks.length + ' response(s) shown)' +
+        (cookie ? '' : ' and set no session cookie') +
+        '. A bare 401 at the end means curl sent no ' +
+        'ticket at all — usually a service ticket for an SPN the KDC does ' +
+        'not have (the door names the hosts it accepts in ' +
+        'X-Krb5-Accepts-Spn-Hosts: ' +
+        (headerValues(last, 'x-krb5-accepts-spn-hosts')[0] || 'not sent') +
+        '). curl said: ' + result.stderr.trim().slice(0, 200)] };
+  }
+  log.debug("Leaving negotiate(). Signed in.");
+  return { status: status, next: 'redirect', location: location,
+    cookie: cookie };
 }
 
 // Why the push half is not being run here. It is a sentence about the TARGET
@@ -664,11 +919,6 @@ function pushNeedsAnApi() {
 
 async function run() {
   log.debug("Entering run().");
-  if (protocol === 'spnego') {
-    declineToRun(log, spnegoNeedsATicket());
-    log.debug("Leaving run(). Deferred.");
-    return { skipped: true };
-  }
   const who = usernameFor('caep-' + protocol);
   log.info("=== " + protocol + ", as " + who + " ===");
 
@@ -770,6 +1020,16 @@ async function run() {
   if (!row) {
     log.debug("Leaving run(). No row.");
     return;
+  }
+  // AND FOR SPNEGO, THAT THE TICKET MADE IT. The application here is the
+  // OIDC one, so a session minted by the password screen would satisfy every
+  // other check in this file; the row's protocol is what tells the two apart.
+  if (protocol === 'spnego') {
+    check('the session was minted by the Kerberos ticket at /authn/spnego ' +
+        'and not by a password screen', function () {
+          assert.ok(/SPNEGO/.test(String(row.protocol || '')),
+            'the CAEP row names its protocol as "' + row.protocol + '"');
+        });
   }
 
   // --- the five this job asks the transmitter for, so the subject is
@@ -913,6 +1173,14 @@ async function run() {
 
 async function cleanUp() {
   log.debug("Entering cleanUp().");
+  if (krbDir) {
+    try {
+      fs.rmSync(krbDir, { recursive: true, force: true });
+    } catch (e) {
+      // Untidy and harmless; not worth failing a passing run over.
+      log.warn("could not remove " + krbDir + ": " + e.message);
+    }
+  }
   for (const one of created) {
     await call('DELETE', stsUrl + '/ssf/stream',
         { stream_id: one.id }, { Authorization: basic(one.who) });
@@ -931,9 +1199,8 @@ async function test() {
   // skip — tests/CLAUDE.md's "a test that does not run is not a passing test".
   mustBeReady(ready, 'a mock STS with Shared Signals at ' + stsUrl);
   let failed = false;
-  let outcome = null;
   try {
-    outcome = await run();
+    await run();
   } catch (e) {
     log.error(e.stack || e.message);
     failed = true;
@@ -950,15 +1217,6 @@ async function test() {
     log.error(checks + " check(s) passed, " + failures.length + " failed.");
     log.debug("Leaving test(). Failed.");
     process.exit(1);
-  }
-  // A SKIP IS NOT A PASS AND MUST NOT PRINT ONE. Seven files in this
-  // directory once wrote "Test completed successfully" on a skip path, and
-  // that sentence is what made a fifth of the suite invisible — see the
-  // section in tests/CLAUDE.md. declineToRun() has already set the exit code
-  // and written the marker line the runner reads.
-  if (outcome && outcome.skipped) {
-    log.debug("Leaving test(). Skipped.");
-    return;
   }
   log.info(checks + " checks passed.");
   if (skips.length) {

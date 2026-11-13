@@ -62,7 +62,7 @@ header is the bare word.
 | The relay | `POST /krb5/spnego` (`api/server.js`) | one HTTP GET, and the `Authorization` header built from a validated token |
 | The acceptor | the mock STS's `spnego_exchange.js` | the negotiation and the HTTP; every Kerberos check is `krb5_service.js`'s |
 | The advert | the mock STS's `GET /spnego` (`spnego.js`) | what a real intranet site never tells you: the SPN, the realm, the mechanisms |
-| The sign-in | the mock STS's `/authn/spnego` (`spnego_authn.js`) | the same exchange, ending in a browser SESSION. **Not driven by this workflow** — see below |
+| The sign-in | the mock STS's `/authn/spnego` (`spnego_authn.js`) | the same exchange, ending in a browser SESSION. **Not driven by this workflow** — see below. `tests/krb5_mit_client.js` and the SPNEGO job of `tests/caep_session_protocols.js` drive it with MIT Kerberos and `curl --negotiate`, the second to make a session CAEP events are about |
 
 **The acceptor was one file until the 2026-08-27 `sts/` bump and is three now**, which matters here only because the table above names them: `spnego_exchange.js` holds the negotiation, `spnego.js` the page that advertises it, and `spnego_authn.js` a THIRD thing this workflow does not touch — `/authn/spnego`, where the same verified ticket becomes a browser session the mock's own `/oauth2/authorize`, `/wsfed` and `/saml2/sso` read. The debugger still drives `/spnego/protected`, which authenticates and deliberately hands back no session, because what this page exists to show is the exchange rather than what an intranet does with the result. See `docs/mock-sts.md`.
 

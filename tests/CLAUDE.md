@@ -71,12 +71,31 @@ sites actually use. Until 2026-09-04 the variable did not exist, and four of
 these five jobs failed nine checks each on every `./remote-run-tests.sh` run —
 against `https://localhost:4000`, a service that was never part of the target.
 
-**The SPNEGO job is SCHEDULED and skips itself**, with `declineToRun()` and a
-reason. The mock side is ready — `/authn/spnego` calls `startSession()` like
-every other door there — but it answers `401 WWW-Authenticate: Negotiate` and
-answering that needs a KDC, a keytab and a credential cache, which only
-`krb5_mit_client.js` has. A scheduled skip rather than an absent job, for the
-reason the section above gives: a job nobody schedules is a gap nobody can see.
+**The SPNEGO job signs in with a REAL Kerberos ticket** (since 2026-11-13; it
+was a declared skip until then, which it never needed to be). iya-sts is its
+own KDC on this stack and the tests image installs `krb5-user`, so the job
+does what a workstation does: `kinit` for a name generated for this run (the
+KDC creates accounts on first sight), then `curl --negotiate` at
+`/authn/spnego?authn=<id>` — the pending sign-in an OIDC authorization request
+for `webapp1` was sent to. The door's 303 goes back to the authorization
+endpoint, so single sign-on is presented there and sign-out uses the OIDC door,
+as for SAML 1.1. One extra check holds the CAEP row's protocol to `Kerberos v5
+(SPNEGO)`, because a password session would satisfy every other check here.
+It needs no configuration on iya-sts. Three things to know before changing it:
+
+* It reads **`KRB5_TEST_KDC_HOST` / `KRB5_TEST_KDC_PORT`**, not
+  `KRB5_KDC_HOST`, for the reason `krb5_mit_client.js` has them (see the
+  Kerberos section below). Its `krb5.conf` carries the same three
+  hostname settings that job's does; without them the SPN on the compose
+  network is `HTTP/sts.<search domain>`, curl sends no ticket, and the door's
+  bare 401 is all the job sees.
+* **Missing MIT tools or a curl without GSS-API is a FAILURE, not a skip.** It
+  is a package, not money or hardware.
+* It holds **two locks**, `sts-ssf` and `sts-spnego-signin` — a `lock` list on
+  its descriptor, which `run-report.js`'s pool supports for this. The jobs
+  under the second turn `krb5.spnegoAuthentication` off to assert the closed
+  door, and a sign-in inside that window is a 403 this job would report as its
+  own failure.
 
 **`caep_page.js` drives two grants for real and maps all eight onto the three
 SHAPES they produce.** The two are resource owner password (with `openid`, so
