@@ -322,10 +322,12 @@ const JOB_LOCKS = {
   // The mock's SSF configuration. `ssf_protocol.js` turns
   // `ssf.pushAllowHttp` ON (its own RFC 8935 listener is plain http) and
   // flips both deliberate defects — `ssf.legacySubClaim` and
-  // `ssf.breakSetSignature` — one at a time. Each is restored, and not
-  // instantly: a job polling that transmitter inside that window gets a SET
-  // whose signature does not verify, which `ssf_page.js` would report as its
-  // own failure with nothing to say which other job did it.
+  // `ssf.breakSetSignature` — one at a time. Product refuses those two
+  // writes, so they are not left on; the lock stays, because development
+  // still flips them. Each is restored, and not instantly: a job polling
+  // that transmitter inside that window gets a SET whose signature does not
+  // verify, which `ssf_page.js` would report as its own failure with nothing
+  // to say which other job did it.
   //
   // It also DELETES the streams it made, and a stream is named by an id the
   // other job does not know — so what actually collides is the settings and

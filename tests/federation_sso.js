@@ -572,9 +572,10 @@ async function prepareAuthorizationRequest(driver, spBase, callbackUri) {
 
 // The mock's sign-in screen, whichever realm is showing it. It reuses
 // Keycloak's field ids, which is why every test in this suite drives it the
-// same way; it checks no password, so the username typed here is the identity
-// every token downstream describes.
-async function signIn(driver, user) {
+// same way. Development checks no password, so the dummy below is the
+// identity. Product checks it, and `password` is the one
+// prepareFederatedSignIn() set; null keeps the dummy.
+async function signIn(driver, user, password) {
   log.debug("Entering signIn(). user=" + user);
   const username = By.id("username");
   try {
@@ -592,7 +593,7 @@ async function signIn(driver, user) {
   const passwords = await driver.findElements(By.id("password"));
   if (passwords.length) {
     await passwords[0].clear();
-    await passwords[0].sendKeys("no password is checked here");
+    await passwords[0].sendKeys(password || "no password is checked here");
   }
   await driver.findElement(By.id("kc-login")).click();
   // AND THE CONSENT SCREEN, if there is one. It is PASSED rather than asserted:
@@ -846,6 +847,12 @@ async function test() {
   const spEntityId = spBase + "/federation/acs/" + RELATIONSHIP;
   const partner = await readPartnerMetadata(idpBase, spEntityId);
   await createRelationship(spBase, partner);
+  // Product links the person and returns the password to type. Development
+  // returns null and the dummy password still signs in.
+  const prepared = await admin.prepareFederatedSignIn({
+    spBase: spBase, idpBase: idpBase, relationship: RELATIONSHIP,
+    username: user, subjectKind: "nameid"
+  });
 
   // ---------------------------------------------------------------------
   // THE ADDRESS THE CONSOLE TELLS AN OPERATOR TO GIVE THE PARTNER must be the
@@ -1009,7 +1016,7 @@ async function test() {
     // seeing a partner button that arrived under some other href.
     await assertOnlyOtherButtonIsKerberos(driver, "Realm 2's sign-in screen");
 
-    await signIn(driver, user);
+    await signIn(driver, user, prepared.password);
 
     // ---------------------------------------------------------------------
     // AND BACK. The browser goes realm 2 → realm 1's assertion consumer

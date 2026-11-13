@@ -693,7 +693,7 @@ async function assertChooser(driver, spBase) {
   return offered;
 }
 
-async function chooseAndSignIn(driver, which, user) {
+async function chooseAndSignIn(driver, which, user, password) {
   log.debug("Entering chooseAndSignIn(). which=" + which + ", user=" + user);
   const buttons = await driver.findElements(By.css("a.fedbtn"));
   let picked = null;
@@ -754,7 +754,7 @@ async function chooseAndSignIn(driver, which, user) {
   const passwords = await driver.findElements(By.id("password"));
   if (passwords.length) {
     await passwords[0].clear();
-    await passwords[0].sendKeys("no password is checked here");
+    await passwords[0].sendKeys(password || "no password is checked here");
   }
   await driver.findElement(By.id("kc-login")).click();
   // AND THE CONSENT SCREENS, if there are any. They are PASSED rather than
@@ -808,7 +808,8 @@ function b64uJson(part) {
 // request would be satisfied by that session and no chooser would be drawn at
 // all, so the second half of this test would silently assert nothing.
 // ---------------------------------------------------------------------------
-async function signInThrough(driver, spBase, callbackUri, which, user) {
+async function signInThrough(driver, spBase, callbackUri, which, user,
+                             password) {
   log.debug("Entering signInThrough(). which=" + which);
   await clearSessionsAt(driver, spBase);
   await loadPage(driver, baseUrl + "/oauth2_oidc_1.html",
@@ -833,7 +834,7 @@ async function signInThrough(driver, spBase, callbackUri, which, user) {
     By.css("input[type=\"submit\"][value=\"Authorize\"]")).click();
 
   await assertChooser(driver, spBase);
-  await chooseAndSignIn(driver, which, user);
+  await chooseAndSignIn(driver, which, user, password);
 
   // WHAT THE PAGE SAYS, not just that it never arrived. Everything that can
   // go wrong between the password and the callback goes wrong at the mock and
@@ -1168,6 +1169,17 @@ async function test() {
 
     await bareChooserIsRefused(spBase);
 
+    // Product links each person and returns the password to type.
+    // Development returns null and the dummy password still signs in.
+    const samlReady = await admin.prepareFederatedSignIn({
+      spBase: spBase, idpBase: idpBase, relationship: PARTNERS[0].id,
+      username: samlUser, subjectKind: "nameid"
+    });
+    const oidcReady = await admin.prepareFederatedSignIn({
+      spBase: spBase, idpBase: idpBase, relationship: PARTNERS[1].id,
+      username: oidcUser, subjectKind: "partner-subject"
+    });
+
     const before = await counts(spBase);
     for (const one of PARTNERS) {
       assert.strictEqual(before[one.id].authentications, 0,
@@ -1202,7 +1214,8 @@ async function test() {
       log.info("Sign-in one: " + samlUser + " through \"" + PARTNERS[0].id +
                "\" (" + PARTNERS[0].label + ").");
       const sentSaml = await signInThrough(driver, spBase, callbackUri,
-                                           PARTNERS[0].id, samlUser);
+                                           PARTNERS[0].id, samlUser,
+                                           samlReady.password);
       // WHO REALM 1 CALLS THAT PERSON: the NameID as it crossed, unless the
       // relationship's fedSubjectPolicy (iya-sts #109) namespaced the entry
       // the sign-in created. See localNameAt() in federation_admin.js.
@@ -1271,7 +1284,8 @@ async function test() {
       log.info("Sign-in two: " + oidcUser + " through \"" + PARTNERS[1].id +
                "\" (" + PARTNERS[1].label + ").");
       const sentOidc = await signInThrough(driver, spBase, callbackUri,
-                                           PARTNERS[1].id, oidcUser);
+                                           PARTNERS[1].id, oidcUser,
+                                           oidcReady.password);
       // WHO REALM 1 CALLS THAT PERSON. Since iya-sts 64580f4 (2026-09-14) an
       // OpenID Connect partner names somebody by its `urn:uuid:` subject, and
       // realm 1 files a partner's `urn:uuid:` as `sub-<uuid>` rather than
