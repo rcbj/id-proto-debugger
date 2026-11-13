@@ -69,6 +69,7 @@
 // ---------------------------------------------------------------------------
 const helpers = require("../xacml_runtime");
 const InstanceSlot = require("./xacml_slot");
+const ownMembers = require("./xacml_own_members");
 const model = require("./xacml_model");
 const datatypes = require("./xacml_datatypes");
 const functions = require("./xacml_functions");
@@ -370,17 +371,10 @@ class XacmlEditor {
      */
     static ownStep(node, key) {
         helpers.log.debug("Entering XacmlEditor.ownStep().");
-        if (node === null || typeof node !== 'object') {
-            helpers.log.debug("Leaving XacmlEditor.ownStep(). Not an object.");
-            return false;
-        }
-        if (Array.isArray(node)) {
-            const own = /^[0-9]+$/.test(key) && Number(key) < node.length;
-            helpers.log.debug("Leaving XacmlEditor.ownStep(). Index " + own);
-            return own;
-        }
-        const own = Object.prototype.hasOwnProperty.call(node, key);
-        helpers.log.debug("Leaving XacmlEditor.ownStep(). Member " + own);
+        // The rule is xacml_own_members.js's: one place, which every read
+        // of a name a caller chose goes through.
+        const own = ownMembers.has(node, key);
+        helpers.log.debug("Leaving XacmlEditor.ownStep(). " + own);
         return own;
     }
     // Resolve a path to `{ node, parent, key }`, or null. `parent` and `key`
@@ -1112,12 +1106,13 @@ class XacmlEditor {
             }
             if (!id) {
                 let n = Object.keys(node.variables).length + 1;
-                while (node.variables['v' + n]) {
+                while (ownMembers.has(node.variables, 'v' + n)) {
                     n += 1;
                 }
                 id = 'v' + n;
             }
-            if (node.variables[id]) {
+            // An own member only: `toString` is not already defined.
+            if (ownMembers.read(node.variables, id)) {
                 // The reader refuses a document with two definitions of one id,
                 // so
                 // producing one here would write a policy this service cannot
@@ -1136,11 +1131,11 @@ class XacmlEditor {
             // a VariableDefinition with no expression is a document that will
             // not
             // load.
-            node.variables[id] = {
+            ownMembers.put(node.variables, id, {
                 kind: 'designator', category: model.CATEGORY.ACCESS_SUBJECT,
                 attributeId: 'employeeType', dataType: TYPE.STRING,
                 issuer: null, mustBePresent: false
-            };
+            });
             log.debug('Leaving XacmlEditor.applyEdit(). Variable added.');
             return { ok: true, what: 'Variable $' + id + ' added.' };
         }
@@ -1160,7 +1155,7 @@ class XacmlEditor {
                 return { ok: true, what: 'Unchanged.' };
             }
             const variables = holder && holder.variables;
-            if (variables && variables[renamed]) {
+            if (variables && ownMembers.read(variables, renamed)) {
                 log.debug('Leaving XacmlEditor.applyEdit(). Duplicate ' +
                   'variable id.');
                 return { ok: false,
@@ -1174,7 +1169,7 @@ class XacmlEditor {
             // then
             // threw reading `.kind` (STS-API-0140, #1403). A policy set has no
             // variables map, and reading it threw the same way.
-            const defined = variables && variables[wasCalled];
+            const defined = variables && ownMembers.read(variables, wasCalled);
             if (!defined || !defined.kind) {
                 log.debug('Leaving XacmlEditor.applyEdit(). No such variable.');
                 return { ok: false,
@@ -1191,7 +1186,7 @@ class XacmlEditor {
             // does not load, and the store would refuse the write with a
             // message
             // about a variable that no longer exists.
-            holder.variables[renamed] = defined;
+            ownMembers.put(holder.variables, renamed, defined);
             delete holder.variables[wasCalled];
             const rewritten = self.renameVariableReferences(holder, wasCalled,
               renamed);

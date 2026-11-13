@@ -67,6 +67,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 const datatypes = require('./xacml_datatypes');
 
@@ -1198,7 +1199,7 @@ function functionReference(expression, context, evaluate, where) {
     throw model.processingError(
       where + " requires a <Function> as its first argument.");
   }
-  const definition = FUNCTIONS[expression.functionId];
+  const definition = ownMembers.read(FUNCTIONS, expression.functionId);
   if (!definition) {
     throw model.processingError(
       'Unknown function "' + expression.functionId + '" passed to ' + where +
@@ -1459,7 +1460,9 @@ function invoke(definition, argumentBags, context) {
 function lookup(uri) {
   log.debug("Entering lookup().");
   log.debug("Leaving lookup().");
-  return FUNCTIONS[uri] || null;
+  // An own member only (2026-11-12): a policy naming `toString` names no
+  // function.
+  return ownMembers.read(FUNCTIONS, uri) || null;
 }
 
 /**

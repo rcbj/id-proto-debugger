@@ -56,6 +56,7 @@
 
 const { DOMParser, XMLSerializer } = require('./xacml_xml_parser');
 const { log, xmlEscape } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 const validate = require('./xacml_validate');
 
@@ -506,7 +507,9 @@ function readVariableDefinitions(node) {
   const variables = {};
   childrenNamed(node, 'VariableDefinition').forEach(function (definition) {
     const id = requiredAttribute(definition, 'VariableId');
-    if (variables[id]) {
+    // Own members only (2026-11-12): `toString` is not "defined twice", and
+    // `__proto__` is stored as a variable rather than as the prototype.
+    if (ownMembers.has(variables, id)) {
       // The specification requires VariableId to be unique within a policy,
       // and the vendored suite has a case for it. A duplicate silently
       // overwriting the first would make which definition wins depend on
@@ -519,7 +522,7 @@ function readVariableDefinitions(node) {
       throw model.syntaxError(
         '<VariableDefinition> must hold exactly one expression.');
     }
-    variables[id] = readExpression(children[0]);
+    ownMembers.put(variables, id, readExpression(children[0]));
   });
   log.debug('Leaving readVariableDefinitions(). ' +
             Object.keys(variables).length + ' variable(s).');
@@ -620,11 +623,11 @@ function readPolicy(node) {
   const rules = childrenNamed(node, 'Rule').map(readRule);
   const seen = {};
   rules.forEach(function (rule) {
-    if (seen[rule.id]) {
+    if (ownMembers.has(seen, rule.id)) {
       throw model.syntaxError(
         'RuleId "' + rule.id + '" appears twice in one <Policy>.');
     }
-    seen[rule.id] = true;
+    ownMembers.put(seen, rule.id, true);
   });
   log.debug('Leaving readPolicy(). ' + rules.length + ' rule(s).');
   return {

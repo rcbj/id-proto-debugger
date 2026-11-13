@@ -42,6 +42,8 @@ function load(name) {
 
 const workbench = load("xacml_workbench.js");
 const model = load("xacml/xacml_model.js");
+const alfa = load("xacml/xacml_alfa.js");
+const xmlEngine = load("xacml/xacml_xml.js");
 const LOG_OBLIGATION = "urn:sts:xacml:obligation:log";
 
 function fresh() {
@@ -260,6 +262,33 @@ function alfaAndRequestsAgree() {
   log.debug("Leaving alfaAndRequestsAgree().");
 }
 
+function inheritedNamesAreUnknown() {
+  log.debug("Entering inheritedNamesAreUnknown().");
+  // A name a document chose is looked up as an own member. Before, an
+  // ALFA category or attribute called constructor or toString read
+  // Object or Function through the prototype and was accepted.
+  assert.throws(function () {
+    alfa.parse("namespace e { attribute a { category = constructor " +
+      "id = \"x\" type = string } policy p { apply denyUnlessPermit " +
+      "rule r { permit target clause a == \"1\" } } }");
+  }, /Unknown category "constructor"/);
+  assert.throws(function () {
+    alfa.parse("namespace e { policy p { apply denyUnlessPermit " +
+      "rule r { permit condition toString == \"1\" } } }");
+  }, /never declared/);
+  var bench = fresh();
+  var unknown = bench.importText("proto", "<Policy xmlns=\"" +
+    model.NS_XACML + "\" PolicyId=\"proto\" Version=\"1.0\" " +
+    "RuleCombiningAlgId=\"urn:oasis:names:tc:xacml:3.0:" +
+    "rule-combining-algorithm:deny-unless-permit\"><Target/>" +
+    "<Rule RuleId=\"r\" Effect=\"Permit\"><Condition>" +
+    "<Apply FunctionId=\"toString\"/></Condition></Rule></Policy>");
+  assert.strictEqual(unknown.ok, false);
+  assert.ok(/Unknown function "toString"/.test(unknown.why), unknown.why);
+  log.info("OK — constructor and toString are unknown names.");
+  log.debug("Leaving inheritedNamesAreUnknown().");
+}
+
 function pageWiring() {
   log.debug("Entering pageWiring().");
   var html = fs.readFileSync(path.join(PUBLIC, "xacml.html"), "utf8");
@@ -314,6 +343,7 @@ function main() {
   referenceResolvesFromTheRepository();
   anUndischargeableObligationRefuses();
   alfaAndRequestsAgree();
+  inheritedNamesAreUnknown();
   pageWiring();
   log.info("xacml_engine: all checks passed.");
   log.debug("Leaving main().");

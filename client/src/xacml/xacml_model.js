@@ -79,6 +79,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 
 // ---------------------------------------------------------------------------
 // DECISIONS.
@@ -432,7 +433,9 @@ function indeterminateOfEffect(effect) {
  */
 function canonicalType(uri) {
   log.debug('Entering canonicalType(). uri=' + uri);
-  const alias = LEGACY_TYPE_ALIASES[uri];
+  // An own member only (2026-11-12): `__proto__` is no legacy spelling, and
+  // answering Object.prototype for it made a datatype of an object.
+  const alias = ownMembers.read(LEGACY_TYPE_ALIASES, uri);
   if (alias) {
     log.debug('Leaving canonicalType(). Legacy duration spelling mapped.');
     return alias;
