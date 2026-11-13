@@ -997,13 +997,16 @@ are about</legend>
                 title="A public key as a JWK, a JWK Set or a PEM. Left empty, the signature is reported as NOT CHECKED rather than as valid — which is the honest answer and the one a receiver has to act on."></textarea>
     </div>
     <div>
-      <label class="ssf-label" for="ssf_verify_alg">Algorithm</label>
-      <select class="ssf-field" id="ssf_verify_alg"></select>
       <details class="ssf-more">
-        <summary>Why the verifier chooses the algorithm</summary>
-        <p class="ssf-note">The <em>verifier</em> chooses the algorithm, never
-        the token (RFC 8725 section 3.1). A mismatch with the header is
-        reported rather than accommodated.</p>
+        <summary>Which algorithm a SET is verified with</summary>
+        <p class="ssf-note">The SET's header <code>alg</code>, and only when
+        the key agrees with it. A JWK Set is narrowed to one key by
+        <code>kid</code>; that key's own <code>alg</code>, <code>kty</code>,
+        <code>crv</code> and <code>use</code> must not contradict the header,
+        and a mismatch is REFUSED rather than tried (RFC 8725 section 3.1).
+        <code>alg: none</code> is never verified. A PEM carries no algorithm,
+        so the header's is used and a key of the wrong type fails to
+        import.</p>
       </details>
       <input type="button" class="ssf-btn ssf-btn-quiet"
              id="btn_ssf_fetch_jwks" value="Fetch the transmitter's JWKS"
