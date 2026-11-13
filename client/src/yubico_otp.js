@@ -391,8 +391,24 @@ function parseValidationResponse(text, opts) {
     status: fields.status,
     fields: fields,
     nonceMatches: null,
+    otpMatches: null,
     hmacMatches: null
   };
+  // Validation Protocol 2.0: the client checks that the response's otp
+  // and nonce are the ones it sent. A signed answer for a different OTP
+  // is otherwise accepted. An error status may omit otp; an OK may not.
+  if (options.otp) {
+    if (fields.otp === undefined && fields.status !== "OK") {
+      result.otpMatches = null;
+    } else {
+      result.otpMatches = fields.otp === options.otp;
+      if (!result.otpMatches) {
+        log.debug("Leaving parseValidationResponse(). OTP.");
+        reject("The response otp does not match the one this " +
+            "request sent.");
+      }
+    }
+  }
   if (options.nonce) {
     result.nonceMatches = fields.nonce === options.nonce;
     if (!result.nonceMatches) {
@@ -498,6 +514,111 @@ function hidReports(frame) {
   return reports;
 }
 
+// THE READ SIDE OF THE HID EXCHANGE, as yubikit's otp.py does it. The
+// last byte of every 8-byte feature report is a status: SLOT_WRITE
+// (0x80) means the key has not taken the last write yet, RESP_PENDING
+// (0x40) means this report carries response bytes and its low five
+// bits are their sequence number, RESP_TIMEOUT_WAIT (0x20) means the
+// key is waiting for a touch, and 0 is a plain status report. The
+// page polls; these functions only read what a report says.
+var HID_SLOT_WRITE_FLAG = 0x80;
+var HID_RESP_PENDING_FLAG = 0x40;
+var HID_RESP_TIMEOUT_WAIT_FLAG = 0x20;
+var HID_SEQUENCE_MASK = 0x1f;
+var HID_DUMMY_REPORT_WRITE = 0x8f;
+
+// A feature report as 8 bytes. Some platforms hand back the report ID
+// in front, which makes 9.
+function hidReportBytes(view) {
+  log.debug("Entering hidReportBytes().");
+  var raw = Buffer.from(view.buffer ?
+      new Uint8Array(view.buffer, view.byteOffset || 0, view.byteLength) :
+      view);
+  if (raw.length === 9) {
+    raw = raw.slice(1);
+  }
+  if (raw.length !== 8) {
+    log.debug("Leaving hidReportBytes(). Length.");
+    reject("A feature report is 8 bytes, got " + raw.length + ".");
+  }
+  log.debug("Leaving hidReportBytes().");
+  return raw;
+}
+
+function hidCanWrite(report) {
+  log.debug("Entering hidCanWrite().");
+  var ok = (report[7] & HID_SLOT_WRITE_FLAG) === 0;
+  log.debug("Leaving hidCanWrite().");
+  return ok;
+}
+
+// One step of the read. state is { seq, data } and starts { seq: 0,
+// data: [] }. Returns { kind } where kind is "data" (keep reading),
+// "done" (data holds the frame), "wait" or "touch" (poll again), or
+// "status" (the key answered with no response at all).
+function hidReadStep(state, report) {
+  log.debug("Entering hidReadStep().");
+  var status = report[7];
+  var out = null;
+  if (status & HID_RESP_PENDING_FLAG) {
+    var seq = status & HID_SEQUENCE_MASK;
+    if (seq === state.seq) {
+      var i;
+      for (i = 0; i < 7; i++) {
+        state.data.push(report[i]);
+      }
+      state.seq += 1;
+      out = { kind: "data" };
+    } else if (seq === 0) {
+      out = { kind: "done" };
+    } else {
+      out = { kind: "data" };
+    }
+  } else if (status === 0) {
+    if (state.data.length > 0) {
+      log.debug("Leaving hidReadStep(). Incomplete.");
+      reject("The key stopped part way through its response.");
+    }
+    out = { kind: "status" };
+  } else if (status & HID_RESP_TIMEOUT_WAIT_FLAG) {
+    out = { kind: "touch" };
+  } else {
+    out = { kind: "wait" };
+  }
+  log.debug("Leaving hidReadStep(). " + out.kind);
+  return out;
+}
+
+// The report that ends a read, so the key is ready for the next one.
+function hidResetReport() {
+  log.debug("Entering hidResetReport().");
+  var report = Buffer.alloc(8, 0);
+  report[0] = 0xff;
+  report[7] = HID_DUMMY_REPORT_WRITE;
+  log.debug("Leaving hidResetReport().");
+  return report;
+}
+
+// The response in a finished frame: 20 bytes for HMAC-SHA1, 16 for a
+// Yubico OTP challenge-response, each followed by a CRC whose residual
+// over the whole is CRC_RESIDUAL.
+function hidResponse(slot, frame) {
+  log.debug("Entering hidResponse().");
+  var size = slot === SLOT_HMAC_1 || slot === SLOT_HMAC_2 ? 20 : 16;
+  var buf = Buffer.from(frame);
+  if (buf.length < size + 2) {
+    log.debug("Leaving hidResponse(). Short.");
+    reject("The response is " + buf.length + " bytes; " + (size + 2) +
+        " were expected.");
+  }
+  if (crc16(buf.slice(0, size + 2)) !== CRC_RESIDUAL) {
+    log.debug("Leaving hidResponse(). CRC.");
+    reject("The response CRC does not check.");
+  }
+  log.debug("Leaving hidResponse().");
+  return buf.slice(0, size);
+}
+
 module.exports = {
   MODHEX: MODHEX,
   CRC_RESIDUAL: CRC_RESIDUAL,
@@ -518,5 +639,10 @@ module.exports = {
   parseValidationResponse: parseValidationResponse,
   defaultVerifier: defaultVerifier,
   hidFrame: hidFrame,
-  hidReports: hidReports
+  hidReports: hidReports,
+  hidReportBytes: hidReportBytes,
+  hidCanWrite: hidCanWrite,
+  hidReadStep: hidReadStep,
+  hidResetReport: hidResetReport,
+  hidResponse: hidResponse
 };

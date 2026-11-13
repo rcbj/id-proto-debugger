@@ -676,6 +676,32 @@ function otpVectors() {
       apiKey: secret
     });
   }, "response nonce does not match");
+  // Validation Protocol 2.0 requires the echoed otp to be checked too.
+  var echoed = otp.parseValidationResponse(answered, {
+    nonce: "0123456789abcdef",
+    otp: "cccccckdvvulethkhtvkrtbeukiettvfceekurncllcj",
+    apiKey: secret
+  });
+  assert.strictEqual(echoed.otpMatches, true);
+  throws(function () {
+    otp.parseValidationResponse(answered, {
+      nonce: "0123456789abcdef",
+      otp: "vvungrrdhvtklknvrtvuvbbkeidikkvgglrvdgrfcdft",
+      apiKey: secret
+    });
+  }, "response otp does not match");
+  var refused = otp.parseValidationResponse(
+      "nonce=0123456789abcdef\nstatus=BAD_SIGNATURE", {
+        nonce: "0123456789abcdef",
+        otp: "vvungrrdhvtklknvrtvuvbbkeidikkvgglrvdgrfcdft"
+      });
+  assert.strictEqual(refused.otpMatches, null);
+  throws(function () {
+    otp.parseValidationResponse("nonce=0123456789abcdef\nstatus=OK", {
+      nonce: "0123456789abcdef",
+      otp: "vvungrrdhvtklknvrtvuvbbkeidikkvgglrvdgrfcdft"
+    });
+  }, "response otp does not match");
 
   var posted = otpVerify.describeRequest({ body: built.body });
   assert.strictEqual(posted.ok, true, posted.error);
@@ -710,9 +736,92 @@ function otpVectors() {
   var reports = otp.hidReports(frame);
   assert.strictEqual(reports[0][7], 0x80);
   assert.strictEqual(reports[reports.length - 1][7], 0x80 | 9);
+  hidReadProtocol();
   log.info("OK — published OTP vectors decrypt, both HMACs match, " +
       "and the verifier refuses a bad URL.");
   log.debug("Leaving otpVectors().");
+}
+
+// A key's answer to a challenge, as the 8-byte feature reports it
+// returns: response bytes plus the complemented CRC, 7 to a report,
+// each with RESP_PENDING and its sequence number, then a report with
+// sequence 0 that ends the frame.
+function hidAnswer(response) {
+  log.debug("Entering hidAnswer().");
+  var inv = (~otp.crc16(response)) & 0xffff;
+  var frame = Buffer.concat([response,
+      Buffer.from([inv & 0xff, (inv >> 8) & 0xff])]);
+  var reports = [];
+  var seq = 0;
+  var off = 0;
+  for (off = 0; off < frame.length; off += 7) {
+    var report = Buffer.alloc(8, 0);
+    frame.slice(off, off + 7).copy(report, 0);
+    report[7] = 0x40 | seq;
+    reports.push(report);
+    seq += 1;
+  }
+  var end = Buffer.alloc(8, 0);
+  end[7] = 0x40;
+  reports.push(end);
+  log.debug("Leaving hidAnswer().");
+  return reports;
+}
+
+function hidReadProtocol() {
+  log.debug("Entering hidReadProtocol().");
+  var busy = Buffer.alloc(8, 0);
+  busy[7] = 0x80;
+  assert.strictEqual(otp.hidCanWrite(busy), false);
+  assert.strictEqual(otp.hidCanWrite(Buffer.alloc(8, 0)), true);
+  var nine = new Uint8Array(9);
+  nine[8] = 0x20;
+  assert.strictEqual(otp.hidReportBytes(new DataView(nine.buffer))[7],
+      0x20);
+
+  var hmac = Buffer.from("0123456789abcdef0123456789abcdef01234567",
+      "hex");
+  var state = { seq: 0, data: [] };
+  var touch = Buffer.alloc(8, 0);
+  touch[7] = 0x20;
+  var wait = Buffer.alloc(8, 0);
+  wait[7] = 0x01;
+  assert.strictEqual(otp.hidReadStep(state, touch).kind, "touch");
+  assert.strictEqual(otp.hidReadStep(state, wait).kind, "wait");
+  var answer = hidAnswer(hmac);
+  var kinds = answer.map(function (report) {
+    return otp.hidReadStep(state, report).kind;
+  });
+  assert.deepStrictEqual(kinds, ["data", "data", "data", "data", "done"]);
+  var got = otp.hidResponse(0x30, Buffer.from(state.data));
+  assert.strictEqual(got.toString("hex"), hmac.toString("hex"));
+
+  var otpResponse = Buffer.from("00112233445566778899aabbccddeeff",
+      "hex");
+  var otpState = { seq: 0, data: [] };
+  hidAnswer(otpResponse).forEach(function (report) {
+    otp.hidReadStep(otpState, report);
+  });
+  assert.strictEqual(otp.hidResponse(0x20,
+      Buffer.from(otpState.data)).toString("hex"),
+      otpResponse.toString("hex"));
+
+  var bad = Buffer.from(state.data);
+  bad[0] ^= 1;
+  throws(function () {
+    otp.hidResponse(0x30, bad);
+  }, "CRC does not check");
+  assert.strictEqual(otp.hidReadStep({ seq: 0, data: [] },
+      Buffer.alloc(8, 0)).kind, "status");
+  throws(function () {
+    otp.hidReadStep({ seq: 1, data: [1] }, Buffer.alloc(8, 0));
+  }, "stopped part way");
+  var reset = otp.hidResetReport();
+  assert.strictEqual(reset[0], 0xff);
+  assert.strictEqual(reset[7], 0x8f);
+  log.info("OK — the HID read follows the sequence numbers, waits on " +
+      "busy and touch, and checks the response CRC.");
+  log.debug("Leaving hidReadProtocol().");
 }
 
 function oathVectors() {
@@ -933,9 +1042,17 @@ function readerRefusals() {
     assert.strictEqual(reader.checkReaderName(name).ok, false, name);
   });
   var limits = reader.limits();
-  assert.strictEqual(typeof limits.available, "boolean");
-  if (!limits.available) {
-    assert.ok(limits.reason && limits.reason.length > 0);
+  assert.strictEqual(limits.enabled, false,
+      "the reader relay must be off without smartcardReaderEnabled");
+  assert.strictEqual(limits.available, false);
+  assert.ok(limits.reason.indexOf("smartcardReaderEnabled") >= 0);
+  assert.strictEqual(reader.enabled({ smartcardReaderEnabled: "true" }),
+      false, "only the boolean true turns the relay on");
+  var on = reader.limits({ smartcardReaderEnabled: true });
+  assert.strictEqual(on.enabled, true);
+  assert.strictEqual(typeof on.available, "boolean");
+  if (!on.available) {
+    assert.ok(on.reason && on.reason.length > 0);
   }
   assert.strictEqual(reader.describeTransmit({
     reader: usual, apdu: "00a4"
@@ -949,9 +1066,154 @@ function readerRefusals() {
   assert.strictEqual(reader.describeTransmit({
     reader: usual, apdu: huge
   }).ok, false);
+  var sequence = reader.describeTransmit({
+    reader: usual, apdus: ["00a4040008a000000308000010", "00cb3fff"]
+  });
+  assert.strictEqual(sequence.ok, true, sequence.error);
+  assert.strictEqual(sequence.apdus.length, 2);
+  assert.strictEqual(sequence.getResponse, true);
+  assert.strictEqual(reader.describeTransmit({
+    reader: usual, apdu: "00a40400", getResponse: false
+  }).getResponse, false);
+  var many = [];
+  while (many.length <= reader.MAX_SEQUENCE) {
+    many.push("00a40400");
+  }
+  assert.strictEqual(reader.describeTransmit({
+    reader: usual, apdus: many
+  }).ok, false);
+  assert.ok(reader.describeTransmit({
+    reader: usual, apdus: ["00a40400", "00"]
+  }).error.indexOf("APDU 2") === 0);
   log.info("OK — a reader name that is a URL, a port or a path is " +
-      "refused, and an APDU has a floor and a cap.");
+      "refused, an APDU has a floor and a cap, a sequence has a cap, " +
+      "and the relay is off by default.");
   log.debug("Leaving readerRefusals().");
+}
+
+// A card that answers from a script: each entry is the expected APDU
+// in hex and the answer it gives.
+function scriptedCard(script) {
+  log.debug("Entering scriptedCard().");
+  var sent = [];
+  var i = 0;
+  log.debug("Leaving scriptedCard().");
+  return {
+    sent: sent,
+    send: function (apdu) {
+      var hex = apdu.toString("hex");
+      sent.push(hex);
+      var entry = script[i];
+      i += 1;
+      if (!entry || entry[0] !== hex) {
+        return Promise.reject(new Error("unexpected APDU " + hex));
+      }
+      return Promise.resolve(Buffer.from(entry[1], "hex"));
+    }
+  };
+}
+
+async function readerExchanges() {
+  log.debug("Entering readerExchanges().");
+  assert.strictEqual(reader.withLe(fromHex("00cb3fff"), 0x10)
+      .toString("hex"), "00cb3fff10");
+  assert.strictEqual(reader.withLe(fromHex("00ca006e00"), 0x2a)
+      .toString("hex"), "00ca006e2a");
+  assert.strictEqual(reader.withLe(fromHex("00cb3fff055c035fc10500"),
+      0x40).toString("hex"), "00cb3fff055c035fc10540");
+  assert.strictEqual(reader.withLe(fromHex("00cb3fff055c035fc105"),
+      0x40).toString("hex"), "00cb3fff055c035fc10540");
+  assert.strictEqual(reader.withLe(fromHex("00cb3fff000001aa0000"),
+      0x40), null, "an extended APDU has no one-byte Le");
+
+  // 61xx twice: the data is the concatenation and the final status is
+  // the last GET RESPONSE's.
+  var card = scriptedCard([
+    ["00cb3fff055c035fc10500", "aabb6104"],
+    ["00c0000004", "ccddeeff6102"],
+    ["00c0000002", "11229000"]
+  ]);
+  var answer = await reader.exchange(card.send,
+      fromHex("00cb3fff055c035fc10500"), true);
+  assert.strictEqual(answer.data, "aabbccddeeff1122");
+  assert.strictEqual(answer.status, "9000");
+  assert.strictEqual(answer.steps.length, 3);
+
+  // GET RESPONSE keeps the logical channel of the command.
+  var channel = scriptedCard([
+    ["01ca006e00", "6101"],
+    ["01c0000001", "779000"]
+  ]);
+  assert.strictEqual((await reader.exchange(channel.send,
+      fromHex("01ca006e00"), true)).data, "77");
+
+  // 6Cxx resends with the Le the card asked for.
+  var wrongLe = scriptedCard([
+    ["00ca006e00", "6c03"],
+    ["00ca006e03", "0102039000"]
+  ]);
+  var fixed = await reader.exchange(wrongLe.send, fromHex("00ca006e00"),
+      true);
+  assert.strictEqual(fixed.data, "010203");
+  assert.strictEqual(fixed.status, "9000");
+
+  // getResponse off is the raw exchange.
+  var raw = scriptedCard([["00cb3fff055c035fc10500", "aabb6104"]]);
+  var rawAnswer = await reader.exchange(raw.send,
+      fromHex("00cb3fff055c035fc10500"), false);
+  assert.strictEqual(rawAnswer.status, "6104");
+  assert.strictEqual(raw.sent.length, 1);
+
+  // A sequence stops at the first APDU that fails.
+  var pin = scriptedCard([
+    ["00a4040005a000000308", "9000"],
+    ["0020008008313233343536ffff", "63c2"]
+  ]);
+  var results = await reader.runSequence(pin.send, [
+    fromHex("00a4040005a000000308"),
+    fromHex("0020008008313233343536ffff"),
+    fromHex("00cb3fff055c035fc10500")
+  ], true);
+  assert.strictEqual(results.length, 2);
+  assert.strictEqual(results[1].status, "63C2");
+
+  // transmit() opens ONE connection, exclusive for a sequence.
+  var EventEmitter = require("events");
+  var opened = [];
+  var factory = function () {
+    var pcsc = new EventEmitter();
+    pcsc.close = function () {};
+    setImmediate(function () {
+      pcsc.emit("reader", {
+        name: "Fake Reader 00",
+        SCARD_SHARE_SHARED: 2,
+        SCARD_SHARE_EXCLUSIVE: 1,
+        SCARD_LEAVE_CARD: 0,
+        connect: function (opts, cb) {
+          opened.push(opts.share_mode);
+          cb(null, 2);
+        },
+        transmit: function (apdu, max, protocol, cb) {
+          cb(null, Buffer.from("9000", "hex"));
+        },
+        disconnect: function (how, cb) {
+          cb();
+        }
+      });
+    });
+    return pcsc;
+  };
+  var done = await reader.transmit("Fake Reader 00",
+      [fromHex("00a40400"), fromHex("00cb3fff")], { factory: factory });
+  assert.strictEqual(done.results.length, 2);
+  assert.deepStrictEqual(opened, [1]);
+  await reader.transmit("Fake Reader 00", [fromHex("00a40400")],
+      { factory: factory });
+  assert.deepStrictEqual(opened, [1, 2]);
+  log.info("OK — 61xx is followed by GET RESPONSE on the same channel, " +
+      "6Cxx is resent with the Le asked for, a sequence stops at a " +
+      "failure and runs on one exclusive connection.");
+  log.debug("Leaving readerExchanges().");
 }
 
 function enginesStayOffTheDom() {
@@ -1002,6 +1264,7 @@ async function test() {
   await openpgpKeys();
   yubihsmTraces();
   readerRefusals();
+  await readerExchanges();
   enginesStayOffTheDom();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");

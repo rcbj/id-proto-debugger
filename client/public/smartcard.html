@@ -216,15 +216,18 @@
   <legend class="saml-legend">Reader</legend>
   <div class="saml-pane-body">
     <p class="saml-note">The reader is the machine the API runs on. <code>localhost</code> on this pane is that machine. A container does not see a USB key unless the operator passes the device through. PC/SC is optional: if the library is not installed, listing readers says so and the API stays up.</p>
-    <p class="saml-note" id="sc_hid_note">OTP challenge-response can use WebHID in a browser that has it. Firefox has no WebHID. The keyboard OTP field on the first pane still works. HMAC-SHA1 slots 30 and 38 use the same frame and are not the live button.</p>
+    <p class="saml-note saml-hidden" id="sc_reader_disabled">The reader relay is off on this API. Set <code>smartcardReaderEnabled: true</code> in its env file to list readers and transmit. It is off by default because any APDU reaches the card, including a wrong-PIN VERIFY that blocks the PIN.</p>
+    <p class="saml-note" id="sc_hid_note">Challenge-response over WebHID, in a browser that has it. Firefox has no WebHID. The page polls the key the way yubikit does and waits up to 15 seconds for a touch. The keyboard OTP field on the first pane still works.</p>
     <div class="saml-row">
-      <label>Challenge (6 bytes, hex)
+      <label>Challenge (hex: 6 bytes for an OTP slot, up to 64 for HMAC-SHA1)
         <input id="sc_hid_challenge" class="sc-field" value="000000000000" spellcheck="false" />
       </label>
       <label>Slot
         <select id="sc_hid_slot">
           <option value="20">OTP slot 1 (20)</option>
           <option value="28">OTP slot 2 (28)</option>
+          <option value="30">HMAC-SHA1 slot 1 (30)</option>
+          <option value="38">HMAC-SHA1 slot 2 (38)</option>
         </select>
       </label>
     </div>
@@ -245,9 +248,12 @@
         </label>
       </div>
       <div class="saml-row">
-        <label class="saml-grow">APDU (hex)
+        <label class="saml-grow">APDUs (hex, one per line, up to 16, sent in order on one exclusive connection)
           <textarea id="sc_reader_apdu" class="sc-trace" spellcheck="false"></textarea>
         </label>
+      </div>
+      <div class="saml-row">
+        <label><input type="checkbox" id="sc_reader_get_response" checked /> Follow 61xx with GET RESPONSE and resend 6Cxx with the Le the card asks for</label>
       </div>
       <p>
         <button type="button" class="saml-btn saml-hidden" id="sc_readers_button" onclick="smartcard.listReaders();">List readers</button>

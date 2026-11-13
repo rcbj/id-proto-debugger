@@ -8,6 +8,19 @@
 // There is no host, no port and no caller-chosen filesystem path.
 // The reader is the machine this api runs on. The APDU is not
 // logged: a VERIFY carries a PIN.
+//
+// It is OFF unless smartcardReaderEnabled is true in the api's env:
+// anything that reaches the api could otherwise send any APDU to a
+// card on this machine, including the wrong-PIN VERIFYs that block a
+// PIN, a PIV reset or an OpenPGP TERMINATE.
+//
+// A transmit is a SEQUENCE of up to MAX_SEQUENCE APDUs on ONE
+// connection, so SELECT then GET DATA, or VERIFY then a signature,
+// cannot be interleaved by another process. A sequence of more than
+// one APDU connects SCARD_SHARE_EXCLUSIVE for that reason. 61xx is
+// followed by GET RESPONSE and 6Cxx is resent with the Le the card
+// asked for, the way ISO 7816-4 section 5.1.3 describes, unless the
+// caller turns that off to see the raw exchange.
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({
@@ -22,6 +35,9 @@ var log = bunyan.createLogger({
 });
 
 var MAX_APDU_BYTES = 8192;
+var MAX_SEQUENCE = 16;
+var MAX_RESPONSE_BYTES = 65536;
+var MAX_GET_RESPONSE = 64;
 var MAX_READER_LENGTH = 256;
 var LIST_WAIT_MS = 450;
 
@@ -48,13 +64,27 @@ function loadFactory() {
   return { factory: factory, reason: factory ? null : reason };
 }
 
-function limits() {
+function enabled(appconfig) {
+  log.debug("Entering enabled().");
+  var on = !!(appconfig && appconfig.smartcardReaderEnabled === true);
+  log.debug("Leaving enabled().");
+  return on;
+}
+
+var DISABLED_MESSAGE = "The smart-card reader relay is off on this " +
+    "api. Set smartcardReaderEnabled: true in its env file to send " +
+    "APDUs to a reader on the machine it runs on.";
+
+function limits(appconfig) {
   log.debug("Entering limits().");
   var loaded = loadFactory();
+  var on = enabled(appconfig);
   var out = {
-    available: !!loaded.factory,
-    reason: loaded.reason,
+    enabled: on,
+    available: on && !!loaded.factory,
+    reason: on ? loaded.reason : DISABLED_MESSAGE,
     maxApduBytes: MAX_APDU_BYTES,
+    maxSequence: MAX_SEQUENCE,
     reader: "the machine this api runs on"
   };
   log.debug("Leaving limits().");
@@ -116,6 +146,8 @@ function parseApdu(text) {
   return { ok: true, apdu: bytes };
 }
 
+// { reader, apdu } or { reader, apdus: [...] }, and getResponse,
+// which is true unless the caller sends false.
 function describeTransmit(given) {
   log.debug("Entering describeTransmit().");
   var body = given || {};
@@ -124,13 +156,140 @@ function describeTransmit(given) {
     log.debug("Leaving describeTransmit(). Reader.");
     return reader;
   }
-  var apdu = parseApdu(body.apdu);
-  if (!apdu.ok) {
-    log.debug("Leaving describeTransmit(). APDU.");
-    return apdu;
+  var texts = Array.isArray(body.apdus) ? body.apdus : [body.apdu];
+  if (texts.length === 0 || texts.length > MAX_SEQUENCE) {
+    log.debug("Leaving describeTransmit(). Count.");
+    return failure("A sequence is 1 to " + MAX_SEQUENCE + " APDUs.");
   }
+  var apdus = [];
+  var i;
+  for (i = 0; i < texts.length; i++) {
+    var apdu = parseApdu(texts[i]);
+    if (!apdu.ok) {
+      log.debug("Leaving describeTransmit(). APDU.");
+      return texts.length > 1 ?
+          failure("APDU " + (i + 1) + ": " + apdu.error) : apdu;
+    }
+    apdus.push(apdu.apdu);
+  }
+  var getResponse = !(body.getResponse === false ||
+      body.getResponse === "false");
   log.debug("Leaving describeTransmit().");
-  return { ok: true, reader: reader.reader, apdu: apdu.apdu };
+  return { ok: true, reader: reader.reader, apdu: apdus[0],
+      apdus: apdus, getResponse: getResponse };
+}
+
+// The same APDU with its Le replaced by le, for a 6Cxx answer. Only a
+// short APDU has a one-byte Le to replace; null means "do not retry".
+function withLe(apdu, le) {
+  log.debug("Entering withLe().");
+  var out = null;
+  if (apdu.length === 4) {
+    out = Buffer.concat([apdu, Buffer.from([le])]);
+  } else if (apdu.length === 5) {
+    out = Buffer.from(apdu);
+    out[4] = le;
+  } else if (apdu[4] !== 0) {
+    var lc = apdu[4];
+    if (apdu.length === 5 + lc) {
+      out = Buffer.concat([apdu, Buffer.from([le])]);
+    } else if (apdu.length === 6 + lc) {
+      out = Buffer.from(apdu);
+      out[out.length - 1] = le;
+    }
+  }
+  log.debug("Leaving withLe().");
+  return out;
+}
+
+function splitStatus(buf) {
+  log.debug("Entering splitStatus().");
+  if (!buf || buf.length < 2) {
+    log.debug("Leaving splitStatus(). No status word.");
+    throw new Error("The card returned no status word.");
+  }
+  log.debug("Leaving splitStatus().");
+  return { data: buf.slice(0, buf.length - 2),
+      sw1: buf[buf.length - 2], sw2: buf[buf.length - 1] };
+}
+
+// One APDU through send(apdu) -> Promise<Buffer>, completed with GET
+// RESPONSE and the 6Cxx retry when getResponse is on. Every exchange
+// on the wire is in steps, so the page can show what was sent.
+function exchange(send, apdu, getResponse) {
+  log.debug("Entering exchange().");
+  var steps = [];
+  var data = Buffer.alloc(0);
+  var retried = false;
+  var fetches = 0;
+  function record(sent, answer) {
+    steps.push({
+      apdu: sent.toString("hex").toUpperCase(),
+      data: answer.data.toString("hex"),
+      status: Buffer.from([answer.sw1, answer.sw2]).toString("hex")
+          .toUpperCase()
+    });
+  }
+  function step(sent) {
+    return send(sent).then(function (buf) {
+      var answer = splitStatus(Buffer.from(buf));
+      record(sent, answer);
+      data = Buffer.concat([data, answer.data]);
+      if (data.length > MAX_RESPONSE_BYTES) {
+        throw new Error("The response is longer than " +
+            MAX_RESPONSE_BYTES + " bytes.");
+      }
+      if (getResponse && answer.sw1 === 0x6c && !retried) {
+        var again = withLe(sent, answer.sw2);
+        if (again) {
+          retried = true;
+          data = Buffer.alloc(0);
+          return step(again);
+        }
+      }
+      if (getResponse && answer.sw1 === 0x61) {
+        fetches += 1;
+        if (fetches > MAX_GET_RESPONSE) {
+          throw new Error("The card asked for more than " +
+              MAX_GET_RESPONSE + " GET RESPONSEs.");
+        }
+        return step(Buffer.from([apdu[0] & 0x03, 0xc0, 0x00, 0x00,
+            answer.sw2]));
+      }
+      return {
+        data: data.toString("hex"),
+        status: Buffer.from([answer.sw1, answer.sw2]).toString("hex")
+            .toUpperCase(),
+        steps: steps
+      };
+    });
+  }
+  log.debug("Leaving exchange().");
+  return step(apdu);
+}
+
+// Every APDU in order, stopping at the first one whose final status is
+// not 90xx or 61xx, because the next one usually depends on it.
+function runSequence(send, apdus, getResponse) {
+  log.debug("Entering runSequence().");
+  var results = [];
+  var chain = Promise.resolve(true);
+  apdus.forEach(function (apdu) {
+    chain = chain.then(function (going) {
+      if (!going) {
+        return false;
+      }
+      return exchange(send, apdu, getResponse).then(function (answer) {
+        results.push(answer);
+        return answer.status.slice(0, 2) === "90" ||
+            answer.status.slice(0, 2) === "61";
+      });
+    });
+  });
+  log.debug("Leaving runSequence().");
+  return chain.then(function () {
+    return results;
+  });
 }
 
 function closePcsc(pcsc) {
@@ -190,9 +349,15 @@ function listReaders() {
   return pending;
 }
 
-function transmit(readerName, apdu) {
+// opts: { getResponse, factory }. factory replaces the native module,
+// which is how tests/smartcard_engine.js drives this without a reader.
+function transmit(readerName, apdus, opts) {
   log.debug("Entering transmit().");
-  var loaded = loadFactory();
+  var options = opts || {};
+  var list = Buffer.isBuffer(apdus) ? [apdus] : apdus;
+  var getResponse = options.getResponse !== false;
+  var loaded = options.factory ? { factory: options.factory } :
+      loadFactory();
   if (!loaded.factory) {
     log.debug("Leaving transmit(). Unavailable.");
     return Promise.reject(new Error(loaded.reason));
@@ -227,29 +392,43 @@ function transmit(readerName, apdu) {
         return;
       }
       found = true;
-      reader.connect({ share_mode: reader.SCARD_SHARE_SHARED },
+      var share = list.length > 1 ? reader.SCARD_SHARE_EXCLUSIVE :
+          reader.SCARD_SHARE_SHARED;
+      reader.connect({ share_mode: share },
           function (connectErr, protocol) {
         if (connectErr) {
-          finish(new Error("No card in " + readerName + "."));
+          finish(new Error(list.length > 1 ?
+              "Could not open " + readerName + " exclusively. Is a " +
+              "card in it, and is another process (scdaemon, pcscd " +
+              "clients) holding it? " + connectErr.message :
+              "No card in " + readerName + "."));
           return;
         }
-        reader.transmit(apdu, MAX_APDU_BYTES, protocol,
-            function (txErr, data) {
-          reader.disconnect(reader.SCARD_LEAVE_CARD, function () {
-            if (txErr) {
-              finish(txErr);
-              return;
-            }
-            var buf = Buffer.from(data || []);
-            if (buf.length < 2) {
-              finish(new Error("The card returned no status word."));
-              return;
-            }
-            finish(null, {
-              data: buf.slice(0, buf.length - 2).toString("hex"),
-              status: buf.slice(buf.length - 2).toString("hex")
-                  .toUpperCase()
+        function send(apdu) {
+          return new Promise(function (ok, bad) {
+            reader.transmit(apdu, MAX_APDU_BYTES, protocol,
+                function (txErr, data) {
+              if (txErr) {
+                bad(txErr);
+                return;
+              }
+              ok(Buffer.from(data || []));
             });
+          });
+        }
+        runSequence(send, list, getResponse).then(function (results) {
+          reader.disconnect(reader.SCARD_LEAVE_CARD, function () {
+            var last = results[results.length - 1];
+            finish(null, {
+              data: last.data,
+              status: last.status,
+              steps: last.steps,
+              results: results
+            });
+          });
+        }, function (err) {
+          reader.disconnect(reader.SCARD_LEAVE_CARD, function () {
+            finish(err);
           });
         });
       });
@@ -266,7 +445,13 @@ function transmit(readerName, apdu) {
 
 module.exports = {
   MAX_APDU_BYTES: MAX_APDU_BYTES,
+  MAX_SEQUENCE: MAX_SEQUENCE,
+  DISABLED_MESSAGE: DISABLED_MESSAGE,
+  enabled: enabled,
   limits: limits,
+  withLe: withLe,
+  exchange: exchange,
+  runSequence: runSequence,
   checkReaderName: checkReaderName,
   describeTransmit: describeTransmit,
   listReaders: listReaders,

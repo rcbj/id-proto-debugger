@@ -267,7 +267,7 @@ function decodeOtp() {
   log.debug("Leaving decodeOtp().");
 }
 
-function applyVerify(payload, nonce, apiKey) {
+function applyVerify(payload, nonce, apiKey, sentOtp) {
   log.debug("Entering applyVerify().");
   if (!payload || payload.error) {
     setStatus(payload && payload.error ? payload.error :
@@ -281,11 +281,14 @@ function applyVerify(payload, nonce, apiKey) {
   try {
     var parsed = otp.parseValidationResponse(payload.body || "", {
       nonce: nonce,
+      otp: sentOtp,
       apiKey: apiKey
     });
     rows.push({ label: "Status", value: parsed.status });
     rows.push({ label: "Nonce", value: parsed.nonceMatches ?
         "matches" : "not checked" });
+    rows.push({ label: "OTP", value: parsed.otpMatches ?
+        "matches" : "not echoed" });
     rows.push({ label: "HMAC", value: parsed.hmacMatches ?
         "matches" : "not checked" });
     render("sc_otp_out", rows);
@@ -332,7 +335,8 @@ function verifyOtp() {
       body: JSON.stringify(payload)
     }).then(function (res) {
       return res.json().then(function (body) {
-        applyVerify(body, built.nonce, valueOf("sc_otp_api_key"));
+        applyVerify(body, built.nonce, valueOf("sc_otp_api_key"),
+            built.otp);
       });
     }).catch(function (e) {
       setStatus(e.message);
@@ -616,6 +620,38 @@ function listReaders() {
   log.debug("Leaving listReaders().");
 }
 
+function readerApdus() {
+  log.debug("Entering readerApdus().");
+  var lines = valueOf("sc_reader_apdu").split(/\r?\n/)
+    .map(function (line) {
+      return line.trim();
+    })
+    .filter(function (line) {
+      return line.length > 0;
+    });
+  log.debug("Leaving readerApdus().");
+  return lines;
+}
+
+function transmitRows(body) {
+  log.debug("Entering transmitRows().");
+  var rows = [];
+  (body.results || [body]).forEach(function (result, index) {
+    (result.steps || []).forEach(function (step) {
+      rows.push({ label: "APDU " + (index + 1) + " sent",
+          value: step.apdu });
+      rows.push({ label: "  answered", value: step.status +
+          (step.data ? " " + step.data : "") });
+    });
+    rows.push({ label: "APDU " + (index + 1) + " status",
+        value: result.status || "" });
+    rows.push({ label: "APDU " + (index + 1) + " data",
+        value: result.data || "(none)" });
+  });
+  log.debug("Leaving transmitRows().");
+  return rows;
+}
+
 function transmitApdu() {
   log.debug("Entering transmitApdu().");
   if (!backendAvailable()) {
@@ -623,12 +659,19 @@ function transmitApdu() {
     log.debug("Leaving transmitApdu(). No api.");
     return;
   }
+  var apdus = readerApdus();
+  if (apdus.length === 0) {
+    setStatus("Enter at least one APDU.");
+    log.debug("Leaving transmitApdu(). Empty.");
+    return;
+  }
   fetch(apiBase() + "/smartcard/transmit", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       reader: valueOf("sc_reader_name"),
-      apdu: valueOf("sc_reader_apdu")
+      apdus: apdus,
+      getResponse: checked("sc_reader_get_response")
     })
   }).then(function (res) {
     return res.json().then(function (body) {
@@ -636,11 +679,11 @@ function transmitApdu() {
         setStatus(body.error || "Transmit failed.");
         return;
       }
-      render("sc_reader_out", [
-        { label: "Status", value: body.status || "" },
-        { label: "Data", value: body.data || "(none)" }
-      ]);
-      setStatus(body.status || "answered");
+      render("sc_reader_out", transmitRows(body));
+      var done = (body.results || [body]).length;
+      setStatus(body.status + (done < apdus.length ?
+          " — stopped after APDU " + done + " of " + apdus.length :
+          ""));
     });
   }).catch(function (e) {
     setStatus(e.message);
@@ -659,18 +702,97 @@ function hidBytes(hex) {
   return Buffer.from(text, "hex");
 }
 
+var HID_POLL_MS = 20;
+var HID_TOUCH_POLL_MS = 100;
+var HID_WRITE_TRIES = 20;
+var HID_DEADLINE_MS = 15000;
+
+function delay(ms) {
+  log.debug("Entering delay().");
+  log.debug("Leaving delay().");
+  return new Promise(function (resolve) {
+    setTimeout(resolve, ms);
+  });
+}
+
+function hidRead(device) {
+  log.debug("Entering hidRead().");
+  log.debug("Leaving hidRead().");
+  return device.receiveFeatureReport(0).then(function (view) {
+    return otp.hidReportBytes(view);
+  });
+}
+
+// Wait for the key to take the previous report, then write this one.
+function hidWrite(device, report) {
+  log.debug("Entering hidWrite().");
+  var tries = 0;
+  function attempt() {
+    return hidRead(device).then(function (status) {
+      if (otp.hidCanWrite(status)) {
+        return device.sendFeatureReport(0, report);
+      }
+      tries += 1;
+      if (tries >= HID_WRITE_TRIES) {
+        throw new Error("The key did not take the report.");
+      }
+      return delay(50).then(attempt);
+    });
+  }
+  log.debug("Leaving hidWrite().");
+  return attempt();
+}
+
+// Poll until the response frame is complete, the key gives up, or the
+// deadline passes. A touch-wait is reported once on the status line.
+function hidCollect(device) {
+  log.debug("Entering hidCollect().");
+  var state = { seq: 0, data: [] };
+  var started = Date.now();
+  var told = false;
+  function poll() {
+    if (Date.now() - started > HID_DEADLINE_MS) {
+      throw new Error("No response from the key within " +
+          (HID_DEADLINE_MS / 1000) + " seconds.");
+    }
+    return hidRead(device).then(function (report) {
+      var step = otp.hidReadStep(state, report);
+      if (step.kind === "done") {
+        return device.sendFeatureReport(0, otp.hidResetReport())
+          .then(function () {
+            return Buffer.from(state.data);
+          });
+      }
+      if (step.kind === "status") {
+        throw new Error("The key answered with no response. Is the " +
+            "slot configured for challenge-response?");
+      }
+      if (step.kind === "touch" && !told) {
+        told = true;
+        setStatus("Touch the key.");
+      }
+      if (step.kind === "data") {
+        return poll();
+      }
+      return delay(step.kind === "touch" ? HID_TOUCH_POLL_MS :
+          HID_POLL_MS).then(poll);
+    });
+  }
+  log.debug("Leaving hidCollect().");
+  return poll();
+}
+
 function sendHid() {
   log.debug("Entering sendHid().");
   if (typeof navigator === "undefined" || !navigator.hid) {
-    setStatus("This browser has no WebHID. The keyboard OTP " +
-        "field still works.");
+    setStatus("This browser has no WebHID.");
     log.debug("Leaving sendHid(). No WebHID.");
     return;
   }
+  var slot = parseInt(valueOf("sc_hid_slot"), 16);
   var frame = null;
   try {
-    frame = otp.hidFrame(parseInt(valueOf("sc_hid_slot"), 16),
-        hidBytes(valueOf("sc_hid_challenge")));
+    frame = otp.hidFrame(slot, hidBytes(valueOf("sc_hid_challenge")));
   } catch (e) {
     setStatus(e.message);
     log.debug("Leaving sendHid(). Frame.");
@@ -690,26 +812,45 @@ function sendHid() {
       var chain = Promise.resolve();
       reports.forEach(function (report) {
         chain = chain.then(function () {
-          return device.sendFeatureReport(0, report);
+          return hidWrite(device, report);
         });
       });
       return chain.then(function () {
-        return device.receiveFeatureReport(0);
+        return hidCollect(device);
       });
     });
-  }).then(function (view) {
-    if (!view) {
+  }).then(function (raw) {
+    if (!raw) {
       return;
     }
-    var raw = new Uint8Array(view.buffer);
+    var response = otp.hidResponse(slot, raw);
     render("sc_reader_out", [
-      { label: "Feature report", value: iso.toHex(raw) }
+      { label: "Response", value: iso.toHex(response) },
+      { label: "Frame read", value: iso.toHex(raw) }
     ]);
-    setStatus("HID response, " + raw.length + " bytes");
+    setStatus("HID response, " + response.length + " bytes, CRC good");
   }).catch(function (e) {
     setStatus(e.message);
   });
   log.debug("Leaving sendHid().");
+}
+
+function readerLimits() {
+  log.debug("Entering readerLimits().");
+  fetch(apiBase() + "/smartcard/limits")
+    .then(function (res) {
+      return res.json();
+    })
+    .then(function (body) {
+      var on = !!(body && body.enabled);
+      show("sc_reader_disabled", !on);
+      show("sc_readers_button", on);
+      show("sc_transmit_button", on);
+    })
+    .catch(function (e) {
+      log.warn("GET /smartcard/limits failed: " + e.message);
+    });
+  log.debug("Leaving readerLimits().");
 }
 
 function onload() {
@@ -717,8 +858,13 @@ function onload() {
   var live = backendAvailable();
   show("sc_backend_notice", !live);
   show("sc_verify_button", live);
-  show("sc_readers_button", live);
-  show("sc_transmit_button", live);
+  // The reader buttons wait for /smartcard/limits: the relay is off
+  // unless the api's smartcardReaderEnabled is true.
+  show("sc_readers_button", false);
+  show("sc_transmit_button", false);
+  if (live) {
+    readerLimits();
+  }
   restoreSecret(SAVE.otp[0], SAVE.otp[1]);
   restoreSecret(SAVE.oath[0], SAVE.oath[1]);
   restoreSecret(SAVE.api[0], SAVE.api[1]);

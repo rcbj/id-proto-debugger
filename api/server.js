@@ -3381,8 +3381,10 @@ app.get('/scim/limits', function (req, res) {
   return res.status(STATUS_200).json(scimProxy.limits(appconfig));
 });
 
-// YubiCloud OTP validation. The page signs the request. This posts it.
-// A verifier answer, including BAD_OTP, is a 200. See otp_verify.js.
+// YubiCloud OTP validation. The page signs the request. This sends it
+// as Validation Protocol 2.0 says, an HTTP GET with the signed
+// parameters as the query string. A verifier answer, including
+// BAD_OTP, is a 200. See otp_verify.js.
 app.post('/otp/verify', function (req, res) {
   log.debug('Entering POST /otp/verify.');
   var described = otpVerify.describeRequest(req.body || {});
@@ -3394,13 +3396,11 @@ app.post('/otp/verify', function (req, res) {
       (req.body || {}).http_trace === 'true';
   var sink = {};
   var startedAt = Date.now();
-  var sentHeaders = withUserAgent({
-    'Content-Type': 'application/x-www-form-urlencoded'
-  });
+  var sentHeaders = withUserAgent({});
+  var target = described.url + '?' + described.body;
   axios({
-    method: 'post',
-    url: described.url,
-    data: described.body,
+    method: 'get',
+    url: target,
     responseType: 'text',
     timeout: CALL_TIMEOUT,
     maxContentLength: MAX_CONTENT_LENGTH,
@@ -3414,8 +3414,8 @@ app.post('/otp/verify', function (req, res) {
   })
     .then(function (response) {
       var answer = otpVerify.readResponse(response.status, sink.raw);
-      var trace = buildHttpTrace({ method: 'POST', url: described.url,
-          headers: sentHeaders, body: described.body },
+      var trace = buildHttpTrace({ method: 'GET', url: target,
+          headers: sentHeaders, body: '' },
           response, sink.raw, startedAt, null);
       log.debug('Leaving POST /otp/verify. The verifier answered ' +
           answer.status + '.');
@@ -3426,8 +3426,8 @@ app.post('/otp/verify', function (req, res) {
       var message = (error && error.message) ? error.message : String(error);
       log.warn('POST /otp/verify to ' + described.url + ' failed: ' +
           message);
-      var trace = buildHttpTrace({ method: 'POST', url: described.url,
-          headers: sentHeaders, body: described.body },
+      var trace = buildHttpTrace({ method: 'GET', url: target,
+          headers: sentHeaders, body: '' },
           null, sink.raw, startedAt, message);
       log.debug('Leaving POST /otp/verify. 502.');
       return res.status(502).json(withHttpTrace({
@@ -3442,16 +3442,23 @@ app.get('/otp/limits', function (req, res) {
   return res.status(STATUS_200).json(otpVerify.limits());
 });
 
-// One APDU in, one response out. The reader is this machine. A card
-// status word is a 200. A missing library, reader or card is a 502.
+// A sequence of APDUs on one connection, with GET RESPONSE. The reader
+// is this machine, and the relay is off unless smartcardReaderEnabled
+// is true (403 otherwise). A card status word is a 200. A missing
+// library, reader or card is a 502.
 app.get('/smartcard/limits', function (req, res) {
   log.debug('Entering GET /smartcard/limits.');
   log.debug('Leaving GET /smartcard/limits.');
-  return res.status(STATUS_200).json(smartcardReader.limits());
+  return res.status(STATUS_200).json(smartcardReader.limits(appconfig));
 });
 
 app.get('/smartcard/readers', function (req, res) {
   log.debug('Entering GET /smartcard/readers.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving GET /smartcard/readers. Disabled.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
   smartcardReader.listReaders()
     .then(function (names) {
       log.debug('Leaving GET /smartcard/readers.');
@@ -3468,13 +3475,19 @@ app.get('/smartcard/readers', function (req, res) {
 
 app.post('/smartcard/transmit', function (req, res) {
   log.debug('Entering POST /smartcard/transmit.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving POST /smartcard/transmit. Disabled.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
   var described = smartcardReader.describeTransmit(req.body || {});
   if (!described.ok) {
     log.debug('Leaving POST /smartcard/transmit. Refused: ' +
         described.error);
     return res.status(STATUS_400).json({ error: described.error });
   }
-  smartcardReader.transmit(described.reader, described.apdu)
+  smartcardReader.transmit(described.reader, described.apdus,
+      { getResponse: described.getResponse })
     .then(function (answer) {
       log.debug('Leaving POST /smartcard/transmit. Answered ' +
           answer.status + '.');

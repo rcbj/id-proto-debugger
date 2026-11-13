@@ -136,6 +136,12 @@ var config = {
   tlsAllowedPorts: "any",
   spiffeAllowedPorts: [8081, 8092, 8181],
   spiffeAllowedSocketPaths: ["/tmp/spire-agent/", "/tmp/spire-server/"],
+  // POST /smartcard/transmit and GET /smartcard/readers reach a card in
+  // a reader on the machine this api runs on, with any APDU the caller
+  // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
+  // reset/terminate commands). Off unless this is true. See
+  // docs/smartcard.md.
+  smartcardReaderEnabled: false,
   spiffeMaxStreamMessages: 4,
   spiffeStreamTimeout: 45000,
   // --- the SAML and WS-Federation landings, on the public origin -----------

@@ -285,6 +285,12 @@ var config = {
   // in use — naming something that is not the problem), and a path that exists
   // and is not a socket is refused rather than dialled.
   spiffeAllowedSocketPaths: ["/tmp/spire-agent/", "/tmp/spire-server/"],
+  // POST /smartcard/transmit and GET /smartcard/readers reach a card in
+  // a reader on the machine this api runs on, with any APDU the caller
+  // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
+  // reset/terminate commands). Off unless this is true. See
+  // docs/smartcard.md.
+  smartcardReaderEnabled: false,
   // How many messages POST /spiffe/call will read from a STREAM before it stops
   // and says so. A NUMBER.
   //

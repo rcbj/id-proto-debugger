@@ -40,7 +40,8 @@ verifying an OTP, and talking to a reader, need the api.
 `client/static_site.js` does not drop the page. No image installs
 `libpcsclite`. `POST /smartcard/transmit` loads the native module
 only when a request asks, and a missing module is a limit the page
-can show.
+can show. The reader relay is **off** unless the api's env sets
+`smartcardReaderEnabled: true` (see [Reader](#reader)).
 
 ## The codec
 
@@ -130,12 +131,22 @@ check and is reported as a wrong key.
 
 The validation request is protocol 2.0. The page signs it. The
 signature is HMAC-SHA1 over the parameters sorted by name, joined
-with `&`, excluding `h`. The body that is posted is the same fields
+with `&`, excluding `h`. The query string is the same fields
 percent-encoded, including `h`. The API key stays in the browser.
-`POST /otp/verify` checks the shape and posts the form. A
-`status=BAD_OTP` answer is a 200, because that answer is the point.
+`POST /otp/verify` checks the shape and sends it to the verifier as
+an HTTP GET with those fields as the query string, which is what
+Validation Protocol 2.0 specifies. A `status=BAD_OTP` answer is a
+200, because that answer is the point.
+
+The page checks the answer the way the protocol tells a client to:
+the response `nonce` and `otp` must be the ones the request sent, and
+with an API key the response `h` must verify. A signed answer for a
+different OTP is refused. An error status that omits `otp` is shown
+as "not echoed"; an `OK` without the request's `otp` is refused.
 The five default hosts are `api.yubico.com` through `api5.yubico.com`,
-path `/wsapi/2.0/verify`. A caller-supplied verifier is https, with
+path `/wsapi/2.0/verify`; server 1, `api.yubico.com`, is the default.
+Whether the other four still answer has not been checked against the
+live service (#410). A caller-supplied verifier is https, with
 no userinfo, no query string and no `..` in the URL. The address
 policy is the one already installed on axios.
 
@@ -143,14 +154,29 @@ The AES key and the API key are saved only when that field's box is
 checked. Clearing the box removes the stored value. A missing box
 does not save.
 
-OTP challenge-response over WebHID uses the frame in
-`yubico_otp.js`: 64 bytes of payload, the slot, the CRC of the
-payload, three zero bytes. Reports are eight bytes, seven of payload
-and a sequence byte. An all-zero report is skipped except the first
-and the last. Slots `0x20` and `0x28` are the live button. Slots
-`0x30` and `0x38` are named by the same frame and are not that
-button. Firefox has no `navigator.hid`. The keyboard field still
-works. The node test never calls `navigator.hid`.
+Challenge-response over WebHID uses the frame in `yubico_otp.js`: 64
+bytes of payload, the slot, the CRC of the payload, three zero bytes.
+Reports are eight bytes, seven of payload and a sequence byte. An
+all-zero report is skipped except the first and the last. Slots
+`0x20` and `0x28` are Yubico OTP challenge-response (6-byte challenge,
+16-byte answer) and `0x30` and `0x38` are HMAC-SHA1 (up to 64 bytes,
+20-byte answer).
+
+The exchange is the one yubikit's `otp.py` runs, and a single read
+straight after the write does not work. The last byte of every
+feature report is a status: before each write the page polls until
+`SLOT_WRITE` (`0x80`) is clear; after the frame it polls while the
+key is busy (20 ms) or waiting for a touch (`0x20`, 100 ms, and the
+status line says "Touch the key"), collects each report flagged
+`RESP_PENDING` (`0x40`) in sequence-number order, stops at the
+report whose sequence is back to 0, and writes the reset report
+(`ff…8f`). The answer is the response bytes plus a CRC whose
+residual is `0xf0b8`; a bad CRC is refused. A plain status report
+with no data means the slot is not configured for challenge-response.
+The page gives up after 15 seconds. Firefox has no `navigator.hid`.
+The keyboard field still works. The node test drives the read side
+with reports built the way a key sends them; it never calls
+`navigator.hid`, so a real key is still the check.
 
 ## OATH
 
@@ -209,11 +235,38 @@ does not run.
 The reader is the machine the api runs on. A name that is a URL, a
 host and port, a filesystem path, empty, longer than 256 characters
 or full of control characters is refused. The usual
-`Yubico YubiKey OTP+FIDO+CCID 00 00` is a name and is accepted. One
-call lists readers. One call sends one APDU and returns the data and
-the status word. A card status word is a 200. A missing library, a
-missing reader or no card is a 502. A bad request is a 400. The APDU
-is not logged. Docker does not see a host key unless the operator
+`Yubico YubiKey OTP+FIDO+CCID 00 00` is a name and is accepted.
+
+**The relay is off by default.** `GET /smartcard/readers` and
+`POST /smartcard/transmit` answer 403 unless the api's env file sets
+`smartcardReaderEnabled: true` (the boolean; `"true"` does not
+count). Anything that reaches the api can otherwise send any APDU to
+a card on that machine: a few wrong-PIN VERIFYs block a PIN, and PIV
+and OpenPGP both have reset and terminate commands.
+`GET /smartcard/limits` reports `enabled`, and the page hides the
+reader buttons and says why when it is false.
+
+One call lists readers. A transmit is a **sequence** of up to 16
+APDUs (`apdus`, one per line on the page; a single `apdu` still
+works), run in order on ONE PC/SC connection, so SELECT then GET
+DATA or VERIFY then a signature keeps its selected applet and
+security state. A sequence of more than one APDU connects
+`SCARD_SHARE_EXCLUSIVE`, so another process (`scdaemon`, say) cannot
+interleave; if one holds the reader the connect fails and says so. A
+sequence stops at the first APDU whose final status is not `90xx` or
+`61xx`, because the next command usually depends on it.
+
+With `getResponse` on (the default, a checkbox on the page) a `61xx`
+answer is followed by GET RESPONSE (`CLA C0 00 00 xx`, keeping the
+command's logical channel) until the card stops asking, and a `6Cxx`
+is resent once with the Le the card named, as ISO 7816-4 section
+5.1.3 describes; the data is the concatenation. Every APDU actually
+on the wire is in `steps`, and the page shows them. Off, the answer
+is the raw exchange.
+
+A card status word is a 200. A missing library, a missing reader or
+no card is a 502. A bad request is a 400. The APDU is not logged.
+Docker does not see a host key unless the operator
 passes the device through, and the page says so. No launcher starts
 a reader.
 

@@ -629,6 +629,21 @@ no-response branch must answer**, as everywhere else here: a refusal by policy i
 a 400, a network failure is a 502, and a failed HANDSHAKE is neither — it
 resolves with a report, because the alert is the answer. See `docs/pki.md`.
 
+## Smart cards: a reader on THIS machine, off by default
+
+`POST /smartcard/transmit` and `GET /smartcard/readers`
+(`api/smartcard_reader.js`) reach a card in a PC/SC reader on the machine
+the api runs on. There is no address to police, so the address policy has
+nothing to say, and the thing to guard is the CARD: any APDU the caller
+sends reaches it, and a handful of wrong-PIN VERIFYs blocks a PIN while
+PIV and OpenPGP both have reset and terminate commands. So the relay
+answers 403 unless the env file sets **`smartcardReaderEnabled: true`**,
+and all four `api/env/*.js` ship it `false`. A transmit is a sequence of
+up to 16 APDUs on one connection (exclusive when there is more than one),
+with GET RESPONSE and the 6Cxx retry; see `docs/smartcard.md`.
+`POST /otp/verify` (`api/otp_verify.js`) is an ordinary outbound call on
+the shared agents, sent as the HTTP GET Validation Protocol 2.0 specifies.
+
 ## SAML signing: the same module the browser uses, staged in
 
 `POST /samlsign` signs an AuthnRequest or a LogoutRequest for whichever binding
