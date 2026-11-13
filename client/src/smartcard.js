@@ -567,10 +567,14 @@ function buildVerify() {
     log.debug("Leaving buildVerify(). Empty.");
     return;
   }
-  var apdu = iso.encodeCommand({
-    cla: 0x00, ins: 0x20, p1: 0x00, p2: 0x80,
-    data: Buffer.from(pin, "utf8"), le: null
-  });
+  var apdu = null;
+  try {
+    apdu = piv.verifyApdu(pin);
+  } catch (e) {
+    setStatus(e.message);
+    log.debug("Leaving buildVerify(). PIN length.");
+    return;
+  }
   var box = document.getElementById("sc_reader_apdu");
   var pinBox = document.getElementById("sc_pin");
   if (box) {
@@ -579,7 +583,8 @@ function buildVerify() {
   if (pinBox) {
     pinBox.value = "";
   }
-  setStatus("VERIFY APDU built. The PIN is not stored.");
+  setStatus("PIV VERIFY APDU built, the PIN padded with FF to 8 " +
+      "bytes. The PIN is not stored.");
   log.debug("Leaving buildVerify().");
 }
 
