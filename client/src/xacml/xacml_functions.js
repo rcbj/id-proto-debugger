@@ -1,6 +1,6 @@
 // @ts-check
 // SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 
 'use strict';
 //
@@ -589,13 +589,18 @@ function arithmetic(name, uri, arity, compute) {
   log.debug("Leaving arithmetic().");
 }
 
+// BigInt(0) rather than a `0n` literal: envify's esprima cannot parse one,
+// and browserify fails the bundle with "Unexpected token ILLEGAL" (see
+// tests/jwk_pem_encoding.js bigIntLiteralsStayOutOfTheBundles()).
+var _B0 = BigInt(0);
+
 arithmetic('integer-add', TYPE.INTEGER, 2, function (a, b) { return a + b; });
 arithmetic('integer-subtract', TYPE.INTEGER, 2,
            function (a, b) { return a - b; });
 arithmetic('integer-multiply', TYPE.INTEGER, 2,
            function (a, b) { return a * b; });
 arithmetic('integer-abs', TYPE.INTEGER, 1,
-           function (a) { return a < 0n ? -a : a; });
+           function (a) { return a < _B0 ? -a : a; });
 arithmetic('double-add', TYPE.DOUBLE, 2, function (a, b) { return a + b; });
 arithmetic('double-subtract', TYPE.DOUBLE, 2,
            function (a, b) { return a - b; });
@@ -609,7 +614,7 @@ define(F1 + 'integer-divide', {
          { kind: 'primitive', type: TYPE.INTEGER }],
   apply: function (values) {
     log.debug("Entering apply().");
-    if (values[1] === 0n) {
+    if (values[1] === _B0) {
       // Indeterminate rather than a crash or an Infinity. A.3.4 makes division
       // by zero an error, and a PDP that returned Infinity here would carry a
       // value no subsequent comparison could do anything sensible with.
@@ -642,7 +647,7 @@ define(F1 + 'integer-mod', {
          { kind: 'primitive', type: TYPE.INTEGER }],
   apply: function (values) {
     log.debug("Entering apply().");
-    if (values[1] === 0n) {
+    if (values[1] === _B0) {
       throw model.processingError('integer-mod by zero.');
     }
     log.debug("Leaving apply().");
