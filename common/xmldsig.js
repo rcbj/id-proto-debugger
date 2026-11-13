@@ -3335,6 +3335,7 @@ function verifyQueryString(queryString, opts) {
 
 module.exports = {
   forge: forge,
+  rsaSigAlgRefusal: rsaSigAlgRefusal,
   DS_NS: DS_NS,
   XENC_NS: XENC_NS,
   XENC11_NS: XENC11_NS,

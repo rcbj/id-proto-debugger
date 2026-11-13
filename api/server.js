@@ -1166,6 +1166,15 @@ app.post('/samlsign', function (req, res) {
       return res.status(STATUS_400).json({
         error: 'xml and privateKeyPem are required.' });
     }
+    // The api signs with RSA only (it holds no post-quantum signer), and
+    // sigAlg is the caller's choice. An ECDSA, HMAC or misspelt URI is the
+    // caller's error, so it is a 400 naming the methods on offer rather than
+    // the 500 the signer's throw would become in the catch below.
+    var refusal = xmldsig.rsaSigAlgRefusal(sigAlg, 'samlsign');
+    if (refusal) {
+      log.debug('Leaving POST /samlsign. ' + refusal);
+      return res.status(STATUS_400).json({ error: refusal });
+    }
 
     if (binding === 'post') {
       var signedXml = signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg);
