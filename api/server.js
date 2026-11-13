@@ -853,7 +853,13 @@ function publicBaseUrl(req) {
   return base;
 }
 
-app.use(bodyParser.json());
+// The JSON limit is an OUTER bound only. The caps that mean something are
+// scimMaxRequestBytes (1 MiB), ssfMaxRequestBytes and gnapMaxRequestBytes
+// (256 KiB each), enforced in their proxies where the answer can name the
+// setting. At body-parser's default of 100 KB none of them was reachable:
+// a body between 100 KB and the configured cap got body-parser's bare 413
+// instead of the documented refusal. Keep this above the largest of them.
+app.use(bodyParser.json({ limit: '5mb' }));
 // SAML ACS receives application/x-www-form-urlencoded POSTs (SAMLResponse,
 // RelayState, SAMLart) from the IdP; enable urlencoded parsing for those.
 app.use(bodyParser.urlencoded({
