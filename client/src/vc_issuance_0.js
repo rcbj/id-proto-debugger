@@ -78,9 +78,28 @@ function issuerSiteUrl() {
 
 // The same page for every offer use case: what differs is what the reader
 // asks for on it.
+//
+// The value is navigated to, so only an http: or https: URL is returned: a
+// stored `javascript:` or `data:` "website" would otherwise run in this
+// page's origin the moment a use case is chosen (CodeQL
+// js/xss-through-dom). Anything else reads as not set.
 function issuerPageUrl(id) {
   log.debug("Entering issuerPageUrl(). id=" + id);
   var url = (STARTS[id] || {}).site ? issuerSiteUrl() : "";
+  if (url) {
+    var parsed = null;
+    try {
+      parsed = new URL(url);
+    } catch (e) {
+      parsed = null;
+    }
+    if (!parsed ||
+        (parsed.protocol !== "https:" && parsed.protocol !== "http:")) {
+      log.warn("issuerPageUrl(): not an http(s) URL, ignored: " + url);
+      log.debug("Leaving issuerPageUrl(). Not http(s).");
+      return "";
+    }
+  }
   log.debug("Leaving issuerPageUrl(). url=" + url);
   return url;
 }

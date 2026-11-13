@@ -210,10 +210,36 @@ function resolveAllowedPorts(value, log) {
 // an array — handing it the bundle as one string works for some node versions
 // and silently uses only the first certificate on others, which reads as "the
 // root I added is not trusted".
+//
+// A linear scan rather than /BEGIN[\s\S]*?END/g: that lazy pattern restarts at
+// every BEGIN and rescans to the end of the input when no END follows, so a
+// caller-supplied truststore of many BEGIN lines and no END was quadratic
+// (CodeQL js/polynomial-redos). Same blocks, same order, same text.
+//
+// No Entering/Leaving lines: this module has no logger of its own (it is
+// handed one by createProbe()), and this helper is exported and called
+// without one, so a `log` here would be a ReferenceError.
 function splitPemCertificates(text) {
-  const matches = String(text || '').match(
-      /-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g);
-  return matches || [];
+  const BEGIN = '-----BEGIN CERTIFICATE-----';
+  const END = '-----END CERTIFICATE-----';
+  const input = String(text || '');
+  const out = [];
+  let from = 0;
+  for (;;) {
+    const start = input.indexOf(BEGIN, from);
+    if (start === -1) {
+      break;
+    }
+    const end = input.indexOf(END, start + BEGIN.length);
+    if (end === -1) {
+      break;
+    }
+    // The regex's lazy match ends at the FIRST END after this BEGIN, and a
+    // second BEGIN between the two belongs to that same match.
+    out.push(input.slice(start, end + END.length));
+    from = end + END.length;
+  }
+  return out;
 }
 
 // Undo `Transfer-Encoding: chunked`.
