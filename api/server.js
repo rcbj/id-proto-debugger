@@ -2927,6 +2927,12 @@ const scimProxy = require('./scim_proxy.js');
 // and every cap with no listener and no transmitter.
 const ssfProxy = require('./ssf_proxy.js');
 const ssfReceiver = require('./ssf_receiver.js');
+// YubiCloud verification posts a form the page already signed. The
+// decision half has no axios, same as the SCIM proxy.
+const otpVerify = require('./otp_verify.js');
+// PC/SC is optional. Requiring this file does not load the native
+// library and does not stop the process when it is absent.
+const smartcardReader = require('./smartcard_reader.js');
 // The LDAP client reuses the guard's address DECISION for the same reason the
 // Kerberos relay does: the guard's INSTALLATION is hooks on the axios agents,
 // and this transport is a raw socket with no axios in the path. Two
@@ -3373,6 +3379,114 @@ app.get('/scim/limits', function (req, res) {
   log.debug('Entering GET /scim/limits.');
   log.debug('Leaving GET /scim/limits.');
   return res.status(STATUS_200).json(scimProxy.limits(appconfig));
+});
+
+// YubiCloud OTP validation. The page signs the request. This posts it.
+// A verifier answer, including BAD_OTP, is a 200. See otp_verify.js.
+app.post('/otp/verify', function (req, res) {
+  log.debug('Entering POST /otp/verify.');
+  var described = otpVerify.describeRequest(req.body || {});
+  if (!described.ok) {
+    log.debug('Leaving POST /otp/verify. Refused: ' + described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  var wantsTrace = (req.body || {}).http_trace === true ||
+      (req.body || {}).http_trace === 'true';
+  var sink = {};
+  var startedAt = Date.now();
+  var sentHeaders = withUserAgent({
+    'Content-Type': 'application/x-www-form-urlencoded'
+  });
+  axios({
+    method: 'post',
+    url: described.url,
+    data: described.body,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      var answer = otpVerify.readResponse(response.status, sink.raw);
+      var trace = buildHttpTrace({ method: 'POST', url: described.url,
+          headers: sentHeaders, body: described.body },
+          response, sink.raw, startedAt, null);
+      log.debug('Leaving POST /otp/verify. The verifier answered ' +
+          answer.status + '.');
+      return res.status(STATUS_200).json(withHttpTrace(answer, trace,
+          wantsTrace));
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message : String(error);
+      log.warn('POST /otp/verify to ' + described.url + ' failed: ' +
+          message);
+      var trace = buildHttpTrace({ method: 'POST', url: described.url,
+          headers: sentHeaders, body: described.body },
+          null, sink.raw, startedAt, message);
+      log.debug('Leaving POST /otp/verify. 502.');
+      return res.status(502).json(withHttpTrace({
+        error: 'The verifier could not be reached: ' + message,
+        code: (error && error.code) || '' }, trace, wantsTrace));
+    });
+});
+
+app.get('/otp/limits', function (req, res) {
+  log.debug('Entering GET /otp/limits.');
+  log.debug('Leaving GET /otp/limits.');
+  return res.status(STATUS_200).json(otpVerify.limits());
+});
+
+// One APDU in, one response out. The reader is this machine. A card
+// status word is a 200. A missing library, reader or card is a 502.
+app.get('/smartcard/limits', function (req, res) {
+  log.debug('Entering GET /smartcard/limits.');
+  log.debug('Leaving GET /smartcard/limits.');
+  return res.status(STATUS_200).json(smartcardReader.limits());
+});
+
+app.get('/smartcard/readers', function (req, res) {
+  log.debug('Entering GET /smartcard/readers.');
+  smartcardReader.listReaders()
+    .then(function (names) {
+      log.debug('Leaving GET /smartcard/readers.');
+      return res.status(STATUS_200).json({ readers: names });
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message :
+          String(error);
+      log.warn('GET /smartcard/readers failed: ' + message);
+      log.debug('Leaving GET /smartcard/readers. 502.');
+      return res.status(502).json({ error: message });
+    });
+});
+
+app.post('/smartcard/transmit', function (req, res) {
+  log.debug('Entering POST /smartcard/transmit.');
+  var described = smartcardReader.describeTransmit(req.body || {});
+  if (!described.ok) {
+    log.debug('Leaving POST /smartcard/transmit. Refused: ' +
+        described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  smartcardReader.transmit(described.reader, described.apdu)
+    .then(function (answer) {
+      log.debug('Leaving POST /smartcard/transmit. Answered ' +
+          answer.status + '.');
+      return res.status(STATUS_200).json(answer);
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message :
+          String(error);
+      log.warn('POST /smartcard/transmit failed: ' + message);
+      log.debug('Leaving POST /smartcard/transmit. 502.');
+      return res.status(502).json({ error: message });
+    });
 });
 
 /**

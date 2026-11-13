@@ -15,6 +15,7 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | **SAML 1.1** — the second protocol version the SAML workflow speaks, which is a different protocol rather than an older spelling: no request message, no Single Logout, a QName status code, and five settings switched off | `docs/saml11.md` |
 | **RFC 9700** — the OAuth 2.0 Security BCP compliance checkbox on the OAuth2/OIDC workflow, what it enforces, and why it is off by default | `docs/rfc9700.md` |
 | the WebAuthn workflow, its decoder, or the read-only browser extension | `docs/webauthn.md` |
+| **smart cards** — ISO 7816 APDUs and BER-TLV (`client/src/iso7816.js`), then Yubico OTP, OATH, PIV, the OpenPGP card and YubiHSM Auth (`client/src/yubico_otp.js`, `oath.js`, `piv.js`, `openpgp_card.js`, `yubihsm_auth.js`) on `smartcard.html`. FIDO2 and FIDO U2F stay in the WebAuthn workflow. OTP verification and the reader go through the api; the page still decodes without either | `docs/smartcard.md` |
 | the Kerberos workflow, its six pages, `common/krb5/`, the PAC, delegation, or the mock KDC | `docs/kerberos.md` |
 | **SPNEGO** — Kerberos over HTTP: `spnego.html`, `krb5_spnego.js`, `POST /krb5/spnego`, the mock's protected page | `docs/spnego.md` |
 | **LDAP** — `ldap.html`, `api/ldap_client.js`, the eight `POST /ldap/*` endpoints, the mock's embedded directory, the `node-ldapjs` submodules | `docs/ldap.md` |

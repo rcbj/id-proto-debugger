@@ -1339,6 +1339,26 @@ function buildJobs() {
     env: {},
   });
 
+  // ISO 7816 command and response APDUs and BER-TLV, in node, with no
+  // browser and no reader. PIV, the OpenPGP card, OATH and YubiHSM Auth
+  // share this one reader. The vectors are the short and extended
+  // cases, including a length that overruns and a nested tag. No
+  // service, so it never skips.
+  jobs.push({
+    name: "Smart card engine (ISO 7816, OTP, OATH, PIV, " +
+        "OpenPGP, YubiHSM Auth, in node)",
+    script: "smartcard_engine.js",
+    env: {},
+  });
+
+  // The smart-card page. Types an OTP and refuses a bad string. It does
+  // not click Verify and it does not call YubiCloud. Needs the client.
+  jobs.push({
+    name: "Smart card page (OTP decode and layout, in the browser)",
+    script: "smartcard_page.js",
+    env: {},
+  });
+
   // Digital Signature page. A fully client-side page needing no IdP. For every
   // pane it sets a value, generates a key, produces a signature/MAC, confirms
   // it validates, and exercises the keystore downloads. Asymmetric: SLH-DSA (12
