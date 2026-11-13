@@ -57,7 +57,75 @@ function textField(name, value, size) {
   log.debug("Entering textField().");
   log.debug("Leaving textField().");
   return '<input type="text" name="' + esc(name) + '" value="' +
-    esc(value == null ? "" : value) + '" size="' + Number(size) + '">';
+    esc(value == null ? "" : value) + '" size="' + Number(size) + '"' +
+    titleFor(name) + '>';
+}
+
+// THE TOOLTIP OF EVERY EDITOR FIELD, by its form field name. Every field
+// the editor draws comes through textField() or select(), so one table
+// covers all of them; a name not listed gets no title.
+var FIELD_TIPS = {
+  action: "What to add or remove at this element.",
+  attributeId: "The AttributeId: the URI naming the attribute to read " +
+    "from the request.",
+  category: "The attribute category: access-subject, action, " +
+    "resource, environment, or another category URI.",
+  combiningAlgId: "How the decisions of the children are combined " +
+    "into one: deny-overrides, permit-overrides, first-applicable, " +
+    "deny-unless-permit and the rest.",
+  contextSelectorId: "The AttributeId of an XPath attribute in the " +
+    "request whose value is the context node of the Path.",
+  dataType: "The XML Schema or XACML data type of the value, such " +
+    "as string, anyURI, integer or dateTime.",
+  description: "Free text describing this element. It does not affect " +
+    "the decision.",
+  effect: "Permit or Deny: what this Rule returns when its target and " +
+    "condition both match.",
+  functionId: "The XACML function applied to the arguments.",
+  id: "The identifier of this element: its PolicyId, PolicySetId or " +
+    "RuleId.",
+  issuer: "The Issuer an attribute must carry to match. Empty matches " +
+    "any issuer.",
+  lexical: "The value, written as the data type's lexical form.",
+  matchId: "The function comparing the literal with each attribute " +
+    "value, such as string-equal.",
+  maxDelegationDepth: "The longest delegation chain an administrative " +
+    "request may follow. Empty means unlimited.",
+  mustBePresent: "Yes makes a missing attribute an Indeterminate " +
+    "result; no treats it as an empty bag.",
+  namespacePrefix: "The XML namespace prefix used in the XPath " +
+    "expressions.",
+  namespaceUri: "The namespace URI that prefix stands for.",
+  on: "Which obligation or advice list this expression belongs to.",
+  path: "The XPath expression selecting values from the request's " +
+    "Content.",
+  ref: "The id of the Policy or PolicySet this reference points to.",
+  referenceKind: "Whether the reference names a Policy or a PolicySet.",
+  type: "The kind of element to add.",
+  value: "The literal value.",
+  variableId: "The VariableDefinition this refers to, or defines.",
+  version: "The version of this Policy or PolicySet, such as 1.0.",
+  xpathCategory: "The category whose Content an XPath expression " +
+    "reads.",
+  xpathVersion: "The XPath version the document's XPath expressions " +
+    "are written in."
+};
+
+// Explanatory text, folded: a <details> closed until asked for, styled by
+// saml_common.css's `saml-explain`. `inner` is already HTML.
+function explain(summary, inner) {
+  log.debug("Entering explain().");
+  log.debug("Leaving explain().");
+  return '<details class="saml-explain"><summary>' + esc(summary) +
+    "</summary><div>" + inner + "</div></details>";
+}
+
+function titleFor(name) {
+  log.debug("Entering titleFor().");
+  var tip = Object.prototype.hasOwnProperty.call(FIELD_TIPS, name) ?
+      FIELD_TIPS[name] : "";
+  log.debug("Leaving titleFor().");
+  return tip ? ' title="' + esc(tip) + '"' : "";
 }
 
 /**
@@ -70,7 +138,7 @@ function textField(name, value, size) {
  */
 function select(name, options, selected) {
   log.debug("Entering select().");
-  var html = '<select name="' + esc(name) + '">';
+  var html = '<select name="' + esc(name) + '"' + titleFor(name) + '>';
   (options || []).forEach(function (one) {
     var on = String(one.value) === String(selected == null ? "" : selected);
     html += '<option value="' + esc(one.value) + '"' +
@@ -148,8 +216,8 @@ function expressionForm(view, row, node) {
       " Issuer " + textField("issuer", node.issuer, 16) +
       " must be present " + yesNo("mustBePresent", node.mustBePresent) +
       ' <button type="submit">Update</button></form>' +
-      '<div class="xacml-sub">Issuer is optional. must be present ' +
-      "turns a missing attribute into Indeterminate.</div>";
+      explain("Notes", "Issuer is optional. must be present " +
+      "turns a missing attribute into Indeterminate.");
   }
   if (node.kind === "selector") {
     var bindings = Object.keys(node.namespaces || {}).filter(function (p) {
@@ -170,17 +238,17 @@ function expressionForm(view, row, node) {
       textField("namespaceUri", "", 30) +
       ' <button type="submit">Update</button></form>' +
       '<div class="xacml-sub">Bindings: ' +
-      (bindings || "<em>none</em>") +
-      ". A prefix and a URI on Update adds one binding. This PDP " +
-      "does not evaluate XPath.</div>";
+      (bindings || "<em>none</em>") + ".</div>" +
+      explain("Notes", "A prefix and a URI on Update adds one binding. " +
+      "This PDP does not evaluate XPath.");
   }
   if (node.kind === "function") {
     log.debug("Leaving expressionForm(). A function.");
     return formHead(view, row, "edit-function") +
       select("functionId", menus.functions, node.functionId) +
       ' <button type="submit">Update</button></form>' +
-      '<div class="xacml-sub">A function used as a value, not applied ' +
-      "here. any-of and map take one of these.</div>";
+      explain("Notes", "A function used as a value, not applied " +
+      "here. any-of and map take one of these.");
   }
   if (node.kind === "apply") {
     log.debug("Leaving expressionForm(). An apply.");
@@ -239,10 +307,10 @@ function editForm(view, row) {
       textField("maxDelegationDepth", node.maxDelegationDepth, 4) +
       " XPathVersion " + textField("xpathVersion", node.xpathVersion, 44) +
       ' <button type="submit">Update</button></form>' +
-      '<div class="xacml-sub">' + esc(chosen.what || "") + "</div>" +
-      '<div class="xacml-sub">MaxDelegationDepth is stored and not ' +
+      explain("Notes", esc(chosen.what || "") + "<br>" +
+      "MaxDelegationDepth is stored and not " +
       "read by this PDP. XPathVersion is reported when a selector " +
-      "needs it, and it is not enforced.</div>";
+      "needs it, and it is not enforced.");
   }
   if (row.kind === "reference") {
     log.debug("Leaving editForm(). A reference.");
@@ -250,8 +318,8 @@ function editForm(view, row) {
       esc(node.kind) + " " + textField("ref", node.ref, 44) +
       " Version " + textField("version", node.version, 8) +
       ' <button type="submit">Update</button></form>' +
-      '<div class="xacml-sub">Resolved from the other enabled ' +
-      "policies when a decision is asked, by PolicyId.</div>";
+      explain("Notes", "Resolved from the other enabled " +
+      "policies when a decision is asked, by PolicyId.");
   }
   if (row.kind === "rule") {
     log.debug("Leaving editForm(). A rule.");
@@ -270,8 +338,8 @@ function editForm(view, row) {
     return formHead(view, row, "edit-variable") +
       "VariableId $" + textField("variableId", id, 12) +
       ' <button type="submit">Rename</button></form>' +
-      '<div class="xacml-sub">Renaming rewrites every reference. ' +
-      "A dot in the name is refused, because a path uses dots.</div>" +
+      explain("Notes", "Renaming rewrites every reference. " +
+      "A dot in the name is refused, because a path uses dots.") +
       expressionForm(view, row, node);
   }
   if (row.kind === "match") {
@@ -381,10 +449,10 @@ function editorBody(view) {
     log.debug("Leaving editorBody(). Unparsed.");
     return html;
   }
-  html += '<p class="xacml-note">Each Add offers only the elements that ' +
-    "are legal at that point, from the same grammar that checks the " +
-    "result. An edit updates the copy stored in this browser. ALFA is " +
-    "a view of that document, not a second copy.</p>";
+  html += explain("How Add and edits work", "Each Add offers only the " +
+    "elements that are legal at that point, from the same grammar that " +
+    "checks the result. An edit updates the copy stored in this " +
+    "browser. ALFA is a view of that document, not a second copy.");
   html += "<table class=\"xacml-tree\"><tr><th>Element</th><th>Kind</th>" +
     "<th>Add / remove</th></tr>";
   view.tree.forEach(function (row) {
@@ -416,7 +484,7 @@ function editorBody(view) {
       (row.detail ? '<div class="xacml-sub">' + esc(row.detail) + "</div>"
                   : "") +
       editForm(view, row) +
-      (helps ? '<div class="xacml-sub">' + helps + "</div>" : "") +
+      (helps ? explain("What can be added here", helps) : "") +
       "</td><td class=\"xacml-sub\">" + esc(row.kind) + "</td><td>" +
       menu + " " + remove + "</td></tr>";
   });

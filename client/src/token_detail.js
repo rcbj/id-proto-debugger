@@ -190,6 +190,12 @@ function resolveTokenFromParams() {
     // type to ask for even when `issued_token_type` named an ID token.
     log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('tokenexchange_access_token');
+  } else if (type === 'gnap_access') {
+    // The access token a GNAP grant issued (gnap.html's Inspect link). The
+    // token is the AS's own format: a JWT decodes here, an opaque one is
+    // shown as it is.
+    log.debug("Leaving resolveTokenFromParams().");
+    return localStorage.getItem('gnap_access_token');
   } else if (type === 'tokenexchange_refresh') {
     log.debug("Leaving resolveTokenFromParams().");
     return localStorage.getItem('tokenexchange_refresh_token');
@@ -949,13 +955,15 @@ var RETURN_TARGETS = {
   'vc-issuance-1.html': '/vc-issuance-1.html',
   'vc-issuance-2.html': '/vc-issuance-2.html',
   'vc-issuance-3.html': '/vc-issuance-3.html',
-  'vc-issuance-4.html': '/vc-issuance-4.html'
+  'vc-issuance-4.html': '/vc-issuance-4.html',
+  'gnap.html': '/gnap.html'
 };
 var RETURN_LABELS = {
   'vc-issuance-1.html': 'Return to SD-JWT VC issuance (step 1)',
   'vc-issuance-2.html': 'Return to SD-JWT VC issuance (step 2)',
   'vc-issuance-3.html': 'Return to SD-JWT VC issuance (step 3)',
-  'vc-issuance-4.html': 'Return to SD-JWT VC issuance (step 4)'
+  'vc-issuance-4.html': 'Return to SD-JWT VC issuance (step 4)',
+  'gnap.html': 'Return to GNAP'
 };
 
 function setReturnLinks() {

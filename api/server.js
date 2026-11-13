@@ -3640,6 +3640,15 @@ app.post('/gnap/call', function (req, res) {
   }
   var sink = {};
   var sentHeaders = withUserAgent(described.headers);
+  // http_trace asks for this service's own account of the call — the
+  // request as it left here and the raw answer — for the page's HTTP tab,
+  // exactly as POST /token does. It is attached as http_exchange.
+  var wantsTrace = (req.body || {}).http_trace === true ||
+      (req.body || {}).http_trace === 'true';
+  var startedAt = Date.now();
+  var sentRequest = { method: described.method, url: described.url,
+      headers: sentHeaders,
+      body: described.body === null ? '' : described.body };
   axios({
     method: described.method.toLowerCase(),
     url: described.url,
@@ -3662,21 +3671,26 @@ app.post('/gnap/call', function (req, res) {
     .then(function (response) {
       var answer = gnapProxy.readResponse(response.status,
           traceHeaders(response.headers), sink.raw);
+      var trace = buildHttpTrace(sentRequest, response, sink.raw, startedAt,
+          null);
       log.debug('Leaving POST /gnap/call. Answered ' + answer.status +
           (answer.error ? ' ' + answer.error : '') + '.');
-      return res.status(STATUS_200).json(answer);
+      return res.status(STATUS_200).json(withHttpTrace(answer, trace,
+          wantsTrace));
     })
     .catch(function (error) {
       var message = (error && error.message) ? error.message
           : String(error);
       log.warn('POST /gnap/call to ' + described.url + ' failed: ' +
           message);
+      var failed = buildHttpTrace(sentRequest, null, sink.raw, startedAt,
+          message);
       log.debug('Leaving POST /gnap/call. 502.');
-      return res.status(502).json({
+      return res.status(502).json(withHttpTrace({
         error: 'The authorization server could not be reached: ' +
             message,
         code: (error && error.code) || ''
-      });
+      }, failed, wantsTrace));
     });
 });
 

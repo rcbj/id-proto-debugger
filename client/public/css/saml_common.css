@@ -36,6 +36,18 @@
   margin: 0 0 8px;
 }
 
+/* Collapsible explanatory text: a <details> that stays closed until asked
+   for, so a page opens on its controls rather than on paragraphs. The XACML
+   and GNAP pages use it for every block of prose. */
+details.saml-explain { margin: 0 0 6px; font-size: 0.8em; color: #555; }
+details.saml-explain > summary {
+  cursor: pointer;
+  color: #1f4a6b;
+  font-size: 0.95em;
+}
+details.saml-explain > summary:hover { text-decoration: underline; }
+details.saml-explain p { margin: 4px 0; line-height: 1.4; }
+
 /* Generic hide used by show() for collapsible sections (signing / encryption). */
 .saml-hidden { display: none !important; }
 

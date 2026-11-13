@@ -345,11 +345,34 @@ function pageWiring() {
   assert.ok(html.indexOf('src="/js/gnap.js"') >= 0);
   assert.ok(/already\s+signed/.test(html));
   assert.ok(html.indexOf('href="/css/gnap.css"') >= 0);
-  ["gnap-note", "gnap-warn", "gnap-mono", "gnap-field",
-   "gnap-intro"].forEach(function (name) {
-    assert.ok(css.indexOf("." + name) >= 0,
-      "gnap.css does not define ." + name);
+  ["gnap-note", "gnap-warn", "gnap-mono", "gnap-inspect"]
+    .forEach(function (name) {
+      assert.ok(css.indexOf("." + name) >= 0,
+        "gnap.css does not define ." + name);
+    });
+  // The collapsible panes (saml_common.css's pattern), the collapse/expand
+  // all switch, folded explanatory text, an HTTP tab on each pane that
+  // makes a call, and the token detail hand-off.
+  assert.ok(html.indexOf('href="/css/saml_common.css"') >= 0 &&
+    html.indexOf('href="/css/debugger.css"') >= 0,
+    "gnap.html must load the pane and HTTP-tab styles");
+  ["gnap_pane_key", "gnap_pane_server", "gnap_pane_grant",
+   "gnap_pane_interaction", "gnap_pane_continuation", "gnap_pane_call",
+   "gnap_pane_exchange"].forEach(function (id) {
+    assert.ok(new RegExp('class="saml-pane" id="' + id + '"').test(html),
+      id + " is not a collapsible pane");
   });
+  assert.ok(html.indexOf('onchange="return gnap.setAllPanes(') >= 0,
+    "gnap.html has no collapse / expand all switch");
+  assert.ok(html.indexOf('class="saml-explain"') >= 0,
+    "the explanatory text is not folded");
+  ["server", "grant", "continuation", "call"].forEach(function (ch) {
+    assert.ok(html.indexOf('id="gnap_http_' + ch + '"') >= 0 &&
+      html.indexOf('id="gnap_tab_http_' + ch + '"') >= 0,
+      "the " + ch + " pane has no HTTP tab");
+  });
+  assert.ok(html.indexOf("type=gnap_access") >= 0,
+    "the access token has no token detail link");
   var card = index.match(
     /<a class="landing-card" href="\/gnap\.html"[^>]*>/);
   assert.ok(card, "the landing page does not link the GNAP page");

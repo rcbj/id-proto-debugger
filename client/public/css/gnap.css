@@ -1,4 +1,5 @@
-/* The GNAP page. Loaded last so it wins over bootstrap and common.css. */
+/* The GNAP page. Loaded last so it wins over bootstrap, common.css and
+   saml_common.css, whose saml-pane pattern the panes use. */
 
 .container {
   width: 96%;
@@ -10,37 +11,23 @@
   margin: 4px 0 2px;
 }
 
-.gnap-intro {
-  font-size: 0.9em;
-  line-height: 1.4;
-  color: #333;
+h3 {
+  margin: 4px 0 6px;
 }
 
-fieldset {
-  border: 1px solid #aaa;
-  border-radius: 6px;
-  padding: 8px 12px 12px;
-  margin: 12px 0;
+/* A row of inline controls, compact: the saml-row of saml_common.css with
+   the labels kept beside their controls. */
+.saml-pane .saml-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 10px 0 0;
+  font-size: 0.85em;
 }
 
-.gnap-row {
-  margin: 6px 0;
-}
-
-.gnap-row label,
-.gnap-field label {
-  margin-right: 10px;
-}
-
-.gnap-field {
-  margin: 6px 0;
-}
-
-.gnap-field input,
-.gnap-mono,
-.gnap-field textarea {
-  width: 100%;
-  box-sizing: border-box;
+.saml-pane .saml-row select {
+  width: auto;
+  margin: 0;
 }
 
 .gnap-mono {
@@ -48,9 +35,19 @@ fieldset {
   font-size: 0.85em;
 }
 
+.gnap-links {
+  margin: 0 0 4px;
+  font-size: 0.85em;
+}
+
 .gnap-note {
   color: #135;
-  min-height: 1.2em;
+  font-size: 0.85em;
+  margin: 0 0 6px;
+}
+
+.gnap-note:empty {
+  display: none;
 }
 
 .gnap-warn {
@@ -61,4 +58,38 @@ fieldset {
 #gnap_redirect,
 #gnap_user_code_uri {
   word-break: break-all;
+}
+
+/* Tighter than the SAML pages: a narrow label column so the controls
+   start near their names, and less air between and inside the panes. */
+.saml-pane {
+  margin: 0 0 8px;
+  padding: 2px 10px 8px;
+}
+
+.saml-pane > legend {
+  margin: 0 0 2px;
+}
+
+.saml-field {
+  margin: 0 0 4px;
+}
+
+.saml-field > label {
+  flex: 0 0 170px;
+  max-width: 170px;
+}
+
+.saml-pane button {
+  padding: 1px 8px;
+  font-size: 0.85em;
+}
+
+.saml-controls {
+  margin: 2px 0 6px;
+}
+
+.gnap-inspect {
+  margin-left: 6px;
+  font-weight: normal;
 }

@@ -278,6 +278,23 @@ function pageWiring() {
   assert.ok(/only\s+ones the PDP sees/.test(html),
     "the page must say the request is the whole attribute set");
   assert.ok(html.indexOf('href="/css/xacml.css"') >= 0);
+  // The collapsible panes, the switch, the Editor and SAML Tools panes,
+  // upload / download / copy, and folded explanatory text.
+  ["xacml_pane_repository", "xacml_pane_files", "xacml_pane_editor",
+   "xacml_pane_decision", "xacml_pane_saml_tools"].forEach(function (id) {
+    assert.ok(new RegExp('class="saml-pane" id="' + id + '"').test(html),
+      id + " is not a collapsible pane");
+  });
+  assert.ok(html.indexOf('onchange="return xacml.setAllPanes(') >= 0,
+    "xacml.html has no collapse / expand all switch");
+  ["xacml_upload", "xacml_export_layout"].forEach(function (id) {
+    assert.ok(html.indexOf('id="' + id + '"') >= 0,
+      "xacml.html is missing #" + id);
+  });
+  assert.ok(html.indexOf('class="saml-explain"') >= 0,
+    "the explanatory text is not folded");
+  assert.ok(html.indexOf("saml_tools.html?from=xacml.html") >= 0,
+    "the SAML Tools pane is missing");
   ["xacml-edit", "xacml-sub", "xacml-warn", "xacml-note",
    "xacml-tree", "xacml-attr"].forEach(function (name) {
     assert.ok(css.indexOf("." + name) >= 0,

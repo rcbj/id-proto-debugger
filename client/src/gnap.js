@@ -9,6 +9,11 @@
 
 var bunyan = require("bunyan");
 var engine = require("./gnap_client");
+// The collapsible panes and the collapse / expand all switch. Every pane
+// starts expanded on this page.
+var panes = require("./panes");
+// The HTTP tab of each pane that makes a call (OAuth2's drawing).
+var httpView = require("./http_view");
 
 var appconfig = {};
 try {
@@ -275,15 +280,66 @@ function requestBody() {
     val("gnap_class").trim());
 }
 
-async function deliver(prepared) {
-  log.debug("Entering deliver().");
+// THE HTTP TAB. Four panes make calls, and each shows its own last
+// exchange: server (Discover), grant (Send grant request), continuation
+// (Continue, Revoke grant, Rotate the client key) and call (Send).
+var HTTP_CHANNELS = ["server", "grant", "continuation", "call"];
+
+function showHttp(channel, view) {
+  log.debug("Entering showHttp(). " + channel);
+  httpView.drawHttpExchange(document.getElementById("gnap_http_" + channel),
+      view, "Nothing has been sent from this pane yet.");
+  var tab = document.getElementById("gnap_tab_http_" + channel);
+  if (tab) {
+    tab.textContent = "HTTP" + (view && view.response ?
+        " (" + view.response.status + ")" :
+        (view && view.failure ? " (no response)" : ""));
+  }
+  log.debug("Leaving showHttp().");
+}
+
+// One pane's Form / HTTP tabs.
+function selectTab(channel, which) {
+  log.debug("Entering selectTab(). " + channel + " " + which);
+  ["form", "http"].forEach(function (one) {
+    var on = one === which;
+    var panel = document.getElementById("gnap_tabpanel_" + one + "_" +
+        channel);
+    var tab = document.getElementById("gnap_tab_" + one + "_" + channel);
+    if (panel) {
+      panel.className = "dbg-tabpanel" + (on ? "" : " dbg-tabpanel-off");
+    }
+    if (tab) {
+      tab.className = "dbg-tab" + (on ? " dbg-tab-on" : "");
+      tab.setAttribute("aria-selected", on ? "true" : "false");
+    }
+  });
+  log.debug("Leaving selectTab().");
+  return false;
+}
+
+async function deliver(prepared, channel) {
+  log.debug("Entering deliver(). " + (channel || ""));
+  var started = Date.now();
   if (val("gnap_via") === "browser") {
-    var direct = await fetch(prepared.url, {
-      method: prepared.method,
-      headers: prepared.headers,
-      body: prepared.body ? prepared.body : undefined
-    });
+    var direct = null;
+    try {
+      direct = await fetch(prepared.url, {
+        method: prepared.method,
+        headers: prepared.headers,
+        body: prepared.body ? prepared.body : undefined
+      });
+    } catch (e) {
+      showHttp(channel, httpView.viewFromBrowser(prepared, null, e.message,
+          Date.now() - started));
+      log.debug("Leaving deliver(). Browser call failed.");
+      throw e;
+    }
     var directText = await direct.text();
+    showHttp(channel, httpView.viewFromBrowser(prepared, {
+      status: direct.status, statusText: direct.statusText,
+      headers: httpView.fetchHeaders(direct), body: directText
+    }, null, Date.now() - started));
     log.debug("Leaving deliver(). Browser " + direct.status);
     return {
       status: direct.status,
@@ -292,18 +348,40 @@ async function deliver(prepared) {
       error: engine.errorOf(parseJson(directText))
     };
   }
-  var response = await fetch(apiBase() + "/gnap/call", {
-    method: "POST",
+  var relayed = {
+    url: prepared.url,
+    method: prepared.method,
+    headers: prepared.headers,
+    body: prepared.body,
+    sslValidate: !checked("gnap_insecure"),
+    http_trace: true
+  };
+  var toApi = { method: "POST", url: apiBase() + "/gnap/call",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url: prepared.url,
-      method: prepared.method,
-      headers: prepared.headers,
-      body: prepared.body,
-      sslValidate: !checked("gnap_insecure")
-    })
-  });
+    body: JSON.stringify(relayed) };
+  var response = null;
+  try {
+    response = await fetch(toApi.url, { method: "POST",
+      headers: toApi.headers, body: toApi.body });
+  } catch (e) {
+    showHttp(channel, httpView.viewFromBrowser(toApi, null, e.message,
+        Date.now() - started));
+    log.debug("Leaving deliver(). The API did not answer.");
+    throw e;
+  }
   var payload = await response.json();
+  var trace = payload && payload.http_exchange;
+  if (trace) {
+    delete payload.http_exchange;
+    showHttp(channel, httpView.viewFromApiTrace(trace,
+        "Call to the authorization server", Date.now() - started));
+  } else {
+    showHttp(channel, httpView.viewFromBrowser(toApi, {
+      status: response.status, statusText: response.statusText,
+      headers: httpView.fetchHeaders(response),
+      body: JSON.stringify(payload, null, 2)
+    }, null, Date.now() - started));
+  }
   if (!response.ok) {
     log.debug("Leaving deliver(). API refused.");
     throw new Error(payload.error || ("The API returned " +
@@ -311,6 +389,30 @@ async function deliver(prepared) {
   }
   log.debug("Leaving deliver(). API " + payload.status);
   return payload;
+}
+
+// The access token, handed to the token detail page the OAuth2 workflow
+// uses (token_detail.html?type=gnap_access), which reads it from storage.
+function inspectToken() {
+  log.debug("Entering inspectToken().");
+  var token = val("gnap_token").trim();
+  if (!token) {
+    status("There is no access token to inspect yet.", true);
+    log.debug("Leaving inspectToken(). No token.");
+    return false;
+  }
+  try {
+    localStorage.setItem("gnap_access_token", token);
+  } catch (e) {
+    status("This browser would not store the token for the detail page.",
+        true);
+    log.debug("Leaving inspectToken(). Storage refused.");
+    return false;
+  }
+  window.location.assign("/token_detail.html?type=gnap_access&from=" +
+      "gnap.html");
+  log.debug("Leaving inspectToken().");
+  return false;
 }
 
 function parseJson(text) {
@@ -406,7 +508,7 @@ async function discover() {
       privateJwk: {},
       publicJwk: {}
     }, "OPTIONS", val("gnap_grant").trim(), { sign: false });
-    var answer = await deliver(prepared);
+    var answer = await deliver(prepared, "server");
     showExchange(prepared, answer);
     status("Discovery answered HTTP " + answer.status + ".");
   } catch (e) {
@@ -425,7 +527,7 @@ async function sendGrant() {
         json: requestBody(),
         proof: val("gnap_proof")
       });
-    var answer = await deliver(prepared);
+    var answer = await deliver(prepared, "grant");
     showExchange(prepared, answer);
     var code = answer.error || engine.errorOf(answer.body);
     status(code
@@ -458,7 +560,7 @@ async function continueGrant() {
       options.json = { interact_ref: ref };
     }
     var prepared = await engine.prepare(record(), "POST", uri, options);
-    var answer = await deliver(prepared);
+    var answer = await deliver(prepared, "continuation");
     showExchange(prepared, answer);
     var code = answer.error || engine.errorOf(answer.body);
     if (code === "too_fast") {
@@ -491,7 +593,7 @@ async function revokeGrant() {
       token: val("gnap_continue_token").trim(),
       proof: val("gnap_proof")
     });
-    var answer = await deliver(prepared);
+    var answer = await deliver(prepared, "continuation");
     showExchange(prepared, answer);
     status("Revocation answered HTTP " + answer.status + ".");
   } catch (e) {
@@ -518,7 +620,7 @@ async function rotateKey() {
       json: { key: engine.keyObject(next, val("gnap_proof")) },
       rotateTo: next
     });
-    var answer = await deliver(prepared);
+    var answer = await deliver(prepared, "continuation");
     showExchange(prepared, answer);
     var code = answer.error || engine.errorOf(answer.body);
     if (!code && answer.status >= 200 && answer.status < 300) {
@@ -555,7 +657,7 @@ async function sendCall() {
     var prepared = await engine.prepare(record(),
       val("gnap_call_method") || "POST",
       val("gnap_call_url").trim(), options);
-    var answer = await deliver(prepared);
+    var answer = await deliver(prepared, "call");
     showExchange(prepared, answer);
     status("Call answered HTTP " + answer.status + ".");
   } catch (e) {
@@ -672,6 +774,10 @@ window.onload = function () {
 };
 
 module.exports = {
+  togglePane: panes.togglePane,
+  setAllPanes: panes.setAllPanes,
+  selectTab: selectTab,
+  inspectToken: inspectToken,
   generate: generate,
   usePasted: usePasted,
   onSaveChange: onSaveChange,
