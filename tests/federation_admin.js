@@ -15,8 +15,10 @@
 // result: who a person IS in a realm (`subjectOf()`), and what the service
 // provider files them under (`federatedNameOf()`, `localNameAt()`, and
 // `pinSubjectPolicy()`, which decides it — see the note above it for why the
-// jobs pin the policy they do), and how a realm is let dial its partner's
-// back channel (`trustPartnerTls()`).
+// jobs pin the policy they do). `prepareFederatedSignIn()` is the product-mode
+// half of that: the person, the link and the password a product realm will
+// actually accept. `trustPartnerTls()` is how a realm is let dial its
+// partner's back channel.
 //
 // ---------------------------------------------------------------------------
 // WHY `/admin-api` AND NOT THE `/admin` CONSOLE.
@@ -224,28 +226,58 @@ async function federatedNameOf(idpBase, name, spBase, relationship) {
 //                          plain name. DEVELOPMENT ONLY: product refuses to
 //                          set it (STS-FED-0095).
 //
-// WHAT THE FEDERATION JOBS HERE PIN, AND WHY IT IS `any-existing`. Each of
-// them signs in a person the service provider has never seen and asserts two
-// things about the result: that the SP CREATED the entry at the first
-// federated sign-in, and that the application's tokens name NEITHER the
-// partner realm NOR the relationship — "the one property the whole feature
-// exists to have", in federation_sso.js's words. Under the default policy
-// the created entry is `<relationship>~<name>`, and the relationship ids here
-// ARE partner realm names (`federation-realm-2`, `choice-saml2`, the chain's
+// WHAT THE FEDERATION JOBS HERE PIN. Each of them asserts that the
+// application's tokens name NEITHER the partner realm NOR the relationship
+// — "the one property the whole feature exists to have", in
+// federation_sso.js's words. Under the default policy a created entry is
+// `<relationship>~<name>`, and the relationship ids here ARE partner realm
+// names (`federation-realm-2`, `choice-saml2`, the chain's
 // `federation-realm-4`), so the SP's own username would carry the partner
-// into every ID Token and the second assertion could not hold. `pre-linked`
-// keeps the names but provisions the person BEFORE the sign-in, which is the
-// first assertion gone, and it needs the partner's `urn:uuid:` subject before
-// anybody has signed in there. `any-existing` keeps both assertions exactly
-// as they were; what it costs is that these jobs need a DEVELOPMENT realm,
-// which they already did — product never creates a federated person
-// (STS-FED-0090), and the partner realms here check no password. The subject
-// policies themselves are the mock's own job to test
-// (`sts_federation_subject_policy.js` in iya-sts), and an sts from before #109
-// has no such attribute, so it is set only where the relationship's own
-// `editable` list names it.
+// into every ID Token. `jit-namespaced` does the same.
+//
+// DEVELOPMENT pins `any-existing`, which keeps the mapped name and creates
+// the entry at the sign-in. PRODUCT refuses that value (STS-FED-0095) and
+// does not autocreate a federated person (STS-FED-0090; `fedAutocreateUsers`
+// defaults off, and `mode.autoCreates()` is off). It also checks the
+// password, and it requires a front-channel assertion to be encrypted unless
+// `fedAllowUnencrypted` is on. So product pins `pre-linked` — the link is
+// found before the policy, so the local name stays the mapped one — turns
+// plaintext on where the relationship lists that field, and
+// `prepareFederatedSignIn()` creates both people and the link before the
+// browser starts. A SAML or WS-Federation subject is the username. An OAuth
+// 2.0 or OpenID Connect subject is the IdP's `urn:uuid:`, filed locally as
+// `sub-<uuid>`, which does not contain the partner realm.
+//
+// The subject policies themselves are iya-sts's own job to test
+// (`sts_federation_subject_policy.js`), and an sts from before #109 has no
+// such attribute, so it is set only where the relationship's own `editable`
+// list names it.
 // ---------------------------------------------------------------------------
 const SUBJECT_POLICY_FOR_TESTS = "any-existing";
+const PRODUCT_SUBJECT_POLICY = "pre-linked";
+
+// Long enough for the default password profile (twelve characters) and free
+// of every realm id these jobs use, which product treats as a context word.
+const PRODUCT_SIGNIN_PASSWORD = "Qk7-signin-vault-42";
+
+// Whether the realm at `base` is in product mode. Cached: a job asks once
+// per realm and then again from the sign-in helper. Read through
+// sts_applications.js so there is one detector.
+const productByBase = {};
+
+async function realmIsProduct(base) {
+  logger().debug("Entering realmIsProduct().");
+  if (Object.prototype.hasOwnProperty.call(productByBase, base)) {
+    logger().debug("Leaving realmIsProduct(). Cached " +
+                   productByBase[base] + ".");
+    return productByBase[base];
+  }
+  const registry = require("./sts_applications.js");
+  const product = await registry.isProduct(base);
+  productByBase[base] = product;
+  logger().debug("Leaving realmIsProduct(). " + product);
+  return product;
+}
 
 // Where `fedSubjectPolicy` is known, per relationship, once read: null for an
 // sts that predates it, otherwise the policy in force (empty meaning the
@@ -277,38 +309,93 @@ async function subjectPolicyOf(spBase, relationship) {
   return policy;
 }
 
-// Put SUBJECT_POLICY_FOR_TESTS on a service-provider-side relationship, where
-// the sts knows the attribute. Answers true when it was set and false for an
-// sts from before #109, which behaves that way with no attribute at all.
+// Product requires a front-channel assertion to be encrypted unless the
+// relationship opts out. SAML 2.0 and WS-Federation always cross the browser;
+// an OpenID Connect ID Token does when the response type puts one there.
+// The field is listed only for those protocols, so OAuth 2.0 and SAML 1.1
+// are left alone — writing it there is STS-FED-0143.
+async function allowPlainFrontChannel(spBase, relationship) {
+  logger().debug("Entering allowPlainFrontChannel(). " + relationship);
+  const view = await adminGet(spBase,
+    "/federation?relationship=" + encodeURIComponent(relationship));
+  const listed = (view.editable || []).some(function (row) {
+    return row && row.name === "fedAllowUnencrypted";
+  });
+  if (!listed) {
+    logger().debug("Leaving allowPlainFrontChannel(). This protocol " +
+                   "does not encrypt.");
+    return;
+  }
+  const result = await adminPost(spBase, "/federation/set", {
+    id: relationship, field: "fedAllowUnencrypted", value: "TRUE"
+  });
+  assert.ok(result.ok,
+    "Setting fedAllowUnencrypted=TRUE on \"" + relationship + "\" at " +
+    spBase + " was refused: " + JSON.stringify(result.errors || result) +
+    ". Product mode refuses a plaintext front-channel assertion unless " +
+    "this is on, and these jobs do not carry an encryption key.");
+  logger().info("[federation] \"" + relationship + "\" accepts a " +
+                "plaintext front-channel assertion " +
+                "(fedAllowUnencrypted=TRUE).");
+  logger().debug("Leaving allowPlainFrontChannel().");
+}
+
+// Put the subject policy these jobs can assert against on a
+// service-provider-side relationship, where the sts knows the attribute.
+// Development gets any-existing. Product gets pre-linked, and plaintext
+// front-channel assertions where that field exists. Answers true when a
+// policy was set and false for an sts from before #109.
 async function pinSubjectPolicy(spBase, relationship) {
   logger().debug("Entering pinSubjectPolicy(). " + relationship);
   const key = spBase + " " + relationship;
   delete policyByRelationship[key];
   if ((await subjectPolicyOf(spBase, relationship)) === null) {
+    if (await realmIsProduct(spBase)) {
+      assert.ok(false,
+        spBase + " is in product mode and \"" + relationship +
+        "\" publishes no fedSubjectPolicy. Product refuses any-existing " +
+        "and does not autocreate a federated person, so this job cannot " +
+        "sign in there.");
+    }
     logger().info("[federation] " + spBase + " predates fedSubjectPolicy " +
                   "(iya-sts #109), so \"" + relationship + "\" matches the " +
                   "mapped name onto a local person without being told to.");
     logger().debug("Leaving pinSubjectPolicy(). Before #109.");
     return false;
   }
+  const product = await realmIsProduct(spBase);
+  const policy = product ? PRODUCT_SUBJECT_POLICY
+                         : SUBJECT_POLICY_FOR_TESTS;
   const result = await adminPost(spBase, "/federation/set",
-    { id: relationship, field: "fedSubjectPolicy",
-      value: SUBJECT_POLICY_FOR_TESTS });
-  assert.ok(result.ok,
-    "Setting fedSubjectPolicy=" + SUBJECT_POLICY_FOR_TESTS + " on \"" +
-    relationship + "\" at " + spBase + " was refused: " +
-    JSON.stringify(result.errors || result) + ". That value is " +
-    "development-only (STS-FED-0095), and this job needs it for the reason " +
-    "federation_admin.js gives: it asserts a person CREATED at the first " +
-    "federated sign-in, which a product-mode realm never does. Run it " +
-    "against a development realm.");
+    { id: relationship, field: "fedSubjectPolicy", value: policy });
+  if (product) {
+    assert.ok(result.ok,
+      "Setting fedSubjectPolicy=" + policy + " on \"" + relationship +
+      "\" at " + spBase + " was refused: " +
+      JSON.stringify(result.errors || result) + ". Product mode refuses " +
+      "any-existing (STS-FED-0095); pre-linked keeps the mapped name.");
+    await allowPlainFrontChannel(spBase, relationship);
+  } else {
+    assert.ok(result.ok,
+      "Setting fedSubjectPolicy=" + policy + " on \"" + relationship +
+      "\" at " + spBase + " was refused: " +
+      JSON.stringify(result.errors || result) + ". That value is " +
+      "development-only (STS-FED-0095). Run this job against a " +
+      "development realm, or a product one, which pins pre-linked.");
+  }
   delete policyByRelationship[key];
   const now = await subjectPolicyOf(spBase, relationship);
-  assert.strictEqual(now, SUBJECT_POLICY_FOR_TESTS,
-    "\"" + relationship + "\" was set to fedSubjectPolicy=" +
-    SUBJECT_POLICY_FOR_TESTS + " and its entry says \"" + now + "\".");
-  logger().info("[federation] \"" + relationship + "\" matches the mapped " +
-                "name onto a local person (fedSubjectPolicy=" + now + ").");
+  assert.strictEqual(now, policy,
+    "\"" + relationship + "\" was set to fedSubjectPolicy=" + policy +
+    " and its entry says \"" + now + "\".");
+  if (product) {
+    logger().info("[federation] \"" + relationship + "\" signs in only a " +
+                  "person linked beforehand (fedSubjectPolicy=" + now + ").");
+  } else {
+    logger().info("[federation] \"" + relationship + "\" matches the " +
+                  "mapped name onto a local person (fedSubjectPolicy=" +
+                  now + ").");
+  }
   logger().debug("Leaving pinSubjectPolicy(). Set.");
   return true;
 }
@@ -341,6 +428,69 @@ async function localNameAt(spBase, relationship, name) {
 }
 
 // ---------------------------------------------------------------------------
+// A SIGN-IN A PRODUCT REALM WILL ACCEPT (iya-sts #109, #168).
+//
+// Called after the relationship exists and the username is known, and before
+// the browser starts. Development returns `{ password: null }` and the job
+// keeps typing the dummy password: that mode checks none.
+//
+// A product IdP gets a real account and the password to type. A product SP
+// gets the person under the mapped name and a federation link to the subject
+// the partner will send — the username for a NameID, the IdP's `urn:uuid:`
+// for an OAuth 2.0 or OpenID Connect hop. The link is what pre-linked finds
+// first, so the local name stays the mapped one. An IdP that is still in
+// development is not given that password to type: it accepts the dummy even
+// after the account exists, which an OpenID Connect hop needs so `subjectOf()`
+// has a `urn:uuid:` to link.
+//
+// `spec.subjectKind` is `nameid` or `partner-subject`.
+// ---------------------------------------------------------------------------
+async function prepareFederatedSignIn(spec) {
+  logger().debug("Entering prepareFederatedSignIn(). " +
+                 spec.relationship);
+  const kind = spec.subjectKind;
+  assert.ok(kind === "nameid" || kind === "partner-subject",
+    "prepareFederatedSignIn() was given subjectKind \"" + kind +
+    "\". It is nameid or partner-subject.");
+  const idpProduct = await realmIsProduct(spec.idpBase);
+  const spProduct = await realmIsProduct(spec.spBase);
+  if (!idpProduct && !spProduct) {
+    logger().debug("Leaving prepareFederatedSignIn(). Development.");
+    return { password: null };
+  }
+  const registry = require("./sts_applications.js");
+  const password = PRODUCT_SIGNIN_PASSWORD;
+  if (idpProduct || (spProduct && kind === "partner-subject")) {
+    await registry.ensurePerson(spec.idpBase, spec.username, password);
+  }
+  if (spProduct) {
+    let subject = spec.username;
+    let localName = spec.username;
+    if (kind === "partner-subject") {
+      subject = await subjectOf(spec.idpBase, spec.username);
+      localName = "sub-" +
+        subject.slice("urn:uuid:".length).toLowerCase();
+    }
+    await registry.ensurePerson(spec.spBase, localName, password);
+    const linked = await adminPost(spec.spBase, "/users/federation-link", {
+      user: localName,
+      relationship: spec.relationship,
+      subject: subject
+    });
+    assert.ok(linked && linked.ok,
+      "Linking \"" + localName + "\" to subject \"" + subject +
+      "\" through \"" + spec.relationship + "\" was refused: " +
+      JSON.stringify((linked && linked.errors) || linked) +
+      ". pre-linked signs nobody in without that link (STS-FED-0091).");
+    logger().info("[federation] \"" + localName + "\" is linked to \"" +
+                  subject + "\" through \"" + spec.relationship + "\".");
+  }
+  logger().debug("Leaving prepareFederatedSignIn(). " +
+                 (idpProduct ? "Password provisioned." : "Dummy password."));
+  return { password: idpProduct ? password : null };
+}
+
+// ---------------------------------------------------------------------------
 // LETTING A REALM DIAL ITS PARTNER'S BACK CHANNEL (iya-sts #171, 2026-09-23).
 //
 // An OAuth 2.0 or OpenID Connect relationship redeems its code at the
@@ -360,8 +510,12 @@ async function localNameAt(spBase, relationship, name) {
 //     mock was given no certificate and makes its own at every start — a
 //     bare `docker run`, or ./remote-run-tests.sh against somebody else's
 //     mock. There is no file to name then, and nothing better to do.
+//     Product refuses that write. With no certificate file this function
+//     fails instead of posting it.
 //   * `federation.outboundAllowHttp` as well, when the realm is served over
-//     plain http, because that is a separate refusal now.
+//     plain http, because that is a separate refusal now. Product accepts
+//     the write and ignores it at dial time (STS-FED-0112), so a product
+//     realm on plain http fails here rather than pretending the waiver works.
 //
 // An sts from before #171 knows none of the three, and there the old setting
 // is still the answer — one branch, so it is kept.
@@ -400,6 +554,25 @@ async function trustPartnerTls(spBase, realm, why) {
     }
     if (/^http:/i.test(spBase)) {
       writes.push({ key: "federation.outboundAllowHttp", value: "true" });
+    }
+  }
+  if (await realmIsProduct(spBase)) {
+    const waived = writes.filter(function (write) {
+      return write.key === "federation.outboundSkipTlsVerification" ||
+             write.key === "federation.outboundAllowHttp" ||
+             write.key === "federation.outboundAllowInsecure";
+    });
+    if (waived.length) {
+      assert.ok(false,
+        realm + " is in product mode, which will not waive the back " +
+        "channel (" + why + "). It needs tls.certificateFile so " +
+        "federation.outboundCaFile can name the stack certificate. " +
+        "outboundSkipTlsVerification is development only, and plain " +
+        "http is refused at dial time (STS-FED-0112) even when " +
+        "outboundAllowHttp is stored. This job would have written: " +
+        waived.map(function (write) {
+          return write.key + "=" + write.value;
+        }).join(", ") + ".");
     }
   }
   for (const write of writes) {
@@ -442,5 +615,7 @@ module.exports = {
   subjectPolicyOf: subjectPolicyOf,
   pinSubjectPolicy: pinSubjectPolicy,
   localNameAt: localNameAt,
+  prepareFederatedSignIn: prepareFederatedSignIn,
+  realmIsProduct: realmIsProduct,
   SUBJECT_POLICY_FOR_TESTS: SUBJECT_POLICY_FOR_TESTS
 };
