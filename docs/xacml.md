@@ -3,7 +3,8 @@
 Covers `client/public/xacml.html`, `client/src/xacml.js`,
 `client/src/xacml_workbench.js`, `client/src/xacml_draw.js`,
 `client/src/xacml_runtime.js`, the engine under `client/src/xacml/`,
-`client/public/css/xacml.css` and `tests/xacml_engine.js`.
+`client/public/css/xacml.css`, `tests/xacml_engine.js` and
+`tests/xacml_page.js`.
 
 The page is the XACML editor and the "Try a decision" tool from the
 iya-sts admin console, as a debugger workflow. It was added for
@@ -81,6 +82,21 @@ writers and the PDP. `xacml_draw.js` returns HTML. The modules under
 `client/src/xacml/` parse, validate and evaluate. `tests/xacml_engine.js`
 drives the workbench in node for that reason. A round trip that only
 went through the page would agree with itself whatever the engine did.
+
+## The page test
+
+`tests/xacml_page.js` drives the page in Chrome: decisions, a Match
+edit, an ill-typed edit refused, a rule added and removed, the ALFA
+view imported back, the decision root, a reload, and Remove.
+
+The page redraws the editor with `innerHTML` after every edit, so an
+element handle held across an edit goes stale. iya-sts's job for the
+same editor fails intermittently for that kind of reason. This test
+finds, fills and submits each form inside one in-page script, waits on
+the status line and the decision rather than on elements, reads what
+was saved from `localStorage`, and never needs a control to be
+visible, so collapsed panes do not affect it. A wait that times out
+reports what the page showed.
 
 ## The static sites
 

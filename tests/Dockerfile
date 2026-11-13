@@ -737,7 +737,7 @@ COPY tests/hash_engine.js ./
 # hashing job above: the subject is the client source tree this image
 # has just staged, and a flat copy would make the workbench exist
 # twice. The stylesheet is not in that HTML copy, so it is named.
-COPY tests/xacml_engine.js ./
+COPY tests/xacml_engine.js tests/xacml_page.js ./
 COPY client/public/css/xacml.css /usr/src/client/public/css/xacml.css
 # The GNAP client instance, in node, and one signed grant against
 # iya-sts. The stylesheet is not in the HTML copy above. The proxy

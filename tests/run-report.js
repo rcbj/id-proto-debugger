@@ -1381,6 +1381,18 @@ function buildJobs() {
     env: {},
   });
 
+  // The XACML editor page in a browser: decisions, a Match edit, an
+  // ill-typed edit refused, a rule added and removed, the ALFA view
+  // imported back, the decision root, a reload, and Remove. Every action
+  // runs inside one in-page script, so no element handle outlives a
+  // re-render. Needs the client only.
+  jobs.push({
+    name: "XACML editor page (edits, ALFA round trip and decisions, " +
+        "in the browser)",
+    script: "xacml_page.js",
+    env: {},
+  });
+
   // GNAP client instance. The signature checks need no network. The
   // live half must obtain a grant from iya-sts with each of httpsig,
   // jwsd and jws for the page's default sample (subject information),
