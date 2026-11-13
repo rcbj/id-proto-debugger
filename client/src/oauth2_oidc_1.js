@@ -2687,10 +2687,11 @@ function buildDefaultClientMetadata() {
       discoveryInfo.scopes_supported.length) {
     md.scope = discoveryInfo.scopes_supported.join(" ");
   }
-  // The three partners above are the client's own preferences.
-  // applyChoices overwrites them, together with the arrays section 4
-  // sends beside them. Discovery stays on the Configuration pane.
-  md = rpMetadataChoices.applyChoices(md);
+  // The three partners above are the client's own preferences, not
+  // discovery's. The section 4 choice arrays are NOT added here: a
+  // provider that does not implement RP Metadata Choices may refuse
+  // members it does not know (Keycloak answers 400 "Unrecognized field
+  // subject_types_supported"). Apply RP metadata choices adds them.
   log.debug("Leaving buildDefaultClientMetadata().");
   return md;
 }

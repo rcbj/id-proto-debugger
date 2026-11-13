@@ -1238,7 +1238,7 @@ function buildJobs() {
   // input, so the job never skips and takes no env.
   jobs.push({
     name: "RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens, in node)",
-    script: "rfc9068.js",
+    script: "rfc9068_engine.js",
     env: {},
   });
 
@@ -1249,7 +1249,7 @@ function buildJobs() {
   jobs.push({
     name: "RP Metadata Choices (OpenID Connect RP Metadata Choices " +
         "1.0, in node)",
-    script: "rp_metadata_choices.js",
+    script: "rp_metadata_choices_engine.js",
     env: {},
   });
 

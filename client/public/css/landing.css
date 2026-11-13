@@ -243,10 +243,11 @@
 .landing-card:nth-child(16) .landing-icon { color: #7a3f5f; }
 .landing-card:nth-child(17) .landing-icon { color: #3a6ea5; }
 /* The eighteenth card is XACML. Smart cards took the tenth place, so
-   the accent written for XACML when it was seventeenth now colours
-   the seventeenth card. A card with no rule of its own uses the body
-   colour, and landingFitsOnOneScreen() fails that card. */
-.landing-card:nth-child(18) .landing-icon { color: #245a8c; }
+   the accent that used to sit on the seventeenth card colours Shared
+   Signals now. This olive is XACML's own. A card with no rule of its
+   own uses the body colour, and landingFitsOnOneScreen() fails that
+   card. */
+.landing-card:nth-child(18) .landing-icon { color: #5f7a3f; }
 /* The nineteenth card is GNAP. Ten columns, in the grid note above. */
 .landing-card:nth-child(19) .landing-icon { color: #0b6e4f; }
 .landing-card:hover .landing-icon,

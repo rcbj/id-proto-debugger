@@ -36,7 +36,26 @@ var log = bunyan.createLogger({
 });
 log.info("Log initialized. logLevel=" + log.level());
 
-const REPO = path.resolve(__dirname, "..");
+// In a checkout the sources are beside tests/. In the tests image they are
+// the complete copy tests/Dockerfile stages at /usr/src/source-tree, which is
+// ../source-tree from /usr/src/app (the image's ../client/src is a partial
+// mirror). The first candidate holding client/package.json wins.
+function repoRoot() {
+  log.debug("Entering repoRoot().");
+  var candidates = [path.resolve(__dirname, ".."),
+                    path.resolve(__dirname, "..", "source-tree")];
+  var i;
+  for (i = 0; i < candidates.length; i++) {
+    if (fs.existsSync(path.join(candidates[i], "client", "package.json"))) {
+      log.debug("Leaving repoRoot(). " + candidates[i]);
+      return candidates[i];
+    }
+  }
+  log.debug("Leaving repoRoot(). None found.");
+  return candidates[0];
+}
+
+const REPO = repoRoot();
 const SRC = path.join(REPO, "client", "src");
 const PUBLIC = path.join(REPO, "client", "public");
 const paths = require("./module_paths.js");
