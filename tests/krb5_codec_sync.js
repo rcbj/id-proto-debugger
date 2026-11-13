@@ -34,13 +34,15 @@
 //      and copy B DECRYPTS. A divergence in key usage numbers, in what the MAC
 //      covers, in string-to-key, or in a context tag fails this and nothing else
 //      would.
-//   2. **A file comparison**, which catches drift before it has consequences and
-//      names the one command that fixes it.
+//   2. **A file comparison**, retired on 2026-11-12 (see the note above
+//      test()): iya-sts's codec is its own now.
 //
-// If the submodule is not initialised there is nothing to compare, and this test
-// says so and passes rather than pretending: an uninitialised submodule is an
-// EMPTY DIRECTORY, and reporting that as a codec failure would send somebody
-// looking in the wrong place entirely.
+// If the submodule is not initialised there is nothing to compare, and this
+// test DECLARES A SKIP (declineToRun(), exit 42, recorded as SKIP in the
+// report) rather than passing: an uninitialised submodule is an EMPTY
+// DIRECTORY, which is a fact about this checkout and not a codec failure,
+// but a green result would say the comparison happened. Until 2026-11-13 it
+// logged a warning and exited 0, which the report counted as a pass.
 //
 // No browser and no services: node only.
 // ---------------------------------------------------------------------------
@@ -48,6 +50,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
+const { declineToRun } = require("./expectation.js");
 const paths = require("./module_paths.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -156,9 +159,9 @@ function findVendoredDir() {
           " is INCOMPLETE: it has " +
         present.join(", ") + " but not " +
             MODULES.filter(function (m) { return present.indexOf(m) === -1; }).join(", ") +
-        ". Run common/krb5/sync-to-mock-sts.sh — a partial copy will fail to " +
-            "load rather than " +
-        "merely disagree.");
+        ". Update the sts/ submodule (git submodule update --init " +
+            "--recursive sts) — a partial copy will fail to load rather " +
+            "than merely disagree.");
     }
   }
   log.debug("Leaving findVendoredDir().");
@@ -609,9 +612,9 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
 // eventually stops being cosmetic. iya-sts #1280 ended the premise: those
 // modules are that service's OWN now — they carry its SPDX lines (BUSL-1.1),
 // its style rules and its logging — so there is no longer one file in two
-// places for a hash to hold together, and common/krb5/sync-to-mock-sts.sh,
-// which that assertion told you to run, would overwrite somebody else's
-// licensed source with this repository's.
+// places for a hash to hold together, and the sync script that assertion
+// told you to run (deleted on 2026-11-13) would have overwritten somebody
+// else's licensed source with this repository's.
 //
 // What remains is the check that was always the point: the two
 // IMPLEMENTATIONS still agree on the wire, cross-wise, above. Two codecs that
@@ -631,18 +634,16 @@ async function test() {
 
   const vendored = findVendoredDir();
   if (!vendored) {
-    // Said plainly, and passing. An uninitialised submodule is an empty
-    // directory, and reporting that as a codec failure sends somebody looking
-    // in the wrong place. What is NOT acceptable is being silent about it,
-    // because then a green run looks like the comparison happened.
-    log.warn("NO VENDORED COPY FOUND, so the two copies were NOT compared. " +
-        "The mock STS is the " +
-      "sts/ SUBMODULE: run `git submodule update --init sts`. An " +
-          "uninitialised submodule is an " +
-      "EMPTY DIRECTORY rather than a missing one, which is why this is a " +
-          "warning about the " +
-      "checkout and not a failure of the codec.");
-    log.info("Test completed successfully.");
+    // A declared skip, not a pass and not a failure. An uninitialised
+    // submodule is an empty directory: a fact about this checkout (tests/
+    // CLAUDE.md, "the prerequisite is genuinely ABSENT"), so calling it a
+    // codec failure sends somebody looking in the wrong place, and calling
+    // it a pass says the comparison happened.
+    declineToRun(log, "no iya-sts Kerberos codec found (sts/ submodule, " +
+        "./sts in the tests image, or a sibling ../iya-sts), so the two " +
+        "codecs were NOT compared. Run `git submodule update --init " +
+        "--recursive sts`.");
+    log.debug("Leaving test(). Skipped.");
     return;
   }
   log.info("comparing common/krb5 against " + vendored.what + " (" +
