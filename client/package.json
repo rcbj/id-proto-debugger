@@ -15,6 +15,7 @@
     "@noble/curves": "1.4.0",
     "@noble/hashes": "1.4.0",
     "@noble/post-quantum": "^0.4.1",
+    "@xmldom/xmldom": "0.9.12",
     "asn1js": "^3.0.10",
     "bunyan": "latest",
     "create-hash": "^1.2.0",

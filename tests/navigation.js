@@ -114,8 +114,11 @@ async function checkFooterVersion(driver, where) {
 // The prefix is listed anyway so that the day it does, or the day another page
 // borrows an `ldap-` class, the guard is already in force rather than being
 // remembered. tests/ldap_page.js makes the same check for that page directly.
+// `xacml` is listed for the same reason. The page ships on the static sites,
+// and tests/xacml_engine.js checks that xacml.css defines the classes the
+// page draws. The walk below does not open it.
 
-var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki|ldap)-/;
+var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki|ldap|xacml)-/;
 
 async function checkStylesheetsLoaded(driver, where) {
   log.debug("Entering checkStylesheetsLoaded(). where=" + where);
