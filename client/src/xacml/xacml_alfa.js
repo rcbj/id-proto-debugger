@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 'use strict';
 //
-// File: xacml_alfa.ts
+// File: xacml_alfa.js
 //
 // ---------------------------------------------------------------------------
 // ALFA — THE ABBREVIATED LANGUAGE FOR AUTHORIZATION — READ AND WRITTEN.
@@ -22,9 +22,8 @@
 // So this file is a parser and an emitter over the same model the XML reader
 // produces, and NOTHING downstream knows which one a policy came from — see
 // `xacml_model.js`'s header for why that is the rule this directory is built
-// on. It is also what made this phase cheap: the model, the validator and the
-// writer were already there, so ALFA is a syntax and not a second policy
-// system.
+// on. The model, the validator and the XML writer are shared, so ALFA is a
+// syntax and not a second policy system.
 //
 // ---------------------------------------------------------------------------
 // ALFA IS A COMMITTEE SPECIFICATION DRAFT, NOT A RATIFIED STANDARD.
@@ -32,8 +31,8 @@
 // It was Axiomatics' language, contributed to the OASIS XACML TC, and it has
 // never gone to Committee Specification. There is no conformance suite for it,
 // no schema, and no second implementation to disagree with — which is a very
-// different footing from the rest of this directory, where 455 cases somebody
-// else wrote hold the engine honest.
+// different footing from the rest of this directory, where the OASIS XACML 3.0
+// conformance cases somebody else wrote hold the engine honest.
 //
 // So the contract this file offers is one it can actually keep, stated rather
 // than implied:
@@ -41,15 +40,15 @@
 //   **ANYTHING THIS EMITTER WRITES, THIS PARSER READS, AND THE POLICY DECIDES
 //   IDENTICALLY EITHER WAY.**
 //
-// `tests/xacml_alfa.js` asserts exactly that, in both directions, over every
-// policy the templates can build and over the seeded one. What this file does
+// `tests/xacml_engine.js` asserts it for the sample policy, for every
+// comparison operator, and for MustBePresent and Issuer. What this file does
 // NOT claim is that it reads every ALFA document in the world: the language
 // has corners — macros, `advice` at namespace scope, imports across files —
 // that nothing here emits and nothing here parses, and it says so when it
 // meets one rather than guessing.
 //
 // ---------------------------------------------------------------------------
-// FOUR PLACES THIS DIALECT IS EXPLICIT WHERE ALFA IS VAGUE, AND EACH IS
+// FIVE PLACES THIS DIALECT IS EXPLICIT WHERE ALFA IS VAGUE, AND EACH IS
 // WRITTEN DOWN BECAUSE A READER WILL OTHERWISE THINK IT IS A BUG.
 //
 // 1. TYPED LITERALS. ALFA has native syntax for strings, integers, booleans
@@ -81,8 +80,6 @@
 //    emitter has always written it as the bare short name, which is the only
 //    spelling ALFA has; the parser read it as an attribute reference and
 //    refused the document, so `anyOfAny` round-tripped in one direction only.
-//    It was found the day the first policy here used one — the `role-issuance`
-//    template, whose whole condition is an intersection test.
 //
 //    **A DECLARATION WINS.** A name that is BOTH declared as an attribute and
 //    the short name of a function is the attribute, because the declaration is
@@ -91,24 +88,26 @@
 //    not hand a designator a short name that a function already owns, and
 //    numbers it instead. Point 3's refusal is unchanged for every name that is
 //    neither — it just says so about both kinds now.
-// ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// TYPESCRIPT, AS A CLASS (#50, 2026-09-16) — `common/realm_chooser.ts`'s
-// shape: `AlfaLanguage` takes the logger and the three engine modules it reads
-// (`xacml_model.js`, `xacml_datatypes.js`, `xacml_functions.js`, which stay
-// JavaScript because the remote PEP's image copies them by name) through its
-// constructor. The name tables that come from `xacml_model.js` alone stay
-// module-level constants and are static members; the index of functions by
-// their ALFA name is built from the function library, so it is built by the
-// constructor and is an instance member. The parser's helpers stay closures
-// inside `parse()`, because they share its position in the token list.
 //
-// The module still exports every old name, for `xacml_admin.ts` and
-// `tests/xacml_alfa.js`: each function a FACADE forwarding to the instance the
-// composition root builds and installs (#50's R2), and the function index a
-// getter reading that instance's. A process without the root builds a
-// default when this module loads — which is also what builds the function
-// index at load, as the original did.
+// 5. MUSTBEPRESENT AND ISSUER BELONG TO A USE, NOT TO A DECLARATION. They are
+//    written in brackets after the short name, as Axiomatics' ALFA reference
+//    spells them: `role[mustbepresent]`, `role[issuer="..."]` and
+//    `role[mustbepresent issuer="..."]`. Two uses of one attribute may differ,
+//    which is why the `attribute` declaration does not carry them.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// A CLASS WITH ITS DEPENDENCIES PASSED IN. `AlfaLanguage` takes the logger
+// and the three engine modules it reads (`xacml_model.js`,
+// `xacml_datatypes.js`, `xacml_functions.js`) through its constructor. The
+// name tables that come from `xacml_model.js` alone are module-level
+// constants and static members; the index of functions by their ALFA name is
+// built from the function library, so it is built by the constructor and is
+// an instance member. The parser's helpers are closures inside `parse()`,
+// because they share its position in the token list.
+//
+// The module exports each method as a function forwarding to the one
+// instance `xacml_slot.js` holds, and the function index as a getter reading
+// that instance's. The instance is built when this module loads.
 // ---------------------------------------------------------------------------
 const helpers = require("../xacml_runtime");
 const InstanceSlot = require("./xacml_slot");
@@ -192,7 +191,7 @@ class AlfaLanguage {
     constructor(deps) {
         this.deps = deps;
         // The inverse of `shortFunctionName()`. Built once from the library, so
-        // every function this service implements is reachable by its camel-case
+        // every function this engine implements is reachable by its camel-case
         // name and nothing else is.
         /**
          * Every implemented function's URI, keyed by its camel-case ALFA name;
@@ -214,10 +213,9 @@ class AlfaLanguage {
         });
         deps.log.debug("Leaving AlfaLanguage.constructor().");
     }
-    // What the composition root passes, from the real modules.
     /**
-     * Returns the dependencies built from the real modules, as the
-     * composition root passes them.
+     * Returns the dependencies built from the real modules, for the default
+     * instance `xacml_slot.js` holds.
      *
      * @returns the dependencies
      */
@@ -719,14 +717,10 @@ class AlfaLanguage {
         }).map(function (effect) {
             const body = byEffect[effect].map(function (holder) {
                 // AN ASSIGNMENT'S ATTRIBUTE IS NAMED AS WRITTEN, QUOTED WHERE
-                // IT IS
-                // NOT A PLAIN WORD (#62 P3). It was always written bare, which
-                // read
-                // back only while every assignment in every template happened
-                // to be
-                // one — the issuance policy's risk obligation assigns
-                // `urn:sts:xacml:risk-action`, whose colons the reader took for
-                // punctuation. The reader has always accepted either spelling.
+                // IT IS NOT A PLAIN WORD. Written bare, an AttributeId such
+                // as `urn:example:risk-action` would not read back: the
+                // reader takes its colons for punctuation. The reader accepts
+                // either spelling.
                 const assignments = (holder.assignments ||
                   []).map(function (one) {
                     const name =
@@ -1821,13 +1815,8 @@ AlfaLanguage.CATEGORY_NAMES = CATEGORY_NAMES;
  */
 AlfaLanguage.ALGORITHM_NAMES = ALGORITHM_NAMES;
 // ---------------------------------------------------------------------------
-// THE INSTANCE, BUILT BY THE COMPOSITION ROOT (#50, R2). This module builds no
-// instance of its own: `common/protocol_stack.ts` builds one and calls
-// `installInstance()`. The exports below are FACADES that forward to that
-// instance, for the JavaScript that still calls this module through
-// `require()`; a process that never runs the root gets a default instance,
-// built from `defaultDeps()` when this module loads (see
-// `common/instance_slot.ts`).
+// THE INSTANCE. The exports below forward to the one instance `xacml_slot.js`
+// holds, built from `defaultDeps()` when this module loads.
 // ---------------------------------------------------------------------------
 const slot = new InstanceSlot('xacml/xacml_alfa',
   () => new AlfaLanguage(AlfaLanguage.defaultDeps()), null, helpers.log);

@@ -3,8 +3,7 @@
 
 // File: xacml_runtime.js
 //
-// Logger and XML escape for the XACML engine copied into this tree.
-// The engine files call this the way they called iya-sts's helpers.
+// Logger and XML escape for the XACML engine under client/src/xacml/.
 // This file lives in client/src so require(process.env.CONFIG_FILE)
 // resolves client/src/env, the same way the other client modules do.
 // A file under client/src/xacml/ would look for env beside itself.

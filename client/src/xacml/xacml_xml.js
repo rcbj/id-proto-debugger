@@ -14,18 +14,18 @@
 // file knows a policy came from XML. See the header of `xacml_model.js` for
 // why that is the rule this directory is built on.
 //
-// This file reads with `@xmldom/xmldom`, which the api and this service
-// already depend on for SAML and WS-Federation, and it uses no XPath at all —
-// the policy grammar is walked by element name, because an XPath per element
-// would be slower and would hide what is actually a very small tree walk. (An
-// `AttributeSelector` is read and carried, and the PDP refuses to evaluate
-// one: `xacml/CLAUDE.md`, *What is not here yet*.)
+// This file reads with `@xmldom/xmldom`, through `xacml_xml_parser.js`, which
+// refuses a document type or an entity declaration before xmldom sees the
+// text. It uses no XPath at all — the policy grammar is walked by element
+// name, because an XPath per element would be slower and would hide what is
+// actually a very small tree walk. (An `AttributeSelector` is read and
+// carried, and the PDP refuses to evaluate one: `docs/xacml.md`.)
 //
 // ---------------------------------------------------------------------------
 // THE PARSER IS DELIBERATELY STRICT, AND SIX CONFORMANCE CASES DEPEND ON IT.
 //
-// Six cases in the vendored suite carry `Request.xml.ignore` and
-// `Response.xml.ignore` — upstream renamed them so that no runner would
+// Six cases in the OASIS XACML 3.0 conformance suite carry `Request.xml.ignore`
+// and `Response.xml.ignore` — upstream renamed them so that no runner would
 // evaluate them — because the POLICY in those cases is invalid and the whole
 // assertion is that loading it FAILS. A permissive parser that shrugged at an
 // unknown element or a missing attribute would load all six, produce a
@@ -511,7 +511,7 @@ function readVariableDefinitions(node) {
     // `__proto__` is stored as a variable rather than as the prototype.
     if (ownMembers.has(variables, id)) {
       // The specification requires VariableId to be unique within a policy,
-      // and the vendored suite has a case for it. A duplicate silently
+      // and the OASIS conformance suite has a case for it. A duplicate silently
       // overwriting the first would make which definition wins depend on
       // document order, which is not something a policy author can see.
       throw model.syntaxError(
@@ -536,9 +536,9 @@ function readVariableDefinitions(node) {
 // element MUST be present when the policy contains an <AttributeSelector> or
 // an `xpathExpression` value. Nothing here READS it — this implementation
 // evaluates no XPath, so there is no dialect to switch on a URI — but it is
-// carried, because a policy that arrived
-// schema-valid and left without it would leave through this service's own
-// writer, and two of the vendored conformance policies carry one.
+// carried, because a policy that arrived schema-valid and left without it
+// would leave this engine's own writer schema-invalid, and two of the OASIS
+// conformance policies carry one.
 //
 // The rest of what the element may hold in later profiles is not read and not
 // written: what is not in the model is lost on the first edit, and saying so
@@ -709,25 +709,24 @@ function parseDocument(xml) {
   // `@xmldom/xmldom` reports a malformed document by CALLING A HANDLER rather
   // than throwing, and its default handler writes to the console and carries
   // on — so without this, a truncated policy parses to a partial tree and
-  // fails much later as something that is not an element. Six conformance
-  // cases assert that a bad document is refused, and every one of them would
-  // pass for the wrong reason.
+  // fails much later as something that is not an element. Six OASIS
+  // conformance cases assert that a bad document is refused, and every one of
+  // them would pass for the wrong reason.
   // `onError` IS THE ONLY SPELLING. The older `errorHandler` object is not
   // merely deprecated in @xmldom/xmldom 0.9 — passing one THROWS a TypeError
   // out of the constructor ("errorHandler object is no longer supported"), so
   // carrying both spellings defensively is not free: it makes every parse fail
-  // before a document is read. It cost the first conformance run here, where
-  // 449 of 455 cases reported "could not be loaded" and named an option rather
+  // before a document is read, with a message that names an option rather
   // than a policy.
   const errors = [];
   const parser = new DOMParser({
     onError: function (level, message) {
       log.debug("Entering onError().");
-      // Warnings are ignored deliberately. Several policies in the vendored
-      // suite carry an `xsi:schemaLocation` pointing at the XACML 2.0 schema —
-      // upstream's README lists it as a defect in the original AT&T files —
-      // and refusing those would fail cases over a schema hint rather than
-      // over a decision.
+      // Warnings are ignored deliberately. Several policies in the OASIS
+      // conformance suite carry an `xsi:schemaLocation` pointing at the XACML
+      // 2.0 schema — upstream's README lists it as a defect in the original
+      // AT&T files — and refusing those would fail cases over a schema hint
+      // rather than over a decision.
       if (level === 'error' || level === 'fatalError') {
         errors.push(String(message));
       }
@@ -767,9 +766,10 @@ function parsePolicy(xml) {
     // STATIC VALIDATION IS PART OF LOADING, not a separate step a caller can
     // forget. XACML is statically typed and a policy that does not typecheck
     // is wrong for every request rather than for some — see
-    // `xacml_validate.js`. An ALFA import comes through here too (the console
-    // writes it out as XML and the store's write parses it), so both syntaxes
-    // refuse the same documents; the JSON Profile carries no policies.
+    // `xacml_validate.js`. An ALFA import comes through here too (the page
+    // stores it as XML and reads that back through this function), so both
+    // syntaxes refuse the same documents; the JSON Profile carries no
+    // policies.
     validate.validate(parsed);
     log.debug('Leaving parsePolicy(). A valid ' + name + '.');
     return parsed;
@@ -816,21 +816,20 @@ function parseRequest(xml) {
 // ---------------------------------------------------------------------------
 // A <Request> ELEMENT, READ — SPLIT OUT OF THE FUNCTION ABOVE.
 //
-// `parseRequest()` takes a whole DOCUMENT, which is what a PDP is POSTed. This
-// takes the NODE, because `POST /xacml/pip` carries a `<Request>` nested inside
-// an envelope of this service's own and therefore has no document to hand over.
+// `parseRequest()` takes a whole DOCUMENT, which is what the decision form's
+// request box holds. This takes the NODE, for a `<Request>` nested inside
+// some other envelope, which has no document of its own to hand over.
 //
 // **IT IS A SPLIT AND NOT A SECOND READER, WHICH IS THE ENTIRE POINT.** The
 // alternative was to serialize the nested subtree back to a string and hand it
-// to `parseRequest()` — which would put an XML SERIALIZER in the path of every
-// PIP query, and a round trip through one is exactly where namespace
-// declarations inherited from an ancestor go missing. Two readings of a
-// request would also be two chances to disagree about what a request IS, which
-// is the thing this file exists to prevent.
+// to `parseRequest()`, and a round trip through a serializer is exactly where
+// namespace declarations inherited from an ancestor go missing. Two readings
+// of a request would also be two chances to disagree about what a request
+// IS, which is the thing this file exists to prevent.
 // ---------------------------------------------------------------------------
 /**
  * Reads a `<Request>` element already in a DOM, for a request nested inside
- * another envelope (`POST /xacml/pip`).
+ * another envelope.
  * @param root - the Request element
  * @returns `{ returnPolicyIdList, combinedDecision, categories }`
  */
@@ -876,13 +875,14 @@ function readRequest(root) {
 // ---------------------------------------------------------------------------
 // A RESPONSE, READ BACK.
 //
-// Only the conformance runner needs this — a PDP produces responses and does
-// not consume them. It is here rather than in the test because the runner
-// comparing responses must read them the same way this implementation writes
+// A PDP produces responses and does not consume them; this is for a caller
+// that compares a decision against a recorded `<Response>`, as the OASIS
+// conformance cases are written. It is here rather than in a test because a
+// comparison must read responses the same way this implementation writes
 // them, and two readings would be the very thing this directory refuses.
 // ---------------------------------------------------------------------------
 /**
- * Reads a XACML 3.0 `<Response>` document back, for the conformance runner.
+ * Reads a XACML 3.0 `<Response>` document back, to compare a decision.
  * @param xml - the response document text
  * @returns `{ results }`, each result with its decision, status,
  * obligations and advice
@@ -941,32 +941,30 @@ function readResponseAssignments(parent, wrapper, item, idAttribute) {
 // ---------------------------------------------------------------------------
 // THE MODEL, WRITTEN BACK OUT AS XACML 3.0 XML.
 //
-// The reader's inverse, and the PAP is what needs it: the guided editor works
-// on the MODEL, so every structural change has to be serialized back into the
-// document `ou=policies` actually stores. An ALFA import needs it too — ALFA
-// in, model, XML out is the whole of what an ALFA compiler is here
-// (`xacml_admin.js`'s `import-alfa`).
+// The reader's inverse, and the editor is what needs it: the guided editor
+// works on the MODEL, so every structural change has to be serialized back
+// into the XML document the page keeps in `localStorage`. An ALFA import
+// needs it too — ALFA in, model, XML out is the whole of what an ALFA
+// compiler is here (`xacml_workbench.js`'s importText()).
 //
 // TWO THINGS IT DELIBERATELY DOES NOT PRESERVE, and both are worth knowing
 // before pointing the editor at a hand-authored policy:
 //
 //   * COMMENTS AND WHITESPACE. The model does not carry them, so a document
 //     that goes through the editor comes back reformatted and stripped of
-//     anything a person wrote between the elements. That is why the store
-//     keeps the document AS AUTHORED and why opening a policy in the editor
-//     and saving it is a deliberate act rather than a side effect of viewing.
+//     anything a person wrote between the elements. Viewing a policy does
+//     not rewrite it; only an edit does.
 //   * ATTRIBUTE ORDER. Written in the schema's order rather than the source's.
 //
-// Neither changes what a policy MEANS — `tests/xacml_service.js` asserts that
-// a document through the reader and back decides identically — but the diff
+// Neither changes what a policy MEANS — a document through the reader and
+// back decides identically — but the diff
 // after an edit will be large, and somebody expecting a one-line change should
 // know why before they see it.
 // ---------------------------------------------------------------------------
 
 // Every attribute value and every text node goes through `xmlEscape`, which is
-// the same function every other document this service emits is escaped with —
-// so the policy writer and the SAML writer cannot disagree about what escaping
-// is.
+// `xacml_runtime.js`'s, the one escape for every document this engine
+// writes.
 function attr(name, value) {
   log.debug("Entering attr().");
   if (value === null || value === undefined || value === '') {
@@ -1064,7 +1062,7 @@ function writeExpression(expression, depth) {
       attr('Issuer', expression.issuer) +
       // MustBePresent is written ALWAYS, including when false. The schema
       // requires it, and relying on a reader to default a missing one is a
-      // liberty worth not needing in a document this service produced itself.
+      // liberty worth not needing in a document this engine produced itself.
       ' MustBePresent="' + (expression.mustBePresent ? 'true' : 'false') +
       '"/>';
   }
@@ -1117,7 +1115,7 @@ function writeTarget(target, depth) {
   // AN ABSENT TARGET AND AN EMPTY ONE MEAN THE SAME THING — match everything —
   // and `<Target/>` is written for both, because the schema REQUIRES the
   // element on a Rule and a Policy. Omitting it where the model holds null
-  // would produce a document this service's own reader accepts and somebody
+  // would produce a document this engine's own reader accepts and somebody
   // else's schema validator rejects, which is the worst of both.
   if (!target || !target.anyOf || !target.anyOf.length) {
     log.debug('Leaving writeTarget(). Empty.');
@@ -1291,8 +1289,8 @@ function writePolicyBody(policy, depth, withNamespace) {
     attr('RuleCombiningAlgId', policy.combiningAlgId) +
     // Optional, and carried rather than honoured: this PDP implements no
     // administrative delegation, so the depth is written back exactly as it
-    // was found and read by nothing. `xacml/CLAUDE.md` says so out loud rather
-    // than letting the attribute imply otherwise.
+    // was found and read by nothing. The editor says so beside the field
+    // rather than letting the attribute imply otherwise.
     attr('MaxDelegationDepth', policy.maxDelegationDepth) + '>' +
     body + '\n' + pad + '</Policy>';
 }

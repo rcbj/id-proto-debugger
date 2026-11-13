@@ -17,7 +17,7 @@
 // requests", wrong — and a PDP that finds out at evaluation time reports it as
 // an Indeterminate, once per request, for ever.
 //
-// FIVE CASES IN THE VENDORED CONFORMANCE SUITE EXIST FOR THIS AND FOR NOTHING
+// FIVE CASES IN THE OASIS CONFORMANCE SUITE EXIST FOR THIS AND FOR NOTHING
 // ELSE, and upstream renamed their `Request.xml` and `Response.xml` to
 // `.ignore` precisely so that no runner could evaluate them and pass by
 // accident. Without this file all five load happily and produce a decision:
@@ -44,9 +44,9 @@
 // It validates the MODEL, so it is the same check for a policy that arrived as
 // XACML XML, as JSON, or as ALFA — which is the rule this whole directory is
 // built on (see `xacml_model.js`). `xacml_xml.js` calls it at the end of
-// `parsePolicy()`; an ALFA import reaches the same call because the console
-// writes the converted model out as XML and `xacml_store.js`'s write parses
-// that document through `parsePolicy()`. (The JSON Profile reads requests,
+// `parsePolicy()`; an ALFA import reaches the same call because the page
+// stores the converted model as XML and `xacml_workbench.js` reads that
+// document back through `parsePolicy()`. (The JSON Profile reads requests,
 // never policies.) Putting the logic in any one reader would mean another
 // accepted policies the first refused.
 //
