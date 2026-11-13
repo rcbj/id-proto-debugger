@@ -235,9 +235,17 @@ the
 ML-KEM round trip with its encapsulation lengths, its self-describing
 derivation, and the two refusals.
 
-## Keeping the two copies in step
+## Two implementations
 
-`common/xmldsig.js` is vendored into the mock STS as
-`sts/common/crypto_impl/xmldsig.js`, **byte-identical**, so both ends of a SAML
-exchange canonicalize with the same code. A change here is copied there in the
-same commit; `sts/common/crypto_impl/CLAUDE.md` carries the rule.
+`common/xmldsig.js` is this repository's XML Signature and XML Encryption
+code. iya-sts has its own, `common/crypto_impl/xmldsig.js`. The two evolve
+independently. A change in this file stays in this repository.
+
+Issue #304's three canonicalization rules are proved here against Merlin's
+published bytes in `tests/w3c-merlin/`. `tests/xmlsec_interop.js` holds
+inclusive C14N of `merlin-c14n-three`'s SignedInfo to `c14n-27.txt`, so the
+apex keeps the `xml:lang` it inherits. It holds
+`merlin-xmldsig-twenty-three` references 7–14 to the published forms.
+`URI=""` and `URI="#id"` drop comments before a `#WithComments` method
+renders them. `#xpointer(/)` and `#xpointer(id('…'))` keep them, including
+the comments and processing instructions outside the document element.

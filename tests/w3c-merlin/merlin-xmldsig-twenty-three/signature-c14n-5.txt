@@ -1,0 +1,3 @@
+<Object xmlns="http://www.w3.org/2000/09/xmldsig#" xmlns:foo="http://example.org/foo" Id="object-3">
+        <NonCommentandus xmlns=""><!-- Commentandum --></NonCommentandus>
+      </Object>

@@ -1,0 +1,15 @@
+<!-- Preamble -->
+<Envelope xmlns="http://example.org/usps" xmlns:foo="http://example.org/foo">
+  <DearSir>foo</DearSir>
+  <Body>bar</Body>
+  <YoursSincerely>
+    
+  </YoursSincerely>
+  <PostScript>bar</PostScript>
+  <Notaries xmlns="" Id="notaries">
+    <Notary name="Great, A. T."></Notary>
+    <Notary name="Hun, A. T."></Notary>
+  </Notaries>
+  <!-- Commentary -->
+</Envelope>
+<!-- Postamble -->

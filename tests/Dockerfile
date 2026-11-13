@@ -70,6 +70,10 @@ COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js
 # _engine suffix keeps them from colliding with client/src/rfc9068.js and
 # client/src/rp_metadata_choices.js in this flat directory.
 COPY tests/rfc9068_engine.js tests/rp_metadata_choices_engine.js ./
+# Merlin's published canonical forms, read by xmlsec_interop.js for
+# issue #304. The two signature documents and the expected octets.
+# Public W3C interop output. iya-sts keeps its own harness.
+COPY tests/w3c-merlin ./w3c-merlin
 # The per-run username minter, required by tests across four protocols (OAuth2,
 # RFC 9700, Kerberos, LDAP) and by both mock-KDC page jobs. A SHARED MODULE
 # rather than a test, so nothing schedules it and the run-report cross-check in
