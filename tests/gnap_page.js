@@ -39,6 +39,7 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { mustBeAbleTo } = require("./expectation.js");
 const live = require("./gnap_live.js");
+const { loadUrl } = require("./page_load.js");
 const By = webdriver.By;
 
 var appconfig = require(process.env.CONFIG_FILE);
@@ -131,11 +132,11 @@ async function responseJson(driver) {
 
 async function openFresh(driver) {
   log.debug("Entering openFresh().");
-  await driver.get(baseUrl + "/gnap.html");
+  await loadUrl(driver, baseUrl + "/gnap.html");
   await driver.executeScript("localStorage.removeItem('gnap_state');" +
     "localStorage.removeItem('gnap_private_jwk');" +
     "localStorage.removeItem('gnap_mtls_key');");
-  await driver.get(baseUrl + "/gnap.html");
+  await loadUrl(driver, baseUrl + "/gnap.html");
   await driver.wait(async function () {
     return driver.executeScript("return typeof window.gnap === " +
       "'object' && typeof window.gnap.sendGrant === 'function';");

@@ -836,6 +836,16 @@ function appendedBeaconNeedsNoModuleSystem() {
 }
 
 
+// tests/Dockerfile with every `\` continuation joined, so a COPY written
+// across several lines reads as the one instruction Docker sees. Every check
+// below that parses COPY lines reads the file through this.
+function readDockerfile(file) {
+  log.debug("Entering readDockerfile().");
+  const text = fs.readFileSync(file, "utf8").replace(/\\\r?\n/g, " ");
+  log.debug("Leaving readDockerfile().");
+  return text;
+}
+
 // ---------------------------------------------------------------------------
 // No two files may land on the same path in the tests image.
 //
@@ -874,8 +884,7 @@ function testsImageHasNoCollidingFilenames() {
   const flat = {};
   // Join `\` continuations first: a COPY written across lines is one COPY,
   // and reading it line by line missed every source after the first line.
-  fs.readFileSync(dockerfile, "utf8").replace(/\\\r?\n/g, " ")
-      .split("\n").forEach(function (line) {
+  readDockerfile(dockerfile).split("\n").forEach(function (line) {
     const text = line.trim();
     if (text.indexOf("COPY ") !== 0) return;
     const parts = text.slice(5).split(/\s+/).filter(Boolean);
@@ -1236,7 +1245,7 @@ function stsModuleClosureIsCopied(dockerfile) {
   // its extension and it is as absent from an image without its COPY.
   const copyLine = /^COPY\s+([^\n]+)/gm;
   const fromImage = {};
-  fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
+  readDockerfile(dockerfile).replace(copyLine, function (_, rest) {
     const image = /^--from=mocksts\s/.test(rest);
     rest.split(/\s+/).forEach(function (src) {
       const prefix = image ? "/usr/src/sts/" : "sts/";
@@ -1417,7 +1426,7 @@ function testsImageCopiesTheRequireClosure(dockerfile) {
   const available = {};
   const globs = [];
   const copyLine = /^COPY\s+([^\n]+)/gm;
-  fs.readFileSync(dockerfile, "utf8").replace(copyLine, function (_, rest) {
+  readDockerfile(dockerfile).replace(copyLine, function (_, rest) {
     const parts = rest.split(/\s+/).filter(Boolean);
     if (parts.length < 2) {
       return _;
@@ -1591,7 +1600,7 @@ function flatCopiedModulesHaveTheirPackages(dockerfile) {
   // client/server.js — copied there to be RUN rather than required — brings
   // the client's own node_modules question with it.
   const sources = [];
-  fs.readFileSync(dockerfile, "utf8").split("\n").forEach(function (line) {
+  readDockerfile(dockerfile).split("\n").forEach(function (line) {
     const text = line.trim();
     if (text.indexOf("COPY ") !== 0) {
       return;

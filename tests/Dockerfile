@@ -148,8 +148,6 @@ COPY tests/authn_signin.js ./
 # same MODULE_NOT_FOUND failure as the rest when this line is missing.
 COPY tests/kerberos_principals.js ./
 COPY tests/consent_screen.js ./
-# Shared by the four GNAP jobs (engine, protocol, api relay, page).
-COPY tests/gnap_live.js ./
 
 # THE SIGN-OUT CONFIRMATION CLIENT, required by webauthn_oidc_mfa.js and
 # webauthn_extension.js, which need the next authorization request to meet a
