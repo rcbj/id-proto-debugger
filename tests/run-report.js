@@ -2374,16 +2374,18 @@ function buildJobs() {
   // passing, and the symptom is an integrity failure indistinguishable from a wrong
   // password. So the copies are cross-checked behaviourally: messages built by one
   // and read by the other, and — the assertion nothing else can make — one copy
-  // ENCRYPTS and the other DECRYPTS. Then the files are compared too, which catches
-  // drift before it has consequences and names the one command that fixes it
-  // (common/krb5/sync-to-mock-sts.sh).
+  // ENCRYPTS and the other DECRYPTS. The file comparison that used to follow
+  // was retired on 2026-11-12 (iya-sts #1280 made its copy that service's
+  // own), and the script it named was deleted on 2026-11-13.
   //
   // Proved against five real drift scenarios, each caught by a different assertion:
   // a key usage number, a MAC over the ciphertext instead of the plaintext, a
-  // context tag, a comment-only edit, and a reader silently dropping a field.
-  // With the submodule uninitialised it says so and passes — an uninitialised
-  // submodule is an EMPTY DIRECTORY, and reporting that as a codec failure sends
-  // somebody looking in the wrong place. Node only, never skipped.
+  // context tag, and a reader silently dropping a field.
+  // With no iya-sts codec to be found it DECLARES A SKIP (declineToRun()) —
+  // an uninitialised submodule is an EMPTY DIRECTORY, which is neither a codec
+  // failure nor a comparison that happened. Node only. Every launcher
+  // initialises sts/ and the tests image copies it, so a skip here means a
+  // hand-run from a bare checkout.
   jobs.push({
     name: "Kerberos codec sync (common/krb5 against the mock STS's vendored copy, cross-wise)",
     script: "krb5_codec_sync.js",

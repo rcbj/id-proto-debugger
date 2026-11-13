@@ -69,7 +69,7 @@ header is the bare word.
 `krb5_spnego.js` has a counterpart in iya-sts like the other seven codec
 modules. It was a vendored copy until 2026-11-12; since iya-sts #1280 that
 counterpart is iya-sts's own and the two evolve independently (nothing here
-copies into iya-sts, and `common/krb5/sync-to-mock-sts.sh` is retired). It is
+copies into iya-sts; the sync script was deleted on 2026-11-13). It is
 the module with the most to lose from disagreement: the browser encodes a
 NegTokenInit iya-sts decodes and iya-sts encodes a NegTokenResp the browser
 decodes, so every field crosses between the two implementations in both
