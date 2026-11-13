@@ -1360,6 +1360,27 @@ function verifyXmlSignature(xml, opts) {
     ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
         digestUri: pqSpec.digestUri }
     : sigAlgSpec(sigAlg);
+  // NOT RSA AND NOT POST-QUANTUM. sigAlgSpec() reads any URI it does not
+  // list as RSA-SHA256, so an ECDSA, HMAC, misspelt or missing
+  // SignatureMethod used to be checked as an RSA-SHA256 signature and
+  // reported "invalid" — a verdict about a signature nobody made. This
+  // module implements RSA only, so such a method goes to opts.verifier when
+  // the caller has one (as in verifyXml()), and is otherwise reported as
+  // not verified, with the references still checked.
+  var method = SIG_METHODS[sigAlg] || null;
+  var external = pqSpec ||
+      ((method && method.family === 'rsa') ? null : (method || {
+        family: 'unknown', label: sigAlg || '(no SignatureMethod)' }));
+  var unsupported = null;
+  if (external && !pqSpec && typeof opts.verifier !== 'function') {
+    unsupported = method
+      ? (method.label + ' is not verified here: this module implements ' +
+         'RSA only, so the caller has to supply opts.verifier. The ' +
+         'reference digests below were still checked.')
+      : ('SignatureMethod ' + (sigAlg ? '"' + sigAlg + '"' : '(none)') +
+         ' is not one this module knows, so the signature was not ' +
+         'verified. The reference digests below were still checked.');
+  }
 
   // Signing certificate: prefer a supplied cert, else the one in KeyInfo.
   var certB64 = '';
@@ -1377,7 +1398,7 @@ function verifyXmlSignature(xml, opts) {
                    'hbs.js, and the public key is in the ' +
                    'dsig11:DEREncodedKeyValue rather than in a certificate.' };
   }
-  if (!pqSpec && !certPem) {
+  if (!external && !certPem) {
     log.debug("Leaving verifyXmlSignature().");
     return { valid: false,
             error: 'No signing certificate in KeyInfo and none supplied.' };
@@ -1389,9 +1410,16 @@ function verifyXmlSignature(xml, opts) {
       pub = cert.publicKey;
     }
   } catch (e) {
-    log.debug("Leaving verifyXmlSignature().");
-    return { valid: false, error: 'Could not parse signing certificate: ' +
-            e.message };
+    // forge reads RSA certificates only. For a method this module does not
+    // verify itself the key is the verifier's business, so an EC
+    // certificate is not a reason to stop.
+    if (!external) {
+      log.debug("Leaving verifyXmlSignature().");
+      return { valid: false, error: 'Could not parse signing certificate: ' +
+              e.message };
+    }
+    log.debug("verifyXmlSignature(): certificate not read: " + e.message);
+    cert = null;
   }
 
   // 1) SignatureValue over C14N(SignedInfo) — compute before detaching the
@@ -1401,12 +1429,14 @@ function verifyXmlSignature(xml, opts) {
       '').replace(/\s+/g, ''));
   var signatureValid = false;
   try {
-    if (pqSpec) {
+    if (unsupported) {
+      signatureValid = false;
+    } else if (external) {
       // The same octets the RSA branch hashes — see signEnveloped() on why
       // this is encodeUtf8() of the canonicalized string rather than the
       // string.
       signatureValid = !!opts.verifier(forge.util.encodeUtf8(siCanon),
-                                       signatureBytes, pqSpec, sigAlg);
+                                       signatureBytes, external, sigAlg);
     } else {
       var md1 = spec.md();
       md1.update(siCanon, 'utf8');
@@ -1446,7 +1476,12 @@ function verifyXmlSignature(xml, opts) {
           reason: 'referenced element not found' });
       continue;
     }
-    var c14nRef = C14N_EXCLUSIVE;
+    // No canonicalization transform: XMLDSig core 4.3.3.2 converts the
+    // node-set with inclusive C14N 1.0, not exclusive. SAML and WS-*
+    // references always name exc-c14n, so they never reach this default;
+    // a document from the general engine with only enveloped-signature did,
+    // and its digest was computed over the wrong octets.
+    var c14nRef = C14N_INCLUSIVE;
     var trs = ref.getElementsByTagNameNS('*', 'Transform');
     for (var t = 0; t < trs.length; t++) {
       var ta = trs[t].getAttribute('Algorithm') || '';
@@ -1464,7 +1499,7 @@ function verifyXmlSignature(xml, opts) {
       references.every(function (r) { return r.ok; });
 
   log.debug("Leaving verifyXmlSignature().");
-  return {
+  var result = {
     valid: signatureValid && referencesValid,
     signatureValid: signatureValid,
     referencesValid: referencesValid,
@@ -1474,6 +1509,11 @@ function verifyXmlSignature(xml, opts) {
     signerSubject: cert ? certSubjectCN(cert) : '',
     signerCertB64: certB64
   };
+  if (unsupported) {
+    result.unsupported = true;
+    result.error = unsupported;
+  }
+  return result;
 }
 
 // --- XML DECRYPTION (W3C xmlenc) -------------------------------------------
