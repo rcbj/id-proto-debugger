@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // ---------------------------------------------------------------------------
 // HOW LONG A BROWSER WAIT MAY TAKE, AND WHY IT IS A VARIABLE NOW.
 //

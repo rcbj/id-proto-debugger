@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: iso7816.js
 //
 // ISO 7816-4 command and response APDUs, and BER-TLV, for the smart-card

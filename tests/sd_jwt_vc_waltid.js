@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: sd_jwt_vc_waltid.js
 //
 // The SD-JWT VC issuance workflow driven against **walt.id issuer-api2** — a

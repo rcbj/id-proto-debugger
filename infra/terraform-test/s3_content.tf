@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # --- Content bucket: public-read S3 static website (same pattern as prod) ---
 
 resource "aws_s3_bucket" "site" {

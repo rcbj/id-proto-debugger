@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 'use strict';
 
 var appconfig = require(process.env.CONFIG_FILE);
@@ -853,7 +856,13 @@ function publicBaseUrl(req) {
   return base;
 }
 
-app.use(bodyParser.json());
+// The JSON limit is an OUTER bound only. The caps that mean something are
+// scimMaxRequestBytes (1 MiB), ssfMaxRequestBytes and gnapMaxRequestBytes
+// (256 KiB each), enforced in their proxies where the answer can name the
+// setting. At body-parser's default of 100 KB none of them was reachable:
+// a body between 100 KB and the configured cap got body-parser's bare 413
+// instead of the documented refusal. Keep this above the largest of them.
+app.use(bodyParser.json({ limit: '5mb' }));
 // SAML ACS receives application/x-www-form-urlencoded POSTs (SAMLResponse,
 // RelayState, SAMLart) from the IdP; enable urlencoded parsing for those.
 app.use(bodyParser.urlencoded({
@@ -1159,6 +1168,15 @@ app.post('/samlsign', function (req, res) {
     if (!xml || !privateKeyPem) {
       return res.status(STATUS_400).json({
         error: 'xml and privateKeyPem are required.' });
+    }
+    // The api signs with RSA only (it holds no post-quantum signer), and
+    // sigAlg is the caller's choice. An ECDSA, HMAC or misspelt URI is the
+    // caller's error, so it is a 400 naming the methods on offer rather than
+    // the 500 the signer's throw would become in the catch below.
+    var refusal = xmldsig.rsaSigAlgRefusal(sigAlg, 'samlsign');
+    if (refusal) {
+      log.debug('Leaving POST /samlsign. ' + refusal);
+      return res.status(STATUS_400).json({ error: refusal });
     }
 
     if (binding === 'post') {
@@ -3501,7 +3519,8 @@ app.post('/smartcard/transmit', function (req, res) {
     return res.status(STATUS_400).json({ error: described.error });
   }
   smartcardReader.transmit(described.reader, described.apdus,
-      { getResponse: described.getResponse })
+      { getResponse: described.getResponse,
+        remainingIns: described.remainingIns })
     .then(function (answer) {
       log.debug('Leaving POST /smartcard/transmit. Answered ' +
           answer.status + '.');
@@ -3537,7 +3556,8 @@ app.post('/smartcard/transmit', function (req, res) {
  * thing this workflow can put on the screen.
  * ---------------------------------------------------------------------------
  * @route POST /ssf/call
- * @param {object} request.body - url, method, headers, body, sslValidate
+ * @param {object} request.body - url, method, headers, body, sslValidate,
+ *     and for the mtls proof clientCertificatePem and clientKeyPem
  * @returns {object} 200 - the transmitter's answer, whatever its status
  * @returns {object} 400 - this service refused to send it
  * @returns {object} 502 - the transmitter could not be reached
@@ -3631,6 +3651,27 @@ app.get('/ssf/limits', function (req, res) {
  * @returns {object} 400 - this service refused to send it
  * @returns {object} 502 - the authorization server could not be reached
  */
+/**
+ * The https agent for one mtls-proved GNAP call. It is the guard's
+ * agent, so the address policy is the shared one, with the connect
+ * deadline every other outbound agent has.
+ * @param {object} described - gnapProxy.describeRequest()'s answer
+ * @returns {https.Agent} an agent to destroy after the call
+ */
+function gnapClientCertificateAgent(described) {
+  log.debug('Entering gnapClientCertificateAgent().');
+  var agent = connectTimeout.withConnectTimeout(
+      guard.createAgent('https', {
+        keepAlive: false,
+        timeout: OUTBOUND_IDLE_SOCKET_TIMEOUT,
+        rejectUnauthorized: described.sslValidate !== false,
+        cert: described.clientCertificatePem,
+        key: described.clientKeyPem
+      }), CONNECTION_TIMEOUT, log);
+  log.debug('Leaving gnapClientCertificateAgent().');
+  return agent;
+}
+
 app.post('/gnap/call', function (req, res) {
   log.debug('Entering POST /gnap/call.');
   var described = gnapProxy.describeRequest(req.body || {}, appconfig);
@@ -3640,6 +3681,11 @@ app.post('/gnap/call', function (req, res) {
   }
   var sink = {};
   var sentHeaders = withUserAgent(described.headers);
+  // THE mtls PROOF: an agent of its own, made by the same guard and the
+  // same connect deadline as the shared ones, never cached (it holds the
+  // caller's private key) and never kept alive, and destroyed below.
+  var clientAgent = described.clientCertificatePem
+    ? gnapClientCertificateAgent(described) : null;
   // http_trace asks for this service's own account of the call — the
   // request as it left here and the raw answer — for the page's HTTP tab,
   // exactly as POST /token does. It is attached as http_exchange.
@@ -3665,9 +3711,15 @@ app.post('/gnap/call', function (req, res) {
     validateStatus: function () {
       return true; },
     httpAgent: outboundHttpAgent(),
-    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    httpsAgent: clientAgent ||
+        outboundHttpsAgent(described.sslValidate),
     headers: sentHeaders
   })
+    .finally(function () {
+      if (clientAgent) {
+        clientAgent.destroy();
+      }
+    })
     .then(function (response) {
       var answer = gnapProxy.readResponse(response.status,
           traceHeaders(response.headers), sink.raw);
@@ -3714,10 +3766,12 @@ app.get('/gnap/limits', function (req, res) {
  *
  * `api/ssf_receiver.js` holds every decision and every bound; these handlers
  * are wiring. The one thing worth knowing at this layer is that
- * `POST /ssf/receiver/:id` is UNAUTHENTICATED AND ACCEPTS DATA, because what
- * pushes to it is somebody else's transmitter — the bounds are structural (an
- * unguessable id, an expiry, three caps and a configuration switch) rather
- * than a gate.
+ * `POST /ssf/receiver/:id` ACCEPTS DATA from somebody else's transmitter. An
+ * inbox created with an `authorization` requires exactly that Authorization
+ * header on every push (401 `authentication_failed` otherwise); one created
+ * without is open, bounded only structurally (an unguessable id, two
+ * expiries, the caps and a configuration switch). The caller's address is
+ * what `ssfReceiverMaxInboxesPerCaller` counts.
  * ---------------------------------------------------------------------------
  * @route POST /ssf/receiver
  * @returns {object} 200 - the inbox and the URL to put in a stream
@@ -3725,7 +3779,7 @@ app.get('/gnap/limits', function (req, res) {
  */
 app.post('/ssf/receiver', function (req, res) {
   log.debug('Entering POST /ssf/receiver.');
-  var made = ssfReceiver.create(appconfig, req.body || {});
+  var made = ssfReceiver.create(appconfig, req.body || {}, req.ip);
   if (!made.ok) {
     log.debug('Leaving POST /ssf/receiver. Refused: ' + made.error);
     return res.status(STATUS_400).json({ error: made.error });
@@ -3745,7 +3799,12 @@ app.post('/ssf/receiver', function (req, res) {
     deliveryEndpoint: base + '/ssf/receiver/' + made.id,
     note: 'Put deliveryEndpoint in the stream\'s delivery.endpoint_url. The ' +
         'TRANSMITTER has to be able to reach it, which is why it is this ' +
-        'api\'s address as you reached it rather than a configured one.'
+        'api\'s address as you reached it rather than a configured one.',
+    authentication: made.inbox.authenticated
+      ? 'Every push must carry the authorization_header this inbox was ' +
+        'created with, or it is answered 401 authentication_failed.'
+      : 'OPEN: this inbox was created with no authorization_header, so ' +
+        'anybody who has its URL can push to it.'
   });
 });
 
@@ -3774,6 +3833,11 @@ app.post('/ssf/receiver/:id', function (req, res) {
   }
   log.debug('Leaving POST /ssf/receiver/:id. ' + answer.status + ' ' +
       answer.err);
+  if (answer.status === 401) {
+    // RFC 7235: a 401 names the scheme it wants. What the receiver chose is
+    // opaque to it, so the challenge is the generic one.
+    res.set('WWW-Authenticate', 'Bearer realm="ssf-receiver"');
+  }
   return res.status(answer.status).json({ err: answer.err,
     description: answer.description });
 });

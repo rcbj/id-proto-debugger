@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # install-wsfed.sh — install the cloudtrust keycloak-wsfed WildFly module into a
 # Keycloak 8.0.1 home.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: rp_metadata_choices.js
 //
 // ---------------------------------------------------------------------------
@@ -289,14 +292,19 @@ function section3NamesAreNotClientMetadata() {
 
 function sectorIdentifierFollowsTheRedirectCount() {
   log.debug("Entering sectorIdentifierFollowsTheRedirectCount().");
+  // Core 1.0 section 8.1 counts HOSTS, and the provider fetches a
+  // sector_identifier_uri, so none is ever invented.
   var one = choices.applyChoices({
     redirect_uris: ["https://client.example.org/callback"]
   });
-  var two = choices.applyChoices({
+  var sameHost = choices.applyChoices({
     redirect_uris: [
       "https://client.example.org/callback",
       "https://client.example.org/callback2"
     ]
+  });
+  var twoHosts = choices.applyChoices({
+    redirect_uris: ["https://a.example/cb", "https://b.example/cb"]
   });
   var kept = choices.applyChoices({
     redirect_uris: ["https://a.example/cb", "https://b.example/cb"],
@@ -312,24 +320,33 @@ function sectorIdentifierFollowsTheRedirectCount() {
     subject_type: "public"
   };
   var single = {
-    redirect_uris: ["https://a.example/cb"],
+    redirect_uris: ["https://a.example/cb", "https://a.example/cb2"],
     subject_types_supported: ["public", "pairwise"],
     subject_type: "public"
   };
-  assert.ok(!Object.prototype.hasOwnProperty.call(one,
-      "sector_identifier_uri"));
-  assert.strictEqual(two.sector_identifier_uri,
-      choices.SECTOR_IDENTIFIER_URI);
+  var both = ["public", "pairwise"];
+  [one, sameHost, twoHosts, kept, blank].forEach(function (md) {
+    assert.ok(md.sector_identifier_uri === undefined ||
+        md.sector_identifier_uri === "https://rp.example/sector.json" ||
+        md.sector_identifier_uri === "   ",
+        "a sector_identifier_uri was invented");
+  });
+  assert.deepStrictEqual(one.subject_types_supported, both);
+  assert.deepStrictEqual(sameHost.subject_types_supported, both);
+  assert.deepStrictEqual(twoHosts.subject_types_supported, ["public"]);
+  assert.strictEqual(twoHosts.subject_type, "public");
+  assert.deepStrictEqual(kept.subject_types_supported, both);
   assert.strictEqual(kept.sector_identifier_uri,
       "https://rp.example/sector.json");
-  assert.strictEqual(blank.sector_identifier_uri,
-      choices.SECTOR_IDENTIFIER_URI);
+  assert.deepStrictEqual(blank.subject_types_supported, ["public"]);
   assert.ok(hasRule(choices.checkRequest(bare),
       "sector-identifier-required"));
   assert.ok(!hasRule(choices.checkRequest(single),
       "sector-identifier-required"));
-  assert.deepStrictEqual(choices.checkRequest(two), []);
-  log.info("OK — sector_identifier_uri follows the redirect count.");
+  assert.deepStrictEqual(choices.checkRequest(sameHost), []);
+  assert.deepStrictEqual(choices.checkRequest(twoHosts), []);
+  log.info("OK — pairwise follows the redirect hosts and no " +
+      "sector_identifier_uri is invented.");
   log.debug("Leaving sectorIdentifierFollowsTheRedirectCount().");
 }
 

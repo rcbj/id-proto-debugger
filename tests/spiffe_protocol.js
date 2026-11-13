@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: spiffe_protocol.js
 //
 // ---------------------------------------------------------------------------
@@ -304,7 +307,7 @@ async function gate() {
     mustBeAbleTo(false, "The mock STS at " + STS_URL + " is reachable, but",
       "GET /spiffe?format=json did not describe an enabled SPIFFE service " +
       "(HTTP " + described.status + "). Either this mock STS predates " +
-      "SPIFFE (bump the sts/ submodule) or spiffe.enabled is off.");
+      "SPIFFE (bump IYA_STS_IMAGE) or spiffe.enabled is off.");
   }
   // AND THE TWO PORTS BELONG TO THE MOCK THAT WAS JUST DESCRIBED. Enabled is
   // not bound: this service carries on when a SPIFFE listener loses its port

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: kerberos_as_page.js
 //
 // client/public/kerberos.html — the Kerberos AS exchange, in a browser, against

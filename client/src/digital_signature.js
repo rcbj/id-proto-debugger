@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: digital_signature.js
 // Author: Robert C. Broeckelmann Jr.
 // Notes:

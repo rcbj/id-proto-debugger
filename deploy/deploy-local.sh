@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Build and deploy the static idptools.com site — entirely inside Docker.
 # Nothing but Docker (and the AWS CLI, for auth) runs on your host.

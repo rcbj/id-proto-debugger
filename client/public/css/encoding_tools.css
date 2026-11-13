@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
 /* Compact layout for the Encoding / Hashing Tools page. Loaded last so it
    overrides the shared container/legend/textarea rules from bootstrap and
    common.css. */

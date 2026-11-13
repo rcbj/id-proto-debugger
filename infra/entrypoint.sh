@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Container entrypoint: run Terraform for one environment. State is remote (S3),
 # so this works identically whether the container runs locally or in CI.

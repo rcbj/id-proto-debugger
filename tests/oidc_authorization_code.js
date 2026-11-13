@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 const { Builder, By, until } = require("selenium-webdriver");
 const browserFlags = require("./browser_flags.js");
 const { Select } = require('selenium-webdriver/lib/select');
@@ -305,9 +308,18 @@ async function tokenDetailPage(driver, type)
 }
 
 async function refresh_token_call(driver, client_id, scope, user, access,
-                                  audience) {
+                                  audience, client_secret) {
   log.debug("Entering refresh_token_call().");
   log.info("Entering refresh_token_call().");
+  // The page came back from token_detail.html, which reloads it, and a
+  // client secret is never stored (CLAUDE.md, State persistence). The
+  // refresh pane's secret is therefore empty and is typed again here.
+  if (client_secret) {
+    const secretField = await driver.wait(
+        until.elementLocated(By.id("refresh_client_secret")), waitTime);
+    await driver.executeScript("arguments[0].value = arguments[1];",
+                               secretField, client_secret);
+  }
   // Locate and click the refresh button to exchange the refresh token for new
   // tokens
   log.info("Find Refresh Button");
@@ -674,7 +686,7 @@ async function test() {
     await tokenDetailPage(driver, "id_token");
     log.info("Making refresh_token_call().");
     await refresh_token_call(driver, client_id, scope, user, "account",
-                             audience);
+                             audience, client_secret);
     // The Refresh Request's own HTTP tab, asserted on the FIRST refresh —
     // before the token detail pages below navigate away and rebuild the
     // panes. See verifyRefreshHttpTab().
@@ -688,7 +700,7 @@ async function test() {
     await tokenDetailPage(driver, "refresh_id_token");
     log.info("Making refresh_token_call().");
     await refresh_token_call(driver, client_id, scope, user, "account",
-                             audience);
+                             audience, client_secret);
     log.info("Go to refresh_access_token detail page.");
     await tokenDetailPage(driver, "refresh_access_token");
     log.info("Go to refresh_refresh_token detail page.");

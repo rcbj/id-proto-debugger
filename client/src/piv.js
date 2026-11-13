@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: piv.js
 //
 // PIV, NIST SP 800-73-4, plus the Yubico commands a YubiKey adds
@@ -78,7 +81,10 @@ var OBJECTS = {
   "5fc10c": "key history object",
   "5fc121": "cardholder iris images",
   "5fc122": "secure messaging certificate signer",
-  "5fc123": "pairing code reference data"
+  "5fc123": "pairing code reference data",
+  // Yubico: the attestation certificate for the key in slot F9, the
+  // one that signs what ATTEST returns. Factory-loaded by Yubico.
+  "5fff01": "attestation certificate (Yubico, slot F9)"
 };
 
 var PIN_POLICY = {
@@ -132,6 +138,48 @@ function slotName(p2) {
   return "slot " + key.toUpperCase();
 }
 
+// VERIFY's P2 names a PIN, not a key slot (SP 800-73-4 Part 2
+// section 3.2.1). 96 and 97 are the on-card biometric references.
+var PIN_REFERENCES = {
+  "00": "global PIN",
+  "80": "PIV card application PIN",
+  "81": "PIN unblocking key (PUK)",
+  "96": "primary finger OCC",
+  "97": "secondary finger OCC"
+};
+var PIN_LENGTH = 8;
+
+function pinReferenceName(p2) {
+  log.debug("Entering pinReferenceName().");
+  var key = hexByte(p2);
+  var name = (PIN_REFERENCES[key] || "reference") + " (" +
+      key.toUpperCase() + ")";
+  log.debug("Leaving pinReferenceName().");
+  return name;
+}
+
+// VERIFY of the application PIN. SP 800-73-4 Part 2 section 3.2.1:
+// the PIN is 6 to 8 characters, padded with FF to 8 bytes. An
+// unpadded PIN is a different reference value, and the card counts
+// it as a wrong one.
+function verifyApdu(pin, reference) {
+  log.debug("Entering verifyApdu().");
+  var bytes = Buffer.from(String(pin == null ? "" : pin), "utf8");
+  if (bytes.length < 6 || bytes.length > PIN_LENGTH) {
+    log.debug("Leaving verifyApdu(). Length.");
+    reject("A PIV PIN is 6 to 8 characters.");
+  }
+  var padded = Buffer.concat([bytes,
+      Buffer.alloc(PIN_LENGTH - bytes.length, 0xff)]);
+  var apdu = iso.encodeCommand({
+    cla: 0x00, ins: 0x20, p1: 0x00,
+    p2: reference === undefined ? 0x80 : reference,
+    data: padded, le: null
+  });
+  log.debug("Leaving verifyApdu().");
+  return apdu;
+}
+
 function algorithmName(p1) {
   log.debug("Entering algorithmName().");
   var key = hexByte(p1);
@@ -156,6 +204,125 @@ function objectName(tagHex) {
   }
   log.debug("Leaving objectName(). Unnamed.");
   return "data object " + key.toUpperCase();
+}
+
+// The Yubico attestation extensions, 1.3.6.1.4.1.41482.3.N, from
+// developers.yubico.com/PIV/Introduction/PIV_attestation.html. The
+// content octets of the OID up to and including the 3 arc; N follows.
+var YUBICO_ATTESTATION_ARC = "2b0601040182c40a03";
+var ATTEST_PIN_POLICY = { "1": "never", "2": "once per session",
+    "3": "always" };
+var ATTEST_TOUCH_POLICY = { "1": "never", "2": "always",
+    "3": "cached for 15s" };
+var FORM_FACTORS = {
+  "1": "USB-A keychain",
+  "2": "USB-A nano",
+  "3": "USB-C keychain",
+  "4": "USB-C nano",
+  "5": "Lightning and USB-C"
+};
+
+// Every Extension SEQUENCE in a certificate, as { oid, value } with
+// the extnValue's content octets. Not a certificate parser: it finds
+// SEQUENCE { OID, [BOOLEAN,] OCTET STRING } inside the [3] wrapper of
+// the TBSCertificate and nothing else. describeCertificate() in
+// x509.js is still what reads the certificate.
+function certificateExtensions(der) {
+  log.debug("Entering certificateExtensions().");
+  var top = iso.parseElements(der);
+  if (top.length !== 1 || top[0].tag !== 0x30) {
+    log.debug("Leaving certificateExtensions(). Not a certificate.");
+    reject("Not a DER certificate.");
+  }
+  var tbs = iso.parseElements(top[0].value)[0];
+  if (!tbs || tbs.tag !== 0x30) {
+    log.debug("Leaving certificateExtensions(). No TBS.");
+    reject("The certificate has no TBSCertificate.");
+  }
+  var wrapper = childByTag(iso.parseElements(tbs.value), 0xa3);
+  var out = [];
+  if (!wrapper) {
+    log.debug("Leaving certificateExtensions(). None.");
+    return out;
+  }
+  var list = iso.parseElements(wrapper.value);
+  var items = list.length && list[0].tag === 0x30 ?
+      iso.parseElements(list[0].value) : [];
+  var i = 0;
+  for (i = 0; i < items.length; i++) {
+    var parts = iso.parseElements(items[i].value);
+    var oid = childByTag(parts, 0x06);
+    var value = childByTag(parts, 0x04);
+    if (oid && value) {
+      out.push({ oid: oid.value.toString("hex"), value: value.value });
+    }
+  }
+  log.debug("Leaving certificateExtensions().");
+  return out;
+}
+
+// The serial extension is a DER INTEGER inside the OCTET STRING.
+function attestationSerial(value) {
+  log.debug("Entering attestationSerial().");
+  var nodes = iso.parseElements(value);
+  if (nodes.length !== 1 || nodes[0].tag !== 0x02 ||
+      nodes[0].value.length < 1 || nodes[0].value.length > 6) {
+    log.debug("Leaving attestationSerial(). Shape.");
+    return null;
+  }
+  var n = 0;
+  var i = 0;
+  for (i = 0; i < nodes[0].value.length; i++) {
+    n = (n * 256) + nodes[0].value[i];
+  }
+  log.debug("Leaving attestationSerial().");
+  return n;
+}
+
+// Rows for the Yubico extensions in a certificate: the device
+// attestation certificate in 5FFF01 carries the firmware version, and
+// a certificate ATTEST returns for a slot carries all of them.
+function attestationRows(der) {
+  log.debug("Entering attestationRows().");
+  var rows = [];
+  var exts = certificateExtensions(iso.asBytes(der));
+  var i = 0;
+  for (i = 0; i < exts.length; i++) {
+    var oid = exts[i].oid;
+    if (oid.indexOf(YUBICO_ATTESTATION_ARC) !== 0 ||
+        oid.length !== YUBICO_ATTESTATION_ARC.length + 2) {
+      continue;
+    }
+    var arc = parseInt(oid.slice(-2), 16);
+    var v = exts[i].value;
+    if (arc === 3 && v.length === 3) {
+      rows.push({ label: "Firmware (Yubico 3.3)",
+          value: v[0] + "." + v[1] + "." + v[2] });
+    } else if (arc === 7) {
+      var serial = attestationSerial(v);
+      rows.push({ label: "YubiKey serial (Yubico 3.7)",
+          value: serial === null ? iso.toHex(v) : String(serial) });
+    } else if (arc === 8 && v.length === 2) {
+      rows.push({ label: "PIN policy (Yubico 3.8)",
+          value: ATTEST_PIN_POLICY[String(v[0])] || hexByte(v[0]) });
+      rows.push({ label: "Touch policy (Yubico 3.8)",
+          value: ATTEST_TOUCH_POLICY[String(v[1])] || hexByte(v[1]) });
+    } else if (arc === 9 && v.length === 1) {
+      var fips = (v[0] & 0x80) !== 0;
+      rows.push({ label: "Form factor (Yubico 3.9)",
+          value: (FORM_FACTORS[String(v[0] & 0x7f)] ||
+              hexByte(v[0])) + (fips ? ", FIPS" : "") });
+    } else if (arc === 10) {
+      rows.push({ label: "FIPS certified (Yubico 3.10)", value: "yes" });
+    } else if (arc === 11) {
+      rows.push({ label: "CSPN certified (Yubico 3.11)", value: "yes" });
+    } else {
+      rows.push({ label: "Yubico extension 3." + arc,
+          value: iso.toHex(v) });
+    }
+  }
+  log.debug("Leaving attestationRows().");
+  return rows;
 }
 
 function childByTag(nodes, tag) {
@@ -306,6 +473,7 @@ function describeGeneralAuthenticate(command) {
   var witness = childByTag(inner, 0x80);
   var challenge = childByTag(inner, 0x81);
   var response = childByTag(inner, 0x82);
+  var exponentiation = childByTag(inner, 0x85);
   if (witness) {
     rows.push({ label: "Witness",
         value: witness.value.length + " bytes" });
@@ -317,6 +485,10 @@ function describeGeneralAuthenticate(command) {
   if (response) {
     rows.push({ label: "Response",
         value: response.value.length + " bytes (not checked)" });
+  }
+  if (exponentiation) {
+    rows.push({ label: "Exponentiation (ECDH peer key)",
+        value: exponentiation.value.length + " bytes" });
   }
   rows.push({ label: "Performed", value: "no — decoded only" });
   log.debug("Leaving describeGeneralAuthenticate().");
@@ -353,10 +525,10 @@ function describeCommand(input) {
     described = describeGeneralAuthenticate(command);
   } else if (ins === 0x20) {
     described = {
-      summary: "VERIFY " + slotName(command.p2),
+      summary: "VERIFY " + pinReferenceName(command.p2),
       rows: [
         { label: "Instruction", value: "VERIFY" },
-        { label: "Reference", value: slotName(command.p2) },
+        { label: "Reference", value: pinReferenceName(command.p2) },
         { label: "Data", value: "PIN (" + command.data.length +
             " bytes, not shown)" }
       ]
@@ -419,13 +591,18 @@ function metadataRows(body) {
       rows.push({ label: "PIN policy", value: pin });
       rows.push({ label: "Touch policy", value: touch });
     } else if (node.tag === 0x03 && value.length >= 1) {
-      var origin = value[0] === 0x01 ? "imported" :
-          (value[0] === 0x00 ? "generated" : hexByte(value[0]));
+      // yubikit ORIGIN_GENERATED = 1, ORIGIN_IMPORTED = 2.
+      var origin = value[0] === 0x01 ? "generated" :
+          (value[0] === 0x02 ? "imported" : hexByte(value[0]));
       rows.push({ label: "Origin", value: origin });
     } else if (node.tag === 0x04) {
       rows.push({ label: "Public key", value: value.length + " bytes" });
-    } else if (node.tag === 0x06 && value.length >= 1) {
-      rows.push({ label: "Retries", value: iso.toHex(value) });
+    } else if (node.tag === 0x05 && value.length >= 1) {
+      rows.push({ label: "Default value",
+          value: value[0] ? "yes" : "no" });
+    } else if (node.tag === 0x06 && value.length >= 2) {
+      rows.push({ label: "Retries", value: value[1] + " of " +
+          value[0] + " remaining" });
     } else {
       rows.push({ label: "Tag " + node.tagHex.toUpperCase(),
           value: iso.toHex(value) });
@@ -473,6 +650,12 @@ function describeResponse(input, inflate) {
     }
     if (certificate.der) {
       rows.push({ label: "DER", value: certificate.der.length + " bytes" });
+      try {
+        rows = rows.concat(attestationRows(certificate.der));
+      } catch (e) {
+        rows.push({ label: "Yubico extensions",
+            value: "not read: " + e.message });
+      }
     } else {
       rows.push({ label: "Compressed",
           value: certificate.deflated.length +
@@ -508,7 +691,10 @@ module.exports = {
   algorithmName: algorithmName,
   objectName: objectName,
   certificateFields: certificateFields,
+  attestationRows: attestationRows,
   unwrapCertificate: unwrapCertificate,
+  pinReferenceName: pinReferenceName,
+  verifyApdu: verifyApdu,
   describeCommand: describeCommand,
   describeResponse: describeResponse
 };

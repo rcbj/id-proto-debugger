@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: scim_page.js
 //
 // ---------------------------------------------------------------------------
@@ -354,9 +357,9 @@ async function theServerIsThere(driver) {
     log.debug("Leaving theServerIsThere(). Not reachable.");
     return { present: false, why: 'the browser could not read a ' +
         'ServiceProviderConfig from ' + scimBaseUrl + ': "' + status + '". ' +
-        'The SCIM endpoints arrived in rcbj/iya-sts AFTER this ' +
-        'repository\'s sts/ gitlink was last moved, so a checkout whose ' +
-        'submodule predates them has no /scim/v2 routes; a CORS refusal ' +
+        'The SCIM endpoints arrived in rcbj/iya-sts AFTER some of its ' +
+        'releases, so an IYA_STS_IMAGE that predates them has no ' +
+        '/scim/v2 routes; a CORS refusal ' +
         'looks the same from here and is the other possibility.' };
   }
   check('the browser reads the ServiceProviderConfig DIRECTLY — no api',
@@ -3111,7 +3114,7 @@ async function test() {
     // The throw is inside the try, so the finally still quits the driver.
     // See tests/expectation.js.
     mustBeAbleTo(present.present, "The SCIM server this page was pointed at",
-      "cannot be used: " + present.why + ". Either the sts/ submodule " +
+      "cannot be used: " + present.why + ". Either the iya-sts image " +
       "predates /scim/v2 (bump it), or the stack is not up.");
     await useRunCredential(driver, 'for the sections that send');
     await everyEndpointComposes(driver);

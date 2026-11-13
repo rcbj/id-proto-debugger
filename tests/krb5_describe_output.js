@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_describe_output.js
 //
 // common/krb5/krb5_describe.js and krb5_keytab.js — what the Kerberos decoder

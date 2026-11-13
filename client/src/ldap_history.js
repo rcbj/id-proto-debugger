@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: ldap_history.js
 //
 // The Operations History log for the LDAP workflow — every operation this page

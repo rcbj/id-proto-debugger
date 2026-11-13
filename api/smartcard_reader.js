@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: smartcard_reader.js
 //
 // The optional PC/SC transmit path. A browser cannot open CCID.
@@ -40,6 +43,15 @@ var MAX_RESPONSE_BYTES = 65536;
 var MAX_GET_RESPONSE = 64;
 var MAX_READER_LENGTH = 256;
 var LIST_WAIT_MS = 450;
+// A whole sequence, touches included. A card that never answers would
+// otherwise hold the request, and the reader, for ever.
+var TRANSMIT_TIMEOUT_MS = 60000;
+// GET RESPONSE is ISO 7816-4's C0. YKOATH does not implement it and
+// asks for SEND REMAINING, A5, instead (yubikit's oath.py builds its
+// SmartCardProtocol with INS_SEND_REMAINING = 0xA5).
+var INS_GET_RESPONSE = 0xc0;
+var INS_SEND_REMAINING = 0xa5;
+var OATH_AID = "a0000005272101";
 
 function failure(message) {
   log.debug("Entering failure().");
@@ -174,9 +186,19 @@ function describeTransmit(given) {
   }
   var getResponse = !(body.getResponse === false ||
       body.getResponse === "false");
+  // The applet may have been selected by an earlier transmit, which
+  // remainingInsAfter() cannot see. "a5" says it is YKOATH.
+  var remaining = String(body.remainingIns == null ? "c0" :
+      body.remainingIns).toLowerCase();
+  if (remaining !== "c0" && remaining !== "a5") {
+    log.debug("Leaving describeTransmit(). Remaining.");
+    return failure("remainingIns is c0 (GET RESPONSE) or a5 " +
+        "(YKOATH SEND REMAINING).");
+  }
   log.debug("Leaving describeTransmit().");
   return { ok: true, reader: reader.reader, apdu: apdus[0],
-      apdus: apdus, getResponse: getResponse };
+      apdus: apdus, getResponse: getResponse,
+      remainingIns: parseInt(remaining, 16) };
 }
 
 // The same APDU with its Le replaced by le, for a 6Cxx answer. Only a
@@ -213,24 +235,60 @@ function splitStatus(buf) {
       sw1: buf[buf.length - 2], sw2: buf[buf.length - 1] };
 }
 
+// The CLA of a GET RESPONSE: the command's logical channel, and
+// nothing else. First interindustry CLA (00-3F) keeps the channel in
+// b2-b1; further interindustry (40-7F) keeps b7 and the channel in
+// b4-b1. Chaining and secure messaging bits are dropped either way.
+function responseCla(cla) {
+  log.debug("Entering responseCla().");
+  var out = (cla & 0xc0) === 0x40 ? (cla & 0x4f) : (cla & 0x03);
+  log.debug("Leaving responseCla().");
+  return out;
+}
+
+// The INS that fetches the rest of a 61xx answer after this APDU,
+// given the one in force before it. A SELECT changes it: SELECT of
+// the OATH applet means A5 from then on, any other SELECT means C0.
+function remainingInsAfter(apdu, current) {
+  log.debug("Entering remainingInsAfter().");
+  var out = current;
+  if (apdu.length >= 5 && apdu[1] === 0xa4 && apdu[2] === 0x04) {
+    var lc = apdu[4];
+    var aid = apdu.slice(5, 5 + lc).toString("hex");
+    out = aid.indexOf(OATH_AID) === 0 ? INS_SEND_REMAINING :
+        INS_GET_RESPONSE;
+  }
+  log.debug("Leaving remainingInsAfter().");
+  return out;
+}
+
 // One APDU through send(apdu) -> Promise<Buffer>, completed with GET
 // RESPONSE and the 6Cxx retry when getResponse is on. Every exchange
 // on the wire is in steps, so the page can show what was sent.
-function exchange(send, apdu, getResponse) {
+function exchange(send, apdu, getResponse, remainingIns) {
   log.debug("Entering exchange().");
+  var fetchIns = remainingIns === undefined ? INS_GET_RESPONSE :
+      remainingIns;
   var steps = [];
   var data = Buffer.alloc(0);
   var retried = false;
   var fetches = 0;
+  // record(), step() and send() run once per APDU on the wire, at
+  // most MAX_SEQUENCE x (MAX_GET_RESPONSE + 2) times a request, which
+  // is not a hot path, so they log like everything else.
   function record(sent, answer) {
+    log.debug("Entering record().");
     steps.push({
       apdu: sent.toString("hex").toUpperCase(),
       data: answer.data.toString("hex"),
       status: Buffer.from([answer.sw1, answer.sw2]).toString("hex")
           .toUpperCase()
     });
+    log.debug("Leaving record().");
   }
   function step(sent) {
+    log.debug("Entering step().");
+    log.debug("Leaving step(). The answer is a promise.");
     return send(sent).then(function (buf) {
       var answer = splitStatus(Buffer.from(buf));
       record(sent, answer);
@@ -253,8 +311,8 @@ function exchange(send, apdu, getResponse) {
           throw new Error("The card asked for more than " +
               MAX_GET_RESPONSE + " GET RESPONSEs.");
         }
-        return step(Buffer.from([apdu[0] & 0x03, 0xc0, 0x00, 0x00,
-            answer.sw2]));
+        return step(Buffer.from([responseCla(apdu[0]), fetchIns, 0x00,
+            0x00, answer.sw2]));
       }
       return {
         data: data.toString("hex"),
@@ -270,16 +328,20 @@ function exchange(send, apdu, getResponse) {
 
 // Every APDU in order, stopping at the first one whose final status is
 // not 90xx or 61xx, because the next one usually depends on it.
-function runSequence(send, apdus, getResponse) {
+function runSequence(send, apdus, getResponse, remainingIns) {
   log.debug("Entering runSequence().");
   var results = [];
   var chain = Promise.resolve(true);
+  var fetchIns = remainingIns === undefined ? INS_GET_RESPONSE :
+      remainingIns;
   apdus.forEach(function (apdu) {
     chain = chain.then(function (going) {
       if (!going) {
         return false;
       }
-      return exchange(send, apdu, getResponse).then(function (answer) {
+      fetchIns = remainingInsAfter(apdu, fetchIns);
+      return exchange(send, apdu, getResponse, fetchIns)
+          .then(function (answer) {
         results.push(answer);
         return answer.status.slice(0, 2) === "90" ||
             answer.status.slice(0, 2) === "61";
@@ -316,7 +378,9 @@ function listReaders() {
     var settled = false;
     var names = [];
     function finish(err, value) {
+      log.debug("Entering finish().");
       if (settled) {
+        log.debug("Leaving finish(). Already settled.");
         return;
       }
       settled = true;
@@ -326,6 +390,7 @@ function listReaders() {
       } else {
         resolve(value);
       }
+      log.debug("Leaving finish().");
     }
     try {
       pcsc = loaded.factory();
@@ -349,13 +414,15 @@ function listReaders() {
   return pending;
 }
 
-// opts: { getResponse, factory }. factory replaces the native module,
+// opts: { getResponse, remainingIns, factory, timeoutMs }. factory
+// replaces the native module,
 // which is how tests/smartcard_engine.js drives this without a reader.
 function transmit(readerName, apdus, opts) {
   log.debug("Entering transmit().");
   var options = opts || {};
   var list = Buffer.isBuffer(apdus) ? [apdus] : apdus;
   var getResponse = options.getResponse !== false;
+  var timeoutMs = options.timeoutMs || TRANSMIT_TIMEOUT_MS;
   var loaded = options.factory ? { factory: options.factory } :
       loadFactory();
   if (!loaded.factory) {
@@ -367,7 +434,9 @@ function transmit(readerName, apdus, opts) {
     var settled = false;
     var found = false;
     function finish(err, value) {
+      log.debug("Entering finish().");
       if (settled) {
+        log.debug("Leaving finish(). Already settled.");
         return;
       }
       settled = true;
@@ -377,6 +446,7 @@ function transmit(readerName, apdus, opts) {
       } else {
         resolve(value);
       }
+      log.debug("Leaving finish().");
     }
     try {
       pcsc = loaded.factory();
@@ -397,14 +467,22 @@ function transmit(readerName, apdus, opts) {
       reader.connect({ share_mode: share },
           function (connectErr, protocol) {
         if (connectErr) {
+          // pcsclite's own text names the PC/SC code (no card, card
+          // unpowered, sharing violation, ...), which is the diagnosis.
+          // A guess of ours in its place would hide it.
+          var said = (connectErr && connectErr.message) ?
+              connectErr.message : String(connectErr);
           finish(new Error(list.length > 1 ?
               "Could not open " + readerName + " exclusively. Is a " +
               "card in it, and is another process (scdaemon, pcscd " +
-              "clients) holding it? " + connectErr.message :
-              "No card in " + readerName + "."));
+              "clients) holding it? PC/SC said: " + said :
+              "Could not connect to " + readerName + ". PC/SC said: " +
+              said));
           return;
         }
         function send(apdu) {
+          log.debug("Entering send().");
+          log.debug("Leaving send(). The answer is a promise.");
           return new Promise(function (ok, bad) {
             reader.transmit(apdu, MAX_APDU_BYTES, protocol,
                 function (txErr, data) {
@@ -416,7 +494,8 @@ function transmit(readerName, apdus, opts) {
             });
           });
         }
-        runSequence(send, list, getResponse).then(function (results) {
+        runSequence(send, list, getResponse, options.remainingIns)
+            .then(function (results) {
           reader.disconnect(reader.SCARD_LEAVE_CARD, function () {
             var last = results[results.length - 1];
             finish(null, {
@@ -438,6 +517,10 @@ function transmit(readerName, apdus, opts) {
         finish(new Error("No reader named \"" + readerName + "\"."));
       }
     }, LIST_WAIT_MS);
+    setTimeout(function () {
+      finish(new Error("The card did not finish the sequence in " +
+          (timeoutMs / 1000) + " seconds."));
+    }, timeoutMs).unref();
   });
   log.debug("Leaving transmit().");
   return pending;
@@ -450,6 +533,8 @@ module.exports = {
   enabled: enabled,
   limits: limits,
   withLe: withLe,
+  responseCla: responseCla,
+  remainingInsAfter: remainingInsAfter,
   exchange: exchange,
   runSequence: runSequence,
   checkReaderName: checkReaderName,

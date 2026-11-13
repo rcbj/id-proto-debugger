@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: smartcard_engine.js
 //
 // ---------------------------------------------------------------------------
@@ -557,6 +560,21 @@ async function pivCertificates() {
   assert.ok(rowText(pin.rows).indexOf("not shown") >= 0);
   assert.ok(rowText(pin.rows).indexOf("123456") < 0,
       "the PIN was copied into the description");
+  // SP 800-73-4 Part 2 3.2.1: FF-padded to 8 bytes. The YubiKey
+  // default PIN 123456 is 313233343536FFFF on the wire.
+  assert.strictEqual(piv.verifyApdu("123456").toString("hex"),
+      "0020008008313233343536ffff");
+  assert.ok(pin.summary.indexOf("PIV card application PIN") >= 0,
+      pin.summary);
+  throws(function () {
+    piv.verifyApdu("12345");
+  }, "A PIV PIN is 6 to 8 characters.");
+  // yubikit: ORIGIN_GENERATED = 1, ORIGIN_IMPORTED = 2; retries is
+  // total then remaining.
+  var meta = rowText(piv.describeResponse(
+      fromHex("010111 02020102 030101 06020302 9000")).rows);
+  assert.ok(meta.indexOf("Origin=generated") >= 0, meta);
+  assert.ok(meta.indexOf("Retries=2 of 3 remaining") >= 0, meta);
   var failed = piv.describeResponse(Buffer.from([0x69, 0x82]));
   assert.ok(failed.summary.indexOf("6982") >= 0, failed.summary);
   assert.strictEqual(failed.certificate, null);
@@ -600,6 +618,82 @@ async function pivCertificates() {
   log.info("OK — PIV names the authentication certificate, hides a " +
       "PIN, and a gzip container inflates to the same certificate.");
   log.debug("Leaving pivCertificates().");
+}
+
+// A REAL attestation chain, not one this code built: go-piv/piv-go
+// (Apache-2.0), v2/piv/key_test.go, TestVerify "ValidChain". The
+// device certificate is what a YubiKey keeps in object 5FFF01; the
+// key certificate is what ATTEST returned for slot 9A. openssl
+// asn1parse of the latter shows 3.3 = 050403, 3.7 = 020400F00F14,
+// 3.8 = 0201 and 3.9 = 04.
+var PIVGO_DEVICE_CERT_B64 =
+  "MIIC+jCCAeKgAwIBAgIJAKs/UIpBjg1uMA0GCSqGSIb3DQEBCwUAMCsxKTAnBgNV" +
+  "BAMMIFl1YmljbyBQSVYgUm9vdCBDQSBTZXJpYWwgMjYzNzUxMCAXDTE2MDMxNDAw" +
+  "MDAwMFoYDzIwNTIwNDE3MDAwMDAwWjAhMR8wHQYDVQQDDBZZdWJpY28gUElWIEF0" +
+  "dGVzdGF0aW9uMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0zdJWGnk" +
+  "aLE8Rb+TP7iSffhJV9SJEp2Me4QcfVidgHqyIdo0lruBk69RF1nrmS3i+G1yyUh/" +
+  "ymAPZkcQCpms0E23Dmhue1VRpBedcsVtO/xSrfu0qAWTslp/k57ry6vkidrQU1cx" +
+  "l2KodH3KTmnZmaskQD8eGtxXwcmLOmhKem6GSqhN/3QznaDhZmVUAvUKSOaIzOxn" +
+  "2u1mDHhGwaHhR7dklsDwN7oni4WWX1GJXtzpB8j6JhoqyqXwSbq+ck54PfzUoOFd" +
+  "/2yKyFRDXnQvzbNL7+afbxBQQMxxo1e24DNE/cp+K09eT7Gh1Urao6meaSssN4aV" +
+  "FfmkhC2NapGKMQIDAQABoykwJzARBgorBgEEAYLECgMDBAMFBAMwEgYDVR0TAQH/" +
+  "BAgwBgEB/wIBADANBgkqhkiG9w0BAQsFAAOCAQEAJfOLOQYGyIMQ5y+sDkYz+e6G" +
+  "H8BqqiYL9VOC3U3KQX9mrtZnaIexqJOCQyCFOSvaTFJvOfNiCCKQuLbmS+Qn4znd" +
+  "nSitCsdJSFKskQP7hbXqUK01epb6iTuuko4w3V57YVudnniZBD2s4XoNcJ6BFizZ" +
+  "3iXQqRMaLVfFHS9Qx0iLZLcR2s29nIl6NI/qFdIgkyo07J5cPnBiD6wxQft8FdfR" +
+  "bgx9yrrjY0mvj/k5LRN6lab8lTolgI5luJtKNueq96LVkTkAzcCaJPQ9YQ4cxeU9" +
+  "OapsEeOk6xf5bRPtdf0WhEKthXywt9D0pSHhAI+fpLNe/VtlZpt3hn9aTbqSug==";
+var PIVGO_KEY_CERT_B64 =
+  "MIICVTCCAT2gAwIBAgIQAU4Yg7Qnw9FZgMBEaJ7ZMzANBgkqhkiG9w0BAQsFADAh" +
+  "MR8wHQYDVQQDDBZZdWJpY28gUElWIEF0dGVzdGF0aW9uMCAXDTE2MDMxNDAwMDAw" +
+  "MFoYDzIwNTIwNDE3MDAwMDAwWjAlMSMwIQYDVQQDDBpZdWJpS2V5IFBJViBBdHRl" +
+  "c3RhdGlvbiA5YTBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABATzM3sJuwemL2Ha" +
+  "HkGIzmCVjUMreNIVrRLOvnbZjoVflk1eab/iLUlKzk/2jXTu9TISRg2dhyXcutct" +
+  "vnqr66yjTjBMMBEGCisGAQQBgsQKAwMEAwUEAzAUBgorBgEEAYLECgMHBAYCBADw" +
+  "DxQwEAYKKwYBBAGCxAoDCAQCAgEwDwYKKwYBBAGCxAoDCQQBBDANBgkqhkiG9w0B" +
+  "AQsFAAOCAQEAFX0hL5gi/g4ZM7vCH5kDAtma7eBp0LpbCzR313GGyBR7pJFtuj2l" +
+  "bWU+V3SFRihXBTDb8q+uvyCBqgz1szdZzrpfjqNkhEPfPNabxjxJxVoe6Gdcn115" +
+  "aduxfqqT2u+YIsERzaIIIisehLQkc/5zLkpocA6jbKBZnZWUBJIxuz4QmYTIf0O4" +
+  "HPE2o4JbAyGx/hRaqVvDgNeAz94ZFjb4Mp3RNbbdRUZB0ehrT/IGRJoHRu2HKFGM" +
+  "ylRJL2kjKPoEc4XHbCu+MfmAIrQ4Xseg85zyI7ThhYvAzktdLHhQyfYr4wrrLCN3" +
+  "oeTzmiqIHe9AataJXQ+mEQEEc9TNY23RFg==";
+
+async function pivAttestation() {
+  log.debug("Entering pivAttestation().");
+  var device = Buffer.from(PIVGO_DEVICE_CERT_B64, "base64");
+  var key = Buffer.from(PIVGO_KEY_CERT_B64, "base64");
+  // GET DATA 5FFF01 answers 53 { 70 cert, 71 00, FE 00 }.
+  var container = Buffer.concat([
+    fromHex("53 82"), Buffer.from([((device.length + 9) >> 8) & 0xff,
+        (device.length + 9) & 0xff]),
+    fromHex("70 82"), Buffer.from([(device.length >> 8) & 0xff,
+        device.length & 0xff]),
+    device, fromHex("71 01 00 fe 00 90 00")
+  ]);
+  assert.strictEqual(piv.objectName("5fff01"),
+      "attestation certificate (Yubico, slot F9)");
+  var dev = rowText(piv.describeResponse(container).rows);
+  assert.ok(dev.indexOf("Firmware (Yubico 3.3)=5.4.3") >= 0, dev);
+  assert.ok(dev.indexOf("serial") < 0, dev);
+  var attested = rowText(piv.describeResponse(
+      Buffer.concat([key, fromHex("9000")])).rows);
+  assert.ok(attested.indexOf("Firmware (Yubico 3.3)=5.4.3") >= 0,
+      attested);
+  assert.ok(attested.indexOf("YubiKey serial (Yubico 3.7)=15732500") >= 0,
+      attested);
+  assert.ok(attested.indexOf("PIN policy (Yubico 3.8)=once per session") >=
+      0, attested);
+  assert.ok(attested.indexOf("Touch policy (Yubico 3.8)=never") >= 0,
+      attested);
+  assert.ok(attested.indexOf("Form factor (Yubico 3.9)=USB-C nano") >= 0,
+      attested);
+  var described = await x509.describeCertificate(
+      bytes.derToPem(key, "CERTIFICATE"));
+  assert.ok(String(described.subject).indexOf("YubiKey PIV Attestation 9a")
+      >= 0, described.subject);
+  log.info("OK — a real YubiKey attestation pair (piv-go's test vector) " +
+      "decodes from 5FFF01 and from ATTEST, Yubico extensions included.");
+  log.debug("Leaving pivAttestation().");
 }
 
 function otpVectors() {
@@ -736,6 +830,29 @@ function otpVectors() {
   var reports = otp.hidReports(frame);
   assert.strictEqual(reports[0][7], 0x80);
   assert.strictEqual(reports[reports.length - 1][7], 0x80 | 9);
+  // HMAC variable mode pads the way yubikit's calculate_hmac_sha1
+  // does: ljust(64, b"\1" if challenge.endswith(b"\0") else b"\0").
+  var endsZero = otp.hidFrame(0x30, fromHex("aa 00"));
+  assert.strictEqual(endsZero.slice(0, 64).toString("hex"),
+      "aa00" + "01".repeat(62));
+  var endsOne = otp.hidFrame(0x38, fromHex("aa 01"));
+  assert.strictEqual(endsOne.slice(0, 64).toString("hex"),
+      "aa01" + "00".repeat(62));
+  assert.strictEqual(otp.hmacChallengeBytes(endsZero).toString("hex"),
+      "aa00");
+  assert.strictEqual(otp.hmacChallengeBytes(endsOne).toString("hex"),
+      "aa01");
+  // Fixed mode: the 64 bytes are the challenge, zero filled.
+  var fixed = otp.hidFrame(0x30, fromHex("aa 00"), { variable: false });
+  assert.strictEqual(fixed.slice(0, 64).toString("hex"),
+      "aa" + "00".repeat(63));
+  assert.strictEqual(otp.hmacChallengeBytes(fixed, false).length, 64);
+  // The CRC is over the padded payload, so it differs between modes.
+  assert.notStrictEqual(endsZero.slice(65, 67).toString("hex"),
+      fixed.slice(65, 67).toString("hex"));
+  // OTP slots are not padded with 01.
+  assert.strictEqual(otp.hidFrame(0x20, fromHex("0102030405 00"))
+      .slice(6, 64).toString("hex"), "00".repeat(58));
   hidReadProtocol();
   log.info("OK — published OTP vectors decrypt, both HMACs match, " +
       "and the verifier refuses a bad URL.");
@@ -888,6 +1005,19 @@ function oathVectors() {
   var putText = rowText(oath.describeCommand(put).rows);
   assert.ok(putText.indexOf("not shown") >= 0);
   assert.ok(putText.indexOf("12345678901234567890") < 0);
+  // The property is tag 78 and one byte with NO length (yubikit's
+  // struct.pack(">BB", TAG_PROPERTY, prop)); a short key is padded
+  // to 14 bytes, as yubikit does.
+  var touchPut = oath.putApdu({
+    name: "t", secret: Buffer.from("0102030405", "hex"), type: "HOTP",
+    digits: 6, touch: true, counter: 5
+  });
+  assert.strictEqual(touchPut.toString("hex"),
+      "00010000" + "1d" + "710174" + "7310" + "1106" +
+      "0102030405" + "00".repeat(9) + "7802" + "7a0400000005");
+  var touchText = rowText(oath.describeCommand(touchPut).rows);
+  assert.ok(touchText.indexOf("touch required") >= 0, touchText);
+  assert.ok(touchText.indexOf("Initial counter") >= 0, touchText);
   assert.strictEqual(oath.resetApdu().toString("hex"), "0004dead");
   var listed = iso.encodeTlv(0x72, Buffer.concat([
     Buffer.from([0x21]), Buffer.from("demo", "utf8")
@@ -901,6 +1031,46 @@ function oathVectors() {
   var calc = oath.parseCalculate(iso.encodeTlv(0x76,
       Buffer.concat([Buffer.from([6]), code])));
   assert.strictEqual(calc.code, "755224");
+
+  // A FULL CALCULATE response (75) is the whole HMAC, and the code is
+  // its dynamic truncation. RFC 4226 Appendix D, count 0 and 1.
+  var full0 = oath.parseCalculate(fromHex("75 15 06 " +
+      "cc93cf18508d94934c64b65d8ba7667fb7cde4b0"));
+  assert.strictEqual(full0.truncated, false);
+  assert.strictEqual(full0.code, "755224");
+  assert.strictEqual(oath.parseCalculate(fromHex("75 15 06 " +
+      "75a48a19d4cbe100644e8ac1397eea747a2d33ab")).code, "287082");
+  // RFC 4226 Appendix D's truncated value for count 1.
+  assert.strictEqual(oath.parseCalculate(fromHex("76 05 06 41397eea"))
+      .code, "287082");
+  // RFC 6238 Appendix B, T = 59, SHA-256, 8 digits: 46119246. The
+  // 32-byte HMAC is node's, from the RFC's seed and T = 1.
+  var sha256Seed = Buffer.from("12345678901234567890123456789012");
+  var mac256 = crypto.createHmac("sha256", sha256Seed)
+      .update(fromHex("0000000000000001")).digest();
+  assert.strictEqual(oath.parseCalculate(Buffer.concat([
+    fromHex("75 21 08"), mac256
+  ])).code, "46119246");
+  // CALCULATE ALL, written by hand from the YKOATH grammar: name 71
+  // then 76 (truncated), 77 (HOTP) or 7C (touch), digits first.
+  var all = oath.parseCalculateAll(fromHex(
+      "71 05 746f747031 76 05 06 4c93cf18" +
+      "71 05 686f747031 77 01 06" +
+      "71 05 746f756368 7c 01 08"));
+  assert.deepStrictEqual(all.map(function (c) {
+    return [c.name, c.kind, c.digits, c.code];
+  }), [
+    ["totp1", "truncated", 6, "755224"],
+    ["hotp1", "HOTP, not calculated", 6, null],
+    ["touch", "touch required, not calculated", 8, null]
+  ]);
+  var allText = rowText(oath.describeResponse(fromHex(
+      "71 05 746f747031 76 05 06 4c93cf18 90 00")).rows);
+  assert.ok(allText.indexOf("totp1=755224 (truncated)") >= 0, allText);
+  throws(function () {
+    oath.parseCalculateAll(fromHex("71 05 746f747031 72 01 06"));
+  }, "A CALCULATE ALL response is name (71) and response " +
+      "(75, 76, 77 or 7C) pairs.");
   log.info("OK — RFC 4226 and RFC 6238 codes match, and a YKOATH " +
       "PUT does not show the secret.");
   log.debug("Leaving oathVectors().");
@@ -913,10 +1083,23 @@ async function openpgpKeys() {
   assert.strictEqual(rsaAttr.modulusBits, 2048);
   assert.strictEqual(rsaAttr.exponentBits, 17);
   var oid = Buffer.from("2a8648ce3d030107", "hex");
-  var ecc = pgp.parseAlgorithmAttributes(Buffer.concat([
-    Buffer.from([0x13, oid.length]), oid
-  ]));
+  // OpenPGP card 3.4 4.4.3.9: the OID follows the algorithm ID with
+  // no length byte. These are the bytes gpg writes for C1.
+  var ecc = pgp.parseAlgorithmAttributes(
+      fromHex("13 2a 86 48 ce 3d 03 01 07"));
   assert.strictEqual(ecc.curve, "P-256");
+  var ed = pgp.parseAlgorithmAttributes(
+      fromHex("16 2b 06 01 04 01 da 47 0f 01"));
+  assert.strictEqual(ed.curve, "Ed25519");
+  var withImport = pgp.parseAlgorithmAttributes(
+      fromHex("12 2b 06 01 04 01 97 55 01 05 01 ff"));
+  assert.strictEqual(withImport.curve, "X25519");
+  assert.strictEqual(withImport.importFormat, 0xff);
+  var counted = pgp.describeData(iso.encodeTlv(0x7a,
+      iso.encodeTlv(0x93, Buffer.from([0, 1, 2]))));
+  assert.ok(counted.rows.some(function (row) {
+    return row.label === "Signature counter" && row.value === "258";
+  }), "the counter inside 7A is read");
 
   var rsa = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
   var rsaJwk = rsa.publicKey.export({ format: "jwk" });
@@ -1210,9 +1393,60 @@ async function readerExchanges() {
   await reader.transmit("Fake Reader 00", [fromHex("00a40400")],
       { factory: factory });
   assert.deepStrictEqual(opened, [1, 2]);
+
+  // A connect failure keeps pcsclite's own text.
+  var refusing = function () {
+    var pcsc = new EventEmitter();
+    pcsc.close = function () {};
+    setImmediate(function () {
+      pcsc.emit("reader", {
+        name: "Fake Reader 00",
+        SCARD_SHARE_SHARED: 2,
+        SCARD_SHARE_EXCLUSIVE: 1,
+        connect: function (opts, cb) {
+          cb(new Error("SCardConnect error: Card is unpowered." +
+              "(0x80100067)"));
+        }
+      });
+    });
+    return pcsc;
+  };
+  var said = null;
+  try {
+    await reader.transmit("Fake Reader 00", [fromHex("00a40400")],
+        { factory: refusing });
+  } catch (e) {
+    said = e.message;
+  }
+  assert.ok(said && said.indexOf("Card is unpowered.(0x80100067)") >= 0,
+      said);
+  assert.ok(said.indexOf("No card in") < 0, said);
+
+  // GET RESPONSE keeps the channel and nothing else, in both CLA
+  // ranges: 13 (chained, channel 3) -> 03, 51 (further, channel 5)
+  // -> 41, 71 (further, chained) -> 41.
+  assert.strictEqual(reader.responseCla(0x13), 0x03);
+  assert.strictEqual(reader.responseCla(0x51), 0x41);
+  assert.strictEqual(reader.responseCla(0x71), 0x41);
+  // YKOATH answers 61xx and wants SEND REMAINING (A5), not C0.
+  var oathCard = scriptedCard([
+    ["00a4040007a000000527210100", "79030500009000"],
+    ["00a1000000", "7205216465616d6f6110"],
+    ["00a5000010", "720521626262626290" + "00"]
+  ]);
+  var oathRun = await reader.runSequence(oathCard.send, [
+    fromHex("00a4040007a000000527210100"), fromHex("00a1000000")
+  ], true);
+  assert.strictEqual(oathRun.length, 2);
+  assert.strictEqual(oathRun[1].status, "9000", oathCard.sent.join());
+  assert.strictEqual(reader.describeTransmit({ reader: "R",
+      apdu: "00a1000000", remainingIns: "a5" }).remainingIns, 0xa5);
+  assert.strictEqual(reader.describeTransmit({ reader: "R",
+      apdu: "00a1000000", remainingIns: "b0" }).ok, false);
   log.info("OK — 61xx is followed by GET RESPONSE on the same channel, " +
       "6Cxx is resent with the Le asked for, a sequence stops at a " +
-      "failure and runs on one exclusive connection.");
+      "failure and runs on one exclusive connection, and YKOATH gets " +
+      "SEND REMAINING.");
   log.debug("Leaving readerExchanges().");
 }
 
@@ -1259,6 +1493,7 @@ async function test() {
   tlvRoundTripAndRefusals();
   theModuleStaysACodec();
   await pivCertificates();
+  await pivAttestation();
   otpVectors();
   oathVectors();
   await openpgpKeys();

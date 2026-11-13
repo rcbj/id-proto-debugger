@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wsfed_history.js
 //
 // The Operations History log for the WS-Federation workflow — every attempted

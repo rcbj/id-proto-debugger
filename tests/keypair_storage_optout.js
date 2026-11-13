@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: keypair_storage_optout.js
 //
 // "Save this key pair in browser localStorage" — the key-pair opt-out on every

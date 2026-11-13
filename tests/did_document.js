@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: did_document.js
 //
 // client/src/did.js — Decentralized Identifiers for the VC workflows, and the

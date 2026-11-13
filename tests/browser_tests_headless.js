@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: browser_tests_headless.js
 //
 // Every browser test in this suite must start Chrome HEADLESS by default.

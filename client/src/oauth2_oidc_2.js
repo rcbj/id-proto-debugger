@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 const appconfig = require(process.env.CONFIG_FILE);
 // OpenID Provider Metadata (Discovery 1.0 s3) — shared with oauth2_oidc_1.js
 // so both Configuration Parameters panes carry the same fields and defaults.
@@ -31,6 +34,8 @@ const rfc6750 = require("./rfc6750");
 // Token-request scope. The advertisement is not a default. See
 // oauth_scope.js.
 const oauthScope = require("./oauth_scope");
+// Client secrets and passwords are never stored; see secret_storage.js.
+const secretStorage = require("./secret_storage");
 
 const TOKEN_HISTORY_LIMIT = 1000;
 const OPERATION_HISTORY_LIMIT = 1000;
@@ -558,17 +563,13 @@ function renderOauthDpopStatus(accessToken) {
 // Everything else about the exchange is kept, which is what makes the Currently
 // Viewing pane's HTTP tab worth having.
 //
-// Be exact about what that buys, because the page's storage rules are not
-// uniform and it is easy to claim more than is true. This page already stores
-// `token_client_secret` and `refresh_client_secret` as ordinary form state —
-// they are what the fields hold, and they come back when the page reloads. The
-// PASSWORD is the one the state persistence note in CLAUDE.md excludes, and it
-// is not stored anywhere. So the redaction is not what keeps the client secret
-// out of this browser; it keeps a SECOND copy of every credential out of a
-// record that grows one entry per token call, outlives the form's own state,
-// is read back by a pane rather than typed into one, and — unlike a form field
-// — carries the api's HTTP Basic header, which is a credential this page never
-// composed and had never persisted before.
+// Be exact about what that buys. No client secret and no password is stored
+// as form state on this page (CLAUDE.md, State persistence; see
+// secret_storage.js): they live in their fields for one page load. The
+// redaction is what keeps them out of the one record that IS stored — a
+// record that grows one entry per token call, is read back by a pane rather
+// than typed into one, and carries the api's HTTP Basic header, a
+// credential this page never composed.
 // ---------------------------------------------------------------------------
 
 // One element, with its text set as TEXT.
@@ -1966,7 +1967,8 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     // the original grant. Copying localStorage "scope" here also copied
     // scopes_supported, which is every scope the server advertises.
     // A narrower value the reader already typed stays in the field.
-    $("#refresh_client_secret").val(localStorage.getItem("client_secret"));
+    // The secret the token request just used, carried in memory only.
+    $("#refresh_client_secret").val($("#token_client_secret").val());
     $("#token_fieldset").hide();
     $("#token_expand_button").val("Expand");
     useRefreshTokens();
@@ -2561,8 +2563,6 @@ function writeValuesToLocalStorage()
   }
   if (localStorage) {
       localStorage.setItem("token_client_id", $("#token_client_id").val());
-      localStorage.setItem("token_client_secret",
-                           $("#token_client_secret").val());
       localStorage.setItem("token_redirect_uri",
                            $("#token_redirect_uri").val());
       localStorage.setItem("token_username", $("#token_username").val());
@@ -2581,8 +2581,6 @@ function writeValuesToLocalStorage()
       localStorage.setItem("yesCheck", $("#SSLValidate-yes").is(":checked"));
       localStorage.setItem("noCheck", $("#SSLValidate-no").is(":checked"));
       localStorage.setItem("refresh_client_id", $("#refresh_client_id").val());
-      localStorage.setItem("refresh_client_secret",
-                           $("#refresh_client_secret").val());
       localStorage.setItem("refresh_scope", $("#refresh_scope").val());
       localStorage.setItem("refresh_refresh_token",
                            $("#refresh_refresh_token").val());
@@ -2733,10 +2731,38 @@ function readStoredScopesSupported() {
   return field || "";
 }
 
-// Replace a seeded advertisement in #token_scope and #refresh_scope.
-// A value the reader typed is kept. An empty token scope stays empty
-// for a code exchange and a refresh, and is prefilled for client
-// credentials and resource-owner password.
+// "true" or "false": a client secret was typed into the token request.
+// A boolean is not a credential, so it may be stored.
+function rememberClientHasSecret(value) {
+  log.debug("Entering rememberClientHasSecret().");
+  try {
+    localStorage.setItem("client_has_secret", value ? "true" : "false");
+  } catch (e) {
+    log.debug("rememberClientHasSecret(): " + e.message);
+  }
+  log.debug("Leaving rememberClientHasSecret().");
+}
+
+// The "edited" mark for a scope field: "true" once the reader typed
+// into it, persisted beside the value. Comparing the value with the
+// prefill cannot tell a typed "openid" from a seeded one.
+function scopeEdited(key) {
+  log.debug("Entering scopeEdited().");
+  var edited = localStorage.getItem(key) === "true";
+  log.debug("Leaving scopeEdited().");
+  return edited;
+}
+
+function markScopeEdited(key) {
+  log.debug("Entering markScopeEdited().");
+  localStorage.setItem(key, "true");
+  log.debug("Leaving markScopeEdited().");
+}
+
+// Fill #token_scope and #refresh_scope. A field the reader edited keeps
+// its value, empty included. Otherwise the page's prefill: nothing for
+// a code exchange and a refresh, and oauth_scope.js's default for
+// client credentials and resource-owner password.
 function applyStoredTokenScopes() {
   log.debug("Entering applyStoredTokenScopes().");
   var supported = readStoredScopesSupported();
@@ -2744,9 +2770,11 @@ function applyStoredTokenScopes() {
       localStorage.getItem("authorization_grant_type") || "";
   var authz = localStorage.getItem("scope") || "";
   $("#token_scope").val(oauthScope.tokenRequestScope(
-      grant, $("#token_scope").val(), authz, supported));
+      grant, $("#token_scope").val(), scopeEdited("token_scope_edited"),
+      authz, supported));
   $("#refresh_scope").val(oauthScope.tokenRequestScope(
-      "refresh_token", $("#refresh_scope").val(), authz, supported));
+      "refresh_token", $("#refresh_scope").val(),
+      scopeEdited("refresh_scope_edited"), authz, supported));
   log.debug("Leaving applyStoredTokenScopes().");
 }
 
@@ -2754,6 +2782,7 @@ function loadValuesFromLocalStorage()
 {
   log.debug("Entering loadValuesFromLocalStorage().");
 
+  secretStorage.purgeOnLoad(window.localStorage, window.sessionStorage);
   setAuthorizationGrantType();
 
   $("#authorization_endpoint")
@@ -2797,7 +2826,6 @@ function loadValuesFromLocalStorage()
     $("#device_authorization_endpoint").closest('tr').hide();
   }
   $("#revocation_client_id").val(localStorage.getItem("client_id"));
-  $("#revocation_client_secret").val(localStorage.getItem("client_secret"));
   if (localStorage.getItem("revocation_initiateFromFrontEnd") !== null) {
     $("#revocation_initiateFromFrontEnd").prop("checked",
       getLSBooleanItem("revocation_initiateFromFrontEnd"));
@@ -2819,7 +2847,6 @@ function loadValuesFromLocalStorage()
   $("#tokenexchange_token_endpoint")
     .val(localStorage.getItem("token_endpoint"));
   $("#tokenexchange_client_id").val(localStorage.getItem("client_id"));
-  $("#tokenexchange_client_secret").val(localStorage.getItem("client_secret"));
   if (localStorage.getItem("tokenexchange_initiateFromFrontEnd") !== null) {
     $("#tokenexchange_initiateFromFrontEnd").prop("checked",
       getLSBooleanItem("tokenexchange_initiateFromFrontEnd"));
@@ -2836,7 +2863,6 @@ function loadValuesFromLocalStorage()
     }
   }
   $("#token_client_id").val(localStorage.getItem("client_id"));
-  $("#token_client_secret").val(localStorage.getItem("client_secret"));
   // THIS ONE IS NOT A SETTING, WHICH IS WHY IT IS NOT HEALED THE WAY STEP 1
   // HEALS ITS OWN FIELD.
   //
@@ -2906,8 +2932,6 @@ function loadValuesFromLocalStorage()
     getLSBooleanItem("customTokenParametersCheck-no"));
   $("#refresh_client_id").val(localStorage.getItem("refresh_client_id"));
   $("#refresh_scope").val(localStorage.getItem("refresh_scope"));
-  $("#refresh_client_secret")
-    .val(localStorage.getItem("refresh_client_secret"));
   $("#useRefreshToken-yes").prop("checked",
     getLSBooleanItem("useRefreshToken_yes"));
   $("#useRefreshToken-no").prop("checked",
@@ -3847,6 +3871,19 @@ $(document).ready(function() {
   $("#refresh_refresh_token, #refresh_client_id, #refresh_client_secret, " +
     "#refresh_scope")
     .on("input change", recalculateRefreshRequestDescription);
+  // Only the reader types, so only `input` marks a scope as edited. A
+  // value set in script fires neither event.
+  $("#token_scope").on("input", function () {
+    markScopeEdited("token_scope_edited");
+  });
+  $("#refresh_scope").on("input", function () {
+    markScopeEdited("refresh_scope_edited");
+  });
+  // Whether the client has a secret, never the secret: step 1's RFC 9700
+  // check reads this to tell a confidential client from a public one.
+  $("#token_client_secret").on("input", function () {
+    rememberClientHasSecret($(this).val());
+  });
 
   loadValuesFromLocalStorage();
   enforceBackendAvailability();
@@ -4355,6 +4392,9 @@ function maybeShowTokenHandoffBanner() {
   if (wanted && $("#token_scope").length) {
     filled = tokenHandoff.mergeScope($("#token_scope").val(), wanted);
     $("#token_scope").val(filled);
+    // The workflow asked for this scope, so it is kept across a reload
+    // the way a typed one is.
+    markScopeEdited("token_scope_edited");
     // A value set in script fires no change event, and the next thing this
     // reader does is press a button that posts to the token endpoint.
     writeValuesToLocalStorage();
@@ -4798,12 +4838,11 @@ function isUrl(url) {
   }
 }
 
+// Remove every client secret and password an earlier build stored, and
+// the bearer credentials that now live in sessionStorage only.
 function clearLocalStorage() {
   log.debug("Entering clearLocalStorage().");
-  if (localStorage) {
-    localStorage.setItem("token_client_secret", "");
-    localStorage.setItem("refresh_client_secret", "");
-  }
+  secretStorage.purgeOnLoad(window.localStorage, window.sessionStorage);
   log.debug("Leaving clearLocalStorage().");
 }
 
@@ -6209,8 +6248,7 @@ function loadTokenForRevocation(type, generation) {
       localStorage.getItem("client_id"));
   }
   if (!$("#revocation_client_secret").val()) {
-    $("#revocation_client_secret").val($("#token_client_secret").val() ||
-      localStorage.getItem("client_secret"));
+    $("#revocation_client_secret").val($("#token_client_secret").val());
   }
   // Make sure the revocation pane is visible and expanded.
   expandPane("#step6");

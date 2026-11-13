@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wsfed_response.js
 //
 // WS-Federation Passive Requestor Profile response debugger. In the passive

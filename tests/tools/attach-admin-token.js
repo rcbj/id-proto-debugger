@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: tools/attach-admin-token.js
 //
 // PRESENT THE MANAGEMENT API'S ACCESS TOKEN, IN ONE PLACE.

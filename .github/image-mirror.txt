@@ -17,8 +17,9 @@
 #   * an `image:` in the compose file, written as
 #       ${IMAGE_MIRROR:-...}/<mirror path>
 #   * a base image some Dockerfile names in a FROM, redirected by an entry in
-#     that service's build.additional_contexts — which is how the mock STS's
-#     Dockerfile, in a submodule this repository does not edit, is covered.
+#     that service's build.additional_contexts — which is how the iya-sts
+#     companion's Dockerfile, built from that repository's release tag and
+#     not edited here, is covered.
 #
 # tests/image_mirror_coverage.js fails when a FROM or an `image:` in the test
 # stack is not covered here, so a new base image cannot silently go back to

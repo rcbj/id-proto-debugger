@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: kerberos_spnego_page.js
 //
 // client/public/spnego.html — a Kerberos ticket travelling in an HTTP header,

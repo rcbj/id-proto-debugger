@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 'use strict';
 
 // Application version: M.N.O
@@ -193,13 +196,11 @@ function load(dir) {
 // helpers keep the three in step with VERSION — a bump that updates only
 // VERSION would otherwise leave them silently stale.
 //
-// `sts` IS NOT ONE OF THEM, and was until the submodule moved to iya-sts's
-// v1.0.0 tag (2026-11-12). That repository versions its own releases now
-// (its common/version.js, #1298/#1317), so sts/package.json says which release
-// of IYA STS is pinned rather than which release of this debugger it is pinned
-// into — and --sync-manifests rewriting it would be an edit to somebody
-// else's checkout that undoes their release. iya-sts's version.js names this
-// conflict and leaves it to this side to settle; this is the settlement.
+// `sts` IS NOT ONE OF THEM, and was until the sts/ submodule moved to
+// iya-sts's v1.0.0 tag (2026-11-12). That repository versions its own
+// releases (its common/version.js, #1298/#1317), and since 2026-11-13 this
+// repository has no checkout of it at all: the stacks run its release image
+// (IYA_STS_IMAGE), whose tag is the pin.
 const MANIFESTS = ['api', 'client', 'tests'];
 
 function manifestVersion() {

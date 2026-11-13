@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: algorithm_menus.js
 //
 // EVERY ALGORITHM MENU ON EVERY PAGE OFFERS WHAT THE ENGINE BEHIND IT CAN DO.

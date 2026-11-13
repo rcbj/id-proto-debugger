@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wstrust_delegation_chain.js
 //
 // ---------------------------------------------------------------------------
@@ -410,7 +413,7 @@ async function delegationJson(query) {
     "GET " + url + " should answer 200 and answered " + r.status + ". " +
     "That endpoint is the mock's delegation register and is NOT behind the " +
     "console's gate, so a refusal here is the service being too old for this " +
-    "test (bump the sts/ submodule) rather than a permission: " +
+    "test (bump IYA_STS_IMAGE) rather than a permission: " +
     String(r.raw).slice(0, 200));
   log.debug("Leaving delegationJson(). held=" + r.body.held);
   return r.body;
@@ -518,7 +521,7 @@ async function provisionApplication(app) {
       " for a reason that is not \"it is already here\": " +
       JSON.stringify(errors) + ". If it names `wstrustAppliesTo` or " +
       "`samlEntityId` as unknown, this mock STS predates what this test " +
-      "needs — bump the sts/ submodule.");
+      "needs — bump IYA_STS_IMAGE.");
     log.info("[registry] " + app.identifier + " is already in the registry, " +
              "so this run reconciles it rather than creating it. A second " +
              "run, the other delegation element's job, or an earlier " +
@@ -551,7 +554,7 @@ async function provisionApplication(app) {
         attributes[i].value + " on the existing " + app.identifier +
         " was refused: " + String(added.raw).slice(0, 200) + ". A refusal " +
         "naming the attribute as unknown or not editable means this mock " +
-        "STS predates what this test needs — bump the sts/ submodule.");
+        "STS predates what this test needs — bump IYA_STS_IMAGE.");
     }
   }
 

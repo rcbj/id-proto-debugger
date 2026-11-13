@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 var config = {
   apiUrl: "https://api:4000",
   uiUrl: "https://client:3000",

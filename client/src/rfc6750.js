@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: rfc6750.js
 //
 // RFC 6750 section 2.1, the Authorization header a resource server must

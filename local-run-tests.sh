@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 set -x
 #
 # This script runs tests locally.
@@ -457,10 +460,10 @@ init()
   # THE URL IS NOT SET HERE. The realm is held in memory by a service that
   # persists nothing, so it does not exist until something creates it — which
   # is configureStsRfc9700Realm(), after the stack is up. That call is also the
-  # capability probe: it replaced a test for `oauth2_bcp.js` in the sts/
-  # submodule, which was a PATH test and silently took its else branch when
-  # iya-sts reorganised its directories, printing a confident and wrong
-  # explanation while quietly dropping five jobs. Asking the running service
+  # capability probe: it replaced a test for `oauth2_bcp.js` in the (since
+  # removed) sts/ submodule, which was a PATH test and silently took its else
+  # branch when iya-sts reorganised its directories, printing a confident and
+  # wrong explanation while quietly dropping five jobs. Asking the running service
   # answers the same question about the code that is actually running — and
   # answers it about realms too, which a file probe could not have seen at all.
   # walt.id's issuer-api2 (local-tests.yml, host networking) — the real
@@ -528,13 +531,14 @@ init()
   fi
   common_setup
   check_return_code $?
-  # The mock STS is a submodule, so its source is fetched rather than committed
-  # here. Checked before anything builds: without the checkout, compose reports a
-  # missing Dockerfile and nothing mentions a submodule.
-  requireMockStsCheckout "${CURRENT_DIR}"
-  # The api needs node-ldapjs too — the same library on the client side of
-  # the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
-  # the mock's, because npm resolves a `file:` dependency's own requires from
+  # iya-sts runs from its release image (local-tests.yml, IYA_STS_IMAGE),
+  # pulled here so a failure names the image rather than a compose step.
+  requireIyaStsImage "${CURRENT_DIR}"
+  check_return_code $?
+  # The api needs node-ldapjs — the same library iya-sts's directory is built
+  # on, here on the client side of
+  # the LDAP exchange, pinned as api/node-ldapjs (this repository's one
+  # submodule), because npm resolves a `file:` dependency's own requires from
   # where the real directory lives, so a copy outside api/ never reaches
   # api/node_modules. Uninitialised, the image builds fine and the service
   # dies at startup with `Cannot find module 'ldapjs'`.
@@ -667,32 +671,11 @@ prepareExternalSts()
 prepTestEnv()
 {
   npm install --prefix tests
-  # And the mock STS's own dependencies, because four tests run on the HOST and
-  # load sts/common/crypto_impl/bbs2023.js from the submodule in place:
-  # bbs2023_cryptosuite.js,
-  # ldp_vc_issuance.js, ldp_vc_refresh.js and vc_did.js, each of which compares
-  # the issuer's cryptosuite with the wallet's. That module reaches
-  # @digitalbazaar/bbs-signatures through a dynamic `import()`, and ESM resolution
-  # walks the directory tree from the importing FILE — it does not consult
-  # NODE_PATH, so tests/module_paths.js cannot cover it the way it covers the
-  # module's CommonJS requires. Without sts/node_modules those four fail at load
-  # with ERR_MODULE_NOT_FOUND. The containerized suite is unaffected: there
-  # bbs2023.js is copied flat beside the tests, next to tests/node_modules.
-  #
-  # `npm ci`, not `npm install`: iya-sts commits its lock, and `npm install`
-  # REWRITES it (its lock still carries the pre-rename package name), which would
-  # leave the submodule with a modified file after every run.
-  #
-  # `--omit=dev` is spelled out even though sts/.npmrc says the same thing, and
-  # the reason is that it DOES NOT APPLY HERE: npm reads .npmrc from the current
-  # directory, not from --prefix, so the submodule's own file is invisible to
-  # this invocation. Without the flag npm installs the devDependencies of the
-  # mock's `file:node-ldapjs` dependency — tap, eslint and their trees, roughly
-  # 200 packages nothing in this run loads — on every launcher run.
-  if [ -f sts/package.json ];
-  then
-    npm ci --omit=dev --prefix sts
-  fi
+  # iya-sts's own dependencies come with its tree, which warmIyaStsTree()
+  # (startDocker) copies out of its image: the host-run tests that load its
+  # modules in place — bbs2023.js reaches @digitalbazaar/bbs-signatures
+  # through a dynamic import(), which resolves from the importing FILE and
+  # ignores NODE_PATH — find them beside the module.
 }
 
 startDocker()
@@ -739,12 +722,13 @@ startDocker()
   # Start Docker containers
   CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml build
   check_return_code $?
-  # THE HOST-RUN JOBS THAT LOAD THE MOCK'S OWN MODULES need a tree the host
-  # can run, and since iya-sts #50 that means a COMPILED one, which a
-  # checkout is not. The image just built carries exactly that, so it is
-  # copied out rather than built here; see extractMockStsTree() for why
-  # building is not available. Best effort — it never stops the run.
-  extractMockStsTree
+  # THE HOST-RUN JOBS THAT LOAD iya-sts'S OWN MODULES need a tree the host
+  # can run, and since iya-sts #50 that means a COMPILED one, which only its
+  # image carries. Copied out once, into a cache keyed by the image; see
+  # warmIyaStsTree(). Fatal when it cannot be had: those jobs would only fail
+  # one by one, each naming a module.
+  warmIyaStsTree "${CURRENT_DIR}"
+  check_return_code $?
   CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml up -d
   check_return_code $?
   # The WS-Federation side-car must actually be running, not merely created: the
@@ -1667,10 +1651,6 @@ onExit()
 {
   local status=$?
   echo "Entering onExit()."
-  # The copy extractMockStsTree() made, and only that one: a MOCK_STS_DIR the
-  # caller supplied is somebody's working copy. Before the status is reported,
-  # so a failing run cleans up after itself too.
-  removeMockStsTree
   launcherExitStatus "${status}" "local-run-tests.sh"
   exit "${status}"
 }

@@ -1,9 +1,14 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # GitHub Pages (https://rcbj.github.io/id-proto-debugger/), the site every
 # debugger page's header and footer links to as "Documentation". The Pages
 # source is the legacy one (branch `master`, path `/`), so Jekyll builds the
 # whole repository and checks out its SUBMODULES with it.
 #
-# THE SUBMODULES ARE EXCLUDED (2026-10-02). sts/ is rcbj/iya-sts, which has a
+# THE SUBMODULES ARE EXCLUDED (2026-10-02). sts/ was rcbj/iya-sts (a
+# submodule until 2026-11-13, and still a directory in older checkouts and in
+# any Pages build of an older commit), which has a
 # Jekyll docs site of its own on the minima theme. Its
 # docs/assets/main.scss does `@import "minima"` (iya-sts 818207f0,
 # 2026-09-22), and this site builds on the default primer theme, so Sass

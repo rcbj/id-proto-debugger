@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: embedded.js
 //
 // ---------------------------------------------------------------------------
@@ -130,10 +133,22 @@ var config = {
   ssfMaxRequestBytes: 262144,
   gnapMaxRequestBytes: 262144,
   ssfReceiverEnabled: true,
+  // ssfReceiverTtlMs, ssfReceiverIdleTtlMs and ssfReceiverMaxInboxBytes are
+  // each the DEFAULT for one inbox and its CEILING: the SSF page may ask an
+  // inbox for less, and a request for more is refused naming the setting.
   ssfReceiverTtlMs: 3600000,
+  // How long an inbox lives with no push, drain or clear. The TTL above
+  // still applies however busy it is.
+  ssfReceiverIdleTtlMs: 1800000,
   ssfReceiverMaxInboxes: 20,
+  // One caller's share of those inboxes, by its address, so one client
+  // cannot hold them all.
+  ssfReceiverMaxInboxesPerCaller: 5,
   ssfReceiverMaxEvents: 200,
   ssfReceiverMaxEventBytes: 65536,
+  // The most one inbox holds in total, oldest dropped first. Without it
+  // the three caps above multiply out to a quarter of a gigabyte.
+  ssfReceiverMaxInboxBytes: 1048576,
   tlsAllowedPorts: "any",
   spiffeAllowedPorts: [8081, 8092, 8181],
   spiffeAllowedSocketPaths: ["/tmp/spire-agent/", "/tmp/spire-server/"],

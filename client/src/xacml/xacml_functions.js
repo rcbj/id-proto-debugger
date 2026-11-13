@@ -1,6 +1,6 @@
 // @ts-check
 // SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 
 'use strict';
 //
@@ -11,9 +11,9 @@
 // WRITTEN OUT.
 //
 // XACML 3.0 defines a little over two hundred function identifiers, and the
-// vendored conformance suite exercises 210 of them. They are NOT two hundred
-// functions: `string-is-in`, `integer-is-in`, `date-is-in` and eleven more are
-// ONE function and a table row each, and the same is true of `-bag`,
+// OASIS XACML 3.0 conformance suite exercises 210 of them. They are NOT two
+// hundred functions: `string-is-in`, `integer-is-in`, `date-is-in` and eleven
+// more are ONE function and a table row each, and the same is true of `-bag`,
 // `-bag-size`, `-one-and-only`, `-intersection`, `-union`, `-subset`,
 // `-set-equals`, `-at-least-one-member-of`, `-equal` and the four comparison
 // operators.
@@ -67,6 +67,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 const datatypes = require('./xacml_datatypes');
 
@@ -186,7 +187,7 @@ function typesWith(capability) {
 // such function and go Indeterminate, and the error would name a URI that
 // looks exactly like the twelve working ones beside it.
 //
-// Verified against the vendored conformance suite, which uses all 26 of the
+// Verified against the OASIS conformance suite, which uses all 26 of the
 // duration function URIs and every one of them at 3.0.
 // ---------------------------------------------------------------------------
 function familyPrefix(uri) {
@@ -588,13 +589,18 @@ function arithmetic(name, uri, arity, compute) {
   log.debug("Leaving arithmetic().");
 }
 
+// BigInt(0) rather than a `0n` literal: envify's esprima cannot parse one,
+// and browserify fails the bundle with "Unexpected token ILLEGAL" (see
+// tests/jwk_pem_encoding.js bigIntLiteralsStayOutOfTheBundles()).
+var _B0 = BigInt(0);
+
 arithmetic('integer-add', TYPE.INTEGER, 2, function (a, b) { return a + b; });
 arithmetic('integer-subtract', TYPE.INTEGER, 2,
            function (a, b) { return a - b; });
 arithmetic('integer-multiply', TYPE.INTEGER, 2,
            function (a, b) { return a * b; });
 arithmetic('integer-abs', TYPE.INTEGER, 1,
-           function (a) { return a < 0n ? -a : a; });
+           function (a) { return a < _B0 ? -a : a; });
 arithmetic('double-add', TYPE.DOUBLE, 2, function (a, b) { return a + b; });
 arithmetic('double-subtract', TYPE.DOUBLE, 2,
            function (a, b) { return a - b; });
@@ -608,7 +614,7 @@ define(F1 + 'integer-divide', {
          { kind: 'primitive', type: TYPE.INTEGER }],
   apply: function (values) {
     log.debug("Entering apply().");
-    if (values[1] === 0n) {
+    if (values[1] === _B0) {
       // Indeterminate rather than a crash or an Infinity. A.3.4 makes division
       // by zero an error, and a PDP that returned Infinity here would carry a
       // value no subsequent comparison could do anything sensible with.
@@ -641,7 +647,7 @@ define(F1 + 'integer-mod', {
          { kind: 'primitive', type: TYPE.INTEGER }],
   apply: function (values) {
     log.debug("Entering apply().");
-    if (values[1] === 0n) {
+    if (values[1] === _B0) {
       throw model.processingError('integer-mod by zero.');
     }
     log.debug("Leaving apply().");
@@ -1198,7 +1204,7 @@ function functionReference(expression, context, evaluate, where) {
     throw model.processingError(
       where + " requires a <Function> as its first argument.");
   }
-  const definition = FUNCTIONS[expression.functionId];
+  const definition = ownMembers.read(FUNCTIONS, expression.functionId);
   if (!definition) {
     throw model.processingError(
       'Unknown function "' + expression.functionId + '" passed to ' + where +
@@ -1223,7 +1229,7 @@ function applyPair(definition, left, right, context) {
 // `any-of-all` are 1.0, because those three existed in XACML 1.0 and the other
 // three were re-specified in 3.0 to take their bag argument either way round.
 // So the prefix is per function rather than per family, and it is passed in.
-// Verified against the vendored suite, which uses all six.
+// Verified against the OASIS conformance suite, which uses all six.
 function higherOrder(prefix, name, combine) {
   log.debug("Entering higherOrder().");
   define(prefix + name, {
@@ -1459,7 +1465,9 @@ function invoke(definition, argumentBags, context) {
 function lookup(uri) {
   log.debug("Entering lookup().");
   log.debug("Leaving lookup().");
-  return FUNCTIONS[uri] || null;
+  // An own member only (2026-11-12): a policy naming `toString` names no
+  // function.
+  return ownMembers.read(FUNCTIONS, uri) || null;
 }
 
 /**

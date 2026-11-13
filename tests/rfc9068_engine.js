@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: rfc9068.js
 //
 // ---------------------------------------------------------------------------
@@ -96,6 +99,70 @@ function typAcceptance() {
   assert.strictEqual(rfc9068.typFinding(undefined).level, "fail");
   log.info("OK — typ accepts the profile's media type in any case.");
   log.debug("Leaving typAcceptance().");
+}
+
+// Section 4 puts the signature first. A report that did not verify it
+// says so, and a clean report then does not read as an accepted token.
+function signatureIsNeverSilent() {
+  log.debug("Entering signatureIsNeverSilent().");
+  var skipped = rfc9068.signatureNotVerifiedFinding();
+  assert.strictEqual(skipped.level, "skip");
+  assert.strictEqual(skipped.claim, "signature");
+  assert.ok(/^SKIP  signature: /.test(rfc9068.formatFinding(skipped)));
+  assert.strictEqual(rfc9068.summaryLine(0, []), "All checks passed.");
+  var partial = rfc9068.summaryLine(0, ["signature", "iss", "aud"]);
+  assert.ok(partial.indexOf("All checks passed") < 0,
+      "a clean report with steps left out reads as accepted");
+  assert.ok(partial.indexOf("signature, iss, aud") > 0, partial);
+  assert.ok(partial.indexOf("FAIL") < 0,
+      "the summary must not look like a FAIL row");
+  assert.strictEqual(rfc9068.summaryLine(2, ["iss"]),
+      "2 check(s) failed.");
+  var detail = fs.readFileSync(
+      path.join(SRC, "token_detail.js"), "utf8");
+  var tools = fs.readFileSync(
+      path.join(SRC, "jwt_tools.js"), "utf8");
+  assert.ok(detail.indexOf("signatureNotVerifiedFinding") >= 0 &&
+      detail.indexOf("summaryLine") >= 0,
+      "token detail reports a clean run without the signature");
+  assert.ok(tools.indexOf("signatureNotVerifiedFinding") >= 0,
+      "JWT Tools omits the signature row when it did not verify");
+  assert.ok(tools.indexOf("summaryLine") >= 0,
+      "JWT Tools has no summary that names what it left out");
+  log.info("OK — a report that skipped the signature says so.");
+  log.debug("Leaving signatureIsNeverSilent().");
+}
+
+// Section 4: iss must match the issuer and aud must name this resource.
+// Present with nothing to compare against is a SKIP, never a PASS.
+function issAndAudAreNotPassedUncompared() {
+  log.debug("Entering issAndAudAreNotPassedUncompared().");
+  var iss = rfc9068.notComparedFinding("iss", "https://as.example",
+      "issuer");
+  assert.strictEqual(iss.level, "skip");
+  assert.ok(/^SKIP  iss: .*not compared: no expected issuer$/.test(
+      rfc9068.formatFinding(iss)), rfc9068.formatFinding(iss));
+  var aud = rfc9068.notComparedFinding("aud", ["a", "b"], "audience");
+  assert.ok(/not compared: no expected audience$/.test(aud.message));
+  var rows = ["SKIP  iss: x", "PASS  iss/workflow: y", "FAIL  aud: z"];
+  assert.ok(rfc9068.compared(rows, ["iss", "iss/workflow"]));
+  assert.ok(rfc9068.compared(rows, ["aud"]));
+  assert.ok(!rfc9068.compared(["SKIP  iss: x", "PASS  issuer: y"],
+      ["iss"]), "a SKIP or another claim's row counted as compared");
+  var detail = fs.readFileSync(
+      path.join(SRC, "token_detail.js"), "utf8");
+  var tools = fs.readFileSync(
+      path.join(SRC, "jwt_tools.js"), "utf8");
+  assert.ok(detail.indexOf("notComparedFinding('iss'") >= 0 &&
+      detail.indexOf("notComparedFinding('aud'") >= 0,
+      "token detail still passes an uncompared iss or aud");
+  assert.ok(tools.indexOf("notComparedFinding('iss'") >= 0 &&
+      tools.indexOf("notComparedFinding('aud'") >= 0,
+      "JWT Tools still passes an uncompared iss or aud");
+  assert.ok(tools.indexOf("requireString('iss')") < 0,
+      "JWT Tools still passes iss on presence alone");
+  log.info("OK — an iss or aud with nothing to compare is a SKIP.");
+  log.debug("Leaving issAndAudAreNotPassedUncompared().");
 }
 
 function authorizationClaims() {
@@ -358,6 +425,8 @@ function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
   typAcceptance();
+  signatureIsNeverSilent();
+  issAndAudAreNotPassedUncompared();
   authorizationClaims();
   authenticationContext();
   resourceSelection();

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # ---------------------------------------------------------------------------
 # PUSH THE IMAGES A TEST RUN BUILT TO ghcr.io.
 #

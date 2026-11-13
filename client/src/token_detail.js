@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: token_detail.js
 // Author: Robert C. Broeckelmann Jr.
 // Date: 05/28/2020
@@ -423,6 +426,7 @@ async function prepareRfc9068Token(results, jwt_, purpose) {
       return { jwt: token, stop: true };
     }
   }
+  var verified = false;
   if (rfc9068Checked("rfc9068_verify")) {
     if (!apply) {
       results.push("SKIP  signature: Applies when JWT Purpose is " +
@@ -430,6 +434,7 @@ async function prepareRfc9068Token(results, jwt_, purpose) {
     } else {
       var verdict = await verifyCompact(token);
       writeSignatureOutput(verdict);
+      verified = verdict.valid;
       if (verdict.valid) {
         results.push("PASS  signature: Verified (RFC 9068 §4).");
       } else {
@@ -438,9 +443,12 @@ async function prepareRfc9068Token(results, jwt_, purpose) {
             " (RFC 9068 §4).");
       }
     }
+  } else if (apply) {
+    results.push(rfc9068.formatFinding(
+        rfc9068.signatureNotVerifiedFinding()));
   }
   log.debug("Leaving prepareRfc9068Token().");
-  return { jwt: token, stop: false };
+  return { jwt: token, stop: false, verified: verified };
 }
 
 function reportRfc9068Options(results, payload, jwt_, purpose) {
@@ -677,9 +685,12 @@ async function validateClaims() {
     } else if (expectedIss && payload.iss !== expectedIss) {
       fail('iss', 'Mismatch (expected="' + expectedIss + '", got="' +
            payload.iss + '")');
+    } else if (expectedIss) {
+      pass('iss', '"' + payload.iss + '" (matches expected)');
     } else {
-      pass('iss', '"' + payload.iss + '"' + (expectedIss ?
-           ' (matches expected)' : ''));
+      // Present is not a pass: there was nothing to compare it with.
+      results.push(rfc9068.formatFinding(
+          rfc9068.notComparedFinding('iss', payload.iss, 'issuer')));
     }
   } else if (isRequired) {
     fail('iss', 'Missing required claim');
@@ -716,7 +727,8 @@ async function validateClaims() {
       pass('aud', '"' + expectedAud + '" found in ' +
            JSON.stringify(payload.aud));
     } else {
-      pass('aud', JSON.stringify(payload.aud));
+      results.push(rfc9068.formatFinding(
+          rfc9068.notComparedFinding('aud', payload.aud, 'audience')));
     }
   } else if (isRequired) {
     fail('aud', 'Missing required claim');
@@ -874,9 +886,14 @@ async function validateClaims() {
     } else if (payload.authorization_details !== undefined) {
       pass('authorization_details', 'Present (used in place of scope)');
       skip('scope', 'Not present — authorization_details present instead');
+    } else if (expectedScope) {
+      // Section 2.2.3 is a SHOULD: a token for a scoped request
+      // carries scope. Neither claim is required by section 2.2.
+      fail('scope', 'Missing — required scope(s) "' + expectedScope +
+           '" cannot be found (RFC 9068 §2.2.3)');
     } else {
-      fail('scope/authorization_details',
-           'At least one is required (RFC 9068 §2.2)');
+      skip('scope', 'Not present (SHOULD be present if a scope was ' +
+           'requested — RFC 9068 §2.2.3)');
     }
   }
 
@@ -897,8 +914,22 @@ async function validateClaims() {
   const failCount = results.filter(r => r.startsWith('FAIL')).length;
   var output = results.join('\n');
   if (ageLine) output += '\n\n' + ageLine;
-  output += '\n\n' + (failCount === 0 ? 'All checks passed.' : failCount +
-      ' check(s) failed.');
+  // A clean result names what it left out: an access token's signature
+  // (RFC 9068 §4), and an iss or aud that was present with nothing to
+  // compare it with. The workflow rows count as a comparison.
+  var notChecked = [];
+  if (purpose === 'oauth2_access_token' && !prepared.verified) {
+    notChecked.push('signature');
+  }
+  if (payload.iss !== undefined &&
+      !rfc9068.compared(results, ['iss', 'iss/workflow'])) {
+    notChecked.push('iss');
+  }
+  if (payload.aud !== undefined &&
+      !rfc9068.compared(results, ['aud', 'aud/resource'])) {
+    notChecked.push('aud');
+  }
+  output += '\n\n' + rfc9068.summaryLine(failCount, notChecked);
   document.getElementById('jwt_claims_validation_output').value = output;
   log.debug("Leaving validateClaims().");
   return false;
@@ -910,7 +941,12 @@ function writeValuesToLocalStorage() {
     const vtEl = document.getElementById('jwt_verification_type');
     const vkEl = document.getElementById('jwt_verification_key');
     if (vtEl) localStorage.setItem('jwt_verification_type', vtEl.value);
-    if (vkEl) localStorage.setItem('jwt_verification_key', vkEl.value);
+    // The key is not stored: for HMAC it is a shared secret, often the
+    // client secret itself (CLAUDE.md, State persistence). Nothing read
+    // the stored copy back; an older build's copy is removed here.
+    if (vkEl) {
+      localStorage.removeItem('jwt_verification_key');
+    }
     localStorage.setItem('jwt_purpose',
                          document.getElementById('jwt_purpose').value);
     localStorage.setItem('jwt_expected_iss',

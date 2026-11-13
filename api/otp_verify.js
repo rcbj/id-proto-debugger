@@ -1,12 +1,17 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: otp_verify.js
 //
 // What POST /otp/verify will and will not send. It decides; server.js
-// posts the body. This file has no axios and no network, so a test
-// can refuse a request with nothing listening on the far side.
+// sends the signed fields as the query string of an HTTP GET, which is
+// what Validation Protocol 2.0 specifies. This file has no axios and
+// no network, so a test can refuse a request with nothing listening
+// on the far side.
 //
 // The page builds and signs the validation request. The API key stays
-// in the browser. This service only checks the shape and posts the
-// form. The address policy is the one already installed on axios.
+// in the browser. This service only checks the shape and sends the
+// request. The address policy is the one already installed on axios.
 // It is not reimplemented here.
 //
 // Three outcomes, the same three as POST /scim. A refusal by this
@@ -218,13 +223,13 @@ function limits() {
   log.debug("Entering limits().");
   var out = {
     maxBodyBytes: MAX_BODY_BYTES,
-    contentType: "application/x-www-form-urlencoded",
+    method: "GET",
     defaultVerifier: defaultUrl(1),
     servers: HOSTS.map(function (host, index) {
       return { server: index + 1, host: host };
     }),
-    note: "The API key stays in the browser. This service posts a " +
-        "request the page already signed."
+    note: "The API key stays in the browser. This service sends, " +
+        "as an HTTP GET, a request the page already signed."
   };
   log.debug("Leaving limits().");
   return out;

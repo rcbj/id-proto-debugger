@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_spnego_codec.js
 //
 // RFC 4178's two messages, byte by byte. No browser, no services, no network.

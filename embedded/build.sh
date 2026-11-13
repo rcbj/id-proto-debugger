@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # embedded/build.sh --out <dir>
 #
@@ -100,7 +103,7 @@ command -v "${NPM}" >/dev/null 2>&1 || {
 # `Cannot find module 'ldapjs'` — a message naming a package, not a submodule.
 if [ ! -f "${REPO_ROOT}/api/node-ldapjs/package.json" ]; then
   echo "embedded/build.sh: api/node-ldapjs is empty. Run" \
-       "\`git submodule update --init --recursive\` first." >&2
+       "\`git submodule update --init\` first." >&2
   exit 1
 fi
 

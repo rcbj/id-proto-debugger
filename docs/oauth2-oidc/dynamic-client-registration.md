@@ -46,8 +46,8 @@ provider requires more members (`grant_types`, and so on).
 | Field or button | Default | Stored | What it does |
 |---|---|---|---|
 | **Registration Endpoint** | empty until discovery | yes | POST target for **Register New Client**. |
-| **Initial Access Token** | empty | no | Optional bearer token. Leave it empty for open registration. A provider that requires an initial access token rejects a blank one. This value is not written to `localStorage`. |
-| **Client Metadata (JSON)** | filled by **Populate Meta Data** | no | The body of the create (POST) and of the update (PUT). |
+| **Initial Access Token** | empty | no | Optional bearer token. Leave it empty for open registration. A provider that requires an initial access token rejects a blank one. It is kept in this tab's `sessionStorage` only, never in `localStorage`. |
+| **Client Metadata (JSON)** | filled by **Populate Meta Data** | yes, without `client_secret` and `registration_access_token` | The body of the create (POST) and of the update (PUT). |
 | **Apply RP metadata choices** | | | Rewrites the six choice pairs in the metadata. See [RP metadata choices](#rp-metadata-choices). |
 | **Request** | rebuilt as you edit | no | The POST **Register New Client** will send. Read-only. |
 | **Register New Client** | | | Sends that POST. |
@@ -89,11 +89,13 @@ The pairs this client sends:
 | `userinfo_encryption_enc_values_supported` | `userinfo_encrypted_response_enc` | `A128CBC-HS256` |
 | `token_endpoint_auth_methods_supported` | `token_endpoint_auth_method` | `client_secret_basic` |
 
-`subject_types_supported` is `public` and `pairwise`. With one redirect
-URI, `sector_identifier_uri` is not required. A second redirect URI,
-while `pairwise` is still offered, adds
-`https://client.example.org/sector.json` when that member is missing.
-A value you already typed is left as it is.
+`subject_types_supported` is `public` and `pairwise`. Core 1.0
+section 8.1 needs a `sector_identifier_uri` once the redirect URIs span
+more than one host, and the provider fetches that document. This
+client publishes none, so with redirect URIs on two hosts and no
+`sector_identifier_uri` typed, `pairwise` is dropped from the array
+instead. A value you already typed is left as it is, and `pairwise`
+stays offered with it.
 
 The ID Token signing list is the JWS algorithms this client verifies,
 without `none`. The UserInfo signing list is that same list plus
@@ -134,11 +136,12 @@ A successful create fills the two fields below from the response.
 | Field or button | Stored | What it does |
 |---|---|---|
 | **Registration Client URI** | yes | `registration_client_uri`. You can paste one from an earlier registration. |
-| **Registration Access Token** | yes | `registration_access_token`, sent as a bearer token (RFC 7592). |
+| **Registration Access Token** | this tab only | `registration_access_token`, sent as a bearer token (RFC 7592). Kept in `sessionStorage`, so it survives the identity provider's redirect and is gone when the tab closes. |
 | **Read Client** | | GET of the client URI. |
 | **Update Client** | | PUT of **Client Metadata (JSON)** to the client URI. |
 | **Delete Client** | | DELETE of the client URI. |
 | **Response** | no | The last response body. Read-only. |
+| **Issued Client Secret** | **never** | Shown after a create that issued a `client_secret`, with a **Copy** button. It is not saved anywhere and is not carried to step 2: copy it now and type it into **Client Secret** there. |
 
 After **Register New Client**, **Read Client**, or **Update Client**,
 the table under the response shows each choice member, the values that

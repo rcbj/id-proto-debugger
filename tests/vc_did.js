@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: vc_did.js
 //
 // The issuer named by a DECENTRALIZED IDENTIFIER, end to end, for both formats
@@ -62,8 +65,8 @@ const metadataClient = paths.requireSharedModule(
    "metadata_client.js")],
   "the wallet's metadata/JWS module");
 const stsSuite = paths.requireSharedModule(
-  // The tests image's flattened copy first, then wherever the submodule keeps
-  // it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
+  // The tests image's flattened copy first, then wherever iya-sts's tree
+  // keeps it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
   // ("Reorganizing source code.") moved every module into a subdirectory, and
   // this one is in common/crypto_impl/. mockStsModule() is the single place
   // that answers that question — see tests/module_paths.js.

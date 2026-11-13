@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oauth_dpop.js
 //
 // DPoP (RFC 9449) for the OAuth2 / OIDC workflow — the wallet-free half of what

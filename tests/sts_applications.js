@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: sts_applications.js
 //
 // ---------------------------------------------------------------------------
@@ -332,7 +335,7 @@ async function editableModes(base) {
     "that holds a single value. That member arrived with the applications " +
     "registry — a mock STS without it predates the registry entirely, and " +
     "the " +
-    "fix is to bump the sts/ submodule rather than to guess the modes here.");
+    "fix is to bump IYA_STS_IMAGE rather than to guess the modes here.");
   editableByBase[base] = modes;
   log.debug("Leaving editableModes(). " + Object.keys(modes).length +
             " editable attribute(s).");
@@ -515,7 +518,7 @@ async function provision(base, spec) {
     log.warn("[registry] the mock STS at " + base + " publishes no " +
              "applications registry, so \"" + identifier + "\" is NOT being " +
              "pre-registered and this job runs the way it did before " +
-             "pre-registration existed. Bump the sts/ submodule to close " +
+             "pre-registration existed. Bump IYA_STS_IMAGE to close " +
              "this.");
     log.debug("Leaving provision(). No registry.");
     return null;
@@ -564,7 +567,7 @@ async function provision(base, spec) {
       "POST " + base + "/admin-api/applications/create refused \"" +
       identifier + "\" for a reason that is not \"it is already here\": " +
       JSON.stringify(errors) + ". If it names an attribute, this mock STS " +
-      "does not have it and the sts/ submodule needs bumping; if it names a " +
+      "does not have it and IYA_STS_IMAGE needs bumping; if it names a " +
       "protocol family, the vocabulary GET /admin-api/applications/new " +
       "publishes is the list to correct this call against.");
     log.info("[registry] \"" + identifier + "\" is already in " + base +
@@ -905,7 +908,7 @@ async function permissionsAction(base, action, body, what, tolerate) {
     "POST " + base + "/admin-api/permissions/" + action + " refused " + what +
     ": " + JSON.stringify(errors) + ". A refusal naming the ACTION rather " +
     "than the application means this mock STS predates delegated permissions " +
-    "(added 2026-09-01) and the sts/ submodule needs bumping; a refusal " +
+    "(added 2026-09-01) and IYA_STS_IMAGE needs bumping; a refusal " +
     "naming the ordering means the permission was granted before it was " +
     "defined, which delegate() exists to make impossible.");
   log.debug("Leaving permissionsAction(). Already done.");
@@ -950,7 +953,7 @@ async function expose(base, spec) {
     log.warn("[permissions] the mock STS at " + base + " publishes no " +
              "applications registry, so \"" + resource + "\" is NOT being " +
              "given permissions and this job runs the way it did before " +
-             "delegated permissions existed. Bump the sts/ submodule to " +
+             "delegated permissions existed. Bump IYA_STS_IMAGE to " +
              "close this.");
     log.debug("Leaving expose(). No registry.");
     return null;

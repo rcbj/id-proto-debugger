@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 const { Builder, By, until } = require("selenium-webdriver");
 const browserFlags = require("./browser_flags.js");
 const { Select } = require('selenium-webdriver/lib/select');

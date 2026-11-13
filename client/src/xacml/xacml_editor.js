@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 'use strict';
 //
-// File: xacml_editor.ts
+// File: xacml_editor.js
 //
 // ---------------------------------------------------------------------------
 // THE GUIDED EDITOR'S GRAMMAR: WHAT MAY BE ADDED WHERE, AND HOW ONE EDIT IS
 // APPLIED.
 //
 // This file has NO DOM and emits no HTML. It answers three questions about a
-// policy model and `xacml_admin.ts` draws the answers:
+// policy model, `xacml_workbench.js` calls it, and `xacml_draw.js` draws the
+// answers on the XACML page:
 //
 //   tree(policy)              what nodes are there, and where
 //   optionsAt(policy, path)   what may legally be added AT this node
@@ -17,58 +18,44 @@
 //
 // Keeping it DOM-free is the same rule the rest of this directory follows, and
 // here it buys something specific: the grammar is testable in node without a
-// browser, a page or a form, so `tests/xacml_pap.js` can assert that a
-// `<Match>` offers exactly the two-argument boolean functions and nothing else.
-// A grammar that only existed inside a `<select>` could not be checked at all.
+// browser, a page or a form, which is how `tests/xacml_engine.js` drives the
+// workbench.
 //
 // ---------------------------------------------------------------------------
-// WHY THE OPTIONS ARE COMPUTED ON THE SERVER, WHICH IS NOT A COMPROMISE.
+// THE OPTIONS ARE COMPUTED BY THE CODE THAT VALIDATES THE POLICY.
 //
-// The admin console is `script-src 'none'`, and `admin-ui/CLAUDE.md` refuses a
-// script nine times over — twice for graph pages, and its rule is that the
-// argument has to be MADE rather than cited: a script is allowed only when the
-// page CANNOT work without one. An editor can. So every dropdown here is a
-// plain `<select>` whose `<option>`s were computed by this file, and choosing
-// one is a form POST that re-renders the page.
-//
-// What that costs is a round trip per element, and it is worth saying out loud
-// rather than hiding: building a five-rule policy by hand is perhaps forty
-// POSTs. What it buys is that the list of legal next elements is computed by
-// THE SAME CODE THAT VALIDATES THE POLICY, in the same process, against the
-// real function library — so the editor cannot offer something the validator
-// will then refuse. A browser-side editor would have needed a second copy of
-// the grammar shipped to the page, and two copies of a grammar is the thing
-// this whole directory is arranged to avoid.
-//
-// The templates in `xacml_templates.ts` are the answer to the forty POSTs.
+// Every dropdown on the page is a plain `<select>` whose `<option>`s were
+// computed by this file, and choosing one is a form submit that the page hands
+// to `applyEdit()` and then redraws. The list of legal next elements comes
+// from THE SAME CODE THAT VALIDATES THE POLICY, against the real function
+// library, so the editor cannot offer something the validator will then
+// refuse.
 //
 // ---------------------------------------------------------------------------
 // A PATH IS A STRING OF SEGMENTS AND IT IS NOT AN OBJECT REFERENCE.
 //
-// `rules.0.target.anyOf.1.allOf.0.matches.2` names a node. It survives a form
-// POST, which an object reference does not, and it survives being written into
-// an `<input type="hidden">`, which is the only state this editor has.
+// `rules.0.target.anyOf.1.allOf.0.matches.2` names a node. It survives being
+// written into an `<input type="hidden">`, which is the only state an edit
+// form carries.
 //
 // THE CONSEQUENCE, and it is the one thing that will surprise somebody: a path
 // is only valid against the document it was computed from. Remove rule 0 and
-// every path naming rule 1 now means rule 0. That is why every edit re-renders
+// every path naming rule 1 now means rule 0. That is why every edit redraws
 // the whole tree rather than patching part of it, and why `nodeAt()` returns
 // null for a path that no longer resolves instead of guessing.
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
-// TYPESCRIPT, AS A CLASS (#50, 2026-09-16) — `common/realm_chooser.ts`'s
-// shape: `XacmlEditor` takes the logger and the three engine modules it reads
-// (`xacml_model.js`, `xacml_datatypes.js`, `xacml_functions.js`, which stay
-// JavaScript because the remote PEP's image copies them by name) through its
-// constructor. The menus and the grammar table stay module-level constants,
-// built at load exactly as before, and are also static members of the class.
-// The module still exports every old name, each function a FACADE forwarding
-// to the instance the composition root builds and installs (#50's R2), for
-// `xacml_admin.ts` and `tests/xacml_pap.js`; a process without the root
-// builds a default when this module loads.
+// A CLASS WITH ITS DEPENDENCIES PASSED IN. `XacmlEditor` takes the logger and
+// the three engine modules it reads (`xacml_model.js`, `xacml_datatypes.js`,
+// `xacml_functions.js`) through its constructor. The menus and the grammar
+// table are module-level constants, built at load, and are also static members
+// of the class. The module exports each method as a function forwarding to
+// the one instance `xacml_slot.js` holds, which is built when this module
+// loads.
 // ---------------------------------------------------------------------------
 const helpers = require("../xacml_runtime");
 const InstanceSlot = require("./xacml_slot");
+const ownMembers = require("./xacml_own_members");
 const model = require("./xacml_model");
 const datatypes = require("./xacml_datatypes");
 const functions = require("./xacml_functions");
@@ -318,7 +305,7 @@ ADDITIONS.variable = ADDITIONS.expression.slice();
  * The guided policy editor's grammar: what nodes a policy model holds, what
  * may legally be added at each, and how one edit is applied.
  *
- * It has no DOM and emits no HTML; `xacml_admin.ts` draws its answers. A
+ * It has no DOM and emits no HTML; `xacml_draw.js` draws its answers. A
  * node is named by a dotted path, valid only against the document it was
  * computed from.
  */
@@ -332,7 +319,6 @@ class XacmlEditor {
         deps.log.debug("Entering XacmlEditor.constructor().");
         deps.log.debug("Leaving XacmlEditor.constructor().");
     }
-    // What the composition root passes, from the real modules.
     /**
      * Returns the dependencies built from the real modules, for the default
      * instance.
@@ -370,38 +356,22 @@ class XacmlEditor {
      */
     static ownStep(node, key) {
         helpers.log.debug("Entering XacmlEditor.ownStep().");
-        if (node === null || typeof node !== 'object') {
-            helpers.log.debug("Leaving XacmlEditor.ownStep(). Not an object.");
-            return false;
-        }
-        if (Array.isArray(node)) {
-            const own = /^[0-9]+$/.test(key) && Number(key) < node.length;
-            helpers.log.debug("Leaving XacmlEditor.ownStep(). Index " + own);
-            return own;
-        }
-        const own = Object.prototype.hasOwnProperty.call(node, key);
-        helpers.log.debug("Leaving XacmlEditor.ownStep(). Member " + own);
+        // The rule is xacml_own_members.js's: one place, which every read
+        // of a name a caller chose goes through.
+        const own = ownMembers.has(node, key);
+        helpers.log.debug("Leaving XacmlEditor.ownStep(). " + own);
         return own;
     }
     // Resolve a path to `{ node, parent, key }`, or null. `parent` and `key`
-    // are
-    // what a REMOVE needs — you cannot delete a node from itself.
+    // are what a REMOVE needs — you cannot delete a node from itself.
     //
     // **EVERY STEP IS AN OWN MEMBER OF THE NODE IT LEAVES, OR THE PATH DOES NOT
-    // RESOLVE (2026-11-12).** The path arrives from a caller — the console's
-    // form and `/admin-api/xacml/*`'s `path` — and the walk was `node[key]`,
-    // which follows the prototype chain. The fuzz stage of a full run sent
-    // `add-rule` a path that reached `Object.prototype` (`__proto__`, or
-    // `constructor.prototype`): `node.rules = node.rules || []` then gave EVERY
-    // object in that process an enumerable inherited `rules`, the edit wrote
-    // the
-    // unchanged policy and answered "Rule added.", and from that moment every
-    // closed response model refused every answer (additionalProperties
-    // "rules", because ajv reads members with `for…in`), and every compile of
-    // one recursed without end (each rule object inherits `rules` again):
-    // 1911 answers turned into 500s in seven minutes, and the change-log reader
-    // overflowed beside them. An index into an array is digits below its
-    // length; anything else must be the node's own member.
+    // RESOLVE.** The path arrives from an edit form's hidden field, and a walk
+    // written as `node[key]` follows the prototype chain: a path through
+    // `__proto__` or `constructor.prototype` reaches `Object.prototype`, and
+    // `node.rules = node.rules || []` there gives EVERY object on the page an
+    // inherited `rules`. An index into an array is digits below its length;
+    // anything else must be the node's own member.
     /**
      * Resolves a path in a policy model.
      * @param policy - the policy model
@@ -918,22 +888,13 @@ class XacmlEditor {
         }
         const node = located.node;
         // ---------------------------------------------------------------------
-        // AN EFFECT IS ONE OF TWO WORDS, AND A THIRD IS REFUSED (#86).
+        // AN EFFECT IS ONE OF TWO WORDS, AND A THIRD IS REFUSED.
         //
-        // `add-rule` and the four `add-*-obligation`/`-advice` actions made
-        // anything but exactly `Deny` a PERMIT, and
-        // `edit-rule`/`edit-obligation`
-        // ignored anything but the two — so `deny`, `DENY` or a typo wrote a
-        // rule
-        // that PERMITS, and said "Rule added." The management API and the
-        // console
-        // now refuse such a value before it arrives here (the operation's
-        // enum),
-        // and this is the same rule at the model, for any other caller: absent
-        // or
-        // empty keeps the default, and a value that is neither word is refused
-        // by
-        // name. XACML 3.0 section 5.9 (EffectType) defines exactly these two.
+        // Reading anything but exactly `Deny` as a PERMIT would make `deny`,
+        // `DENY` or a typo write a rule that PERMITS and say "Rule added." So
+        // absent or empty keeps the default, and a value that is neither word
+        // is refused by name. XACML 3.0 section 5.9 (EffectType) defines
+        // exactly these two.
         // ---------------------------------------------------------------------
         const effects = [model.EFFECT.PERMIT, model.EFFECT.DENY];
         const effectFields = ['effect', 'on'];
@@ -1112,17 +1073,16 @@ class XacmlEditor {
             }
             if (!id) {
                 let n = Object.keys(node.variables).length + 1;
-                while (node.variables['v' + n]) {
+                while (ownMembers.has(node.variables, 'v' + n)) {
                     n += 1;
                 }
                 id = 'v' + n;
             }
-            if (node.variables[id]) {
-                // The reader refuses a document with two definitions of one id,
-                // so
-                // producing one here would write a policy this service cannot
-                // load
-                // back.
+            // An own member only: `toString` is not already defined.
+            if (ownMembers.read(node.variables, id)) {
+                // The reader refuses a document with two definitions of one
+                // id, so producing one here would write a policy this page
+                // cannot load back.
                 log.debug('Leaving XacmlEditor.applyEdit(). Duplicate ' +
                   'variable id.');
                 return { ok: false,
@@ -1136,11 +1096,11 @@ class XacmlEditor {
             // a VariableDefinition with no expression is a document that will
             // not
             // load.
-            node.variables[id] = {
+            ownMembers.put(node.variables, id, {
                 kind: 'designator', category: model.CATEGORY.ACCESS_SUBJECT,
                 attributeId: 'employeeType', dataType: TYPE.STRING,
                 issuer: null, mustBePresent: false
-            };
+            });
             log.debug('Leaving XacmlEditor.applyEdit(). Variable added.');
             return { ok: true, what: 'Variable $' + id + ' added.' };
         }
@@ -1160,7 +1120,7 @@ class XacmlEditor {
                 return { ok: true, what: 'Unchanged.' };
             }
             const variables = holder && holder.variables;
-            if (variables && variables[renamed]) {
+            if (variables && ownMembers.read(variables, renamed)) {
                 log.debug('Leaving XacmlEditor.applyEdit(). Duplicate ' +
                   'variable id.');
                 return { ok: false,
@@ -1172,9 +1132,9 @@ class XacmlEditor {
             // still
             // resolves. Copying that miss stored `undefined`, and writePolicy
             // then
-            // threw reading `.kind` (STS-API-0140, #1403). A policy set has no
+            // threw reading `.kind`. A policy set has no
             // variables map, and reading it threw the same way.
-            const defined = variables && variables[wasCalled];
+            const defined = variables && ownMembers.read(variables, wasCalled);
             if (!defined || !defined.kind) {
                 log.debug('Leaving XacmlEditor.applyEdit(). No such variable.');
                 return { ok: false,
@@ -1191,7 +1151,7 @@ class XacmlEditor {
             // does not load, and the store would refuse the write with a
             // message
             // about a variable that no longer exists.
-            holder.variables[renamed] = defined;
+            ownMembers.put(holder.variables, renamed, defined);
             delete holder.variables[wasCalled];
             const rewritten = self.renameVariableReferences(holder, wasCalled,
               renamed);
@@ -1239,11 +1199,11 @@ class XacmlEditor {
         }
         if (action === 'edit-match') {
             // A MATCH IS THE ONLY NODE THIS ACTION MAY READ A VALUE FROM. The
-            // fuzzer named an AllOf (`.rules.0.target.anyOf.0.allOf.0`) and
-            // omitted `value`. An AllOf has `matches`, not `value`, so
-            // `node.value.lexical` throws (STS-API-0140, #1428). An expression
-            // edit of the wrong kind is already a refusal (#1419); this is the
-            // same rule for the action that owns a Match.
+            // path may name an AllOf (`.rules.0.target.anyOf.0.allOf.0`) and
+            // omit `value`. An AllOf has `matches`, not `value`, so
+            // `node.value.lexical` would throw. An expression edit of the
+            // wrong kind is already a refusal; this is the same rule for the
+            // action that owns a Match.
             if (self.kindAt(path, node) !== 'match') {
                 log.debug('Leaving XacmlEditor.applyEdit(). Not a Match.');
                 return { ok: false,
@@ -1298,6 +1258,12 @@ class XacmlEditor {
             }
             else {
                 lexical = String(given.value);
+            }
+            const badMatchValue = self.lexicalRefusal(type, lexical);
+            if (badMatchValue) {
+                log.debug('Leaving XacmlEditor.applyEdit(). Match value ' +
+                  'is not of its type.');
+                return badMatchValue;
             }
             node.matchId = matchId;
             node.value = { kind: 'value', type: type, lexical: lexical };
@@ -1355,13 +1321,10 @@ class XacmlEditor {
                 node.description = String(given.description);
             }
             if (given.version !== undefined && String(given.version)) {
-                // The schema's VersionType: dot-separated numbers. Checked here
-                // because
-                // a Version of "draft 2" is refused by somebody else's schema
-                // validator
-                // and by nothing in this service, so it would travel a long way
-                // before
-                // anybody found out.
+                // The schema's VersionType: dot-separated numbers. Checked
+                // here because a Version of "draft 2" is refused by somebody
+                // else's schema validator and by nothing in this engine, so it
+                // would travel a long way before anybody found out.
                 if (!/^\d+(\.\d+)*$/.test(String(given.version))) {
                     log.debug('Leaving XacmlEditor.applyEdit(). Bad version.');
                     return { ok: false,
@@ -1457,10 +1420,7 @@ class XacmlEditor {
             // which has
             // no parent to write the expression into —
             // `located.parent[located.key]`
-            // would throw (reading a property of null) and the action's catch
-            // would
-            // answer 500. A fuzzed `path: ""` found it (#1356). The `remove`
-            // action
+            // would throw (reading a property of null). The `remove` action
             // above guards the same way; an expression replaces a node that HAS
             // a
             // parent, so the root is a refusal, not a crash.
@@ -1476,7 +1436,7 @@ class XacmlEditor {
             // at the path. A path that names a Match still resolves, and
             // writing an Apply into that slot makes writeTarget() call
             // writeExpression() on match.value, which is now absent, so it
-            // throws reading `.kind` (STS-API-0140, #1419). A rule, a target,
+            // throws reading `.kind`. A rule, a target,
             // an AnyOf and an AllOf are the same kind of miss. A Match is
             // edited by edit-match.
             const slot = self.kindAt(path, node);
@@ -1531,9 +1491,17 @@ class XacmlEditor {
             return { ok: true, what: 'Function changed.' };
         }
         if (action === 'edit-value') {
-            node.type = given.type || node.type;
-            node.lexical = given.lexical === undefined ? node.lexical
+            const nextType = given.type || node.type;
+            const nextLexical = given.lexical === undefined ? node.lexical
                 : String(given.lexical);
+            const badValue = self.lexicalRefusal(nextType, nextLexical);
+            if (badValue) {
+                log.debug('Leaving XacmlEditor.applyEdit(). Value is not ' +
+                  'of its type.');
+                return badValue;
+            }
+            node.type = nextType;
+            node.lexical = nextLexical;
             if (given.xpathCategory !== undefined) {
                 node.xpathCategory = String(given.xpathCategory) || null;
             }
@@ -1588,11 +1556,10 @@ class XacmlEditor {
             }
             if (given.namespacePrefix !== undefined ||
                 given.namespaceUri !== undefined) {
-                // ONE BINDING AT A TIME, because a no-JavaScript console cannot
-                // grow a
-                // row. A prefix with no URI REMOVES that binding, which is the
-                // only way
-                // to take one away without a second control.
+                // ONE BINDING AT A TIME, because the edit form has one prefix
+                // field and one URI field. A prefix with no URI REMOVES that
+                // binding, which is the only way to take one away without a
+                // second control.
                 const prefix = String(given.namespacePrefix || '').trim();
                 const uri = String(given.namespaceUri || '').trim();
                 if (prefix) {
@@ -1677,10 +1644,33 @@ class XacmlEditor {
                 'is a gap between the menu and the code that acts on it, ' +
                 'not something you did.' };
     }
+    // THE LITERAL MUST BE A VALUE OF ITS DATATYPE. An integer-equal Match
+    // whose literal is "notanint" used to be stored, and only the decision
+    // said so, as a syntax-error status that a deny-unless-permit policy
+    // turns into a plain Deny. Refused here instead, before anything is
+    // written. An xpathExpression is checked by the PDP against its
+    // category, so it is not parsed here.
+    lexicalRefusal(type, lexical) {
+        const { log } = this.deps;
+        log.debug("Entering XacmlEditor.lexicalRefusal().");
+        if (model.canonicalType(type) === TYPE.XPATH_EXPRESSION) {
+            log.debug("Leaving XacmlEditor.lexicalRefusal(). XPath.");
+            return null;
+        }
+        try {
+            datatypes.parseValue(type, lexical);
+        }
+        catch (error) {
+            const why = (error && error.message) || String(error);
+            log.debug("Leaving XacmlEditor.lexicalRefusal(). " + why);
+            return { ok: false, why: why };
+        }
+        log.debug("Leaving XacmlEditor.lexicalRefusal(). Valid.");
+        return null;
+    }
     // A TRISTATE READ OF A FORM FIELD: true, false, or "the form did not say".
     //
-    // It exists because of one specific way this console can lose information.
-    // An
+    // It exists because of one specific way a form can lose information. An
     // unchecked checkbox SENDS NOTHING, so a form that edits a Match's function
     // and happens not to carry the MustBePresent box would clear MustBePresent
     // on
@@ -1868,11 +1858,9 @@ class XacmlEditor {
                 (available.length ? available[0].id : '');
             if (!chosen) {
                 log.debug("Leaving XacmlEditor.newExpression().");
-                // Cannot happen through the console — `optionsAt()` withdraws
-                // the
-                // option where there is nothing to name — and can happen
-                // through
-                // /admin-api, which is not the menu.
+                // Cannot happen through the page's menu — `optionsAt()`
+                // withdraws the option where there is nothing to name — and
+                // can happen for any other caller of applyEdit().
                 return { ok: false,
                     why: 'This policy defines no variables, so there is ' +
                       'nothing ' +
@@ -2122,20 +2110,14 @@ class XacmlEditor {
             log.debug("Leaving walkHolders().");
         }
         // The four combiner-parameter elements, which are SHOWN AND REMOVABLE
-        // AND
-        // NOT ADDABLE — the one place in this editor where those three come
-        // apart,
-        // and it is deliberate. Section C of the specification says none of the
-        // twelve standard combining algorithms takes a parameter, so an Add
-        // button
-        // here would be the first control on this console that provably changes
-        // no
-        // decision. Drawing them is a different question: a document may arrive
-        // with them (through ALFA, an import, or an `ldapmodify` straight into
-        // `ou=policies`), and an element the editor did not draw would be one
-        // the
-        // person could neither see nor delete while the writer faithfully kept
-        // it.
+        // AND NOT ADDABLE — the one place in this editor where those three
+        // come apart, and it is deliberate. Section C of the specification
+        // says none of the twelve standard combining algorithms takes a
+        // parameter, so an Add button here would be the first control on this
+        // page that provably changes no decision. Drawing them is a different
+        // question: a document may arrive with them through an import, and an
+        // element the editor did not draw would be one the person could
+        // neither see nor delete while the writer faithfully kept it.
         function walkCombinerParameters(node, base, depth) {
             log.debug("Entering walkCombinerParameters().");
             (node.combinerParameters || []).forEach(function (one, i) {
@@ -2260,7 +2242,7 @@ class XacmlEditor {
     // the editor page draws it beside the field that sets it. Refusing the
     // write
     // would be the editor inventing a rule the evaluator does not have; saying
-    // nothing would let somebody build a document here that this service is
+    // nothing would let somebody build a document here that this engine is
     // perfectly happy with and somebody else's schema validator rejects — which
     // is the failure mode `writeTarget()` argues about, arriving from the other
     // side.
@@ -2415,13 +2397,8 @@ XacmlEditor.POLICY_ALG_MENU = POLICY_ALG_MENU;
  */
 XacmlEditor.ADDITIONS = ADDITIONS;
 // ---------------------------------------------------------------------------
-// THE INSTANCE, BUILT BY THE COMPOSITION ROOT (#50, R2). This module builds no
-// instance of its own: `common/protocol_stack.ts` builds one and calls
-// `installInstance()`. The exports below are FACADES that forward to that
-// instance, for the JavaScript that still calls this module through
-// `require()`; a process that never runs the root gets a default instance,
-// built from `defaultDeps()` when this module loads (see
-// `common/instance_slot.ts`).
+// THE INSTANCE. The exports below forward to the one instance `xacml_slot.js`
+// holds, built from `defaultDeps()` when this module loads.
 // ---------------------------------------------------------------------------
 const slot = new InstanceSlot('xacml/xacml_editor',
   () => new XacmlEditor(XacmlEditor.defaultDeps()), null, helpers.log);

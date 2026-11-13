@@ -6,7 +6,7 @@ Read this before touching `client/public/scim.html`, `client/src/scim*.js`,
 RFC 7642 (the requirements), RFC 7643 (the schema) and RFC 7644 (the protocol).
 The server this workflow is built against is the mock STS's `/scim/v2`, whose
 own notes are in `docs/mock-sts.md` and in `scim.js`, `scim_auth.js` and
-`scim_map.js` inside that submodule.
+`scim_map.js` inside that repository (rcbj/iya-sts).
 
 ## Why this workflow is shaped differently from the other fifteen
 
@@ -972,7 +972,7 @@ path, the runner actually running, and what does and does not reach
 `localStorage`.
 
 All three **skip with a stated reason** when the mock STS has no `/scim/v2`
-routes — the ordinary state of a checkout whose `sts/` gitlink predates them. A
+routes — the state of a run against an `IYA_STS_IMAGE` that predates them. A
 silent pass there would be this project's recurring defect.
 
 **Both server-facing tests run under a credential, and it is HTTP Basic in each.**

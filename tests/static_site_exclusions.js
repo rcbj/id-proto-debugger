@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: static_site_exclusions.js
 //
 // client/static_site.js — what the STATIC deployments leave out, and what the

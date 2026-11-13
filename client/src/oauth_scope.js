@@ -1,8 +1,11 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oauth_scope.js
 //
 // ---------------------------------------------------------------------------
-// What scope a token request, a refresh, and a dynamic registration may
-// start from.
+// What scope an authorization request, a token request, a refresh, and
+// a dynamic registration may start from.
 //
 // scopes_supported is everything the authorization server knows about.
 // It is the right thing to SHOW, and the wrong thing to SEND: a code
@@ -14,9 +17,15 @@
 // declared it answer invalid_scope, and the token response is never
 // drawn.
 //
-// The OIDC basics (openid, profile, email) are what those two grants
-// and a registration may prefill with, and only the ones the server
-// actually advertised. A value the reader typed is kept. No DOM.
+// The OIDC basics (openid, profile, email), limited to what the server
+// advertised, are what an OIDC authorization request and a registration
+// start from. An OAuth 2.0 authorization request starts from nothing.
+// Password starts from the authorization scope or the basics. Client
+// credentials starts from the authorization scope without the scopes
+// that only mean something about a user, and sends none when nothing is
+// left. A value the reader typed is kept whatever it is: the page
+// records that the field was edited and passes that fact in, rather
+// than guessing it from the value. No DOM.
 // ---------------------------------------------------------------------------
 
 var bunyan = require("bunyan");
@@ -35,17 +44,43 @@ var log = bunyan.createLogger({
 // substitute for scopes_supported: the intersection is.
 var OIDC_BASIC_SCOPES = ["openid", "profile", "email"];
 
+// Scopes about the person who signed in. A client-credentials grant
+// has no such person (RFC 6749 section 4.4), so these are never its
+// default.
+var USER_CENTRIC_SCOPES = ["openid", "profile", "email", "address",
+  "phone", "offline_access"];
+
 // Grants whose token request carries a scope. The authorization-code
 // grant does not (RFC 6749 section 4.1.3), and neither does a refresh
 // unless the reader narrows it (section 6). The page-1 select and the
 // token grant_type spell the same two grants differently.
 function scopeOnTokenRequest(grant) {
   log.debug("Entering scopeOnTokenRequest().");
+  var on = isClientCredentials(grant) || isPassword(grant);
+  log.debug("Leaving scopeOnTokenRequest().");
+  return on;
+}
+
+function isClientCredentials(grant) {
+  log.debug("Entering isClientCredentials().");
   var on = grant === "client_credential" ||
-      grant === "client_credentials" ||
-      grant === "resource_owner" ||
-      grant === "password";
-  log.debug("Leaving scopeOnTokenRequest(). on=" + on);
+      grant === "client_credentials";
+  log.debug("Leaving isClientCredentials().");
+  return on;
+}
+
+function isPassword(grant) {
+  log.debug("Entering isPassword().");
+  var on = grant === "resource_owner" || grant === "password";
+  log.debug("Leaving isPassword().");
+  return on;
+}
+
+// The page-1 select's OpenID Connect flows all start "oidc_".
+function isOidcFlow(grant) {
+  log.debug("Entering isOidcFlow().");
+  var on = typeof grant === "string" && grant.indexOf("oidc_") === 0;
+  log.debug("Leaving isOidcFlow().");
   return on;
 }
 
@@ -53,7 +88,7 @@ function scopeOnTokenRequest(grant) {
 function scopeNames(value) {
   log.debug("Entering scopeNames().");
   if (value == null || value === "") {
-    log.debug("Leaving scopeNames(). Empty.");
+    log.debug("Leaving scopeNames().");
     return [];
   }
   var names;
@@ -83,25 +118,6 @@ function joinAdvertised(scopesSupported) {
   return joined;
 }
 
-// Sorted, so "email openid" and "openid email" are the same list. Used
-// only to recognise the seeded advertisement, never as a value to send.
-function canonical(value) {
-  log.debug("Entering canonical().");
-  var sorted = scopeNames(value).slice().sort().join(" ");
-  log.debug("Leaving canonical().");
-  return sorted;
-}
-
-// True when `value` is the whole advertisement, in any order. An empty
-// advertisement matches nothing: there is no dump to recognise.
-function isAdvertisedDump(value, scopesSupported) {
-  log.debug("Entering isAdvertisedDump().");
-  var dumped = canonical(scopesSupported);
-  var same = dumped.length > 0 && canonical(value) === dumped;
-  log.debug("Leaving isAdvertisedDump(). same=" + same);
-  return same;
-}
-
 // openid profile email, limited to what the server advertised. No
 // advertisement at all keeps the three; an advertisement that contains
 // none of them is the empty string, and the caller omits scope.
@@ -119,63 +135,78 @@ function registrationScope(scopesSupported) {
   return basics.join(" ");
 }
 
-// What client credentials or password would prefill when the field is
-// empty: the authorization-step scope, or the OIDC basics when that
-// scope is itself the advertisement.
-function prefilledScope(authorizationScope, scopesSupported) {
+// The authorization request's starting scope. An OIDC flow asks for
+// the basics the server advertised; an OAuth 2.0 flow names no scope
+// of its own, so it starts empty. Never the whole advertisement.
+function authorizationScope(grant, scopesSupported) {
+  log.debug("Entering authorizationScope().");
+  var scope = isOidcFlow(grant) ? registrationScope(scopesSupported) : "";
+  log.debug("Leaving authorizationScope().");
+  return scope;
+}
+
+// The authorization scope without the names that are about a user.
+function withoutUserScopes(value) {
+  log.debug("Entering withoutUserScopes().");
+  var kept = scopeNames(value).filter(function (name) {
+    return USER_CENTRIC_SCOPES.indexOf(name) < 0;
+  });
+  log.debug("Leaving withoutUserScopes().");
+  return kept.join(" ");
+}
+
+// What a grant prefills when the reader has not edited the field.
+// Client credentials: the authorization scope less the user scopes, or
+// nothing. Password: the authorization scope, or the OIDC basics. A
+// code exchange and a refresh: nothing.
+function prefilledScope(grant, authorizationScopeValue, scopesSupported) {
   log.debug("Entering prefilledScope().");
-  var authz = scopeNames(authorizationScope).join(" ");
-  if (authz && !isAdvertisedDump(authz, scopesSupported)) {
-    log.debug("Leaving prefilledScope(). Authorization scope.");
-    return authz;
+  var authz = scopeNames(authorizationScopeValue).join(" ");
+  var scope = "";
+  if (isClientCredentials(grant)) {
+    scope = withoutUserScopes(authz);
+  } else if (isPassword(grant)) {
+    scope = authz || registrationScope(scopesSupported);
   }
-  var basics = registrationScope(scopesSupported);
-  log.debug("Leaving prefilledScope(). OIDC basics.");
-  return basics;
+  log.debug("Leaving prefilledScope().");
+  return scope;
 }
 
 // The scope a token request or a refresh should carry.
 //
 //   grant               page-1 select value, or the token grant_type
 //   stored              what the field (or localStorage) already holds
+//   edited              true when the reader typed into the field
 //   authorizationScope  the authorization request's scope
 //   scopesSupported     the provider's scopes_supported, in any of the
 //                       shapes scopeNames() accepts
 //
-// Client credentials and password keep a stored value that is not the
-// advertisement, and otherwise take prefilledScope(). A code exchange
-// and a refresh send nothing unless the reader narrowed it: the
-// advertisement and the value the other grants prefill are not a
-// narrowing.
-function tokenRequestScope(grant, stored, authorizationScope,
+// An edited field is kept exactly, empty included. Otherwise the
+// grant's prefill: the value is the page's, so it follows the grant
+// and the advertisement rather than an earlier visit.
+function tokenRequestScope(grant, stored, edited, authorizationScopeValue,
     scopesSupported) {
   log.debug("Entering tokenRequestScope().");
-  var kept = scopeNames(stored).join(" ");
-  var prefilled = prefilledScope(authorizationScope, scopesSupported);
-  if (!scopeOnTokenRequest(grant)) {
-    if (kept && !isAdvertisedDump(kept, scopesSupported) &&
-        kept !== prefilled) {
-      log.debug("Leaving tokenRequestScope(). Kept.");
-      return kept;
-    }
-    log.debug("Leaving tokenRequestScope(). Empty.");
-    return "";
-  }
-  if (kept && !isAdvertisedDump(kept, scopesSupported)) {
-    log.debug("Leaving tokenRequestScope(). Kept.");
+  if (edited) {
+    var kept = stored == null ? "" : String(stored);
+    log.debug("Leaving tokenRequestScope(). Edited by the reader.");
     return kept;
   }
-  log.debug("Leaving tokenRequestScope(). Prefilled.");
+  var prefilled = prefilledScope(grant, authorizationScopeValue,
+      scopesSupported);
+  log.debug("Leaving tokenRequestScope().");
   return prefilled;
 }
 
 module.exports = {
   OIDC_BASIC_SCOPES: OIDC_BASIC_SCOPES,
+  USER_CENTRIC_SCOPES: USER_CENTRIC_SCOPES,
   scopeOnTokenRequest: scopeOnTokenRequest,
+  isOidcFlow: isOidcFlow,
   scopeNames: scopeNames,
   joinAdvertised: joinAdvertised,
-  isAdvertisedDump: isAdvertisedDump,
   registrationScope: registrationScope,
+  authorizationScope: authorizationScope,
   prefilledScope: prefilledScope,
   tokenRequestScope: tokenRequestScope
 };

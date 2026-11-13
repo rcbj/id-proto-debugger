@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Layered over local-tests.yml by `./local-run-tests.sh --sts-url=<base>` and by
 # nothing else (2026-09-19).
 #

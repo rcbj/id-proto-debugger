@@ -230,6 +230,12 @@
           <option value="38">HMAC-SHA1 slot 2 (38)</option>
         </select>
       </label>
+      <label>HMAC challenge length
+        <select id="sc_hid_hmac_mode">
+          <option value="variable" selected>variable, up to 63 bytes (HMAC_LT64; what ykman programs)</option>
+          <option value="fixed">fixed, all 64 bytes (zero filled)</option>
+        </select>
+      </label>
     </div>
     <p>
       <button type="button" class="saml-btn" id="sc_hid_send" onclick="smartcard.sendHid();">Send challenge</button>

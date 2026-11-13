@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: relay.js  —  ISOLATED world, on an armed origin, beside shim.js.
 //
 // The shim runs in the page's world so it can see navigator.credentials; that

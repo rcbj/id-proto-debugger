@@ -912,11 +912,11 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Registration Access Token: </label><span class="tooltiptext">The registration_access_token returned at registration. Presented as a bearer token to read, update, and delete the client (RFC 7592).</span>
+              <div class="tooltip"><label>Registration Access Token: </label><span class="tooltiptext">The registration_access_token returned at registration. Presented as a bearer token to read, update, and delete the client (RFC 7592). Kept in this tab's sessionStorage only, and gone when the tab closes.</span>
               </div>
             </td>
             <td>
-              <input class="stored" id="registration_access_token" name="registration_access_token" type="text" size="64" />
+              <input id="registration_access_token" name="registration_access_token" type="text" size="64" />
             </td>
           </tr>
           <tr>
@@ -935,6 +935,17 @@ function dbgSetAllPanes(expand) {
             </td>
             <td>
               <textarea id="dcr_response_textarea" name="dcr_response_textarea" rows="14" cols="70" readonly></textarea>
+            </td>
+          </tr>
+          <tr id="dcr_issued_client_secret_row" style="display: none;">
+            <td>
+              <div class="tooltip"><label>Issued Client Secret: </label><span class="tooltiptext">The client_secret this registration issued. It is shown here once and is not saved anywhere. Copy it now and type it into Client Secret on step 2.</span>
+              </div>
+            </td>
+            <td>
+              <input id="dcr_issued_client_secret" name="dcr_issued_client_secret" type="text" size="64" readonly autocomplete="off" />
+              <input class="btn2" type="button" value="Copy" onclick="return oauth2_oidc_1.copyIssuedClientSecret();" />
+              <p id="dcr_issued_client_secret_note"><strong>Not saved.</strong> This secret is not stored in the browser and is not carried to step 2. Copy it now; step 2 asks for it again.</p>
             </td>
           </tr>
           <tr>

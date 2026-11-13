@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: api_connect_timeout.js
 //
 // The api's outbound LIMITS: api/connect_timeout.js, and the four settings in

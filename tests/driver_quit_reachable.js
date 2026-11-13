@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: driver_quit_reachable.js
 //
 // No test in this suite may call process.exit() while a WebDriver session is

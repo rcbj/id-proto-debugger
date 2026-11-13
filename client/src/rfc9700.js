@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: rfc9700.js
 //
 // ---------------------------------------------------------------------------
@@ -913,7 +916,8 @@ function grantRefusalReason(grant) {
 //
 //   req = {
 //     grant, responseType, authorizationEndpoint, redirectUri, clientId,
-//     clientSecret, scope, resource, state, nonce, usePKCE,
+//     clientSecret, confidentialClient, scope, resource, state, nonce,
+//     usePKCE,
 //     codeChallengeMethod, endpoints: {label: url, ...}, sslValidate,
 //     metadata: <the discovery document or null>, metadataUrl,
 //     dpopEnabled, backendAvailable
@@ -922,6 +926,10 @@ function grantRefusalReason(grant) {
 function checkAuthorizationRequest(req) {
   log.debug("Entering checkAuthorizationRequest().");
   var findings = [];
+  // A confidential client is one with a secret. The page never stores the
+  // secret, so it passes confidentialClient; a caller holding the secret
+  // itself may still pass clientSecret.
+  var confidential = !!(req.confidentialClient || req.clientSecret);
   var isCodeFlow = /(^|\s)code(\s|$)/.test(String(req.responseType || ""));
   // RFC 8628's Device Authorization Grant is not a browser redirect: there is
   // no redirect_uri, no state, no nonce and no PKCE to check, and the request
@@ -1005,9 +1013,9 @@ function checkAuthorizationRequest(req) {
   // -- sections 1.6 / 1.7: PKCE --------------------------------------------
   if (isCodeFlow && !deviceFlow) {
     if (!req.usePKCE) {
-      var level = req.clientSecret ? SHOULD : MUST;
+      var level = confidential ? SHOULD : MUST;
       findings.push(finding("1.6", level,
-        req.clientSecret
+        confidential
           ? "PKCE is off. RFC 9700 states it at SHOULD for a confidential " +
             "client; this client is configured with a secret."
           : "PKCE is off and this is a public client (no client secret), " +
@@ -1077,7 +1085,7 @@ function checkAuthorizationRequest(req) {
   }
 
   // -- section 6.2: how the secret will travel -------------------------------
-  if (req.clientSecret && req.authStyle === "post") {
+  if (confidential && req.authStyle === "post") {
     findings.push(finding("6.2", SHOULD,
       "The client secret will be sent in the request body " +
       "(client_secret_post). client_secret_basic keeps it out of anything " +

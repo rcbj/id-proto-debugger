@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 variable "domain" {
   description = "Apex domain for the site (e.g. idptools.com). Registered at the registrar; DNS is delegated to the Route 53 zone created here."
   type        = string

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # embedded/Dockerfile — the debugger tree the mock STS embeds, as an image.
 #
 #   docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:<tag> .

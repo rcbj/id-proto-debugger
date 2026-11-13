@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // Production config for the static idptools.com deployment.
 //
 // This is the CONFIG_FILE baked into the browser bundles for the static build

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 output "name_servers" {
   description = "Set these 4 name servers at the Namecheap registrar for the domain (Custom DNS). This is the one manual step."
   value       = aws_route53_zone.this.name_servers

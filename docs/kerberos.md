@@ -187,7 +187,7 @@ For forwarding, the one enforceable control is `NOT_DELEGATED` ("account is sens
 
 ## The mock KDC, and the two things about it that are deliberate
 
-It lives in the `sts/` **submodule** (`docs/mock-sts.md` has the detail, including why the codec modules were once vendored there; since 2026-11-12 they are iya-sts's own, and `tests/krb5_codec_sync.js` checks only that the two implementations agree on the wire). Two design points matter when reading its tests:
+It lives in iya-sts, which this repository runs from its release image (`docs/mock-sts.md` has the detail, including why the codec modules were once vendored there; since 2026-11-12 they are iya-sts's own, and `tests/krb5_codec_sync.js` checks only that the two implementations agree on the wire). Two design points matter when reading its tests:
 
 **Its principals are misconfigured on purpose.** `locked`, `expired`, `aesonly` (a hardened account offering no RC4), `rc4only` (the legacy account a 2025 baseline breaks), `noreauth` (answered in **one** message rather than two), a computer account for the host-shaped salt, `sensitive` (flagged `NOT_DELEGATED`), and four service accounts differing by one delegation attribute each. The whole point is producing failures deliberately, and each account's PAC records the same misconfiguration its behaviour shows.
 

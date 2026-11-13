@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: gnap.js
 //
 // The GNAP page. The proofs and the request builder live in
@@ -30,6 +33,9 @@ log.info("Log initialized. logLevel=" + log.level());
 
 var API_URL = appconfig.apiUrl || "";
 var KEY_STORAGE = "gnap_private_jwk";
+// The mtls client certificate's private key. It follows the same
+// save box as the JWK: cleared, it is removed at once and on load.
+var MTLS_KEY_STORAGE = "gnap_mtls_key";
 var STATE_STORAGE = "gnap_state";
 
 var privateJwk = null;
@@ -67,6 +73,11 @@ function checked(id) {
 
 function record() {
   log.debug("Entering record().");
+  if (val("gnap_proof") === "mtls") {
+    log.debug("Leaving record(). Certificate.");
+    return engine.recordFromCertificate(val("gnap_mtls_cert"),
+      val("gnap_mtls_key"));
+  }
   if (!privateJwk) {
     log.debug("Leaving record(). No key.");
     return null;
@@ -91,6 +102,11 @@ function persist() {
   } else {
     localStorage.removeItem(KEY_STORAGE);
   }
+  if (save && val("gnap_mtls_key").trim()) {
+    localStorage.setItem(MTLS_KEY_STORAGE, val("gnap_mtls_key"));
+  } else {
+    localStorage.removeItem(MTLS_KEY_STORAGE);
+  }
   var state = {
     saveKey: save,
     alg: val("gnap_alg"),
@@ -100,6 +116,7 @@ function persist() {
     insecure: checked("gnap_insecure"),
     api: val("gnap_api"),
     request: val("gnap_request"),
+    mtlsCertificate: val("gnap_mtls_cert"),
     display: val("gnap_display"),
     classId: val("gnap_class"),
     clientNonce: val("gnap_client_nonce"),
@@ -144,6 +161,9 @@ function loadState() {
   if (state.request) {
     setVal("gnap_request", state.request);
   }
+  if (state.mtlsCertificate) {
+    setVal("gnap_mtls_cert", state.mtlsCertificate);
+  }
   if (state.display) {
     setVal("gnap_display", state.display);
   }
@@ -170,8 +190,10 @@ function loadState() {
         log.debug("Caught in loadState() key: " + e.message);
       }
     }
+    setVal("gnap_mtls_key", localStorage.getItem(MTLS_KEY_STORAGE) || "");
   } else {
     localStorage.removeItem(KEY_STORAGE);
+    localStorage.removeItem(MTLS_KEY_STORAGE);
   }
   log.debug("Leaving loadState().");
 }
@@ -233,21 +255,45 @@ function onSaveChange() {
   return false;
 }
 
-function fillSample() {
-  log.debug("Entering fillSample().");
+function newNonce() {
+  log.debug("Entering newNonce().");
   var nonce = "n-" + Array.prototype.map.call(
     crypto.getRandomValues(new Uint8Array(8)), function (b) {
       var hex = b.toString(16);
       return hex.length === 1 ? "0" + hex : hex;
     }).join("");
+  log.debug("Leaving newNonce().");
+  return nonce;
+}
+
+function writeSample(build) {
+  log.debug("Entering writeSample().");
+  var nonce = newNonce();
   var finish = window.location.origin + "/gnap.html";
-  var body = engine.sampleRequest(finish, nonce);
-  setVal("gnap_request", JSON.stringify(body, null, 2));
+  setVal("gnap_request", JSON.stringify(build(finish, nonce), null, 2));
   setVal("gnap_client_nonce", nonce);
   persist();
-  status("Sample request. The finish URI is this page, so an " +
-    "approval can return here with the interaction hash.");
+  log.debug("Leaving writeSample().");
+}
+
+function fillSample() {
+  log.debug("Entering fillSample().");
+  writeSample(engine.sampleRequest);
+  status("Sample request for subject information, which iya-sts " +
+    "grants with no administrator involved. The finish URI is this " +
+    "page, so an approval returns here with the interaction hash.");
   log.debug("Leaving fillSample().");
+  return false;
+}
+
+function fillSsfSample() {
+  log.debug("Entering fillSsfSample().");
+  writeSample(engine.ssfSampleRequest);
+  status("Sample request for an access token to iya-sts's Shared " +
+    "Signals transmitter (ssf.read). iya-sts refuses it with " +
+    "request_denied until an administrator declares ssf.read in the " +
+    "application's oauthAllowedScope.");
+  log.debug("Leaving fillSsfSample().");
   return false;
 }
 
@@ -321,6 +367,12 @@ function selectTab(channel, which) {
 async function deliver(prepared, channel) {
   log.debug("Entering deliver(). " + (channel || ""));
   var started = Date.now();
+  if (prepared.mtls && val("gnap_via") === "browser") {
+    log.debug("Leaving deliver(). mtls needs the API.");
+    throw new Error("The mtls proof is the TLS client certificate, and " +
+      "a browser cannot choose which one a request presents. Send it " +
+      "through the API.");
+  }
   if (val("gnap_via") === "browser") {
     var direct = null;
     try {
@@ -354,7 +406,23 @@ async function deliver(prepared, channel) {
     headers: prepared.headers,
     body: prepared.body,
     sslValidate: !checked("gnap_insecure"),
-    http_trace: true
+    http_trace: true,
+    clientCertificatePem: prepared.mtls
+      ? prepared.mtls.certificatePem : undefined,
+    clientKeyPem: prepared.mtls ? prepared.mtls.privateKeyPem : undefined
+  };
+  // What the HTTP tab may show of the call to the API. The mtls private key
+  // travels to the api in this body, and a tab that drew it would put the
+  // key on the screen and in a screenshot, so the shown copy names it only.
+  var shownToApi = function () {
+    log.debug("Entering shownToApi().");
+    var shown = Object.assign({}, relayed);
+    if (shown.clientKeyPem) {
+      shown.clientKeyPem = "[the mtls private key, not shown]";
+    }
+    log.debug("Leaving shownToApi().");
+    return { method: toApi.method, url: toApi.url, headers: toApi.headers,
+      body: JSON.stringify(shown) };
   };
   var toApi = { method: "POST", url: apiBase() + "/gnap/call",
     headers: { "Content-Type": "application/json" },
@@ -364,8 +432,8 @@ async function deliver(prepared, channel) {
     response = await fetch(toApi.url, { method: "POST",
       headers: toApi.headers, body: toApi.body });
   } catch (e) {
-    showHttp(channel, httpView.viewFromBrowser(toApi, null, e.message,
-        Date.now() - started));
+    showHttp(channel, httpView.viewFromBrowser(shownToApi(), null,
+        e.message, Date.now() - started));
     log.debug("Leaving deliver(). The API did not answer.");
     throw e;
   }
@@ -376,7 +444,7 @@ async function deliver(prepared, channel) {
     showHttp(channel, httpView.viewFromApiTrace(trace,
         "Call to the authorization server", Date.now() - started));
   } else {
-    showHttp(channel, httpView.viewFromBrowser(toApi, {
+    showHttp(channel, httpView.viewFromBrowser(shownToApi(), {
       status: response.status, statusText: response.statusText,
       headers: httpView.fetchHeaders(response),
       body: JSON.stringify(payload, null, 2)
@@ -502,12 +570,10 @@ function applyResponse(body) {
 async function discover() {
   log.debug("Entering discover().");
   try {
-    var prepared = await engine.prepare(record() || {
-      alg: "ES256",
-      kid: "none",
-      privateJwk: {},
-      publicJwk: {}
-    }, "OPTIONS", val("gnap_grant").trim(), { sign: false });
+    // Discovery is unsigned, so it needs no key, whichever proof is
+    // selected.
+    var prepared = await engine.prepare(null, "OPTIONS",
+      val("gnap_grant").trim(), { sign: false });
     var answer = await deliver(prepared, "server");
     showExchange(prepared, answer);
     status("Discovery answered HTTP " + answer.status + ".");
@@ -640,6 +706,102 @@ async function rotateKey() {
   return false;
 }
 
+// RFC 9635 section 6.1: a POST to the management URI with the
+// management token rotates the access token's value.
+async function rotateToken() {
+  log.debug("Entering rotateToken().");
+  try {
+    var uri = val("gnap_manage_uri").trim();
+    if (!uri) {
+      status("The token response has no management URI yet.", true);
+      log.debug("Leaving rotateToken(). No URI.");
+      return false;
+    }
+    var before = val("gnap_token").trim();
+    var prepared = await engine.prepare(record(), "POST", uri, {
+      token: val("gnap_manage_token").trim(),
+      proof: val("gnap_proof")
+    });
+    var answer = await deliver(prepared);
+    showExchange(prepared, answer);
+    var code = answer.error || engine.errorOf(answer.body);
+    var after = val("gnap_token").trim();
+    if (!code && answer.status >= 200 && answer.status < 300 &&
+        after && after !== before) {
+      status("Rotated the access token. The old value is no longer " +
+        "valid.");
+    } else {
+      status(code ? ("Token rotation refused: " + code) :
+        ("Token rotation answered HTTP " + answer.status + "."), true);
+    }
+  } catch (e) {
+    log.debug("Caught in rotateToken(): " + e.message);
+    status(e.message, true);
+  }
+  log.debug("Leaving rotateToken().");
+  return false;
+}
+
+// RFC 9635 section 6.2: a DELETE of the management URI revokes the
+// access token.
+async function revokeToken() {
+  log.debug("Entering revokeToken().");
+  try {
+    var uri = val("gnap_manage_uri").trim();
+    if (!uri) {
+      status("The token response has no management URI to revoke.",
+        true);
+      log.debug("Leaving revokeToken(). No URI.");
+      return false;
+    }
+    var prepared = await engine.prepare(record(), "DELETE", uri, {
+      token: val("gnap_manage_token").trim(),
+      proof: val("gnap_proof")
+    });
+    var answer = await deliver(prepared);
+    showExchange(prepared, answer);
+    if (answer.status >= 200 && answer.status < 300) {
+      setVal("gnap_token", "");
+      setVal("gnap_manage_uri", "");
+      setVal("gnap_manage_token", "");
+      persist();
+      status("Revoked the access token. HTTP " + answer.status + ".");
+    } else {
+      status("Token revocation answered HTTP " + answer.status + ".",
+        true);
+    }
+  } catch (e) {
+    log.debug("Caught in revokeToken(): " + e.message);
+    status(e.message, true);
+  }
+  log.debug("Leaving revokeToken().");
+  return false;
+}
+
+// Present the access token at a resource server. iya-sts's Shared
+// Signals transmitter is one: GET /ssf/stream with the GNAP scheme
+// and this key's proof.
+function fillResourceCall() {
+  log.debug("Entering fillResourceCall().");
+  var origin = "";
+  try {
+    origin = new URL(val("gnap_grant").trim()).origin;
+  } catch (e) {
+    log.debug("Caught in fillResourceCall(): " + e.message);
+    status("The grant URL is not a URL.", true);
+    log.debug("Leaving fillResourceCall(). Bad URL.");
+    return false;
+  }
+  setVal("gnap_call_method", "GET");
+  setVal("gnap_call_url", origin + "/ssf/stream");
+  setVal("gnap_call_body", "");
+  setVal("gnap_call_token", val("gnap_token").trim());
+  status("A GET of the Shared Signals transmitter's streams, with the " +
+    "access token and this key's proof.");
+  log.debug("Leaving fillResourceCall().");
+  return false;
+}
+
 async function sendCall() {
   log.debug("Entering sendCall().");
   try {
@@ -692,6 +854,21 @@ function fillIntrospect() {
   return false;
 }
 
+// RFC 9635 section 4.2.3: the hash uses the request's
+// interact.finish.hash_method, and sha-256 when it names none.
+function finishHashMethod() {
+  log.debug("Entering finishHashMethod().");
+  var parsed = parseJson(val("gnap_request").trim());
+  var finish = parsed && parsed.interact && parsed.interact.finish;
+  if (finish && typeof finish.hash_method === "string" &&
+      finish.hash_method) {
+    log.debug("Leaving finishHashMethod(). " + finish.hash_method);
+    return finish.hash_method;
+  }
+  log.debug("Leaving finishHashMethod(). Default.");
+  return "sha-256";
+}
+
 async function checkFinish() {
   log.debug("Entering checkFinish().");
   try {
@@ -710,7 +887,7 @@ async function checkFinish() {
       val("gnap_as_nonce").trim(),
       val("gnap_interact_ref").trim(),
       val("gnap_grant").trim(),
-      "sha-256");
+      finishHashMethod());
     var got = val("gnap_hash").trim();
     setVal("gnap_hash_expected", expected);
     status(got === expected
@@ -782,6 +959,10 @@ module.exports = {
   usePasted: usePasted,
   onSaveChange: onSaveChange,
   fillSample: fillSample,
+  fillSsfSample: fillSsfSample,
+  rotateToken: rotateToken,
+  revokeToken: revokeToken,
+  fillResourceCall: fillResourceCall,
   discover: discover,
   sendGrant: sendGrant,
   continueGrant: continueGrant,

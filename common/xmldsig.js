@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xmldsig.js
 //
 // Shared in-browser XML security primitives used by the WS-Trust workflow
@@ -113,6 +116,22 @@ function sigAlgSpec(uri) {
       log.debug("Leaving sigAlgSpec().");
       return { md: forge.md.sha512.create,
               digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512' };
+    // RSASSA-PSS (RFC 9231 section 2.3.10). Until these three were listed
+    // they fell to the default below, so a caller asking for PSS got a
+    // PKCS#1 v1.5 SHA-256 signature under a PSS SignatureMethod or SigAlg —
+    // a label nothing at the far end could verify against.
+    case 'http://www.w3.org/2007/05/xmldsig-more#sha256-rsa-MGF1':
+      log.debug("Leaving sigAlgSpec(). PSS.");
+      return { md: forge.md.sha256.create, pad: 'pss',
+              digestUri: 'http://www.w3.org/2001/04/xmlenc#sha256' };
+    case 'http://www.w3.org/2007/05/xmldsig-more#sha384-rsa-MGF1':
+      log.debug("Leaving sigAlgSpec(). PSS.");
+      return { md: forge.md.sha384.create, pad: 'pss',
+              digestUri: 'http://www.w3.org/2001/04/xmldsig-more#sha384' };
+    case 'http://www.w3.org/2007/05/xmldsig-more#sha512-rsa-MGF1':
+      log.debug("Leaving sigAlgSpec(). PSS.");
+      return { md: forge.md.sha512.create, pad: 'pss',
+              digestUri: 'http://www.w3.org/2001/04/xmlenc#sha512' };
     case 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256':
     default:
       log.debug("Leaving sigAlgSpec().");
@@ -120,6 +139,28 @@ function sigAlgSpec(uri) {
               digestUri: 'http://www.w3.org/2001/04/xmlenc#sha256' };
   }
   log.debug("Leaving sigAlgSpec().");
+}
+
+// The SIGNERS below that are RSA-only (signEnveloped, signWsSecurity,
+// signQueryString) write `sigAlg` into the message and then sign with RSA.
+// sigAlgSpec() answers SHA-256 for a URI it does not know, which is right
+// for a verifier reading somebody else's document and wrong for a signer:
+// an ECDSA, HMAC or misspelt URI would be advertised over an RSA-SHA256
+// signature. So a signer asks this first and refuses what it cannot honour:
+// it returns the refusal's text, or null for one of the seven RSA methods.
+function rsaSigAlgRefusal(sigAlg, who) {
+  log.debug("Entering rsaSigAlgRefusal(). sigAlg=" + sigAlg);
+  var m = SIG_METHODS[sigAlg];
+  if (m && m.family === 'rsa') {
+    log.debug("Leaving rsaSigAlgRefusal(). RSA.");
+    return null;
+  }
+  var rsa = Object.keys(SIG_METHODS).filter(function (u) {
+    return SIG_METHODS[u].family === 'rsa';
+  });
+  log.debug("Leaving rsaSigAlgRefusal(). Refused.");
+  return who + ': SignatureMethod ' + sigAlg + ' is not an RSA method ' +
+      'this signer implements (' + rsa.join(', ') + ').';
 }
 
 // --- RSA signing: node's OpenSSL where there is one, forge where there is not
@@ -948,6 +989,11 @@ function signWsSecurity(soapXml, opts) {
     log.debug("Leaving signWsSecurity(). No private key.");
     throw new Error('signWsSecurity: privateKeyPem is required.');
   }
+  var refusal = pqSpec ? null : rsaSigAlgRefusal(sigAlg, 'signWsSecurity');
+  if (refusal) {
+    log.debug("Leaving signWsSecurity(). Not an RSA SignatureMethod.");
+    throw new Error(refusal);
+  }
   var spec = pqSpec
     ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
         digestUri: pqSpec.digestUri }
@@ -989,7 +1035,7 @@ function signWsSecurity(soapXml, opts) {
       : forge.util.encode64(forge.util.binary.raw.encode(rawSig));
   } else {
     sigVal = forge.util.encode64(rsaSign(opts.privateKeyPem,
-        spec.md().algorithm, forge.util.encodeUtf8(siCanon)));
+        spec.md().algorithm, forge.util.encodeUtf8(siCanon), spec.pad));
   }
   // A post-quantum signer has no certificate — the draft defines no X.509
   // profile — so its KeyInfo is the caller's DEREncodedKeyValue. WS-Security's
@@ -1093,6 +1139,11 @@ function signEnveloped(xml, opts) {
     log.debug("Leaving signEnveloped(). No private key.");
     throw new Error('signEnveloped: privateKeyPem is required.');
   }
+  var refusal = pqSpec ? null : rsaSigAlgRefusal(sigAlg, 'signEnveloped');
+  if (refusal) {
+    log.debug("Leaving signEnveloped(). Not an RSA SignatureMethod.");
+    throw new Error(refusal);
+  }
   var spec = pqSpec
     ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
         digestUri: pqSpec.digestUri }
@@ -1191,7 +1242,8 @@ function signEnveloped(xml, opts) {
       : forge.util.encode64(forge.util.binary.raw.encode(rawSig));
   } else {
     sigB64 = forge.util.encode64(rsaSign(opts.privateKeyPem,
-        spec.md().algorithm, forge.util.encodeUtf8(c14nFn(siNode))));
+        spec.md().algorithm, forge.util.encodeUtf8(c14nFn(siNode)),
+        spec.pad));
   }
   directChildByLocal(sigNode, 'SignatureValue')
     .appendChild(doc.createTextNode(sigB64));
@@ -1308,6 +1360,27 @@ function verifyXmlSignature(xml, opts) {
     ? { md: function () { return forgeMdFor(pqSpec.digestUri); },
         digestUri: pqSpec.digestUri }
     : sigAlgSpec(sigAlg);
+  // NOT RSA AND NOT POST-QUANTUM. sigAlgSpec() reads any URI it does not
+  // list as RSA-SHA256, so an ECDSA, HMAC, misspelt or missing
+  // SignatureMethod used to be checked as an RSA-SHA256 signature and
+  // reported "invalid" — a verdict about a signature nobody made. This
+  // module implements RSA only, so such a method goes to opts.verifier when
+  // the caller has one (as in verifyXml()), and is otherwise reported as
+  // not verified, with the references still checked.
+  var method = SIG_METHODS[sigAlg] || null;
+  var external = pqSpec ||
+      ((method && method.family === 'rsa') ? null : (method || {
+        family: 'unknown', label: sigAlg || '(no SignatureMethod)' }));
+  var unsupported = null;
+  if (external && !pqSpec && typeof opts.verifier !== 'function') {
+    unsupported = method
+      ? (method.label + ' is not verified here: this module implements ' +
+         'RSA only, so the caller has to supply opts.verifier. The ' +
+         'reference digests below were still checked.')
+      : ('SignatureMethod ' + (sigAlg ? '"' + sigAlg + '"' : '(none)') +
+         ' is not one this module knows, so the signature was not ' +
+         'verified. The reference digests below were still checked.');
+  }
 
   // Signing certificate: prefer a supplied cert, else the one in KeyInfo.
   var certB64 = '';
@@ -1325,7 +1398,7 @@ function verifyXmlSignature(xml, opts) {
                    'hbs.js, and the public key is in the ' +
                    'dsig11:DEREncodedKeyValue rather than in a certificate.' };
   }
-  if (!pqSpec && !certPem) {
+  if (!external && !certPem) {
     log.debug("Leaving verifyXmlSignature().");
     return { valid: false,
             error: 'No signing certificate in KeyInfo and none supplied.' };
@@ -1337,9 +1410,16 @@ function verifyXmlSignature(xml, opts) {
       pub = cert.publicKey;
     }
   } catch (e) {
-    log.debug("Leaving verifyXmlSignature().");
-    return { valid: false, error: 'Could not parse signing certificate: ' +
-            e.message };
+    // forge reads RSA certificates only. For a method this module does not
+    // verify itself the key is the verifier's business, so an EC
+    // certificate is not a reason to stop.
+    if (!external) {
+      log.debug("Leaving verifyXmlSignature().");
+      return { valid: false, error: 'Could not parse signing certificate: ' +
+              e.message };
+    }
+    log.debug("verifyXmlSignature(): certificate not read: " + e.message);
+    cert = null;
   }
 
   // 1) SignatureValue over C14N(SignedInfo) — compute before detaching the
@@ -1349,16 +1429,21 @@ function verifyXmlSignature(xml, opts) {
       '').replace(/\s+/g, ''));
   var signatureValid = false;
   try {
-    if (pqSpec) {
+    if (unsupported) {
+      signatureValid = false;
+    } else if (external) {
       // The same octets the RSA branch hashes — see signEnveloped() on why
       // this is encodeUtf8() of the canonicalized string rather than the
       // string.
       signatureValid = !!opts.verifier(forge.util.encodeUtf8(siCanon),
-                                       signatureBytes, pqSpec, sigAlg);
+                                       signatureBytes, external, sigAlg);
     } else {
       var md1 = spec.md();
       md1.update(siCanon, 'utf8');
-      signatureValid = pub.verify(md1.digest().bytes(), signatureBytes);
+      signatureValid = spec.pad === 'pss'
+        ? pub.verify(md1.digest().bytes(), signatureBytes,
+                     pssFor(md1.algorithm))
+        : pub.verify(md1.digest().bytes(), signatureBytes);
     }
   } catch (e) {
     // A verifier that THREW said something a caller can act on — a wrong
@@ -1391,7 +1476,12 @@ function verifyXmlSignature(xml, opts) {
           reason: 'referenced element not found' });
       continue;
     }
-    var c14nRef = C14N_EXCLUSIVE;
+    // No canonicalization transform: XMLDSig core 4.3.3.2 converts the
+    // node-set with inclusive C14N 1.0, not exclusive. SAML and WS-*
+    // references always name exc-c14n, so they never reach this default;
+    // a document from the general engine with only enveloped-signature did,
+    // and its digest was computed over the wrong octets.
+    var c14nRef = C14N_INCLUSIVE;
     var trs = ref.getElementsByTagNameNS('*', 'Transform');
     for (var t = 0; t < trs.length; t++) {
       var ta = trs[t].getAttribute('Algorithm') || '';
@@ -1409,7 +1499,7 @@ function verifyXmlSignature(xml, opts) {
       references.every(function (r) { return r.ok; });
 
   log.debug("Leaving verifyXmlSignature().");
-  return {
+  var result = {
     valid: signatureValid && referencesValid,
     signatureValid: signatureValid,
     referencesValid: referencesValid,
@@ -1419,6 +1509,11 @@ function verifyXmlSignature(xml, opts) {
     signerSubject: cert ? certSubjectCN(cert) : '',
     signerCertB64: certB64
   };
+  if (unsupported) {
+    result.unsupported = true;
+    result.error = unsupported;
+  }
+  return result;
 }
 
 // --- XML DECRYPTION (W3C xmlenc) -------------------------------------------
@@ -1710,11 +1805,17 @@ function signQueryString(queryString, opts) {
   if (!opts.privateKeyPem) throw new Error('signQueryString: privateKeyPem ' +
       'is required.');
   var sigAlg = opts.sigAlg || SIG_ALG_RSA_SHA256;
-  var hash = sigAlgSpec(sigAlg).md().algorithm;
+  var refusal = rsaSigAlgRefusal(sigAlg, 'signQueryString');
+  if (refusal) {
+    log.debug("Leaving signQueryString(). Not an RSA SignatureMethod.");
+    throw new Error(refusal);
+  }
+  var qsSpec = sigAlgSpec(sigAlg);
+  var hash = qsSpec.md().algorithm;
   // The query string is ASCII; encodeUtf8 is what forge's md.update(s,
   // 'utf8') did with it before, so nothing changes if it is not.
   var raw = rsaSign(opts.privateKeyPem, hash,
-      forge.util.encodeUtf8(queryString));
+      forge.util.encodeUtf8(queryString), qsSpec.pad);
   log.debug("Leaving signQueryString().");
   return forge.util.encode64(raw);
 }
@@ -3277,6 +3378,7 @@ function verifyQueryString(queryString, opts) {
 
 module.exports = {
   forge: forge,
+  rsaSigAlgRefusal: rsaSigAlgRefusal,
   DS_NS: DS_NS,
   XENC_NS: XENC_NS,
   XENC11_NS: XENC11_NS,

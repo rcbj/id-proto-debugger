@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_delegation_interop.js
 //
 // ---------------------------------------------------------------------------
@@ -21,7 +24,8 @@
 //
 // WHICH KDC. KRB5_DELEG_TARGET selects it:
 //
-//   mock     (default) the KDC in the sts/ submodule, started in-process on an
+//   mock     (default) iya-sts's KDC, out of its release image's tree
+//            (module_paths.js, iyaStsRoot()), started in-process on an
 //            ephemeral port. No AWS, no network, no services.
 //   windows  a real Windows Server domain controller, described by the JSON the
 //            bootstrap uploaded — KRB5_DC_JSON names the file that
@@ -43,7 +47,6 @@ const fs = require("fs");
 const path = require("path");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
-const { usernameFor } = require("./random_username.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -96,17 +99,31 @@ async function mockTarget() {
   const kdcPath = paths.mockStsModule("krb5_kdc.js", function (m) {
     log.warn(m);
   });
-  assert.ok(kdcPath, "could not find the mock KDC " +
-    "(sts/kerberos/krb5_kdc.js). The " +
-    "sts/ directory is a submodule; run `git submodule update --init sts`.");
+  assert.ok(kdcPath, "could not find iya-sts's KDC (kerberos/krb5_kdc.js) " +
+    "in its tree at " + paths.iyaStsRoot() + ". That release has moved or " +
+    "dropped it.");
+  // iya-sts 1.0.0 decides S4U through its delegation issuance policy, which
+  // it seeds from the Kerberos fixtures into the APPLICATION REGISTRY. That
+  // registry has no store until ldap/ldap_server.js attaches one, so a bare
+  // KDC refuses protocol transition for every account ("the issuance policy
+  // did not allow HTTP/frontend... to impersonate this user"). Load the app
+  // and the directory first, exactly as iya-sts's own
+  // tests/kerberos_delegation.js does.
+  const root = paths.iyaStsRoot();
+  try {
+    require(path.join(root, "common", "app"));
+    require(path.join(root, "ldap", "ldap_server"));
+  } catch (e) {
+    throw new Error("iya-sts's application registry could not be " +
+      "initialised from " + root + ": " + e.message);
+  }
   let kdcModule;
   try {
     kdcModule = require(kdcPath);
   } catch (e) {
     throw new Error("the mock KDC loaded but one of its own dependencies did " +
-      "not: " + e.message + ". tests/Dockerfile copies the sts/ modules " +
-      "individually, and that set has to be recomputed when one grows a new " +
-      "require.");
+      "not: " + e.message + ". The tree it was loaded from is " +
+      paths.iyaStsRoot() + ", which should carry its own node_modules.");
   }
   kdcListeners = kdcModule.listen(0);
   await kdcListeners.whenReady;
@@ -118,13 +135,15 @@ async function mockTarget() {
   return {
     what: "the mock KDC",
     realm: realm,
-    // Generated, prefixed with this file's name. The mock KDC resolves an
-    // S4U2Self target through findOrCreateUser(), so the account exists on
-    // first sight; nothing below asserts anything the principal TABLE
-    // configured, only that every ticket in the chain keeps naming this
-    // person. windowsTarget() below cannot do this — dc.test_user is an
-    // account somebody provisioned in a live directory.
-    impersonate: usernameFor("krb5-delegation-interop"),
+    // A person iya-sts's directory really holds, as dc.test_user is on
+    // Windows. Since iya-sts 1.0.0 the delegation policy reads the subject's
+    // roles from the directory, and a name it does not know holds none, not
+    // even the built-in EVERYBODY, so impersonating a made-up user is
+    // refused ("holds none of the roles the application ... requires"). It
+    // used to resolve the subject through findOrCreateUser(), which is why
+    // a generated name worked before. `alice` is seeded with the directory
+    // and is the subject iya-sts's own tests/kerberos_delegation.js uses.
+    impersonate: "alice",
     frontend: {
       asName: "HTTP/frontend." + domain,
       spn: "HTTP/frontend." + domain,

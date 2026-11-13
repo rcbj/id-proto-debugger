@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_crypto_vectors.js
 //
 // common/krb5/krb5_primitives.js and krb5_crypto.js — the RFC 3961 encryption

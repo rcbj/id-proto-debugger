@@ -145,8 +145,8 @@ different OTP is refused. An error status that omits `otp` is shown
 as "not echoed"; an `OK` without the request's `otp` is refused.
 The five default hosts are `api.yubico.com` through `api5.yubico.com`,
 path `/wsapi/2.0/verify`; server 1, `api.yubico.com`, is the default.
-Whether the other four still answer has not been checked against the
-live service (#410). A caller-supplied verifier is https, with
+All five answered an unsigned verify with HTTP 200 on 2026-11-13, and
+each still resolves to its own `apiN.yubicloud-r53.yubico.com` name. A caller-supplied verifier is https, with
 no userinfo, no query string and no `..` in the URL. The address
 policy is the one already installed on axios.
 
@@ -161,6 +161,21 @@ all-zero report is skipped except the first and the last. Slots
 `0x20` and `0x28` are Yubico OTP challenge-response (6-byte challenge,
 16-byte answer) and `0x30` and `0x38` are HMAC-SHA1 (up to 64 bytes,
 20-byte answer).
+
+An HMAC slot is programmed **variable** or **fixed**, and the page
+asks which (*HMAC challenge length*; variable is the default because
+it is what `ykman otp chalresp` programs). A variable slot
+(`HMAC_LT64`) drops every trailing byte equal to the payload's last
+byte before it computes, so the page pads the way yubikit's
+`calculate_hmac_sha1` does: with `01` after a challenge ending in
+`00`, and with `00` otherwise, and the key strips exactly that
+padding. A variable slot therefore cannot take a 64-byte challenge
+whose last bytes repeat. A fixed slot HMACs all 64 bytes, so a
+shorter challenge is zero filled and the answer is the HMAC of that
+64-byte block. Pick the wrong mode and the key answers with a valid
+CRC and an HMAC of a different message. `hmacChallengeBytes()` gives
+the message a slot actually signs, for checking an answer against a
+known key.
 
 The exchange is the one yubikit's `otp.py` runs, and a single read
 straight after the write does not work. The last byte of every
@@ -187,7 +202,22 @@ appendix. The secret is saved only when the box is checked.
 
 YKOATH's AID is `A0000005272101`. PUT builds an APDU and does not
 send it. The secret in that APDU is described as a length, not
-shown. LIST, CALCULATE and RESET are decoded from a paste.
+shown, and a secret shorter than 14 bytes is padded with zeros to
+14, as yubikit does (the applet refuses a shorter key, and HMAC pads
+with zeros anyway, so the codes do not change). The property element
+is the one exception to TLV in YKOATH: tag `78` and ONE value byte
+with no length (`01` only-increasing, `02` touch). LIST, CALCULATE,
+CALCULATE ALL and RESET are decoded from a paste. A truncated
+CALCULATE answer (`76`) is the digit count and four bytes, and the
+code is those bytes with the top bit masked. A full one (`75`) is the
+digit count and the whole HMAC (20, 32 or 64 bytes), and the code is
+its RFC 4226 dynamic truncation; the engine test checks it against
+the RFC 4226 Appendix D HMACs and RFC 6238 Appendix B. CALCULATE ALL
+is name (`71`) and answer pairs, where the answer is `75` or `76` as
+above, `77` for an HOTP credential and `7C` for one that needs a
+touch. Neither of those last two is calculated; they carry the digit
+count alone. YKOATH continues a long answer
+with SEND REMAINING (`A5`), not GET RESPONSE; see [Reader](#reader).
 
 ## PIV
 
@@ -199,13 +229,41 @@ as CertInfo. The low bit of CertInfo means gzip. A gzip header with
 no CertInfo is still gzip. The page inflates with
 `DecompressionStream` and hands the DER to
 `x509.describeCertificate`. This module does not parse a certificate
-itself. GENERAL AUTHENTICATE is decoded and not performed. VERIFY is
-described as a PIN of N bytes, not shown, and the PIN is not stored.
+itself. GENERAL AUTHENTICATE is decoded and not performed, including
+the `85` exponentiation element of an ECDH. VERIFY is described as a
+PIN of N bytes, not shown, and its P2 is named as a PIN reference
+(`80` application PIN, `81` PUK, `00` global PIN) rather than as a
+key slot. The page's *Build VERIFY* writes the application PIN the
+way SP 800-73-4 Part 2 section 3.2.1 requires: 6 to 8 characters,
+padded with `FF` to 8 bytes. An unpadded PIN is a different value and
+the card counts it as a wrong one. The PIN is not stored. GET
+METADATA's origin is `01` generated and `02` imported (yubikit's
+`ORIGIN_GENERATED`/`ORIGIN_IMPORTED`), and its retries element is
+the total then the remaining count.
+
+Object `5FFF01` is Yubico's: the attestation certificate for the key
+in slot `F9`, factory-loaded and signed by a Yubico PIV CA. ATTEST
+(`F9`) returns a certificate for one slot's key, signed by that F9
+key. Both are read like any other certificate, and the Yubico
+extensions under `1.3.6.1.4.1.41482.3` are named, as
+developers.yubico.com/PIV/Introduction/PIV_attestation.html defines
+them: `3.3` firmware (three bytes), `3.7` serial (a DER INTEGER),
+`3.8` PIN then touch policy, `3.9` form factor (high bit set for a
+FIPS device), and `3.10`/`3.11` FIPS and CSPN certified. The device
+certificate in `5FFF01` usually carries only `3.3`. The engine test
+uses a real pair from go-piv's `TestVerify` (firmware 5.4.3, serial
+15732500, PIN once, touch never, USB-C nano) rather than a
+certificate this code made.
 
 ## OpenPGP card
 
 Application related data and the public keys, from the OpenPGP card
-3.4 data objects. RSA, NIST curves, Ed25519 and X25519 public keys
+3.4 data objects. Algorithm attributes for an EC key (`C1`-`C3`) are
+the algorithm ID followed by the curve OID's content octets with no
+tag and no length byte (section 4.4.3.9), and an optional trailing
+`FF` import-format byte. The signature counter `93` is found inside
+the security support template `7A`.
+RSA, NIST curves, Ed25519 and X25519 public keys
 become a SubjectPublicKeyInfo, and the page asks
 `key_material.describePublicPem` what it imported. There is no
 OpenPGP message, no PKCS#11 and no GPG-agent. PSO:CDS, PSO:DECIPHER
@@ -224,8 +282,12 @@ two AES keys with PBKDF2-HMAC-SHA256, salt `Yubico`, 10000 rounds.
 The management key and the credential password are not saved and are
 not logged.
 
-The PIV, OATH, OpenPGP and YubiHSM traces in
-`tests/smartcard_engine.js` are containers this code built. The OTP
+Most of the PIV, OATH, OpenPGP and YubiHSM traces in
+`tests/smartcard_engine.js` are containers this code built. The
+exceptions are the attestation certificates (go-piv's real pair),
+the OpenPGP algorithm attributes (the bytes gpg writes), and the
+OATH CALCULATE answers (RFC 4226 and RFC 6238 values in the YKOATH
+grammar). The OTP
 vectors are Yubico's published ones. The OATH codes are the RFC
 appendices. A capture from a key is the manual list below, which CI
 does not run.
@@ -258,14 +320,23 @@ sequence stops at the first APDU whose final status is not `90xx` or
 
 With `getResponse` on (the default, a checkbox on the page) a `61xx`
 answer is followed by GET RESPONSE (`CLA C0 00 00 xx`, keeping the
-command's logical channel) until the card stops asking, and a `6Cxx`
+command's logical channel in either CLA range) until the card stops
+asking. YKOATH does not implement `C0` and asks for SEND REMAINING
+(`A5`) instead, so after a SELECT of the OATH AID in the same
+sequence the relay sends `A5`; a transmit that relies on an OATH
+SELECT made earlier passes `remainingIns: "a5"`. A `6Cxx`
 is resent once with the Le the card named, as ISO 7816-4 section
 5.1.3 describes; the data is the concatenation. Every APDU actually
 on the wire is in `steps`, and the page shows them. Off, the answer
 is the raw exchange.
 
-A card status word is a 200. A missing library, a missing reader or
-no card is a 502. A bad request is a 400. The APDU is not logged.
+A failed connect reports pcsclite's own text (`SCardConnect error:
+Card is unpowered.(0x80100067)`, a sharing violation, no card)
+after the reader's name, because that text is the diagnosis.
+
+A card status word is a 200. A missing library, a missing reader,
+no card, or a sequence that has not finished in 60 seconds (a touch
+nobody gave, a wedged reader) is a 502. A bad request is a 400. The APDU is not logged.
 Docker does not see a host key unless the operator
 passes the device through, and the page says so. No launcher starts
 a reader.

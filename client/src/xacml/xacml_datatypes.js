@@ -1,6 +1,6 @@
 // @ts-check
 // SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 
 'use strict';
 //
@@ -68,6 +68,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 
 const TYPE = model.TYPE;
@@ -1115,7 +1116,8 @@ define(TYPE.XPATH_EXPRESSION, {
  */
 function typeOf(uri) {
   log.debug('Entering typeOf(). uri=' + uri);
-  const row = TYPES[model.canonicalType(uri)];
+  // An own member only (2026-11-12): `constructor` is no datatype.
+  const row = ownMembers.read(TYPES, model.canonicalType(uri));
   if (!row) {
     log.debug('Leaving typeOf(). Unknown.');
     return null;
