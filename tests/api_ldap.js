@@ -844,22 +844,26 @@ async function authenticatingAnywhereCreatesAnLdapUser(described) {
   // An LDAP bind does NOT seed one, and that is deliberate: a bind presents a
   // DN, which already names an object in this directory, so creating
   // `uid=cn=admin\,dc=example...` from one would be nonsense.
-  const before = await call("/ldap/search", {
-    url: ldapUrl, bindDn: bindDn, password: password,
-    baseDn: usersDn, scope: "one", filter: "(objectClass=*)" });
-  assertSucceeded(before, "counting the users before a bind");
+  //
+  // Look for the entry THIS bind would have made, not at how many users there
+  // are: auto-creation fires on every protocol's sign-in, and the suite runs
+  // jobs in a pool, so another job signing a fresh user in between two counts
+  // grew the directory by one and failed this check on the integration run of
+  // 263fb76 (2026-11-13, "Before 22, after 23") with no bind involved.
+  const nobody = "nobody-" + stamp;
   await call("/ldap/bind", {
-    url: ldapUrl, bindDn: "cn=nobody-" + stamp + "," + baseDn,
+    url: ldapUrl, bindDn: "cn=" + nobody + "," + baseDn,
     password: "whatever" });
-  const after = await call("/ldap/search", {
+  const seeded = await call("/ldap/search", {
     url: ldapUrl, bindDn: bindDn, password: password,
-    baseDn: usersDn, scope: "one", filter: "(objectClass=*)" });
-  assertSucceeded(after, "counting the users after a bind");
-  assert.strictEqual(after.body.entryCount, before.body.entryCount,
+    baseDn: usersDn, scope: "sub",
+    filter: "(|(uid=*" + nobody + "*)(cn=*" + nobody + "*))" });
+  assertSucceeded(seeded, "looking for an entry seeded by the bind");
+  assert.strictEqual(seeded.body.entryCount, 0,
     "an LDAP bind must not seed a user entry. The identity a bind presents " +
     "is a DN, not a user name, so an entry created from one would be " +
     "nonsense — and this directory's own binds would grow it without bound. " +
-    "Before " + before.body.entryCount + ", after " + after.body.entryCount);
+    "Found " + JSON.stringify(dnsOf(seeded)));
   log.debug("Leaving authenticatingAnywhereCreatesAnLdapUser().");
 }
 
