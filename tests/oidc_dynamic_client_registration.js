@@ -249,8 +249,9 @@ async function test() {
       "Client Metadata was not populated from the discovery metadata.");
     log.info("registration_endpoint=" + registration_endpoint);
 
-    // RP Metadata Choices 1.0. Populate already applied the pairs.
-    // Apply is idempotent. The discovery inputs above the fieldset are
+    // RP Metadata Choices 1.0. Populate leaves the choice arrays out,
+    // because Keycloak refuses members it does not know; Apply adds
+    // them, and is idempotent. The discovery inputs above the fieldset are
     // the provider's metadata and must stay as Populate left them.
     const discoveryIds = [
       "subject_types_supported",
@@ -276,8 +277,8 @@ async function test() {
         "Expected a clean choices verdict, got: " + cleanVerdict);
 
     // A hand edit that puts the partner outside its array is reported
-    // before anything is sent. Apply again so the CRUD steps below
-    // register a clean request.
+    // before anything is sent, and Apply repairs it. The CRUD steps
+    // below register the Populate document, which carries no arrays.
     applied.id_token_signed_response_alg = "none";
     await setFieldValueAndInput(driver, "dcr_client_metadata",
         JSON.stringify(applied, null, 2));

@@ -66,6 +66,10 @@ COPY common/common.sh .
 
 # Bundle app source
 COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js tests/encoding_tools.js tests/digital_signature.js tests/encryption_tools.js tests/crypto_engines.js tests/saml_sso.js tests/saml_logout.js tests/saml11_sso.js tests/saml11_options.js tests/saml_encrypted_sso.js tests/saml_tools.js tests/saml_operation_history.js tests/wstrust_operation_history.js tests/wsfed_sso.js tests/federation_sso.js tests/federation_chain_sso.js tests/wstrust.js tests/wstrust_delegation_chain.js tests/xmlsec_interop.js tests/wstrust_schema_validate.js tests/navigation.js tests/sd_jwt_vc_issuance.js tests/sd_jwt_vc_waltid.js tests/sd_jwt_vc_presentation.js tests/sd_jwt_vc_presentation_waltid.js tests/jose_jwe_encryption.js tests/module_paths.js tests/browser_flags.js tests/api_ssrf_guard.js tests/api_connect_timeout.js tests/edge_landing_contract.js tests/jwk_pem_encoding.js tests/url_safety_schemes.js tests/xml_parse_inert.js tests/keypair_storage_optout.js tests/wait_for.js tests/page_load.js tests/page_load_retry.js tests/jwt_vc_json_common.js tests/jwt_vc_json_issuance.js tests/jwt_vc_json_presentation.js tests/jwt_vc_json_issuance_waltid.js tests/jwt_vc_json_presentation_waltid.js tests/metadata_schema_validation.js tests/bbs_crypto.js tests/bbs2023_cryptosuite.js tests/ldp_vc_issuance.js tests/ldp_vc_refresh.js tests/ldp_vc_presentation.js tests/oid4vci_request_encryption.js tests/did_document.js tests/vc_did.js tests/did_tools.js tests/dpop_vectors.js tests/dpop_workflow.js tests/jws_engine.js tests/pqc_engines.js tests/xwing_vectors.json tests/saml_authnrequest_page.js tests/saml_response_decoder_page.js tests/sts_userinfo_protected.js tests/algorithm_menus.js tests/oidc_userinfo_protected_page.js tests/algorithm_panes.js ./
+# Node-only engine tests that read client/src from /usr/src/source-tree. The
+# _engine suffix keeps them from colliding with client/src/rfc9068.js and
+# client/src/rp_metadata_choices.js in this flat directory.
+COPY tests/rfc9068_engine.js tests/rp_metadata_choices_engine.js ./
 # The per-run username minter, required by tests across four protocols (OAuth2,
 # RFC 9700, Kerberos, LDAP) and by both mock-KDC page jobs. A SHARED MODULE
 # rather than a test, so nothing schedules it and the run-report cross-check in
@@ -955,6 +959,9 @@ COPY tests/tools ./tools
 COPY client/package.json /usr/src/source-tree/client/package.json
 COPY client/src /usr/src/source-tree/client/src
 COPY common /usr/src/source-tree/common
+# rfc9068_engine.js and rp_metadata_choices_engine.js also read the pages
+# their modules are wired into, so the HTML is staged beside client/src.
+COPY client/public/*.html /usr/src/source-tree/client/public/
 
 # ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers

@@ -29,10 +29,12 @@ the one in this pane. They stay in sync. You can also type the URL.
 
 Set **Redirect URL** on the authorization pane to the URI you want the
 client metadata to advertise. **Populate Meta Data** fills the metadata
-JSON from that redirect URI, from the scopes discovery advertises, and
-from the [choice pairs](#rp-metadata-choices) this client can use. Edit
-the JSON before you register if the provider requires more members
-(`grant_types`, and so on).
+JSON from that redirect URI and from the scopes discovery advertises. It
+does not add the [choice arrays](#rp-metadata-choices): a provider that
+does not implement RP Metadata Choices may refuse a member it does not
+know, and Keycloak does (HTTP 400, `Unrecognized field
+"subject_types_supported"`). Edit the JSON before you register if the
+provider requires more members (`grant_types`, and so on).
 
 [iya-sts](https://rcbj.github.io/iya-sts/) is at
 `https://localhost:8081`. Its registration endpoint is whatever
@@ -68,8 +70,9 @@ the provider's discovery document. Those stay on the Configuration
 Parameters pane, under the same names, and applying choices does not
 change them.
 
-**Populate Meta Data** already writes the pairs. **Apply RP metadata
-choices** writes them again over the metadata in the box, and leaves
+**Populate Meta Data** writes only the single-valued partners.
+**Apply RP metadata choices** writes the pairs over the metadata in the
+box, and leaves
 every other member (`client_name`, `scope`, `redirect_uris`, and the
 rest) as it was. The line under the box runs the same checks as you
 edit. A clean request has an empty finding list. You can still send a
