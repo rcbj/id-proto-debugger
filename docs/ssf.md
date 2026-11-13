@@ -443,31 +443,65 @@ static sites there is no api and therefore no push**, and the page says so in it
 `callPath` row rather than offering a stream that would be agreed and silently
 deliver nothing.
 
-### The push inbox is an unauthenticated endpoint that accepts data
+### The push inbox accepts data from somebody else's transmitter
 
 Which is the most dangerous shape anything in the api has, so it is worth
-knowing what bounds it. It HAS to be unauthenticated — what pushes to it is
-somebody else's transmitter, and the only credential in that exchange is the
-`authorization_header` the receiver chose — so the bounds are structural rather
-than a gate:
+knowing what bounds it. The only credential in an RFC 8935 push is the
+`authorization_header` the RECEIVER chose and put in the stream's `delivery`,
+which the transmitter sends as the Authorization header of every push.
 
+0. **"Ask the api to host one" passes the page's
+   `delivery.authorization_header` to the api**, and an inbox created with one
+   requires exactly that header on every push. Anything else is answered
+   **401** with `{"err": "authentication_failed", ...}` (RFC 8935 section 2.4)
+   and stores nothing. An inbox created with the field EMPTY is **open** —
+   anybody who has its URL can push to it — and the page says so in red when it
+   is made. Change the field afterwards and you need a new inbox.
 1. an inbox exists only because somebody asked, and its id is 32 hex characters
    of `crypto.randomBytes`;
-2. every inbox expires (`ssfReceiverTtlMs`, an hour) and is swept from every
-   entry point rather than on a timer;
-3. the counts are capped — inboxes, events per inbox, and the OLDEST event goes
-   when the ring fills, because a receiver that has stopped draining most wants
-   what has happened lately;
+2. every inbox expires — after `ssfReceiverIdleTtlMs` (thirty minutes) with no
+   push, drain or clear, and after `ssfReceiverTtlMs` (an hour) however busy it
+   is — and is swept from every entry point rather than on a timer;
+3. the counts are capped — inboxes in all (`ssfReceiverMaxInboxes`), inboxes
+   per caller address (`ssfReceiverMaxInboxesPerCaller`, five, so one client
+   cannot hold all twenty), events per inbox, and the OLDEST event goes when the
+   ring fills, because a receiver that has stopped draining most wants what has
+   happened lately. The page's drain cursor counts pushes rather than positions
+   in the ring, so a dropped event never hides a newer one;
 4. each event is size-capped, and so is each inbox in total
    (`ssfReceiverMaxInboxBytes`, 1 MiB), oldest dropped first — the counts
    alone multiply out to a quarter of a gigabyte;
 5. `ssfReceiverEnabled` turns the whole thing off, and it is false wherever
    there is no api at all.
 
+The per-caller cap counts `req.ip`. Behind the embedding proxy, where `trust
+proxy` is on, that is the forwarded address; anywhere else, every page that
+reaches the api through one shared proxy counts as one caller.
+
 **Nothing is executed, rendered or forwarded**, and the api verifies no
 signature: it holds no key of the transmitter's, and a receiver that refused what
 it could not verify would be unable to show anybody WHY — which is the question
 the workflow exists to answer. The PAGE verifies.
+
+### A pushed SET that fails here was already accepted
+
+**This is inherent to hosting an RFC 8935 receiver on a page's behalf, and
+nothing in this tree can remove it.** RFC 8935 has the receiver answer each
+push in the same HTTP exchange: 202 for accepted, 400 with an error code for
+refused. The page is not in that exchange. The api answers it, and it can judge
+only what it can see without a key — the authorization header, the size, the
+inbox — so a SET that is well-formed enough to store is answered 202. The page
+drains it later, and only then checks `iss`, `aud`, the subject and the
+signature.
+
+So when a pushed SET fails one of those checks, the transmitter has already been
+told it was delivered, and there is no message in RFC 8935 that takes a 202
+back. The page says so where it cannot be missed: the row gains an
+**ALREADY ACCEPTED** finding at the top, its outcome is `findings`, and the
+inbox status line turns red naming how many failed. What to do about it is a
+conversation with the transmitter's operator. POLL delivery has no such gap —
+the receiver refuses in the next poll's `setErrs` — which is a reason to prefer
+it when the debugging is about refusals.
 
 ### `ack` and `setErrs` both take an event off the queue
 
@@ -748,8 +782,18 @@ has to say why.
   that retried would make a receiver's one-shot failure invisible, because a
   client answering 500 then 202 looks from its own logs like a client that works.
 * **It verifies no signature it has no key for**, and reports that as NOT
-  CHECKED rather than as valid. A page that showed "no key" as a pass would be
-  teaching the opposite of what this protocol needs.
+  CHECKED rather than as valid. Such a row's outcome is **`unverified`**, never
+  `clean`: `clean` needs a signature that verified AND no error-level finding,
+  and nothing on the page counts an unverified row as clean. A page that
+  showed "no key" as a pass would be teaching the opposite of what this
+  protocol needs.
+* **The verification algorithm is the SET's header `alg`, held against the
+  key** (`resolveVerification()` in `ssf_client.js`), not a menu. A JWK Set is
+  narrowed to one key by `kid`; that key's own `alg`, `kty`, `crv` and `use`
+  must agree with the header, and a mismatch is REFUSED rather than tried (RFC
+  8725 section 3.1). `alg: none` is never verified. EdDSA takes its curve from
+  the key, since RFC 8037 puts it there. A PEM carries no algorithm, so the
+  header's is used and a key of the wrong type fails to import.
 * **It offers no `alg: none` when transmitting.** A SET says somebody's session
   was revoked; an unsigned one says anybody who can reach the endpoint can claim
   it. The Digital Signature page is where an unsecured JWS is built on purpose,

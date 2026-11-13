@@ -1269,6 +1269,11 @@ async function preconditions() {
 // An RFC 8935 inbox at the api: `{ id, endpoint }`, the endpoint being what
 // a transmitter is given as its delivery URL. The api answers
 // `{ ok, inbox: { id, … }, deliveryEndpoint }`.
+// The inboxes this job opened, deleted in cleanUp(). One left behind holds
+// a slot against ssfReceiverMaxInboxesPerCaller until it goes idle, and every
+// job in the tests container is the same caller.
+const openedInboxes = [];
+
 async function openApiInbox() {
   log.debug("Entering openApiInbox().");
   const made = await fetch(apiUrl + "/ssf/receiver", {
@@ -1284,6 +1289,7 @@ async function openApiInbox() {
   assert.ok(made.status < 300 && id && endpoint,
       "The api at " + apiUrl + " would not open a push inbox: " +
       made.status + " " + JSON.stringify(json));
+  openedInboxes.push(String(id));
   log.debug("Leaving openApiInbox().");
   return { id: String(id), endpoint: endpoint };
 }
@@ -1302,7 +1308,14 @@ async function cleanUp() {
       return null;
     });
   }
-  log.debug("Leaving cleanUp(). " + created.length + " stream(s).");
+  for (id of openedInboxes) {
+    await fetch(apiUrl + "/ssf/receiver/" + encodeURIComponent(id),
+      { method: "DELETE" }).catch(function () {
+      return null;
+    });
+  }
+  log.debug("Leaving cleanUp(). " + created.length + " stream(s), " +
+      openedInboxes.length + " inbox(es).");
 }
 
 async function test() {

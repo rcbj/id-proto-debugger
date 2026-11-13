@@ -128,7 +128,7 @@ var REMEMBERED = [
   'ssf_status_value', 'ssf_status_reason', 'ssf_verify_state',
   'ssf_poll_max', 'ssf_tx_type', 'ssf_tx_alg', 'ssf_tx_iss', 'ssf_tx_aud',
   'ssf_tx_txn', 'ssf_tx_media', 'ssf_tx_payload', 'ssf_tx_subject',
-  'ssf_tx_endpoint', 'ssf_auth_scheme', 'ssf_basic_user', 'ssf_verify_alg',
+  'ssf_tx_endpoint', 'ssf_auth_scheme', 'ssf_basic_user',
   // The CAEP session's identity and its four common claims. None of them is a
   // credential: an `iss`/`sub`/`sid` triple is who a session belongs to, which
   // is exactly what the SETs on this page say out loud, and a reason message
@@ -2063,7 +2063,10 @@ function createReceiver() {
   fetch(API_URL + '/ssf/receiver', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label: 'the Shared Signals debugger' })
+    // The stream's delivery.authorization_header, so the api requires it on
+    // every push. Empty makes an OPEN inbox, and the status below says so.
+    body: JSON.stringify({ label: 'the Shared Signals debugger',
+      authorization: val('ssf_stream_auth_header').trim() })
   }).then(function (response) {
     return response.json();
   }).then(function (answer) {
@@ -2083,7 +2086,16 @@ function createReceiver() {
       'that in the stream\'s delivery.endpoint_url — it is already filled ' +
       'in above. THE TRANSMITTER has to be able to reach it, which is why ' +
       'it is the api\'s address as this page reached it rather than a ' +
-      'configured one.', 'ssf-status ssf-ok');
+      'configured one. ' + (answer.inbox.authenticated
+        ? 'Every push must carry the delivery.authorization_header above, ' +
+          'exactly; the api answers anything else 401 ' +
+          'authentication_failed. Change that field and you need a new ' +
+          'inbox.'
+        : 'THIS INBOX IS OPEN: delivery.authorization_header was empty ' +
+          'when it was created, so anybody who has its URL can push events ' +
+          'into it. Fill that field in and ask again to require it.'),
+      answer.inbox.authenticated ? 'ssf-status ssf-ok'
+        : 'ssf-status ssf-bad');
     log.debug("Leaving createReceiver(). " + answer.inbox.id);
   }).catch(function (e) {
     setText('ssf_inbox_status', 'The api could not be reached: ' + e.message,
@@ -2114,10 +2126,15 @@ function drainReceiver() {
     inbox = answer.inbox;
     inboxSeen = answer.total;
     var repeated = 0;
+    var accepted = 0;
     answer.events.forEach(function (one) {
-      if (takeReceivedToken(one.token, 'push', val('ssf_stream_id'),
-          one).duplicate) {
+      var taken = takeReceivedToken(one.token, 'push', val('ssf_stream_id'),
+        one);
+      if (taken.duplicate) {
         repeated++;
+      }
+      if (taken.err) {
+        accepted++;
       }
     });
     setText('ssf_inbox_status',
@@ -2131,8 +2148,13 @@ function drainReceiver() {
         ? ', and ' + answer.inbox.dropped + ' dropped because the inbox ' +
           'filled up — the OLDEST go, because a receiver that has stopped ' +
           'reading most wants what has happened lately'
-        : '') + '.',
-      answer.events.length ? 'ssf-status ssf-ok' : 'ssf-status ssf-pending');
+        : '') + '.' +
+      (accepted
+        ? ' ' + accepted + ' of them FAILED a check. ' + ALREADY_ACCEPTED
+        : ''),
+      accepted ? 'ssf-status ssf-bad'
+        : (answer.events.length ? 'ssf-status ssf-ok'
+          : 'ssf-status ssf-pending'));
     renderMessages();
     log.debug("Leaving drainReceiver(). " + answer.events.length);
   }).catch(function (e) {
@@ -2276,6 +2298,13 @@ function takeReceivedToken(token, via, streamId, extra) {
     });
   });
 
+  var failed = verdicts.some(function (one) {
+    return one.level === 'error';
+  });
+  if (failed && via === 'push') {
+    verdicts.unshift({ level: 'error', text: ALREADY_ACCEPTED });
+  }
+  var haveKey = val('ssf_verify_key').trim() !== '';
   var id = ssfHistory.recordMessage({
     direction: 'received', via: via, streamId: streamId,
     jti: setVerdict.jti, types: setVerdict.types,
@@ -2286,18 +2315,40 @@ function takeReceivedToken(token, via, streamId, extra) {
       ? setVerdict.audience : pretty(setVerdict.audience),
     token: token, header: parsed.header, claims: parsed.claims,
     verdicts: verdicts,
-    signature: 'not checked',
-    outcome: verdicts.some(function (one) {
-      return one.level === 'error';
-    }) ? 'findings' : 'clean'
+    signature: haveKey ? 'being checked'
+      : 'NOT CHECKED: there is no verification key, so nothing says who ' +
+        'sent this',
+    // Never 'clean' until a signature has verified: an event nobody checked
+    // is UNVERIFIED, however well-formed it is.
+    outcome: failed ? OUTCOME_FINDINGS : OUTCOME_UNVERIFIED
   });
-  verifyReceived(id, token, parsed, via === 'poll' ? jti : '');
+  var keyProblem = verifyReceived(id, token, parsed,
+    via === 'poll' ? jti : '');
   var refusal = setErrorFor(parsed.claims, verdicts, read.issuer,
     expectedAudience);
+  if (!refusal.err && keyProblem) {
+    refusal = { err: 'invalid_key', description: keyProblem };
+  }
   log.debug("Leaving takeReceivedToken(). " + id);
   return { id: id, duplicate: false, err: refusal.err,
     description: refusal.description };
 }
+
+// What a received row's outcome can be. `clean` needs a signature that
+// verified as well as no error-level finding; anything short of that is
+// `unverified` or `findings`, and nothing counts it as clean.
+var OUTCOME_CLEAN = 'clean';
+var OUTCOME_UNVERIFIED = 'unverified';
+var OUTCOME_FINDINGS = 'findings';
+
+// RFC 8935 has the receiver answer a push before this page can look at it,
+// and the api answers 202 for anything it can store. So a pushed SET that
+// fails here was ALREADY ACCEPTED as far as the transmitter knows, and
+// nothing can refuse it now. See docs/ssf.md.
+var ALREADY_ACCEPTED = 'ALREADY ACCEPTED: the api answered this push 202 ' +
+  'before this page checked it, so the transmitter believes it was ' +
+  'delivered and RFC 8935 has no way to take that back. Do not act on it; ' +
+  'the problem has to be raised with the transmitter by hand.';
 
 // The SET Error Code (RFC 8935 section 7.1) a receiver refuses this token
 // with: the issuer and audience codes when those are what failed, and
@@ -2344,9 +2395,8 @@ function verifyReceived(id, token, parsed, jti) {
   var keyText = val('ssf_verify_key').trim();
   if (!keyText) {
     log.debug("Leaving verifyReceived(). No key.");
-    return;
+    return '';
   }
-  var alg = val('ssf_verify_alg') || (parsed.header || {}).alg;
   var key;
   try {
     key = JSON.parse(keyText);
@@ -2354,40 +2404,86 @@ function verifyReceived(id, token, parsed, jti) {
     // A PEM, or something else jws.js can resolve. Handed over as text.
     key = keyText;
   }
-  ssfClient.verifySet(token, key, alg).then(function (verdict) {
+  // The algorithm is the SET's own header `alg`, held against the key: see
+  // ssfClient.resolveVerification(). A mismatch is refused, not tried.
+  var chosen = ssfClient.resolveVerification(parsed.header, key);
+  var refuse = function (description) {
+    log.debug("Entering refuse(). " + jti);
+    var waiting = jti ? pendingAcks.indexOf(jti) : -1;
+    if (waiting >= 0) {
+      pendingAcks.splice(waiting, 1);
+      pendingSetErrs[jti] = { err: 'invalid_key', description: description };
+    }
+    log.debug("Leaving refuse(). " + (waiting >= 0));
+  };
+  if (!chosen.ok) {
+    refuse(chosen.problem);
+    noteSignature(id, 'NOT VERIFIED: ' + chosen.problem, false);
+    log.debug("Leaving verifyReceived(). Refused before trying.");
+    return chosen.problem;
+  }
+  var alg = chosen.alg;
+  ssfClient.verifySet(token, chosen.key, alg).then(function (verdict) {
     // `reason` is per SIGNATURE rather than per token — a general
     // serialization can carry several — so the first one's is what a compact
     // SET's failure is.
     var first = (verdict.signatures || [])[0] || {};
-    var waiting = jti ? pendingAcks.indexOf(jti) : -1;
-    if (!verdict.valid && waiting >= 0) {
-      pendingAcks.splice(waiting, 1);
-      pendingSetErrs[jti] = { err: 'invalid_key',
-        description: 'The signature did not verify with ' + alg + '.' };
+    if (!verdict.valid) {
+      refuse('The signature did not verify with ' + alg + '.');
     }
     noteSignature(id, verdict.valid
       ? 'verified with ' + alg
       : 'DID NOT VERIFY with ' + alg + ': ' +
-        String(first.reason || 'the signature does not match'));
+        String(first.reason || 'the signature does not match'),
+      verdict.valid);
     log.debug("Leaving verifyReceived(). " + verdict.valid);
   }).catch(function (e) {
-    noteSignature(id, 'could not be checked: ' + e.message);
+    refuse('The signature could not be checked: ' + e.message);
+    noteSignature(id, 'could not be checked: ' + e.message, false);
     log.debug("Leaving verifyReceived(). Threw.");
   });
+  log.debug("Leaving verifyReceived(). Checking.");
+  return '';
 }
 
-function noteSignature(id, text) {
+// `valid` is true only for a signature that verified. That is the one thing
+// that turns an `unverified` row `clean`; anything else makes it `findings`,
+// and a pushed one gains the ALREADY ACCEPTED finding and is said on the
+// inbox's status line, because it is the one failure this page cannot
+// refuse back to the transmitter.
+function noteSignature(id, text, valid) {
   log.debug("Entering noteSignature().");
   // The history is written whole, so the row is re-read, changed and written
   // back — which is what keeps ssf_history.js free of a "patch one field"
   // function that only this caller would use.
   var rows = ssfHistory.messages();
   var i;
+  var pushedAndFailed = false;
   for (i = rows.length - 1; i >= 0; i--) {
     if (rows[i].id === id) {
       rows[i].signature = text;
+      if (valid) {
+        if (rows[i].outcome === OUTCOME_UNVERIFIED) {
+          rows[i].outcome = OUTCOME_CLEAN;
+        }
+      } else {
+        var already = rows[i].outcome === OUTCOME_FINDINGS;
+        rows[i].outcome = OUTCOME_FINDINGS;
+        rows[i].verdicts = rows[i].verdicts || [];
+        rows[i].verdicts.push({ level: 'error', text: 'Signature: ' + text });
+        if (rows[i].via === 'push' && !already) {
+          rows[i].verdicts.unshift({ level: 'error',
+            text: ALREADY_ACCEPTED });
+          pushedAndFailed = true;
+        }
+      }
       break;
     }
+  }
+  if (pushedAndFailed) {
+    setText('ssf_inbox_status', 'A pushed event FAILED its signature ' +
+      'check after the api had already answered it 202. ' +
+      ALREADY_ACCEPTED, 'ssf-status ssf-bad');
   }
   try {
     localStorage.setItem(ssfHistory.MESSAGE_KEY, JSON.stringify(rows));
@@ -2475,10 +2571,9 @@ function fillEventTypes() {
     }
   }
   var algs = el('ssf_tx_alg');
-  var verifyAlgs = el('ssf_verify_alg');
   // ONCE, however often this function runs. It is called again on every
-  // profile change to rebuild the event menu above, and the algorithm menus
-  // have nothing to do with the vocabulary — appending to them a second time
+  // profile change to rebuild the event menu above, and the algorithm menu
+  // has nothing to do with the vocabulary — appending to them a second time
   // would give this page ninety algorithms with every name twice.
   if (algs && algs.options.length) {
     renderFamilies();
@@ -2496,15 +2591,13 @@ function fillEventTypes() {
       // this page still REPORTS one that arrives.
       return;
     }
-    [algs, verifyAlgs].forEach(function (host) {
-      if (!host) {
-        return;
-      }
-      var option = document.createElement('option');
-      option.value = id;
-      option.textContent = spec.label || id;
-      host.appendChild(option);
-    });
+    if (!algs) {
+      return;
+    }
+    var option = document.createElement('option');
+    option.value = id;
+    option.textContent = spec.label || id;
+    algs.appendChild(option);
   });
   if (algs && !algs.value) {
     algs.value = 'ES256';
