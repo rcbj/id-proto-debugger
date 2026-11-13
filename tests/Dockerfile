@@ -74,6 +74,9 @@ COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js
 # client/src/rp_metadata_choices.js in this flat directory.
 COPY tests/rfc9068_engine.js tests/rp_metadata_choices_engine.js \
      tests/oauth_scope_engine.js tests/secret_storage_engine.js ./
+# The SAML 1.1 peers job: the page's Shibboleth AuthnRequest profile request
+# against iya-sts, and a Shibboleth IdP when SHIBBOLETH_IDP_URL names one.
+COPY tests/saml11_peers.js ./
 # Checks the scripts `run-report.js --check-scripts` cannot see: every
 # script literal, including jobs only scheduled under a non-default env.
 COPY tests/job_scripts_in_image.js ./

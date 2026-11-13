@@ -71,6 +71,12 @@ var log = bunyan.createLogger({
 var NS_SAML1P = 'urn:oasis:names:tc:SAML:1.0:protocol';
 var NS_SAML2P = 'urn:oasis:names:tc:SAML:2.0:protocol';
 
+// Shibboleth's marker AttributeNamespace for SAML 1.1. With it the
+// AttributeName is already the whole attribute URI
+// (urn:mace:dir:attribute-def:mail), not a local name to join on.
+var SHIB_URI_ATTRIBUTE_NS =
+    'urn:mace:shibboleth:1.0:attributeNamespace:uri';
+
 // ---------------------------------------------------------------------------
 // Bytes, base64 and UTF-8.
 // ---------------------------------------------------------------------------
@@ -1099,7 +1105,11 @@ function attributesOf(root) {
     }
     var ns = attr(a, 'AttributeNamespace');
     var name = attr(a, 'Name') || attr(a, 'AttributeName');
-    var shown = (ns && !attr(a, 'Name'))
+    // A prefix plus a local name (urn:mace:dir:attribute-def + mail) joins
+    // back into one claim URI. Shibboleth's marker namespace does not: the
+    // AttributeName is already that URI, and joining the marker onto it
+    // produces a name nothing resolves.
+    var shown = (ns && !attr(a, 'Name') && ns !== SHIB_URI_ATTRIBUTE_NS)
       ? (ns.replace(/\/$/, '') + '/' + name)
       : name;
     out.push({

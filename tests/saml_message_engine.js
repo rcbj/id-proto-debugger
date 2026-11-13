@@ -1515,8 +1515,44 @@ function theSaml11RequestIsTheShibbolethProfile() {
   log.debug("Leaving theSaml11RequestIsTheShibbolethProfile().");
 }
 
+// SHIBBOLETH'S SAML 1.1 ATTRIBUTE NAMING. Its marker AttributeNamespace
+// means the AttributeName is the whole URI already; the older split form
+// (namespace + local name) still joins.
+function shibbolethAttributeNamesAreWhole() {
+  log.debug("Entering shibbolethAttributeNamesAreWhole().");
+  check('Shibboleth\'s URI attribute namespace is not a prefix',
+      function () {
+    const ns = 'urn:mace:shibboleth:1.0:attributeNamespace:uri';
+    const doc = sm.parseXml('<saml:Assertion xmlns:saml="urn:oasis:names:' +
+      'tc:SAML:1.0:assertion"><saml:AttributeStatement>' +
+        '<saml:Attribute AttributeName="urn:mace:dir:attribute-def:mail" ' +
+            'AttributeNamespace="' + ns + '">' +
+          '<saml:AttributeValue>jdoe@example.org</saml:AttributeValue>' +
+        '</saml:Attribute>' +
+      '</saml:AttributeStatement></saml:Assertion>');
+    const attrs = sm.attributesOf(doc.documentElement);
+    assert.strictEqual(attrs[0].name, 'urn:mace:dir:attribute-def:mail');
+    assert.strictEqual(attrs[0].rawName, 'urn:mace:dir:attribute-def:mail');
+    assert.deepStrictEqual(attrs[0].values, ['jdoe@example.org']);
+  });
+  check('an older split SAML 1.1 attribute name still joins', function () {
+    const doc = sm.parseXml('<saml:Assertion xmlns:saml="urn:oasis:names:' +
+      'tc:SAML:1.0:assertion"><saml:AttributeStatement>' +
+        '<saml:Attribute AttributeName="mail" ' +
+            'AttributeNamespace="urn:mace:dir:attribute-def">' +
+          '<saml:AttributeValue>jdoe@example.org</saml:AttributeValue>' +
+        '</saml:Attribute>' +
+      '</saml:AttributeStatement></saml:Assertion>');
+    const attrs = sm.attributesOf(doc.documentElement);
+    assert.strictEqual(attrs[0].name, 'urn:mace:dir:attribute-def/mail');
+    assert.strictEqual(attrs[0].rawName, 'mail');
+  });
+  log.debug("Leaving shibbolethAttributeNamesAreWhole().");
+}
+
 function test() {
   log.debug("Entering test().");
+  shibbolethAttributeNamesAreWhole();
   everyPastedShapeIsClassified();
   theSaml11RequestIsTheShibbolethProfile();
   theArtifactIsBytesAndNotAMessage();

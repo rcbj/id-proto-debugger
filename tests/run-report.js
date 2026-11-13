@@ -4346,6 +4346,30 @@ function buildJobs() {
     env: {},
   });
 
+  // The SAML 1.1 request the page builds, held against iya-sts and, when
+  // SHIBBOLETH_IDP_URL names one, a Shibboleth identity provider, with no
+  // browser. The fixture half (the request's exact parameters, and both
+  // SAML 1.1 attribute-name shapes in a Browser/POST response) always runs.
+  // Nothing here starts a Shibboleth identity provider, so that half runs
+  // only where one is configured.
+  jobs.push({
+    name: "SAML 1.1 peers (the Shibboleth request profile against iya-sts " +
+        "and a Shibboleth IdP)",
+    script: "saml11_peers.js",
+    env: {
+      SAML11_METADATA_URL: env.SAML11_METADATA_URL,
+      SAML11_METADATA_FILE: env.SAML11_METADATA_FILE,
+      WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+      STS_URL: env.STS_URL,
+      STS_ADMIN_URL: env.STS_ADMIN_URL,
+      SHIBBOLETH_IDP_URL: env.SHIBBOLETH_IDP_URL,
+      SHIBBOLETH_IDP_USER: env.SHIBBOLETH_IDP_USER,
+      SHIBBOLETH_IDP_PASSWORD: env.SHIBBOLETH_IDP_PASSWORD,
+      SHIBBOLETH_SP_ENTITY_ID: env.SHIBBOLETH_SP_ENTITY_ID,
+      SHIBBOLETH_ACS_URL: env.SHIBBOLETH_ACS_URL,
+    },
+  });
+
   // SAML 2.0 EncryptedAssertion decryption: SSO against a SAML client with
   // saml.encrypt=true (provisioned in common.sh), so Keycloak returns an
   // <saml:EncryptedAssertion>; the Response page decrypts it IN THE BROWSER
