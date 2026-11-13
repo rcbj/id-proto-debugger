@@ -45,8 +45,10 @@ sleep. Rotate posts the new public key to the token's management
 URI, with a second signature over the first. Revoke is a `DELETE`
 of the continuation URI. Check hash computes
 `base64url(HASH(client nonce, newline, authorization-server nonce,
-newline, interact_ref, newline, grant endpoint))` with SHA-256 and
-compares it to the `hash` parameter on the finish redirect.
+newline, interact_ref, newline, grant endpoint))` with the request's
+`interact.finish.hash_method` (SHA-256 when it names none; SHA-512 is
+the other one supported) and compares it to the `hash` parameter on
+the finish redirect.
 
 The logical request is the textarea. The signed body is the
 exchange. An attached JWS proof replaces the body with the compact

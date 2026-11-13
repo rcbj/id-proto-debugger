@@ -590,6 +590,21 @@ function fillIntrospect() {
   return false;
 }
 
+// RFC 9635 section 4.2.3: the hash uses the request's
+// interact.finish.hash_method, and sha-256 when it names none.
+function finishHashMethod() {
+  log.debug("Entering finishHashMethod().");
+  var parsed = parseJson(val("gnap_request").trim());
+  var finish = parsed && parsed.interact && parsed.interact.finish;
+  if (finish && typeof finish.hash_method === "string" &&
+      finish.hash_method) {
+    log.debug("Leaving finishHashMethod(). " + finish.hash_method);
+    return finish.hash_method;
+  }
+  log.debug("Leaving finishHashMethod(). Default.");
+  return "sha-256";
+}
+
 async function checkFinish() {
   log.debug("Entering checkFinish().");
   try {
@@ -608,7 +623,7 @@ async function checkFinish() {
       val("gnap_as_nonce").trim(),
       val("gnap_interact_ref").trim(),
       val("gnap_grant").trim(),
-      "sha-256");
+      finishHashMethod());
     var got = val("gnap_hash").trim();
     setVal("gnap_hash_expected", expected);
     status(got === expected
