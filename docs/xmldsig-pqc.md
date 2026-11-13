@@ -238,8 +238,17 @@ derivation, and the two refusals.
 ## Two implementations
 
 `common/xmldsig.js` is this repository's XML Signature and XML Encryption
-code. iya-sts has its own, `common/crypto_impl/xmldsig.js`. The two evolve
+code. iya-sts has its own at `common/crypto_impl/xmldsig.js`. The two were
+byte-identical until 2026-11-12; since iya-sts #1280 they evolve
 independently. A change in this file stays in this repository.
+
+This file stays the engine the browser runs. The static sites sign SAML,
+WS-Trust, WS-Federation and the XML Signature pane with no Node process, so
+forge is what those pages sign with. Under Node, `rsaSign()` signs RSA with
+`crypto.sign()` (issue #302). A bundle keeps forge: the `crypto` module name
+is not a literal `require`, which browserify would replace with
+`crypto-browserify`. `tests/xmlsec_interop.js` checks this file's two RSA
+backends against each other. It does not read iya-sts's copy.
 
 Issue #304's three canonicalization rules are proved here against Merlin's
 published bytes in `tests/w3c-merlin/`. `tests/xmlsec_interop.js` holds
