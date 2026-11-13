@@ -1265,6 +1265,15 @@ function buildJobs() {
     env: {},
   });
 
+  // Every script a job above or below names must be in the tests image.
+  // A missing COPY otherwise surfaces minutes into a run as
+  // `Cannot find module`, and it reached develop three times in a row.
+  jobs.push({
+    name: "Every job script reaches the tests image (in node)",
+    script: "job_scripts_in_image.js",
+    env: {},
+  });
+
   // OIDC Dynamic Client Registration (OpenID Connect Registration 1.0 /
   // RFC 7591 / RFC 7592). Creates a client using an initial access token, then
   // reads, updates, and deletes it via the client configuration endpoint.

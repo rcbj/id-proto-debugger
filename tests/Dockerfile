@@ -70,6 +70,9 @@ COPY tests/oauth2_* tests/oidc_* tests/token_introspection.js tests/jwt_tools.js
 # _engine suffix keeps them from colliding with client/src/rfc9068.js and
 # client/src/rp_metadata_choices.js in this flat directory.
 COPY tests/rfc9068_engine.js tests/rp_metadata_choices_engine.js ./
+COPY tests/oauth_scope_engine.js ./
+# Checks that every script a job in run-report.js names is in this image.
+COPY tests/job_scripts_in_image.js ./
 # Merlin's published canonical forms, read by xmlsec_interop.js for
 # issue #304. The two signature documents and the expected octets.
 # Public W3C interop output. iya-sts keeps its own harness.
