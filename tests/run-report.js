@@ -357,6 +357,14 @@ const JOB_LOCKS = {
   // the middle of its own poll — which is the exact hazard the
   // sts-ssf lock was created for when caep.autoEmit landed.
   "caep_session_protocols.js": "sts-ssf",
+  // The two GNAP jobs that APPROVE grants: they sign people in at iya-sts
+  // and revoke approved grants and tokens, and each of those is a CAEP
+  // event (session-revoked about gnap-grant:/gnap-token:) on any stream
+  // scoped to that application. A stream another job is reading must not
+  // be handed one it did not cause. gnap_engine.js and api_gnap.js
+  // approve nothing, so nobody is told about their grants.
+  "gnap_protocol.js": "sts-ssf",
+  "gnap_page.js": "sts-ssf",
   // `ssf_engine.js` is deliberately absent: it needs no transmitter at all,
   // so nothing it does can collide with this. `api_ssf.js` is absent for a
   // different reason — it drives the api's own receiver and never touches
@@ -1362,15 +1370,30 @@ function buildJobs() {
 
   // GNAP client instance. The signature checks need no network. The
   // live half must obtain a grant from iya-sts with each of httpsig,
-  // jwsd and jws. In development mode that takes declaring ssf.read
-  // on the application iya-sts created for the job's key (through
-  // /admin-api); the job forgets that entry afterwards. A product-mode
-  // server refuses the unprovisioned key, and only the proofs are
-  // checked there.
+  // jwsd and jws for the page's default sample (subject information),
+  // which development mode grants with no administrator involved. A
+  // product-mode server refuses the unprovisioned key, and only the
+  // proofs are checked there.
   jobs.push({
     name: "GNAP client (RFC 9635 proofs, and one grant against iya-sts)",
     script: "gnap_engine.js",
     env: {},
+  });
+
+  // The whole life of a GNAP grant against iya-sts, for httpsig, jwsd,
+  // jws and mtls: the SSF scope declared through /admin-api, the
+  // interaction approved in Chrome, the finish hash, continuation past
+  // too_fast, the token used at the Shared Signals transmitter, token
+  // rotation, client key rotation (not mtls: RFC 9635 section 7.3.2.1),
+  // token and grant revocation. Development mode only; it fails, and
+  // says why, in product mode.
+  jobs.push({
+    name: "GNAP protocol (every proof through a grant's whole life " +
+        "against iya-sts, the interaction approved in a browser)",
+    script: "gnap_protocol.js",
+    env: {
+      STS_URL: env.STS_URL || "https://localhost:8081",
+    },
   });
 
   // ISO 7816 command and response APDUs and BER-TLV, in node, with no
@@ -3121,6 +3144,42 @@ function buildJobs() {
   };
   if (ssfApiSkip) ssfApiJob.skip = ssfApiSkip;
   jobs.push(ssfApiJob);
+
+  // GNAP through the api. POST /gnap/call is how the page reaches an
+  // authorization server that sends no CORS headers, and the ONLY way
+  // it can make the mtls proof: a browser cannot choose the client
+  // certificate a request presents. Both jobs need the api, so they
+  // ride the same fact the SSF api job does. A static site still ships
+  // gnap.html, with the browser path only.
+  const gnapApiSkip = ldapOff
+    ? "POST /gnap/call is the api's, and a static site has no api. " +
+      "gnap.html still ships there and calls the authorization server " +
+      "from the browser, which cannot make the mtls proof."
+    : null;
+  const gnapApiJob = {
+    name: "GNAP api (the limits document, every refusal as a 400, the " +
+        "address policy, signed bytes forwarded unchanged, and the mtls " +
+        "proof made by the api)",
+    script: "api_gnap.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+    },
+  };
+  if (gnapApiSkip) gnapApiJob.skip = gnapApiSkip;
+  jobs.push(gnapApiJob);
+  const gnapPageJob = {
+    name: "GNAP page (a grant's whole life through gnap.html and the " +
+        "api: approval in the browser, the token used, rotated and " +
+        "revoked, the client key rotated, and mtls)",
+    script: "gnap_page.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+    },
+  };
+  if (gnapApiSkip) gnapPageJob.skip = gnapApiSkip;
+  jobs.push(gnapPageJob);
 
   // THE PAGE. It is NOT gated on the api, for the reason the SCIM page job is
   // not: the browser call path is the one a static deployment has, and this
