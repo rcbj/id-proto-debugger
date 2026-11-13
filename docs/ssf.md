@@ -474,6 +474,22 @@ which the transmitter sends as the Authorization header of every push.
 5. `ssfReceiverEnabled` turns the whole thing off, and it is false wherever
    there is no api at all.
 
+**A page may ask one inbox for LESS, never more.** `POST /ssf/receiver` takes
+`idleTtlMs`, `ttlMs` and `maxInboxBytes` for that inbox alone, and the
+configuration pane's **pushInbox** row (idle TTL and lifetime in minutes, byte
+cap in KiB, stored with the page's other settings) sends whichever are filled
+in. `ssfReceiverIdleTtlMs`, `ssfReceiverTtlMs` and `ssfReceiverMaxInboxBytes`
+are each the DEFAULT for a value left out and the CEILING for one asked for: a
+value above its ceiling is answered **400 naming the setting** rather than
+quietly clamped, and a byte cap below one event (`ssfReceiverMaxEventBytes`) is
+refused too. The answer and every later `describe()` report what the inbox
+actually got, with the `expiresAt` it will reach if nothing touches it. The two
+counts — `ssfReceiverMaxInboxesPerCaller` and `ssfReceiverMaxInboxes` — are not
+per inbox at all. The pane shows the three ceilings and the two counts read
+only, from `GET /ssf/limits`, so a refused value or a refused sixth inbox has
+its reason on screen; raising any of them means editing `ssfReceiver*` in the
+api's env file.
+
 The per-caller cap counts `req.ip`. Behind the embedding proxy, where `trust
 proxy` is on, that is the forwarded address; anywhere else, every page that
 reaches the api through one shared proxy counts as one caller.

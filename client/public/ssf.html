@@ -252,6 +252,35 @@ Who you are, and the tokens this session has used</legend>
                  title="Never written to localStorage."></td>
       <td class="ssf-source">you</td>
     </tr>
+    <tr id="ssf_inbox_settings_row">
+      <td><label class="ssf-label" for="ssf_inbox_idle_minutes">pushInbox
+      </label></td>
+      <td>
+        <label class="ssf-radio">idle TTL
+          <input class="ssf-field ssf-tiny" type="number" min="1" step="1"
+                 id="ssf_inbox_idle_minutes" placeholder="default"
+                 title="Minutes the api keeps a push inbox this page creates with no push, drain or clear. Empty takes the api's default, ssfReceiverIdleTtlMs, which is also the most you may ask for.">
+          min</label>
+        <label class="ssf-radio">lifetime
+          <input class="ssf-field ssf-tiny" type="number" min="1" step="1"
+                 id="ssf_inbox_ttl_minutes" placeholder="default"
+                 title="Minutes the inbox lives however busy it is. Empty takes the api's default, ssfReceiverTtlMs, which is also the most you may ask for.">
+          min</label>
+        <label class="ssf-radio">byte cap
+          <input class="ssf-field ssf-tiny" type="number" min="1" step="1"
+                 id="ssf_inbox_max_kib" placeholder="default"
+                 title="KiB of events the inbox holds before the oldest is dropped. Empty takes the api's default, ssfReceiverMaxInboxBytes, which is also the most you may ask for; less than one event (ssfReceiverMaxEventBytes) is refused.">
+          KiB</label>
+        <p class="ssf-note">Applied to the NEXT inbox the Stream pane asks
+        the api for. Each may be lowered here and never raised: a value above
+        the api&rsquo;s ceiling is refused with the setting&rsquo;s name.
+        Raising a ceiling, or the two counts below, means editing
+        <code>ssfReceiver*</code> in the api&rsquo;s env file.</p>
+        <p class="ssf-note" id="ssf_receiver_ceilings">The api&rsquo;s
+        ceilings are read from GET /ssf/limits&hellip;</p>
+      </td>
+      <td class="ssf-source">you, within the api&rsquo;s ceilings</td>
+    </tr>
   </table>
   <p class="ssf-limits" id="ssf_limits">Asking the api what it will
   do&hellip;</p>

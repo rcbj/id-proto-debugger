@@ -133,6 +133,9 @@ var config = {
   ssfMaxRequestBytes: 262144,
   gnapMaxRequestBytes: 262144,
   ssfReceiverEnabled: true,
+  // ssfReceiverTtlMs, ssfReceiverIdleTtlMs and ssfReceiverMaxInboxBytes are
+  // each the DEFAULT for one inbox and its CEILING: the SSF page may ask an
+  // inbox for less, and a request for more is refused naming the setting.
   ssfReceiverTtlMs: 3600000,
   // How long an inbox lives with no push, drain or clear. The TTL above
   // still applies however busy it is.

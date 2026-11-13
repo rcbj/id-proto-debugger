@@ -44,6 +44,9 @@
 //    minutes) with no push, drain or clear, and after `ssfReceiverTtlMs`
 //    (default one hour) whatever happens — and is swept when anything touches
 //    this module. A page that closed its tab leaves nothing behind for long.
+//    A page may give one inbox SHORTER lifetimes and a smaller byte cap than
+//    the settings; those settings are ceilings as well as defaults, and a
+//    request above one is refused naming it (`perInboxSettings()`).
 // 3. **THE COUNTS ARE CAPPED** — `ssfReceiverMaxInboxes` inboxes in all and
 //    `ssfReceiverMaxInboxesPerCaller` for one caller's address, so one client
 //    cannot hold every inbox; and `ssfReceiverMaxEvents` events in each,
@@ -148,18 +151,81 @@ function enabled(appconfig) {
   return on;
 }
 
+// ---------------------------------------------------------------------------
+// WHAT ONE INBOX MAY ASK FOR. The page may give an inbox its own idle TTL,
+// absolute lifetime and byte cap; the setting named beside each is both its
+// DEFAULT and its CEILING. An omitted value takes the default; a value above
+// the ceiling is REFUSED naming the setting, rather than quietly clamped, so
+// the page can say why. Raising a ceiling means editing api/env.
+// ---------------------------------------------------------------------------
+var PER_INBOX = [
+  { member: 'idleTtlMs', setting: 'ssfReceiverIdleTtlMs',
+    fallback: DEFAULTS.idleTtlMs },
+  { member: 'ttlMs', setting: 'ssfReceiverTtlMs', fallback: DEFAULTS.ttlMs },
+  { member: 'maxInboxBytes', setting: 'ssfReceiverMaxInboxBytes',
+    fallback: DEFAULTS.maxInboxBytes }
+];
+
+// The effective `{ idleTtlMs, ttlMs, maxInboxBytes }` for an inbox asked for
+// with `asked`, or `{ error }` naming the member and the setting.
+function perInboxSettings(appconfig, asked) {
+  log.debug("Entering perInboxSettings().");
+  var out = {};
+  var i;
+  for (i = 0; i < PER_INBOX.length; i++) {
+    var row = PER_INBOX[i];
+    var ceiling = setting(appconfig, row.setting, row.fallback);
+    var value = asked[row.member];
+    if (value === undefined || value === null || value === '') {
+      out[row.member] = ceiling;
+      continue;
+    }
+    var number = Number(value);
+    if (typeof value === 'boolean' || !isFinite(number) || number <= 0 ||
+        Math.floor(number) !== number) {
+      log.debug("Leaving perInboxSettings(). " + row.member + " malformed.");
+      return { error: row.member + ' must be a positive whole number; it ' +
+          'was ' + JSON.stringify(value) + '. Leave it out for the default (' +
+          row.setting + ', ' + ceiling + ').' };
+    }
+    if (number > ceiling) {
+      log.debug("Leaving perInboxSettings(). " + row.member + " too high.");
+      return { error: row.member + ' ' + number + ' is above this ' +
+          'service\'s ceiling, ' + row.setting + ' = ' + ceiling + '. A ' +
+          'page may ask for less, never more; raising the ceiling means ' +
+          'editing ' + row.setting + ' in the api\'s env file.' };
+    }
+    out[row.member] = number;
+  }
+  var eventCap = setting(appconfig, 'ssfReceiverMaxEventBytes',
+                         DEFAULTS.maxEventBytes);
+  // Only an ASKED value is held to this. The default is the setting, and
+  // deliver() never lets an inbox's cap fall below one event's.
+  if (asked.maxInboxBytes !== undefined && asked.maxInboxBytes !== null &&
+      asked.maxInboxBytes !== '' && out.maxInboxBytes < eventCap) {
+    log.debug("Leaving perInboxSettings(). Smaller than one event.");
+    return { error: 'maxInboxBytes ' + out.maxInboxBytes + ' is smaller ' +
+        'than one event may be (ssfReceiverMaxEventBytes = ' + eventCap +
+        '), so an inbox that size could refuse a single push.' };
+  }
+  log.debug("Leaving perInboxSettings().");
+  return out;
+}
+
 // Drop what has expired. Called from every entry point rather than on a timer:
 // a timer would keep this process's event loop alive for a feature nobody is
 // using, and the cost of the sweep is one pass over at most `maxInboxes`
 // entries.
 function sweep(appconfig, now) {
   log.debug("Entering sweep().");
+  // Each inbox by its own values, and never past the ceiling in force now.
   var ttl = setting(appconfig, 'ssfReceiverTtlMs', DEFAULTS.ttlMs);
   var idle = setting(appconfig, 'ssfReceiverIdleTtlMs', DEFAULTS.idleTtlMs);
   var at = now || Date.now();
   var gone = 0;
   inboxes.forEach(function (inbox, id) {
-    if (at - inbox.createdAt > ttl || at - inbox.lastUsedAt > idle) {
+    if (at - inbox.createdAt > Math.min(inbox.ttlMs, ttl) ||
+        at - inbox.lastUsedAt > Math.min(inbox.idleTtlMs, idle)) {
       inboxes.delete(id);
       gone++;
     }
@@ -177,7 +243,8 @@ function sweep(appconfig, now) {
 // stream's `delivery.authorization_header`, the exact Authorization header
 // every push must then carry; empty makes an OPEN inbox. `caller` is who
 // asked — server.js passes the request's address — and is what the
-// per-caller cap counts.
+// per-caller cap counts. `idleTtlMs`, `ttlMs` and `maxInboxBytes` are this
+// inbox's own, within the ceilings; see PER_INBOX.
 // ---------------------------------------------------------------------------
 function create(appconfig, options, caller) {
   log.debug("Entering create().");
@@ -222,6 +289,11 @@ function create(appconfig, options, caller) {
         authorization.length + ' characters; this receiver takes at most ' +
         '4096.' };
   }
+  var own = perInboxSettings(appconfig, asked);
+  if (own.error) {
+    log.debug("Leaving create(). Per-inbox setting refused.");
+    return { ok: false, error: own.error };
+  }
   var id = crypto.randomBytes(16).toString('hex');
   var inbox = {
     id: id,
@@ -231,6 +303,9 @@ function create(appconfig, options, caller) {
     lastUsedAt: Date.now(),
     caller: who,
     authorization: authorization,
+    idleTtlMs: own.idleTtlMs,
+    ttlMs: own.ttlMs,
+    maxInboxBytes: own.maxInboxBytes,
     pushes: 0,
     dropped: 0,
     bytes: 0,
@@ -269,6 +344,13 @@ function describe(inbox) {
     // Whether a push must carry the stream's authorization_header. The
     // value itself is never handed back.
     authenticated: inbox.authorization !== '',
+    // What this inbox was given, defaults or asked for, within the
+    // ceilings. The expiry is when it goes if nothing touches it again.
+    idleTtlMs: inbox.idleTtlMs,
+    ttlMs: inbox.ttlMs,
+    maxInboxBytes: inbox.maxInboxBytes,
+    expiresAt: new Date(Math.min(inbox.createdAt + inbox.ttlMs,
+      inbox.lastUsedAt + inbox.idleTtlMs)).toISOString(),
     pushes: inbox.pushes,
     dropped: inbox.dropped,
     waiting: inbox.events.length
@@ -352,9 +434,10 @@ function deliver(appconfig, id, options) {
   var read = readCompactJws(text);
   var maxEvents = setting(appconfig, 'ssfReceiverMaxEvents',
                           DEFAULTS.maxEvents);
-  // Never below one event's cap, so a single accepted event always fits.
-  var maxBytes = Math.max(limit, setting(appconfig, 'ssfReceiverMaxInboxBytes',
-                                         DEFAULTS.maxInboxBytes));
+  // This inbox's own cap, never past the ceiling in force now, and never
+  // below one event's cap, so a single accepted event always fits.
+  var maxBytes = Math.max(limit, Math.min(inbox.maxInboxBytes,
+    setting(appconfig, 'ssfReceiverMaxInboxBytes', DEFAULTS.maxInboxBytes)));
   // The OLDEST goes, by count and by total size. A receiver that has stopped
   // draining most wants what has happened lately, and refusing new events
   // would make a transmitter's push fail because a PAGE stopped reading.
@@ -505,6 +588,14 @@ function limits(appconfig) {
                            DEFAULTS.maxEventBytes),
     maxInboxBytes: setting(appconfig, 'ssfReceiverMaxInboxBytes',
                            DEFAULTS.maxInboxBytes),
+    // What the three above ARE to a page creating an inbox: each is the
+    // default for an inbox that asks for nothing and the most one may ask
+    // for. The two counts are not negotiable per inbox at all.
+    ceilings: 'ttlMs, idleTtlMs and maxInboxBytes are each the default and ' +
+        'the CEILING for one inbox: POST /ssf/receiver may ask for less, ' +
+        'never more. maxInboxes and maxInboxesPerCaller are not per inbox. ' +
+        'Raising any of them means editing ssfReceiver* in the api\'s env ' +
+        'file.',
     held: inboxes.size,
     mediaType: SET_MEDIA_TYPE,
     verifies: false,
@@ -544,6 +635,7 @@ module.exports = {
   deliver: deliver,
   readCompactJws: readCompactJws,
   sameSecret: sameSecret,
+  perInboxSettings: perInboxSettings,
   drain: drain,
   clear: clear,
   sweep: sweep,
