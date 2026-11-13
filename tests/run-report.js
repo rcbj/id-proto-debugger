@@ -4350,8 +4350,9 @@ function buildJobs() {
   // SHIBBOLETH_IDP_URL names one, a Shibboleth identity provider, with no
   // browser. The fixture half (the request's exact parameters, and both
   // SAML 1.1 attribute-name shapes in a Browser/POST response) always runs.
-  // Nothing here starts a Shibboleth identity provider, so that half runs
-  // only where one is configured.
+  // The containerized stack starts one (shibboleth-idp/, Shibboleth IdP
+  // 4.3.3) and run-tests-in-container.sh points SHIBBOLETH_IDP_URL at it;
+  // anywhere else that half runs only where one is configured.
   jobs.push({
     name: "SAML 1.1 peers (the Shibboleth request profile against iya-sts " +
         "and a Shibboleth IdP)",

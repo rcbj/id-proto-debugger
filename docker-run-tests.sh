@@ -860,7 +860,7 @@ runPartialStack()
   # BUILD. The tests image is always built. iya-sts is not built at all: the
   # stack runs its published release image (IYA_STS_IMAGE), which `up` pulls.
   local builds="tests" s
-  for s in api client keycloak-wsfed companion;
+  for s in api client keycloak-wsfed shibboleth-idp companion;
   do
     inList "${s}" "${services}" && builds="${builds} ${s}"
   done

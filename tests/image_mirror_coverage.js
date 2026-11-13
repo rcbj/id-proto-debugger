@@ -67,6 +67,7 @@ const DOCKERFILES = {
   "api/Dockerfile": "api_Dockerfile",
   "client/Dockerfile": "client_Dockerfile",
   "keycloak-wsfed/Dockerfile": "keycloak-wsfed_Dockerfile",
+  "shibboleth-idp/Dockerfile": "shibboleth-idp_Dockerfile",
   "tests/Dockerfile": "tests_Dockerfile",
 };
 
@@ -203,6 +204,34 @@ function everyBuildCarriesTheContexts(source) {
     "its FROMs against Docker Hub.");
   log.info(builds + " builds, each with the mirror contexts.");
   log.debug("Leaving everyBuildCarriesTheContexts().");
+}
+
+// A Dockerfile the compose file builds and DOCKERFILES does not name is
+// one whose FROMs nobody reads, so a new built service would pass this
+// test while pulling its base from Docker Hub. Every `dockerfile:` path
+// must be listed. (The companion's comes from a git context and names
+// none.)
+function everyBuiltDockerfileIsRead(lines) {
+  log.debug("Entering everyBuiltDockerfileIsRead().");
+  const missing = [];
+  var n = 0;
+  lines.forEach(function (line) {
+    const m = /^\s+dockerfile:\s*(\S+)\s*$/.exec(line);
+    if (!m) {
+      return;
+    }
+    n++;
+    if (!(m[1] in DOCKERFILES)) {
+      missing.push(m[1]);
+    }
+  });
+  assert.ok(n > 0, "no `dockerfile:` was parsed.");
+  assert.deepStrictEqual(missing, [],
+    "docker-compose-run-tests.yml builds these Dockerfiles and this test " +
+    "does not read them. Add each to DOCKERFILES here and COPY it into " +
+    "tests/Dockerfile: " + missing.join(", "));
+  log.info(n + " dockerfile: entries, each one read.");
+  log.debug("Leaving everyBuiltDockerfileIsRead().");
 }
 
 // BuildKit looks a FROM up by its familiar name with `:latest` dropped, so
@@ -351,6 +380,7 @@ function test() {
   everyImageIsMirroredOrBuiltHere(lines, paths);
   const names = mirrorContexts(lines, paths);
   everyBuildCarriesTheContexts(compose);
+  everyBuiltDockerfileIsRead(lines);
   everyFromHasAContext(names);
   iyaStsReleaseIsNamedOnce();
   log.info("Test completed successfully.");

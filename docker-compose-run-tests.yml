@@ -655,6 +655,30 @@ services:
       - keycloak
     ports:
       - "8082:8080"
+  # SAML 1.1 peer: Shibboleth IdP 4.3.3 on Jetty 10, for the Shibboleth half
+  # of tests/saml11_peers.js (the AuthnRequest profile at
+  # /idp/profile/Shibboleth/SSO, answered with a signed Browser/POST
+  # response). Only the tests container talks to it, over plain HTTP on this
+  # network, so it publishes no host port. See shibboleth-idp/CLAUDE.md.
+  shibboleth-idp:
+    container_name: id-proto-debugger-shibboleth-idp
+    hostname: shibboleth-idp
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/shibboleth-idp:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: shibboleth-idp/Dockerfile
+      additional_contexts: *mirror-contexts
+    # /idp/status answers only once the IdP's services have loaded, and only
+    # to the loopback address (conf/access-control.xml), which is where the
+    # probe runs.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -o /dev/null http://localhost:8080/idp/status || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 60s
+    networks:
+      - keycloak
   # IYA-STS'S DEVELOPMENT COMPANION (iya-sts #594, #595): the click-through
   # demonstrations iya-sts moved out of its runtime — the OpenID4VCI issuer's
   # offer pages, the SPNEGO-protected page and the Kerberos-protected TCP
@@ -831,6 +855,8 @@ services:
       waltid-verifier:
         condition: service_healthy
       keycloak-wsfed:
+        condition: service_healthy
+      shibboleth-idp:
         condition: service_healthy
       companion:
         condition: service_healthy

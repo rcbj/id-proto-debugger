@@ -12,6 +12,7 @@ It deliberately holds only what is **cross-cutting**: the overview, the componen
 | the deployed static sites, Terraform, the Lambda@Edge landings | `infra/CLAUDE.md` |
 | the walt.id issuer/verifier containers and their configuration | `waltid/CLAUDE.md` |
 | the WS-Federation Keycloak 8.0.1 side-car | `keycloak-wsfed/CLAUDE.md` |
+| the **Shibboleth IdP 4.3.3** side-car — the SAML 1.1 peer `tests/saml11_peers.js` signs in to on the containerized stack, its image, its configuration overlay and the SP metadata baked into it | `shibboleth-idp/CLAUDE.md` |
 | **SAML 1.1** — the second protocol version the SAML workflow speaks, which is a different protocol rather than an older spelling: no request message, no Single Logout, a QName status code, and five settings switched off | `docs/saml11.md` |
 | **RFC 9700** — the OAuth 2.0 Security BCP compliance checkbox on the OAuth2/OIDC workflow, what it enforces, and why it is off by default | `docs/rfc9700.md` |
 | the WebAuthn workflow, its decoder, or the read-only browser extension | `docs/webauthn.md` |
@@ -317,8 +318,8 @@ cryptography at all — it reads the file.
 
 **Every image this repository builds runs as an unprivileged user**, and each
 Dockerfile ends with the block that makes it one: `api`, `client`, `deploy`,
-`infra` and `tests` as `appuser`, `keycloak-wsfed` as `jboss`, all at **uid/gid
-10001**. Root is used for the BUILD — packages, `/usr/local`, nvm — and dropped
+`infra`, `tests` and `shibboleth-idp` as `appuser`, `keycloak-wsfed` as
+`jboss`, all at **uid/gid 10001**. Root is used for the BUILD — packages, `/usr/local`, nvm — and dropped
 before the `ENTRYPOINT`/`CMD`. `HOME` is set explicitly beside each `USER`,
 because Docker does not derive one from it and npm, the AWS CLI and Chrome all
 write there.
@@ -514,7 +515,7 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 **The two containerized launchers pull everything from ghcr.io, and it is
 PRIVATE — run `docker login ghcr.io` once.** Since 2026-09-27
 `docker-compose-run-tests.yml` takes every third-party image (Postgres,
-Keycloak, walt.id, node) AND every base image the five Dockerfiles it builds
+Keycloak, walt.id, node) AND every base image the six Dockerfiles it builds
 name in a `FROM` from private copies under
 `ghcr.io/rcbj/id-proto-debugger/mirror/`, because a reset connection to
 auth.docker.io took a scheduled run down three seconds in. The `FROM`s are

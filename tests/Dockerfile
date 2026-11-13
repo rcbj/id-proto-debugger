@@ -254,13 +254,14 @@ COPY keycloak-tests.yml ./
 
 # Where the stack's images come from: tests/image_mirror_coverage.js checks
 # that every image docker-compose-run-tests.yml (copied above) pulls, and every
-# FROM in the five Dockerfiles it builds, is covered by the ghcr.io mirror. It
+# FROM in the six Dockerfiles it builds, is covered by the ghcr.io mirror. It
 # needs the list and those Dockerfiles, renamed flat because this directory is
 # flat. client/Dockerfile is already here as client_Dockerfile.
 COPY tests/image_mirror_coverage.js ./
 COPY .github/image-mirror.txt ./
 COPY api/Dockerfile ./api_Dockerfile
 COPY keycloak-wsfed/Dockerfile ./keycloak-wsfed_Dockerfile
+COPY shibboleth-idp/Dockerfile ./shibboleth-idp_Dockerfile
 COPY tests/Dockerfile ./tests_Dockerfile
 
 # Where a downloaded file lands. Several pages here have a Download button, and

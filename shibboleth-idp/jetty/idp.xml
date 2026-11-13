@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+  SPDX-License-Identifier: MIT
+
+  Jetty context descriptor: deploy the installer's war in place at /idp
+  rather than copying 56 MB of it into webapps/.
+-->
+<!DOCTYPE Configure PUBLIC "-//Jetty//Configure//EN"
+    "https://www.eclipse.org/jetty/configure_10_0.dtd">
+<Configure class="org.eclipse.jetty.webapp.WebAppContext">
+  <Set name="war">/opt/shibboleth-idp/war/idp.war</Set>
+  <Set name="contextPath">/idp</Set>
+  <Set name="extractWAR">false</Set>
+  <Set name="copyWebDir">false</Set>
+  <Set name="copyWebInf">true</Set>
+  <Set name="persistTempDirectory">false</Set>
+</Configure>

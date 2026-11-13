@@ -7,7 +7,7 @@
 #
 #   .github/scripts/push-stack-images.sh [extra-tag]
 #
-# docker-compose-run-tests.yml names the five images it builds
+# docker-compose-run-tests.yml names the six images it builds
 # ${IMAGE_REGISTRY}/<name>:${IMAGE_TAG}, and common.sh names the mock STS the
 # same way. This pushes each one that exists locally under that tag and, when
 # given, under a second tag too (tests.yml passes the branch name, so
@@ -23,7 +23,7 @@ set -euo pipefail
 IMAGE_REGISTRY="${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}"
 IMAGE_TAG="${IMAGE_TAG:?IMAGE_TAG must be set}"
 EXTRA_TAG="${1:-}"
-NAMES="api client sts test keycloak-wsfed"
+NAMES="api client sts test keycloak-wsfed shibboleth-idp"
 
 pushImage()
 {
