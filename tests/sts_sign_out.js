@@ -65,10 +65,7 @@ async function signOutInBrowser(driver, sts, By, until, timeoutMs) {
       pressed = buttons[0];
       break;
     } catch (e) {
-      const stale = e.name === "StaleElementReferenceError" ||
-          /does not belong to the document|stale element/i.test(
-              e.message || "");
-      if (!stale || Date.now() > deadline) {
+      if (!isStale(e) || Date.now() > deadline) {
         log.debug("Leaving signOutInBrowser(). " + e.message);
         throw e;
       }
@@ -78,11 +75,52 @@ async function signOutInBrowser(driver, sts, By, until, timeoutMs) {
   }
   // The answer is a page saying it is done (or a front-channel page on the
   // way there); what matters is that the question is gone.
-  await driver.wait(until.stalenessOf(pressed), wait,
-    "pressed Sign out on the mock's RP-Initiated Logout confirmation, and " +
-    "the page never moved on");
+  //
+  // NOT `until.stalenessOf()`, which counts only StaleElementReferenceError as
+  // gone. Chrome also reports a replaced document as an `unknown error`,
+  // "unhandled inspector error: Node with given id does not belong to the
+  // document", and stalenessOf THROWS that one — out of this wait and out of
+  // whatever called it. That is how webauthn_oidc_mfa's password-only section
+  // and webauthn_extension's last ceremony failed on 2026-11-13, on a
+  // sign-out that had worked.
+  if (!(await waitUntilReplaced(driver, pressed, wait))) {
+    log.debug("Leaving signOutInBrowser(). The page never moved on.");
+    throw new Error("pressed Sign out on the mock's RP-Initiated Logout " +
+        "confirmation, and the page never moved on");
+  }
   log.debug("Leaving signOutInBrowser(). Confirmed.");
   return true;
 }
 
-module.exports = { signOutInBrowser };
+// True once `element`'s document has been replaced, by either of the two
+// errors Chrome uses to say so; false if it is still there after `maxMs`.
+// Any other error is a navigation in flight and is asked again.
+async function waitUntilReplaced(driver, element, maxMs) {
+  log.debug("Entering waitUntilReplaced().");
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    try {
+      await element.isEnabled();
+    } catch (e) {
+      if (isStale(e)) {
+        log.debug("Leaving waitUntilReplaced(). Replaced.");
+        return true;
+      }
+      log.debug("waitUntilReplaced(): " + e.message);
+    }
+    await driver.sleep(50);
+  }
+  log.debug("Leaving waitUntilReplaced(). Still there.");
+  return false;
+}
+
+// Both of Chrome's spellings of "that element's page is gone".
+function isStale(e) {
+  log.debug("Entering isStale().");
+  const stale = !!e && (e.name === "StaleElementReferenceError" ||
+      /does not belong to the document|stale element/i.test(e.message || ""));
+  log.debug("Leaving isStale().");
+  return stale;
+}
+
+module.exports = { signOutInBrowser, isStale };
