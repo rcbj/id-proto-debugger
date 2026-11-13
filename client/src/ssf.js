@@ -1971,7 +1971,8 @@ function pollOnce() {
     streamId: id,
     maxEvents: Number(val('ssf_poll_max')) || 10,
     returnImmediately: true,
-    ack: pendingAcks
+    ack: pendingAcks,
+    setErrs: pendingSetErrs
   });
   var entry = recordCall('poll', where.url, id);
   request({ method: 'POST', url: where.url, body: body })
@@ -1985,21 +1986,43 @@ function pollOnce() {
       }
       settleCall(entry, operations.SUCCESS, '');
       pendingAcks = [];
+      pendingSetErrs = {};
       var read = ssfClient.readPollResponse(answer.body);
+      var repeated = 0;
+      var refused = 0;
       read.jtis.forEach(function (jti) {
-        takeReceivedToken(read.sets[jti], 'poll', id);
-        if (isOn('ssf_poll_ack')) {
+        var taken = takeReceivedToken(read.sets[jti], 'poll', id,
+          { pollKey: jti });
+        if (taken.duplicate) {
+          repeated++;
+        }
+        if (!isOn('ssf_poll_ack')) {
+          return;
+        }
+        if (taken.err) {
+          pendingSetErrs[jti] = { err: taken.err,
+            description: taken.description };
+          refused++;
+        } else {
           pendingAcks.push(jti);
         }
       });
       setStatus('ssf_poll_status',
         read.jtis.length + ' event(s)' +
+        (repeated
+          ? ' (' + repeated + ' already received, by jti, and not recorded ' +
+            'again — a transmitter redelivers what was never acknowledged)'
+          : '') +
         (read.moreAvailable
           ? ' — AND moreAvailable IS TRUE, so the queue is not drained. A ' +
             'client that ignores that member assumes one poll empties it.'
           : ' — the queue is drained (moreAvailable is false).') +
         (isOn('ssf_poll_ack') && read.jtis.length
-          ? ' They will be acknowledged on the next poll.'
+          ? ' They will be acknowledged on the next poll' +
+            (refused
+              ? ', ' + refused + ' of them in setErrs as REFUSED rather ' +
+                'than in ack'
+              : '') + '.'
           : ''),
         read.jtis.length ? 'ok' : 'pending');
       renderMessages();
@@ -2013,6 +2036,12 @@ function pollOnce() {
 // request: a receiver acknowledges what it has STORED, and it has not stored
 // anything until this page has drawn it.
 var pendingAcks = [];
+// What the next poll will REFUSE, as RFC 8936 section 2.4's `setErrs`: jti ->
+// { err, description }, with `err` from the SET Error Codes registry (RFC
+// 8935 section 7.1). A SET that failed a check here is not acknowledged as
+// stored. It is refused, which also takes it off the queue — the docs say
+// why — and tells the transmitter what was wrong with it.
+var pendingSetErrs = {};
 
 // ---------------------------------------------------------------------------
 // RECEIVING — THE api's PUSH INBOX.
@@ -2081,11 +2110,19 @@ function drainReceiver() {
     }
     inbox = answer.inbox;
     inboxSeen = answer.total;
+    var repeated = 0;
     answer.events.forEach(function (one) {
-      takeReceivedToken(one.token, 'push', val('ssf_stream_id'), one);
+      if (takeReceivedToken(one.token, 'push', val('ssf_stream_id'),
+          one).duplicate) {
+        repeated++;
+      }
     });
     setText('ssf_inbox_status',
-      answer.events.length + ' new event(s); ' + answer.inbox.pushes +
+      answer.events.length + ' new event(s)' +
+      (repeated
+        ? ' (' + repeated + ' already received, by jti, and not recorded ' +
+          'again)'
+        : '') + '; ' + answer.inbox.pushes +
       ' pushed to this inbox in total' +
       (answer.inbox.dropped
         ? ', and ' + answer.inbox.dropped + ' dropped because the inbox ' +
@@ -2136,25 +2173,59 @@ function deleteReceiver() {
 // "valid" over a token whose audience is somebody else is the most dangerous
 // thing this page could say.
 // ---------------------------------------------------------------------------
+//
+// Answers `{ id, duplicate, err, description }`. `err` is the RFC 8935 SET
+// Error Code a receiver would refuse this token with, or '' when nothing
+// here refuses it; a poll puts it in the next request's `setErrs`.
+// `duplicate` is a jti this page has already recorded as received over a
+// delivery, which is recorded once — a transmitter redelivers what it never
+// saw acknowledged, and two rows would make delivery look twice as busy. A
+// PASTED token is always recorded: pasting it again is asking again.
 function takeReceivedToken(token, via, streamId, extra) {
   log.debug("Entering takeReceivedToken(). " + via);
+  var asked = extra || {};
   var parsed = ssfClient.parseSet(token);
   var verdicts = [];
   if (!parsed.ok) {
     verdicts.push({ level: 'error', text: parsed.problem });
-    ssfHistory.recordMessage({ direction: 'received', via: via,
-      streamId: streamId, token: token, verdicts: verdicts,
+    var unreadable = ssfHistory.recordMessage({ direction: 'received',
+      via: via, streamId: streamId, token: token, verdicts: verdicts,
       outcome: 'unreadable', detail: parsed.problem });
     log.debug("Leaving takeReceivedToken(). Unreadable.");
-    return;
+    return { id: unreadable, duplicate: false, err: 'invalid_request',
+      description: parsed.problem };
+  }
+  var jti = String(parsed.claims.jti || '');
+  if (via !== 'pasted' && ssfHistory.hasMessage(jti, 'received')) {
+    log.debug("Leaving takeReceivedToken(). Already received: " + jti);
+    return { id: '', duplicate: true, err: '', description: '' };
   }
   var read = ssfClient.readMetadata(metadata);
+  var expectedAudience = val('ssf_stream_aud');
   var headerVerdict = ssfClient.inspectSetHeader(parsed.header);
   var setVerdict = ssfClient.inspectSet(parsed.claims, {
     expectedIssuer: read.issuer,
-    expectedAudience: val('ssf_stream_aud'),
+    expectedAudience: expectedAudience,
     criticalMembers: read.criticalSubjectMembers
   });
+  // A check with nothing to check AGAINST is said out loud. Silence here
+  // would read as "the issuer and audience are right".
+  if (!read.issuer) {
+    verdicts.push({ level: 'warn', text: 'The "iss" was NOT checked: no ' +
+        'transmitter metadata has been fetched, so there is no issuer to ' +
+        'compare it with.' });
+  }
+  if (!expectedAudience) {
+    verdicts.push({ level: 'warn', text: 'The "aud" was NOT checked: this ' +
+        'page knows no audience for the stream. Read or create the stream ' +
+        'first, or type the audience in.' });
+  }
+  if (asked.pollKey !== undefined && String(asked.pollKey) !== jti) {
+    verdicts.push({ level: 'error', text: 'This SET arrived in the poll ' +
+        'response under the key "' + asked.pollKey + '" and its "jti" is "' +
+        jti + '". RFC 8936 section 2.2 keys the "sets" object BY jti, so ' +
+        'an acknowledgement of one names the other.' });
+  }
   headerVerdict.errors.forEach(function (text) {
     verdicts.push({ level: 'error', text: text });
   });
@@ -2217,8 +2288,42 @@ function takeReceivedToken(token, via, streamId, extra) {
       return one.level === 'error';
     }) ? 'findings' : 'clean'
   });
-  verifyReceived(id, token, parsed);
+  verifyReceived(id, token, parsed, via === 'poll' ? jti : '');
+  var refusal = setErrorFor(parsed.claims, verdicts, read.issuer,
+    expectedAudience);
   log.debug("Leaving takeReceivedToken(). " + id);
+  return { id: id, duplicate: false, err: refusal.err,
+    description: refusal.description };
+}
+
+// The SET Error Code (RFC 8935 section 7.1) a receiver refuses this token
+// with: the issuer and audience codes when those are what failed, and
+// invalid_request for any other error-level finding. '' when there is none.
+function setErrorFor(claims, verdicts, expectedIssuer, expectedAudience) {
+  log.debug("Entering setErrorFor().");
+  var errors = verdicts.filter(function (one) {
+    return one.level === 'error';
+  });
+  if (!errors.length) {
+    log.debug("Leaving setErrorFor(). None.");
+    return { err: '', description: '' };
+  }
+  var description = errors[0].text;
+  if (expectedIssuer && claims.iss !== undefined &&
+      String(claims.iss) !== String(expectedIssuer)) {
+    log.debug("Leaving setErrorFor(). invalid_issuer.");
+    return { err: 'invalid_issuer', description: description };
+  }
+  if (expectedAudience && claims.aud !== undefined) {
+    var audience = Object.prototype.toString.call(claims.aud) ===
+      '[object Array]' ? claims.aud.map(String) : [String(claims.aud)];
+    if (audience.indexOf(String(expectedAudience)) < 0) {
+      log.debug("Leaving setErrorFor(). invalid_audience.");
+      return { err: 'invalid_audience', description: description };
+    }
+  }
+  log.debug("Leaving setErrorFor(). invalid_request.");
+  return { err: 'invalid_request', description: description };
 }
 
 // The signature, checked separately and asynchronously — several algorithms
@@ -2226,7 +2331,12 @@ function takeReceivedToken(token, via, streamId, extra) {
 // which is the whole of why this is its own step: a receiver has to act on the
 // difference, and a page that quietly showed "no key" as a pass would be
 // teaching the opposite of what this protocol needs.
-function verifyReceived(id, token, parsed) {
+//
+// A signature that does not verify on a POLLED token still waiting to be
+// acknowledged is moved from the next poll's `ack` to its `setErrs`. A
+// pushed token was answered 202 by the api before this page saw it, so there
+// is nothing left to refuse.
+function verifyReceived(id, token, parsed, jti) {
   log.debug("Entering verifyReceived().");
   var keyText = val('ssf_verify_key').trim();
   if (!keyText) {
@@ -2246,6 +2356,12 @@ function verifyReceived(id, token, parsed) {
     // serialization can carry several — so the first one's is what a compact
     // SET's failure is.
     var first = (verdict.signatures || [])[0] || {};
+    var waiting = jti ? pendingAcks.indexOf(jti) : -1;
+    if (!verdict.valid && waiting >= 0) {
+      pendingAcks.splice(waiting, 1);
+      pendingSetErrs[jti] = { err: 'invalid_key',
+        description: 'The signature did not verify with ' + alg + '.' };
+    }
     noteSignature(id, verdict.valid
       ? 'verified with ' + alg
       : 'DID NOT VERIFY with ' + alg + ': ' +

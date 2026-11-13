@@ -41,7 +41,11 @@
 //    pushed in a loop fills one bounded ring and stops.
 // 4. **EACH EVENT IS SIZE-CAPPED** (`ssfReceiverMaxEventBytes`). A SET is a
 //    JWS of a few hundred bytes; 64 KiB is three orders of magnitude of
-//    headroom and still a bound.
+//    headroom and still a bound. **AND EACH INBOX IS SIZE-CAPPED IN TOTAL**
+//    (`ssfReceiverMaxInboxBytes`, default 1 MiB), oldest dropped first: the
+//    three counts alone multiply out to 20 x 200 x 64 KiB, a quarter of a
+//    gigabyte of text before the decoded header and claims are counted,
+//    and anybody who can reach this service can create an inbox.
 // 5. **IT IS OFF UNLESS THE CONFIGURATION SAYS OTHERWISE.**
 //    `ssfReceiverEnabled` ships true on the local and containerized configs and
 //    is false on the deployed ones, where there is no api at all — so the only
@@ -95,10 +99,12 @@ var DEFAULTS = {
   ttlMs: 60 * 60 * 1000,
   maxInboxes: 20,
   maxEvents: 200,
-  maxEventBytes: 64 * 1024
+  maxEventBytes: 64 * 1024,
+  maxInboxBytes: 1024 * 1024
 };
 
-// id -> { id, createdAt, lastPushAt, events: [...], pushes, dropped, label }
+// id -> { id, createdAt, lastPushAt, events: [...], bytes, pushes, dropped,
+//        label }
 var inboxes = new Map();
 
 function setting(appconfig, name, fallback) {
@@ -180,6 +186,7 @@ function create(appconfig, options) {
     lastPushAt: 0,
     pushes: 0,
     dropped: 0,
+    bytes: 0,
     events: []
   };
   inboxes.set(id, inbox);
@@ -286,14 +293,22 @@ function deliver(appconfig, id, options) {
   var read = readCompactJws(text);
   var maxEvents = setting(appconfig, 'ssfReceiverMaxEvents',
                           DEFAULTS.maxEvents);
-  if (inbox.events.length >= maxEvents) {
-    // The OLDEST goes. A receiver that has stopped draining most wants what
-    // has happened lately, and refusing new events would make a transmitter's
-    // push fail because a PAGE stopped reading.
-    inbox.events.shift();
+  // Never below one event's cap, so a single accepted event always fits.
+  var maxBytes = Math.max(limit, setting(appconfig, 'ssfReceiverMaxInboxBytes',
+                                         DEFAULTS.maxInboxBytes));
+  // The OLDEST goes, by count and by total size. A receiver that has stopped
+  // draining most wants what has happened lately, and refusing new events
+  // would make a transmitter's push fail because a PAGE stopped reading.
+  while (inbox.events.length &&
+         (inbox.events.length >= maxEvents ||
+          inbox.bytes + size > maxBytes)) {
+    inbox.bytes -= inbox.events.shift().bytes;
     inbox.dropped++;
   }
   inbox.events.push({
+    // The push's own number, from 0, which never moves when older events
+    // are dropped. It is what `drain()`'s cursor counts.
+    seq: inbox.pushes,
     at: new Date().toISOString(),
     token: text,
     bytes: size,
@@ -304,6 +319,7 @@ function deliver(appconfig, id, options) {
     claims: read.claims,
     problem: read.problem
   });
+  inbox.bytes += size;
   inbox.pushes++;
   inbox.lastPushAt = Date.now();
   log.debug("Leaving deliver(). Accepted, " + inbox.events.length +
@@ -340,10 +356,16 @@ function readCompactJws(token) {
 }
 
 // ---------------------------------------------------------------------------
-// The page collects. `after` is the number of events it has already seen, so a
-// page that polls twice does not redraw the first lot — a cursor rather than a
-// destructive read, because the events stay visible in the page's own history
-// pane and a drain that emptied the inbox would make a second tab useless.
+// The page collects. `after` is the number of PUSHES it has already seen —
+// the `total` the previous drain answered — so a page that polls twice does
+// not redraw the first lot. A cursor rather than a destructive read, because
+// the events stay visible in the page's own history pane and a drain that
+// emptied the inbox would make a second tab useless.
+//
+// It counts pushes and not positions in the ring. The caps drop the OLDEST
+// event, and a cursor that was an index would then point past events the
+// page has never seen: drop three, push five, and an index-based drain hands
+// back two of the five.
 // ---------------------------------------------------------------------------
 function drain(appconfig, id, after) {
   log.debug("Entering drain(). " + id);
@@ -358,18 +380,19 @@ function drain(appconfig, id, after) {
   if (!isFinite(from) || from < 0) {
     from = 0;
   }
-  // A cap that has been reached SHIFTS the array, so an index a page is
-  // holding can point past what is there. Clamping rather than failing: the
-  // page's own count is then simply behind, and the next poll catches up.
-  if (from > inbox.events.length) {
-    from = inbox.events.length;
+  // A cursor from the future (a page holding a count from an inbox that has
+  // since been deleted and recreated) is clamped, so the next push is seen.
+  if (from > inbox.pushes) {
+    from = inbox.pushes;
   }
   var out = {
     ok: true,
     inbox: describe(inbox),
     from: from,
-    events: inbox.events.slice(from),
-    total: inbox.events.length
+    events: inbox.events.filter(function (one) {
+      return one.seq >= from;
+    }),
+    total: inbox.pushes
   };
   log.debug("Leaving drain(). " + out.events.length + " new event(s).");
   return out;
@@ -385,6 +408,7 @@ function clear(appconfig, id) {
   }
   var gone = inbox.events.length;
   inbox.events.length = 0;
+  inbox.bytes = 0;
   log.debug("Leaving clear(). " + gone + " dropped.");
   return { ok: true, cleared: gone, inbox: describe(inbox) };
 }
@@ -402,6 +426,8 @@ function limits(appconfig) {
     maxEvents: setting(appconfig, 'ssfReceiverMaxEvents', DEFAULTS.maxEvents),
     maxEventBytes: setting(appconfig, 'ssfReceiverMaxEventBytes',
                            DEFAULTS.maxEventBytes),
+    maxInboxBytes: setting(appconfig, 'ssfReceiverMaxInboxBytes',
+                           DEFAULTS.maxInboxBytes),
     held: inboxes.size,
     mediaType: SET_MEDIA_TYPE,
     verifies: false,
