@@ -632,13 +632,15 @@ async function decryptRfc9068Token(results, compact) {
   return { stop: true };
 }
 
+// Returns true only when the signature verified.
 async function appendRfc9068Signature(results, compact) {
   log.debug("Entering appendRfc9068Signature().");
+  var verified = false;
   if (rfc9068.segmentCount(compact) !== 3) {
     results.push('FAIL  signature: No compact JWS to verify ' +
         '(RFC 9068 §4).');
     log.debug("Leaving appendRfc9068Signature().");
-    return;
+    return verified;
   }
   var type = val('jwt_verification_type');
   var key = val('jwt_verification_key');
@@ -661,6 +663,7 @@ async function appendRfc9068Signature(results, compact) {
     var first = result.signatures[0] || {};
     if (result.valid) {
       results.push('PASS  signature: Verified (RFC 9068 §4).');
+      verified = true;
     } else {
       results.push('FAIL  signature: ' +
           (first.reason || 'signature invalid') + ' (RFC 9068 §4).');
@@ -670,6 +673,7 @@ async function appendRfc9068Signature(results, compact) {
     results.push('FAIL  signature: ' + err.message + ' (RFC 9068 §4).');
   }
   log.debug("Leaving appendRfc9068Signature().");
+  return verified;
 }
 
 function appendRfc9068AuthContext(results, payload, compact) {
@@ -767,10 +771,23 @@ async function checkRfc9068Compliance() {
 
   results.push('RFC 9068 — OAuth 2.0 JWT Access Token');
 
+  var verified = false;
   if (isChecked('jwt_rfc9068_verify')) {
-    await appendRfc9068Signature(results, compact);
+    verified = await appendRfc9068Signature(results, compact);
   } else {
     pushRfc9068(results, [rfc9068.signatureNotVerifiedFinding()]);
+  }
+  // The workflow rows are the only thing this page compares iss and aud
+  // with, so they are worked out before the claims that need them.
+  var workflowRows = isChecked('jwt_rfc9068_workflow') ?
+      rfc9068.checkWorkflow(payload, rfc9068WorkflowExpectation()) : [];
+  function workflowCompared(claim) {
+    log.debug("Entering workflowCompared().");
+    var hit = workflowRows.some(function (row) {
+      return row.claim === claim && row.level !== 'skip';
+    });
+    log.debug("Leaving workflowCompared().");
+    return hit;
   }
 
   // typ — RFC 9068 §4 accepts "at+jwt" or "application/at+jwt",
@@ -814,7 +831,18 @@ async function checkRfc9068Compliance() {
     log.debug("Leaving requireNumericDate().");
   }
 
-  requireString('iss');
+  // iss: present is not a pass on its own (RFC 9068 §4).
+  if (payload.iss === undefined) {
+    fail('iss', 'Missing required claim (RFC 9068 §2.2)');
+  } else if (typeof payload.iss !== 'string') {
+    fail('iss', 'Must be a string');
+  } else if (workflowCompared('iss/workflow')) {
+    pass('iss', '"' + payload.iss + '" (compared with the workflow ' +
+         'below)');
+  } else {
+    pushRfc9068(results, [rfc9068.notComparedFinding('iss', payload.iss,
+        'issuer')]);
+  }
   requireNumericDate('exp');
   // Section 4: the current time MUST be before exp.
   if (typeof payload.exp === 'number' && Number.isInteger(payload.exp) &&
@@ -826,11 +854,16 @@ async function checkRfc9068Compliance() {
   // aud is REQUIRED: a StringOrURI or a non-empty array of them.
   if (payload.aud === undefined) {
     fail('aud', 'Missing required claim (RFC 9068 §2.2)');
-  } else if (typeof payload.aud === 'string') {
-    pass('aud', '"' + payload.aud + '"');
-  } else if (Array.isArray(payload.aud) && payload.aud.length > 0 &&
-      payload.aud.every(function (a) { return typeof a === 'string'; })) {
-    pass('aud', payload.aud.length + ' value(s)');
+  } else if (typeof payload.aud === 'string' ||
+      (Array.isArray(payload.aud) && payload.aud.length > 0 &&
+      payload.aud.every(function (a) { return typeof a === 'string'; }))) {
+    if (workflowCompared('aud/resource')) {
+      pass('aud', JSON.stringify(payload.aud) + ' (compared with the ' +
+           'resource below)');
+    } else {
+      pushRfc9068(results, [rfc9068.notComparedFinding('aud',
+          payload.aud, 'audience')]);
+    }
   } else {
     fail('aud', 'Must be a string or non-empty array of strings');
   }
@@ -870,8 +903,7 @@ async function checkRfc9068Compliance() {
   }
 
   if (isChecked('jwt_rfc9068_workflow')) {
-    pushRfc9068(results, rfc9068.checkWorkflow(payload,
-        rfc9068WorkflowExpectation()));
+    pushRfc9068(results, workflowRows);
   }
   if (isChecked('jwt_rfc9068_authz_claims')) {
     pushRfc9068(results, rfc9068.checkAuthorizationClaims(payload));
@@ -880,6 +912,22 @@ async function checkRfc9068Compliance() {
     appendRfc9068AuthContext(results, payload, compact);
   }
 
+  var notChecked = [];
+  if (!verified) {
+    notChecked.push('signature');
+  }
+  if (typeof payload.iss === 'string' &&
+      !workflowCompared('iss/workflow')) {
+    notChecked.push('iss');
+  }
+  if (payload.aud !== undefined && !workflowCompared('aud/resource')) {
+    notChecked.push('aud');
+  }
+  var failCount = results.filter(function (line) {
+    return line.indexOf('FAIL') === 0;
+  }).length;
+  results.push('');
+  results.push(rfc9068.summaryLine(failCount, notChecked));
   setVal('compliance_output', results.join('\n'));
   log.debug("Leaving checkRfc9068Compliance().");
   return false;

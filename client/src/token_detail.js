@@ -679,9 +679,12 @@ async function validateClaims() {
     } else if (expectedIss && payload.iss !== expectedIss) {
       fail('iss', 'Mismatch (expected="' + expectedIss + '", got="' +
            payload.iss + '")');
+    } else if (expectedIss) {
+      pass('iss', '"' + payload.iss + '" (matches expected)');
     } else {
-      pass('iss', '"' + payload.iss + '"' + (expectedIss ?
-           ' (matches expected)' : ''));
+      // Present is not a pass: there was nothing to compare it with.
+      results.push(rfc9068.formatFinding(
+          rfc9068.notComparedFinding('iss', payload.iss, 'issuer')));
     }
   } else if (isRequired) {
     fail('iss', 'Missing required claim');
@@ -718,7 +721,8 @@ async function validateClaims() {
       pass('aud', '"' + expectedAud + '" found in ' +
            JSON.stringify(payload.aud));
     } else {
-      pass('aud', JSON.stringify(payload.aud));
+      results.push(rfc9068.formatFinding(
+          rfc9068.notComparedFinding('aud', payload.aud, 'audience')));
     }
   } else if (isRequired) {
     fail('aud', 'Missing required claim');
@@ -904,11 +908,22 @@ async function validateClaims() {
   const failCount = results.filter(r => r.startsWith('FAIL')).length;
   var output = results.join('\n');
   if (ageLine) output += '\n\n' + ageLine;
-  // An access token's report is only a clean result when its
-  // signature was part of it (RFC 9068 §4).
-  var signatureDone = purpose !== 'oauth2_access_token' ||
-      prepared.verified;
-  output += '\n\n' + rfc9068.summaryLine(failCount, signatureDone);
+  // A clean result names what it left out: an access token's signature
+  // (RFC 9068 §4), and an iss or aud that was present with nothing to
+  // compare it with. The workflow rows count as a comparison.
+  var notChecked = [];
+  if (purpose === 'oauth2_access_token' && !prepared.verified) {
+    notChecked.push('signature');
+  }
+  if (payload.iss !== undefined &&
+      !rfc9068.compared(results, ['iss', 'iss/workflow'])) {
+    notChecked.push('iss');
+  }
+  if (payload.aud !== undefined &&
+      !rfc9068.compared(results, ['aud', 'aud/resource'])) {
+    notChecked.push('aud');
+  }
+  output += '\n\n' + rfc9068.summaryLine(failCount, notChecked);
   document.getElementById('jwt_claims_validation_output').value = output;
   log.debug("Leaving validateClaims().");
   return false;

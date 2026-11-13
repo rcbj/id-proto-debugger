@@ -94,21 +94,49 @@ function signatureNotVerifiedFinding() {
   return row;
 }
 
-// The closing line of a report. When the signature was not part of
-// it, a clean run says that the claims passed, not the token.
-function summaryLine(failCount, signatureVerified) {
+// A claim that is present but had nothing to be compared with. Section
+// 4 requires iss to match the issuer and aud to name this resource, so
+// "present" alone is not a pass. `what` is "issuer" or "audience".
+function notComparedFinding(claim, value, what) {
+  log.debug("Entering notComparedFinding().");
+  var row = finding("skip", claim, JSON.stringify(value) +
+      " — not compared: no expected " + what);
+  log.debug("Leaving notComparedFinding().");
+  return row;
+}
+
+// The closing line of a report. `notChecked` names the steps the
+// report left out (the signature, an iss or aud with nothing to compare
+// against), so a clean run is never read as an accepted token.
+function summaryLine(failCount, notChecked) {
   log.debug("Entering summaryLine().");
+  var missing = Array.isArray(notChecked) ? notChecked : [];
   var line;
   if (failCount > 0) {
     line = failCount + " check(s) failed.";
-  } else if (signatureVerified) {
+  } else if (missing.length === 0) {
     line = "All checks passed.";
   } else {
-    line = "All checks passed. The signature was not verified, so " +
-        "RFC 9068 §4 does not accept this token yet.";
+    line = "No check failed, but these were not checked: " +
+        missing.join(", ") + ". RFC 9068 §4 does not accept a token " +
+        "until they are.";
   }
   log.debug("Leaving summaryLine().");
   return line;
+}
+
+// Whether a report already compared `claim`: a PASS or FAIL row for it
+// or for one of the workflow rows that compare it.
+function compared(results, claims) {
+  log.debug("Entering compared().");
+  var found = results.some(function (line) {
+    return claims.some(function (claim) {
+      return line.indexOf("PASS  " + claim + ":") === 0 ||
+          line.indexOf("FAIL  " + claim + ":") === 0;
+    });
+  });
+  log.debug("Leaving compared().");
+  return found;
 }
 
 function segmentCount(token) {
@@ -423,7 +451,9 @@ module.exports = {
   typAccepted: typAccepted,
   typFinding: typFinding,
   signatureNotVerifiedFinding: signatureNotVerifiedFinding,
+  notComparedFinding: notComparedFinding,
   summaryLine: summaryLine,
+  compared: compared,
   segmentCount: segmentCount,
   decodeCompact: decodeCompact,
   checkAuthorizationClaim: checkAuthorizationClaim,
