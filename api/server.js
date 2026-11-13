@@ -313,6 +313,27 @@ const USER_AGENT = resolveUserAgent();
  * @returns {boolean}
  */
 /**
+ * Answers with TEXT that may carry a caller's, an identity provider's or an
+ * exception's words. Express's res.send(string) labels a string text/html,
+ * so an error message quoting a crafted SAMLart, RelayState or upstream body
+ * would be rendered as markup in the browser that was redirected here (CodeQL
+ * js/xss-through-exception). text/plain plus nosniff keeps it text.
+ *
+ * @param {object} res - the express response.
+ * @param {number} status - the HTTP status.
+ * @param {string} text - what to send.
+ * @returns {object} the express response.
+ */
+function sendPlainText(res, status, text) {
+  log.debug("Entering sendPlainText(). status=" + status);
+  res.status(status);
+  res.type('text/plain; charset=utf-8');
+  res.set('X-Content-Type-Options', 'nosniff');
+  log.debug("Leaving sendPlainText().");
+  return res.send(String(text));
+}
+
+/**
  * The browser origins allowed to call this api, derived from the configured URLs.
  *
  * Until now this was `origin: '*'`, which tells every site on the internet that
@@ -333,9 +354,9 @@ const USER_AGENT = resolveUserAgent();
  * never does, so each is reduced to scheme://host:port before comparison.
  *
  * @param {object} config - the appconfig for this environment.
- * @returns {string[]|string} the allowlist, or '*' when nothing usable is
- *   configured — a deployment missing both keys keeps working rather than
- *   refusing its own UI, with the reason logged.
+ * @returns {string[]} the allowlist, EMPTY when nothing usable is configured
+ *   — a deployment missing both keys refuses every cross-origin caller, its
+ *   own UI included, with the reason logged as an error.
  */
 function resolveAllowedOrigins(config) {
   log.debug("Entering resolveAllowedOrigins().");
@@ -364,11 +385,16 @@ function resolveAllowedOrigins(config) {
     if (origins.indexOf(parsed.origin) === -1) origins.push(parsed.origin);
   });
   if (!origins.length) {
-    log.warn("Neither uiUrl nor apiUrl gives a usable origin, so CORS falls " +
-             "back to '*'. " +
-             "Set uiUrl to the browser origin that calls this api.");
+    // Fail CLOSED. This used to fall back to '*', which let any site on the
+    // web drive an api that fetches URLs its caller chooses (CodeQL
+    // js/cors-permissive-configuration). Every shipped configuration sets
+    // uiUrl, so this is only ever a misconfiguration, and a browser refusing
+    // every cross-origin call names the problem where '*' hides it.
+    log.error("Neither uiUrl nor apiUrl gives a usable origin, so NO browser " +
+              "origin may call this api. " +
+              "Set uiUrl to the browser origin that calls this api.");
     log.debug("Leaving resolveAllowedOrigins().");
-    return "*";
+    return [];
   }
   log.debug("Leaving resolveAllowedOrigins().");
   return origins;
@@ -597,8 +623,8 @@ log.info("Outbound User-Agent: " + USER_AGENT);
 log.info("Outbound connection pooling (keepAlive): " + (KEEP_ALIVE ?
          "on" : "off") + ".");
 log.info("CORS allowed origins: " +
-         (ALLOWED_ORIGINS === "*" ?
-          "* (any site) — uiUrl is not configured" : ALLOWED_ORIGINS.join(
+         (ALLOWED_ORIGINS.length === 0 ?
+          "none — uiUrl is not configured" : ALLOWED_ORIGINS.join(
           ", ")) + ".");
 
 // ---------------------------------------------------------------------------
@@ -1065,9 +1091,8 @@ app.get('/samlmetadata', function (req, res) {
     log.error('Error fetching SAML metadata from ' + target + ': ' + (error &&
               error.stack ? error.stack : error));
     if (error && error.response) {
-      res.status(error.response.status ||
-                 STATUS_500).send(String(error.response.data ||
-                 'metadata fetch failed'));
+      sendPlainText(res, error.response.status || STATUS_500,
+                    String(error.response.data || 'metadata fetch failed'));
     } else {
       res.status(STATUS_500).json({
         error: 'metadata fetch failed: ' + (error && error.message ?
@@ -1488,7 +1513,7 @@ function handleSamlAcs(req, res) {
         (req.body && req.body.TARGET) || req.query.TARGET || '';
     if (typeof relayState !== 'string') {
       log.debug("Leaving handleSamlAcs().");
-      return res.status(STATUS_400).send('ACS: invalid RelayState.');
+      return sendPlainText(res, STATUS_400, 'ACS: invalid RelayState.');
     }
     var artifact = (req.body && req.body.SAMLart) || req.query.SAMLart;
 
@@ -1513,15 +1538,16 @@ function handleSamlAcs(req, res) {
         })
         .catch(function (e) {
           log.error('artifact resolve: ' + (e && e.stack ? e.stack : e));
-          res.status(STATUS_500).send('Artifact resolution failed: ' + (e &&
-                     e.message ? e.message : String(e)));
+          sendPlainText(res, STATUS_500, 'Artifact resolution failed: ' +
+                        (e && e.message ? e.message : String(e)));
         });
     }
-    res.status(STATUS_400).send('ACS: no SAMLResponse or SAMLart present.');
+    sendPlainText(res, STATUS_400,
+                  'ACS: no SAMLResponse or SAMLart present.');
   } catch (e) {
     log.error('samlacs: ' + (e && e.stack ? e.stack : e));
-    res.status(STATUS_500).send('ACS error: ' + (e && e.message ?
-               e.message : String(e)));
+    sendPlainText(res, STATUS_500, 'ACS error: ' + (e && e.message ?
+                  e.message : String(e)));
   }
   log.debug("Leaving handleSamlAcs().");
 }
@@ -1599,8 +1625,8 @@ function handleWsFedLanding(req, res) {
     res.end();
   } catch (e) {
     log.error('wsfed: ' + (e && e.stack ? e.stack : e));
-    res.status(STATUS_500).send('WS-Fed landing error: ' + (e && e.message ?
-               e.message : String(e)));
+    sendPlainText(res, STATUS_500, 'WS-Fed landing error: ' +
+                  (e && e.message ? e.message : String(e)));
   }
   log.debug("Leaving handleWsFedLanding().");
 }
