@@ -200,6 +200,7 @@ const BUNDLES = [
   ['did_tools', 'didtools'],
   ['webauthn_lab', 'webauthnlab'],
   ['webauthn_analyzer', 'webauthnanalyzer'],
+  ['smartcard', 'smartcard'],
   ['wsfed_request', 'wsfed_request'],
   ['wsfed_response', 'wsfed_response'],
   ['kerberos_decoder', 'kerberos_decoder'],

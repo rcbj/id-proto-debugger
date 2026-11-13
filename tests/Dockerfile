@@ -751,6 +751,17 @@ COPY tests/hash_engine.js ./
 # twice. The stylesheet is not in that HTML copy, so it is named.
 COPY tests/xacml_engine.js ./
 COPY client/public/css/xacml.css /usr/src/client/public/css/xacml.css
+# ISO 7816 command and response APDUs, and BER-TLV, in node. Like
+# hash_engine.js it loads client/src/iso7816.js out of the tree the
+# COPY client/src line above staged, so this script must not also get
+# a flat copy of that module. A second copy would make the job load
+# whichever file resolution order found.
+COPY tests/smartcard_engine.js tests/smartcard_page.js ./
+# The two api modules the engine job loads. They decide and do not
+# pull axios. Flat, beside the test, because this image has no api
+# tree. Do not also flat-copy the client codecs: the job reads those
+# from the client/src tree staged above.
+COPY api/otp_verify.js api/smartcard_reader.js ./
 # The stateful hash-based signature job and its vendored vectors. Like
 # hash_engine.js it needs no flat copy of its subject — it loads
 # client/src/hbs.js out of the tree the three COPY lines above stage — but the

@@ -1,0 +1,22 @@
+.sc-apps { margin: 8px 0 12px; }
+.sc-apps select { margin-left: 8px; }
+
+.sc-trace,
+.saml-pane textarea.sc-trace {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 8em;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.sc-out {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
+
+.sc-out .saml-table { table-layout: fixed; width: 100%; }
+.sc-out .saml-table td { overflow-wrap: anywhere; }
+
+.sc-field { width: 100%; max-width: 36em; box-sizing: border-box; }
