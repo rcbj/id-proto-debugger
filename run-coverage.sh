@@ -184,6 +184,62 @@ fi
 # ---------------------------------------------------------------------------
 # The base file plus the coverage override, which touches only api and client.
 COMPOSE="docker_compose -f docker-compose-run-tests.yml -f docker-compose-coverage.yml"
+
+# ---------------------------------------------------------------------------
+# THE HOST PORTS, AND RUNNING BESIDE A STACK THAT HOLDS THEM.
+#
+# The same rule ./docker-run-tests.sh follows, which this script did not: the
+# stack publishes 3000, 4000, 8080, 8081, 8082, 7003, 7005 and 5432 for a
+# person looking from the host, and the suite uses none of them. When one is
+# already held — an iya-sts container on 8081/8082 — `up` refuses with "port
+# is already allocated" and no job runs; on 2026-11-13 that was the Keycloak
+# WS-Federation side-car's 8082, and the run ended before its first test. So
+# publishing is dropped instead (docker-compose-run-tests-no-host-ports.yml)
+# and nothing outside this stack is touched. NO_HOST_PORTS=1 forces it,
+# NO_HOST_PORTS=0 never does it; the default decides from what is held.
+# ---------------------------------------------------------------------------
+NO_HOST_PORTS="${NO_HOST_PORTS:-auto}"
+heldHostPorts()
+{
+  echo "Entering heldHostPorts()." >&2
+  local wanted held="" port
+  # Ports read from the merged configuration, so one added to a compose file
+  # is covered without an edit here. The JSON is cut to its outermost braces
+  # because docker_compose()'s own "Leaving" line is glued to the last one.
+  wanted="$(${COMPOSE} config --format json 2>/dev/null |
+            grep -v '^Entering\|^Leaving' |
+            node -e 'let r="";process.stdin.on("data",d=>r+=d).on("end",
+              ()=>{try{const c=JSON.parse(r.slice(r.indexOf("{"),
+                r.lastIndexOf("}")+1));const out=[];
+              for(const s of Object.values(c.services||{}))
+                for(const p of (s.ports||[]))
+                  if(p.published)out.push(p.published);
+              console.log(out.join(" "))}catch(e){}})' 2>/dev/null)"
+  for port in ${wanted};
+  do
+    if ss -Hltn "sport = :${port}" 2>/dev/null | grep -q .;
+    then
+      held="${held} ${port}"
+    fi
+  done
+  echo "Leaving heldHostPorts().${held:- none}" >&2
+  echo "${held# }"
+}
+if [ "${NO_HOST_PORTS}" = "auto" ];
+then
+  HELD_PORTS="$(heldHostPorts)"
+  if [ -n "${HELD_PORTS}" ];
+  then
+    echo "Host port(s) ${HELD_PORTS} are already held by something outside" \
+         "this stack, so it will publish no host ports at all and leave" \
+         "those alone. The suite does not need them."
+    NO_HOST_PORTS=1
+  fi
+fi
+if [ "${NO_HOST_PORTS}" = "1" ];
+then
+  COMPOSE="${COMPOSE} -f docker-compose-run-tests-no-host-ports.yml"
+fi
 # The BASE file alone is enough for `ps` / `logs` / a single-service `up` below:
 # compose scopes those to this directory's project, and the override changes
 # nothing about the side-cars.
