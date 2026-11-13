@@ -6103,8 +6103,55 @@ async function ensureAdminApiToken() {
   log.debug("Leaving ensureAdminApiToken().");
 }
 
+// THE IMAGE HAS EVERY SCRIPT THIS RUNNER SCHEDULES. `node run-report.js
+// --check-scripts` builds the job list and exits 1, naming them, if any job's
+// script is not in TESTS_DIR. tests/Dockerfile runs it as a build step, so a
+// test added to buildJobs() without its COPY fails the IMAGE BUILD — in
+// Docker Image CI's `build` job, before a suite runs — instead of failing one
+// job with MODULE_NOT_FOUND in 0.0s that reads as a broken test. #405, #406
+// and #415 each merged exactly that on 2026-11-12/13.
+// jwk_pem_encoding.js has the same check over tests/Dockerfile's text, and it
+// can only run from a checkout; this one runs where the scripts have to be.
+function missingJobScripts(jobs) {
+  log.debug("Entering missingJobScripts().");
+  const missing = [];
+  jobs.forEach(function (job) {
+    const script = job.script;
+    if (!script || missing.indexOf(script) !== -1) {
+      return;
+    }
+    if (!fs.existsSync(path.join(TESTS_DIR, script))) {
+      missing.push(script);
+    }
+  });
+  log.debug("Leaving missingJobScripts(). " + missing.length + " missing.");
+  return missing;
+}
+
+function checkJobScripts() {
+  log.debug("Entering checkJobScripts().");
+  const jobs = buildJobs();
+  const missing = missingJobScripts(jobs);
+  if (missing.length > 0) {
+    log.error("run-report.js schedules these scripts and they are not in " +
+        TESTS_DIR + ", so each job would fail with MODULE_NOT_FOUND: " +
+        missing.join(", ") + ". Add a COPY for each to tests/Dockerfile.");
+    log.debug("Leaving checkJobScripts(). Missing scripts.");
+    return 1;
+  }
+  log.info("All " + jobs.length + " scheduled jobs have their script in " +
+      TESTS_DIR + ".");
+  log.debug("Leaving checkJobScripts().");
+  return 0;
+}
+
 async function main() {
   log.debug("Entering main().");
+  if (process.argv.includes("--check-scripts")) {
+    const code = checkJobScripts();
+    log.debug("Leaving main(). --check-scripts.");
+    process.exit(code);
+  }
   const demo = process.argv.includes("--demo");
   let results;
 
