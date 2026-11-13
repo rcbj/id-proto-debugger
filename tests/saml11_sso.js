@@ -6,6 +6,7 @@ const { Command, Option } = require('commander');
 // The SP key pair is generated per run and passed in through the environment;
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
+const crypto = require("crypto");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
 const { loadUrl } = require("./page_load.js");
@@ -668,6 +669,31 @@ async function assertHistoryClosedAsSuccess(driver, binding, loginWait) {
   log.debug("Leaving assertHistoryClosedAsSuccess().");
 }
 
+// This job's relying party: the suite's SP entity ID with a /saml11 suffix,
+// so that consuming its SAML 1.1 metadata never touches the SAML 2.0 entry.
+function saml11EntityId(base) {
+  log.debug("Entering saml11EntityId().");
+  log.debug("Leaving saml11EntityId().");
+  return String(base).replace(/\/+$/, '') + '/saml11';
+}
+
+// iya-sts addresses a relying party's metadata by a slug it derives from the
+// identifier: "app-" and the first 12 hex digits of its SHA-256 (as
+// tests/run-tests-in-container.sh computes SAML_STS_SP_SLUG). A URL whose last
+// segment is such a slug is re-addressed to this job's own relying party; any
+// other URL is left as given.
+function saml11MetadataUrl(url, entityId) {
+  log.debug("Entering saml11MetadataUrl().");
+  if (!url || !/\/app-[0-9a-f]{12}$/.test(url)) {
+    log.debug("Leaving saml11MetadataUrl(). Unchanged.");
+    return url;
+  }
+  const slug = "app-" + crypto.createHash("sha256").update(entityId)
+      .digest("hex").slice(0, 12);
+  log.debug("Leaving saml11MetadataUrl(). " + slug);
+  return url.replace(/app-[0-9a-f]{12}$/, slug);
+}
+
 async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
                                 metadataFile) {
   log.debug("Entering saml11Activities().");
@@ -759,7 +785,8 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
     "the page's SAML 1.1 SP metadata must bind both profiles:\n" +
         spMetadata);
   var consumed = await registry.adminPost(registry.stsBaseFor(metadataUrl),
-      "/saml2/upload-metadata", { sp: spEntityId, document: spMetadata });
+      "/saml2/upload-metadata", { sp: spEntityId, document: spMetadata,
+                                  family: "saml11" });
   assert(consumed && consumed.ok !== false && !consumed.error,
     "iya-sts did not consume this service provider's SAML 1.1 metadata: " +
         JSON.stringify(consumed).slice(0, 600));
@@ -844,9 +871,18 @@ async function test() {
   // Record the failure, let the finally quit the driver, THEN exit.
   let testFailed = false;
   try {
-    const metadataUrl = process.env.SAML11_METADATA_URL;
     const metadataFile = process.env.SAML11_METADATA_FILE;
-    const spEntityId = process.env.SAML_SP_ENTITY_ID;
+    assert(process.env.SAML_SP_ENTITY_ID,
+           "SAML_SP_ENTITY_ID environment variable is not set.");
+    // A RELYING PARTY OF ITS OWN (#307). This job registers its consumers by
+    // having iya-sts CONSUME its SAML 1.1 SP metadata, and consuming metadata
+    // replaces an entry's consumers, NameIDFormats and certificates. Shared
+    // with saml_sso.js's SAML 2.0 entry, that would change what the SAML 2.0
+    // jobs are held to. So SAML 1.1 uses SAML_SP_ENTITY_ID + "/saml11", and
+    // the per-relying-party metadata URL is re-addressed to its slug.
+    const spEntityId = saml11EntityId(process.env.SAML_SP_ENTITY_ID);
+    const metadataUrl = saml11MetadataUrl(process.env.SAML11_METADATA_URL,
+                                          spEntityId);
     const user = process.env.SAML_USER || "saml";
     // `redirect` is the old name of the Browser/POST job: the request is a
     // GET either way since #307, so the two were the same flow.
@@ -859,7 +895,6 @@ async function test() {
       "upload). It names the mock STS's per-relying-party SAML 1.1 " +
       "descriptor; nothing has to be provisioned first, because that service " +
       "mints one for any identifier asked for.");
-    assert(spEntityId, "SAML_SP_ENTITY_ID environment variable is not set.");
     assert(["post", "artifact"].indexOf(binding) >= 0,
            "SAML_BINDING must be post or artifact (the browser profile).");
     log.info("metadata=" + (metadataUrl || metadataFile) + " sp=" +

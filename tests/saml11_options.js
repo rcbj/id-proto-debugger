@@ -584,11 +584,12 @@ async function optionActivities(driver) {
   // of the other two fields.
   await setInput(driver, 'saml_sso_artifact', '');
   await setInput(driver, 'saml_acs_url', acs);
-  await setInput(driver, 'saml11_artifact_acs_url', artifactAcs);
   await setInput(driver, 'saml_sp_entity_id', sp);
 
   log.info("Select SAML 1.1.");
   await chooseVersion(driver, '1.1');
+  // Shown only on SAML 1.1, so typed after the version is chosen.
+  await setInput(driver, 'saml11_artifact_acs_url', artifactAcs);
   await assertControlsOffForSaml11(driver);
   await assertVersionNoticeExplains(driver);
 
