@@ -1,6 +1,6 @@
 // @ts-check
 // SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 
 'use strict';
 //
@@ -14,11 +14,11 @@
 // arrived in, the separation this directory is built on has failed — see that
 // file's header.
 //
-// It also knows nothing about HTTP, the directory or the console. The only
-// thing it reaches outside itself for is an ATTRIBUTE, through the resolver on
-// the context — which is what makes `xacml_pip.js` swappable and what lets the
-// conformance runner drive the whole engine in-process with no service, no
-// port and no container.
+// It also knows nothing about HTTP, storage or the page. The only thing it
+// reaches outside itself for is an ATTRIBUTE, through the optional resolver on
+// the context — and the XACML page passes none, so a decision sees only what
+// the request carried. That is also what lets `tests/xacml_engine.js` drive
+// the whole engine in node with no service, no port and no container.
 //
 // ---------------------------------------------------------------------------
 // THE FOUR THINGS A PDP GETS WRONG, IN THE ORDER THEY COST THE MOST.
@@ -50,6 +50,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 const datatypes = require('./xacml_datatypes');
 const functions = require('./xacml_functions');
@@ -63,8 +64,8 @@ const EFFECT = model.EFFECT;
 //
 // Everything one decision needs, built once per request. The `resolver` is the
 // PIP and is optional: with none, a designator sees only what the request
-// carried, which is the pure-XACML behaviour the conformance suite expects and
-// is why the suite can drive this with no directory anywhere.
+// carried, which is the pure-XACML behaviour the OASIS conformance suite
+// expects. The XACML page passes no resolver.
 // ---------------------------------------------------------------------------
 /**
  * Builds the evaluation context for one decision.
@@ -115,7 +116,7 @@ function makeContext(request, options) {
 // ATTRIBUTE RESOLUTION.
 //
 // The request first, then the PIP, then — for the three environment attributes
-// only — this service's clock. That order matters: a request that carries
+// only — the clock on the context. That order matters: a request that carries
 // `current-time` uses the one it carried, because a PEP that supplied it is
 // asserting the time the decision is ABOUT, which is not necessarily now.
 // ---------------------------------------------------------------------------
@@ -161,8 +162,8 @@ function resolveDesignator(designator, context) {
   if (values.length === 0 && context.resolver) {
     // THE PIP. Consulted only when the request carried nothing, which is the
     // ordering every deployment expects: what the PEP asserted wins over what
-    // the directory holds, because the PEP is describing this request and the
-    // directory is describing the world.
+    // a PIP looks up, because the PEP is describing this request and the PIP
+    // is describing the world.
     const supplied = context.resolver(designator, context);
     if (supplied && supplied.length) {
       supplied.forEach(function (value) {
@@ -321,7 +322,12 @@ function evaluateExpression(expression, context, variables) {
 // ---------------------------------------------------------------------------
 function resolveVariable(id, context, variables) {
   log.debug('Entering resolveVariable(). id=' + id);
-  if (!variables || !variables.definitions[id]) {
+  // Own members only (2026-11-12): an id a policy chose is never an
+  // inherited name — `constructor` is undefined, not Object, and
+  // `toString` is not in progress.
+  const definition = variables
+    ? ownMembers.read(variables.definitions, id) : undefined;
+  if (!definition) {
     log.debug('Leaving resolveVariable(). Undefined.');
     throw model.syntaxError(
       'VariableReference names "' + id + '", which no VariableDefinition in ' +
@@ -331,17 +337,16 @@ function resolveVariable(id, context, variables) {
     log.debug('Leaving resolveVariable(). Memoised.');
     return variables.values[id];
   }
-  if (variables.inProgress[id]) {
+  if (ownMembers.read(variables.inProgress, id)) {
     log.debug('Leaving resolveVariable(). Cyclic.');
     throw model.syntaxError(
       'VariableDefinition "' + id + '" refers to itself, directly or ' +
       'through another variable.');
   }
-  variables.inProgress[id] = true;
+  ownMembers.put(variables.inProgress, id, true);
   try {
-    const value = evaluateExpression(variables.definitions[id], context,
-                                     variables);
-    variables.values[id] = value;
+    const value = evaluateExpression(definition, context, variables);
+    ownMembers.put(variables.values, id, value);
     log.debug('Leaving resolveVariable(). Evaluated.');
     return value;
   } finally {
@@ -656,9 +661,10 @@ const COMBINERS = {};
 // children in document order always, so `ordered-deny-overrides` and
 // `deny-overrides` are the same function here. That is conformant — the
 // specification PERMITS reordering for the unordered variants and does not
-// require it — and it is the right choice for a mock, where reproducibility is
-// the whole point. It is ALSO what makes the early exit above well defined:
-// "the first Deny" means something only if the order is fixed.
+// require it — and it is the right choice for a debugger, where
+// reproducibility is the whole point. It is ALSO what makes the early exit
+// above well defined: "the first Deny" means something only if the order is
+// fixed.
 // ---------------------------------------------------------------------------
 function combiner(uris, implementation) {
   log.debug("Entering combiner().");
@@ -997,7 +1003,8 @@ combiner([model.POLICY_ALG.ONLY_ONE_APPLICABLE], function () {
 function lookupCombiner(uri) {
   log.debug("Entering lookupCombiner().");
   log.debug("Leaving lookupCombiner().");
-  return COMBINERS[uri] || null;
+  // An own member only (2026-11-12): `constructor` is no combiner.
+  return ownMembers.read(COMBINERS, uri) || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1204,7 +1211,9 @@ function resolveChild(child, repository) {
     log.debug("Leaving resolveChild().");
     return child;
   }
-  const found = repository ? repository[child.ref] : null;
+  // An own member only (2026-11-12): a reference to `constructor` is
+  // unresolved, not Object.
+  const found = repository ? ownMembers.read(repository, child.ref) : null;
   if (!found) {
     log.debug("Leaving resolveChild().");
     return { kind: 'UnresolvedReference', ref: child.ref, target: null };
@@ -1350,7 +1359,7 @@ function evaluate(policy, request, options) {
  * The XACML 3.0 policy decision point: a request and a policy in, a
  * decision out.
  *
- * It knows nothing of XML, JSON, ALFA, HTTP or the directory; the only
+ * It knows nothing of XML, JSON, ALFA, HTTP or storage; the only
  * thing it reaches outside itself for is an attribute, through the
  * context's resolver.
  * @namespace

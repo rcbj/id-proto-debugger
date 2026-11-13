@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 const appconfig = require(process.env.CONFIG_FILE);
 const bunyan = require("bunyan");
 const log = bunyan.createLogger({ name: 'common',

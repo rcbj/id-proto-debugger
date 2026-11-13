@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
 /* The GNAP page. Loaded last so it wins over bootstrap, common.css and
    saml_common.css, whose saml-pane pattern the panes use. */
 

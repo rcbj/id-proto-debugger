@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # ---------------------------------------------------------------------------
 # The instance's own role. Nothing here is shared with the site stacks: the role,
 # the policy and the profile all carry this stack's prefix and all live in this

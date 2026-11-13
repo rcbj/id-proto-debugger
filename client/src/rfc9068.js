@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: rfc9068.js
 //
 // ---------------------------------------------------------------------------
@@ -77,6 +80,63 @@ function typFinding(typ) {
   }
   log.debug("Leaving typFinding().");
   return row;
+}
+
+// Section 4 makes the signature a resource server's first check. A
+// report that left it out says so in a row of its own, so "All checks
+// passed" is never read as an accepted token.
+function signatureNotVerifiedFinding() {
+  log.debug("Entering signatureNotVerifiedFinding().");
+  var row = finding("skip", "signature",
+      "Not verified by this report. RFC 9068 §4 requires a resource " +
+      "server to verify it before trusting any claim below");
+  log.debug("Leaving signatureNotVerifiedFinding().");
+  return row;
+}
+
+// A claim that is present but had nothing to be compared with. Section
+// 4 requires iss to match the issuer and aud to name this resource, so
+// "present" alone is not a pass. `what` is "issuer" or "audience".
+function notComparedFinding(claim, value, what) {
+  log.debug("Entering notComparedFinding().");
+  var row = finding("skip", claim, JSON.stringify(value) +
+      " — not compared: no expected " + what);
+  log.debug("Leaving notComparedFinding().");
+  return row;
+}
+
+// The closing line of a report. `notChecked` names the steps the
+// report left out (the signature, an iss or aud with nothing to compare
+// against), so a clean run is never read as an accepted token.
+function summaryLine(failCount, notChecked) {
+  log.debug("Entering summaryLine().");
+  var missing = Array.isArray(notChecked) ? notChecked : [];
+  var line;
+  if (failCount > 0) {
+    line = failCount + " check(s) failed.";
+  } else if (missing.length === 0) {
+    line = "All checks passed.";
+  } else {
+    line = "No check failed, but these were not checked: " +
+        missing.join(", ") + ". RFC 9068 §4 does not accept a token " +
+        "until they are.";
+  }
+  log.debug("Leaving summaryLine().");
+  return line;
+}
+
+// Whether a report already compared `claim`: a PASS or FAIL row for it
+// or for one of the workflow rows that compare it.
+function compared(results, claims) {
+  log.debug("Entering compared().");
+  var found = results.some(function (line) {
+    return claims.some(function (claim) {
+      return line.indexOf("PASS  " + claim + ":") === 0 ||
+          line.indexOf("FAIL  " + claim + ":") === 0;
+    });
+  });
+  log.debug("Leaving compared().");
+  return found;
 }
 
 function segmentCount(token) {
@@ -390,6 +450,10 @@ module.exports = {
   formatFinding: formatFinding,
   typAccepted: typAccepted,
   typFinding: typFinding,
+  signatureNotVerifiedFinding: signatureNotVerifiedFinding,
+  notComparedFinding: notComparedFinding,
+  summaryLine: summaryLine,
+  compared: compared,
   segmentCount: segmentCount,
   decodeCompact: decodeCompact,
   checkAuthorizationClaim: checkAuthorizationClaim,

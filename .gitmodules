@@ -1,7 +1,3 @@
-[submodule "sts"]
-	path = sts
-	url = https://github.com/rcbj/iya-sts.git
-	branch = main
 [submodule "api/node-ldapjs"]
 	path = api/node-ldapjs
 	url = https://github.com/rcbj/node-ldapjs.git

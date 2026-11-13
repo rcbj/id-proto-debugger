@@ -1,6 +1,6 @@
 // @ts-check
 // SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 
 'use strict';
 //
@@ -60,6 +60,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 const datatypes = require('./xacml_datatypes');
 
@@ -116,9 +117,12 @@ function resolveType(name) {
     log.debug("Leaving resolveType().");
     return model.canonicalType(text);
   }
-  if (SHORT_TYPE[text]) {
+  // An own member only (2026-11-12): `DataType: "constructor"` is an
+  // unknown datatype, refused as one, and never Object.
+  const short = ownMembers.read(SHORT_TYPE, text);
+  if (short) {
     log.debug("Leaving resolveType().");
-    return SHORT_TYPE[text];
+    return short;
   }
   log.debug("Leaving resolveType().");
   return null;

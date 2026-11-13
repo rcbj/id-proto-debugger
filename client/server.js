@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: server.js
 // Author: Robert C. Broeckelmann Jr.
 // Date: 05/31/2020

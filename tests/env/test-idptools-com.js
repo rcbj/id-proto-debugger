@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // TEST_WAIT_TIME_MS overrides `waitTime` here too, so the knob means the
 // same thing on every configuration rather than on three of five; the
 // whole reasoning is in env/test.js. Unset, empty or not a positive

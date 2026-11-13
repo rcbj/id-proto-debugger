@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: image_mirror_coverage.js
 //
 // Every image the containerized test stack PULLS, and every base image a
@@ -15,20 +18,22 @@
 //
 //  * a service that is only run names the mirror in its `image:`;
 //  * a FROM is redirected by the build's `additional_contexts`, which BuildKit
-//    consults before any registry — the only way to reach sts/Dockerfile,
-//    which is the iya-sts submodule's and is not edited here.
+//    consults before any registry — the only way to reach the companion's
+//    Dockerfile, which is iya-sts's, built from that repository's tag, and
+//    not edited here.
 //
 // BOTH FAIL OPEN. A FROM with no matching named context is not an error: it is
 // pulled from Docker Hub, exactly as before, and the run is green until the
-// day Docker Hub is not there. The likeliest way in is not an edit here at
-// all but a submodule bump that moves sts/Dockerfile to a new node tag. So
-// this reads the compose file, the list and the five Dockerfiles and asserts:
+// day Docker Hub is not there. So this reads the compose file, the list and
+// the four Dockerfiles built from this repository and asserts:
 //
 //  1. every `image:` is either the mirror (with a path the list has) or one of
 //     this repository's own built images under IMAGE_REGISTRY;
 //  2. every named context in x-mirror-contexts points at a listed path;
 //  3. every `build:` carries those contexts;
-//  4. every external FROM (and COPY --from) in a built Dockerfile has one.
+//  4. every external FROM (and COPY --from) in a built Dockerfile has one;
+//  5. every compose file names the SAME iya-sts release, and the companion is
+//     built from that release's tag (iyaStsReleaseIsNamedOnce()).
 //
 // Node only, no services. A missing file FAILS rather than skips, because a
 // check that compares nothing is the shape of bug it is here to catch.
@@ -63,17 +68,16 @@ const DOCKERFILES = {
   "client/Dockerfile": "client_Dockerfile",
   "keycloak-wsfed/Dockerfile": "keycloak-wsfed_Dockerfile",
   "tests/Dockerfile": "tests_Dockerfile",
-  "sts/Dockerfile": "sts_Dockerfile",
 };
 
 const MIRROR_PREFIX = "${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/";
 const BUILT_PREFIXES = [
   "${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/",
-  "${STS_IMAGE:-${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/",
-  // iya-sts's own RELEASE image (2026-11-12), which the stack runs instead of
-  // building sts/Dockerfile. It is not mirrored because it does not need to
-  // be: the mirror exists to keep this suite off Docker Hub, and this is a
-  // first-party package on ghcr.io already, published by iya-sts's pipeline.
+  // iya-sts's own RELEASE image (2026-11-12), which the stack runs rather
+  // than building iya-sts itself. It is not mirrored because it does not
+  // need to be: the mirror exists to keep this suite off Docker Hub, and
+  // this is a public first-party package on ghcr.io already, published by
+  // iya-sts's pipeline.
   // Named exactly, so that a different upstream behind the same variable is
   // still caught.
   "${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:",
@@ -267,6 +271,76 @@ function everyFromHasAContext(names) {
   log.debug("Leaving everyFromHasAContext().");
 }
 
+// ---------------------------------------------------------------------------
+// THE iya-sts RELEASE IS NAMED ONCE.
+//
+// docker-compose-run-tests.yml's `${IYA_STS_IMAGE:-...}` default is the one
+// place the release is named; tests/module_paths.js and common/common.sh read
+// it from there. The other compose files cannot read it (compose has no
+// include for a default), so they repeat it, and the companion is built from
+// the iya-sts repository at the matching tag
+// (`${IYA_STS_COMPANION_CONTEXT:-https://...git#v<version>:companion}`).
+// Each repetition is a place a release bump can miss, and a miss is a stack
+// running one release beside a companion — or a host stack — of another,
+// which fails naming a protocol. So every one is held to the first.
+// ---------------------------------------------------------------------------
+const IYA_STS_COMPOSE_FILES = ["docker-compose-run-tests.yml",
+  "docker-compose.yml", "local-tests.yml", "keycloak-tests.yml"];
+
+function iyaStsReleaseIsNamedOnce() {
+  log.debug("Entering iyaStsReleaseIsNamedOnce().");
+  const images = [];
+  const contexts = [];
+  IYA_STS_COMPOSE_FILES.forEach(function (name) {
+    const text = codeLines(fs.readFileSync(locate(name, name), "utf8"))
+      .join("\n");
+    (text.match(/\$\{IYA_STS_IMAGE:-[^}]+\}/g) || []).forEach(function (m) {
+      images.push({ file: name, ref: m.slice("${IYA_STS_IMAGE:-".length,
+                                             -1) });
+    });
+    (text.match(/\$\{IYA_STS_COMPANION_CONTEXT:-[^}]+\}/g) || [])
+      .forEach(function (m) {
+        contexts.push({ file: name,
+          ref: m.slice("${IYA_STS_COMPANION_CONTEXT:-".length, -1) });
+      });
+  });
+  assert.ok(images.length > 0 && images[0].file === IYA_STS_COMPOSE_FILES[0],
+    "docker-compose-run-tests.yml names no ${IYA_STS_IMAGE:-...} default.");
+  const release = images[0].ref;
+  const tag = /:([^:/@]+)$/.exec(release);
+  assert.ok(tag, "the iya-sts default " + release + " carries no tag.");
+  const disagree = images.filter(function (one) {
+    return one.ref !== release;
+  }).map(function (one) {
+    return one.file + ": " + one.ref;
+  });
+  assert.deepStrictEqual(disagree, [],
+    "These compose files run a different iya-sts release from " +
+    "docker-compose-run-tests.yml's " + release + ": " + disagree.join(", "));
+  IYA_STS_COMPOSE_FILES.forEach(function (name) {
+    assert.ok(images.some(function (one) {
+      return one.file === name;
+    }), name + " does not run ${IYA_STS_IMAGE:-" + release + "}.");
+  });
+  const wanted = "https://github.com/rcbj/iya-sts.git#v" + tag[1] +
+    ":companion";
+  assert.ok(contexts.length >= 3,
+    "expected the companion's IYA_STS_COMPANION_CONTEXT default in three " +
+    "compose files, found " + contexts.length + ".");
+  const stale = contexts.filter(function (one) {
+    return one.ref !== wanted;
+  }).map(function (one) {
+    return one.file + ": " + one.ref;
+  });
+  assert.deepStrictEqual(stale, [],
+    "The companion must be built from the tag of the iya-sts release the " +
+    "stack runs (" + wanted + "): " + stale.join(", "));
+  log.info("iya-sts " + release + " is named the same way in " +
+    images.length + " places, and the companion is built from v" + tag[1] +
+    " in " + contexts.length + ".");
+  log.debug("Leaving iyaStsReleaseIsNamedOnce().");
+}
+
 function test() {
   log.debug("Entering test().");
   const compose = fs.readFileSync(locate.apply(null, FILES.compose), "utf8");
@@ -278,6 +352,7 @@ function test() {
   const names = mirrorContexts(lines, paths);
   everyBuildCarriesTheContexts(compose);
   everyFromHasAContext(names);
+  iyaStsReleaseIsNamedOnce();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

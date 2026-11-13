@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: yubihsm_auth.js
 //
 // The YubiKey applet that authenticates TO a YubiHSM 2 (yubikit
@@ -408,6 +411,19 @@ function describeCommand(input) {
   } else if (command.ins === 0x07) {
     summary = "GET VERSION";
     rows = [{ label: "Instruction", value: "GET VERSION" }];
+  } else if (command.ins === 0x08) {
+    summary = "PUT MANAGEMENT KEY (not sent)";
+    rows = [
+      { label: "Instruction", value: "PUT MANAGEMENT KEY (not sent)" },
+      secretRow("Keys", command.data.length)
+    ];
+  } else if (command.ins === 0x09) {
+    summary = "GET MANAGEMENT KEY RETRIES";
+    rows = [{ label: "Instruction",
+        value: "GET MANAGEMENT KEY RETRIES" }];
+  } else if (command.ins === 0x0a) {
+    summary = "GET PUBLIC KEY";
+    rows = [{ label: "Instruction", value: "GET PUBLIC KEY" }];
   }
   log.debug("Leaving describeCommand().");
   return { summary: summary, rows: rows };

@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
 /* The pane grid the standalone tool pages are built out of — a grid of
    collapsible fieldsets, each with a Copy button on every label, an optional
    Key Pair sub-section, action buttons and a one-line status readout.

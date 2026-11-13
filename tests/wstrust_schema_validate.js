@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wstrust_schema_validate.js
 //
 // XSD schema validation of the WS-Trust RequestSecurityToken (RST) messages the

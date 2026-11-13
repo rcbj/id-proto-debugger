@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wstrust_response.js
 //
 // WS-Trust response debugger. The config page (wstrust_tools.js) sends the SOAP

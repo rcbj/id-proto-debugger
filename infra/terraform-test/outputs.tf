@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 output "site_url" {
   description = "Public URL for the test site."
   value       = "https://${var.domain}"

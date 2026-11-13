@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: shim.js  —  runs in the PAGE's world (MAIN), on an armed origin only.
 //
 // ---------------------------------------------------------------------------

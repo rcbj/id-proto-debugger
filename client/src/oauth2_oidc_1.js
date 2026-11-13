@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 var appconfig = require(process.env.CONFIG_FILE);
 // OpenID Provider Metadata (Discovery 1.0 s3) — the table and its
 // defaults/persistence/populate helpers, shared with oauth2_oidc_2.js.
@@ -28,6 +31,9 @@ var rpMetadataChoices = require("./rp_metadata_choices");
 // What a token request and a registration may ask for. scopes_supported
 // is shown; it is not the default those two send. See oauth_scope.js.
 var oauthScope = require("./oauth_scope");
+// Client secrets and passwords are never stored, and the DCR bearer
+// tokens live in sessionStorage only. See secret_storage.js.
+var secretStorage = require("./secret_storage");
 var $ = require("jquery");
 console.log("logLevel: " + appconfig.logLevel);
 var log = bunyan.createLogger({ name: 'oauth2_oidc_1',
@@ -453,6 +459,7 @@ function initValuesToLocalStorage()
 function loadValuesFromLocalStorage()
 {
   log.debug("Entering loadValuesFromLocalStorage().");
+  secretStorage.purgeOnLoad(window.localStorage, window.sessionStorage);
   var authzGrantType = localStorage.getItem("authorization_grant_type");
   log.debug("authzGrantType=" + authzGrantType);
   if ( authzGrantType == "" || 
@@ -2150,14 +2157,15 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   var issuer = discoveryInfo["issuer"];
   var jwksUri = discoveryInfo["jwks_uri"];
   var responseTypesSupported = discoveryInfo["response_types_supported"];
-  // The authorization request's scope stays the advertisement, so the
-  // reader can see every name and narrow it. The token request does
-  // not: RFC 6749 section 4.1.3 defines no scope parameter on a code
-  // exchange, and client credentials or password take the
-  // authorization-step scope or the OIDC basics, never the whole list.
+  // Neither request starts from the whole advertisement, which stays
+  // visible in the metadata table. An OIDC flow's authorization request
+  // asks for the OIDC basics the provider advertised, and an OAuth 2.0
+  // flow's for nothing. The token request follows oauth_scope.js:
+  // nothing on a code exchange (RFC 6749 section 4.1.3), and a prefill
+  // for client credentials and password.
   var rawScopes = discoveryInfo["scopes_supported"];
-  var scopesSupported = rawScopes == null ? "" :
-      oauthScope.joinAdvertised(rawScopes);
+  var authorizationScope = oauthScope.authorizationScope(
+      $("#authorization_grant_type").val(), rawScopes);
   var subjectTypesSupported = discoveryInfo["subject_types_supported"];
   var tokenEndpoint = discoveryInfo["token_endpoint"];
   var tokenEndpointAuthMethodsSupported =
@@ -2205,9 +2213,7 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
     $("#device_authorization_endpoint").closest('tr').hide();
   }
 
-  if (rawScopes != null) {
-    $("#scope").val(scopesSupported);
-  }
+  $("#scope").val(authorizationScope);
   $("#oidc_userinfo_endpoint").val(userInfoEndpoint);
   $("#jwks_endpoint").val(jwksUri);
   // Every remaining OpenID Provider Metadata member (Discovery 1.0 section 3).
@@ -2242,23 +2248,18 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
         localStorage.setItem("device_authorization_endpoint", "" );
       }
 
-      if (rawScopes != null) {
-        localStorage.setItem("scope", scopesSupported);
-      }
-      // Overwrite a previously seeded token_scope. Page 2 restores
-      // this key into #token_scope, so leaving the advertisement here
-      // is the request that fails with invalid_scope.
+      localStorage.setItem("scope", authorizationScope);
+      // Populate is a deliberate reset: the token and refresh scopes go
+      // back to the page's prefill, and the "edited" marks that keep a
+      // typed value across reloads are cleared with them.
+      localStorage.setItem("token_scope_edited", "false");
+      localStorage.setItem("refresh_scope_edited", "false");
       var tokenScope = oauthScope.tokenRequestScope(
-          $("#authorization_grant_type").val(),
-          "",
-          $("#scope").val(),
-          rawScopes);
+          $("#authorization_grant_type").val(), "", false,
+          authorizationScope, rawScopes);
       localStorage.setItem("token_scope", tokenScope);
       var refreshScope = oauthScope.tokenRequestScope(
-          "refresh_token",
-          localStorage.getItem("refresh_scope"),
-          $("#scope").val(),
-          rawScopes);
+          "refresh_token", "", false, authorizationScope, rawScopes);
       localStorage.setItem("refresh_scope", refreshScope);
       localStorage.setItem("jwks_endpoint", jwksUri);
       localStorage.setItem("end_session_endpoint", endSessionEndpoint);
@@ -2301,11 +2302,15 @@ function clearConfigurationStorage() {
    "revocation_endpoint", "device_authorization_endpoint",
        "registration_endpoint",
    "oidc_userinfo_endpoint", "jwks_endpoint", "oidc_discovery_endpoint",
-   "client_id", "scope", "token_scope", "refresh_scope", "resource",
+   "client_id", "scope", "token_scope", "refresh_scope",
+   "token_scope_edited", "refresh_scope_edited", "resource",
    "redirect_uri",
-   "registration_client_uri", "registration_access_token",
-   "dcr_initial_access_token", "dcr_client_metadata"].forEach(function (key) {
+   "registration_client_uri", "dcr_client_metadata",
+   "client_has_secret"].forEach(function (key) {
     localStorage.setItem(key, "");
+  });
+  secretStorage.SESSION_KEYS.forEach(function (key) {
+    secretStorage.sessionSet(window.sessionStorage, key, "");
   });
   // The select and the radio pairs are RESET rather than blanked, so store the
   // value they were reset to (their storage keys differ from the element ids).
@@ -3038,9 +3043,7 @@ function registerClient() {
           localStorage.setItem("client_id", data.client_id);
         }
       }
-      if (localStorage && typeof data.client_secret !== "undefined") {
-        localStorage.setItem("client_secret", data.client_secret);
-      }
+      showIssuedClientSecret(data);
       adoptRegistrationResponse(md, data);
     });
 }
@@ -3093,6 +3096,63 @@ function deleteClient() {
     $("#registration_access_token").val(), null, null);
 }
 
+// A secret issued in this page load, held in memory for the RFC 9700
+// check below and never written anywhere.
+var issuedClientSecret = "";
+
+// True when this client authenticates with a secret: one issued by a
+// registration in this page load, or step 2's record that one was typed.
+function clientHasSecret() {
+  log.debug("Entering clientHasSecret().");
+  var has = !!issuedClientSecret;
+  if (!has) {
+    try {
+      has = localStorage.getItem("client_has_secret") === "true";
+    } catch (e) {
+      log.debug("clientHasSecret(): " + e.message);
+    }
+  }
+  log.debug("Leaving clientHasSecret().");
+  return has;
+}
+
+// Show a registration's client_secret once, with a copy button and a note
+// that it is not saved, and record only whether there is one. Step 2 does
+// not receive it: the reader types it there.
+function showIssuedClientSecret(data) {
+  log.debug("Entering showIssuedClientSecret().");
+  var secret = data && typeof data.client_secret === "string" ?
+      data.client_secret : "";
+  issuedClientSecret = secret;
+  var method = data ? data.token_endpoint_auth_method : undefined;
+  try {
+    localStorage.setItem("client_has_secret",
+        secret && method !== "none" ? "true" : "false");
+  } catch (e) {
+    log.debug("showIssuedClientSecret(): " + e.message);
+  }
+  $("#dcr_issued_client_secret").val(secret);
+  if (secret) {
+    $("#dcr_issued_client_secret_row").show();
+  } else {
+    $("#dcr_issued_client_secret_row").hide();
+  }
+  log.debug("Leaving showIssuedClientSecret().");
+}
+
+function copyIssuedClientSecret() {
+  log.debug("Entering copyIssuedClientSecret().");
+  var value = $("#dcr_issued_client_secret").val() || "";
+  if (navigator.clipboard &&
+      typeof navigator.clipboard.writeText === "function") {
+    navigator.clipboard.writeText(value).catch(function (e) {
+      log.error("copyIssuedClientSecret(): " + e);
+    });
+  }
+  log.debug("Leaving copyIssuedClientSecret().");
+  return false;
+}
+
 function displayDcrResponse(data) {
   log.debug("Entering displayDcrResponse().");
   $("#dcr_response_textarea").val(JSON.stringify(data, null, 2));
@@ -3136,12 +3196,16 @@ function writeDcrValuesToLocalStorage() {
     }
     localStorage.setItem("registration_client_uri",
                          $("#registration_client_uri").val());
-    localStorage.setItem("registration_access_token",
-                         $("#registration_access_token").val());
-    localStorage.setItem("dcr_initial_access_token",
-                         $("#dcr_initial_access_token").val());
+    // Bearer credentials: this tab only, never localStorage.
+    secretStorage.sessionSet(window.sessionStorage,
+        "registration_access_token", $("#registration_access_token").val());
+    secretStorage.sessionSet(window.sessionStorage,
+        "dcr_initial_access_token", $("#dcr_initial_access_token").val());
+    // The editor may hold a registration response's client_secret and
+    // registration_access_token for this page load; the stored copy
+    // does not.
     localStorage.setItem("dcr_client_metadata",
-                         $("#dcr_client_metadata").val());
+        secretStorage.withoutSecretMembers($("#dcr_client_metadata").val()));
   }
   log.debug("Leaving writeDcrValuesToLocalStorage().");
 }
@@ -3157,13 +3221,14 @@ function loadDcrValuesFromLocalStorage() {
       $("#registration_client_uri")
         .val(localStorage.getItem("registration_client_uri"));
     }
-    if (localStorage.getItem("registration_access_token")) {
-      $("#registration_access_token")
-        .val(localStorage.getItem("registration_access_token"));
+    var registrationToken = secretStorage.sessionGet(window.sessionStorage,
+        "registration_access_token");
+    if (registrationToken) {
+      $("#registration_access_token").val(registrationToken);
     }
-    // Initial access token: use the stored value if present (default is blank).
-    $("#dcr_initial_access_token")
-      .val(localStorage.getItem("dcr_initial_access_token") || "");
+    // Initial access token: this tab's value if present (default blank).
+    $("#dcr_initial_access_token").val(secretStorage.sessionGet(
+        window.sessionStorage, "dcr_initial_access_token"));
     // Client metadata: prefer the stored document; otherwise seed a default
     // one. Persist whatever value ends up in the field so it is available next
     // time.
@@ -3172,7 +3237,8 @@ function loadDcrValuesFromLocalStorage() {
       clientMetadata = JSON.stringify(buildDefaultClientMetadata(), null, 2);
     }
     $("#dcr_client_metadata").val(clientMetadata);
-    localStorage.setItem("dcr_client_metadata", clientMetadata);
+    localStorage.setItem("dcr_client_metadata",
+        secretStorage.withoutSecretMembers(clientMetadata));
   }
   refreshChoicesVerdict();
   log.debug("Leaving loadDcrValuesFromLocalStorage().");
@@ -3297,12 +3363,13 @@ function rfc9700GateAuthorizationRequest(deviceFlow) {
     deviceAuthorizationEndpoint: $("#device_authorization_endpoint").val(),
     redirectUri: $("#redirect_uri").val(),
     clientId: $("#client_id").val(),
-    // This page has no client secret field — it is on step 2 — so the answer
-    // to "is this a public client" is read from where step 2 stored it. An
-    // empty value means public, which is the reading that makes PKCE a MUST
-    // rather than a SHOULD, so an unreadable value fails toward the stricter
-    // rule.
-    clientSecret: localStorage.getItem("token_client_secret") || "",
+    // This page has no client secret field — it is on step 2 — and no
+    // secret is ever stored. "Is this a public client" is read from the
+    // boolean step 2 keeps when a secret is typed there, or from a
+    // registration made in this page load. Absent means public, which
+    // makes PKCE a MUST rather than a SHOULD, so an unknown client fails
+    // toward the stricter rule.
+    confidentialClient: clientHasSecret(),
     authStyle: getLSBooleanItem("token_postAuthStyleCheckToken") ? "post"
                                                                 : "header",
     scope: $("#scope").val(),
@@ -3474,6 +3541,7 @@ module.exports = {
   parseDiscoveryInfo,
   buildDiscoveryInfoTable,
   onSubmitPopulateFormsWithDiscoveryInformation,
+  copyIssuedClientSecret,
   onSubmitClearAllForms,
   onClickClearAllForms,
   regenerateState,

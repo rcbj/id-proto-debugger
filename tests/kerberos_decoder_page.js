@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: kerberos_decoder_page.js
 //
 // client/public/kerberos_decoder.html — the Kerberos Decoder page.

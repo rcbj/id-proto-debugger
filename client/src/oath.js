@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oath.js
 //
 // HOTP (RFC 4226) and TOTP (RFC 6238), and the YKOATH applet that
@@ -33,6 +36,8 @@ var TYPES = { "10": "HOTP", "20": "TOTP" };
 var ALGOS = { "1": "SHA-1", "2": "SHA-256", "3": "SHA-512" };
 var ALGO_CODE = { "SHA-1": 0x01, "SHA-256": 0x02, "SHA-512": 0x03 };
 var TYPE_CODE = { "HOTP": 0x10, "TOTP": 0x20 };
+var TAG_PROPERTY = 0x78;
+var MIN_SECRET_BYTES = 14;
 
 function reject(message) {
   log.debug("Entering reject().");
@@ -163,8 +168,54 @@ function secretBytes(secret) {
     log.debug("Leaving secretBytes(). Length.");
     reject("A YKOATH secret is 1 to 64 bytes.");
   }
+  // yubikit pads a short key with zeros to 14 bytes before a PUT,
+  // because the applet refuses a shorter one. HMAC pads its key with
+  // zeros to the block size anyway, so the codes do not change.
+  if (bytes.length < MIN_SECRET_BYTES) {
+    bytes = Buffer.concat([bytes,
+        Buffer.alloc(MIN_SECRET_BYTES - bytes.length, 0)]);
+  }
   log.debug("Leaving secretBytes().");
   return bytes;
+}
+
+// PUT's data field. Every element is TLV except the property, which
+// YKOATH writes as tag 78 and ONE value byte with no length (yubikit:
+// struct.pack(">BB", TAG_PROPERTY, prop)). parseElements() would read
+// that value byte as a length.
+function putElements(data) {
+  log.debug("Entering putElements().");
+  var nodes = [];
+  var i = 0;
+  while (i < data.length) {
+    var tag = data[i];
+    if (tag === TAG_PROPERTY) {
+      if (i + 1 >= data.length) {
+        log.debug("Leaving putElements(). Property.");
+        reject("The PUT property byte is missing.");
+      }
+      nodes.push({ tag: tag, value: data.slice(i + 1, i + 2) });
+      i += 2;
+      continue;
+    }
+    // YKOATH tags are one byte and its values are short, so the
+    // length is one byte, or 81 and one byte.
+    var length = data[i + 1];
+    var start = i + 2;
+    if (length === 0x81) {
+      length = data[i + 2];
+      start = i + 3;
+    }
+    if (length === undefined || length > 0x81 ||
+        start + length > data.length) {
+      log.debug("Leaving putElements(). Length.");
+      reject("A PUT element runs past the command.");
+    }
+    nodes.push({ tag: tag, value: data.slice(start, start + length) });
+    i = start + length;
+  }
+  log.debug("Leaving putElements().");
+  return nodes;
 }
 
 function algoByte(type, algorithm) {
@@ -201,7 +252,7 @@ function putApdu(opts) {
   if (options.touch || options.onlyIncreasing) {
     var property = (options.onlyIncreasing ? 0x01 : 0) |
         (options.touch ? 0x02 : 0);
-    parts.push(iso.encodeTlv(0x78, Buffer.from([property])));
+    parts.push(Buffer.from([TAG_PROPERTY, property]));
   }
   if (type === "HOTP" && options.counter) {
     if (!Number.isSafeInteger(options.counter) || options.counter < 0) {
@@ -307,6 +358,34 @@ function parseList(body) {
   return creds;
 }
 
+// The code a CALCULATE response element stands for. A truncated
+// answer (76) is the four bytes RFC 4226 section 5.3 calls DBC2's
+// source, so only its top bit is masked. A full answer (75) is the
+// whole HMAC (20, 32 or 64 bytes); the code is its dynamic truncation,
+// exactly as hotp() computes it from a secret.
+function codeFromResponse(tag, digits, raw) {
+  log.debug("Entering codeFromResponse().");
+  if (digits < 6 || digits > 8) {
+    log.debug("Leaving codeFromResponse(). Digits.");
+    return null;
+  }
+  var bin = null;
+  if (tag === 0x76 && raw.length === 4) {
+    bin = raw.readUInt32BE(0) & 0x7fffffff;
+  } else if (tag === 0x75 &&
+      (raw.length === 20 || raw.length === 32 || raw.length === 64)) {
+    var offset = raw[raw.length - 1] & 0x0f;
+    bin = raw.readUInt32BE(offset) & 0x7fffffff;
+  }
+  if (bin === null) {
+    log.debug("Leaving codeFromResponse(). Shape.");
+    return null;
+  }
+  var code = String(bin % Math.pow(10, digits)).padStart(digits, "0");
+  log.debug("Leaving codeFromResponse().");
+  return code;
+}
+
 function parseCalculate(body) {
   log.debug("Entering parseCalculate().");
   var nodes = iso.parseElements(body);
@@ -323,18 +402,52 @@ function parseCalculate(body) {
   }
   var digits = node.value[0];
   var raw = node.value.slice(1);
-  var code = null;
-  if (raw.length === 4 && digits >= 6 && digits <= 8) {
-    var bin = raw.readUInt32BE(0);
-    code = String(bin % Math.pow(10, digits)).padStart(digits, "0");
-  }
   log.debug("Leaving parseCalculate().");
   return {
     truncated: node.tag === 0x76,
     digits: digits,
     raw: raw,
-    code: code
+    code: codeFromResponse(node.tag, digits, raw)
   };
+}
+
+// CALCULATE ALL (YKOATH INS A4): a list of name (71) then response
+// pairs. 76 truncated and 75 full carry digits and a response; 77 is
+// an HOTP credential, which is not calculated, and 7C one that needs
+// a touch. Both of those carry the digit count alone.
+var CALCULATE_ALL_KINDS = {
+  "117": "full",
+  "118": "truncated",
+  "119": "HOTP, not calculated",
+  "124": "touch required, not calculated"
+};
+
+function parseCalculateAll(body) {
+  log.debug("Entering parseCalculateAll().");
+  var nodes = iso.parseElements(body);
+  var out = [];
+  var i = 0;
+  for (i = 0; i < nodes.length; i += 2) {
+    var name = nodes[i];
+    var answer = nodes[i + 1];
+    if (name.tag !== 0x71 || !answer ||
+        !CALCULATE_ALL_KINDS[String(answer.tag)] ||
+        answer.value.length < 1) {
+      log.debug("Leaving parseCalculateAll(). Pair.");
+      reject("A CALCULATE ALL response is name (71) and response " +
+          "(75, 76, 77 or 7C) pairs.");
+    }
+    var digits = answer.value[0];
+    var raw = answer.value.slice(1);
+    out.push({
+      name: name.value.toString("utf8"),
+      kind: CALCULATE_ALL_KINDS[String(answer.tag)],
+      digits: digits,
+      code: codeFromResponse(answer.tag, digits, raw)
+    });
+  }
+  log.debug("Leaving parseCalculateAll().");
+  return out;
 }
 
 function parseSelect(body) {
@@ -377,7 +490,7 @@ function describeCommand(input) {
   } else if (command.ins === 0x01) {
     summary = "PUT";
     rows = [{ label: "Instruction", value: "PUT (not sent)" }];
-    var nodes = iso.parseElements(command.data);
+    var nodes = putElements(command.data);
     var n = 0;
     for (n = 0; n < nodes.length; n++) {
       if (nodes[n].tag === 0x71) {
@@ -390,6 +503,20 @@ function describeCommand(input) {
         rows.push({ label: "Digits", value: String(nodes[n].value[1]) });
         rows.push({ label: "Secret",
             value: (nodes[n].value.length - 2) + " bytes, not shown" });
+      } else if (nodes[n].tag === TAG_PROPERTY) {
+        var prop = nodes[n].value[0];
+        var named = [];
+        if (prop & 0x01) {
+          named.push("only increasing");
+        }
+        if (prop & 0x02) {
+          named.push("touch required");
+        }
+        rows.push({ label: "Property", value: named.join(", ") ||
+            prop.toString(16) });
+      } else if (nodes[n].tag === 0x7a && nodes[n].value.length === 4) {
+        rows.push({ label: "Initial counter",
+            value: String(nodes[n].value.readUInt32BE(0)) });
       }
     }
   } else if (command.ins === 0x02) {
@@ -436,6 +563,15 @@ function describeResponse(input) {
           value: creds[i].type + " " + creds[i].algorithm });
     }
     summary = creds.length + " credential(s), " + summary;
+  } else if (response.data[0] === 0x71) {
+    var all = parseCalculateAll(response.data);
+    var k = 0;
+    for (k = 0; k < all.length; k++) {
+      rows.push({ label: all[k].name, value: (all[k].code ?
+          all[k].code + " (" + all[k].kind + ")" : all[k].kind) +
+          ", " + all[k].digits + " digits" });
+    }
+    summary = all.length + " code(s), " + summary;
   } else if (response.data[0] === 0x75 || response.data[0] === 0x76) {
     var calc = parseCalculate(response.data);
     rows.push({ label: "Digits", value: String(calc.digits) });
@@ -473,6 +609,7 @@ module.exports = {
   totpChallenge: totpChallenge,
   parseList: parseList,
   parseCalculate: parseCalculate,
+  parseCalculateAll: parseCalculateAll,
   parseSelect: parseSelect,
   describeCommand: describeCommand,
   describeResponse: describeResponse

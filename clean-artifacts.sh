@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Removes everything in this working tree that a build, a test run or an
 # `npm install` PUT there. Nothing it deletes is authored: every path below is
@@ -32,9 +35,9 @@
 #                            recovery copy.
 #   .claude/                 Ignored, but hand-authored: settings.local.json is
 #                            configuration somebody wrote, not output.
-#   sts/, api/node-ldapjs/   Git submodules. Only their node_modules go. The
-#                            directories themselves cost a
-#                            `git submodule update --init --recursive` to get
+#   api/node-ldapjs/         A git submodule. Only its node_modules goes. The
+#                            directory itself costs a
+#                            `git submodule update --init` to get
 #                            back, and an EMPTY submodule directory fails later
 #                            and elsewhere: npm installs a package with no
 #                            main, and the error names a missing module rather
@@ -174,8 +177,8 @@ fi
 # ---------------------------------------------------------------------------
 # Installed dependencies.
 #
-# Four package roots, plus the node-ldapjs submodules. The submodule
-# DIRECTORIES are never touched — only a node_modules inside one, which npm
+# Four package roots, plus the node-ldapjs submodule. The submodule
+# DIRECTORY is never touched — only a node_modules inside one, which npm
 # creates when its own dependencies are installed there rather than hoisted.
 # ---------------------------------------------------------------------------
 group "Installed dependencies (restore: npm ci)"
@@ -184,9 +187,7 @@ remove api/node_modules
 remove client/node_modules
 remove tests/node_modules
 remove extension/node_modules
-remove sts/node_modules
 remove api/node-ldapjs/node_modules
-remove sts/node-ldapjs/node_modules
 
 # ---------------------------------------------------------------------------
 # Build output.
@@ -285,7 +286,7 @@ cat <<'NOTES'
 
 To get a working tree back:
 
-  npm ci                                     # in api/, client/, tests/, and sts/
+  npm ci                                     # in api/, client/ and tests/
   cp common/data.js api/data.js              # both services require ./data.js
   cp common/data.js client/src/data.js
   cp common/xmldsig.js api/xmldsig.js        # the api's SAML signing

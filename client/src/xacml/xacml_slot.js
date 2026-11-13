@@ -1,8 +1,11 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xacml_slot.js
 //
-// The one-instance holder the editor and the ALFA reader were written
-// against. Loading the module builds the default instance. There is no
-// composition root in this debugger.
+// The one-instance holder behind `xacml_editor.js` and `xacml_alfa.js`.
+// Each of them exports its methods as functions forwarding to the instance
+// held here, and loading the module builds that instance.
 
 'use strict';
 

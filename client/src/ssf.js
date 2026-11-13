@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: ssf.js
 //
 // ---------------------------------------------------------------------------
@@ -125,7 +128,9 @@ var REMEMBERED = [
   'ssf_status_value', 'ssf_status_reason', 'ssf_verify_state',
   'ssf_poll_max', 'ssf_tx_type', 'ssf_tx_alg', 'ssf_tx_iss', 'ssf_tx_aud',
   'ssf_tx_txn', 'ssf_tx_media', 'ssf_tx_payload', 'ssf_tx_subject',
-  'ssf_tx_endpoint', 'ssf_auth_scheme', 'ssf_basic_user', 'ssf_verify_alg',
+  'ssf_tx_endpoint', 'ssf_auth_scheme', 'ssf_basic_user',
+  // What the next push inbox asks the api for. Not secrets.
+  'ssf_inbox_idle_minutes', 'ssf_inbox_ttl_minutes', 'ssf_inbox_max_kib',
   // The CAEP session's identity and its four common claims. None of them is a
   // credential: an `iss`/`sub`/`sid` triple is who a session belongs to, which
   // is exactly what the SETs on this page say out loud, and a reason message
@@ -1971,7 +1976,8 @@ function pollOnce() {
     streamId: id,
     maxEvents: Number(val('ssf_poll_max')) || 10,
     returnImmediately: true,
-    ack: pendingAcks
+    ack: pendingAcks,
+    setErrs: pendingSetErrs
   });
   var entry = recordCall('poll', where.url, id);
   request({ method: 'POST', url: where.url, body: body })
@@ -1985,21 +1991,43 @@ function pollOnce() {
       }
       settleCall(entry, operations.SUCCESS, '');
       pendingAcks = [];
+      pendingSetErrs = {};
       var read = ssfClient.readPollResponse(answer.body);
+      var repeated = 0;
+      var refused = 0;
       read.jtis.forEach(function (jti) {
-        takeReceivedToken(read.sets[jti], 'poll', id);
-        if (isOn('ssf_poll_ack')) {
+        var taken = takeReceivedToken(read.sets[jti], 'poll', id,
+          { pollKey: jti });
+        if (taken.duplicate) {
+          repeated++;
+        }
+        if (!isOn('ssf_poll_ack')) {
+          return;
+        }
+        if (taken.err) {
+          pendingSetErrs[jti] = { err: taken.err,
+            description: taken.description };
+          refused++;
+        } else {
           pendingAcks.push(jti);
         }
       });
       setStatus('ssf_poll_status',
         read.jtis.length + ' event(s)' +
+        (repeated
+          ? ' (' + repeated + ' already received, by jti, and not recorded ' +
+            'again — a transmitter redelivers what was never acknowledged)'
+          : '') +
         (read.moreAvailable
           ? ' — AND moreAvailable IS TRUE, so the queue is not drained. A ' +
             'client that ignores that member assumes one poll empties it.'
           : ' — the queue is drained (moreAvailable is false).') +
         (isOn('ssf_poll_ack') && read.jtis.length
-          ? ' They will be acknowledged on the next poll.'
+          ? ' They will be acknowledged on the next poll' +
+            (refused
+              ? ', ' + refused + ' of them in setErrs as REFUSED rather ' +
+                'than in ack'
+              : '') + '.'
           : ''),
         read.jtis.length ? 'ok' : 'pending');
       renderMessages();
@@ -2013,10 +2041,50 @@ function pollOnce() {
 // request: a receiver acknowledges what it has STORED, and it has not stored
 // anything until this page has drawn it.
 var pendingAcks = [];
+// What the next poll will REFUSE, as RFC 8936 section 2.4's `setErrs`: jti ->
+// { err, description }, with `err` from the SET Error Codes registry (RFC
+// 8935 section 7.1). A SET that failed a check here is not acknowledged as
+// stored. It is refused, which also takes it off the queue — the docs say
+// why — and tells the transmitter what was wrong with it.
+var pendingSetErrs = {};
 
 // ---------------------------------------------------------------------------
 // RECEIVING — THE api's PUSH INBOX.
 // ---------------------------------------------------------------------------
+// What the configuration pane asks a new push inbox to be: `{ body }` with
+// `idleTtlMs`, `ttlMs` and `maxInboxBytes` for each field that is filled in,
+// or `{ error }`. An empty field is left out, and the api uses its default.
+// The api, not this page, judges a value against its ceiling.
+function inboxRequest() {
+  log.debug("Entering inboxRequest().");
+  var fields = [
+    { id: 'ssf_inbox_idle_minutes', member: 'idleTtlMs', unit: 60000,
+      name: 'idle TTL' },
+    { id: 'ssf_inbox_ttl_minutes', member: 'ttlMs', unit: 60000,
+      name: 'lifetime' },
+    { id: 'ssf_inbox_max_kib', member: 'maxInboxBytes', unit: 1024,
+      name: 'byte cap' }
+  ];
+  var body = {};
+  var i;
+  for (i = 0; i < fields.length; i++) {
+    var text = val(fields[i].id).trim();
+    if (text === '') {
+      continue;
+    }
+    var number = Number(text);
+    if (!isFinite(number) || number <= 0) {
+      log.debug("Leaving inboxRequest(). " + fields[i].id + " malformed.");
+      return { error: 'The push inbox ' + fields[i].name + ' in the ' +
+        'configuration pane is "' + text + '". It must be a positive ' +
+        'number, or empty for the api\'s default.' };
+    }
+    body[fields[i].member] = Math.round(number * fields[i].unit);
+  }
+  log.debug("Leaving inboxRequest().");
+  return { body: body };
+}
+
 function createReceiver() {
   log.debug("Entering createReceiver().");
   if (!BACKEND_AVAILABLE) {
@@ -2028,10 +2096,21 @@ function createReceiver() {
     log.debug("Leaving createReceiver(). No api.");
     return false;
   }
+  var own = inboxRequest();
+  if (own.error) {
+    setText('ssf_inbox_status', own.error, 'ssf-status ssf-bad');
+    log.debug("Leaving createReceiver(). Malformed setting.");
+    return false;
+  }
+  saveState();
+  // The stream's delivery.authorization_header, so the api requires it on
+  // every push. Empty makes an OPEN inbox, and the status below says so.
+  var asked = Object.assign({ label: 'the Shared Signals debugger',
+    authorization: val('ssf_stream_auth_header').trim() }, own.body);
   fetch(API_URL + '/ssf/receiver', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ label: 'the Shared Signals debugger' })
+    body: JSON.stringify(asked)
   }).then(function (response) {
     return response.json();
   }).then(function (answer) {
@@ -2051,7 +2130,21 @@ function createReceiver() {
       'that in the stream\'s delivery.endpoint_url — it is already filled ' +
       'in above. THE TRANSMITTER has to be able to reach it, which is why ' +
       'it is the api\'s address as this page reached it rather than a ' +
-      'configured one.', 'ssf-status ssf-ok');
+      'configured one. It keeps ' +
+      Math.round(answer.inbox.maxInboxBytes / 1024) + ' KiB of events, ' +
+      'goes after ' + minutes(answer.inbox.idleTtlMs) + ' idle and after ' +
+      minutes(answer.inbox.ttlMs) + ' in any case (' +
+      answer.inbox.expiresAt + ' unless it is used). ' +
+      (answer.inbox.authenticated
+        ? 'Every push must carry the delivery.authorization_header above, ' +
+          'exactly; the api answers anything else 401 ' +
+          'authentication_failed. Change that field and you need a new ' +
+          'inbox.'
+        : 'THIS INBOX IS OPEN: delivery.authorization_header was empty ' +
+          'when it was created, so anybody who has its URL can push events ' +
+          'into it. Fill that field in and ask again to require it.'),
+      answer.inbox.authenticated ? 'ssf-status ssf-ok'
+        : 'ssf-status ssf-bad');
     log.debug("Leaving createReceiver(). " + answer.inbox.id);
   }).catch(function (e) {
     setText('ssf_inbox_status', 'The api could not be reached: ' + e.message,
@@ -2081,18 +2174,36 @@ function drainReceiver() {
     }
     inbox = answer.inbox;
     inboxSeen = answer.total;
+    var repeated = 0;
+    var accepted = 0;
     answer.events.forEach(function (one) {
-      takeReceivedToken(one.token, 'push', val('ssf_stream_id'), one);
+      var taken = takeReceivedToken(one.token, 'push', val('ssf_stream_id'),
+        one);
+      if (taken.duplicate) {
+        repeated++;
+      }
+      if (taken.err) {
+        accepted++;
+      }
     });
     setText('ssf_inbox_status',
-      answer.events.length + ' new event(s); ' + answer.inbox.pushes +
+      answer.events.length + ' new event(s)' +
+      (repeated
+        ? ' (' + repeated + ' already received, by jti, and not recorded ' +
+          'again)'
+        : '') + '; ' + answer.inbox.pushes +
       ' pushed to this inbox in total' +
       (answer.inbox.dropped
         ? ', and ' + answer.inbox.dropped + ' dropped because the inbox ' +
           'filled up — the OLDEST go, because a receiver that has stopped ' +
           'reading most wants what has happened lately'
-        : '') + '.',
-      answer.events.length ? 'ssf-status ssf-ok' : 'ssf-status ssf-pending');
+        : '') + '.' +
+      (accepted
+        ? ' ' + accepted + ' of them FAILED a check. ' + ALREADY_ACCEPTED
+        : ''),
+      accepted ? 'ssf-status ssf-bad'
+        : (answer.events.length ? 'ssf-status ssf-ok'
+          : 'ssf-status ssf-pending'));
     renderMessages();
     log.debug("Leaving drainReceiver(). " + answer.events.length);
   }).catch(function (e) {
@@ -2136,25 +2247,59 @@ function deleteReceiver() {
 // "valid" over a token whose audience is somebody else is the most dangerous
 // thing this page could say.
 // ---------------------------------------------------------------------------
+//
+// Answers `{ id, duplicate, err, description }`. `err` is the RFC 8935 SET
+// Error Code a receiver would refuse this token with, or '' when nothing
+// here refuses it; a poll puts it in the next request's `setErrs`.
+// `duplicate` is a jti this page has already recorded as received over a
+// delivery, which is recorded once — a transmitter redelivers what it never
+// saw acknowledged, and two rows would make delivery look twice as busy. A
+// PASTED token is always recorded: pasting it again is asking again.
 function takeReceivedToken(token, via, streamId, extra) {
   log.debug("Entering takeReceivedToken(). " + via);
+  var asked = extra || {};
   var parsed = ssfClient.parseSet(token);
   var verdicts = [];
   if (!parsed.ok) {
     verdicts.push({ level: 'error', text: parsed.problem });
-    ssfHistory.recordMessage({ direction: 'received', via: via,
-      streamId: streamId, token: token, verdicts: verdicts,
+    var unreadable = ssfHistory.recordMessage({ direction: 'received',
+      via: via, streamId: streamId, token: token, verdicts: verdicts,
       outcome: 'unreadable', detail: parsed.problem });
     log.debug("Leaving takeReceivedToken(). Unreadable.");
-    return;
+    return { id: unreadable, duplicate: false, err: 'invalid_request',
+      description: parsed.problem };
+  }
+  var jti = String(parsed.claims.jti || '');
+  if (via !== 'pasted' && ssfHistory.hasMessage(jti, 'received')) {
+    log.debug("Leaving takeReceivedToken(). Already received: " + jti);
+    return { id: '', duplicate: true, err: '', description: '' };
   }
   var read = ssfClient.readMetadata(metadata);
+  var expectedAudience = val('ssf_stream_aud');
   var headerVerdict = ssfClient.inspectSetHeader(parsed.header);
   var setVerdict = ssfClient.inspectSet(parsed.claims, {
     expectedIssuer: read.issuer,
-    expectedAudience: val('ssf_stream_aud'),
+    expectedAudience: expectedAudience,
     criticalMembers: read.criticalSubjectMembers
   });
+  // A check with nothing to check AGAINST is said out loud. Silence here
+  // would read as "the issuer and audience are right".
+  if (!read.issuer) {
+    verdicts.push({ level: 'warn', text: 'The "iss" was NOT checked: no ' +
+        'transmitter metadata has been fetched, so there is no issuer to ' +
+        'compare it with.' });
+  }
+  if (!expectedAudience) {
+    verdicts.push({ level: 'warn', text: 'The "aud" was NOT checked: this ' +
+        'page knows no audience for the stream. Read or create the stream ' +
+        'first, or type the audience in.' });
+  }
+  if (asked.pollKey !== undefined && String(asked.pollKey) !== jti) {
+    verdicts.push({ level: 'error', text: 'This SET arrived in the poll ' +
+        'response under the key "' + asked.pollKey + '" and its "jti" is "' +
+        jti + '". RFC 8936 section 2.2 keys the "sets" object BY jti, so ' +
+        'an acknowledgement of one names the other.' });
+  }
   headerVerdict.errors.forEach(function (text) {
     verdicts.push({ level: 'error', text: text });
   });
@@ -2202,6 +2347,13 @@ function takeReceivedToken(token, via, streamId, extra) {
     });
   });
 
+  var failed = verdicts.some(function (one) {
+    return one.level === 'error';
+  });
+  if (failed && via === 'push') {
+    verdicts.unshift({ level: 'error', text: ALREADY_ACCEPTED });
+  }
+  var haveKey = val('ssf_verify_key').trim() !== '';
   var id = ssfHistory.recordMessage({
     direction: 'received', via: via, streamId: streamId,
     jti: setVerdict.jti, types: setVerdict.types,
@@ -2212,13 +2364,69 @@ function takeReceivedToken(token, via, streamId, extra) {
       ? setVerdict.audience : pretty(setVerdict.audience),
     token: token, header: parsed.header, claims: parsed.claims,
     verdicts: verdicts,
-    signature: 'not checked',
-    outcome: verdicts.some(function (one) {
-      return one.level === 'error';
-    }) ? 'findings' : 'clean'
+    signature: haveKey ? 'being checked'
+      : 'NOT CHECKED: there is no verification key, so nothing says who ' +
+        'sent this',
+    // Never 'clean' until a signature has verified: an event nobody checked
+    // is UNVERIFIED, however well-formed it is.
+    outcome: failed ? OUTCOME_FINDINGS : OUTCOME_UNVERIFIED
   });
-  verifyReceived(id, token, parsed);
+  var keyProblem = verifyReceived(id, token, parsed,
+    via === 'poll' ? jti : '');
+  var refusal = setErrorFor(parsed.claims, verdicts, read.issuer,
+    expectedAudience);
+  if (!refusal.err && keyProblem) {
+    refusal = { err: 'invalid_key', description: keyProblem };
+  }
   log.debug("Leaving takeReceivedToken(). " + id);
+  return { id: id, duplicate: false, err: refusal.err,
+    description: refusal.description };
+}
+
+// What a received row's outcome can be. `clean` needs a signature that
+// verified as well as no error-level finding; anything short of that is
+// `unverified` or `findings`, and nothing counts it as clean.
+var OUTCOME_CLEAN = 'clean';
+var OUTCOME_UNVERIFIED = 'unverified';
+var OUTCOME_FINDINGS = 'findings';
+
+// RFC 8935 has the receiver answer a push before this page can look at it,
+// and the api answers 202 for anything it can store. So a pushed SET that
+// fails here was ALREADY ACCEPTED as far as the transmitter knows, and
+// nothing can refuse it now. See docs/ssf.md.
+var ALREADY_ACCEPTED = 'ALREADY ACCEPTED: the api answered this push 202 ' +
+  'before this page checked it, so the transmitter believes it was ' +
+  'delivered and RFC 8935 has no way to take that back. Do not act on it; ' +
+  'the problem has to be raised with the transmitter by hand.';
+
+// The SET Error Code (RFC 8935 section 7.1) a receiver refuses this token
+// with: the issuer and audience codes when those are what failed, and
+// invalid_request for any other error-level finding. '' when there is none.
+function setErrorFor(claims, verdicts, expectedIssuer, expectedAudience) {
+  log.debug("Entering setErrorFor().");
+  var errors = verdicts.filter(function (one) {
+    return one.level === 'error';
+  });
+  if (!errors.length) {
+    log.debug("Leaving setErrorFor(). None.");
+    return { err: '', description: '' };
+  }
+  var description = errors[0].text;
+  if (expectedIssuer && claims.iss !== undefined &&
+      String(claims.iss) !== String(expectedIssuer)) {
+    log.debug("Leaving setErrorFor(). invalid_issuer.");
+    return { err: 'invalid_issuer', description: description };
+  }
+  if (expectedAudience && claims.aud !== undefined) {
+    var audience = Object.prototype.toString.call(claims.aud) ===
+      '[object Array]' ? claims.aud.map(String) : [String(claims.aud)];
+    if (audience.indexOf(String(expectedAudience)) < 0) {
+      log.debug("Leaving setErrorFor(). invalid_audience.");
+      return { err: 'invalid_audience', description: description };
+    }
+  }
+  log.debug("Leaving setErrorFor(). invalid_request.");
+  return { err: 'invalid_request', description: description };
 }
 
 // The signature, checked separately and asynchronously — several algorithms
@@ -2226,14 +2434,18 @@ function takeReceivedToken(token, via, streamId, extra) {
 // which is the whole of why this is its own step: a receiver has to act on the
 // difference, and a page that quietly showed "no key" as a pass would be
 // teaching the opposite of what this protocol needs.
-function verifyReceived(id, token, parsed) {
+//
+// A signature that does not verify on a POLLED token still waiting to be
+// acknowledged is moved from the next poll's `ack` to its `setErrs`. A
+// pushed token was answered 202 by the api before this page saw it, so there
+// is nothing left to refuse.
+function verifyReceived(id, token, parsed, jti) {
   log.debug("Entering verifyReceived().");
   var keyText = val('ssf_verify_key').trim();
   if (!keyText) {
     log.debug("Leaving verifyReceived(). No key.");
-    return;
+    return '';
   }
-  var alg = val('ssf_verify_alg') || (parsed.header || {}).alg;
   var key;
   try {
     key = JSON.parse(keyText);
@@ -2241,34 +2453,86 @@ function verifyReceived(id, token, parsed) {
     // A PEM, or something else jws.js can resolve. Handed over as text.
     key = keyText;
   }
-  ssfClient.verifySet(token, key, alg).then(function (verdict) {
+  // The algorithm is the SET's own header `alg`, held against the key: see
+  // ssfClient.resolveVerification(). A mismatch is refused, not tried.
+  var chosen = ssfClient.resolveVerification(parsed.header, key);
+  var refuse = function (description) {
+    log.debug("Entering refuse(). " + jti);
+    var waiting = jti ? pendingAcks.indexOf(jti) : -1;
+    if (waiting >= 0) {
+      pendingAcks.splice(waiting, 1);
+      pendingSetErrs[jti] = { err: 'invalid_key', description: description };
+    }
+    log.debug("Leaving refuse(). " + (waiting >= 0));
+  };
+  if (!chosen.ok) {
+    refuse(chosen.problem);
+    noteSignature(id, 'NOT VERIFIED: ' + chosen.problem, false);
+    log.debug("Leaving verifyReceived(). Refused before trying.");
+    return chosen.problem;
+  }
+  var alg = chosen.alg;
+  ssfClient.verifySet(token, chosen.key, alg).then(function (verdict) {
     // `reason` is per SIGNATURE rather than per token — a general
     // serialization can carry several — so the first one's is what a compact
     // SET's failure is.
     var first = (verdict.signatures || [])[0] || {};
+    if (!verdict.valid) {
+      refuse('The signature did not verify with ' + alg + '.');
+    }
     noteSignature(id, verdict.valid
       ? 'verified with ' + alg
       : 'DID NOT VERIFY with ' + alg + ': ' +
-        String(first.reason || 'the signature does not match'));
+        String(first.reason || 'the signature does not match'),
+      verdict.valid);
     log.debug("Leaving verifyReceived(). " + verdict.valid);
   }).catch(function (e) {
-    noteSignature(id, 'could not be checked: ' + e.message);
+    refuse('The signature could not be checked: ' + e.message);
+    noteSignature(id, 'could not be checked: ' + e.message, false);
     log.debug("Leaving verifyReceived(). Threw.");
   });
+  log.debug("Leaving verifyReceived(). Checking.");
+  return '';
 }
 
-function noteSignature(id, text) {
+// `valid` is true only for a signature that verified. That is the one thing
+// that turns an `unverified` row `clean`; anything else makes it `findings`,
+// and a pushed one gains the ALREADY ACCEPTED finding and is said on the
+// inbox's status line, because it is the one failure this page cannot
+// refuse back to the transmitter.
+function noteSignature(id, text, valid) {
   log.debug("Entering noteSignature().");
   // The history is written whole, so the row is re-read, changed and written
   // back — which is what keeps ssf_history.js free of a "patch one field"
   // function that only this caller would use.
   var rows = ssfHistory.messages();
   var i;
+  var pushedAndFailed = false;
   for (i = rows.length - 1; i >= 0; i--) {
     if (rows[i].id === id) {
       rows[i].signature = text;
+      if (valid) {
+        if (rows[i].outcome === OUTCOME_UNVERIFIED) {
+          rows[i].outcome = OUTCOME_CLEAN;
+        }
+      } else {
+        var already = rows[i].outcome === OUTCOME_FINDINGS;
+        rows[i].outcome = OUTCOME_FINDINGS;
+        rows[i].verdicts = rows[i].verdicts || [];
+        rows[i].verdicts.push({ level: 'error', text: 'Signature: ' + text });
+        if (rows[i].via === 'push' && !already) {
+          rows[i].verdicts.unshift({ level: 'error',
+            text: ALREADY_ACCEPTED });
+          pushedAndFailed = true;
+        }
+      }
       break;
     }
+  }
+  if (pushedAndFailed) {
+    setText('ssf_inbox_status', 'A pushed event FAILED its signature ' +
+      'check after the api had already answered it 202. ' +
+      ALREADY_ACCEPTED, 'ssf-status ssf-bad');
   }
   try {
     localStorage.setItem(ssfHistory.MESSAGE_KEY, JSON.stringify(rows));
@@ -2356,10 +2620,9 @@ function fillEventTypes() {
     }
   }
   var algs = el('ssf_tx_alg');
-  var verifyAlgs = el('ssf_verify_alg');
   // ONCE, however often this function runs. It is called again on every
-  // profile change to rebuild the event menu above, and the algorithm menus
-  // have nothing to do with the vocabulary — appending to them a second time
+  // profile change to rebuild the event menu above, and the algorithm menu
+  // has nothing to do with the vocabulary — appending to them a second time
   // would give this page ninety algorithms with every name twice.
   if (algs && algs.options.length) {
     renderFamilies();
@@ -2377,15 +2640,13 @@ function fillEventTypes() {
       // this page still REPORTS one that arrives.
       return;
     }
-    [algs, verifyAlgs].forEach(function (host) {
-      if (!host) {
-        return;
-      }
-      var option = document.createElement('option');
-      option.value = id;
-      option.textContent = spec.label || id;
-      host.appendChild(option);
-    });
+    if (!algs) {
+      return;
+    }
+    var option = document.createElement('option');
+    option.value = id;
+    option.textContent = spec.label || id;
+    algs.appendChild(option);
   });
   if (algs && !algs.value) {
     algs.value = 'ES256';
@@ -2727,6 +2988,40 @@ function clearMessages() {
 // answer here, which is a stronger signal than a configuration flag because it
 // is the api itself saying so.
 // ---------------------------------------------------------------------------
+// A duration in milliseconds as minutes, for a sentence.
+function minutes(ms) {
+  log.debug("Entering minutes().");
+  var out = Math.round((Number(ms) || 0) / 6000) / 10 + ' min';
+  log.debug("Leaving minutes(). " + out);
+  return out;
+}
+
+// The api's push-inbox ceilings and counts in the configuration pane, read
+// only, so a refusal of a value or of a sixth inbox has its reason on show.
+function renderReceiverCeilings(receiver) {
+  log.debug("Entering renderReceiverCeilings().");
+  if (!receiver || !receiver.enabled) {
+    setText('ssf_receiver_ceilings', receiver
+      ? 'This api hosts no push inbox (ssfReceiverEnabled), so these ' +
+        'fields do nothing here.'
+      : 'No api answered, so there is no push inbox and these fields do ' +
+        'nothing here.');
+    log.debug("Leaving renderReceiverCeilings(). Disabled.");
+    return;
+  }
+  setText('ssf_receiver_ceilings', 'The api\'s ceilings, which are also ' +
+    'its defaults: idle TTL ' + minutes(receiver.idleTtlMs) +
+    ' (ssfReceiverIdleTtlMs), lifetime ' + minutes(receiver.ttlMs) +
+    ' (ssfReceiverTtlMs), byte cap ' +
+    Math.round((receiver.maxInboxBytes || 0) / 1024) +
+    ' KiB (ssfReceiverMaxInboxBytes). Not settable here: at most ' +
+    receiver.maxInboxesPerCaller + ' inbox(es) per caller ' +
+    '(ssfReceiverMaxInboxesPerCaller) and ' + receiver.maxInboxes +
+    ' in all (ssfReceiverMaxInboxes), which is why one more is refused ' +
+    'until one is deleted or goes idle; ' + receiver.held + ' held now.');
+  log.debug("Leaving renderReceiverCeilings().");
+}
+
 function askApiLimits() {
   log.debug("Entering askApiLimits().");
   if (!BACKEND_AVAILABLE) {
@@ -2735,6 +3030,7 @@ function askApiLimits() {
       'delivery is unavailable — a page cannot be an HTTP server, which is ' +
       'RFC 8935 rather than a limitation of this tool. POLL delivery works ' +
       'exactly as it does anywhere.');
+    renderReceiverCeilings(null);
     log.debug("Leaving askApiLimits(). No api.");
     return;
   }
@@ -2743,6 +3039,7 @@ function askApiLimits() {
   }).then(function (answer) {
     apiLimits = answer;
     var receiver = answer.receiver || {};
+    renderReceiverCeilings(receiver);
     setText('ssf_limits',
       'The api will forward ' + (answer.methods || []).join(', ') +
       ', up to ' + answer.maxRequestBytes + ' bytes of request body, and it ' +
@@ -2762,6 +3059,7 @@ function askApiLimits() {
     setText('ssf_limits',
       'The api did not answer (' + e.message + '), so every call will be ' +
       'made by this browser.');
+    renderReceiverCeilings(null);
     log.debug("Leaving askApiLimits(). No answer.");
   });
 }

@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Stand up a real Windows KDC, run tests/krb5_real_dc.js against it, tear it
 # down. One operation, and the teardown happens whatever the test did.

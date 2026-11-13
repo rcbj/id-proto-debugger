@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wsfed_msg.js
 //
 // Pure WS-Federation Passive Requestor Profile message construction, factored

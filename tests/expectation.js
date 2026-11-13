@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: expectation.js
 //
 // ---------------------------------------------------------------------------
@@ -142,7 +145,7 @@ function require_(condition, what, why) {
     what + " " + why + "\n\n" +
     "This is a FAILURE rather than a skip on purpose. The service is " +
     "reachable, so it is there; what is missing is a capability it is " +
-    "supposed to have. That is a moved endpoint, an un-bumped sts/ gitlink, " +
+    "supposed to have. That is a moved endpoint, a stale IYA_STS_IMAGE, " +
     "or a regression — never a fact about this machine. A suite that skipped " +
     "here would go green with the test switched off, which is exactly how " +
     "fifty-four jobs stopped running unnoticed on 2026-09-01. See " +

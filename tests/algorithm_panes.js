@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: algorithm_panes.js
 //
 // EVERY ALGORITHM IN THE JWT TOOLS AND ENCRYPTION PANES, EXERCISED IN A

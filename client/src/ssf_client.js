@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: ssf_client.js
 //
 // ---------------------------------------------------------------------------
@@ -1389,11 +1392,11 @@ function signSet(claims, key, alg, options) {
   });
 }
 
-// Verify one. The algorithm is the CALLER's — `algId` — and never the token's,
-// which is RFC 8725 section 3.1: a verifier that took the algorithm from the
-// header would let the token choose both halves of its own check. The page
-// takes it from the key it resolved, so a transmitter that changed algorithm
-// is a mismatch REPORTED rather than accommodated.
+// Verify one. `alg` is passed explicitly and jws.js is never left to read it
+// off the token. The page gets it from resolveVerification() below, which
+// takes the SET's own header `alg` only after holding it against the key it
+// resolved, so a token cannot choose an algorithm its key does not fit (RFC
+// 8725 section 3.1).
 function verifySet(token, key, alg, options) {
   log.debug("Entering verifySet(). alg=" + alg);
   var asked = options || {};
@@ -1404,6 +1407,99 @@ function verifySet(token, key, alg, options) {
     algId: alg,
     backend: asked.backend
   });
+}
+
+// ---------------------------------------------------------------------------
+// WHICH ALGORITHM, AND WHICH KEY, A RECEIVED SET IS VERIFIED WITH.
+//
+// The algorithm is the SET's header `alg`, and it is accepted only when the
+// key agrees with it: a JWK Set is narrowed to one key (by `kid`, or the one
+// key that can verify that algorithm), and that key's own `alg`, `kty`, `crv`
+// and `use` must not contradict the header. A mismatch is REFUSED with a
+// sentence rather than tried, because a transmitter that changed algorithm
+// is a finding. `alg: none`, or no `alg`, is refused outright.
+//
+// A PEM carries no algorithm of its own. The header's is used, and jws.js
+// refuses a key of the wrong type when it imports it.
+//
+// Answers `{ ok, alg, key, problem }`, where `alg` is jws.js's algorithm id.
+// That is the header `alg` itself for everything but EdDSA, where RFC 8037
+// puts the curve in the key: the id is then the one whose curve is the
+// key's (`EdDSA-Ed25519` or `EdDSA-Ed448`). No DOM, so tests/ssf_engine.js
+// drives it.
+// ---------------------------------------------------------------------------
+var KTY_FOR_FAMILY = { hmac: 'oct', rsa: 'RSA', ec: 'EC', okp: 'OKP' };
+
+function resolveVerification(header, key) {
+  log.debug("Entering resolveVerification().");
+  var alg = String((header && header.alg) || '');
+  if (!alg || alg === 'none') {
+    log.debug("Leaving resolveVerification(). No usable alg.");
+    return { ok: false, alg: alg, key: null, problem: alg
+      ? 'The SET is UNSIGNED (alg: none), so there is nothing to verify.'
+      : 'The SET\'s header has no "alg", so there is nothing to verify ' +
+        'it with.' };
+  }
+  var candidates = jws.algIds().filter(function (id) {
+    return jws.algSpec(id).alg === alg;
+  });
+  var spec = candidates.length ? jws.algSpec(candidates[0]) : null;
+  if (!spec) {
+    log.debug("Leaving resolveVerification(). Unknown alg.");
+    return { ok: false, alg: alg, key: null,
+      problem: 'The SET\'s header names alg "' + alg + '", which this ' +
+        'build does not implement.' };
+  }
+  if (typeof key === 'string' || !key || typeof key !== 'object') {
+    // For EdDSA jws.js tells the two curves apart by the key's length.
+    log.debug("Leaving resolveVerification(). Not a JWK; the header's alg.");
+    return { ok: !!key, alg: candidates[0], key: key || null,
+      problem: key ? '' : 'There is no verification key.' };
+  }
+  var jwk = key;
+  if (Object.prototype.toString.call(key.keys) === '[object Array]') {
+    try {
+      jwk = jws.selectFromJwks(key, header, spec);
+    } catch (e) {
+      log.debug("Leaving resolveVerification(). No key in the set.");
+      return { ok: false, alg: alg, key: null, problem: e.message };
+    }
+  }
+  var algId = candidates[0];
+  if (candidates.length > 1) {
+    var byCurve = candidates.filter(function (id) {
+      return jws.algSpec(id).crv === jwk.crv;
+    });
+    if (byCurve.length) {
+      algId = byCurve[0];
+      spec = jws.algSpec(algId);
+    }
+  }
+  var problems = [];
+  if (jwk.alg && jwk.alg !== alg) {
+    problems.push('The key ' + (jwk.kid ? '"' + jwk.kid + '" ' : '') +
+        'says alg "' + jwk.alg + '" and the SET was signed with "' + alg +
+        '".');
+  }
+  var kty = KTY_FOR_FAMILY[spec.family];
+  if (kty && jwk.kty && jwk.kty !== kty) {
+    problems.push('alg "' + alg + '" needs a ' + kty + ' key and this one ' +
+        'is ' + jwk.kty + '.');
+  }
+  if (spec.crv && jwk.crv && jwk.crv !== spec.crv) {
+    problems.push('alg "' + alg + '" is on ' + spec.crv + ' and this key is ' +
+        'on ' + jwk.crv + '.');
+  }
+  if (jwk.use && jwk.use !== 'sig') {
+    problems.push('The key\'s "use" is "' + jwk.use + '", not "sig".');
+  }
+  if (problems.length) {
+    log.debug("Leaving resolveVerification(). Mismatch.");
+    return { ok: false, alg: algId, key: jwk,
+      problem: 'REFUSED, not tried: ' + problems.join(' ') };
+  }
+  log.debug("Leaving resolveVerification(). " + algId);
+  return { ok: true, alg: algId, key: jwk, problem: '' };
 }
 
 // ---------------------------------------------------------------------------
@@ -1638,6 +1734,7 @@ module.exports = {
   setHeader: setHeader,
   signSet: signSet,
   verifySet: verifySet,
+  resolveVerification: resolveVerification,
   parseSet: parseSet,
   inspectSet: inspectSet,
   inspectSetHeader: inspectSetHeader

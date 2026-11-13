@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: popup.js — the extension's own surface.
 //
 // Arming happens HERE and cannot happen anywhere else: permissions.request()

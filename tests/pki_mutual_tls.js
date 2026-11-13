@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: pki_mutual_tls.js
 //
 // The PKI page, end to end, against a server that answers back: issue a client

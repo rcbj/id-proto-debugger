@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: pki_pqc_x509.js
 //
 // The POST-QUANTUM half of the PKI workflow: client/src/pqc_x509.js, the

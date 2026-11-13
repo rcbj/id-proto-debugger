@@ -1,6 +1,6 @@
 // @ts-check
 // SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 
 'use strict';
 //
@@ -17,7 +17,7 @@
 // requests", wrong — and a PDP that finds out at evaluation time reports it as
 // an Indeterminate, once per request, for ever.
 //
-// FIVE CASES IN THE VENDORED CONFORMANCE SUITE EXIST FOR THIS AND FOR NOTHING
+// FIVE CASES IN THE OASIS CONFORMANCE SUITE EXIST FOR THIS AND FOR NOTHING
 // ELSE, and upstream renamed their `Request.xml` and `Response.xml` to
 // `.ignore` precisely so that no runner could evaluate them and pass by
 // accident. Without this file all five load happily and produce a decision:
@@ -44,9 +44,9 @@
 // It validates the MODEL, so it is the same check for a policy that arrived as
 // XACML XML, as JSON, or as ALFA — which is the rule this whole directory is
 // built on (see `xacml_model.js`). `xacml_xml.js` calls it at the end of
-// `parsePolicy()`; an ALFA import reaches the same call because the console
-// writes the converted model out as XML and `xacml_store.js`'s write parses
-// that document through `parsePolicy()`. (The JSON Profile reads requests,
+// `parsePolicy()`; an ALFA import reaches the same call because the page
+// stores the converted model as XML and `xacml_workbench.js` reads that
+// document back through `parsePolicy()`. (The JSON Profile reads requests,
 // never policies.) Putting the logic in any one reader would mean another
 // accepted policies the first refused.
 //
@@ -64,6 +64,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 const datatypes = require('./xacml_datatypes');
 const functions = require('./xacml_functions');
@@ -121,20 +122,23 @@ function staticTypeOf(expression, scope, problems) {
     return { kind: 'function', type: null };
   }
   if (expression.kind === 'variableRef') {
-    const definition = scope.variables[expression.variableId];
+    // Own members only (2026-11-12): a VariableReference to `constructor`
+    // is to a variable nobody defined, not to Object.
+    const definition = ownMembers.read(scope.variables,
+                                       expression.variableId);
     if (!definition) {
       problems.push('VariableReference names "' + expression.variableId +
                     '", which no VariableDefinition in this policy defines.');
       log.debug('Leaving staticTypeOf(). Undefined variable.');
       return null;
     }
-    if (scope.inProgress[expression.variableId]) {
+    if (ownMembers.read(scope.inProgress, expression.variableId)) {
       // Already reported by the caller that opened the cycle; returning null
       // here stops the recursion rather than reporting it a second time.
       log.debug('Leaving staticTypeOf(). Cyclic variable.');
       return null;
     }
-    scope.inProgress[expression.variableId] = true;
+    ownMembers.put(scope.inProgress, expression.variableId, true);
     const type = staticTypeOf(definition, scope, problems);
     delete scope.inProgress[expression.variableId];
     log.debug('Leaving staticTypeOf(). A variable reference.');
@@ -351,7 +355,7 @@ function checkPolicy(policy, problems) {
     return;
   }
   Object.keys(scope.variables).forEach(function (id) {
-    scope.inProgress[id] = true;
+    ownMembers.put(scope.inProgress, id, true);
     staticTypeOf(scope.variables[id], scope, problems);
     delete scope.inProgress[id];
   });

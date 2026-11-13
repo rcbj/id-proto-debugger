@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: federation_choice_sso.js
 //
 // ===========================================================================
@@ -1089,7 +1092,7 @@ async function test() {
     "appFederationRelationship is not published as kind \"multi\" in the " +
     "schema at GET /admin-api/ldap/applications, so an application cannot " +
     "name two federation partners and there is nothing to choose between. " +
-    "Either the sts/ submodule predates the multi-valued attribute (bump " +
+    "Either the iya-sts image predates the multi-valued attribute (bump " +
     "it) or that endpoint has moved again.");
   const spBase = stsBase + "/realm/" + SP_REALM;
   const idpBase = stsBase + "/realm/" + IDP_REALM;

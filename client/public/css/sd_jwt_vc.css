@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
 /* SD-JWT VC issuance workflow — the three pages share this sheet on top of
    debugger.css, so the panes, tooltips and buttons look exactly like the rest
    of the OAuth2 / OIDC debugger and only the credential-specific parts are new. */

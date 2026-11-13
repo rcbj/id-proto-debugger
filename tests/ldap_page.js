@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: ldap_page.js
 //
 // client/public/ldap.html — the LDAP Protocol Debugger, driven through its own
@@ -252,7 +255,8 @@ async function preconditions() {
       log.debug("Leaving preconditions(). The mock has no directory.");
       return { ok: false, why: "the mock STS has no embedded LDAP directory " +
         "(" + stsUrl + "/admin-api/ldap/service answered " +
-        directory.status + ") — the sts/ gitlink probably predates it" };
+        directory.status + ") — the iya-sts image (IYA_STS_IMAGE) probably " +
+        "predates it" };
     }
     const described = await directory.json();
     if (described.listening === false) {

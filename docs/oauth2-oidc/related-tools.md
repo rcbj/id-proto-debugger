@@ -36,7 +36,7 @@ Both tabs have the same verification block.
 | Field or button | Default | What it does |
 |---|---|---|
 | **Verification Type** | HMAC Secret | Also X.509 Certificate (PEM), JWKS (JSON), and JWKS (URL). The choice is stored. |
-| **JWT Verification Key/URL** | empty | Secret, PEM (a certificate or a bare public key), JWKS JSON, or a URL. JWKS selection is by `kid`, for every algorithm the verifier supports, not only RSA. |
+| **JWT Verification Key/URL** | empty, not stored | Secret, PEM (a certificate or a bare public key), JWKS JSON, or a URL. JWKS selection is by `kid`, for every algorithm the verifier supports, not only RSA. |
 | **Verify Signature** | | Writes **Verification Output**. |
 
 ### Claims validation
@@ -51,7 +51,7 @@ Both tabs have the same verification block.
 | **Clock Skew Tolerance (seconds)** | 30 | Applied to `exp`, `nbf`, and `iat`. |
 | **RFC 9068 on open** | unchecked | When this page opens an access token, JWT Purpose becomes OAuth2 Access Token (RFC 9068). The choice is stored. Opening the page leaves the stored purpose as it was. |
 | **Workflow comparison** | unchecked | Compares `iss` with the discovered issuer, `aud` with the resource parameter that was sent, and `client_id` with the workflow's client id. A blank value is a skip. The token request's resource is used when that request sent one. |
-| **Signature** | unchecked | Verifies with the key above and includes the result in this report. The verification output is updated as well. |
+| **Signature** | unchecked | Verifies with the key above and includes the result in this report. The verification output is updated as well. Unchecked, an access token's report carries `SKIP  signature`. The same goes for `iss` and `aud` when there is nothing to compare them with (no **Expected Issuer** / **Expected Audience**, and no workflow comparison that ran): each is `SKIP … not compared: no expected issuer` (or audience) rather than a PASS. A clean run that left any of the three out ends "No check failed, but these were not checked: …" instead of "All checks passed.", because RFC 9068 section 4 accepts no token until all three are checked. |
 | **Decrypt first** | unchecked | Opens a five-segment JWE with the private key below, then checks the inner JWT. A three-segment token is a skip. |
 | **Decryption key** | empty | PEM or JWK. Kept for this visit only. |
 | **Authorization claims** | unchecked | `groups`, `roles`, and `entitlements`. Absent is a skip. Present must be an array of strings, or of objects with a string `value`. |
@@ -74,8 +74,8 @@ it with the token filled in.
 | **Token Type Hint** | empty | Also `access_token` and `refresh_token`. |
 | **OAuth2 Authentication Type** | Basic Auth | Or Bearer Token. |
 | **OAuth2 Client ID** | empty, stored | With **Client Secret**, for Basic Auth. |
-| **OAuth2 Client Secret** | empty, stored | The field is a text input and it is stored with the rest of the form. |
-| **OAuth2 Bearer Token** | empty, stored | Used when the authentication type is Bearer Token. |
+| **OAuth2 Client Secret** | empty | Not stored. It is a password, so it is gone when the page reloads, and any copy left in local storage is removed on load. |
+| **OAuth2 Bearer Token** | empty, kept for this tab | Used when the authentication type is Bearer Token. It is held in `sessionStorage`, so it survives a reload in the same tab and is gone when the tab closes. An older copy in `localStorage` is removed on load. |
 | **Introspect Token** | | The response is **Introspection Endpoint Results**. |
 
 ## UserInfo

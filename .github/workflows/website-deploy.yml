@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 name: Deploy Static Site (idptools.com)
 
 # Builds the static client content and deploys it to S3 + CloudFront using the

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # --- CloudFront distribution for the test site (same pattern as prod) ---
 
 # Rewrite /callback -> /callback/index.html so the S3 website endpoint does not

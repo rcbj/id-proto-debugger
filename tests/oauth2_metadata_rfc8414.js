@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oauth2_metadata_rfc8414.js
 //
 // RFC 8414 (OAuth 2.0 Authorization Server Metadata) support, end to end:

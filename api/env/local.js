@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 var config = {
   apiUrl: "https://localhost:4000",
   uiUrl: "https://localhost:3000",
@@ -248,14 +251,26 @@ var config = {
   ssfReceiverEnabled: true,
   // How long an inbox lives. A page that closed its tab leaves nothing behind
   // for longer than this.
+  // ssfReceiverTtlMs, ssfReceiverIdleTtlMs and ssfReceiverMaxInboxBytes are
+  // each the DEFAULT for one inbox and its CEILING: the SSF page may ask an
+  // inbox for less, and a request for more is refused naming the setting.
   ssfReceiverTtlMs: 3600000,
+  // How long an inbox lives with no push, drain or clear. The TTL above
+  // still applies however busy it is.
+  ssfReceiverIdleTtlMs: 1800000,
   // How many inboxes, how many events in each, and how large one event may be.
   // A transmitter that pushed in a loop fills one bounded ring and stops; the
   // oldest event goes rather than the newest, because a receiver that has
   // stopped draining most wants what has happened lately.
   ssfReceiverMaxInboxes: 20,
+  // One caller's share of those inboxes, by its address, so one client
+  // cannot hold them all.
+  ssfReceiverMaxInboxesPerCaller: 5,
   ssfReceiverMaxEvents: 200,
   ssfReceiverMaxEventBytes: 65536,
+  // The most one inbox holds in total, oldest dropped first. Without it
+  // the three caps above multiply out to a quarter of a gigabyte.
+  ssfReceiverMaxInboxBytes: 1048576,
   // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
   // TLS test the PKI page (client/public/pki.html) runs.
   //

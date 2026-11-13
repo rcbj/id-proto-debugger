@@ -366,6 +366,20 @@ deployment has no api. The page can then call the authorization server
 from the browser, which works when that server allows the origin. See
 `docs/gnap.md`.
 
+**mtls is the one GNAP proof this service MAKES rather than forwards**
+(RFC 9635 section 7.3.2): the key is the TLS client certificate and a
+browser cannot choose which certificate a fetch presents, so the page
+sends `clientCertificatePem` and `clientKeyPem` with the request. The
+proxy checks the pair before anything is sent (both or neither, https
+only, PEM, at most 64 KiB each, the key is the certificate's) and
+`gnapClientCertificateAgent()` in `server.js` builds an https agent
+for that one call through `guard.createAgent()` and the connect
+deadline, the same two layers `agentFor()` uses — so the address
+policy, the call timeout, `maxContentLength` and `maxRedirects` are
+unchanged. It is never cached and never kept alive (it holds the
+caller's private key) and is destroyed when the call settles. Neither
+PEM is logged. `tests/api_gnap.js` drives the route end to end.
+
 ## SPIFFE: gRPC, and the only endpoint here that dials a filesystem path
 
 `POST /spiffe/call` (`api/spiffe_client.js`) carries **both** of SPIFFE's gRPC

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: compose_env_forwarding.js
 //
 // Every variable the COMPOSE FILES read from the environment must be listed in

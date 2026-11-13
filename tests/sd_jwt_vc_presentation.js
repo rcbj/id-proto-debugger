@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: sd_jwt_vc_presentation.js
 //
 // The SD-JWT VC PRESENTATION workflow, end to end:

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xacml_workbench.js
 //
 // The policy editor and the decision test, with no DOM. A repository
@@ -27,6 +30,7 @@ var alfa = require("./xacml/xacml_alfa");
 var validate = require("./xacml/xacml_validate");
 var pdp = require("./xacml/xacml_pdp");
 var requestBuilder = require("./xacml/xacml_request");
+var ownMembers = require("./xacml/xacml_own_members");
 
 var AuthorizationRequest = requestBuilder.AuthorizationRequest;
 
@@ -571,7 +575,7 @@ function createWorkbench(repository) {
       }
       var loaded = tryParse(row.document);
       if (loaded.policy && loaded.policy.id) {
-        map[loaded.policy.id] = loaded.policy;
+        ownMembers.put(map, loaded.policy.id, loaded.policy);
       }
     });
     log.debug("Leaving repositoryMap().");

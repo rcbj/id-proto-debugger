@@ -1,5 +1,5 @@
 // SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 
 'use strict';
 //
@@ -7,7 +7,7 @@
 //
 // ---------------------------------------------------------------------------
 // A GNAP CLIENT INSTANCE. RFC 9635, with the proofs of sections 7.3.1,
-// 7.3.3 and 7.3.4, the interaction hash of section 4.2.3, RFC 9421
+// 7.3.2, 7.3.3 and 7.3.4, the interaction hash of section 4.2.3, RFC 9421
 // signature bases, RFC 9530 content digests and RFC 8941 serialisation.
 //
 // This is this repository's own client. It was written from those
@@ -19,6 +19,12 @@
 // same API in the browser and in node, so one implementation covers
 // both. A private key is a JWK. The request the caller sends is the
 // string this module returns, which is the string it signed.
+//
+// MUTUAL TLS (section 7.3.2) signs nothing here. The key is the TLS
+// client certificate, so the proof is made by whoever opens the
+// connection: the api, which a page hands the certificate and its key.
+// prepare() returns them beside the request as `mtls`. Section 7.3.2.1
+// defines no key rotation for this method, and prepare() refuses one.
 // ---------------------------------------------------------------------------
 
 var bunyan = require("bunyan");
@@ -33,7 +39,7 @@ var log = bunyan.createLogger({
   })()
 });
 
-var PROOFS = ["httpsig", "jwsd", "jws"];
+var PROOFS = ["httpsig", "jwsd", "jws", "mtls"];
 
 function webCrypto() {
   log.debug("Entering webCrypto().");
@@ -221,7 +227,7 @@ async function generateKey(alg, kid) {
   var name = alg || "ES256";
   var id = kid || ("k-" + hex(randomBytes(6)));
   var params = importParams(name);
-  var usages = name === "HS256" ? ["sign"] : ["sign"];
+  var usages = ["sign"];
   var pair;
   if (name === "RS256" || name === "PS256") {
     pair = await webCrypto().subtle.generateKey({
@@ -294,11 +300,62 @@ function recordFromPrivateJwk(jwk, reference) {
   };
 }
 
+// The first CERTIFICATE block of a PEM text, as RFC 9635 section 7.1's
+// `cert`: the DER in standard base64, which is the PEM body unwrapped.
+function certificateBase64(pem) {
+  log.debug("Entering certificateBase64().");
+  var match = /-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/
+    .exec(String(pem || ""));
+  if (!match) {
+    log.debug("Leaving certificateBase64(). No certificate.");
+    throw new Error("The client certificate is not a PEM certificate.");
+  }
+  var body = match[1].replace(/\s+/g, "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(body)) {
+    log.debug("Leaving certificateBase64(). Not base64.");
+    throw new Error("The client certificate's PEM body is not base64.");
+  }
+  log.debug("Leaving certificateBase64().");
+  return body;
+}
+
+// A client instance proved by mutual TLS. The private key is PEM and
+// is only ever handed to whoever opens the connection.
+function recordFromCertificate(certificatePem, privateKeyPem) {
+  log.debug("Entering recordFromCertificate().");
+  var cert = certificateBase64(certificatePem);
+  if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(
+      String(privateKeyPem || ""))) {
+    log.debug("Leaving recordFromCertificate(). No key.");
+    throw new Error("The client certificate needs its private key, " +
+      "in PEM.");
+  }
+  log.debug("Leaving recordFromCertificate().");
+  return {
+    alg: "mtls",
+    kid: "",
+    privateJwk: null,
+    publicJwk: null,
+    reference: "",
+    certificate: cert,
+    certificatePem: String(certificatePem),
+    privateKeyPem: String(privateKeyPem)
+  };
+}
+
 function keyObject(record, proof) {
   log.debug("Entering keyObject().");
   if (record.reference) {
     log.debug("Leaving keyObject(). Reference.");
     return record.reference;
+  }
+  if (proof === "mtls" || record.certificate) {
+    if (!record.certificate) {
+      log.debug("Leaving keyObject(). mtls without a certificate.");
+      throw new Error("The mtls proof needs a client certificate.");
+    }
+    log.debug("Leaving keyObject(). Certificate.");
+    return { proof: "mtls", cert: record.certificate };
   }
   log.debug("Leaving keyObject().");
   return { proof: proof || "httpsig", jwk: record.publicJwk };
@@ -541,12 +598,45 @@ function withClient(body, record, proof, display, classId) {
   return out;
 }
 
+// The default sample asks for SUBJECT INFORMATION only (RFC 9635
+// section 2.2), with an interaction. It is the one request iya-sts
+// grants with no administrator involved: every access right it issues
+// a token for must name a registered resource server (STS-GNAP-0903,
+// 0904), and the one it needs no entry for, its Shared Signals
+// transmitter, is a protected scope an administrator declares per
+// application (STS-GNAP-0719). That second request is ssfSampleRequest().
 function sampleRequest(finishUri, nonce) {
   log.debug("Entering sampleRequest().");
   log.debug("Leaving sampleRequest().");
   return {
+    subject: {
+      sub_id_formats: ["opaque"]
+    },
+    interact: {
+      start: ["redirect", "user_code"],
+      finish: {
+        method: "redirect",
+        uri: finishUri,
+        nonce: nonce
+      }
+    }
+  };
+}
+
+// An access token for iya-sts's Shared Signals transmitter (`ssf.read`),
+// which is a resource server a GNAP token is presented to (GET
+// /ssf/stream with the GNAP scheme). It is granted only once an
+// administrator has declared ssf.read in the application's
+// oauthAllowedScope.
+function ssfSampleRequest(finishUri, nonce) {
+  log.debug("Entering ssfSampleRequest().");
+  log.debug("Leaving ssfSampleRequest().");
+  return {
     access_token: {
-      access: [{ type: "ssf", actions: ["read"] }]
+      access: ["ssf.read"]
+    },
+    subject: {
+      sub_id_formats: ["opaque"]
     },
     interact: {
       start: ["redirect", "user_code"],
@@ -589,13 +679,46 @@ function finishFromUrl(url) {
   };
 }
 
-async function prepare(record, method, url, opts) {
+// RFC 9421 section 2.2.2: `@target-uri` is the full target URI of the
+// request as it is sent. WHATWG URL serialisation is what fetch and
+// node send: scheme and host lower-cased, the default port dropped, an
+// empty path made "/". A fragment is never sent, so it is removed.
+// prepare() sends this string, signs it, and puts it in a JWS `uri`,
+// so the three cannot disagree with each other or with the wire.
+function targetUri(url) {
+  log.debug("Entering targetUri().");
+  var parsed;
+  try {
+    parsed = new URL(String(url));
+  } catch (e) {
+    log.debug("Leaving targetUri(). Not absolute.");
+    throw new Error("The request URL is not an absolute URL: " + url);
+  }
+  parsed.hash = "";
+  log.debug("Leaving targetUri().");
+  return parsed.href;
+}
+
+async function prepare(record, method, rawUrl, opts) {
   log.debug("Entering prepare().");
+  var url = targetUri(rawUrl);
   var options = opts || {};
   var proof = options.proof || "httpsig";
   if (PROOFS.indexOf(proof) < 0 && options.sign !== false) {
     log.debug("Leaving prepare(). Unknown proof.");
-    throw new Error("proof must be httpsig, jwsd or jws.");
+    throw new Error("proof must be httpsig, jwsd, jws or mtls.");
+  }
+  if (proof === "mtls" && options.sign !== false) {
+    if (!record || !record.certificate) {
+      log.debug("Leaving prepare(). mtls without a certificate.");
+      throw new Error("The mtls proof needs a client certificate and " +
+        "its private key.");
+    }
+    if (options.rotateTo) {
+      log.debug("Leaving prepare(). mtls rotation.");
+      throw new Error("RFC 9635 section 7.3.2.1 defines no key " +
+        "rotation for mtls. Rotate the certificate by deployment.");
+    }
   }
   var headers = {};
   Object.keys(options.headers || {}).forEach(function (name) {
@@ -649,6 +772,12 @@ async function prepare(record, method, url, opts) {
         headers["Detached-JWS"] = await jwsd(message, record,
           options.token, options.jwsTyp);
       }
+    } else if (proof === "mtls") {
+      // Nothing to sign. The TLS handshake is the proof.
+      if (body.length) {
+        headers["Content-Type"] = headers["Content-Type"] ||
+          "application/json";
+      }
     } else if (proof === "jws") {
       if (body.length) {
         var typ = options.rotateTo ? "gnap-binding-rotation-jws"
@@ -674,29 +803,40 @@ async function prepare(record, method, url, opts) {
     headers["Content-Type"] = headers["Content-Type"] ||
       "application/json";
   }
-  log.debug("Leaving prepare().");
-  return {
+  var prepared = {
     method: String(method).toUpperCase(),
     url: url,
     headers: headers,
     body: body,
     signatures: signatures
   };
+  if (proof === "mtls" && options.sign !== false) {
+    prepared.mtls = {
+      certificatePem: record.certificatePem,
+      privateKeyPem: record.privateKeyPem
+    };
+  }
+  log.debug("Leaving prepare().");
+  return prepared;
 }
 
 module.exports = {
   PROOFS: PROOFS,
   generateKey: generateKey,
   recordFromPrivateJwk: recordFromPrivateJwk,
+  recordFromCertificate: recordFromCertificate,
+  certificateBase64: certificateBase64,
   keyObject: keyObject,
   contentDigest: contentDigest,
   signatureBase: signatureBase,
   interactionHash: interactionHash,
   withClient: withClient,
   sampleRequest: sampleRequest,
+  ssfSampleRequest: ssfSampleRequest,
   errorOf: errorOf,
   finishFromUrl: finishFromUrl,
   prepare: prepare,
+  targetUri: targetUri,
   bytesToB64u: bytesToB64u,
   b64uToBytes: b64uToBytes
 };

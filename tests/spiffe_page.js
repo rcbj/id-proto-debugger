@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: spiffe_page.js
 //
 // client/public/spiffe.html — the SPIFFE Protocol Debugger, driven through its

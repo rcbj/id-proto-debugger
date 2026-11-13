@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wsfed_request.js
 //
 // Renamed from wsfed_tools.js: this page BUILDS AND SENDS the sign-in request,

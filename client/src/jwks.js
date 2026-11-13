@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: jwks.js
 // Author: Robert C. Broeckelmann Jr.
 // Date: 05/28/2020
@@ -206,11 +209,14 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   var jwksUri = discoveryInfo["jwks_uri"];
   var responseTypesSupported = discoveryInfo["response_types_supported"];
   var rawScopes = discoveryInfo["scopes_supported"];
-  var scopesSupported = rawScopes == null ? "" :
-      oauthScope.joinAdvertised(rawScopes);
-  // No grant is selected on this page. A code exchange sends no scope,
-  // which is what tokenRequestScope() returns for an empty grant.
-  var tokenScope = oauthScope.tokenRequestScope("", "", "", rawScopes);
+  // No grant is selected on this page, so it reads the workflow's, and
+  // the workflow's default (an OIDC code flow) when none is stored. The
+  // authorization scope is never the whole advertisement.
+  var grant = localStorage.getItem("authorization_grant_type") ||
+      "oidc_authorization_code_flow";
+  var authorizationScope = oauthScope.authorizationScope(grant, rawScopes);
+  var tokenScope = oauthScope.tokenRequestScope(grant, "", false,
+      authorizationScope, rawScopes);
   var subjectTypesSupported = discoveryInfo["subject_types_supported"];
   var tokenEndpoint = discoveryInfo["token_endpoint"];
   var tokenEndpointAuthMethodsSupported =
@@ -220,17 +226,16 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   setNamedValue("authorization_endpoint", authorizationEndpoint);
   setNamedValue("token_endpoint", tokenEndpoint);
   setNamedValue("token_scope", tokenScope);
-  setNamedValue("scope", scopesSupported);
+  setNamedValue("scope", authorizationScope);
   setNamedValue("oidc_userinfo_endpoint", userInfoEndpoint);
   setNamedValue("jwks_endpoint", jwksUri);
   if (localStorage) {
       log.debug('Adding to local storage.');
       localStorage.setItem("authorization_endpoint", authorizationEndpoint );
       localStorage.setItem("token_endpoint", tokenEndpoint );
-      if (rawScopes != null) {
-        localStorage.setItem("scope", scopesSupported);
-      }
+      localStorage.setItem("scope", authorizationScope);
       localStorage.setItem("token_scope", tokenScope);
+      localStorage.setItem("token_scope_edited", "false");
       localStorage.setItem("jwks_endpoint", jwksUri);
   }
   log.debug('Leaving onSubmitPopulateFormsWithDiscoveryInformation().');

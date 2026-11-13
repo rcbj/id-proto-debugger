@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: kerberos_tgs_ap_page.js
 //
 // client/public/kerberos_tgs.html and kerberos_ap.html — spending a TGT on a service

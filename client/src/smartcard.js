@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: smartcard.js
 //
 // The smart-card page. The codecs have no DOM. This file is the
@@ -469,7 +472,13 @@ function decodePivResponse() {
       showCertificate(cert.der, described.rows);
     } else if (cert && cert.deflated) {
       inflateGzip(cert.deflated).then(function (der) {
-        showCertificate(der, described.rows);
+        var extra = [];
+        try {
+          extra = piv.attestationRows(der);
+        } catch (e) {
+          extra = [];
+        }
+        showCertificate(der, described.rows.concat(extra));
       }).catch(function (e) {
         setStatus(e.message);
       });
@@ -567,10 +576,14 @@ function buildVerify() {
     log.debug("Leaving buildVerify(). Empty.");
     return;
   }
-  var apdu = iso.encodeCommand({
-    cla: 0x00, ins: 0x20, p1: 0x00, p2: 0x80,
-    data: Buffer.from(pin, "utf8"), le: null
-  });
+  var apdu = null;
+  try {
+    apdu = piv.verifyApdu(pin);
+  } catch (e) {
+    setStatus(e.message);
+    log.debug("Leaving buildVerify(). PIN length.");
+    return;
+  }
   var box = document.getElementById("sc_reader_apdu");
   var pinBox = document.getElementById("sc_pin");
   if (box) {
@@ -579,7 +592,8 @@ function buildVerify() {
   if (pinBox) {
     pinBox.value = "";
   }
-  setStatus("VERIFY APDU built. The PIN is not stored.");
+  setStatus("PIV VERIFY APDU built, the PIN padded with FF to 8 " +
+      "bytes. The PIN is not stored.");
   log.debug("Leaving buildVerify().");
 }
 
@@ -792,7 +806,8 @@ function sendHid() {
   var slot = parseInt(valueOf("sc_hid_slot"), 16);
   var frame = null;
   try {
-    frame = otp.hidFrame(slot, hidBytes(valueOf("sc_hid_challenge")));
+    frame = otp.hidFrame(slot, hidBytes(valueOf("sc_hid_challenge")),
+        { variable: valueOf("sc_hid_hmac_mode") !== "fixed" });
   } catch (e) {
     setStatus(e.message);
     log.debug("Leaving sendHid(). Frame.");

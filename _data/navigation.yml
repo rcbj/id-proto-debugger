@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # The left-hand navigation of the documentation site
 # (https://rcbj.github.io/id-proto-debugger/), drawn by _includes/sidebar.html
 # on every page. The same arrangement as the mock STS's own site

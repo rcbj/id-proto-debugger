@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xmlsec_interop.js
 //
 // XML Signature & XML Encryption interoperability test for the WS-Trust
@@ -828,6 +831,36 @@ function generalSignatureTests() {
   check("a KeyName is what a MAC key can be identified by",
     /<ds:KeyName>shared-key-1<\/ds:KeyName>/.test(hmacSigned.xml));
 
+  // --- The enveloped verifier behind the SAML / WS-* response pages. It
+  //     implements RSA only, and it used to check every other
+  //     SignatureMethod as RSA-SHA256 and call the result "invalid". Now a
+  //     method it cannot verify is reported as not verified (references
+  //     still checked), and a caller's verifier is used when one is given.
+  [["ECDSA-SHA256", ecSigned.xml, ecVerifier],
+   ["HMAC-SHA256", hmacSigned.xml, hmacVerifier]].forEach(function (row) {
+    const bare = xd.verifyXmlSignature(row[1]);
+    check("verifyXmlSignature reports " + row[0] + " as not verified " +
+      "rather than as a failed RSA check",
+      bare.unsupported === true && bare.valid === false &&
+      new RegExp(row[0]).test(bare.error || "") && bare.referencesValid,
+      JSON.stringify({ error: bare.error, refs: bare.referencesValid }));
+    const given = xd.verifyXmlSignature(row[1], { verifier: row[2] });
+    check("verifyXmlSignature verifies " + row[0] + " with the caller's " +
+      "verifier", given.valid && !given.unsupported, given.error || "");
+    const tampered = xd.verifyXmlSignature(
+      row[1].replace("Widget", "Gadget"), { verifier: row[2] });
+    check("and refuses a modified " + row[0] + " document",
+      !tampered.valid);
+  });
+  const misspelt = ecSigned.xml.replace(
+    "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256",
+    "http://www.w3.org/2000/09/xmldsig#rsa-sha256");
+  const unknown = xd.verifyXmlSignature(misspelt);
+  check("an unknown SignatureMethod is reported as unknown, not checked " +
+    "as RSA-SHA256", unknown.unsupported === true &&
+    /is not one this module knows/.test(unknown.error || ""),
+    unknown.error || "");
+
   // --- The refusals. Each of these is a chain that cannot mean anything, and
   //     each is named rather than producing a signature that verifies nowhere.
   let message = "";
@@ -1105,6 +1138,50 @@ function rsaBackendTests() {
     xd.signQueryString(query, { privateKeyPem: kp.privateKeyPem }) ===
     xd.forge.util.encode64(xd.rsaSign(kp.privateKeyPem, "sha256",
       query, "v1_5", true)));
+  // The RSA-only signers write the SignatureMethod they were given, so they
+  // must sign with it. A PSS URI used to fall to sigAlgSpec()'s SHA-256
+  // default and come out PKCS#1 v1.5 under a PSS label; an ECDSA or HMAC URI
+  // came out RSA-SHA256 under that label.
+  ["sha256", "sha384", "sha512"].forEach(function (hash) {
+    const uri = "http://www.w3.org/2007/05/xmldsig-more#" + hash +
+      "-rsa-MGF1";
+    const signed = xd.signEnveloped(assertion20("_pss_" + hash), {
+      privateKeyPem: kp.privateKeyPem, certPem: kp.certPem, sigAlg: uri });
+    const own = xd.verifyXmlSignature(signed);
+    check("signEnveloped " + hash + "-rsa-MGF1 is PSS and verifies",
+      own.valid && signed.indexOf('Algorithm="' + uri + '"') !== -1,
+      own.error || "");
+    const engine = xd.verifyXml(signed, { certPem: kp.certPem });
+    check("and the general engine reads it as " + hash + "-rsa-MGF1 too",
+      engine.valid, engine.error || "");
+    const q = "SAMLRequest=abc&SigAlg=" + encodeURIComponent(uri);
+    const qs = xd.signQueryString(q, { privateKeyPem: kp.privateKeyPem,
+                                       sigAlg: uri });
+    const qv = xd.verifyQueryString(q, { signature: qs, sigAlg: uri,
+                                         certPem: kp.certPem });
+    check("signQueryString " + hash + "-rsa-MGF1 is PSS and verifies",
+      qv.valid, qv.error || "");
+  });
+  [["signEnveloped", function (uri) {
+    return xd.signEnveloped(assertion20("_refused"), {
+      privateKeyPem: kp.privateKeyPem, certPem: kp.certPem, sigAlg: uri });
+  }], ["signQueryString", function (uri) {
+    return xd.signQueryString("SAMLRequest=abc", {
+      privateKeyPem: kp.privateKeyPem, sigAlg: uri });
+  }]].forEach(function (row) {
+    ["http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256",
+     "http://www.w3.org/2001/04/xmldsig-more#hmac-sha256",
+     "http://www.w3.org/2000/09/xmldsig#rsa-sha256"].forEach(function (uri) {
+      let refused = false;
+      try {
+        row[1](uri);
+      } catch (e) {
+        refused = /is not an RSA method/.test(e.message);
+      }
+      check(row[0] + " refuses " + uri.split("#")[1] + " rather than " +
+        "signing RSA-SHA256 under it", refused);
+    });
+  });
   // selfSignedCertFor() signs its TBSCertificate through the same boundary;
   // the result must still be a certificate OpenSSL accepts as self-signed.
   const x509 = new crypto.X509Certificate(kp.certPem);

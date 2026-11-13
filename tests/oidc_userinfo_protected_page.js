@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oidc_userinfo_protected_page.js
 //
 // THE USERINFO PAGE READING A PROTECTED RESPONSE — OIDC Core section 5.3.2,
