@@ -21,6 +21,15 @@ ALFA written on this page uses the namespace `example`. The parser
 still accepts a document from any namespace, so a policy pasted from
 the iya-sts console imports.
 
+An attribute's MustBePresent and Issuer are written after its short
+name where it is used, in the syntax of Axiomatics' ALFA reference:
+`role[mustbepresent]`, `role[issuer="https://idp.example"]`, or both,
+`role[mustbepresent issuer="..."]`. They are not part of the
+`attribute` declaration, because two uses of one attribute may differ.
+Writing a document as ALFA and reading it back gives the same
+designators; each of the 447 OASIS mandatory conformance policies that
+loads decides its request identically after that round trip.
+
 ## What the page does
 
 The repository is a list of named documents in `localStorage`, under

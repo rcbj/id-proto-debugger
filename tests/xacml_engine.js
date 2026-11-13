@@ -296,6 +296,62 @@ function alfaKeepsEveryComparison() {
   log.debug("Leaving alfaKeepsEveryComparison().");
 }
 
+function alfaKeepsMustBePresentAndIssuer() {
+  log.debug("Entering alfaKeepsMustBePresentAndIssuer().");
+  // MustBePresent and Issuer belong to one use of an attribute. ALFA
+  // writes them after the short name, `role[mustbepresent
+  // issuer="..."]`, and reading that back must give the same
+  // designators. Without them a MustBePresent designator came back
+  // optional, turning a missing attribute's Indeterminate into
+  // NotApplicable, and a designator with an Issuer matched any issuer.
+  var designator = function (id, mustBePresent, issuer) {
+    return "<AttributeDesignator AttributeId=\"" + id + "\" " +
+      "Category=\"" + model.CATEGORY.ACCESS_SUBJECT + "\" DataType=\"" +
+      model.TYPE.STRING + "\" MustBePresent=\"" + mustBePresent + "\"" +
+      (issuer ? " Issuer=\"" + issuer + "\"" : "") + "/>";
+  };
+  var value = "<AttributeValue DataType=\"" + model.TYPE.STRING +
+    "\">x</AttributeValue>";
+  var policy = "<Policy xmlns=\"" + model.NS_XACML + "\" " +
+    "PolicyId=\"q\" Version=\"1.0\" RuleCombiningAlgId=\"" +
+    "urn:oasis:names:tc:xacml:3.0:rule-combining-algorithm:" +
+    "deny-overrides\"><Target/><Rule RuleId=\"r\" Effect=\"Permit\">" +
+    "<Target><AnyOf><AllOf><Match MatchId=\"urn:oasis:names:tc:xacml:" +
+    "1.0:function:string-equal\">" + value +
+    designator("a", "true", "https://issuer.example/&quot;q\\") +
+    "</Match></AllOf></AnyOf></Target><Condition>" +
+    "<Apply FunctionId=\"urn:oasis:names:tc:xacml:1.0:function:" +
+    "string-is-in\">" + value + designator("b", "false", "iss") +
+    "</Apply></Condition></Rule></Policy>";
+  var parsed = xmlEngine.parsePolicy(policy);
+  var text = alfa.write(parsed);
+  assert.ok(text.indexOf("[mustbepresent issuer=") >= 0, text);
+  assert.ok(text.indexOf("[issuer=\"iss\"]") >= 0, text);
+  var back = alfa.parse(text);
+  var match = back.rules[0].target.anyOf[0].allOf[0].matches[0].reference;
+  assert.strictEqual(match.mustBePresent, true);
+  assert.strictEqual(match.issuer, "https://issuer.example/\"q\\");
+  var used = back.rules[0].condition.args[1];
+  assert.strictEqual(used.mustBePresent, false);
+  assert.strictEqual(used.issuer, "iss");
+  assert.strictEqual(alfa.write(back), text);
+  var plain = alfa.parse("namespace e { attribute role { " +
+    "category = subjectCat id = \"role\" type = string } " +
+    "policy p { apply denyOverrides rule r { permit " +
+    "target clause role[mustbepresent] == \"x\" } } }");
+  var reference = plain.rules[0].target.anyOf[0].allOf[0].matches[0]
+    .reference;
+  assert.strictEqual(reference.mustBePresent, true);
+  assert.strictEqual(reference.issuer, null);
+  assert.throws(function () {
+    alfa.parse("namespace e { attribute role { category = subjectCat " +
+      "id = \"role\" type = string } policy p { apply denyOverrides " +
+      "rule r { permit target clause role[mandatory] == \"x\" } } }");
+  }, /Unknown qualifier "mandatory"/);
+  log.info("OK — ALFA keeps MustBePresent and Issuer.");
+  log.debug("Leaving alfaKeepsMustBePresentAndIssuer().");
+}
+
 function inheritedNamesAreUnknown() {
   log.debug("Entering inheritedNamesAreUnknown().");
   // A name a document chose is looked up as an own member. Before, an
@@ -378,6 +434,7 @@ function main() {
   anUndischargeableObligationRefuses();
   alfaAndRequestsAgree();
   alfaKeepsEveryComparison();
+  alfaKeepsMustBePresentAndIssuer();
   inheritedNamesAreUnknown();
   pageWiring();
   log.info("xacml_engine: all checks passed.");

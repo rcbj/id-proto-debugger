@@ -174,7 +174,7 @@ const OPERATORS = [
 // THE TOKENIZER.
 // ---------------------------------------------------------------------------
 const PUNCTUATION = ['==', '!=', '>=', '<=', '&&', '||', '{', '}', '(', ')',
-    ',', '=', '>', '<', '!', '$'];
+    ',', '=', '>', '<', '!', '$', '[', ']'];
 /**
  * Reads and writes ALFA, the Abbreviated Language for Authorization, over
  * the same policy model the XML and JSON readers produce.
@@ -540,6 +540,37 @@ class AlfaLanguage {
         return '"' + String(text).replace(/\\/g,
           '\\\\').replace(/"/g, '\\"') + '"';
     }
+    /**
+     * The qualifiers ALFA writes after a designator's short name:
+     * `[mustbepresent]`, `[issuer="..."]` or both, in that order, as
+     * Axiomatics' ALFA reference spells them (`role[mustbepresent
+     * issuer="Axiomatics"]`). They belong to one USE of an attribute, not
+     * to its declaration, which is why the declaration does not carry
+     * them. Without them a MustBePresent designator came back as
+     * MustBePresent="false" and an Issuer as none: a policy that turned
+     * a missing attribute's Indeterminate into NotApplicable, and matched
+     * an attribute from any issuer.
+     *
+     * @param designator - the AttributeDesignator
+     * @returns the bracketed qualifiers, or '' when there are none
+     */
+    designatorQualifiers(designator) {
+        const { log } = this.deps;
+        log.debug("Entering AlfaLanguage.designatorQualifiers().");
+        const parts = [];
+        if (designator.mustBePresent) {
+            parts.push('mustbepresent');
+        }
+        if (designator.issuer !== null && designator.issuer !== undefined) {
+            parts.push('issuer=' + this.quote(designator.issuer));
+        }
+        if (!parts.length) {
+            log.debug("Leaving AlfaLanguage.designatorQualifiers(). None.");
+            return '';
+        }
+        log.debug("Leaving AlfaLanguage.designatorQualifiers().");
+        return '[' + parts.join(' ') + ']';
+    }
     emitExpression(expression, attributes) {
         const self = this;
         const { log } = this.deps;
@@ -556,9 +587,10 @@ class AlfaLanguage {
             const key = expression.category + '|' + expression.attributeId +
               '|' +
                 expression.dataType;
-            log.debug("Leaving AlfaLanguage.emitExpression().");
-            return attributes.byKey[key] ||
+            const name = attributes.byKey[key] ||
               self.shortNameForAttribute(expression.attributeId);
+            log.debug("Leaving AlfaLanguage.emitExpression().");
+            return name + self.designatorQualifiers(expression);
         }
         if (expression.kind === 'variableRef') {
             log.debug("Leaving AlfaLanguage.emitExpression().");
@@ -1178,6 +1210,46 @@ class AlfaLanguage {
             log.debug("Leaving nameReference().");
             return designatorFor(name, token);
         }
+        // A designator's qualifiers, `[mustbepresent issuer="..."]` — see
+        // designatorQualifiers(). Either may be left out, each may appear
+        // once, and the brackets follow the attribute's short name.
+        function qualified(designator, token) {
+            log.debug("Entering qualified().");
+            const open = expect('[');
+            if (designator.kind !== 'designator') {
+                log.debug("Leaving qualified(). Not an attribute.");
+                throw model.syntaxError('"' + token.value + '" at line ' +
+                    open.line + ' is a function, and only an attribute ' +
+                    'takes [mustbepresent] or [issuer="..."].');
+            }
+            const seen = {};
+            while (!is(']')) {
+                const word = expectWord();
+                if (word !== 'mustbepresent' && word !== 'issuer') {
+                    log.debug("Leaving qualified(). Unknown qualifier.");
+                    throw model.syntaxError('Unknown qualifier "' + word +
+                        '" on "' + token.value + '" at line ' + open.line +
+                        '. An attribute takes mustbepresent and ' +
+                        'issuer="...".');
+                }
+                if (ownMembers.has(seen, word)) {
+                    log.debug("Leaving qualified(). Repeated qualifier.");
+                    throw model.syntaxError('"' + word + '" is given twice ' +
+                        'on "' + token.value + '" at line ' + open.line +
+                        '.');
+                }
+                ownMembers.put(seen, word, true);
+                if (word === 'mustbepresent') {
+                    designator.mustBePresent = true;
+                } else {
+                    expect('=');
+                    designator.issuer = expectString();
+                }
+            }
+            expect(']');
+            log.debug("Leaving qualified().");
+            return designator;
+        }
         // --- expressions
         // ---------------------------------------------------------
         function primary() {
@@ -1254,8 +1326,9 @@ class AlfaLanguage {
                     log.debug("Leaving primary().");
                     return { kind: 'apply', functionId: uri, args: args };
                 }
+                const named = nameReference(token.value, token);
                 log.debug("Leaving primary().");
-                return nameReference(token.value, token);
+                return is('[') ? qualified(named, token) : named;
             }
             log.debug("Leaving primary().");
             throw model.syntaxError('Unexpected "' + token.value +
