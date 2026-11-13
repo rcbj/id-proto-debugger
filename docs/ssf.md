@@ -476,6 +476,15 @@ one catches people: a receiver that could not process an event will not process
 it next time either, so a transmitter that redelivered would poll-loop for ever.
 The refusal is recorded on the stream instead, where a person can see it.
 
+The page acknowledges only a SET it found nothing wrong with. One with an
+error-level finding goes in the next poll's `setErrs` instead, as
+`invalid_issuer`, `invalid_audience` or `invalid_request`, and one whose
+signature then fails against the key in the verification box moves there as
+`invalid_key`. A SET whose `jti` the page has already recorded over a
+delivery is acknowledged again and not recorded twice; a PASTED one always
+is. When no metadata or no stream audience is known, the page says the
+`iss` or `aud` check did not run rather than staying silent.
+
 `moreAvailable` is the member a client most often ignores, and ignoring it means
 assuming one poll drains the queue. The page lifts it out and says so.
 
