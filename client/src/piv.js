@@ -132,6 +132,48 @@ function slotName(p2) {
   return "slot " + key.toUpperCase();
 }
 
+// VERIFY's P2 names a PIN, not a key slot (SP 800-73-4 Part 2
+// section 3.2.1). 96 and 97 are the on-card biometric references.
+var PIN_REFERENCES = {
+  "00": "global PIN",
+  "80": "PIV card application PIN",
+  "81": "PIN unblocking key (PUK)",
+  "96": "primary finger OCC",
+  "97": "secondary finger OCC"
+};
+var PIN_LENGTH = 8;
+
+function pinReferenceName(p2) {
+  log.debug("Entering pinReferenceName().");
+  var key = hexByte(p2);
+  var name = (PIN_REFERENCES[key] || "reference") + " (" +
+      key.toUpperCase() + ")";
+  log.debug("Leaving pinReferenceName().");
+  return name;
+}
+
+// VERIFY of the application PIN. SP 800-73-4 Part 2 section 3.2.1:
+// the PIN is 6 to 8 characters, padded with FF to 8 bytes. An
+// unpadded PIN is a different reference value, and the card counts
+// it as a wrong one.
+function verifyApdu(pin, reference) {
+  log.debug("Entering verifyApdu().");
+  var bytes = Buffer.from(String(pin == null ? "" : pin), "utf8");
+  if (bytes.length < 6 || bytes.length > PIN_LENGTH) {
+    log.debug("Leaving verifyApdu(). Length.");
+    reject("A PIV PIN is 6 to 8 characters.");
+  }
+  var padded = Buffer.concat([bytes,
+      Buffer.alloc(PIN_LENGTH - bytes.length, 0xff)]);
+  var apdu = iso.encodeCommand({
+    cla: 0x00, ins: 0x20, p1: 0x00,
+    p2: reference === undefined ? 0x80 : reference,
+    data: padded, le: null
+  });
+  log.debug("Leaving verifyApdu().");
+  return apdu;
+}
+
 function algorithmName(p1) {
   log.debug("Entering algorithmName().");
   var key = hexByte(p1);
@@ -306,6 +348,7 @@ function describeGeneralAuthenticate(command) {
   var witness = childByTag(inner, 0x80);
   var challenge = childByTag(inner, 0x81);
   var response = childByTag(inner, 0x82);
+  var exponentiation = childByTag(inner, 0x85);
   if (witness) {
     rows.push({ label: "Witness",
         value: witness.value.length + " bytes" });
@@ -317,6 +360,10 @@ function describeGeneralAuthenticate(command) {
   if (response) {
     rows.push({ label: "Response",
         value: response.value.length + " bytes (not checked)" });
+  }
+  if (exponentiation) {
+    rows.push({ label: "Exponentiation (ECDH peer key)",
+        value: exponentiation.value.length + " bytes" });
   }
   rows.push({ label: "Performed", value: "no — decoded only" });
   log.debug("Leaving describeGeneralAuthenticate().");
@@ -353,10 +400,10 @@ function describeCommand(input) {
     described = describeGeneralAuthenticate(command);
   } else if (ins === 0x20) {
     described = {
-      summary: "VERIFY " + slotName(command.p2),
+      summary: "VERIFY " + pinReferenceName(command.p2),
       rows: [
         { label: "Instruction", value: "VERIFY" },
-        { label: "Reference", value: slotName(command.p2) },
+        { label: "Reference", value: pinReferenceName(command.p2) },
         { label: "Data", value: "PIN (" + command.data.length +
             " bytes, not shown)" }
       ]
@@ -419,13 +466,18 @@ function metadataRows(body) {
       rows.push({ label: "PIN policy", value: pin });
       rows.push({ label: "Touch policy", value: touch });
     } else if (node.tag === 0x03 && value.length >= 1) {
-      var origin = value[0] === 0x01 ? "imported" :
-          (value[0] === 0x00 ? "generated" : hexByte(value[0]));
+      // yubikit ORIGIN_GENERATED = 1, ORIGIN_IMPORTED = 2.
+      var origin = value[0] === 0x01 ? "generated" :
+          (value[0] === 0x02 ? "imported" : hexByte(value[0]));
       rows.push({ label: "Origin", value: origin });
     } else if (node.tag === 0x04) {
       rows.push({ label: "Public key", value: value.length + " bytes" });
-    } else if (node.tag === 0x06 && value.length >= 1) {
-      rows.push({ label: "Retries", value: iso.toHex(value) });
+    } else if (node.tag === 0x05 && value.length >= 1) {
+      rows.push({ label: "Default value",
+          value: value[0] ? "yes" : "no" });
+    } else if (node.tag === 0x06 && value.length >= 2) {
+      rows.push({ label: "Retries", value: value[1] + " of " +
+          value[0] + " remaining" });
     } else {
       rows.push({ label: "Tag " + node.tagHex.toUpperCase(),
           value: iso.toHex(value) });
@@ -509,6 +561,8 @@ module.exports = {
   objectName: objectName,
   certificateFields: certificateFields,
   unwrapCertificate: unwrapCertificate,
+  pinReferenceName: pinReferenceName,
+  verifyApdu: verifyApdu,
   describeCommand: describeCommand,
   describeResponse: describeResponse
 };

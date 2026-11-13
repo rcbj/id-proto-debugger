@@ -145,8 +145,8 @@ different OTP is refused. An error status that omits `otp` is shown
 as "not echoed"; an `OK` without the request's `otp` is refused.
 The five default hosts are `api.yubico.com` through `api5.yubico.com`,
 path `/wsapi/2.0/verify`; server 1, `api.yubico.com`, is the default.
-Whether the other four still answer has not been checked against the
-live service (#410). A caller-supplied verifier is https, with
+All five answered an unsigned verify with HTTP 200 on 2026-11-13, and
+each still resolves to its own `apiN.yubicloud-r53.yubico.com` name. A caller-supplied verifier is https, with
 no userinfo, no query string and no `..` in the URL. The address
 policy is the one already installed on axios.
 
@@ -187,7 +187,13 @@ appendix. The secret is saved only when the box is checked.
 
 YKOATH's AID is `A0000005272101`. PUT builds an APDU and does not
 send it. The secret in that APDU is described as a length, not
-shown. LIST, CALCULATE and RESET are decoded from a paste.
+shown, and a secret shorter than 14 bytes is padded with zeros to
+14, as yubikit does (the applet refuses a shorter key, and HMAC pads
+with zeros anyway, so the codes do not change). The property element
+is the one exception to TLV in YKOATH: tag `78` and ONE value byte
+with no length (`01` only-increasing, `02` touch). LIST, CALCULATE
+and RESET are decoded from a paste. YKOATH continues a long answer
+with SEND REMAINING (`A5`), not GET RESPONSE; see [Reader](#reader).
 
 ## PIV
 
@@ -199,13 +205,27 @@ as CertInfo. The low bit of CertInfo means gzip. A gzip header with
 no CertInfo is still gzip. The page inflates with
 `DecompressionStream` and hands the DER to
 `x509.describeCertificate`. This module does not parse a certificate
-itself. GENERAL AUTHENTICATE is decoded and not performed. VERIFY is
-described as a PIN of N bytes, not shown, and the PIN is not stored.
+itself. GENERAL AUTHENTICATE is decoded and not performed, including
+the `85` exponentiation element of an ECDH. VERIFY is described as a
+PIN of N bytes, not shown, and its P2 is named as a PIN reference
+(`80` application PIN, `81` PUK, `00` global PIN) rather than as a
+key slot. The page's *Build VERIFY* writes the application PIN the
+way SP 800-73-4 Part 2 section 3.2.1 requires: 6 to 8 characters,
+padded with `FF` to 8 bytes. An unpadded PIN is a different value and
+the card counts it as a wrong one. The PIN is not stored. GET
+METADATA's origin is `01` generated and `02` imported (yubikit's
+`ORIGIN_GENERATED`/`ORIGIN_IMPORTED`), and its retries element is
+the total then the remaining count.
 
 ## OpenPGP card
 
 Application related data and the public keys, from the OpenPGP card
-3.4 data objects. RSA, NIST curves, Ed25519 and X25519 public keys
+3.4 data objects. Algorithm attributes for an EC key (`C1`-`C3`) are
+the algorithm ID followed by the curve OID's content octets with no
+tag and no length byte (section 4.4.3.9), and an optional trailing
+`FF` import-format byte. The signature counter `93` is found inside
+the security support template `7A`.
+RSA, NIST curves, Ed25519 and X25519 public keys
 become a SubjectPublicKeyInfo, and the page asks
 `key_material.describePublicPem` what it imported. There is no
 OpenPGP message, no PKCS#11 and no GPG-agent. PSO:CDS, PSO:DECIPHER
@@ -258,14 +278,19 @@ sequence stops at the first APDU whose final status is not `90xx` or
 
 With `getResponse` on (the default, a checkbox on the page) a `61xx`
 answer is followed by GET RESPONSE (`CLA C0 00 00 xx`, keeping the
-command's logical channel) until the card stops asking, and a `6Cxx`
+command's logical channel in either CLA range) until the card stops
+asking. YKOATH does not implement `C0` and asks for SEND REMAINING
+(`A5`) instead, so after a SELECT of the OATH AID in the same
+sequence the relay sends `A5`; a transmit that relies on an OATH
+SELECT made earlier passes `remainingIns: "a5"`. A `6Cxx`
 is resent once with the Le the card named, as ISO 7816-4 section
 5.1.3 describes; the data is the concatenation. Every APDU actually
 on the wire is in `steps`, and the page shows them. Off, the answer
 is the raw exchange.
 
-A card status word is a 200. A missing library, a missing reader or
-no card is a 502. A bad request is a 400. The APDU is not logged.
+A card status word is a 200. A missing library, a missing reader,
+no card, or a sequence that has not finished in 60 seconds (a touch
+nobody gave, a wedged reader) is a 502. A bad request is a 400. The APDU is not logged.
 Docker does not see a host key unless the operator
 passes the device through, and the page says so. No launcher starts
 a reader.

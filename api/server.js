@@ -3490,7 +3490,8 @@ app.post('/smartcard/transmit', function (req, res) {
     return res.status(STATUS_400).json({ error: described.error });
   }
   smartcardReader.transmit(described.reader, described.apdus,
-      { getResponse: described.getResponse })
+      { getResponse: described.getResponse,
+        remainingIns: described.remainingIns })
     .then(function (answer) {
       log.debug('Leaving POST /smartcard/transmit. Answered ' +
           answer.status + '.');
