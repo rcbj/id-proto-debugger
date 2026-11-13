@@ -1374,6 +1374,36 @@ async function signInAtIdp(driver, user, idpBase, password) {
 // Three attempts, because two consecutive refusals on a virtual authenticator
 // that is present and consenting are not a scheduling accident.
 // ---------------------------------------------------------------------------
+// THE CEREMONY PAGE'S HEADING, read on the page that is actually there.
+// iya-sts draws that page in the browser, so an <h1> located the moment
+// #wa-go appears can be replaced before getText() reaches it, and the read
+// fails with "Node with given id does not belong to the document". That
+// took a section of webauthn_oidc_mfa.js out of the integration run on
+// 7ddc3cc (2026-11-13) from the identical read; this is the same remedy.
+// Re-find and read again on a stale reference.
+async function headingText(driver) {
+  log.debug("Entering headingText().");
+  const deadline = Date.now() + waitTime * 4;
+  for (;;) {
+    try {
+      const text = await driver.findElement(By.css("h1")).getText();
+      log.debug("Leaving headingText().");
+      return text;
+    } catch (e) {
+      const stale = e.name === "StaleElementReferenceError" ||
+          /does not belong to the document|stale element/i.test(
+              e.message || "");
+      if (!stale || Date.now() > deadline) {
+        log.debug("Leaving headingText(). " + e.message);
+        throw e;
+      }
+      log.info("the ceremony page was replaced under the heading; " +
+          "reading it again");
+      await driver.sleep(100);
+    }
+  }
+}
+
 async function runTheCeremony(driver, user) {
   log.debug("Entering runTheCeremony().");
   // The ceremony page. With no key enrolled for this username it REGISTERS one
@@ -1382,7 +1412,7 @@ async function runTheCeremony(driver, user) {
   await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 6,
     "Realm 2's relationship configures a passwordless security key and no " +
     "WebAuthn ceremony page appeared after the username was submitted.");
-  const heading = await driver.findElement(By.css("h1")).getText();
+  const heading = await headingText(driver);
   // "Create a passkey" / "Sign in with your passkey" since iya-sts #571.
   assert.ok(/Enrol|security key|passkey/i.test(heading),
     "The page after the username is not the WebAuthn step; its heading " +
