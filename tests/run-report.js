@@ -2500,9 +2500,20 @@ function buildJobs() {
   // same terms as krb5_real_dc.js: it costs money and no launcher starts it.
   {
     const delegationIdps = [
-      // The iya-sts half (the in-process KDC) moved to iya-sts's own suite
-      // on 2026-10-23: it tested that service rather than this debugger.
-      // The Windows half stays — it drives this project's Kerberos client.
+      // The iya-sts half: iya-sts's KDC in-process, out of the release
+      // image's tree, with its directory and application registry loaded so
+      // the delegation policy is the one the service runs. Node only, no
+      // services. It left this list on 2026-10-23 and came back on
+      // 2026-11-13: run by hand it had drifted (a made-up subject and no
+      // registry) and failed, and nothing had noticed because nothing ran it.
+      {
+        key: "mock",
+        label: "iya-sts KDC, in-process",
+        skip: null,
+        env: { KRB5_DELEG_TARGET: "mock" },
+      },
+      // The Windows half drives this project's Kerberos client against a
+      // real domain controller.
       {
         key: "windows",
         label: "real Windows KDC",
