@@ -413,6 +413,18 @@ function proved(answer) {
   assert.ok(answer.status >= 400 && answer.status < 500,
     "expected a grant or a client error, got " + answer.status +
     " " + answer.text.slice(0, 500));
+  // Past the proof, an AS may still refuse: an unregistered key, or
+  // (RFC 9635 section 3.6) request_denied because the access asked for
+  // is not this client's to have — iya-sts 1.0.0 registers the key and
+  // then refuses "ssf" as its own protected scope. Either way the
+  // signature verified; a bad proof is invalid_client instead, which
+  // the tampered and unsigned cases below hold the AS to.
+  if (err.code === "request_denied") {
+    log.info("Signature verified; the AS denied the access: " +
+      String(err.description).slice(0, 200));
+    log.debug("Leaving proved(). Denied after verification.");
+    return;
+  }
   assert.ok(/not registered/.test(err.description),
     "a signature that verified is refused as an unregistered key; " +
     "got " + answer.text.slice(0, 500));
