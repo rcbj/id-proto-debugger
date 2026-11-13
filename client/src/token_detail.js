@@ -417,6 +417,7 @@ async function prepareRfc9068Token(results, jwt_, purpose) {
       return { jwt: token, stop: true };
     }
   }
+  var verified = false;
   if (rfc9068Checked("rfc9068_verify")) {
     if (!apply) {
       results.push("SKIP  signature: Applies when JWT Purpose is " +
@@ -424,6 +425,7 @@ async function prepareRfc9068Token(results, jwt_, purpose) {
     } else {
       var verdict = await verifyCompact(token);
       writeSignatureOutput(verdict);
+      verified = verdict.valid;
       if (verdict.valid) {
         results.push("PASS  signature: Verified (RFC 9068 §4).");
       } else {
@@ -432,9 +434,12 @@ async function prepareRfc9068Token(results, jwt_, purpose) {
             " (RFC 9068 §4).");
       }
     }
+  } else if (apply) {
+    results.push(rfc9068.formatFinding(
+        rfc9068.signatureNotVerifiedFinding()));
   }
   log.debug("Leaving prepareRfc9068Token().");
-  return { jwt: token, stop: false };
+  return { jwt: token, stop: false, verified: verified };
 }
 
 function reportRfc9068Options(results, payload, jwt_, purpose) {
@@ -868,9 +873,14 @@ async function validateClaims() {
     } else if (payload.authorization_details !== undefined) {
       pass('authorization_details', 'Present (used in place of scope)');
       skip('scope', 'Not present — authorization_details present instead');
+    } else if (expectedScope) {
+      // Section 2.2.3 is a SHOULD: a token for a scoped request
+      // carries scope. Neither claim is required by section 2.2.
+      fail('scope', 'Missing — required scope(s) "' + expectedScope +
+           '" cannot be found (RFC 9068 §2.2.3)');
     } else {
-      fail('scope/authorization_details',
-           'At least one is required (RFC 9068 §2.2)');
+      skip('scope', 'Not present (SHOULD be present if a scope was ' +
+           'requested — RFC 9068 §2.2.3)');
     }
   }
 
@@ -891,8 +901,11 @@ async function validateClaims() {
   const failCount = results.filter(r => r.startsWith('FAIL')).length;
   var output = results.join('\n');
   if (ageLine) output += '\n\n' + ageLine;
-  output += '\n\n' + (failCount === 0 ? 'All checks passed.' : failCount +
-      ' check(s) failed.');
+  // An access token's report is only a clean result when its
+  // signature was part of it (RFC 9068 §4).
+  var signatureDone = purpose !== 'oauth2_access_token' ||
+      prepared.verified;
+  output += '\n\n' + rfc9068.summaryLine(failCount, signatureDone);
   document.getElementById('jwt_claims_validation_output').value = output;
   log.debug("Leaving validateClaims().");
   return false;

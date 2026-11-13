@@ -89,11 +89,13 @@ The pairs this client sends:
 | `userinfo_encryption_enc_values_supported` | `userinfo_encrypted_response_enc` | `A128CBC-HS256` |
 | `token_endpoint_auth_methods_supported` | `token_endpoint_auth_method` | `client_secret_basic` |
 
-`subject_types_supported` is `public` and `pairwise`. With one redirect
-URI, `sector_identifier_uri` is not required. A second redirect URI,
-while `pairwise` is still offered, adds
-`https://client.example.org/sector.json` when that member is missing.
-A value you already typed is left as it is.
+`subject_types_supported` is `public` and `pairwise`. Core 1.0
+section 8.1 needs a `sector_identifier_uri` once the redirect URIs span
+more than one host, and the provider fetches that document. This
+client publishes none, so with redirect URIs on two hosts and no
+`sector_identifier_uri` typed, `pairwise` is dropped from the array
+instead. A value you already typed is left as it is, and `pairwise`
+stays offered with it.
 
 The ID Token signing list is the JWS algorithms this client verifies,
 without `none`. The UserInfo signing list is that same list plus

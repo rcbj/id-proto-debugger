@@ -42,9 +42,10 @@ var log = bunyan.createLogger({
   })()
 });
 
-// Registration 1.0 requires sector_identifier_uri when pairwise is offered
-// and more than one redirect URI is registered. One redirect URI does not.
-var SECTOR_IDENTIFIER_URI = "https://client.example.org/sector.json";
+// Core 1.0 section 8.1: with pairwise subjects, redirect URIs on more
+// than one host need a sector_identifier_uri, which the provider fetches
+// and checks against those URIs. This client cannot publish one, so it
+// stops offering pairwise rather than naming a document nobody serves.
 
 // Section 3. These names are discovery metadata, not client metadata.
 var NOT_CLIENT_CHOICES = [
@@ -220,6 +221,29 @@ function shallowCopy(source) {
   return copy;
 }
 
+// The number of distinct hosts among the redirect URIs. A value that
+// does not parse as a URL counts as a host of its own.
+function redirectHostCount(redirects) {
+  log.debug("Entering redirectHostCount().");
+  var hosts = {};
+  var count = 0;
+  var list = Array.isArray(redirects) ? redirects : [];
+  list.forEach(function (uri) {
+    var host;
+    try {
+      host = new URL(String(uri)).host.toLowerCase();
+    } catch (e) {
+      host = "unparsed:" + String(uri);
+    }
+    if (!hosts[host]) {
+      hosts[host] = true;
+      count = count + 1;
+    }
+  });
+  log.debug("Leaving redirectHostCount().");
+  return count;
+}
+
 function sectorMissing(metadata) {
   log.debug("Entering sectorMissing().");
   var value = metadata.sector_identifier_uri;
@@ -270,12 +294,14 @@ function applyChoices(metadata) {
     md[row.choice] = row.values.slice();
     md[row.partner] = row.preferred;
   });
-  var redirects = Array.isArray(md.redirect_uris) ? md.redirect_uris : [];
   var subjects = md.subject_types_supported;
   var pairwise = Array.isArray(subjects) &&
       subjects.indexOf("pairwise") >= 0;
-  if (redirects.length > 1 && pairwise && sectorMissing(md)) {
-    md.sector_identifier_uri = SECTOR_IDENTIFIER_URI;
+  if (pairwise && redirectHostCount(md.redirect_uris) > 1 &&
+      sectorMissing(md)) {
+    md.subject_types_supported = subjects.filter(function (value) {
+      return value !== "pairwise";
+    });
   }
   log.debug("Leaving applyChoices().");
   return md;
@@ -366,11 +392,12 @@ function checkSector(findings, metadata) {
   var redirects = metadata.redirect_uris;
   var pairwise = Array.isArray(subjects) &&
       subjects.indexOf("pairwise") >= 0;
-  var many = Array.isArray(redirects) && redirects.length > 1;
+  var many = redirectHostCount(redirects) > 1;
   if (pairwise && many && sectorMissing(metadata)) {
     findings.push(finding("sector_identifier_uri",
         "sector-identifier-required",
-        "pairwise is offered with more than one redirect_uri, so " +
+        "pairwise is offered with redirect_uris on more than one " +
+        "host, so " +
         "sector_identifier_uri is required."));
   }
   log.debug("Leaving checkSector().");
@@ -464,7 +491,6 @@ function adoptOne(row, sentObj, receivedObj, metadata, findings, rows) {
 module.exports = {
   CHOICES: CHOICES,
   NOT_CLIENT_CHOICES: NOT_CLIENT_CHOICES,
-  SECTOR_IDENTIFIER_URI: SECTOR_IDENTIFIER_URI,
   supportedChoices: supportedChoices,
   omittedChoices: omittedChoices,
   applyChoices: applyChoices,
