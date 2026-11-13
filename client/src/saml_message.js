@@ -297,7 +297,7 @@ function tags(root, localName) {
 // letters SAML would otherwise be read as a parameter list with no parameters
 // in it.
 var BINDING_PARAMS = ['SAMLRequest', 'SAMLResponse', 'SAMLart', 'RelayState',
-  'SigAlg', 'Signature', 'TARGET', 'shire', 'providerId'];
+  'SigAlg', 'Signature', 'TARGET', 'target', 'shire', 'providerId'];
 var BINDING_PARAM_RE = new RegExp('(^|&)(' + BINDING_PARAMS.join('|') + ')=');
 
 // Split a query string into ordered [name, rawValue] pairs. ORDERED, and the
@@ -475,7 +475,11 @@ function classify(text) {
   out.sigAlg = pairValue(out.pairs, 'SigAlg');
   out.signature = pairValue(out.pairs, 'Signature');
   out.artifact = pairValue(out.pairs, 'SAMLart');
-  out.target = pairValue(out.pairs, 'TARGET');
+  // The response leg and the inter-site transfer service name it TARGET
+  // (saml-bindings-1.1); Shibboleth's AuthnRequest profile names the same
+  // value target. Either, with no SAMLart, is the start of a flow.
+  out.target = pairValue(out.pairs, 'TARGET') ||
+      pairValue(out.pairs, 'target');
   if (req) {
     out.message = req;
     out.direction = 'request';
@@ -1703,7 +1707,67 @@ function summarizeResponse(xml, depth) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// THE SAML 1.1 SERVICE PROVIDER'S REQUEST, which is not a document.
+//
+// SAML 1.1's browser profiles have no request message. What a service
+// provider sends is Shibboleth's AuthnRequest profile
+// (urn:mace:shibboleth:1.0:profiles:AuthnRequest), and this builds exactly
+// its parameters, in its spelling, and nothing else:
+//
+//   providerId  the service provider's entity ID
+//   shire       the assertion consumer service location. It must be one of
+//               the AssertionConsumerService elements in the service
+//               provider's metadata, and the profile bound to THAT element
+//               is how the identity provider answers — the only way a SAML
+//               1.1 service provider chooses Browser/POST or Browser/Artifact
+//   target      the relay value, returned on the response as TARGET
+//   time        seconds since the epoch, as decimal digits
+//
+// providerId and shire are refused when empty rather than left out: a
+// request without them is not this profile. There is no parameter for a
+// NameIdentifier format or a browser profile; until #307 this page sent
+// `format` and `profile`, which no specification defines.
+//
+// `fields`: { providerId, shire, target, time }. `time` defaults to now.
+// Returns ordered [name, value] pairs.
+// ---------------------------------------------------------------------------
+var SAML11_REQUEST_PARAMS = ['providerId', 'shire', 'target', 'time'];
+
+function saml11AuthnRequestParams(fields) {
+  log.debug("Entering saml11AuthnRequestParams().");
+  var f = fields || {};
+  var providerId = String(f.providerId == null ? '' : f.providerId).trim();
+  var shire = String(f.shire == null ? '' : f.shire).trim();
+  if (!providerId) {
+    log.debug("Leaving saml11AuthnRequestParams(). No providerId.");
+    throw new Error('Shibboleth\'s AuthnRequest profile requires providerId ' +
+        '(the service provider\'s entity ID).');
+  }
+  if (!shire) {
+    log.debug("Leaving saml11AuthnRequestParams(). No shire.");
+    throw new Error('Shibboleth\'s AuthnRequest profile requires shire (the ' +
+        'assertion consumer service location).');
+  }
+  var time = (f.time === undefined || f.time === null || f.time === '') ?
+      String(Math.floor(Date.now() / 1000)) : String(f.time);
+  if (!/^[0-9]+$/.test(time)) {
+    log.debug("Leaving saml11AuthnRequestParams(). Bad time.");
+    throw new Error('time is seconds since the epoch, as decimal digits.');
+  }
+  var out = [
+    ['providerId', providerId],
+    ['shire', shire],
+    ['target', f.target == null ? '' : String(f.target)],
+    ['time', time]
+  ];
+  log.debug("Leaving saml11AuthnRequestParams().");
+  return out;
+}
+
 module.exports = {
+  SAML11_REQUEST_PARAMS: SAML11_REQUEST_PARAMS,
+  saml11AuthnRequestParams: saml11AuthnRequestParams,
   NS_SAML1P: NS_SAML1P,
   NS_SAML2P: NS_SAML2P,
   base64ToBytes: base64ToBytes,

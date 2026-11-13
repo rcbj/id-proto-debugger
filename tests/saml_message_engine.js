@@ -1443,9 +1443,79 @@ function aResponseIsSummarizedInBothVersions() {
   log.debug("Leaving aResponseIsSummarizedInBothVersions().");
 }
 
+// THE SAML 1.1 REQUEST IS SHIBBOLETH'S AUTHNREQUEST PROFILE AND NOTHING ELSE
+// (#307). providerId, shire, target and time, in that spelling, with no
+// TARGET (the response's name for the relay value), no `profile` and no
+// `format` (no specification defines either), and a refusal rather than a
+// request when providerId or shire is missing.
+function theSaml11RequestIsTheShibbolethProfile() {
+  log.debug("Entering theSaml11RequestIsTheShibbolethProfile().");
+  check('the SAML 1.1 request carries exactly providerId, shire, target ' +
+      'and time', function () {
+    const out = sm.saml11AuthnRequestParams({
+      providerId: 'https://sp.example.com/shibboleth',
+      shire: 'https://sp.example.com/Shibboleth.sso/SAML/POST',
+      target: 'https://sp.example.com/home',
+      time: '1700000000'
+    });
+    assert.deepStrictEqual(out.map(function (p) {
+      return p[0];
+    }), ['providerId', 'shire', 'target', 'time']);
+    assert.deepStrictEqual(sm.SAML11_REQUEST_PARAMS,
+        ['providerId', 'shire', 'target', 'time']);
+    assert.strictEqual(out[2][1], 'https://sp.example.com/home');
+    assert.strictEqual(out[3][1], '1700000000');
+  });
+  check('the relay value is spelled target, never TARGET, and nothing ' +
+      'else is added', function () {
+    const out = sm.saml11AuthnRequestParams({
+      providerId: 'sp', shire: 'https://sp/acs', target: 'x',
+      profile: 'artifact', format: 'urn:x', TARGET: 'y'
+    });
+    const names = out.map(function (p) {
+      return p[0];
+    });
+    ['TARGET', 'profile', 'format'].forEach(function (name) {
+      assert.ok(names.indexOf(name) < 0, name + ' was sent');
+    });
+    assert.strictEqual(names.length, 4);
+  });
+  check('time defaults to seconds since the epoch and must be digits',
+      function () {
+    const before = Math.floor(Date.now() / 1000);
+    const out = sm.saml11AuthnRequestParams({ providerId: 'sp',
+        shire: 'https://sp/acs' });
+    const t = Number(out[3][1]);
+    assert.ok(/^[0-9]+$/.test(out[3][1]) && t >= before && t <= before + 5,
+        'time=' + out[3][1]);
+    assert.throws(function () {
+      sm.saml11AuthnRequestParams({ providerId: 'sp', shire: 'https://s',
+          time: '2026-11-13T00:00:00Z' });
+    }, /seconds since the epoch/);
+  });
+  check('a request with no providerId or no shire is refused, not sent ' +
+      'without it', function () {
+    assert.throws(function () {
+      sm.saml11AuthnRequestParams({ shire: 'https://sp/acs' });
+    }, /requires providerId/);
+    assert.throws(function () {
+      sm.saml11AuthnRequestParams({ providerId: 'sp', shire: '  ' });
+    }, /requires shire/);
+  });
+  check('a pasted Shibboleth request (lower-case target) is read as the ' +
+      'start of a flow', function () {
+    const out = sm.classify('https://idp.example.com/SSO?providerId=sp&' +
+        'shire=https%3A%2F%2Fsp%2Facs&target=https%3A%2F%2Fsp%2Fhome&' +
+        'time=1700000000');
+    assert.strictEqual(out.target, 'https://sp/home');
+  });
+  log.debug("Leaving theSaml11RequestIsTheShibbolethProfile().");
+}
+
 function test() {
   log.debug("Entering test().");
   everyPastedShapeIsClassified();
+  theSaml11RequestIsTheShibbolethProfile();
   theArtifactIsBytesAndNotAMessage();
   theRedirectOctetsAreTheOnesThatWereSent();
   aRequestIsSummarizedInBothVersions();
