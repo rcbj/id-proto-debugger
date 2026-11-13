@@ -322,6 +322,8 @@ const JOB_LOCKS = {
   // that a REPLAYED AP-REQ is refused — which a concurrent job spending its
   // own tickets against the same acceptor would disturb.
   "krb5_mit_client.js": "sts-spnego-signin",
+  // (`caep_session_protocols.js` with CAEP_SIGNIN_PROTOCOL=spnego holds this
+  // lock too, for the same two reasons — see its descriptor in buildJobs().)
   // The mock's SSF configuration. `ssf_protocol.js` turns
   // `ssf.pushAllowHttp` ON (its own RFC 8935 listener is plain http) and
   // flips both deliberate defects — `ssf.legacySubClaim` and
@@ -358,7 +360,9 @@ const JOB_LOCKS = {
   // of it, so a caep_protocol.js or ssf_protocol.js run overlapping
   // one would see events about somebody else's session arriving in
   // the middle of its own poll — which is the exact hazard the
-  // sts-ssf lock was created for when caep.autoEmit landed.
+  // sts-ssf lock was created for when caep.autoEmit landed. The SPNEGO
+  // one ALSO holds `sts-spnego-signin` — a `lock` list on its descriptor
+  // in buildJobs(), since this table names one lock per script.
   "caep_session_protocols.js": "sts-ssf",
   // The two GNAP jobs that APPROVE grants: they sign people in at iya-sts
   // and revoke approved grants and tokens, and each of those is a CAEP
@@ -386,11 +390,26 @@ const CONCURRENCY = (function () {
 // The lock a job holds while it runs, or null. A job may name its own (`lock`
 // on the descriptor) for a case the table cannot see; otherwise it is the
 // script's.
+//
+// A descriptor's `lock` may also be a LIST, for a job that drives two shared
+// services at once and must exclude both families: the SPNEGO CAEP job agrees
+// streams on the transmitter (`sts-ssf`) AND spends tickets at the SPNEGO
+// door that `sts-spnego-signin` jobs close on purpose. It holds every name in
+// the list, and starts only when none of them is held.
 function lockOf(job) {
   log.debug("Entering lockOf().");
   const lock = job.lock || JOB_LOCKS[job.script] || null;
   log.debug("Leaving lockOf(). " + (lock || "none"));
   return lock;
+}
+
+// lockOf(), always as a list — empty for an unlocked job.
+function locksOf(job) {
+  log.debug("Entering locksOf().");
+  const lock = lockOf(job);
+  const locks = !lock ? [] : (Array.isArray(lock) ? lock.slice() : [lock]);
+  log.debug("Leaving locksOf(). " + locks.length);
+  return locks;
 }
 
 // Mirror of the *active* (non-commented) test invocations in
@@ -3342,11 +3361,15 @@ function buildJobs() {
   // is the property that mattered about the grid: a failure says `SAML 1.1`
   // rather than being one row of forty.
   //
-  // Gated on a transmitter the way the other CAEP jobs are. The SPNEGO one is
-  // scheduled and SKIPS ITSELF with a reason — it needs a Kerberos service
-  // ticket to answer the acceptor's 401, which only krb5_mit_client.js has
-  // the machinery for — and that is deliberately a scheduled skip rather than
-  // an absent job, because a job nobody schedules is a gap nobody can see.
+  // Gated on a transmitter the way the other CAEP jobs are. The SPNEGO one
+  // answers the acceptor's 401 with a REAL Kerberos ticket: `kinit` against
+  // iya-sts's own KDC, then `curl --negotiate` at /authn/spnego — the MIT
+  // tools krb5_mit_client.js uses, which tests/Dockerfile installs. So it
+  // carries that job's KRB5_TEST_* (this process's view of the KDC, not the
+  // api's), and it holds TWO locks: `sts-ssf` like its four siblings, and
+  // `sts-spnego-signin`, because the jobs under that name switch
+  // `krb5.spnegoAuthentication` off to assert the closed door, and a
+  // sign-in inside that window is a 403 this job would report as its own.
   // ------------------------------------------------------------------------
   ["oidc", "saml2", "saml11", "wsfed", "spnego"].forEach(function (which) {
     jobs.push({
@@ -3357,8 +3380,13 @@ function buildJobs() {
           "page is not an HTTP server — and every one put through the " +
           "debugger's own catalogue rather than merely counted)",
       script: "caep_session_protocols.js",
+      lock: which === "spnego" ? ["sts-ssf", "sts-spnego-signin"] : null,
       env: {
         CAEP_SIGNIN_PROTOCOL: which,
+        // Read by the SPNEGO job only. See krb5_mit_client.js's job.
+        KRB5_TEST_KDC_HOST: env.KRB5_TEST_KDC_HOST || "localhost",
+        KRB5_TEST_KDC_PORT: env.KRB5_TEST_KDC_PORT || "88",
+        KRB5_REALM: env.KRB5_REALM || "EXAMPLE.COM",
         API_URL: env.API_URL || "https://localhost:4000",
         // The push half only. See ssfPushAvailable above: on a target with
         // no api the job still runs and the POLL half — the delivery those
@@ -5389,8 +5417,10 @@ function nextRunnableJob(jobs, started, held) {
     if (started[i]) {
       continue;
     }
-    const lock = lockOf(jobs[i]);
-    if (lock && held.has(lock)) {
+    const blocked = locksOf(jobs[i]).some(function (one) {
+      return held.has(one);
+    });
+    if (blocked) {
       continue;
     }
     log.debug("Leaving nextRunnableJob(). " + i);
@@ -5421,11 +5451,12 @@ function runPool(jobs, results, started, total) {
           break;
         }
         const job = jobs[i];
-        const lock = lockOf(job);
+        const locks = locksOf(job);
+        const lock = locks.join(", ");
         started[i] = true;
-        if (lock) {
-          held.add(lock);
-        }
+        locks.forEach(function (one) {
+          held.add(one);
+        });
         active = active + 1;
         log.info(`===== [${i + 1}/${total}] ${job.name} — started` +
             `${lock ? " (lock: " + lock + ")" : ""} =====`);
@@ -5435,9 +5466,9 @@ function runPool(jobs, results, started, total) {
         // slot occupied and the pool would hang with no line saying why.
         const settle = function (result) {
           results[i] = result;
-          if (lock) {
-            held.delete(lock);
-          }
+          locks.forEach(function (one) {
+            held.delete(one);
+          });
           active = active - 1;
           remaining = remaining - 1;
           reportOne(result, i, total);

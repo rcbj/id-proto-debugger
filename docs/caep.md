@@ -422,9 +422,16 @@ one hard refusal is an event about a session that has already ended — driving
 it earlier makes the five that follow refusals, and the failure then names the
 state machine rather than the ordering.
 
-**SPNEGO is scheduled and skips itself**, with a reason. The mock side is ready
-— `/authn/spnego` calls `startSession()` like every other door — but that
-endpoint answers `401 WWW-Authenticate: Negotiate`, and answering it needs a
-Kerberos service ticket: a KDC, a keytab and a credential cache, which only
-`krb5_mit_client.js` has the machinery for. It is a *scheduled* skip rather
-than an absent job on purpose: a job nobody schedules is a gap nobody can see.
+**SPNEGO signs in with a real Kerberos ticket.** It was a declared skip until
+2026-11-13, for want of a ticket — but iya-sts is its own KDC on the test
+stack and the tests image has MIT Kerberos, so the job gets one the way a
+workstation does: `kinit` for this run's generated name, then `curl
+--negotiate` answering the `401 WWW-Authenticate: Negotiate` at
+`/authn/spnego?authn=<id>`. That `<id>` is the pending sign-in an OIDC
+authorization request was sent to, because RFC 4559 has no request message
+naming a relying party; the door's 303 returns there, the single sign-on is
+presented there, and the sign-out uses the OIDC door as SAML 1.1's does. An
+extra check holds the CAEP row's protocol to `Kerberos v5 (SPNEGO)`, so a
+session the password screen minted cannot pass for one. iya-sts needs no
+configuration for it: the KDC creates the account on first sight and
+`HTTP/<the host in STS_URL>` is one of the service hosts it accepts.
