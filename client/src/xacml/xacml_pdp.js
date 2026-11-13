@@ -50,6 +50,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 const datatypes = require('./xacml_datatypes');
 const functions = require('./xacml_functions');
@@ -321,7 +322,12 @@ function evaluateExpression(expression, context, variables) {
 // ---------------------------------------------------------------------------
 function resolveVariable(id, context, variables) {
   log.debug('Entering resolveVariable(). id=' + id);
-  if (!variables || !variables.definitions[id]) {
+  // Own members only (2026-11-12): an id a policy chose is never an
+  // inherited name — `constructor` is undefined, not Object, and
+  // `toString` is not in progress.
+  const definition = variables
+    ? ownMembers.read(variables.definitions, id) : undefined;
+  if (!definition) {
     log.debug('Leaving resolveVariable(). Undefined.');
     throw model.syntaxError(
       'VariableReference names "' + id + '", which no VariableDefinition in ' +
@@ -331,17 +337,16 @@ function resolveVariable(id, context, variables) {
     log.debug('Leaving resolveVariable(). Memoised.');
     return variables.values[id];
   }
-  if (variables.inProgress[id]) {
+  if (ownMembers.read(variables.inProgress, id)) {
     log.debug('Leaving resolveVariable(). Cyclic.');
     throw model.syntaxError(
       'VariableDefinition "' + id + '" refers to itself, directly or ' +
       'through another variable.');
   }
-  variables.inProgress[id] = true;
+  ownMembers.put(variables.inProgress, id, true);
   try {
-    const value = evaluateExpression(variables.definitions[id], context,
-                                     variables);
-    variables.values[id] = value;
+    const value = evaluateExpression(definition, context, variables);
+    ownMembers.put(variables.values, id, value);
     log.debug('Leaving resolveVariable(). Evaluated.');
     return value;
   } finally {
@@ -997,7 +1002,8 @@ combiner([model.POLICY_ALG.ONLY_ONE_APPLICABLE], function () {
 function lookupCombiner(uri) {
   log.debug("Entering lookupCombiner().");
   log.debug("Leaving lookupCombiner().");
-  return COMBINERS[uri] || null;
+  // An own member only (2026-11-12): `constructor` is no combiner.
+  return ownMembers.read(COMBINERS, uri) || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -1204,7 +1210,9 @@ function resolveChild(child, repository) {
     log.debug("Leaving resolveChild().");
     return child;
   }
-  const found = repository ? repository[child.ref] : null;
+  // An own member only (2026-11-12): a reference to `constructor` is
+  // unresolved, not Object.
+  const found = repository ? ownMembers.read(repository, child.ref) : null;
   if (!found) {
     log.debug("Leaving resolveChild().");
     return { kind: 'UnresolvedReference', ref: child.ref, target: null };

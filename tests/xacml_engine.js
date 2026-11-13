@@ -42,6 +42,8 @@ function load(name) {
 
 const workbench = load("xacml_workbench.js");
 const model = load("xacml/xacml_model.js");
+const alfa = load("xacml/xacml_alfa.js");
+const xmlEngine = load("xacml/xacml_xml.js");
 const LOG_OBLIGATION = "urn:sts:xacml:obligation:log";
 
 function fresh() {
@@ -260,6 +262,64 @@ function alfaAndRequestsAgree() {
   log.debug("Leaving alfaAndRequestsAgree().");
 }
 
+function alfaKeepsEveryComparison() {
+  log.debug("Entering alfaKeepsEveryComparison().");
+  // Each ordering function written as ALFA and read back must be the same
+  // function. `-equal` is also the tail of `-greater-than-or-equal` and
+  // `-less-than-or-equal`, and an emitter that took the first suffix in
+  // its table wrote both as `==`, which reads back as integer-equal.
+  var names = ["equal", "greater-than", "greater-than-or-equal",
+               "less-than", "less-than-or-equal"];
+  names.forEach(function (name) {
+    var functionId = "urn:oasis:names:tc:xacml:1.0:function:integer-" + name;
+    var policy = "<Policy xmlns=\"" + model.NS_XACML + "\" " +
+      "PolicyId=\"cmp\" Version=\"1.0\" RuleCombiningAlgId=\"" +
+      "urn:oasis:names:tc:xacml:3.0:rule-combining-algorithm:" +
+      "deny-unless-permit\"><Target/><Rule RuleId=\"r\" " +
+      "Effect=\"Permit\"><Condition><Apply FunctionId=\"" + functionId +
+      "\"><Apply FunctionId=\"urn:oasis:names:tc:xacml:1.0:function:" +
+      "integer-one-and-only\"><AttributeDesignator AttributeId=\"age\" " +
+      "Category=\"" + model.CATEGORY.ACCESS_SUBJECT + "\" DataType=\"" +
+      model.TYPE.INTEGER + "\" MustBePresent=\"false\"/></Apply>" +
+      "<AttributeValue DataType=\"" + model.TYPE.INTEGER + "\">5" +
+      "</AttributeValue></Apply></Condition></Rule></Policy>";
+    var parsed = xmlEngine.parsePolicy(policy);
+    var back = alfa.parse(alfa.write(parsed));
+    var condition = back.rules[0].condition;
+    assert.strictEqual(condition.functionId, functionId,
+      "integer-" + name + " came back as " + condition.functionId);
+  });
+  log.info("OK — ALFA keeps every comparison operator.");
+  log.debug("Leaving alfaKeepsEveryComparison().");
+}
+
+function inheritedNamesAreUnknown() {
+  log.debug("Entering inheritedNamesAreUnknown().");
+  // A name a document chose is looked up as an own member. Before, an
+  // ALFA category or attribute called constructor or toString read
+  // Object or Function through the prototype and was accepted.
+  assert.throws(function () {
+    alfa.parse("namespace e { attribute a { category = constructor " +
+      "id = \"x\" type = string } policy p { apply denyUnlessPermit " +
+      "rule r { permit target clause a == \"1\" } } }");
+  }, /Unknown category "constructor"/);
+  assert.throws(function () {
+    alfa.parse("namespace e { policy p { apply denyUnlessPermit " +
+      "rule r { permit condition toString == \"1\" } } }");
+  }, /never declared/);
+  var bench = fresh();
+  var unknown = bench.importText("proto", "<Policy xmlns=\"" +
+    model.NS_XACML + "\" PolicyId=\"proto\" Version=\"1.0\" " +
+    "RuleCombiningAlgId=\"urn:oasis:names:tc:xacml:3.0:" +
+    "rule-combining-algorithm:deny-unless-permit\"><Target/>" +
+    "<Rule RuleId=\"r\" Effect=\"Permit\"><Condition>" +
+    "<Apply FunctionId=\"toString\"/></Condition></Rule></Policy>");
+  assert.strictEqual(unknown.ok, false);
+  assert.ok(/Unknown function "toString"/.test(unknown.why), unknown.why);
+  log.info("OK — constructor and toString are unknown names.");
+  log.debug("Leaving inheritedNamesAreUnknown().");
+}
+
 function pageWiring() {
   log.debug("Entering pageWiring().");
   var html = fs.readFileSync(path.join(PUBLIC, "xacml.html"), "utf8");
@@ -314,6 +374,8 @@ function main() {
   referenceResolvesFromTheRepository();
   anUndischargeableObligationRefuses();
   alfaAndRequestsAgree();
+  alfaKeepsEveryComparison();
+  inheritedNamesAreUnknown();
   pageWiring();
   log.info("xacml_engine: all checks passed.");
   log.debug("Leaving main().");

@@ -112,6 +112,7 @@
 // ---------------------------------------------------------------------------
 const helpers = require("../xacml_runtime");
 const InstanceSlot = require("./xacml_slot");
+const ownMembers = require("./xacml_own_members");
 const model = require("./xacml_model");
 const datatypes = require("./xacml_datatypes");
 const functions = require("./xacml_functions");
@@ -257,7 +258,8 @@ class AlfaLanguage {
             return letter.toUpperCase();
         });
         log.debug("Leaving AlfaLanguage.algorithmNameOf().");
-        return ALGORITHM_NAMES[camel] ? camel : null;
+        // An own member only: `constructor` names no algorithm.
+        return ownMembers.read(ALGORITHM_NAMES, camel) ? camel : null;
     }
     /**
      * Returns the combining algorithm URI for an ALFA name.
@@ -271,7 +273,7 @@ class AlfaLanguage {
     algorithmUriOf(name, forPolicySet) {
         const { log } = this.deps;
         log.debug("Entering AlfaLanguage.algorithmUriOf().");
-        const pair = ALGORITHM_NAMES[name];
+        const pair = ownMembers.read(ALGORITHM_NAMES, name);
         if (!pair) {
             log.debug("Leaving AlfaLanguage.algorithmUriOf().");
             return null;
@@ -283,15 +285,21 @@ class AlfaLanguage {
         const { log } = this.deps;
         log.debug("Entering AlfaLanguage.operatorFor().");
         const short = String(functionId).replace(/^.*:function:/, '');
+        // The LONGEST suffix wins. `-equal` is also the tail of
+        // `-greater-than-or-equal` and `-less-than-or-equal`, so taking the
+        // first match in table order wrote `integer-greater-than-or-equal`
+        // as `==`, and the parser read that back as `integer-equal`: a
+        // different policy, with no error anywhere.
+        let found = null;
         for (let i = 0; i < OPERATORS.length; i += 1) {
             if (short.slice(-OPERATORS[i].suffix.length) ===
-                OPERATORS[i].suffix) {
-                log.debug("Leaving AlfaLanguage.operatorFor().");
-                return OPERATORS[i].symbol;
+                OPERATORS[i].suffix &&
+                (!found || OPERATORS[i].suffix.length > found.suffix.length)) {
+                found = OPERATORS[i];
             }
         }
         log.debug("Leaving AlfaLanguage.operatorFor().");
-        return null;
+        return found ? found.symbol : null;
     }
     // The function a `<type> <symbol> <type>` comparison means. Resolved
     // through
@@ -381,7 +389,7 @@ class AlfaLanguage {
             // bag. It
             // is vanishingly rare and costs one comparison to make impossible.
             while (order.some(function (one) { return one.name === name; }) ||
-                self.functionByShortName[name]) {
+                ownMembers.read(self.functionByShortName, name)) {
                 name = base + n;
                 n += 1;
             }
@@ -849,7 +857,8 @@ class AlfaLanguage {
         const declarations = attributes.order.map(function (one) {
             const row = datatypes.typeOf(one.dataType);
             return '    attribute ' + one.name + ' {\n' +
-                '        category = ' + (CATEGORY_URIS[one.category] ||
+                '        category = ' + (ownMembers.read(CATEGORY_URIS,
+                                             one.category) ||
                 self.quote(one.category)) + '\n' +
                 '        id = ' + self.quote(one.attributeId) + '\n' +
                 '        type = ' + (row ? row.name : 'string') + '\n' +
@@ -1062,7 +1071,7 @@ class AlfaLanguage {
                 if (key === 'category') {
                     const token = next();
                     declared.category = token.kind === 'string' ? token.value
-                        : CATEGORY_NAMES[token.value];
+                        : ownMembers.read(CATEGORY_NAMES, token.value);
                     if (!declared.category) {
                         throw model.syntaxError('Unknown category "' +
                           token.value + '" at line ' + token.line +
@@ -1102,12 +1111,14 @@ class AlfaLanguage {
                   '" must declare all three of category, ' +
                     'id and type.');
             }
-            attributes[name] = declared;
+            ownMembers.put(attributes, name, declared);
             log.debug('Leaving attributeDeclaration(). name=' + name);
         }
         function designatorFor(name, token) {
             log.debug("Entering designatorFor().");
-            const declared = attributes[name];
+            // An own member only: an undeclared `toString` is refused as
+            // undeclared, not read as Function.
+            const declared = ownMembers.read(attributes, name);
             if (!declared) {
                 // THE MOST USEFUL REFUSAL IN THIS FILE. See point 3 in the
                 // header: a
@@ -1152,11 +1163,11 @@ class AlfaLanguage {
         // most useful one in this file.
         function nameReference(name, token) {
             log.debug("Entering nameReference().");
-            if (attributes[name]) {
+            if (ownMembers.read(attributes, name)) {
                 log.debug("Leaving nameReference().");
                 return designatorFor(name, token);
             }
-            const uri = self.functionByShortName[name];
+            const uri = ownMembers.read(self.functionByShortName, name);
             if (uri) {
                 log.debug('nameReference(): "' + name + '" is the function ' +
                   uri +
@@ -1233,7 +1244,8 @@ class AlfaLanguage {
                         }
                     }
                     expect(')');
-                    const uri = self.functionByShortName[token.value];
+                    const uri = ownMembers.read(self.functionByShortName,
+                                                token.value);
                     if (!uri) {
                         throw model.syntaxError('There is no function called ' +
                             '"' + token.value + '" at line ' +
@@ -1421,7 +1433,7 @@ class AlfaLanguage {
             // function
             // declares.
             if (token.kind === 'word' && is('(', 1) &&
-                self.functionByShortName[token.value]) {
+                ownMembers.read(self.functionByShortName, token.value)) {
                 const call = primary();
                 if (call.kind !== 'apply' || call.args.length !== 2) {
                     throw model.syntaxError('A target clause written as a ' +
@@ -1636,7 +1648,7 @@ class AlfaLanguage {
                     next();
                     const id = expectWord();
                     expect('=');
-                    policy.variables[id] = expression();
+                    ownMembers.put(policy.variables, id, expression());
                     continue;
                 }
                 const token = peek();

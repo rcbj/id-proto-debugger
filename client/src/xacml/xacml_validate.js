@@ -64,6 +64,7 @@
 // ---------------------------------------------------------------------------
 
 const { log } = require('../xacml_runtime');
+const ownMembers = require('./xacml_own_members');
 const model = require('./xacml_model');
 const datatypes = require('./xacml_datatypes');
 const functions = require('./xacml_functions');
@@ -121,20 +122,23 @@ function staticTypeOf(expression, scope, problems) {
     return { kind: 'function', type: null };
   }
   if (expression.kind === 'variableRef') {
-    const definition = scope.variables[expression.variableId];
+    // Own members only (2026-11-12): a VariableReference to `constructor`
+    // is to a variable nobody defined, not to Object.
+    const definition = ownMembers.read(scope.variables,
+                                       expression.variableId);
     if (!definition) {
       problems.push('VariableReference names "' + expression.variableId +
                     '", which no VariableDefinition in this policy defines.');
       log.debug('Leaving staticTypeOf(). Undefined variable.');
       return null;
     }
-    if (scope.inProgress[expression.variableId]) {
+    if (ownMembers.read(scope.inProgress, expression.variableId)) {
       // Already reported by the caller that opened the cycle; returning null
       // here stops the recursion rather than reporting it a second time.
       log.debug('Leaving staticTypeOf(). Cyclic variable.');
       return null;
     }
-    scope.inProgress[expression.variableId] = true;
+    ownMembers.put(scope.inProgress, expression.variableId, true);
     const type = staticTypeOf(definition, scope, problems);
     delete scope.inProgress[expression.variableId];
     log.debug('Leaving staticTypeOf(). A variable reference.');
@@ -351,7 +355,7 @@ function checkPolicy(policy, problems) {
     return;
   }
   Object.keys(scope.variables).forEach(function (id) {
-    scope.inProgress[id] = true;
+    ownMembers.put(scope.inProgress, id, true);
     staticTypeOf(scope.variables[id], scope, problems);
     delete scope.inProgress[id];
   });
