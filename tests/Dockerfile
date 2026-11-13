@@ -1167,6 +1167,13 @@ RUN . $NVM_DIR/nvm.sh && npm install chromedriver
 # Install modules needed for the test scripts
 RUN . $NVM_DIR/nvm.sh && npm install
 
+# EVERY SCHEDULED SCRIPT IS IN THE IMAGE, or the build stops here naming the
+# ones that are not. A job added to run-report.js without a COPY above used to
+# build fine and then fail one job with MODULE_NOT_FOUND in 0.0s, deep in a
+# forty-minute run; #405, #406 and #415 each merged that. See
+# checkJobScripts() in run-report.js.
+RUN . $NVM_DIR/nvm.sh && node run-report.js --check-scripts
+
 # ---------------------------------------------------------------------------
 # THE MOCK'S OWN EXPRESS, BESIDE THE MOCK'S COPIED MODULES.
 #
