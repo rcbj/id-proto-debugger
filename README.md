@@ -163,8 +163,10 @@ The test launchers do this for you (`requireApiLdapjsCheckout()` in
 
 The mock STS the test suite and the local stack run against,
 [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), is **not** a submodule: every
-compose file runs its published release image, `ghcr.io/rcbj/iya-sts:<version>`
-(see *The mock STS runs from its release image* below).
+compose file runs its published release image — the private copy of
+`ghcr.io/rcbj/iya-sts:<version>` in this repository's image mirror,
+`ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:<version>`, which needs
+`docker login ghcr.io` (see *The mock STS runs from its release image* below).
 
 From a bash command prompt on Fedora or RHEL 7.x, run the following::
 ```
@@ -246,11 +248,11 @@ If you need to pop up the browser for troubleshooting, pass in the --browser opt
 To generate a code coverage report, run ```./run-coverage.sh```. The report will be under the coverage directory.
 
 ### The mock STS runs from its release image
-Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier, the KDC, the LDAP directory and the `did:web` document — is one Node service, [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts). It used to live in `sts/` in this repository and was then linked as the `sts/` submodule; since 2026-11-13 this repository holds no copy of it. Every compose file runs its published, public release image:
+Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier, the KDC, the LDAP directory and the `did:web` document — is one Node service, [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts). It used to live in `sts/` in this repository and was then linked as the `sts/` submodule; since 2026-11-13 this repository holds no copy of it. Every compose file runs its published release image — not iya-sts's public package itself but the PRIVATE copy of it in this repository's image mirror (`.github/image-mirror.txt`), which the Mirror Images workflow refreshes from iya-sts's release, like every other image the stacks pull. Pulling it needs `docker login ghcr.io` with a token that can read packages:
 
 | What | How |
 |---|---|
-| the `sts` service | `image: ${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:<version>}` — the default in `docker-compose-run-tests.yml` is the one place the release is named, and `tests/image_mirror_coverage.js` fails when another compose file disagrees |
+| the `sts` service | `image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:<version>}` — the default in `docker-compose-run-tests.yml` is the one place the release is named, and `tests/image_mirror_coverage.js` fails when another compose file disagrees or the default is not the mirror's copy |
 | its companion (demo pages, SPNEGO page, Kerberos TCP service) | built from iya-sts's repository at the matching tag, `${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v<version>:companion}` |
 | tests that load iya-sts's code in process | the tests image copies the image's `/usr/src/sts`; a host run copies it once into `~/.cache/id-proto-debugger/iya-sts/` (`tests/module_paths.js`, `iyaStsTree()`) |
 

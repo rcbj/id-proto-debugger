@@ -325,8 +325,14 @@ init()
   fi
   common_setup
   check_return_code $?
-  # iya-sts runs from its release image (keycloak-tests.yml, IYA_STS_IMAGE),
-  # pulled here so a failure names the image rather than a compose step.
+  # Every image keycloak-tests.yml pulls, and every base image it builds from,
+  # is a PRIVATE copy on ghcr.io (.github/image-mirror.txt). Say how to log
+  # in before compose fails on a manifest it may not read.
+  requireGhcrMirror
+  check_return_code $?
+  # iya-sts runs from the mirror copy of its release image (keycloak-tests.yml,
+  # IYA_STS_IMAGE), pulled here so a failure names the image rather than a
+  # compose step.
   requireIyaStsImage "${CURRENT_DIR}"
   check_return_code $?
   # The api needs node-ldapjs — the same library iya-sts's directory is built

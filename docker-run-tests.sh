@@ -502,10 +502,10 @@ check_return_code $?
 # login the build fails on a pull error that names neither; this says which.
 requireGhcrMirror
 check_return_code $?
-# iya-sts runs from its published release image (docker-compose-run-tests.yml,
-# IYA_STS_IMAGE), and tests/Dockerfile copies its tree out of the same image,
-# so it is pulled here, before anything builds, where a failure can say which
-# image and why.
+# iya-sts runs from the mirror's copy of its published release image
+# (docker-compose-run-tests.yml, IYA_STS_IMAGE), and tests/Dockerfile copies
+# its tree out of the same image, so it is pulled here, before anything
+# builds, where a failure can say which image and why.
 requireIyaStsImage "${CURRENT_DIR}"
 check_return_code $?
 

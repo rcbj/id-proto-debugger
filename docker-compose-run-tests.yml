@@ -230,7 +230,10 @@ services:
     # built by its own pipeline from its release tag. This stack runs that
     # image: it is the artifact iya-sts ships, so a run here exercises what a
     # deployment gets, and the five minutes of npm and tsc a cold build cost
-    # are gone.
+    # are gone. It pulls the PRIVATE MIRROR COPY of it (mirror path
+    # iya-sts:<version>, .github/image-mirror.txt), like every other image
+    # here, so a run touches no package outside this repository's area; the
+    # Mirror Images workflow refreshes that copy from iya-sts's release.
     #
     # THE IMAGE IS ALSO WHERE iya-sts'S CODE COMES FROM. This repository has
     # no checkout of it (the sts/ submodule was removed on 2026-11-13).
@@ -246,7 +249,7 @@ services:
     # version's. tests/module_paths.js and common/common.sh read it from here.
     #
     # IYA_STS_IMAGE overrides it, for a candidate image or a digest pin.
-    image: ${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:1.0.0}
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
     # ---------------------------------------------------------------------
     # THE SAME UID AS THE TESTS CONTAINER, BECAUSE THE SPIRE SOCKET IS
     # PRIVATE NOW.
@@ -821,7 +824,7 @@ services:
         # iya-sts's release image, the same one the `sts` service runs. The
         # tests image copies its whole /usr/src/sts tree in for the jobs that
         # load iya-sts's modules in process; see stage 2 of tests/Dockerfile.
-        iyasts: docker-image://${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:1.0.0}
+        iyasts: docker-image://${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report

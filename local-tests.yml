@@ -6,9 +6,22 @@
 # (start-order only), which lets Keycloak start before Postgres is accepting
 # connections and crash with "Connection to localhost:5432 refused".
 version: '2.4'
+# ---------------------------------------------------------------------------
+# EVERY IMAGE THIS FILE PULLS, AND EVERY BASE IMAGE IT BUILDS FROM, COMES
+# FROM THE PRIVATE ghcr.io MIRROR — the same arrangement as
+# docker-compose-run-tests.yml, whose header explains it. `image:` names the
+# mirror directly; a Dockerfile's FROM is redirected by the build's
+# `additional_contexts`, which is this anchor. Pulls need
+# `docker login ghcr.io` with a token that can read packages.
+# tests/image_mirror_coverage.js holds this file to it.
+# ---------------------------------------------------------------------------
+x-mirror-contexts: &mirror-contexts
+  ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
+  "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
+  "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
 services:
   postgres:
-    image: postgres:18
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/postgres:18
     # No `user:` needed and one would BREAK it: the official image's
     # entrypoint starts as root only to create and chown PGDATA on a fresh
     # volume, then drops to the `postgres` account with gosu before the
@@ -34,7 +47,7 @@ services:
       retries: 5
       start_period: 45s
   keycloak:
-    image: quay.io/keycloak/keycloak:26.6.4
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/keycloak/keycloak:26.6.4
     # Already non-root: the Keycloak image declares USER 1000 itself.
     # DPoP (RFC 9449) is a PREVIEW feature in Keycloak 26 and is off unless it is
     # named here: without it the server ignores the DPoP header entirely, issues a
@@ -153,6 +166,7 @@ services:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       context: .
+      additional_contexts: *mirror-contexts
       dockerfile: api/Dockerfile
       args:
         CONFIG_FILE: ${CONFIG_FILE}
@@ -217,6 +231,7 @@ services:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       context: .
+      additional_contexts: *mirror-contexts
       dockerfile: client/Dockerfile 
       args:
         CONFIG_FILE: ${CONFIG_FILE}
@@ -243,7 +258,7 @@ services:
     # docker-compose-run-tests.yml runs, where the release is named
     # (IYA_STS_IMAGE; tests/image_mirror_coverage.js holds this default to
     # that one). This repository has no iya-sts checkout to build from.
-    image: ${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:1.0.0}
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
     # ROOT, and the only container here that is. The image runs as uid 10001
     # and this service binds 88 (TCP and UDP), 389 and 636 — all privileged —
     # on the HOST's network namespace, where the per-namespace sysctl the
@@ -418,6 +433,7 @@ services:
     image: rcbj/companion
     build:
       context: ${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v1.0.0:companion}
+      additional_contexts: *mirror-contexts
     network_mode: "host"
     environment:
       - COMPANION_PORT=9700
@@ -451,6 +467,7 @@ services:
     network_mode: "host"
     build:
       context: .
+      additional_contexts: *mirror-contexts
       dockerfile: keycloak-wsfed/Dockerfile
     command: ["-b", "0.0.0.0", "-Djboss.socket.binding.port-offset=2"]
     environment:
@@ -470,7 +487,7 @@ services:
   # comes from the environment (generateWaltidIssuerKey in common/common.sh) —
   # no private key is committed.
   waltid-issuer-api:
-    image: waltid/issuer-api2:0.23.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/waltid/issuer-api2:0.23.0
     # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
     # its own. It needs none: its configuration is bind-mounted READ-ONLY,
     # persistence.conf puts sessions in memory, and its signing key comes
@@ -493,7 +510,7 @@ services:
   # issuer's baseUrl names, because every URL walt.id publishes is built from it.
   # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
   waltid-issuer:
-    image: node:24.22.1-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -526,7 +543,7 @@ services:
   # request-signing key comes from the environment (generateWaltidVerifierKey in
   # common/common.sh) — no private key is committed.
   waltid-verifier-api:
-    image: waltid/verifier-api2:0.23.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/waltid/verifier-api2:0.23.0
     # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
     # its own. It needs none: its configuration is bind-mounted READ-ONLY,
     # persistence.conf puts sessions in memory, and its signing key comes
@@ -545,7 +562,7 @@ services:
   # CORS in front of the verifier, for the same reason the issuer has one, and it
   # IS the address the verifier's urlPrefix names.
   waltid-verifier:
-    image: node:24.22.1-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.

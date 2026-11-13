@@ -252,11 +252,13 @@ COPY docker-compose.yml ./
 COPY local-tests.yml ./
 COPY keycloak-tests.yml ./
 
-# Where the stack's images come from: tests/image_mirror_coverage.js checks
-# that every image docker-compose-run-tests.yml (copied above) pulls, and every
-# FROM in the six Dockerfiles it builds, is covered by the ghcr.io mirror. It
-# needs the list and those Dockerfiles, renamed flat because this directory is
-# flat. client/Dockerfile is already here as client_Dockerfile.
+# Where the stacks' images come from: tests/image_mirror_coverage.js checks
+# that every image the four stack compose files (docker-compose-run-tests.yml,
+# docker-compose.yml, local-tests.yml, keycloak-tests.yml, all copied above)
+# pull, and every FROM in the six Dockerfiles they build, is covered by the
+# ghcr.io mirror — iya-sts's release image included. It needs the list and
+# those Dockerfiles, renamed flat because this directory is flat.
+# client/Dockerfile is already here as client_Dockerfile.
 COPY tests/image_mirror_coverage.js ./
 COPY .github/image-mirror.txt ./
 COPY api/Dockerfile ./api_Dockerfile

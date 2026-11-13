@@ -240,8 +240,51 @@ function alignConfigFileForMockSts(stsRoot, say) {
 // that file rather than written here a second time, so a release bump is one
 // edit. (The file sits at the repository root in a checkout and flat beside
 // the tests in the tests image.)
+//
+// That default NESTS another one: it is the private mirror copy,
+// `${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:<version>`,
+// so it is read by matching braces rather than up to the first `}`, and the
+// inner `${NAME:-default}` is expanded the way compose expands it (the
+// variable when set and non-empty, the default otherwise).
 // ---------------------------------------------------------------------------
-const IYA_STS_IMAGE_DEFAULT_PATTERN = /\$\{IYA_STS_IMAGE:-([^}]+)\}/;
+const IYA_STS_IMAGE_OPEN = "${IYA_STS_IMAGE:-";
+
+function expandComposeDefaults(value) {
+  log.debug("Entering expandComposeDefaults().");
+  const out = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}/g,
+    function (all, name, fallback) {
+      return process.env[name] ? process.env[name] : fallback;
+    });
+  log.debug("Leaving expandComposeDefaults().");
+  return out;
+}
+
+function iyaStsImageDefault(text) {
+  log.debug("Entering iyaStsImageDefault().");
+  const start = text.indexOf(IYA_STS_IMAGE_OPEN);
+  if (start < 0) {
+    log.debug("Leaving iyaStsImageDefault(). None.");
+    return null;
+  }
+  let depth = 1;
+  for (let i = start + IYA_STS_IMAGE_OPEN.length; i < text.length; i++) {
+    if (text.startsWith("${", i)) {
+      depth++;
+      i++;
+    } else if (text.charAt(i) === "}") {
+      depth--;
+      if (depth === 0) {
+        log.debug("Leaving iyaStsImageDefault(). Found.");
+        return expandComposeDefaults(
+          text.slice(start + IYA_STS_IMAGE_OPEN.length, i));
+      }
+    } else if (text.charAt(i) === "\n") {
+      break;
+    }
+  }
+  log.debug("Leaving iyaStsImageDefault(). Unbalanced.");
+  return null;
+}
 
 function iyaStsImage() {
   log.debug("Entering iyaStsImage().");
@@ -255,11 +298,10 @@ function iyaStsImage() {
   ];
   for (const candidate of candidates) {
     if (!fs.existsSync(candidate)) continue;
-    const match = IYA_STS_IMAGE_DEFAULT_PATTERN.exec(
-      fs.readFileSync(candidate, "utf8"));
-    if (match) {
+    const image = iyaStsImageDefault(fs.readFileSync(candidate, "utf8"));
+    if (image) {
       log.debug("Leaving iyaStsImage(). Default from " + candidate + ".");
-      return match[1];
+      return image;
     }
   }
   log.debug("Leaving iyaStsImage(). No default found.");

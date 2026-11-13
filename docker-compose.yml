@@ -2,6 +2,19 @@
 # SPDX-License-Identifier: MIT
 
 version: '3'
+# ---------------------------------------------------------------------------
+# EVERY IMAGE THIS FILE PULLS, AND EVERY BASE IMAGE IT BUILDS FROM, COMES
+# FROM THE PRIVATE ghcr.io MIRROR — the same arrangement as
+# docker-compose-run-tests.yml, whose header explains it. `image:` names the
+# mirror directly; a Dockerfile's FROM is redirected by the build's
+# `additional_contexts`, which is this anchor. Pulls need
+# `docker login ghcr.io` with a token that can read packages.
+# tests/image_mirror_coverage.js holds this file to it.
+# ---------------------------------------------------------------------------
+x-mirror-contexts: &mirror-contexts
+  ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
+  "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
+  "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
 services:
   api:
     container_name: api
@@ -33,6 +46,7 @@ services:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       context: .
+      additional_contexts: *mirror-contexts
       dockerfile: ./api/Dockerfile
       args:
         CONFIG_FILE: ${CONFIG_FILE}
@@ -72,6 +86,7 @@ services:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     build:
       context: .
+      additional_contexts: *mirror-contexts
       dockerfile: ./client/Dockerfile
       args:
         CONFIG_FILE: ${CONFIG_FILE}
@@ -153,7 +168,7 @@ services:
     # docker-compose-run-tests.yml runs, where the release is named
     # (IYA_STS_IMAGE; tests/image_mirror_coverage.js holds this default to
     # that one). This repository has no iya-sts checkout to build from.
-    image: ${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:1.0.0}
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
     # The image runs as uid 10001 and binds 88 (TCP and UDP), 389 and 636,
     # all privileged. The sysctl is per network namespace, so it lowers the
     # bar inside this container alone; docker-compose-run-tests.yml does the

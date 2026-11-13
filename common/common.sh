@@ -1030,6 +1030,11 @@ requireGhcrMirror()
 # it. So the image is resolved and pulled here, before compose is called,
 # because a pull that fails inside `up` names a manifest, not the remedy.
 #
+# The default is the PRIVATE MIRROR COPY of that release, and it nests a
+# second default: `${IYA_STS_IMAGE:-${IMAGE_MIRROR:-<prefix>}/iya-sts:<v>}`.
+# So it is read in two parts — the IMAGE_MIRROR default, then what follows
+# it — and IMAGE_MIRROR is honoured when set, as compose honours it.
+#
 # It is exported, resolved, so that compose, the tests' module_paths.js and
 # warmIyaStsTree() below all mean the same image even if the default moves
 # under a long run. Fatal on failure, like any service a launcher starts.
@@ -1043,8 +1048,21 @@ requireIyaStsImage()
   local image="${IYA_STS_IMAGE:-}"
   if [ -z "${image}" ];
   then
-    image="$(sed -n 's/.*\${IYA_STS_IMAGE:-\([^}]*\)}.*/\1/p' \
-               "${root}/docker-compose-run-tests.yml" | head -1)"
+    local line mirror rest
+    line="$(grep -o '\${IYA_STS_IMAGE:-.*' \
+              "${root}/docker-compose-run-tests.yml" | head -1)"
+    line="${line#\$\{IYA_STS_IMAGE:-}"
+    case "${line}" in
+      '${IMAGE_MIRROR:-'*)
+        line="${line#\$\{IMAGE_MIRROR:-}"
+        mirror="${line%%\}*}"
+        rest="${line#*\}}"
+        image="${IMAGE_MIRROR:-${mirror}}${rest%%\}*}"
+        ;;
+      *)
+        image="${line%%\}*}"
+        ;;
+    esac
   fi
   if [ -z "${image}" ];
   then
@@ -1062,9 +1080,9 @@ requireIyaStsImage()
   if ! ${docker_cmd} pull -q "${image}" >/dev/null;
   then
     echo "ERROR: could not pull ${image}, the iya-sts release this run" \
-         "uses. It is a package on ghcr.io; the login requireGhcrMirror()" \
-         "describes covers it, or set IYA_STS_IMAGE to an image this" \
-         "machine has." >&2
+         "uses. It is the private mirror copy on ghcr.io; the login" \
+         "requireGhcrMirror() describes covers it, or set IYA_STS_IMAGE" \
+         "to an image this machine has." >&2
     echo "Leaving requireIyaStsImage(). Pull failed."
     return 1
   fi
