@@ -1259,6 +1259,12 @@ class XacmlEditor {
             else {
                 lexical = String(given.value);
             }
+            const badMatchValue = self.lexicalRefusal(type, lexical);
+            if (badMatchValue) {
+                log.debug('Leaving XacmlEditor.applyEdit(). Match value ' +
+                  'is not of its type.');
+                return badMatchValue;
+            }
             node.matchId = matchId;
             node.value = { kind: 'value', type: type, lexical: lexical };
             // THE DATATYPE FOLLOWS THE FUNCTION, always. A Match whose literal
@@ -1485,9 +1491,17 @@ class XacmlEditor {
             return { ok: true, what: 'Function changed.' };
         }
         if (action === 'edit-value') {
-            node.type = given.type || node.type;
-            node.lexical = given.lexical === undefined ? node.lexical
+            const nextType = given.type || node.type;
+            const nextLexical = given.lexical === undefined ? node.lexical
                 : String(given.lexical);
+            const badValue = self.lexicalRefusal(nextType, nextLexical);
+            if (badValue) {
+                log.debug('Leaving XacmlEditor.applyEdit(). Value is not ' +
+                  'of its type.');
+                return badValue;
+            }
+            node.type = nextType;
+            node.lexical = nextLexical;
             if (given.xpathCategory !== undefined) {
                 node.xpathCategory = String(given.xpathCategory) || null;
             }
@@ -1629,6 +1643,30 @@ class XacmlEditor {
             why: 'The editor does not know how to "' + action + '". This ' +
                 'is a gap between the menu and the code that acts on it, ' +
                 'not something you did.' };
+    }
+    // THE LITERAL MUST BE A VALUE OF ITS DATATYPE. An integer-equal Match
+    // whose literal is "notanint" used to be stored, and only the decision
+    // said so, as a syntax-error status that a deny-unless-permit policy
+    // turns into a plain Deny. Refused here instead, before anything is
+    // written. An xpathExpression is checked by the PDP against its
+    // category, so it is not parsed here.
+    lexicalRefusal(type, lexical) {
+        const { log } = this.deps;
+        log.debug("Entering XacmlEditor.lexicalRefusal().");
+        if (model.canonicalType(type) === TYPE.XPATH_EXPRESSION) {
+            log.debug("Leaving XacmlEditor.lexicalRefusal(). XPath.");
+            return null;
+        }
+        try {
+            datatypes.parseValue(type, lexical);
+        }
+        catch (error) {
+            const why = (error && error.message) || String(error);
+            log.debug("Leaving XacmlEditor.lexicalRefusal(). " + why);
+            return { ok: false, why: why };
+        }
+        log.debug("Leaving XacmlEditor.lexicalRefusal(). Valid.");
+        return null;
     }
     // A TRISTATE READ OF A FORM FIELD: true, false, or "the form did not say".
     //

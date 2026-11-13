@@ -424,10 +424,47 @@ function pageWiring() {
   log.debug("Leaving pageWiring().");
 }
 
+// A literal that is not a value of its datatype is refused at the edit,
+// for a Match and for a value inside a condition, and the stored document
+// is left as it was. It used to be stored, and only the decision said so,
+// as a syntax-error status a deny-unless-permit policy turns into a Deny.
+function illTypedLiteralsAreRefused() {
+  log.debug("Entering illTypedLiteralsAreRefused().");
+  var bench = fresh();
+  assert.strictEqual(bench.loadSample().ok, true);
+  var match = ".rules.0.target.anyOf.0.allOf.0.matches.0";
+  var integerEqual = "urn:oasis:names:tc:xacml:1.0:function:integer-equal";
+  var before = bench.editorView("sample").document;
+  var refused = bench.edit({ policy: "sample", path: match,
+    action: "edit-match", matchId: integerEqual, value: "notanint" });
+  assert.strictEqual(refused.ok, false, JSON.stringify(refused));
+  assert.ok(/not a valid integer/.test(refused.why), refused.why);
+  assert.strictEqual(bench.editorView("sample").document, before);
+  var accepted = bench.edit({ policy: "sample", path: match,
+    action: "edit-match", matchId: integerEqual, value: "42" });
+  assert.strictEqual(accepted.ok, true, JSON.stringify(accepted));
+
+  assert.strictEqual(bench.edit({ policy: "sample", path: ".rules.0",
+    action: "add-condition" }).ok, true);
+  var value = ".rules.0.condition.args.0";
+  before = bench.editorView("sample").document;
+  refused = bench.edit({ policy: "sample", path: value,
+    action: "edit-value", lexical: "soon",
+    type: "http://www.w3.org/2001/XMLSchema#dateTime" });
+  assert.strictEqual(refused.ok, false, JSON.stringify(refused));
+  assert.strictEqual(bench.editorView("sample").document, before);
+  accepted = bench.edit({ policy: "sample", path: value,
+    action: "edit-value", lexical: "contractor" });
+  assert.strictEqual(accepted.ok, true, JSON.stringify(accepted));
+  log.info("OK — an ill-typed literal is refused at the edit.");
+  log.debug("Leaving illTypedLiteralsAreRefused().");
+}
+
 function main() {
   log.debug("Entering main().");
   sampleAllowsAlice();
   refusedEditLeavesTheDocument();
+  illTypedLiteralsAreRefused();
   policySetRefusesARule();
   variableNameMayNotContainADot();
   referenceResolvesFromTheRepository();
