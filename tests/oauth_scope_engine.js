@@ -6,10 +6,12 @@
 // ---------------------------------------------------------------------------
 // The token-request scope, driven in node with no browser and no
 // network. scopes_supported is everything an authorization server
-// knows. A code exchange must not send it (RFC 6749 section 4.1.3), a
-// refresh must not send it unless the reader narrowed it (section 6),
-// and a registration must ask only for the OIDC basics the server
-// advertised.
+// knows, and no request starts from it. An OIDC authorization request
+// starts from the OIDC basics the server advertised and an OAuth 2.0
+// one from nothing. A code exchange sends no scope (RFC 6749 section
+// 4.1.3), a refresh none unless the reader narrowed it (section 6),
+// client credentials none of the scopes about a user, and a scope the
+// reader typed is kept because the page marks it edited.
 //
 // NOTE ON OPTIONS: run-report.js spawns every job as
 // `node <script>.js --url <BASE_URL>`. This job parses no arguments, so
@@ -78,80 +80,143 @@ function readSource(name) {
   return text;
 }
 
+// tokenRequestScope(grant, stored, edited, authorizationScope,
+// scopesSupported). `edited` is the page's persisted mark that the
+// reader typed into the field.
 function codeExchangeSendsNothing() {
   log.debug("Entering codeExchangeSendsNothing().");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "authorization_code", DUMP, DUMP, ADVERTISED), "");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "oidc_authorization_code_flow", "", "openid profile email",
-      ADVERTISED), "");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "authorization_grant", "", DUMP, ADVERTISED), "");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "device_authorization_grant", DUMP, DUMP, ADVERTISED), "");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "implicit_grant", "", "openid", ADVERTISED), "");
-  // The reader typed one. It is not the advertisement and not the
-  // prefill, so it stays, including on a code exchange.
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "authorization_code", "openid", DUMP, ADVERTISED), "openid");
-  // The value client credentials would have prefilled is not a scope
-  // this grant sends.
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "authorization_code", "openid profile email", DUMP, ADVERTISED),
-      "");
+  var grants = ["authorization_code", "oidc_authorization_code_flow",
+      "authorization_grant", "device_authorization_grant",
+      "implicit_grant"];
+  var i;
+  for (i = 0; i < grants.length; i++) {
+    assert.strictEqual(oauthScope.tokenRequestScope(
+        grants[i], DUMP, false, DUMP, ADVERTISED), "",
+        grants[i] + " kept a seeded scope");
+    assert.strictEqual(oauthScope.tokenRequestScope(
+        grants[i], "", false, "openid profile email", ADVERTISED), "",
+        grants[i] + " prefilled a scope");
+  }
   log.info("OK — a code exchange sends no seeded scope.");
   log.debug("Leaving codeExchangeSendsNothing().");
 }
 
-function refreshStaysEmptyUnlessNarrowed() {
-  log.debug("Entering refreshStaysEmptyUnlessNarrowed().");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "refresh_token", DUMP, DUMP, ADVERTISED), "");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "refresh_token", "", "openid profile email", ADVERTISED), "");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "refresh_token", "openid", DUMP, ADVERTISED), "openid");
-  // The original grant's own scope, repeated, is not a narrowing.
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "refresh_token", "openid profile email offline_access",
-      "openid profile email offline_access", ADVERTISED), "");
-  // Any order of the whole advertisement is still the dump.
-  var reversed = ADVERTISED.slice().reverse().join(" ");
-  assert.strictEqual(oauthScope.tokenRequestScope(
-      "refresh_token", reversed, DUMP, ADVERTISED), "");
-  log.info("OK — a refresh omits scope unless the reader narrowed it.");
-  log.debug("Leaving refreshStaysEmptyUnlessNarrowed().");
-}
-
-function grantsThatAskUseBasicsOrTheAuthorizationScope() {
-  log.debug("Entering grantsThatAskUseBasicsOrTheAuthorizationScope().");
-  var grants = ["client_credential", "client_credentials",
-      "resource_owner", "password"];
+// The mark, not the value, decides. A typed value that happens to equal
+// a default survives a reload; so does a field the reader emptied.
+function aTypedScopeIsKept() {
+  log.debug("Entering aTypedScopeIsKept().");
+  var grants = ["authorization_code", "refresh_token",
+      "client_credentials", "password"];
   var i;
   for (i = 0; i < grants.length; i++) {
     assert.strictEqual(oauthScope.tokenRequestScope(
-        grants[i], "", DUMP, ADVERTISED), "openid profile email",
-        grants[i] + " prefilled from the advertisement");
+        grants[i], "openid profile", true, "openid profile",
+        ADVERTISED), "openid profile",
+        grants[i] + " cleared a typed scope equal to the prefill");
     assert.strictEqual(oauthScope.tokenRequestScope(
-        grants[i], DUMP, "calendar.read", ADVERTISED),
-        "calendar.read",
-        grants[i] + " kept the authorization-step scope");
+        grants[i], DUMP, true, "openid", ADVERTISED), DUMP,
+        grants[i] + " rewrote a typed scope");
     assert.strictEqual(oauthScope.tokenRequestScope(
-        grants[i], "calendar.read", DUMP, ADVERTISED),
-        "calendar.read",
-        grants[i] + " kept a scope the reader typed");
+        grants[i], "", true, "openid", ADVERTISED), "",
+        grants[i] + " refilled a field the reader emptied");
   }
-  // The server did not advertise email. Do not ask for it.
+  // Not edited: whatever is stored is the page's own earlier prefill,
+  // and is replaced.
   assert.strictEqual(oauthScope.tokenRequestScope(
-      "client_credentials", "", "", ["openid", "profile", "api"]),
+      "password", "calendar.read", false, "openid", ADVERTISED),
+      "openid");
+  log.info("OK — a scope the reader typed is kept, whatever it is.");
+  log.debug("Leaving aTypedScopeIsKept().");
+}
+
+function refreshStaysEmptyUnlessEdited() {
+  log.debug("Entering refreshStaysEmptyUnlessEdited().");
+  assert.strictEqual(oauthScope.tokenRequestScope(
+      "refresh_token", DUMP, false, DUMP, ADVERTISED), "");
+  assert.strictEqual(oauthScope.tokenRequestScope(
+      "refresh_token", "", false, "openid profile email", ADVERTISED),
+      "");
+  assert.strictEqual(oauthScope.tokenRequestScope(
+      "refresh_token", "openid", true, DUMP, ADVERTISED), "openid");
+  log.info("OK — a refresh omits scope unless the reader narrowed it.");
+  log.debug("Leaving refreshStaysEmptyUnlessEdited().");
+}
+
+function passwordUsesTheAuthorizationScopeOrBasics() {
+  log.debug("Entering passwordUsesTheAuthorizationScopeOrBasics().");
+  var grants = ["resource_owner", "password"];
+  var i;
+  for (i = 0; i < grants.length; i++) {
+    assert.strictEqual(oauthScope.tokenRequestScope(
+        grants[i], "", false, "", ADVERTISED), "openid profile email",
+        grants[i] + " did not fall back to the basics");
+    assert.strictEqual(oauthScope.tokenRequestScope(
+        grants[i], "", false, "calendar.read", ADVERTISED),
+        "calendar.read",
+        grants[i] + " did not take the authorization-step scope");
+  }
+  assert.strictEqual(oauthScope.tokenRequestScope(
+      "password", "", false, "", ["openid", "profile", "api"]),
       "openid profile");
-  // No advertisement at all: the three basics, not an empty string.
   assert.strictEqual(oauthScope.tokenRequestScope(
-      "password", "", "", null), "openid profile email");
-  log.info("OK — client credentials and password prefill from the " +
-      "authorization scope or the OIDC basics.");
-  log.debug("Leaving grantsThatAskUseBasicsOrTheAuthorizationScope().");
+      "password", "", false, "", null), "openid profile email");
+  log.info("OK — password prefills from the authorization scope or " +
+      "the OIDC basics.");
+  log.debug("Leaving passwordUsesTheAuthorizationScopeOrBasics().");
+}
+
+// RFC 6749 section 4.4 has no user, so the scopes about one are never
+// a client-credentials default, and nothing left means no scope.
+function clientCredentialsDropsUserScopes() {
+  log.debug("Entering clientCredentialsDropsUserScopes().");
+  var grants = ["client_credential", "client_credentials"];
+  var i;
+  for (i = 0; i < grants.length; i++) {
+    assert.strictEqual(oauthScope.tokenRequestScope(
+        grants[i], "", false, "openid profile email", ADVERTISED), "",
+        grants[i] + " sent the OIDC basics");
+    assert.strictEqual(oauthScope.tokenRequestScope(
+        grants[i], "", false,
+        "openid profile email address phone offline_access api",
+        ADVERTISED), "api",
+        grants[i] + " kept a user-centric scope");
+    assert.strictEqual(oauthScope.tokenRequestScope(
+        grants[i], "", false, "", ADVERTISED), "",
+        grants[i] + " invented a scope");
+    assert.strictEqual(oauthScope.tokenRequestScope(
+        grants[i], "openid", true, "", ADVERTISED), "openid",
+        grants[i] + " overrode the reader");
+  }
+  assert.deepStrictEqual(oauthScope.USER_CENTRIC_SCOPES,
+      ["openid", "profile", "email", "address", "phone",
+       "offline_access"]);
+  log.info("OK — client credentials drops the user scopes.");
+  log.debug("Leaving clientCredentialsDropsUserScopes().");
+}
+
+// OIDC flows start from the basics the server advertised; OAuth 2.0
+// flows from nothing. Never the advertisement.
+function authorizationScopeIsNeverTheAdvertisement() {
+  log.debug("Entering authorizationScopeIsNeverTheAdvertisement().");
+  var oidc = ["oidc_authorization_code_flow", "oidc_implicit_flow",
+      "oidc_implicit_flow_id_token", "oidc_hybrid_code_id_token",
+      "oidc_hybrid_code_token", "oidc_hybrid_code_id_token_token"];
+  var oauth = ["authorization_grant", "implicit_grant",
+      "resource_owner", "client_credential",
+      "device_authorization_grant", "", undefined];
+  var i;
+  for (i = 0; i < oidc.length; i++) {
+    assert.strictEqual(oauthScope.authorizationScope(oidc[i],
+        ADVERTISED), "openid profile email", oidc[i]);
+    assert.strictEqual(oauthScope.authorizationScope(oidc[i],
+        ["openid", "scim:read"]), "openid", oidc[i]);
+  }
+  for (i = 0; i < oauth.length; i++) {
+    assert.strictEqual(oauthScope.authorizationScope(oauth[i],
+        ADVERTISED), "", String(oauth[i]));
+  }
+  log.info("OK — the authorization scope is the OIDC basics or nothing.");
+  log.debug("Leaving authorizationScopeIsNeverTheAdvertisement().");
 }
 
 function registrationIntersects() {
@@ -170,10 +235,6 @@ function registrationIntersects() {
   assert.strictEqual(oauthScope.joinAdvertised(
       "openid, profile, email, scim:read"),
       "openid profile email scim:read");
-  assert.ok(oauthScope.isAdvertisedDump(
-      "email openid profile scim:read",
-      ["openid", "profile", "email", "scim:read"]));
-  assert.ok(!oauthScope.isAdvertisedDump("openid profile", ADVERTISED));
   log.info("OK — a registration asks for the OIDC basics the server " +
       "advertised.");
   log.debug("Leaving registrationIntersects().");
@@ -213,6 +274,19 @@ function thePagesStopSeedingTheAdvertisement() {
       "The registration default is still every advertised scope.");
   assert.ok(page.indexOf("discoveryInfo.scopes_supported") >= 0,
       "Scope is no longer taken from discovery at all.");
+  assert.ok(page.indexOf('$("#scope").val(scopesSupported)') < 0 &&
+      jwks.indexOf('setNamedValue("scope", scopesSupported)') < 0,
+      "Populate still seeds the authorization scope with every " +
+      "advertised scope.");
+  assert.ok(page.indexOf("oauthScope.authorizationScope(") >= 0 &&
+      jwks.indexOf("oauthScope.authorizationScope(") >= 0,
+      "Populate does not take the authorization scope from the engine.");
+  assert.ok(step2.indexOf('markScopeEdited("token_scope_edited")') >= 0 &&
+      step2.indexOf('markScopeEdited("refresh_scope_edited")') >= 0,
+      "Typing into a scope field is not recorded as an edit.");
+  assert.ok(step2.indexOf('scopeEdited("token_scope_edited")') >= 0 &&
+      step2.indexOf('scopeEdited("refresh_scope_edited")') >= 0,
+      "The reload does not consult the edit marks.");
   assert.ok(step2.indexOf(
       '$("#refresh_scope").val(localStorage.getItem("scope"))') < 0,
       "A successful token call still copies the authorization scope " +
@@ -232,8 +306,11 @@ function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
   codeExchangeSendsNothing();
-  refreshStaysEmptyUnlessNarrowed();
-  grantsThatAskUseBasicsOrTheAuthorizationScope();
+  aTypedScopeIsKept();
+  refreshStaysEmptyUnlessEdited();
+  passwordUsesTheAuthorizationScopeOrBasics();
+  clientCredentialsDropsUserScopes();
+  authorizationScopeIsNeverTheAdvertisement();
   registrationIntersects();
   theEngineReachesNoDom();
   thePagesStopSeedingTheAdvertisement();

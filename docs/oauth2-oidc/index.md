@@ -106,6 +106,20 @@ Every grant and flow starts the same way. In **Metadata Retrieval**:
 4. Click **Populate Meta Data** below the table. This copies the endpoints
    and the advertised capabilities into the Configuration Parameters pane.
 
+**Populate never sends every advertised scope.** `scopes_supported` stays
+in the metadata table for you to pick from. The authorization request's
+**Scope** starts as `openid profile email`, limited to what the provider
+advertises, for an OIDC flow, and empty for an OAuth 2.0 grant. On step 2
+the token request's scope is empty for a code exchange and a refresh
+(RFC 6749 sections 4.1.3 and 6). Resource-owner password starts from the
+authorization scope, or `openid profile email` when that is empty. Client
+credentials starts from the authorization scope without `openid`,
+`profile`, `email`, `address`, `phone` and `offline_access`, which are
+about a user that grant does not have, and sends no scope when nothing is
+left. Once you type into a token or refresh scope field, that value is
+kept across reloads, even when it matches the default. Pressing
+**Populate Meta Data** again resets both fields to the default.
+
 ![Metadata Retrieval pane after Retrieve, showing the provider's discovery document as a table](images/oauth2-authorization-code-01-metadata.png)
 
 If you have no metadata document, skip this step and type the endpoints into

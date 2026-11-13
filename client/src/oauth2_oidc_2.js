@@ -2736,10 +2736,26 @@ function readStoredScopesSupported() {
   return field || "";
 }
 
-// Replace a seeded advertisement in #token_scope and #refresh_scope.
-// A value the reader typed is kept. An empty token scope stays empty
-// for a code exchange and a refresh, and is prefilled for client
-// credentials and resource-owner password.
+// The "edited" mark for a scope field: "true" once the reader typed
+// into it, persisted beside the value. Comparing the value with the
+// prefill cannot tell a typed "openid" from a seeded one.
+function scopeEdited(key) {
+  log.debug("Entering scopeEdited().");
+  var edited = localStorage.getItem(key) === "true";
+  log.debug("Leaving scopeEdited().");
+  return edited;
+}
+
+function markScopeEdited(key) {
+  log.debug("Entering markScopeEdited().");
+  localStorage.setItem(key, "true");
+  log.debug("Leaving markScopeEdited().");
+}
+
+// Fill #token_scope and #refresh_scope. A field the reader edited keeps
+// its value, empty included. Otherwise the page's prefill: nothing for
+// a code exchange and a refresh, and oauth_scope.js's default for
+// client credentials and resource-owner password.
 function applyStoredTokenScopes() {
   log.debug("Entering applyStoredTokenScopes().");
   var supported = readStoredScopesSupported();
@@ -2747,9 +2763,11 @@ function applyStoredTokenScopes() {
       localStorage.getItem("authorization_grant_type") || "";
   var authz = localStorage.getItem("scope") || "";
   $("#token_scope").val(oauthScope.tokenRequestScope(
-      grant, $("#token_scope").val(), authz, supported));
+      grant, $("#token_scope").val(), scopeEdited("token_scope_edited"),
+      authz, supported));
   $("#refresh_scope").val(oauthScope.tokenRequestScope(
-      "refresh_token", $("#refresh_scope").val(), authz, supported));
+      "refresh_token", $("#refresh_scope").val(),
+      scopeEdited("refresh_scope_edited"), authz, supported));
   log.debug("Leaving applyStoredTokenScopes().");
 }
 
@@ -3850,6 +3868,14 @@ $(document).ready(function() {
   $("#refresh_refresh_token, #refresh_client_id, #refresh_client_secret, " +
     "#refresh_scope")
     .on("input change", recalculateRefreshRequestDescription);
+  // Only the reader types, so only `input` marks a scope as edited. A
+  // value set in script fires neither event.
+  $("#token_scope").on("input", function () {
+    markScopeEdited("token_scope_edited");
+  });
+  $("#refresh_scope").on("input", function () {
+    markScopeEdited("refresh_scope_edited");
+  });
 
   loadValuesFromLocalStorage();
   enforceBackendAvailability();
@@ -4358,6 +4384,9 @@ function maybeShowTokenHandoffBanner() {
   if (wanted && $("#token_scope").length) {
     filled = tokenHandoff.mergeScope($("#token_scope").val(), wanted);
     $("#token_scope").val(filled);
+    // The workflow asked for this scope, so it is kept across a reload
+    // the way a typed one is.
+    markScopeEdited("token_scope_edited");
     // A value set in script fires no change event, and the next thing this
     // reader does is press a button that posts to the token endpoint.
     writeValuesToLocalStorage();

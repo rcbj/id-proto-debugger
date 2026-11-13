@@ -2153,14 +2153,15 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   var issuer = discoveryInfo["issuer"];
   var jwksUri = discoveryInfo["jwks_uri"];
   var responseTypesSupported = discoveryInfo["response_types_supported"];
-  // The authorization request's scope stays the advertisement, so the
-  // reader can see every name and narrow it. The token request does
-  // not: RFC 6749 section 4.1.3 defines no scope parameter on a code
-  // exchange, and client credentials or password take the
-  // authorization-step scope or the OIDC basics, never the whole list.
+  // Neither request starts from the whole advertisement, which stays
+  // visible in the metadata table. An OIDC flow's authorization request
+  // asks for the OIDC basics the provider advertised, and an OAuth 2.0
+  // flow's for nothing. The token request follows oauth_scope.js:
+  // nothing on a code exchange (RFC 6749 section 4.1.3), and a prefill
+  // for client credentials and password.
   var rawScopes = discoveryInfo["scopes_supported"];
-  var scopesSupported = rawScopes == null ? "" :
-      oauthScope.joinAdvertised(rawScopes);
+  var authorizationScope = oauthScope.authorizationScope(
+      $("#authorization_grant_type").val(), rawScopes);
   var subjectTypesSupported = discoveryInfo["subject_types_supported"];
   var tokenEndpoint = discoveryInfo["token_endpoint"];
   var tokenEndpointAuthMethodsSupported =
@@ -2208,9 +2209,7 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
     $("#device_authorization_endpoint").closest('tr').hide();
   }
 
-  if (rawScopes != null) {
-    $("#scope").val(scopesSupported);
-  }
+  $("#scope").val(authorizationScope);
   $("#oidc_userinfo_endpoint").val(userInfoEndpoint);
   $("#jwks_endpoint").val(jwksUri);
   // Every remaining OpenID Provider Metadata member (Discovery 1.0 section 3).
@@ -2245,23 +2244,18 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
         localStorage.setItem("device_authorization_endpoint", "" );
       }
 
-      if (rawScopes != null) {
-        localStorage.setItem("scope", scopesSupported);
-      }
-      // Overwrite a previously seeded token_scope. Page 2 restores
-      // this key into #token_scope, so leaving the advertisement here
-      // is the request that fails with invalid_scope.
+      localStorage.setItem("scope", authorizationScope);
+      // Populate is a deliberate reset: the token and refresh scopes go
+      // back to the page's prefill, and the "edited" marks that keep a
+      // typed value across reloads are cleared with them.
+      localStorage.setItem("token_scope_edited", "false");
+      localStorage.setItem("refresh_scope_edited", "false");
       var tokenScope = oauthScope.tokenRequestScope(
-          $("#authorization_grant_type").val(),
-          "",
-          $("#scope").val(),
-          rawScopes);
+          $("#authorization_grant_type").val(), "", false,
+          authorizationScope, rawScopes);
       localStorage.setItem("token_scope", tokenScope);
       var refreshScope = oauthScope.tokenRequestScope(
-          "refresh_token",
-          localStorage.getItem("refresh_scope"),
-          $("#scope").val(),
-          rawScopes);
+          "refresh_token", "", false, authorizationScope, rawScopes);
       localStorage.setItem("refresh_scope", refreshScope);
       localStorage.setItem("jwks_endpoint", jwksUri);
       localStorage.setItem("end_session_endpoint", endSessionEndpoint);
@@ -2304,7 +2298,8 @@ function clearConfigurationStorage() {
    "revocation_endpoint", "device_authorization_endpoint",
        "registration_endpoint",
    "oidc_userinfo_endpoint", "jwks_endpoint", "oidc_discovery_endpoint",
-   "client_id", "scope", "token_scope", "refresh_scope", "resource",
+   "client_id", "scope", "token_scope", "refresh_scope",
+   "token_scope_edited", "refresh_scope_edited", "resource",
    "redirect_uri",
    "registration_client_uri", "registration_access_token",
    "dcr_initial_access_token", "dcr_client_metadata"].forEach(function (key) {
