@@ -24,24 +24,31 @@
 // pushes here; the page drains what arrived.
 //
 // ---------------------------------------------------------------------------
-// THIS IS AN UNAUTHENTICATED ENDPOINT THAT ACCEPTS DATA, WHICH IS THE MOST
-// DANGEROUS SHAPE ANYTHING IN THIS SERVICE HAS. FIVE THINGS BOUND IT.
+// THIS ENDPOINT ACCEPTS DATA FROM SOMEBODY ELSE'S TRANSMITTER, WHICH IS THE
+// MOST DANGEROUS SHAPE ANYTHING IN THIS SERVICE HAS. SIX THINGS BOUND IT.
 //
-// It has to be unauthenticated: what pushes to it is somebody else's
-// transmitter, and the only credential in that exchange is the
-// `authorization_header` the RECEIVER chose — which this service would have to
-// be told, and which does not authenticate the transmitter to us anyway. So the
-// bounds are structural rather than a gate.
+// The only credential in an RFC 8935 push is the `authorization_header` the
+// RECEIVER chose and put in the stream's `delivery` (SSF 1.0 section 8.1.1),
+// which the transmitter then sends as the Authorization header of every push.
 //
+// 0. **AN INBOX CREATED WITH AN AUTHORIZATION VALUE REQUIRES IT.** The page
+//    passes the value it put in `delivery.authorization_header`, and every
+//    push must carry exactly that Authorization header or is answered 401
+//    `authentication_failed` (RFC 8935 section 2.4). An inbox created with
+//    none is OPEN — anybody who has its URL can push to it — and both the
+//    answer here and the page say so.
 // 1. **AN INBOX EXISTS ONLY BECAUSE SOMEBODY ASKED FOR ONE**, and its id is 32
 //    hex characters of `crypto.randomBytes`. There is no way to push to an
 //    inbox nobody created, and no way to guess one.
-// 2. **EVERY INBOX EXPIRES** (`ssfReceiverTtlMs`, default one hour) and is
-//    swept when anything touches this module. A page that closed its tab leaves
-//    nothing behind for longer than that.
-// 3. **THE COUNTS ARE CAPPED** — `ssfReceiverMaxInboxes` inboxes, and
-//    `ssfReceiverMaxEvents` events in each, oldest dropped. A transmitter that
-//    pushed in a loop fills one bounded ring and stops.
+// 2. **EVERY INBOX EXPIRES** — after `ssfReceiverIdleTtlMs` (default thirty
+//    minutes) with no push, drain or clear, and after `ssfReceiverTtlMs`
+//    (default one hour) whatever happens — and is swept when anything touches
+//    this module. A page that closed its tab leaves nothing behind for long.
+// 3. **THE COUNTS ARE CAPPED** — `ssfReceiverMaxInboxes` inboxes in all and
+//    `ssfReceiverMaxInboxesPerCaller` for one caller's address, so one client
+//    cannot hold every inbox; and `ssfReceiverMaxEvents` events in each,
+//    oldest dropped. A transmitter that pushed in a loop fills one bounded
+//    ring and stops.
 // 4. **EACH EVENT IS SIZE-CAPPED** (`ssfReceiverMaxEventBytes`). A SET is a
 //    JWS of a few hundred bytes; 64 KiB is three orders of magnitude of
 //    headroom and still a bound. **AND EACH INBOX IS SIZE-CAPPED IN TOTAL**
@@ -100,14 +107,19 @@ var SET_MEDIA_TYPE = 'application/secevent+jwt';
 var DEFAULTS = {
   enabled: true,
   ttlMs: 60 * 60 * 1000,
+  idleTtlMs: 30 * 60 * 1000,
   maxInboxes: 20,
+  maxInboxesPerCaller: 5,
   maxEvents: 200,
   maxEventBytes: 64 * 1024,
   maxInboxBytes: 1024 * 1024
 };
 
-// id -> { id, createdAt, lastPushAt, events: [...], bytes, pushes, dropped,
-//        label }
+// id -> { id, createdAt, lastPushAt, lastUsedAt, caller, authorization,
+//        events: [...], bytes, pushes, dropped, label }
+//
+// `authorization` is the exact Authorization header a push must carry, or ''
+// for an open inbox. It is never handed back by describe().
 var inboxes = new Map();
 
 function setting(appconfig, name, fallback) {
@@ -143,10 +155,11 @@ function enabled(appconfig) {
 function sweep(appconfig, now) {
   log.debug("Entering sweep().");
   var ttl = setting(appconfig, 'ssfReceiverTtlMs', DEFAULTS.ttlMs);
+  var idle = setting(appconfig, 'ssfReceiverIdleTtlMs', DEFAULTS.idleTtlMs);
   var at = now || Date.now();
   var gone = 0;
   inboxes.forEach(function (inbox, id) {
-    if (at - inbox.createdAt > ttl) {
+    if (at - inbox.createdAt > ttl || at - inbox.lastUsedAt > idle) {
       inboxes.delete(id);
       gone++;
     }
@@ -160,11 +173,16 @@ function sweep(appconfig, now) {
 
 // ---------------------------------------------------------------------------
 // Create an inbox. `label` is whatever the page calls it and is shown back
-// unchanged; it is TEXT and is never interpreted.
+// unchanged; it is TEXT and is never interpreted. `authorization` is the
+// stream's `delivery.authorization_header`, the exact Authorization header
+// every push must then carry; empty makes an OPEN inbox. `caller` is who
+// asked — server.js passes the request's address — and is what the
+// per-caller cap counts.
 // ---------------------------------------------------------------------------
-function create(appconfig, options) {
+function create(appconfig, options, caller) {
   log.debug("Entering create().");
   var asked = options || {};
+  var who = String(caller || '');
   if (!enabled(appconfig)) {
     log.debug("Leaving create(). Disabled.");
     return { ok: false, error: 'This service does not host push receivers ' +
@@ -181,12 +199,38 @@ function create(appconfig, options) {
         'expire on their own after ssfReceiverTtlMs; delete one to make ' +
         'room now.' };
   }
+  var perCaller = setting(appconfig, 'ssfReceiverMaxInboxesPerCaller',
+                          DEFAULTS.maxInboxesPerCaller);
+  var mine = 0;
+  inboxes.forEach(function (inbox) {
+    if (inbox.caller === who) {
+      mine++;
+    }
+  });
+  if (mine >= perCaller) {
+    log.debug("Leaving create(). At the per-caller limit.");
+    return { ok: false, error: 'This caller already holds ' + mine +
+        ' push receiver(s) and ssfReceiverMaxInboxesPerCaller is ' +
+        perCaller + '. Delete one, or let one go idle ' +
+        '(ssfReceiverIdleTtlMs).' };
+  }
+  var authorization = asked.authorization === undefined ||
+    asked.authorization === null ? '' : String(asked.authorization).trim();
+  if (authorization.length > 4096) {
+    log.debug("Leaving create(). Authorization too long.");
+    return { ok: false, error: 'That authorization_header is ' +
+        authorization.length + ' characters; this receiver takes at most ' +
+        '4096.' };
+  }
   var id = crypto.randomBytes(16).toString('hex');
   var inbox = {
     id: id,
     label: String(asked.label || '').slice(0, 200),
     createdAt: Date.now(),
     lastPushAt: 0,
+    lastUsedAt: Date.now(),
+    caller: who,
+    authorization: authorization,
     pushes: 0,
     dropped: 0,
     bytes: 0,
@@ -222,6 +266,9 @@ function describe(inbox) {
     createdAt: new Date(inbox.createdAt).toISOString(),
     lastPushAt: inbox.lastPushAt
       ? new Date(inbox.lastPushAt).toISOString() : '',
+    // Whether a push must carry the stream's authorization_header. The
+    // value itself is never handed back.
+    authenticated: inbox.authorization !== '',
     pushes: inbox.pushes,
     dropped: inbox.dropped,
     waiting: inbox.events.length
@@ -270,6 +317,15 @@ function deliver(appconfig, id, options) {
         'never created, it has been deleted, or it expired ' +
         '(ssfReceiverTtlMs). A receiver that has gone away is a stream that ' +
         'should be deleted at the transmitter.' };
+  }
+  if (inbox.authorization !== '' &&
+      !sameSecret(String(asked.authorization || ''), inbox.authorization)) {
+    log.debug("Leaving deliver(). Authorization refused.");
+    return { ok: false, status: 401, err: 'authentication_failed',
+      description: 'This receiver requires the authorization_header its ' +
+        'stream was created with, and this push ' +
+        (asked.authorization ? 'carried a different Authorization header.'
+          : 'carried no Authorization header.') };
   }
   var text = String(asked.body === undefined || asked.body === null
     ? '' : asked.body).trim();
@@ -325,9 +381,22 @@ function deliver(appconfig, id, options) {
   inbox.bytes += size;
   inbox.pushes++;
   inbox.lastPushAt = Date.now();
+  inbox.lastUsedAt = inbox.lastPushAt;
   log.debug("Leaving deliver(). Accepted, " + inbox.events.length +
       " waiting.");
   return { ok: true, status: 202, err: '', description: '' };
+}
+
+// The Authorization header a push carried against the one the inbox was
+// created with, in constant time. The lengths are compared first, which says
+// only how long the secret is.
+function sameSecret(presented, expected) {
+  log.debug("Entering sameSecret().");
+  var a = Buffer.from(presented, 'utf8');
+  var b = Buffer.from(expected, 'utf8');
+  var same = a.length === b.length && crypto.timingSafeEqual(a, b);
+  log.debug("Leaving sameSecret(). " + same);
+  return same;
 }
 
 // Decode a compact JWS far enough to show it. NOT a verification and never
@@ -379,6 +448,7 @@ function drain(appconfig, id, after) {
         'Either it was never created, it has been deleted, or it expired ' +
         '(ssfReceiverTtlMs).' };
   }
+  inbox.lastUsedAt = Date.now();
   var from = Number(after);
   if (!isFinite(from) || from < 0) {
     from = 0;
@@ -410,6 +480,7 @@ function clear(appconfig, id) {
     return { ok: false, error: 'There is no receiver with that id here.' };
   }
   var gone = inbox.events.length;
+  inbox.lastUsedAt = Date.now();
   inbox.events.length = 0;
   inbox.bytes = 0;
   log.debug("Leaving clear(). " + gone + " dropped.");
@@ -424,8 +495,11 @@ function limits(appconfig) {
   var out = {
     enabled: enabled(appconfig),
     ttlMs: setting(appconfig, 'ssfReceiverTtlMs', DEFAULTS.ttlMs),
+    idleTtlMs: setting(appconfig, 'ssfReceiverIdleTtlMs', DEFAULTS.idleTtlMs),
     maxInboxes: setting(appconfig, 'ssfReceiverMaxInboxes',
                         DEFAULTS.maxInboxes),
+    maxInboxesPerCaller: setting(appconfig, 'ssfReceiverMaxInboxesPerCaller',
+                                 DEFAULTS.maxInboxesPerCaller),
     maxEvents: setting(appconfig, 'ssfReceiverMaxEvents', DEFAULTS.maxEvents),
     maxEventBytes: setting(appconfig, 'ssfReceiverMaxEventBytes',
                            DEFAULTS.maxEventBytes),
@@ -469,6 +543,7 @@ module.exports = {
   describe: describe,
   deliver: deliver,
   readCompactJws: readCompactJws,
+  sameSecret: sameSecret,
   drain: drain,
   clear: clear,
   sweep: sweep,

@@ -3708,10 +3708,12 @@ app.get('/gnap/limits', function (req, res) {
  *
  * `api/ssf_receiver.js` holds every decision and every bound; these handlers
  * are wiring. The one thing worth knowing at this layer is that
- * `POST /ssf/receiver/:id` is UNAUTHENTICATED AND ACCEPTS DATA, because what
- * pushes to it is somebody else's transmitter — the bounds are structural (an
- * unguessable id, an expiry, three caps and a configuration switch) rather
- * than a gate.
+ * `POST /ssf/receiver/:id` ACCEPTS DATA from somebody else's transmitter. An
+ * inbox created with an `authorization` requires exactly that Authorization
+ * header on every push (401 `authentication_failed` otherwise); one created
+ * without is open, bounded only structurally (an unguessable id, two
+ * expiries, the caps and a configuration switch). The caller's address is
+ * what `ssfReceiverMaxInboxesPerCaller` counts.
  * ---------------------------------------------------------------------------
  * @route POST /ssf/receiver
  * @returns {object} 200 - the inbox and the URL to put in a stream
@@ -3719,7 +3721,7 @@ app.get('/gnap/limits', function (req, res) {
  */
 app.post('/ssf/receiver', function (req, res) {
   log.debug('Entering POST /ssf/receiver.');
-  var made = ssfReceiver.create(appconfig, req.body || {});
+  var made = ssfReceiver.create(appconfig, req.body || {}, req.ip);
   if (!made.ok) {
     log.debug('Leaving POST /ssf/receiver. Refused: ' + made.error);
     return res.status(STATUS_400).json({ error: made.error });
@@ -3739,7 +3741,12 @@ app.post('/ssf/receiver', function (req, res) {
     deliveryEndpoint: base + '/ssf/receiver/' + made.id,
     note: 'Put deliveryEndpoint in the stream\'s delivery.endpoint_url. The ' +
         'TRANSMITTER has to be able to reach it, which is why it is this ' +
-        'api\'s address as you reached it rather than a configured one.'
+        'api\'s address as you reached it rather than a configured one.',
+    authentication: made.inbox.authenticated
+      ? 'Every push must carry the authorization_header this inbox was ' +
+        'created with, or it is answered 401 authentication_failed.'
+      : 'OPEN: this inbox was created with no authorization_header, so ' +
+        'anybody who has its URL can push to it.'
   });
 });
 
@@ -3768,6 +3775,11 @@ app.post('/ssf/receiver/:id', function (req, res) {
   }
   log.debug('Leaving POST /ssf/receiver/:id. ' + answer.status + ' ' +
       answer.err);
+  if (answer.status === 401) {
+    // RFC 7235: a 401 names the scheme it wants. What the receiver chose is
+    // opaque to it, so the challenge is the generic one.
+    res.set('WWW-Authenticate', 'Bearer realm="ssf-receiver"');
+  }
   return res.status(answer.status).json({ err: answer.err,
     description: answer.description });
 });

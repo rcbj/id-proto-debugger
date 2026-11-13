@@ -134,7 +134,13 @@ var config = {
   gnapMaxRequestBytes: 262144,
   ssfReceiverEnabled: true,
   ssfReceiverTtlMs: 3600000,
+  // How long an inbox lives with no push, drain or clear. The TTL above
+  // still applies however busy it is.
+  ssfReceiverIdleTtlMs: 1800000,
   ssfReceiverMaxInboxes: 20,
+  // One caller's share of those inboxes, by its address, so one client
+  // cannot hold them all.
+  ssfReceiverMaxInboxesPerCaller: 5,
   ssfReceiverMaxEvents: 200,
   ssfReceiverMaxEventBytes: 65536,
   // The most one inbox holds in total, oldest dropped first. Without it

@@ -423,6 +423,43 @@ async function theReceiverHostsAnEndpoint() {
     function () {
       assert.strictEqual(alsoGone.status, 404);
     });
+  check('an inbox made with no authorization_header says it is OPEN',
+    function () {
+      assert.strictEqual(made.body.inbox.authenticated, false);
+      assert.ok(/OPEN/.test(String(made.body.authentication || '')),
+          'The answer has to say plainly that anybody with the URL can ' +
+          'push: ' + JSON.stringify(made.body.authentication));
+    });
+
+  // AN INBOX THAT REQUIRES ITS STREAM'S authorization_header, over HTTP,
+  // because the Authorization header reaching deliver() is server.js's
+  // wiring and no module test can see it.
+  const secret = 'Bearer api-ssf-' + Date.now();
+  const guarded = await json('POST', '/ssf/receiver',
+      { label: 'api_ssf.js guarded', authorization: secret });
+  assert.strictEqual(guarded.status, 200,
+      'POST /ssf/receiver answered ' + guarded.status + ': ' + guarded.text);
+  madeInboxes.push(guarded.body.inbox.id);
+  const guardedPath = '/ssf/receiver/' + guarded.body.inbox.id;
+  const without = await json('POST', guardedPath, token,
+      { 'Content-Type': ssf.SET_MEDIA_TYPE });
+  const wrongSecret = await json('POST', guardedPath, token,
+      { 'Content-Type': ssf.SET_MEDIA_TYPE, Authorization: secret + 'x' });
+  const withSecret = await json('POST', guardedPath, token,
+      { 'Content-Type': ssf.SET_MEDIA_TYPE, Authorization: secret });
+  const guardedHeld = await json('GET', guardedPath + '/events?after=0');
+  check('a push without the authorization_header is a 401 ' +
+      'authentication_failed', function () {
+    assert.strictEqual(guarded.body.inbox.authenticated, true);
+    assert.ok(guarded.text.indexOf(secret) < 0,
+        'The secret is never handed back.');
+    assert.strictEqual(without.status, 401, without.text);
+    assert.strictEqual((without.body || {}).err, 'authentication_failed');
+    assert.strictEqual(wrongSecret.status, 401, wrongSecret.text);
+    assert.strictEqual(withSecret.status, 202, withSecret.text);
+    assert.strictEqual(guardedHeld.body.events.length, 1,
+        'Only the push that carried the header was stored.');
+  });
   log.info("[receiver] OK.");
 }
 

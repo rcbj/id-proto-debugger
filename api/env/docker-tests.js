@@ -271,11 +271,17 @@ var config = {
   // How long an inbox lives. A page that closed its tab leaves nothing behind
   // for longer than this.
   ssfReceiverTtlMs: 3600000,
+  // How long an inbox lives with no push, drain or clear. The TTL above
+  // still applies however busy it is.
+  ssfReceiverIdleTtlMs: 1800000,
   // How many inboxes, how many events in each, and how large one event may be.
   // A transmitter that pushed in a loop fills one bounded ring and stops; the
   // oldest event goes rather than the newest, because a receiver that has
   // stopped draining most wants what has happened lately.
   ssfReceiverMaxInboxes: 20,
+  // One caller's share of those inboxes, by its address, so one client
+  // cannot hold them all.
+  ssfReceiverMaxInboxesPerCaller: 5,
   ssfReceiverMaxEvents: 200,
   ssfReceiverMaxEventBytes: 65536,
   // The most one inbox holds in total, oldest dropped first. Without it
