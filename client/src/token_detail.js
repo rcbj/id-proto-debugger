@@ -935,7 +935,12 @@ function writeValuesToLocalStorage() {
     const vtEl = document.getElementById('jwt_verification_type');
     const vkEl = document.getElementById('jwt_verification_key');
     if (vtEl) localStorage.setItem('jwt_verification_type', vtEl.value);
-    if (vkEl) localStorage.setItem('jwt_verification_key', vkEl.value);
+    // The key is not stored: for HMAC it is a shared secret, often the
+    // client secret itself (CLAUDE.md, State persistence). Nothing read
+    // the stored copy back; an older build's copy is removed here.
+    if (vkEl) {
+      localStorage.removeItem('jwt_verification_key');
+    }
     localStorage.setItem('jwt_purpose',
                          document.getElementById('jwt_purpose').value);
     localStorage.setItem('jwt_expected_iss',

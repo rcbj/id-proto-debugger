@@ -1276,6 +1276,16 @@ function buildJobs() {
     env: {},
   });
 
+  // Client secrets and passwords are never stored, and the DCR and
+  // introspection bearer tokens live in sessionStorage only. The engine
+  // runs in node and every module under client/src is read for a write
+  // that breaks either rule.
+  jobs.push({
+    name: "OAuth2 secrets are never stored (in node)",
+    script: "secret_storage_engine.js",
+    env: {},
+  });
+
   // Every script a job above or below names must be in the tests image.
   // A missing COPY otherwise surfaces minutes into a run as
   // `Cannot find module`, and it reached develop three times in a row.

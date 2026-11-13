@@ -4,6 +4,8 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var $ = require("jquery");
+// Client secrets are never stored. See secret_storage.js.
+var secretStorage = require("./secret_storage");
 // THE TWO ENGINES THAT READ A PROTECTED USERINFO RESPONSE, and they are the
 // same two every other page here uses — `jws.js` verifies the signature and
 // `jose_jwe.js` decrypts, so a response this page accepts is one the JWT Tools
@@ -605,6 +607,9 @@ function initLocalStorage()
 function loadValuesFromLocalStorage()
 {
   log.debug("Entering loadValuesFromLocalStorage().");
+  // The client secret is never stored; remove any copy an older build or
+  // another page left behind.
+  secretStorage.purgeOnLoad(window.localStorage, window.sessionStorage);
   if(localStorage) {
     userinfo_endpoint = localStorage.getItem("oidc_userinfo_endpoint");
     userinfo_method = localStorage.getItem("userinfo_method");
