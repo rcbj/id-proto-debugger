@@ -1255,6 +1255,16 @@ function buildJobs() {
     env: {},
   });
 
+  // The token-request scope. scopes_supported is not a default for a
+  // code exchange, a refresh, or a dynamic registration. No browser
+  // and no network: the decision is a function, and the pages are
+  // checked by reading them.
+  jobs.push({
+    name: "OAuth2 token-request scope (in node)",
+    script: "oauth_scope_engine.js",
+    env: {},
+  });
+
   // OIDC Dynamic Client Registration (OpenID Connect Registration 1.0 /
   // RFC 7591 / RFC 7592). Creates a client using an initial access token, then
   // reads, updates, and deletes it via the client configuration endpoint.

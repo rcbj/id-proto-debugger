@@ -28,6 +28,9 @@ const rfc9700 = require("./rfc9700");
 // access token. RFC 9700 section 4.3.2 is why it is the header and not
 // a query parameter; the compliance checkbox does not gate it.
 const rfc6750 = require("./rfc6750");
+// Token-request scope. The advertisement is not a default. See
+// oauth_scope.js.
+const oauthScope = require("./oauth_scope");
 
 const TOKEN_HISTORY_LIMIT = 1000;
 const OPERATION_HISTORY_LIMIT = 1000;
@@ -1959,7 +1962,10 @@ function successfulInternalTokenAPICall(data, textStatus, request)
     expandPane("#token_endpoint_result");
     $("#refresh_refresh_token").val(currentRefreshToken);
     $("#refresh_client_id").val($("#token_client_id").val());
-    $("#refresh_scope").val(localStorage.getItem("scope"));
+    // RFC 6749 section 6: an omitted scope on a refresh is the scope of
+    // the original grant. Copying localStorage "scope" here also copied
+    // scopes_supported, which is every scope the server advertises.
+    // A narrower value the reader already typed stays in the field.
     $("#refresh_client_secret").val(localStorage.getItem("client_secret"));
     $("#token_fieldset").hide();
     $("#token_expand_button").val("Expand");
@@ -2704,6 +2710,46 @@ function isAbsoluteRedirectUri(value) {
   return ok;
 }
 
+// scopes_supported from the stored discovery document, else the field.
+// The field is the comma-separated display; the document is the array
+// Populate wrote, which is what a seeded token_scope was joined from.
+function readStoredScopesSupported() {
+  log.debug("Entering readStoredScopesSupported().");
+  try {
+    var saved = localStorage.getItem(opMetadata.DISCOVERY_INFO_KEY);
+    if (saved) {
+      var info = JSON.parse(saved);
+      if (info && Object.prototype.hasOwnProperty.call(info,
+          "scopes_supported")) {
+        log.debug("Leaving readStoredScopesSupported(). From discovery.");
+        return info.scopes_supported;
+      }
+    }
+  } catch (e) {
+    log.debug("Stored discovery could not be read: " + e.message);
+  }
+  var field = $("#scopes_supported").val();
+  log.debug("Leaving readStoredScopesSupported(). From the field.");
+  return field || "";
+}
+
+// Replace a seeded advertisement in #token_scope and #refresh_scope.
+// A value the reader typed is kept. An empty token scope stays empty
+// for a code exchange and a refresh, and is prefilled for client
+// credentials and resource-owner password.
+function applyStoredTokenScopes() {
+  log.debug("Entering applyStoredTokenScopes().");
+  var supported = readStoredScopesSupported();
+  var grant = $("#authorization_grant_type").val() ||
+      localStorage.getItem("authorization_grant_type") || "";
+  var authz = localStorage.getItem("scope") || "";
+  $("#token_scope").val(oauthScope.tokenRequestScope(
+      grant, $("#token_scope").val(), authz, supported));
+  $("#refresh_scope").val(oauthScope.tokenRequestScope(
+      "refresh_token", $("#refresh_scope").val(), authz, supported));
+  log.debug("Leaving applyStoredTokenScopes().");
+}
+
 function loadValuesFromLocalStorage()
 {
   log.debug("Entering loadValuesFromLocalStorage().");
@@ -2948,6 +2994,9 @@ function loadValuesFromLocalStorage()
   // of those overwritten by the stored values read above.
   $("#rfc9700_mode").prop("checked", rfc9700.enabled());
   applyRfc9700Ui();
+  // After the stored token_scope is back in the field, and after the
+  // discovery document is available to recognise the advertisement.
+  applyStoredTokenScopes();
   log.debug("Leaving loadValuesFromLocalStorage().");
 }
 
@@ -3397,8 +3446,14 @@ function recalculateTokenRequestDescription()
     if (secretInBody) {
       bodyLines.push("client_secret=" + clientSecret);
     }
-    if (grant_type != "urn:ietf:params:oauth:grant-type:device_code") {
-      bodyLines.push("scope=" + $("#token_scope").val());
+    // convertToOAuth2Format() drops a falsy scope, and RFC 6749 section
+    // 4.1.3 defines none on a code exchange. A preview line of "scope="
+    // would describe a different request from the one Get Token sends.
+    // The device grant never sends one (RFC 8628).
+    var scopeLine = $("#token_scope").val();
+    if (scopeLine && grant_type !=
+        "urn:ietf:params:oauth:grant-type:device_code") {
+      bodyLines.push("scope=" + scopeLine);
     }
     if (grant_type == "authorization_code" && usePKCE) {
       bodyLines.push("code_verifier=" + $("#token_pkce_code_verifier").val());
@@ -3484,7 +3539,12 @@ function recalculateRefreshRequestDescription()
       if (postAuthStyle && !!clientSecret) {
         bodyLines.push("client_secret=" + clientSecret);
       }
-      bodyLines.push("scope=" + $("#refresh_scope").val());
+      // An empty refresh scope is "the same as the original grant"
+      // (RFC 6749 section 6). The wire omits it; the preview must too.
+      var refreshScopeLine = $("#refresh_scope").val();
+      if (refreshScopeLine) {
+        bodyLines.push("scope=" + refreshScopeLine);
+      }
       $("#display_refresh_request_form_textarea1")
         .val(DOMPurify.sanitize("POST " + $("#token_endpoint").val() +
                                 "\n") +

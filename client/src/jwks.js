@@ -6,6 +6,9 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var $ = require("jquery");
+// The token-request scope is not scopes_supported. This page's populate
+// path writes the same localStorage keys the OAuth2 workflow reads.
+var oauthScope = require("./oauth_scope");
 var log = bunyan.createLogger({ name: 'jwks',
                                 level: appconfig.logLevel });
 log.info("Log initialized. logLevel=" + log.level());
@@ -181,6 +184,18 @@ function buildJWKSInfoTable(discoveryInfo) {
   log.debug("Leaving buildJWKSInfoTable().");
 }
 
+// This page does not carry the OAuth2 form. Assign only when the
+// element is here, and still write localStorage, which the workflow
+// reads on its own pages.
+function setNamedValue(id, value) {
+  log.debug("Entering setNamedValue().");
+  var el = document.getElementById(id);
+  if (el) {
+    el.value = value;
+  }
+  log.debug("Leaving setNamedValue().");
+}
+
 function onSubmitPopulateFormsWithDiscoveryInformation() {
   log.debug("Entering onSubmitPopulateFormsWithDiscoveryInformation().");
   log.debug('Entering onSubmitPopulateFormsWithDiscoveryInformation().');
@@ -190,27 +205,32 @@ function onSubmitPopulateFormsWithDiscoveryInformation() {
   var issuer = discoveryInfo["issuer"];
   var jwksUri = discoveryInfo["jwks_uri"];
   var responseTypesSupported = discoveryInfo["response_types_supported"];
-  var scopesSupported =
-      discoveryInfo["scopes_supported"].toString().replace(/,/g, " ");
+  var rawScopes = discoveryInfo["scopes_supported"];
+  var scopesSupported = rawScopes == null ? "" :
+      oauthScope.joinAdvertised(rawScopes);
+  // No grant is selected on this page. A code exchange sends no scope,
+  // which is what tokenRequestScope() returns for an empty grant.
+  var tokenScope = oauthScope.tokenRequestScope("", "", "", rawScopes);
   var subjectTypesSupported = discoveryInfo["subject_types_supported"];
   var tokenEndpoint = discoveryInfo["token_endpoint"];
   var tokenEndpointAuthMethodsSupported =
       discoveryInfo["token_endpoint_auth_methods_supported"];
   var userInfoEndpoint = discoveryInfo["userinfo_endpoint"];
 
-  document.getElementById("authorization_endpoint").value =
-                          authorizationEndpoint;
-  document.getElementById("token_endpoint").value = tokenEndpoint;
-  document.getElementById("token_scope").value = scopesSupported;
-  document.getElementById("scope").value = scopesSupported;
-  document.getElementById("oidc_userinfo_endpoint").value = userInfoEndpoint;
-  document.getElementById("jwks_endpoint").value = jwksUri;
+  setNamedValue("authorization_endpoint", authorizationEndpoint);
+  setNamedValue("token_endpoint", tokenEndpoint);
+  setNamedValue("token_scope", tokenScope);
+  setNamedValue("scope", scopesSupported);
+  setNamedValue("oidc_userinfo_endpoint", userInfoEndpoint);
+  setNamedValue("jwks_endpoint", jwksUri);
   if (localStorage) {
       log.debug('Adding to local storage.');
       localStorage.setItem("authorization_endpoint", authorizationEndpoint );
       localStorage.setItem("token_endpoint", tokenEndpoint );
-      localStorage.setItem("scope", scopesSupported);
-      localStorage.setItem("token_scope", scopesSupported );
+      if (rawScopes != null) {
+        localStorage.setItem("scope", scopesSupported);
+      }
+      localStorage.setItem("token_scope", tokenScope);
       localStorage.setItem("jwks_endpoint", jwksUri);
   }
   log.debug('Leaving onSubmitPopulateFormsWithDiscoveryInformation().');
