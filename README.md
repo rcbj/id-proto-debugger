@@ -147,33 +147,24 @@ sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
 Note, you will need at least 950MB of disk space ree in order to build this Docker image.
 
-`--recurse-submodules` matters: the mock STS the test suite and the local stack
-run against lives in its own repository, [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts),
-and is linked here as the `sts/` submodule. Cloned without it, `sts/` is an empty
-directory and the build fails with `failed to read dockerfile`. In a checkout that
-is already in that state:
+`--recurse-submodules` fetches the one submodule,
+[`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs) at `api/node-ldapjs/`
+(branch `master`): a fork of `ldapjs` for the LDAP support of issue #257, pinned
+at the final commit its maintainer left behind when the project was
+decommissioned on 2024-05-14 — which is why it is a submodule rather than a
+dependency in `api/package.json`. An uninitialised submodule is an *empty
+directory* rather than a missing one, so the api image builds and dies at
+startup with `Cannot find module 'ldapjs'`. In a checkout cloned without it:
 ```
 git submodule update --init
 ```
-**`--recursive`, not plain `--init`.** The mock STS has a submodule of its own —
-[`node-ldapjs`](https://github.com/rcbj/node-ldapjs), which its `package.json`
-takes as `"ldapjs": "file:node-ldapjs"` — and `--init` alone stops one level
-short of it. An uninitialised submodule is an *empty directory* rather than a
-missing one, so the image builds perfectly well, npm installs a package with no
-`main`, and the `sts` container dies at startup with `Cannot find module
-'ldapjs'`: a message naming a package, not a submodule.
+The test launchers do this for you (`requireApiLdapjsCheckout()` in
+[`common/common.sh`](common/common.sh)); a bare `docker-compose build` does not.
 
-The test launchers do this for you — `requireMockStsCheckout()` in
-[`common/common.sh`](common/common.sh), which checks the nested one too — but a
-bare `docker-compose build` does not.
-
-There is a **second submodule**, [`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs)
-at `api/node-ldapjs/` (branch `master`): a fork of `ldapjs` for the LDAP support
-of issue #257, pinned at the final commit its maintainer left behind when the
-project was decommissioned on 2024-05-14 — which is why it is a submodule rather
-than a dependency in `api/package.json`. Nothing builds from it yet, so an
-uninitialised `api/node-ldapjs/` does not break anything today; the bare
-`git submodule update --init` above takes it along with `sts/` regardless.
+The mock STS the test suite and the local stack run against,
+[`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), is **not** a submodule: every
+compose file runs its published release image, `ghcr.io/rcbj/iya-sts:<version>`
+(see *The mock STS runs from its release image* below).
 
 From a bash command prompt on Fedora or RHEL 7.x, run the following::
 ```
@@ -254,19 +245,16 @@ If you need to pop up the browser for troubleshooting, pass in the --browser opt
 
 To generate a code coverage report, run ```./run-coverage.sh```. The report will be under the coverage directory.
 
-### The mock STS is a submodule
-Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier and the `did:web` document — is one small Node service that used to live in `sts/` in this repository and now lives in [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts). This repository records a link to it (branch `main`) as the `sts/` submodule; the code is fetched, not vendored.
+### The mock STS runs from its release image
+Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier, the KDC, the LDAP directory and the `did:web` document — is one Node service, [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts). It used to live in `sts/` in this repository and was then linked as the `sts/` submodule; since 2026-11-13 this repository holds no copy of it. Every compose file runs its published, public release image:
 
-Two things build from it, and both fail unhelpfully if the submodule was never initialised:
+| What | How |
+|---|---|
+| the `sts` service | `image: ${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:<version>}` — the default in `docker-compose-run-tests.yml` is the one place the release is named, and `tests/image_mirror_coverage.js` fails when another compose file disagrees |
+| its companion (demo pages, SPNEGO page, Kerberos TCP service) | built from iya-sts's repository at the matching tag, `${IYA_STS_COMPANION_CONTEXT:-https://github.com/rcbj/iya-sts.git#v<version>:companion}` |
+| tests that load iya-sts's code in process | the tests image copies the image's `/usr/src/sts`; a host run copies it once into `~/.cache/id-proto-debugger/iya-sts/` (`tests/module_paths.js`, `iyaStsTree()`) |
 
-| What | Where | What it says when `sts/` is empty |
-|---|---|---|
-| the STS image | `context: ./sts` in all four compose files | `failed to read dockerfile` |
-| the tests image | `COPY sts/common/crypto_impl/bbs2023.js` in `tests/Dockerfile`, so `tests/bbs2023_cryptosuite.js` can check the wallet's cryptosuite against the issuer's | `COPY sts/common/crypto_impl/bbs2023.js: not found` |
-
-Neither message mentions a submodule, so every launcher (`./docker-run-tests.sh`, `./local-run-tests.sh`, `./remote-run-tests.sh`, `./run-coverage.sh`) calls `requireMockStsCheckout()` from [`common/common.sh`](common/common.sh) before building: it initialises the submodule if it can and stops the run with the reason if it cannot. The CI workflows that build the stack check out with `submodules: true` for the same reason.
-
-By default the build uses the commit this repository records, which is what makes a run repeatable. To build against the tip of `main` instead, set `MOCK_STS_TRACK_REMOTE=1` — that is `git submodule update --remote`, so the run is no longer repeatable and `git status` will show the submodule pointer as modified.
+Set `IYA_STS_IMAGE` to run a candidate image, or `MOCK_STS_DIR` to load a working copy of iya-sts's tree in the in-process tests. A checkout from before 2026-11-13 keeps an `sts/` directory after pulling; nothing reads it, and it can be deleted.
 
 ### The SAML SP key pair
 The SAML tests sign the AuthnRequest and LogoutRequest, and decrypt an encrypted assertion, with a Service Provider key pair. **No key pair is stored in this repository.** `generateSpKeyPair()` in [`common/common.sh`](common/common.sh) creates a fresh self-signed RSA 2048 pair at the start of every run — in a temporary directory that is deleted as soon as the PEMs have been read — and exports it:
@@ -455,7 +443,7 @@ on a unix socket behind its own proxy. This repository builds the tree that
 service consumes:
 
 ```bash
-git submodule update --init --recursive
+git submodule update --init
 embedded/build.sh --out /path/to/tree          # without docker
 docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:dev \
   --build-arg GIT_COMMIT=$(git rev-parse --short=12 HEAD) .
@@ -740,7 +728,7 @@ The service logs with **bunyan**, at the level its `CONFIG_FILE` names (`sts/env
 Set the level to `info` (`sts/env/test.js`) for a quiet run.
 
 ### STS for testing
-The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite it also runs against a small **WS-Trust STS mock** — [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), linked here as the `sts/` submodule (see *The mock STS is a submodule* above) — that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. **That port is HTTPS in every stack here** (`STS_HTTPS=true`), because the RFC 9700 pass is a trust realm on the same instance rather than a second container and a realm binds no socket of its own — see `docs/rfc9700.md`; the compose files hand iya-sts the same leaf `./generate-tls-cert.sh` writes for the api and the client (`STS_TLS_CERT_FILE`), so one root covers all three. Without that file, iya-sts still issues its own certificate at every start. `trustStsCertificate()` in `common/common.sh` fetches `GET /tls/server-certificate` and installs that PEM as an anchor for node and as an exact key pin for Chrome. Against a **deployed static site** the same mock is started on the host and reached over loopback (`https://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would not resolve in a browser off that network. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
+The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite it also runs against a small **WS-Trust STS mock** — [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), run from its release image (see *The mock STS runs from its release image* above) — that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. **That port is HTTPS in every stack here** (`STS_HTTPS=true`), because the RFC 9700 pass is a trust realm on the same instance rather than a second container and a realm binds no socket of its own — see `docs/rfc9700.md`; the compose files hand iya-sts the same leaf `./generate-tls-cert.sh` writes for the api and the client (`STS_TLS_CERT_FILE`), so one root covers all three. Without that file, iya-sts still issues its own certificate at every start. `trustStsCertificate()` in `common/common.sh` fetches `GET /tls/server-certificate` and installs that PEM as an anchor for node and as an exact key pin for Chrome. Against a **deployed static site** the same mock is started on the host and reached over loopback (`https://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would not resolve in a browser off that network. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
 
 ## VC Issuance (OID4VCI)
 

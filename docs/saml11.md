@@ -10,7 +10,7 @@ where the two versions differ, is in [Using the SAML workflow](saml.md).
 Read this before touching `client/src/saml_request.js`,
 `client/src/saml_response.js`, `POST /samlartifactctx` or `handleSamlAcs()` in
 `api/server.js`. The identity provider at the other end is `sts/saml/saml11_sso.js`,
-whose own notes are in that submodule's `saml/CLAUDE.md`.
+whose own notes are in iya-sts's `saml/CLAUDE.md`.
 
 ---
 

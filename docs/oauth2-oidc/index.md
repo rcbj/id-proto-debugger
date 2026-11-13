@@ -47,7 +47,7 @@ From a checkout, follow *Getting Started* in the repository's
 [README](../../README.md#getting-started). In short:
 
 ```bash
-git submodule update --init --recursive
+git submodule update --init
 ./generate-tls-cert.sh
 CONFIG_FILE=./env/local.js docker-compose up
 ```
