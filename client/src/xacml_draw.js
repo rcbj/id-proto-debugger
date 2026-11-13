@@ -23,12 +23,16 @@ var log = bunyan.createLogger({
 /**
  * Escapes text for HTML.
  *
+ * A hot path, so it has no Entering/Leaving pair: every label, value and
+ * option the editor draws passes through it, which is thousands of calls
+ * per redraw of a large policy, and render() redraws the whole tree after
+ * every edit. At logLevel "debug" a pair here would be most of the log.
+ * Its callers (editorBody(), decisionBody()) log their own entry and exit.
+ *
  * @param {*} value - the text
  * @returns {string} the escaped text
  */
 function esc(value) {
-  log.debug("Entering esc().");
-  log.debug("Leaving esc().");
   return String(value == null ? "" : value)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");

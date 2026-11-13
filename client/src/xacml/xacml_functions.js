@@ -11,9 +11,9 @@
 // WRITTEN OUT.
 //
 // XACML 3.0 defines a little over two hundred function identifiers, and the
-// vendored conformance suite exercises 210 of them. They are NOT two hundred
-// functions: `string-is-in`, `integer-is-in`, `date-is-in` and eleven more are
-// ONE function and a table row each, and the same is true of `-bag`,
+// OASIS XACML 3.0 conformance suite exercises 210 of them. They are NOT two
+// hundred functions: `string-is-in`, `integer-is-in`, `date-is-in` and eleven
+// more are ONE function and a table row each, and the same is true of `-bag`,
 // `-bag-size`, `-one-and-only`, `-intersection`, `-union`, `-subset`,
 // `-set-equals`, `-at-least-one-member-of`, `-equal` and the four comparison
 // operators.
@@ -187,7 +187,7 @@ function typesWith(capability) {
 // such function and go Indeterminate, and the error would name a URI that
 // looks exactly like the twelve working ones beside it.
 //
-// Verified against the vendored conformance suite, which uses all 26 of the
+// Verified against the OASIS conformance suite, which uses all 26 of the
 // duration function URIs and every one of them at 3.0.
 // ---------------------------------------------------------------------------
 function familyPrefix(uri) {
@@ -1229,7 +1229,7 @@ function applyPair(definition, left, right, context) {
 // `any-of-all` are 1.0, because those three existed in XACML 1.0 and the other
 // three were re-specified in 3.0 to take their bag argument either way round.
 // So the prefix is per function rather than per family, and it is passed in.
-// Verified against the vendored suite, which uses all six.
+// Verified against the OASIS conformance suite, which uses all six.
 function higherOrder(prefix, name, combine) {
   log.debug("Entering higherOrder().");
   define(prefix + name, {

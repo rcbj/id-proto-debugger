@@ -17,7 +17,7 @@
 // a policy tree, and the decision values a PDP is allowed to produce.
 //
 // THE RULE THIS DIRECTORY IS BUILT ON, and it is the same argument
-// `common/crypto_impl/xmldsig.js` makes about canonicalization one layer down: a
+// `common/xmldsig.js` makes about canonicalization one layer down: a
 // GRAMMAR IS A READING, and three readings of XACML would be three chances to
 // disagree with the PDP at the far end. So there is one model. `xacml_xml.js`
 // reads XML into it, `xacml_json.js` reads and writes the JSON Profile,
@@ -234,7 +234,7 @@ const TYPE = {
 };
 
 // XACML 3.0 moved the two duration types out of the 2005 XQuery namespace and
-// into XML Schema's. Documents in the wild — and several cases in the vendored
+// into XML Schema's. Documents in the wild — and several cases in the OASIS
 // conformance suite — still carry the old spelling, so both are accepted on
 // the way IN and only the new one is ever written OUT. Being liberal here
 // costs nothing and rejecting them would fail cases over a namespace rather
@@ -259,7 +259,7 @@ const LEGACY_TYPE_ALIASES = {
 // document order always, the ordered pair is the unordered one under another
 // name. That is CONFORMANT rather than a shortcut: the specification permits
 // an implementation to reorder for the unordered variants, it does not require
-// it, and doing so would buy nothing here and cost reproducibility in a mock
+// it, and doing so would buy nothing here and cost reproducibility in a tool
 // whose whole job is to be inspected.
 //
 // The `2.0` versions of deny-overrides and permit-overrides are the LEGACY
