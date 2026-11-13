@@ -79,6 +79,35 @@ function typFinding(typ) {
   return row;
 }
 
+// Section 4 makes the signature a resource server's first check. A
+// report that left it out says so in a row of its own, so "All checks
+// passed" is never read as an accepted token.
+function signatureNotVerifiedFinding() {
+  log.debug("Entering signatureNotVerifiedFinding().");
+  var row = finding("skip", "signature",
+      "Not verified by this report. RFC 9068 §4 requires a resource " +
+      "server to verify it before trusting any claim below");
+  log.debug("Leaving signatureNotVerifiedFinding().");
+  return row;
+}
+
+// The closing line of a report. When the signature was not part of
+// it, a clean run says that the claims passed, not the token.
+function summaryLine(failCount, signatureVerified) {
+  log.debug("Entering summaryLine().");
+  var line;
+  if (failCount > 0) {
+    line = failCount + " check(s) failed.";
+  } else if (signatureVerified) {
+    line = "All checks passed.";
+  } else {
+    line = "All checks passed. The signature was not verified, so " +
+        "RFC 9068 §4 does not accept this token yet.";
+  }
+  log.debug("Leaving summaryLine().");
+  return line;
+}
+
 function segmentCount(token) {
   log.debug("Entering segmentCount().");
   var count = 0;
@@ -390,6 +419,8 @@ module.exports = {
   formatFinding: formatFinding,
   typAccepted: typAccepted,
   typFinding: typFinding,
+  signatureNotVerifiedFinding: signatureNotVerifiedFinding,
+  summaryLine: summaryLine,
   segmentCount: segmentCount,
   decodeCompact: decodeCompact,
   checkAuthorizationClaim: checkAuthorizationClaim,

@@ -98,6 +98,31 @@ function typAcceptance() {
   log.debug("Leaving typAcceptance().");
 }
 
+// Section 4 puts the signature first. A report that did not verify it
+// says so, and a clean report then does not read as an accepted token.
+function signatureIsNeverSilent() {
+  log.debug("Entering signatureIsNeverSilent().");
+  var skipped = rfc9068.signatureNotVerifiedFinding();
+  assert.strictEqual(skipped.level, "skip");
+  assert.strictEqual(skipped.claim, "signature");
+  assert.ok(/^SKIP  signature: /.test(rfc9068.formatFinding(skipped)));
+  assert.strictEqual(rfc9068.summaryLine(0, true), "All checks passed.");
+  assert.ok(rfc9068.summaryLine(0, false).indexOf("not verified") > 0,
+      "a clean report without a signature reads as accepted");
+  assert.strictEqual(rfc9068.summaryLine(2, false), "2 check(s) failed.");
+  var detail = fs.readFileSync(
+      path.join(SRC, "token_detail.js"), "utf8");
+  var tools = fs.readFileSync(
+      path.join(SRC, "jwt_tools.js"), "utf8");
+  assert.ok(detail.indexOf("signatureNotVerifiedFinding") >= 0 &&
+      detail.indexOf("summaryLine") >= 0,
+      "token detail reports a clean run without the signature");
+  assert.ok(tools.indexOf("signatureNotVerifiedFinding") >= 0,
+      "JWT Tools omits the signature row when it did not verify");
+  log.info("OK — a report that skipped the signature says so.");
+  log.debug("Leaving signatureIsNeverSilent().");
+}
+
 function authorizationClaims() {
   log.debug("Entering authorizationClaims().");
   var absent = rfc9068.checkAuthorizationClaims({});
@@ -358,6 +383,7 @@ function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
   typAcceptance();
+  signatureIsNeverSilent();
   authorizationClaims();
   authenticationContext();
   resourceSelection();

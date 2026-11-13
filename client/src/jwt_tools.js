@@ -766,6 +766,8 @@ async function checkRfc9068Compliance() {
 
   if (isChecked('jwt_rfc9068_verify')) {
     await appendRfc9068Signature(results, compact);
+  } else {
+    pushRfc9068(results, [rfc9068.signatureNotVerifiedFinding()]);
   }
 
   // typ — RFC 9068 §4 accepts "at+jwt" or "application/at+jwt",
@@ -811,6 +813,12 @@ async function checkRfc9068Compliance() {
 
   requireString('iss');
   requireNumericDate('exp');
+  // Section 4: the current time MUST be before exp.
+  if (typeof payload.exp === 'number' && Number.isInteger(payload.exp) &&
+      Math.floor(Date.now() / 1000) >= payload.exp) {
+    fail('exp', 'Expired at ' +
+         new Date(payload.exp * 1000).toISOString() + ' (RFC 9068 §4)');
+  }
 
   // aud is REQUIRED: a StringOrURI or a non-empty array of them.
   if (payload.aud === undefined) {
