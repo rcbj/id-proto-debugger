@@ -216,6 +216,11 @@ async function setSetting(key, value) {
 // mode and the key; the error code is not in the body. A refusal is not
 // recorded for restore, because nothing was stored. Anything else is the
 // same assertion as setSetting().
+//
+// The refusal is accepted ONLY when the transmitter says it is in product
+// mode. A development transmitter that refused the write is a failure,
+// whatever its body says, so the defect checks below cannot quietly stop
+// running on the stack this suite actually uses.
 async function setDevelopmentOnly(key, value) {
   log.debug("Entering setDevelopmentOnly(). " + key);
   const before = await call('GET', adminUrl + '/config', null, {});
@@ -223,10 +228,16 @@ async function setDevelopmentOnly(key, value) {
   const out = await call('POST', adminUrl + '/config/set',
       { key: key, value: String(value) }, {});
   const text = String(out.text || '');
-  if (out.status === 400 && /product mode/.test(text) &&
-      text.indexOf(key) >= 0) {
-    log.info("[defects] " + key + "=" + value +
-        " is refused in product mode, which is the rule.");
+  if (out.status !== 200 &&
+      await registry.isProduct(registry.baseOf(stsUrl))) {
+    check('product mode refuses ' + key + '=' + value, function () {
+      assert.strictEqual(out.status, 400,
+          'Product mode answered ' + out.status + ' to ' + key + ': ' +
+          text.slice(0, 300));
+      assert.ok(/product mode/.test(text) && text.indexOf(key) >= 0,
+          'The refusal does not name product mode and ' + key + ': ' +
+          text.slice(0, 300));
+    });
     log.debug("Leaving setDevelopmentOnly(). Refused.");
     return { refused: true };
   }
