@@ -469,11 +469,31 @@ check_return_code $?
 #
 # These URLs are host-facing and for this wait only: the tests container derives
 # its own compose-DNS ones in tests/run-tests-in-container.sh.
-${COMPOSE} up --build -d waltid-issuer waltid-verifier
-check_return_code $?
-WALTID_ISSUER_URL=http://localhost:7005 WALTID_VERIFIER_URL=http://localhost:7003 \
-  waitForWaltid "${BASE_COMPOSE_FILE}"
-check_return_code $?
+#
+# WITH NO HOST PORTS there is nothing on localhost:7005/7003 to ask, so the
+# wait is the proxies' own healthchecks instead, which run the same two probes
+# from inside each container. `--wait` fails when either turns unhealthy or
+# the timeout passes, and the JVMs' logs are printed as they are above.
+if [ "${NO_HOST_PORTS}" = "1" ];
+then
+  ${COMPOSE} up --build -d --wait --wait-timeout "${WALTID_WAIT_SECONDS:-180}" \
+    waltid-issuer waltid-verifier
+  rc=$?
+  if [ ${rc} -ne 0 ];
+  then
+    echo "ERROR: walt.id's proxies never reported healthy." >&2
+    reportContainerLog "${BASE_COMPOSE_FILE}" "waltid-issuer-api"
+    reportContainerLog "${BASE_COMPOSE_FILE}" "waltid-verifier-api"
+  fi
+  check_return_code ${rc}
+else
+  ${COMPOSE} up --build -d waltid-issuer waltid-verifier
+  check_return_code $?
+  WALTID_ISSUER_URL=http://localhost:7005 \
+    WALTID_VERIFIER_URL=http://localhost:7003 \
+    waitForWaltid "${BASE_COMPOSE_FILE}"
+  check_return_code $?
+fi
 
 # Run the suite. Services are torn down when the tests container exits; stopping
 # the API container lets c8 flush its coverage to ./coverage/api. Capture the
