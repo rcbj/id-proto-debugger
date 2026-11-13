@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Smart cards</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
+    <link href="/css/smartcard.css" rel="stylesheet">
+  </head>
+  <body>
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+    <div class="container">
+<script type="text/javascript" src="/js/smartcard.js">
+</script>
+
+<p class="saml-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<p class="saml-intro">Decode a YubiKey's Yubico OTP, OATH, PIV, OpenPGP card and YubiHSM Auth traffic. FIDO2 and FIDO U2F stay on the <a href="/webauthn.html">WebAuthn</a> page. USB and NFC are the same bytes. A pasted trace needs no reader. A PIN, an OTP key, an OATH seed and an API key are not saved unless the box next to that field is checked, and a PIN is never saved.</p>
+
+<p id="sc_backend_notice" class="saml-notice saml-hidden">This is the static deployment. Decoding and the OATH calculator work here. Verifying an OTP with YubiCloud, and talking to a reader, need the API. A container does not see a key on the host unless the operator passes the device through.</p>
+
+<p class="saml-status" id="sc_status"></p>
+
+<p class="sc-apps">
+  <label>Application
+    <select id="sc_app" onchange="smartcard.showApplication(this.value);">
+      <option value="otp">Yubico OTP</option>
+      <option value="oath">OATH</option>
+      <option value="piv">PIV</option>
+      <option value="pgp">OpenPGP card</option>
+      <option value="hsm">YubiHSM Auth</option>
+      <option value="reader">Reader</option>
+    </select>
+  </label>
+</p>
+
+<fieldset class="saml-pane" id="sc_pane_otp">
+  <legend class="saml-legend">Yubico OTP</legend>
+  <div class="saml-pane-body">
+    <p class="saml-note">Touch the key and it types the token. The public identity is the first twelve characters of a current 44-character OTP. The AES key decrypts the rest. The CRC is how a wrong key is recognised.</p>
+    <div class="saml-row">
+      <label class="saml-grow">Token
+        <textarea id="sc_otp_token" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <div class="saml-row">
+      <label class="saml-grow">AES key (32 hex characters)
+        <input id="sc_otp_aes_key" class="sc-field" type="password"
+            autocomplete="off" spellcheck="false"
+            oninput="smartcard.onSaveChange('otp');" />
+      </label>
+    </div>
+    <label class="saml-toggle">
+      <input type="checkbox" id="sc_save_otp_key"
+          onchange="smartcard.onSaveChange('otp');" />
+      <span>Save the AES key in this browser</span>
+    </label>
+    <p>
+      <button type="button" class="saml-btn" id="sc_otp_decode" onclick="smartcard.decodeOtp();">Decode</button>
+    </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">YubiCloud validation</div>
+      <p class="saml-note">The API key stays in this browser. The page signs the request and the API posts it. A BAD_OTP answer is still an answer.</p>
+      <div class="saml-row">
+        <label>Client id
+          <input id="sc_otp_id" class="sc-field" spellcheck="false" />
+        </label>
+      </div>
+      <div class="saml-row">
+        <label>API key (base64)
+          <input id="sc_otp_api_key" class="sc-field" type="password"
+              autocomplete="off" spellcheck="false"
+              oninput="smartcard.onSaveChange('api');" />
+        </label>
+      </div>
+      <label class="saml-toggle">
+        <input type="checkbox" id="sc_save_api_key"
+            onchange="smartcard.onSaveChange('api');" />
+        <span>Save the API key in this browser</span>
+      </label>
+      <div class="saml-row">
+        <label>Server
+          <select id="sc_otp_server">
+            <option value="1">api.yubico.com</option>
+            <option value="2">api2.yubico.com</option>
+            <option value="3">api3.yubico.com</option>
+            <option value="4">api4.yubico.com</option>
+            <option value="5">api5.yubico.com</option>
+          </select>
+        </label>
+      </div>
+      <div class="saml-row">
+        <label class="saml-grow">Verifier URL (optional, https)
+          <input id="sc_otp_verifier" class="sc-field" spellcheck="false" />
+        </label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn saml-hidden" id="sc_verify_button" onclick="smartcard.verifyOtp();">Verify</button>
+      </p>
+    </div>
+    <div id="sc_otp_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_oath">
+  <legend class="saml-legend">OATH</legend>
+  <div class="saml-pane-body">
+    <p class="saml-note">The calculator needs no key. Six digits is what an authenticator shows. The applet trace is YKOATH: PUT builds an APDU and does not send it.</p>
+    <div class="saml-row">
+      <label>Secret (hex or text)
+        <input id="sc_oath_secret" class="sc-field" type="password"
+            autocomplete="off" spellcheck="false"
+            oninput="smartcard.onSaveChange('oath');" />
+      </label>
+    </div>
+    <label class="saml-toggle">
+      <input type="checkbox" id="sc_save_oath_secret"
+          onchange="smartcard.onSaveChange('oath');" />
+      <span>Save the OATH secret in this browser</span>
+    </label>
+    <div class="saml-row">
+      <label>Digits
+        <select id="sc_oath_digits">
+          <option value="6" selected>6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <label>Algorithm
+        <select id="sc_oath_algorithm">
+          <option>SHA-1</option>
+          <option>SHA-256</option>
+          <option>SHA-512</option>
+        </select>
+      </label>
+      <label>HOTP counter
+        <input id="sc_oath_counter" value="0" />
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_oath_hotp" onclick="smartcard.calculateHotp();">HOTP</button>
+      <button type="button" class="saml-btn" id="sc_oath_totp" onclick="smartcard.calculateTotp();">TOTP</button>
+    </p>
+    <div class="saml-row">
+      <label class="saml-grow">Applet trace (hex APDU or response)
+        <textarea id="sc_oath_trace" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_oath_command" onclick="smartcard.decodeOathCommand();">Decode command</button>
+      <button type="button" class="saml-btn" id="sc_oath_response" onclick="smartcard.decodeOathResponse();">Decode response</button>
+    </p>
+    <div id="sc_oath_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_piv">
+  <legend class="saml-legend">PIV</legend>
+  <div class="saml-pane-body">
+    <p class="saml-note">NIST SP 800-73. A certificate sits in tag 70 inside tag 53. GENERAL AUTHENTICATE is decoded and not performed. Paste the response, including the status word, or the command.</p>
+    <div class="saml-row">
+      <label class="saml-grow">Trace
+        <textarea id="sc_piv_trace" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_piv_command" onclick="smartcard.decodePivCommand();">Decode command</button>
+      <button type="button" class="saml-btn" id="sc_piv_response" onclick="smartcard.decodePivResponse();">Decode response</button>
+    </p>
+    <div id="sc_piv_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_pgp">
+  <legend class="saml-legend">OpenPGP card</legend>
+  <div class="saml-pane-body">
+    <p class="saml-note">Application related data and the public key. There is no OpenPGP message here. A signature or a decipher is decoded and not performed.</p>
+    <div class="saml-row">
+      <label class="saml-grow">Trace
+        <textarea id="sc_pgp_trace" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_pgp_command" onclick="smartcard.decodePgpCommand();">Decode command</button>
+      <button type="button" class="saml-btn" id="sc_pgp_response" onclick="smartcard.decodePgpResponse();">Decode response</button>
+    </p>
+    <div id="sc_pgp_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_hsm">
+  <legend class="saml-legend">YubiHSM Auth</legend>
+  <div class="saml-pane-body">
+    <p class="saml-note">This is the applet that authenticates to a YubiHSM 2. CALCULATE's 48 bytes are the session keys a host would hand to that HSM. This page does not open a session. The management key and the credential password are not saved.</p>
+    <div class="saml-row">
+      <label class="saml-grow">Trace
+        <textarea id="sc_hsm_trace" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_hsm_command" onclick="smartcard.decodeHsmCommand();">Decode command</button>
+      <button type="button" class="saml-btn" id="sc_hsm_response" onclick="smartcard.decodeHsmResponse();">Decode response</button>
+    </p>
+    <div id="sc_hsm_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_reader">
+  <legend class="saml-legend">Reader</legend>
+  <div class="saml-pane-body">
+    <p class="saml-note">The reader is the machine the API runs on. <code>localhost</code> on this pane is that machine. A container does not see a USB key unless the operator passes the device through. PC/SC is optional: if the library is not installed, listing readers says so and the API stays up.</p>
+    <p class="saml-note" id="sc_hid_note">OTP challenge-response can use WebHID in a browser that has it. Firefox has no WebHID. The keyboard OTP field on the first pane still works. HMAC-SHA1 slots 30 and 38 use the same frame and are not the live button.</p>
+    <div class="saml-row">
+      <label>Challenge (6 bytes, hex)
+        <input id="sc_hid_challenge" class="sc-field" value="000000000000" spellcheck="false" />
+      </label>
+      <label>Slot
+        <select id="sc_hid_slot">
+          <option value="20">OTP slot 1 (20)</option>
+          <option value="28">OTP slot 2 (28)</option>
+        </select>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_hid_send" onclick="smartcard.sendHid();">Send challenge</button>
+    </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">CCID</div>
+      <div class="saml-row">
+        <label>PIN (not stored)
+          <input id="sc_pin" class="sc-field" type="password" autocomplete="off" />
+        </label>
+        <button type="button" class="saml-btn" id="sc_build_verify" onclick="smartcard.buildVerify();">Build VERIFY</button>
+      </div>
+      <div class="saml-row">
+        <label class="saml-grow">Reader name
+          <input id="sc_reader_name" class="sc-field" spellcheck="false" />
+        </label>
+      </div>
+      <div class="saml-row">
+        <label class="saml-grow">APDU (hex)
+          <textarea id="sc_reader_apdu" class="sc-trace" spellcheck="false"></textarea>
+        </label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn saml-hidden" id="sc_readers_button" onclick="smartcard.listReaders();">List readers</button>
+        <button type="button" class="saml-btn saml-hidden" id="sc_transmit_button" onclick="smartcard.transmitApdu();">Transmit</button>
+      </p>
+    </div>
+    <div id="sc_reader_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+    </div>
+<div class="bottom_debugger">
+<!--#include file="/partials/bottom.html"-->
+</div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+  </body>
+</html>
