@@ -129,6 +129,8 @@ var REMEMBERED = [
   'ssf_poll_max', 'ssf_tx_type', 'ssf_tx_alg', 'ssf_tx_iss', 'ssf_tx_aud',
   'ssf_tx_txn', 'ssf_tx_media', 'ssf_tx_payload', 'ssf_tx_subject',
   'ssf_tx_endpoint', 'ssf_auth_scheme', 'ssf_basic_user',
+  // What the next push inbox asks the api for. Not secrets.
+  'ssf_inbox_idle_minutes', 'ssf_inbox_ttl_minutes', 'ssf_inbox_max_kib',
   // The CAEP session's identity and its four common claims. None of them is a
   // credential: an `iss`/`sub`/`sid` triple is who a session belongs to, which
   // is exactly what the SETs on this page say out loud, and a reason message
@@ -2049,6 +2051,40 @@ var pendingSetErrs = {};
 // ---------------------------------------------------------------------------
 // RECEIVING — THE api's PUSH INBOX.
 // ---------------------------------------------------------------------------
+// What the configuration pane asks a new push inbox to be: `{ body }` with
+// `idleTtlMs`, `ttlMs` and `maxInboxBytes` for each field that is filled in,
+// or `{ error }`. An empty field is left out, and the api uses its default.
+// The api, not this page, judges a value against its ceiling.
+function inboxRequest() {
+  log.debug("Entering inboxRequest().");
+  var fields = [
+    { id: 'ssf_inbox_idle_minutes', member: 'idleTtlMs', unit: 60000,
+      name: 'idle TTL' },
+    { id: 'ssf_inbox_ttl_minutes', member: 'ttlMs', unit: 60000,
+      name: 'lifetime' },
+    { id: 'ssf_inbox_max_kib', member: 'maxInboxBytes', unit: 1024,
+      name: 'byte cap' }
+  ];
+  var body = {};
+  var i;
+  for (i = 0; i < fields.length; i++) {
+    var text = val(fields[i].id).trim();
+    if (text === '') {
+      continue;
+    }
+    var number = Number(text);
+    if (!isFinite(number) || number <= 0) {
+      log.debug("Leaving inboxRequest(). " + fields[i].id + " malformed.");
+      return { error: 'The push inbox ' + fields[i].name + ' in the ' +
+        'configuration pane is "' + text + '". It must be a positive ' +
+        'number, or empty for the api\'s default.' };
+    }
+    body[fields[i].member] = Math.round(number * fields[i].unit);
+  }
+  log.debug("Leaving inboxRequest().");
+  return { body: body };
+}
+
 function createReceiver() {
   log.debug("Entering createReceiver().");
   if (!BACKEND_AVAILABLE) {
@@ -2060,13 +2096,21 @@ function createReceiver() {
     log.debug("Leaving createReceiver(). No api.");
     return false;
   }
+  var own = inboxRequest();
+  if (own.error) {
+    setText('ssf_inbox_status', own.error, 'ssf-status ssf-bad');
+    log.debug("Leaving createReceiver(). Malformed setting.");
+    return false;
+  }
+  saveState();
+  // The stream's delivery.authorization_header, so the api requires it on
+  // every push. Empty makes an OPEN inbox, and the status below says so.
+  var asked = Object.assign({ label: 'the Shared Signals debugger',
+    authorization: val('ssf_stream_auth_header').trim() }, own.body);
   fetch(API_URL + '/ssf/receiver', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    // The stream's delivery.authorization_header, so the api requires it on
-    // every push. Empty makes an OPEN inbox, and the status below says so.
-    body: JSON.stringify({ label: 'the Shared Signals debugger',
-      authorization: val('ssf_stream_auth_header').trim() })
+    body: JSON.stringify(asked)
   }).then(function (response) {
     return response.json();
   }).then(function (answer) {
@@ -2086,7 +2130,12 @@ function createReceiver() {
       'that in the stream\'s delivery.endpoint_url — it is already filled ' +
       'in above. THE TRANSMITTER has to be able to reach it, which is why ' +
       'it is the api\'s address as this page reached it rather than a ' +
-      'configured one. ' + (answer.inbox.authenticated
+      'configured one. It keeps ' +
+      Math.round(answer.inbox.maxInboxBytes / 1024) + ' KiB of events, ' +
+      'goes after ' + minutes(answer.inbox.idleTtlMs) + ' idle and after ' +
+      minutes(answer.inbox.ttlMs) + ' in any case (' +
+      answer.inbox.expiresAt + ' unless it is used). ' +
+      (answer.inbox.authenticated
         ? 'Every push must carry the delivery.authorization_header above, ' +
           'exactly; the api answers anything else 401 ' +
           'authentication_failed. Change that field and you need a new ' +
@@ -2939,6 +2988,40 @@ function clearMessages() {
 // answer here, which is a stronger signal than a configuration flag because it
 // is the api itself saying so.
 // ---------------------------------------------------------------------------
+// A duration in milliseconds as minutes, for a sentence.
+function minutes(ms) {
+  log.debug("Entering minutes().");
+  var out = Math.round((Number(ms) || 0) / 6000) / 10 + ' min';
+  log.debug("Leaving minutes(). " + out);
+  return out;
+}
+
+// The api's push-inbox ceilings and counts in the configuration pane, read
+// only, so a refusal of a value or of a sixth inbox has its reason on show.
+function renderReceiverCeilings(receiver) {
+  log.debug("Entering renderReceiverCeilings().");
+  if (!receiver || !receiver.enabled) {
+    setText('ssf_receiver_ceilings', receiver
+      ? 'This api hosts no push inbox (ssfReceiverEnabled), so these ' +
+        'fields do nothing here.'
+      : 'No api answered, so there is no push inbox and these fields do ' +
+        'nothing here.');
+    log.debug("Leaving renderReceiverCeilings(). Disabled.");
+    return;
+  }
+  setText('ssf_receiver_ceilings', 'The api\'s ceilings, which are also ' +
+    'its defaults: idle TTL ' + minutes(receiver.idleTtlMs) +
+    ' (ssfReceiverIdleTtlMs), lifetime ' + minutes(receiver.ttlMs) +
+    ' (ssfReceiverTtlMs), byte cap ' +
+    Math.round((receiver.maxInboxBytes || 0) / 1024) +
+    ' KiB (ssfReceiverMaxInboxBytes). Not settable here: at most ' +
+    receiver.maxInboxesPerCaller + ' inbox(es) per caller ' +
+    '(ssfReceiverMaxInboxesPerCaller) and ' + receiver.maxInboxes +
+    ' in all (ssfReceiverMaxInboxes), which is why one more is refused ' +
+    'until one is deleted or goes idle; ' + receiver.held + ' held now.');
+  log.debug("Leaving renderReceiverCeilings().");
+}
+
 function askApiLimits() {
   log.debug("Entering askApiLimits().");
   if (!BACKEND_AVAILABLE) {
@@ -2947,6 +3030,7 @@ function askApiLimits() {
       'delivery is unavailable — a page cannot be an HTTP server, which is ' +
       'RFC 8935 rather than a limitation of this tool. POLL delivery works ' +
       'exactly as it does anywhere.');
+    renderReceiverCeilings(null);
     log.debug("Leaving askApiLimits(). No api.");
     return;
   }
@@ -2955,6 +3039,7 @@ function askApiLimits() {
   }).then(function (answer) {
     apiLimits = answer;
     var receiver = answer.receiver || {};
+    renderReceiverCeilings(receiver);
     setText('ssf_limits',
       'The api will forward ' + (answer.methods || []).join(', ') +
       ', up to ' + answer.maxRequestBytes + ' bytes of request body, and it ' +
@@ -2974,6 +3059,7 @@ function askApiLimits() {
     setText('ssf_limits',
       'The api did not answer (' + e.message + '), so every call will be ' +
       'made by this browser.');
+    renderReceiverCeilings(null);
     log.debug("Leaving askApiLimits(). No answer.");
   });
 }

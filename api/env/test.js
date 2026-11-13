@@ -225,6 +225,9 @@ var config = {
   ssfReceiverEnabled: true,
   // How long an inbox lives. A page that closed its tab leaves nothing behind
   // for longer than this.
+  // ssfReceiverTtlMs, ssfReceiverIdleTtlMs and ssfReceiverMaxInboxBytes are
+  // each the DEFAULT for one inbox and its CEILING: the SSF page may ask an
+  // inbox for less, and a request for more is refused naming the setting.
   ssfReceiverTtlMs: 3600000,
   // How long an inbox lives with no push, drain or clear. The TTL above
   // still applies however busy it is.

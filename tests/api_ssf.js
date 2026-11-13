@@ -460,7 +460,72 @@ async function theReceiverHostsAnEndpoint() {
     assert.strictEqual(guardedHeld.body.events.length, 1,
         'Only the push that carried the header was stored.');
   });
+  // Gone now rather than in cleanUp(), for the per-caller cap: every job in
+  // the tests container is one caller.
+  await json('DELETE', guardedPath);
+  await perInboxSettingsAreCeilinged();
   log.info("[receiver] OK.");
+}
+
+// What a page may ask one inbox to be: its own idle TTL, lifetime and byte
+// cap, each at most the setting that is also its default. Over HTTP, because
+// what reaches create() is server.js's JSON body.
+async function perInboxSettingsAreCeilinged() {
+  log.debug("Entering perInboxSettingsAreCeilinged().");
+  const ceilings = limits.receiver;
+  check('/ssf/limits publishes the three ceilings and the two counts',
+    function () {
+      ['ttlMs', 'idleTtlMs', 'maxInboxBytes', 'maxInboxes',
+        'maxInboxesPerCaller'].forEach(function (name) {
+        assert.ok(Number(ceilings[name]) > 0, name + ' is ' + ceilings[name]);
+      });
+      assert.ok(/CEILING/.test(String(ceilings.ceilings || '')));
+    });
+  const above = await json('POST', '/ssf/receiver',
+      { label: 'api_ssf.js above', idleTtlMs: ceilings.idleTtlMs + 1 });
+  if (above.body && above.body.inbox) {
+    madeInboxes.push(above.body.inbox.id);
+  }
+  check('a value above its ceiling is a 400 naming the setting', function () {
+    assert.strictEqual(above.status, 400, above.text);
+    assert.ok(String((above.body || {}).error || '')
+      .indexOf('ssfReceiverIdleTtlMs') >= 0, above.text);
+  });
+  const asked = { label: 'api_ssf.js within',
+    idleTtlMs: Math.max(1, ceilings.idleTtlMs - 1000),
+    ttlMs: Math.max(1, ceilings.ttlMs - 1000),
+    maxInboxBytes: ceilings.maxInboxBytes };
+  const within = await json('POST', '/ssf/receiver', asked);
+  if (within.body && within.body.inbox) {
+    madeInboxes.push(within.body.inbox.id);
+  }
+  check('a value within its ceiling is honoured and reported', function () {
+    assert.strictEqual(within.status, 200, within.text);
+    assert.strictEqual(within.body.inbox.idleTtlMs, asked.idleTtlMs);
+    assert.strictEqual(within.body.inbox.ttlMs, asked.ttlMs);
+    assert.strictEqual(within.body.inbox.maxInboxBytes, asked.maxInboxBytes);
+    assert.ok(within.body.inbox.expiresAt);
+  });
+  const omitted = await json('POST', '/ssf/receiver',
+      { label: 'api_ssf.js omitted' });
+  if (omitted.body && omitted.body.inbox) {
+    madeInboxes.push(omitted.body.inbox.id);
+  }
+  check('an omitted value gets the default', function () {
+    assert.strictEqual(omitted.status, 200, omitted.text);
+    assert.strictEqual(omitted.body.inbox.idleTtlMs, ceilings.idleTtlMs);
+    assert.strictEqual(omitted.body.inbox.ttlMs, ceilings.ttlMs);
+    assert.strictEqual(omitted.body.inbox.maxInboxBytes,
+        ceilings.maxInboxBytes);
+  });
+  // Deleted now rather than in cleanUp(): each holds a slot against
+  // ssfReceiverMaxInboxesPerCaller, and this job has opened several.
+  for (const one of [within, omitted]) {
+    if (one.body && one.body.inbox) {
+      await json('DELETE', '/ssf/receiver/' + one.body.inbox.id);
+    }
+  }
+  log.debug("Leaving perInboxSettingsAreCeilinged().");
 }
 
 // ---------------------------------------------------------------------------

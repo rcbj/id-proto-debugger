@@ -1768,6 +1768,49 @@ function theApiReceiverIsBounded() {
     assert.strictEqual(drained.inbox.dropped, 1);
     receiver.reset();
   });
+  check('an inbox may ask for LESS than the ceilings, and is told what it got',
+    function () {
+      const ceilings = Object.assign({}, config, { ssfReceiverTtlMs: 60000,
+        ssfReceiverIdleTtlMs: 30000, ssfReceiverMaxInboxBytes: 4096 });
+      const asked = receiver.create(ceilings,
+          { ttlMs: 20000, idleTtlMs: 10000, maxInboxBytes: 1024 });
+      assert.ok(asked.ok, asked.error);
+      assert.strictEqual(asked.inbox.ttlMs, 20000);
+      assert.strictEqual(asked.inbox.idleTtlMs, 10000);
+      assert.strictEqual(asked.inbox.maxInboxBytes, 1024);
+      assert.ok(asked.inbox.expiresAt);
+      const omitted = receiver.create(ceilings, {});
+      assert.strictEqual(omitted.inbox.ttlMs, 60000,
+          'An omitted value takes the setting as its default.');
+      assert.strictEqual(omitted.inbox.idleTtlMs, 30000);
+      assert.strictEqual(omitted.inbox.maxInboxBytes, 4096);
+      receiver.sweep(ceilings, Date.now() + 15000);
+      assert.strictEqual(receiver.get(ceilings, asked.id), null,
+          'The inbox that asked for a 10 s idle TTL is gone at 15 s.');
+      assert.ok(receiver.get(ceilings, omitted.id),
+          'The one on the 30 s default is still there.');
+      receiver.reset();
+    });
+  check('a value above a ceiling is REFUSED naming the setting', function () {
+    const ceilings = Object.assign({}, config, { ssfReceiverTtlMs: 60000,
+      ssfReceiverIdleTtlMs: 30000, ssfReceiverMaxInboxBytes: 4096 });
+    [['ttlMs', 60001, 'ssfReceiverTtlMs'],
+     ['idleTtlMs', 30001, 'ssfReceiverIdleTtlMs'],
+     ['maxInboxBytes', 4097, 'ssfReceiverMaxInboxBytes']]
+      .forEach(function (row) {
+        const asked = {};
+        asked[row[0]] = row[1];
+        const out = receiver.create(ceilings, asked);
+        assert.ok(!out.ok, row[0] + ' above its ceiling was accepted.');
+        assert.ok(out.error.indexOf(row[2]) >= 0, out.error);
+      });
+    assert.ok(!receiver.create(ceilings, { ttlMs: -5 }).ok);
+    assert.ok(!receiver.create(ceilings, { ttlMs: 'soon' }).ok);
+    assert.ok(!receiver.create(ceilings, { maxInboxBytes: 10 }).ok,
+        'Smaller than one event (ssfReceiverMaxEventBytes) is refused.');
+    assert.ok(receiver.limits(ceilings).ceilings.indexOf('CEILING') >= 0);
+    receiver.reset();
+  });
   check('the drain cursor counts PUSHES, so a drop skips nothing new',
     function () {
       const made = receiver.create(config, {});
