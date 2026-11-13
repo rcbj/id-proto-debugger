@@ -213,6 +213,7 @@
    budget. */
 .landing-card:nth-child(16) .landing-icon { color: #7a3f5f; }
 .landing-card:nth-child(17) .landing-icon { color: #3a6ea5; }
+.landing-card:nth-child(18) .landing-icon { color: #5f7a3f; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 

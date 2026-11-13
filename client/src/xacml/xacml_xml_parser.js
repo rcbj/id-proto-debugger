@@ -39,14 +39,16 @@ function DOMParser(options) {
 }
 
 /**
- * Parses a document, unless it declares a document type or an entity.
+ * Parses a document as XML, unless it declares a document type or an
+ * entity. Whatever type the caller names, the inner parse is a literal
+ * application/xml one, so this wrapper can never become an HTML parse
+ * (tests/xml_parse_inert.js reads every parse call for that literal).
  *
  * @param {string} source - the document text
- * @param {string} mimeType - the MIME type
  * @returns {Document} the document
  */
-DOMParser.prototype.parseFromString = function (source, mimeType) {
-  log.debug("Entering DOMParser.parseFromString().");
+function parseXml(source) {
+  log.debug("Entering parseXml().");
   var found = declarationIn(source);
   if (found) {
     var message = "the document carries a <!" + found +
@@ -54,12 +56,14 @@ DOMParser.prototype.parseFromString = function (source, mimeType) {
     if (this.refusalHandler) {
       this.refusalHandler("fatalError", message);
     }
-    log.debug("Leaving DOMParser.parseFromString(). A declaration.");
+    log.debug("Leaving parseXml(). A declaration.");
     throw new Error(message);
   }
-  log.debug("Leaving DOMParser.parseFromString().");
-  return this.inner.parseFromString(source, mimeType);
-};
+  log.debug("Leaving parseXml().");
+  return this.inner.parseFromString(source, "application/xml");
+}
+
+DOMParser.prototype.parseFromString = parseXml;
 
 module.exports = {
   DOMParser: DOMParser,
