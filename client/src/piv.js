@@ -81,7 +81,10 @@ var OBJECTS = {
   "5fc10c": "key history object",
   "5fc121": "cardholder iris images",
   "5fc122": "secure messaging certificate signer",
-  "5fc123": "pairing code reference data"
+  "5fc123": "pairing code reference data",
+  // Yubico: the attestation certificate for the key in slot F9, the
+  // one that signs what ATTEST returns. Factory-loaded by Yubico.
+  "5fff01": "attestation certificate (Yubico, slot F9)"
 };
 
 var PIN_POLICY = {
@@ -201,6 +204,125 @@ function objectName(tagHex) {
   }
   log.debug("Leaving objectName(). Unnamed.");
   return "data object " + key.toUpperCase();
+}
+
+// The Yubico attestation extensions, 1.3.6.1.4.1.41482.3.N, from
+// developers.yubico.com/PIV/Introduction/PIV_attestation.html. The
+// content octets of the OID up to and including the 3 arc; N follows.
+var YUBICO_ATTESTATION_ARC = "2b0601040182c40a03";
+var ATTEST_PIN_POLICY = { "1": "never", "2": "once per session",
+    "3": "always" };
+var ATTEST_TOUCH_POLICY = { "1": "never", "2": "always",
+    "3": "cached for 15s" };
+var FORM_FACTORS = {
+  "1": "USB-A keychain",
+  "2": "USB-A nano",
+  "3": "USB-C keychain",
+  "4": "USB-C nano",
+  "5": "Lightning and USB-C"
+};
+
+// Every Extension SEQUENCE in a certificate, as { oid, value } with
+// the extnValue's content octets. Not a certificate parser: it finds
+// SEQUENCE { OID, [BOOLEAN,] OCTET STRING } inside the [3] wrapper of
+// the TBSCertificate and nothing else. describeCertificate() in
+// x509.js is still what reads the certificate.
+function certificateExtensions(der) {
+  log.debug("Entering certificateExtensions().");
+  var top = iso.parseElements(der);
+  if (top.length !== 1 || top[0].tag !== 0x30) {
+    log.debug("Leaving certificateExtensions(). Not a certificate.");
+    reject("Not a DER certificate.");
+  }
+  var tbs = iso.parseElements(top[0].value)[0];
+  if (!tbs || tbs.tag !== 0x30) {
+    log.debug("Leaving certificateExtensions(). No TBS.");
+    reject("The certificate has no TBSCertificate.");
+  }
+  var wrapper = childByTag(iso.parseElements(tbs.value), 0xa3);
+  var out = [];
+  if (!wrapper) {
+    log.debug("Leaving certificateExtensions(). None.");
+    return out;
+  }
+  var list = iso.parseElements(wrapper.value);
+  var items = list.length && list[0].tag === 0x30 ?
+      iso.parseElements(list[0].value) : [];
+  var i = 0;
+  for (i = 0; i < items.length; i++) {
+    var parts = iso.parseElements(items[i].value);
+    var oid = childByTag(parts, 0x06);
+    var value = childByTag(parts, 0x04);
+    if (oid && value) {
+      out.push({ oid: oid.value.toString("hex"), value: value.value });
+    }
+  }
+  log.debug("Leaving certificateExtensions().");
+  return out;
+}
+
+// The serial extension is a DER INTEGER inside the OCTET STRING.
+function attestationSerial(value) {
+  log.debug("Entering attestationSerial().");
+  var nodes = iso.parseElements(value);
+  if (nodes.length !== 1 || nodes[0].tag !== 0x02 ||
+      nodes[0].value.length < 1 || nodes[0].value.length > 6) {
+    log.debug("Leaving attestationSerial(). Shape.");
+    return null;
+  }
+  var n = 0;
+  var i = 0;
+  for (i = 0; i < nodes[0].value.length; i++) {
+    n = (n * 256) + nodes[0].value[i];
+  }
+  log.debug("Leaving attestationSerial().");
+  return n;
+}
+
+// Rows for the Yubico extensions in a certificate: the device
+// attestation certificate in 5FFF01 carries the firmware version, and
+// a certificate ATTEST returns for a slot carries all of them.
+function attestationRows(der) {
+  log.debug("Entering attestationRows().");
+  var rows = [];
+  var exts = certificateExtensions(iso.asBytes(der));
+  var i = 0;
+  for (i = 0; i < exts.length; i++) {
+    var oid = exts[i].oid;
+    if (oid.indexOf(YUBICO_ATTESTATION_ARC) !== 0 ||
+        oid.length !== YUBICO_ATTESTATION_ARC.length + 2) {
+      continue;
+    }
+    var arc = parseInt(oid.slice(-2), 16);
+    var v = exts[i].value;
+    if (arc === 3 && v.length === 3) {
+      rows.push({ label: "Firmware (Yubico 3.3)",
+          value: v[0] + "." + v[1] + "." + v[2] });
+    } else if (arc === 7) {
+      var serial = attestationSerial(v);
+      rows.push({ label: "YubiKey serial (Yubico 3.7)",
+          value: serial === null ? iso.toHex(v) : String(serial) });
+    } else if (arc === 8 && v.length === 2) {
+      rows.push({ label: "PIN policy (Yubico 3.8)",
+          value: ATTEST_PIN_POLICY[String(v[0])] || hexByte(v[0]) });
+      rows.push({ label: "Touch policy (Yubico 3.8)",
+          value: ATTEST_TOUCH_POLICY[String(v[1])] || hexByte(v[1]) });
+    } else if (arc === 9 && v.length === 1) {
+      var fips = (v[0] & 0x80) !== 0;
+      rows.push({ label: "Form factor (Yubico 3.9)",
+          value: (FORM_FACTORS[String(v[0] & 0x7f)] ||
+              hexByte(v[0])) + (fips ? ", FIPS" : "") });
+    } else if (arc === 10) {
+      rows.push({ label: "FIPS certified (Yubico 3.10)", value: "yes" });
+    } else if (arc === 11) {
+      rows.push({ label: "CSPN certified (Yubico 3.11)", value: "yes" });
+    } else {
+      rows.push({ label: "Yubico extension 3." + arc,
+          value: iso.toHex(v) });
+    }
+  }
+  log.debug("Leaving attestationRows().");
+  return rows;
 }
 
 function childByTag(nodes, tag) {
@@ -528,6 +650,12 @@ function describeResponse(input, inflate) {
     }
     if (certificate.der) {
       rows.push({ label: "DER", value: certificate.der.length + " bytes" });
+      try {
+        rows = rows.concat(attestationRows(certificate.der));
+      } catch (e) {
+        rows.push({ label: "Yubico extensions",
+            value: "not read: " + e.message });
+      }
     } else {
       rows.push({ label: "Compressed",
           value: certificate.deflated.length +
@@ -563,6 +691,7 @@ module.exports = {
   algorithmName: algorithmName,
   objectName: objectName,
   certificateFields: certificateFields,
+  attestationRows: attestationRows,
   unwrapCertificate: unwrapCertificate,
   pinReferenceName: pinReferenceName,
   verifyApdu: verifyApdu,
