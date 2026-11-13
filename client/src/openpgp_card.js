@@ -57,10 +57,12 @@ var ED25519_OID = "2b6570";
 var X25519_OID = "2b656e";
 
 // These values are themselves TLV. The constructed bit is not a
-// reliable signal: 5F50 is a URL, and B6 holds a public key.
+// reliable signal: 5F50 is a URL, and B6 holds a public key. 7A is
+// the security support template that holds the signature counter.
 var CONTAINERS = {
   "6e": true,
   "65": true,
+  "7a": true,
   "73": true,
   "7f49": true,
   "7f48": true,
@@ -207,12 +209,18 @@ function parseAlgorithmAttributes(value) {
       out.importFormat = bytes[5];
     }
   } else if (bytes.length >= 2) {
-    var oidLen = bytes[1];
-    if (bytes.length < 2 + oidLen) {
-      log.debug("Leaving parseAlgorithmAttributes(). Short OID.");
-      reject("The curve OID is shorter than its length.");
+    // OpenPGP card 3.4 section 4.4.3.9: the algorithm ID, then the
+    // curve OID's content octets with NO tag and NO length byte, then
+    // an optional import-format byte (FF: public key included). The
+    // first OID byte is not a length; P-256's is 2A.
+    var oidBytes = bytes.slice(1);
+    var oid = oidBytes.toString("hex");
+    if (!CURVES[oid] && oidBytes.length > 1 &&
+        oidBytes[oidBytes.length - 1] === 0xff) {
+      oidBytes = oidBytes.slice(0, oidBytes.length - 1);
+      oid = oidBytes.toString("hex");
+      out.importFormat = 0xff;
     }
-    var oid = bytes.slice(2, 2 + oidLen).toString("hex");
     out.oid = oid;
     out.curve = CURVES[oid] || oid;
   }
