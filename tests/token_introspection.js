@@ -54,10 +54,10 @@ async function refreshTokenCall(driver, client_secret) {
            "token panes.");
 
   // The refresh grant authenticates as the (confidential) client, so it needs
-  // the client secret. The refresh pane pre-fills #refresh_client_secret from
-  // localStorage("client_secret"), which is only written on the authorization
-  // page and is therefore empty here — set it explicitly so Keycloak does not
-  // reject the refresh with "unauthorized_client".
+  // the client secret. No secret is ever stored (CLAUDE.md, State
+  // persistence), so after any reload of this page the field is empty —
+  // set it explicitly so Keycloak does not reject the refresh with
+  // "unauthorized_client".
   if (!!client_secret) {
     const secretField =
         await driver.findElement(By.id("refresh_client_secret"));

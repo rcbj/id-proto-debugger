@@ -411,6 +411,14 @@ function run() {
       "a confidential client without PKCE (a SHOULD, not a MUST)");
     assertMentions(confidential, "1.6",
       "a confidential client without PKCE");
+    // The page never holds a stored secret, so it says "confidential"
+    // with a boolean. That reading must match the secret's.
+    var flagged = rfc9700.checkAuthorizationRequest(goodRequest({
+      usePKCE: false, clientSecret: "", confidentialClient: true
+    }));
+    assertBlocking(flagged, [],
+      "a client marked confidential without PKCE");
+    assertMentions(flagged, "1.6", "a client marked confidential");
   });
 
   check("1.7 — the plain PKCE method is refused", function () {

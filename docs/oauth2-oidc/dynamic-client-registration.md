@@ -46,8 +46,8 @@ provider requires more members (`grant_types`, and so on).
 | Field or button | Default | Stored | What it does |
 |---|---|---|---|
 | **Registration Endpoint** | empty until discovery | yes | POST target for **Register New Client**. |
-| **Initial Access Token** | empty | no | Optional bearer token. Leave it empty for open registration. A provider that requires an initial access token rejects a blank one. This value is not written to `localStorage`. |
-| **Client Metadata (JSON)** | filled by **Populate Meta Data** | no | The body of the create (POST) and of the update (PUT). |
+| **Initial Access Token** | empty | no | Optional bearer token. Leave it empty for open registration. A provider that requires an initial access token rejects a blank one. It is kept in this tab's `sessionStorage` only, never in `localStorage`. |
+| **Client Metadata (JSON)** | filled by **Populate Meta Data** | yes, without `client_secret` and `registration_access_token` | The body of the create (POST) and of the update (PUT). |
 | **Apply RP metadata choices** | | | Rewrites the six choice pairs in the metadata. See [RP metadata choices](#rp-metadata-choices). |
 | **Request** | rebuilt as you edit | no | The POST **Register New Client** will send. Read-only. |
 | **Register New Client** | | | Sends that POST. |
@@ -136,11 +136,12 @@ A successful create fills the two fields below from the response.
 | Field or button | Stored | What it does |
 |---|---|---|
 | **Registration Client URI** | yes | `registration_client_uri`. You can paste one from an earlier registration. |
-| **Registration Access Token** | yes | `registration_access_token`, sent as a bearer token (RFC 7592). |
+| **Registration Access Token** | this tab only | `registration_access_token`, sent as a bearer token (RFC 7592). Kept in `sessionStorage`, so it survives the identity provider's redirect and is gone when the tab closes. |
 | **Read Client** | | GET of the client URI. |
 | **Update Client** | | PUT of **Client Metadata (JSON)** to the client URI. |
 | **Delete Client** | | DELETE of the client URI. |
 | **Response** | no | The last response body. Read-only. |
+| **Issued Client Secret** | **never** | Shown after a create that issued a `client_secret`, with a **Copy** button. It is not saved anywhere and is not carried to step 2: copy it now and type it into **Client Secret** there. |
 
 After **Register New Client**, **Read Client**, or **Update Client**,
 the table under the response shows each choice member, the values that

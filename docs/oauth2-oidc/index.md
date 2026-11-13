@@ -221,7 +221,23 @@ Further down step 2 are panes that work with the tokens you now hold:
 ## What the debugger remembers
 
 Everything you type is saved in the browser's `localStorage`, so the forms are
-filled in again next time. **Passwords are never saved.** To start over, click
+filled in again next time, with two exceptions:
+
+* **Client secrets and passwords are never saved**, in any storage. That
+  includes the Client Secret fields on step 2 (token request, refresh,
+  revocation, token exchange), the resource-owner password, the
+  introspection and UserInfo client secrets, the HMAC key on the token
+  detail page, and a `client_secret` a dynamic registration issues. A
+  secret typed on a page is used for that page load only. After the
+  identity provider redirects you back to step 2, or after you return from
+  a token detail page, type the secret again.
+* **Bearer tokens that are inputs**, the registration access token, the
+  initial access token and the introspection page's bearer token, are kept
+  in `sessionStorage`: they survive the redirect in the same tab and are
+  gone when the tab closes.
+
+Copies an older version saved are removed when the pages load. To start
+over, click
 **Clear Storage** in the Metadata Retrieval pane or clear the site data for
 the debugger in your browser.
 

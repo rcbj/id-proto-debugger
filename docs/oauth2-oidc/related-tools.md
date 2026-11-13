@@ -36,7 +36,7 @@ Both tabs have the same verification block.
 | Field or button | Default | What it does |
 |---|---|---|
 | **Verification Type** | HMAC Secret | Also X.509 Certificate (PEM), JWKS (JSON), and JWKS (URL). The choice is stored. |
-| **JWT Verification Key/URL** | empty | Secret, PEM (a certificate or a bare public key), JWKS JSON, or a URL. JWKS selection is by `kid`, for every algorithm the verifier supports, not only RSA. |
+| **JWT Verification Key/URL** | empty, not stored | Secret, PEM (a certificate or a bare public key), JWKS JSON, or a URL. JWKS selection is by `kid`, for every algorithm the verifier supports, not only RSA. |
 | **Verify Signature** | | Writes **Verification Output**. |
 
 ### Claims validation
@@ -75,7 +75,7 @@ it with the token filled in.
 | **OAuth2 Authentication Type** | Basic Auth | Or Bearer Token. |
 | **OAuth2 Client ID** | empty, stored | With **Client Secret**, for Basic Auth. |
 | **OAuth2 Client Secret** | empty | Not stored. It is a password, so it is gone when the page reloads, and any copy left in local storage is removed on load. |
-| **OAuth2 Bearer Token** | empty, stored | Used when the authentication type is Bearer Token. |
+| **OAuth2 Bearer Token** | empty, kept for this tab | Used when the authentication type is Bearer Token. It is held in `sessionStorage`, so it survives a reload in the same tab and is gone when the tab closes. An older copy in `localStorage` is removed on load. |
 | **Introspect Token** | | The response is **Introspection Endpoint Results**. |
 
 ## UserInfo
