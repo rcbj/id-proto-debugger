@@ -24,6 +24,8 @@ var log = bunyan.createLogger({
 
 var workbench = require("./xacml_workbench");
 var draw = require("./xacml_draw");
+// The collapsible panes and the collapse / expand all switch.
+var panes = require("./panes");
 
 var STORAGE_KEY = "xacml_repository";
 
@@ -225,6 +227,8 @@ function createBlank() {
   selected = result.name;
   status("Created " + result.name + ".", false);
   render();
+  // Straight to the policy: every other pane folds and the Editor opens.
+  panes.focusPane("xacml_pane_editor");
   log.debug("Leaving createBlank().");
   return false;
 }
@@ -268,8 +272,153 @@ function loadSample() {
   status("Loaded the sample. alice is permitted; anyone else is denied.",
          false);
   render();
+  panes.focusPane("xacml_pane_editor");
   log.debug("Leaving loadSample().");
   return false;
+}
+
+/**
+ * The open policy's XML in the chosen layout. Formatted is the document
+ * as the editor writes it, indented. Unformatted removes the whitespace
+ * between elements, which carries no meaning in an XACML document.
+ *
+ * @param {string} xmlText - the stored document
+ * @param {string} layout - "formatted" or "unformatted"
+ * @returns {string} the text
+ */
+function laidOut(xmlText, layout) {
+  log.debug("Entering laidOut(). " + layout);
+  var text = String(xmlText || "");
+  if (layout === "unformatted") {
+    text = text.replace(/>\s+</g, "><").trim();
+  }
+  log.debug("Leaving laidOut().");
+  return text;
+}
+
+function exportLayout() {
+  log.debug("Entering exportLayout().");
+  var box = document.getElementById("xacml_export_layout");
+  log.debug("Leaving exportLayout().");
+  return box && box.value === "unformatted" ? "unformatted" : "formatted";
+}
+
+/**
+ * Reads a policy file chosen in the upload field and adds it to the
+ * repository, as Import does with pasted text. XACML XML or ALFA.
+ *
+ * @returns {boolean} false
+ */
+function uploadPolicy() {
+  log.debug("Entering uploadPolicy().");
+  var input = document.getElementById("xacml_upload");
+  var file = input && input.files && input.files[0];
+  if (!file) {
+    status("Choose a file to upload first.", true);
+    log.debug("Leaving uploadPolicy(). No file.");
+    return false;
+  }
+  var reader = new FileReader();
+  reader.onload = function () {
+    var asName = document.getElementById("xacml_import_name").value ||
+        file.name.replace(/\.(xml|alfa|txt)$/i, "");
+    var result = bench.importText(asName, String(reader.result || ""));
+    if (!result.ok) {
+      status(file.name + ": " + result.why, true);
+      return;
+    }
+    selected = result.name;
+    status("Uploaded " + file.name + " as " + result.name + ".", false);
+    render();
+    panes.focusPane("xacml_pane_editor");
+  };
+  reader.onerror = function () {
+    status("Could not read " + file.name + ".", true);
+  };
+  reader.readAsText(file);
+  log.debug("Leaving uploadPolicy().");
+  return false;
+}
+
+/**
+ * Saves the open policy's XML as a file.
+ *
+ * @returns {boolean} false
+ */
+function downloadPolicy() {
+  log.debug("Entering downloadPolicy().");
+  var doc = bench.documentOf(selected);
+  if (!doc.ok) {
+    status(doc.why, true);
+    log.debug("Leaving downloadPolicy(). Nothing open.");
+    return false;
+  }
+  var blob = new Blob([laidOut(doc.xml, exportLayout())],
+                      { type: "application/xml" });
+  var link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = doc.name + ".xml";
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(function () {
+    URL.revokeObjectURL(link.href);
+  }, 1000);
+  status("Downloaded " + doc.name + ".xml (" + exportLayout() + ").", false);
+  log.debug("Leaving downloadPolicy().");
+  return false;
+}
+
+/**
+ * Copies the open policy's XML to the clipboard.
+ *
+ * @returns {boolean} false
+ */
+function copyPolicy() {
+  log.debug("Entering copyPolicy().");
+  var doc = bench.documentOf(selected);
+  if (!doc.ok) {
+    status(doc.why, true);
+    log.debug("Leaving copyPolicy(). Nothing open.");
+    return false;
+  }
+  var text = laidOut(doc.xml, exportLayout());
+  var done = function () {
+    status("Copied " + doc.name + " (" + exportLayout() + ").", false);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, function () {
+      copyByHand(text) ? done() :
+        status("The browser refused the clipboard.", true);
+    });
+  } else if (copyByHand(text)) {
+    done();
+  } else {
+    status("The browser refused the clipboard.", true);
+  }
+  log.debug("Leaving copyPolicy().");
+  return false;
+}
+
+// The clipboard where navigator.clipboard is not offered (plain HTTP).
+function copyByHand(text) {
+  log.debug("Entering copyByHand().");
+  var area = document.createElement("textarea");
+  area.value = text;
+  area.setAttribute("readonly", "");
+  area.style.position = "absolute";
+  area.style.left = "-9999px";
+  document.body.appendChild(area);
+  area.select();
+  var ok = false;
+  try {
+    ok = document.execCommand("copy");
+  } catch (e) {
+    ok = false;
+  }
+  document.body.removeChild(area);
+  log.debug("Leaving copyByHand(). " + ok);
+  return ok;
 }
 
 /**
@@ -394,12 +543,15 @@ function addAttribute() {
   row.innerHTML =
     '<input name="category" size="28" ' +
     'value="urn:oasis:names:tc:xacml:1.0:subject-category:' +
-    'access-subject" title="Category URI">' +
+    'access-subject" title="The category URI this attribute is in: ' +
+    'access-subject, action, resource, environment or another.">' +
     '<input name="attributeId" size="28" placeholder="AttributeId" ' +
-    'title="Attribute id">' +
-    '<input name="value" size="16" placeholder="value" title="Value">' +
+    'title="The AttributeId URI a policy reads this value under.">' +
+    '<input name="value" size="16" placeholder="value" ' +
+    'title="The attribute value, in the lexical form of its DataType.">' +
     '<input name="type" size="18" ' +
-    'value="http://www.w3.org/2001/XMLSchema#string" title="DataType">';
+    'value="http://www.w3.org/2001/XMLSchema#string" title="The ' +
+    'DataType URI of the value, such as XMLSchema#string or #integer.">';
   box.appendChild(row);
   log.debug("Leaving addAttribute().");
   return false;
@@ -437,6 +589,8 @@ function init() {
   if (editor) {
     editor.addEventListener("submit", onEditSubmit);
   }
+  // The SAML Tools pane is a list of links, closed until wanted.
+  panes.collapse(["xacml_pane_saml_tools"]);
   render();
   log.debug("Leaving init().");
 }
@@ -444,6 +598,11 @@ function init() {
 window.onload = init;
 
 module.exports = {
+  togglePane: panes.togglePane,
+  setAllPanes: panes.setAllPanes,
+  uploadPolicy: uploadPolicy,
+  downloadPolicy: downloadPolicy,
+  copyPolicy: copyPolicy,
   createBlank: createBlank,
   importPolicy: importPolicy,
   loadSample: loadSample,

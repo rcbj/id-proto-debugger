@@ -788,8 +788,26 @@ function createWorkbench(repository) {
   }
 
   log.debug("Leaving createWorkbench().");
+  /**
+   * The stored XACML document of one policy, for download or copy.
+   *
+   * @param {string} name - the policy's repository name
+   * @returns {object} { ok, name, xml } or { ok: false, why }
+   */
+  function documentOf(name) {
+    log.debug("Entering documentOf().");
+    var row = name ? repository.read(name) : null;
+    if (!row) {
+      log.debug("Leaving documentOf(). No such policy.");
+      return { ok: false, why: "There is no policy open to export." };
+    }
+    log.debug("Leaving documentOf().");
+    return { ok: true, name: row.name, xml: String(row.document || "") };
+  }
+
   return {
     names: names,
+    documentOf: documentOf,
     createBlank: createBlank,
     importText: importText,
     editorView: editorView,

@@ -1,7 +1,8 @@
 /* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
 /* SPDX-License-Identifier: MIT */
 
-/* The XACML page. Loaded last so it wins over bootstrap and common.css. */
+/* The XACML page. Loaded last so it wins over bootstrap, common.css and
+   saml_common.css, whose saml-pane pattern the panes use. */
 
 .container {
   width: 96%;
@@ -13,40 +14,40 @@
   margin: 4px 0 2px;
 }
 
-.xacml-intro {
-  font-size: 0.9em;
-  line-height: 1.4;
-  color: #333;
+h3 {
+  margin: 4px 0 6px;
 }
 
-fieldset {
-  border: 1px solid #aaa;
-  border-radius: 6px;
-  padding: 8px 12px 12px;
-  margin: 12px 0;
+/* A row of inline controls, compact: the saml-row of saml_common.css with
+   the labels kept beside their controls. */
+.saml-pane .saml-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 10px 0 0;
+  font-size: 0.85em;
 }
 
-.xacml-row {
-  margin: 6px 0;
+.saml-pane .saml-row input[type="text"],
+.saml-pane .saml-row select {
+  width: auto;
+  margin: 0;
 }
 
-.xacml-row label,
-.xacml-field label {
-  margin-right: 10px;
-}
-
-.xacml-field textarea,
 #xacml_import,
 #xacml_request {
-  width: 100%;
-  box-sizing: border-box;
   font-family: monospace;
   font-size: 0.85em;
 }
 
 .xacml-note {
   color: #1f4a6b;
-  font-size: 0.9em;
+  font-size: 0.85em;
+  margin: 0 0 6px;
+}
+
+.xacml-note:empty {
+  display: none;
 }
 
 .xacml-warn {
@@ -57,14 +58,15 @@ fieldset {
 .xacml-tree {
   width: 100%;
   border-collapse: collapse;
-  margin: 8px 0;
+  margin: 4px 0;
+  font-size: 0.85em;
 }
 
 .xacml-tree th,
 .xacml-tree td {
   border-bottom: 1px solid #ddd;
   vertical-align: top;
-  padding: 4px 6px;
+  padding: 2px 6px;
   text-align: left;
 }
 
@@ -98,7 +100,7 @@ fieldset {
 .xacml-indent-9 { padding-left: 10.8em; }
 
 .xacml-attr {
-  margin: 4px 0;
+  margin: 2px 0;
 }
 
 .xacml-attr input {
@@ -121,4 +123,33 @@ fieldset {
   text-align: left;
   vertical-align: top;
   padding: 4px 8px;
+}
+
+/* Tighter than the SAML pages: a narrow label column so the controls
+   start near their names, and less air between and inside the panes. */
+.saml-pane {
+  margin: 0 0 8px;
+  padding: 2px 10px 8px;
+}
+
+.saml-pane > legend {
+  margin: 0 0 2px;
+}
+
+.saml-field {
+  margin: 0 0 4px;
+}
+
+.saml-field > label {
+  flex: 0 0 170px;
+  max-width: 170px;
+}
+
+.saml-pane button {
+  padding: 1px 8px;
+  font-size: 0.85em;
+}
+
+.saml-controls {
+  margin: 2px 0 6px;
 }
