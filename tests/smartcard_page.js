@@ -119,7 +119,9 @@ async function offlineForms(driver) {
       "Array.prototype.forEach.call(document.querySelectorAll(" +
       "  'button.sc-gen'), function (b) {" +
       "  b.click();" +
-      "  var id = /generateSecret\\('([a-z_]+)'/.exec(" +
+      // Either quote: the deployed static sites MINIFY the page, and its
+      // minifier rewrites onclick="…('id', …)" as onclick='…("id",…)'.
+      "  var id = /generateSecret\\(\\s*['\"]([a-z_]+)['\"]/.exec(" +
       "      b.getAttribute('onclick'))[1];" +
       "  out[id] = document.getElementById(id).value; });" +
       "return out;");
@@ -144,7 +146,11 @@ async function offlineForms(driver) {
       "  document.getElementById('sc_hsm_add_type').value = t;" +
       "  smartcard.onHsmTypeChange(); });");
 
-  const NO_READER = /reader|PC\/SC|pcscd|service|SCard|readers/i;
+  // No key to reach, said either way: an api with no reader (the
+  // containerized stack), or no api at all ("needs the api", the deployed
+  // static sites). Both refuse before anything is sent to a card.
+  const NO_READER =
+    /reader|PC\/SC|pcscd|service|SCard|readers|needs the api/i;
   const set = function (id, v) {
     return "document.getElementById('" + id + "').value = " +
         JSON.stringify(v) + ";";
