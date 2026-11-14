@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: ssf_protocol.js
 //
 // ---------------------------------------------------------------------------
@@ -210,6 +213,45 @@ async function setSetting(key, value) {
   assert.strictEqual(out.status, 200,
       'The mock refused to set ' + key + ': ' + out.text);
   log.debug("Leaving setSetting().");
+}
+
+// A development-only write. Product answers 400 and the body names product
+// mode and the key; the error code is not in the body. A refusal is not
+// recorded for restore, because nothing was stored. Anything else is the
+// same assertion as setSetting().
+//
+// The refusal is accepted ONLY when the transmitter says it is in product
+// mode. A development transmitter that refused the write is a failure,
+// whatever its body says, so the defect checks below cannot quietly stop
+// running on the stack this suite actually uses.
+async function setDevelopmentOnly(key, value) {
+  log.debug("Entering setDevelopmentOnly(). " + key);
+  const before = await call('GET', adminUrl + '/config', null, {});
+  const row = settingRow(before.body, key);
+  const out = await call('POST', adminUrl + '/config/set',
+      { key: key, value: String(value) }, {});
+  const text = String(out.text || '');
+  if (out.status !== 200 &&
+      await registry.isProduct(registry.baseOf(stsUrl))) {
+    check('product mode refuses ' + key + '=' + value, function () {
+      assert.strictEqual(out.status, 400,
+          'Product mode answered ' + out.status + ' to ' + key + ': ' +
+          text.slice(0, 300));
+      assert.ok(/product mode/.test(text) && text.indexOf(key) >= 0,
+          'The refusal does not name product mode and ' + key + ': ' +
+          text.slice(0, 300));
+    });
+    log.debug("Leaving setDevelopmentOnly(). Refused.");
+    return { refused: true };
+  }
+  assert.strictEqual(out.status, 200,
+      'The mock refused to set ' + key + ': ' + out.text);
+  if (row && changed[key] === undefined) {
+    changed[key] = { overridden: row.overridden === true,
+      text: row.text !== undefined ? String(row.text) : String(row.value) };
+  }
+  log.debug("Leaving setDevelopmentOnly().");
+  return { refused: false };
 }
 
 // A setting that was NOT overridden before this run is RESET — its override
@@ -922,6 +964,20 @@ async function pollingHasItsOwnRefusals() {
     delivery: { method: ssf.DELIVERY_PUSH,
       endpoint_url: receiverUrl + '/events' } }, {});
   if (pushed.status !== 201) {
+    // The set above is allowed in product. Creating the stream is not:
+    // this listener is plain http and is not iya-sts's own loopback
+    // origin, and product refuses that dial (the body names http). A 500
+    // that does not is a failure, not this skip.
+    if (await registry.isProduct(registry.baseOf(stsUrl))) {
+      check('product mode refuses this plain-http push endpoint',
+        function () {
+          assert.ok(/http/i.test(String(pushed.text || '')),
+              'Stream creation answered ' + pushed.status +
+              ' and the body does not mention http, so this is not ' +
+              'the plain-http refusal. The body begins: ' +
+              String(pushed.text || '').slice(0, 300));
+        });
+    }
     skip('polling a push stream',
         'a push stream could not be created: ' + pushed.text);
     log.info("[delivery] partly skipped.");
@@ -1073,36 +1129,98 @@ function stopReceiver() {
 // ---------------------------------------------------------------------------
 // 8. THE DELIBERATE DEFECTS.
 // ---------------------------------------------------------------------------
+// A RISC account-disabled about a fresh account, emitted by hand through the
+// management API, and the claims of the SET it produced. The verification
+// event carries no subject, so it cannot show ssf.legacySubClaim: that defect
+// copies the subject's `sub` onto the SET, and only an event ABOUT somebody
+// has one. The stream is subscribed to the account first so the poll stream
+// takes it; the emit's own answer carries each SET it built, and the poll
+// stream is drained as well in case that answer is empty.
+async function emitWithASubject(streamId, pollUrl) {
+  log.debug("Entering emitWithASubject().");
+  const account = 'ssf-legacy-' + Date.now();
+  const issuer = ssf.readMetadata(metadata).issuer;
+  const addSubject = ssf.endpointFor(metadata, 'add_subject_endpoint');
+  await drain(pollUrl, streamId);
+  await call('POST', addSubject.url, { stream_id: streamId,
+    subject: { format: 'iss_sub', iss: issuer, sub: account } }, {});
+  const sent = await call('POST', adminUrl + '/risc/emit',
+      { type: 'account-disabled', account_id: account }, {});
+  const aboutAccount = function (claims) {
+    log.debug("Entering aboutAccount().");
+    const about = !!claims && (claims.sub === account ||
+      JSON.stringify(claims.sub_id || {}).indexOf(account) >= 0);
+    log.debug("Leaving aboutAccount(). " + about);
+    return about;
+  };
+  let claims = null;
+  ((sent.body && sent.body.reports) || []).forEach(function (report) {
+    if (!claims && aboutAccount(report.claims)) {
+      claims = report.claims;
+    }
+  });
+  const deadline = Date.now() + 15000;
+  while (!claims && Date.now() < deadline) {
+    (await drain(pollUrl, streamId)).forEach(function (one) {
+      const parsed = ssf.parseSet(one.token);
+      if (!claims && parsed.ok && aboutAccount(parsed.claims)) {
+        claims = parsed.claims;
+      }
+    });
+    if (!claims) {
+      await new Promise(function (resolve) {
+        setTimeout(resolve, 250);
+      });
+    }
+  }
+  log.debug("Leaving emitWithASubject(). " + (claims ? "found" : "none"));
+  return { account: account, claims: claims,
+    answer: sent.status + ' ' + String(sent.text || '').slice(0, 300) };
+}
+
 async function theDefectsAreReachable() {
   log.info("[defects] A permissive transmitter is hard to write error " +
       "handling against, so the mock can be made wrong ON PURPOSE. Both " +
-      "defects are asserted here, and both are turned back off.");
+      "defects are turned on where the mode allows it, and turned back " +
+      "off. Product refuses them, and that refusal is the check there.");
   const verify = ssf.endpointFor(metadata, 'verification_endpoint');
   const poll = pollStream.delivery.endpoint_url;
   const id = pollStream.streamId;
 
-  await setSetting('ssf.legacySubClaim', 'true');
-  await drain(poll, id);
-  const addSubject = ssf.endpointFor(metadata, 'add_subject_endpoint');
-  await call('POST', addSubject.url, { stream_id: id,
-    subject: { format: 'iss_sub', iss: 'https://i/',
-      sub: 'alice' } }, {});
-  await call('POST', verify.url, { stream_id: id, state: 'legacy' }, {});
-  const withLegacy = await drainUntil(poll, id, 'legacy');
-  check('ssf.legacySubClaim is REPORTED as a finding rather than accepted',
-    function () {
-      // The verification event carries no subject, so the legacy claim only
-      // appears where a subject does. What is asserted is that this
-      // workflow's inspector NAMES a `sub` when it meets one — which is the
-      // half a client under test has to get right.
-      const verdict = ssf.inspectSet({ iss: 'https://i/', jti: 'j', iat: 1,
-        aud: 'a', sub: 'alice', events: { x: {} } }, {});
-      assert.ok(verdict.warnings.join(' ').indexOf('sub_id') >= 0);
-      assert.ok(withLegacy.length >= 0);
-    });
-  await setSetting('ssf.legacySubClaim', 'false');
+  const legacyOn = await setDevelopmentOnly('ssf.legacySubClaim', 'true');
+  if (!legacyOn.refused) {
+    let legacy = null;
+    try {
+      legacy = await emitWithASubject(id, poll);
+    } finally {
+      await setSetting('ssf.legacySubClaim', 'false');
+    }
+    check('ssf.legacySubClaim puts a "sub" on a SET that has a subject',
+      function () {
+        assert.ok(legacy.claims,
+            'No SET about ' + legacy.account + ' came back, from the emit ' +
+            'answer or from the poll stream, so the defect could not be ' +
+            'looked at. The emit answered: ' + legacy.answer);
+        assert.strictEqual(legacy.claims.sub, legacy.account,
+            'With ssf.legacySubClaim on, the SET about ' + legacy.account +
+            ' carries sub=' + JSON.stringify(legacy.claims.sub) + '.');
+        assert.ok(legacy.claims.sub_id,
+            'The defect ADDS a sub; the sub_id must still be there.');
+      });
+    check('and this workflow\'s inspector REPORTS that sub as a finding',
+      function () {
+        const verdict = ssf.inspectSet(legacy.claims, {});
+        assert.ok(verdict.warnings.join(' ').indexOf('sub_id') >= 0,
+            'The inspector did not name the sub on a SET the transmitter ' +
+            'sent with one: ' + JSON.stringify(verdict.warnings));
+      });
+  }
 
-  await setSetting('ssf.breakSetSignature', 'true');
+  const brokenOn = await setDevelopmentOnly('ssf.breakSetSignature', 'true');
+  if (brokenOn.refused) {
+    log.info("[defects] product mode refuses both deliberate defects.");
+    return;
+  }
   await drain(poll, id);
   await call('POST', verify.url, { stream_id: id, state: 'broken' }, {});
   const broken = await drainUntil(poll, id, 'broken');

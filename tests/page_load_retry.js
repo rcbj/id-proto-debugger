@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: page_load_retry.js
 //
 // What tests/page_load.js promises, checked against a browser and a socket

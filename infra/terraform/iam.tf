@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # ---------------------------------------------------------------------------
 # CI/CD deploy role for GitHub Actions (OIDC).
 #

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: kerberos_principals.js
 // ---------------------------------------------------------------------------
 // WHAT THE KERBEROS JOBS ASKED `GET /krb5/principals` FOR, ASKED OF WHERE IT

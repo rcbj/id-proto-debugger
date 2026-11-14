@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: ssf_engine.js
 //
 // ---------------------------------------------------------------------------
@@ -950,12 +953,20 @@ function everySignatureFamilyRoundTrips() {
           assert.deepStrictEqual(parsed.claims, claims,
               alg + ': the claim set changed between building and signing.');
           checks++;
-          return ssf.verifySet(token, pub, alg).then(function (verdict) {
-            assert.ok(verdict.valid,
-                alg + ': the signature this workflow made does not verify.');
-            checks++;
-            log.info("[set] " + alg + " round trips.");
-          });
+          // The way the page does it: the algorithm from the SET's header,
+          // held against the key, and never chosen by hand.
+          const chosen = ssf.resolveVerification(parsed.header, pub);
+          assert.ok(chosen.ok, alg + ': ' + chosen.problem);
+          assert.strictEqual(chosen.alg, alg,
+              alg + ': the header and the key resolved to ' + chosen.alg);
+          return ssf.verifySet(token, chosen.key, chosen.alg)
+            .then(function (verdict) {
+              assert.ok(verdict.valid,
+                  alg + ': the signature this workflow made does not ' +
+                  'verify.');
+              checks++;
+              log.info("[set] " + alg + " round trips.");
+            });
         });
     });
   }, Promise.resolve()).then(function () {
@@ -1322,6 +1333,24 @@ function theVocabularyIsSsfsTwoAndSaysWhatIsMissing() {
           'an event type this build does not know is still PLACED by its ' +
           'prefix. "Unknown" would read as broken; "a RISC event this build ' +
           'does not implement" reads as a transmitter that is ahead.');
+      assert.strictEqual(aheadRows[0].errors.length, 0,
+          'an unknown type is printed, not refused. validateEvent() is ' +
+          'what refuses to BUILD one.');
+      assert.strictEqual(aheadRows[0].document,
+          JSON.stringify(ahead, null, 2));
+      const vendor = {};
+      vendor['urn:vendor:secevent:event-type:example'] = {
+        realm: 'one', note: 'as it arrived'
+      };
+      const vendorRows = events.describeEvents(vendor);
+      assert.strictEqual(vendorRows[0].known, false);
+      assert.strictEqual(vendorRows[0].family, '');
+      assert.strictEqual(vendorRows[0].document,
+          JSON.stringify(vendor, null, 2),
+          'a type outside SSF, CAEP and RISC is printed as the events-map ' +
+          'entry that arrived. The catalogue does not gain a row for it.');
+      assert.ok(!events.EVENT_BY_URI[
+        'urn:vendor:secevent:event-type:example']);
     });
   log.info("[events] OK.");
 }
@@ -1672,8 +1701,188 @@ function theApiReceiverIsBounded() {
         'to show anybody WHY, which is the question being asked.');
     assert.ok(limits.note.indexOf('HTTP server') >= 0);
   });
+  check('an inbox made with an authorization_header requires it exactly',
+    function () {
+      const made = receiver.create(config, { authorization: 'Bearer s3cret' });
+      assert.strictEqual(made.inbox.authenticated, true);
+      assert.ok(JSON.stringify(made.inbox).indexOf('s3cret') < 0,
+          'The secret is never handed back.');
+      const none = receiver.deliver(config, made.id, { body: token() });
+      assert.strictEqual(none.status, 401);
+      assert.strictEqual(none.err, 'authentication_failed',
+          'RFC 8935 section 2.4 names the code for a push the receiver ' +
+          'could not authenticate.');
+      const wrong = receiver.deliver(config, made.id,
+          { body: token(), authorization: 'Bearer s3cres' });
+      assert.strictEqual(wrong.status, 401);
+      const right = receiver.deliver(config, made.id,
+          { body: token(), authorization: 'Bearer s3cret' });
+      assert.strictEqual(right.status, 202);
+      assert.strictEqual(receiver.drain(config, made.id, 0).events.length, 1,
+          'A refused push stores nothing.');
+      receiver.reset();
+    });
+  check('an inbox made with none is OPEN and says so', function () {
+    const made = receiver.create(config, {});
+    assert.strictEqual(made.inbox.authenticated, false);
+    assert.strictEqual(receiver.deliver(config, made.id,
+        { body: token() }).status, 202);
+    receiver.reset();
+  });
+  check('one caller cannot hold every inbox', function () {
+    const capped = Object.assign({}, config,
+        { ssfReceiverMaxInboxesPerCaller: 2 });
+    assert.ok(receiver.create(capped, {}, '10.0.0.1').ok);
+    assert.ok(receiver.create(capped, {}, '10.0.0.1').ok);
+    const refused = receiver.create(capped, {}, '10.0.0.1');
+    assert.ok(!refused.ok);
+    assert.ok(refused.error.indexOf('ssfReceiverMaxInboxesPerCaller') >= 0);
+    assert.ok(receiver.create(capped, {}, '10.0.0.2').ok,
+        'Another caller still gets one.');
+    assert.strictEqual(receiver.limits(capped).maxInboxesPerCaller, 2);
+    receiver.reset();
+  });
+  check('an IDLE inbox expires before the absolute TTL', function () {
+    const idle = Object.assign({}, config, { ssfReceiverTtlMs: 3600000,
+      ssfReceiverIdleTtlMs: 1000 });
+    const made = receiver.create(idle, {});
+    receiver.sweep(idle, Date.now() + 500);
+    assert.ok(receiver.get(idle, made.id), 'Not idle long enough yet.');
+    receiver.sweep(idle, Date.now() + 5000);
+    assert.ok(!receiver.drain(idle, made.id, 0).ok,
+        'Idle past ssfReceiverIdleTtlMs, so swept.');
+    assert.strictEqual(receiver.limits(idle).idleTtlMs, 1000);
+    assert.strictEqual(receiver.limits({}).idleTtlMs, 30 * 60 * 1000);
+    receiver.reset();
+  });
+  check('each inbox is capped in BYTES as well, oldest dropped', function () {
+    const bytes = Object.assign({}, config, { ssfReceiverMaxEvents: 100,
+      ssfReceiverMaxInboxBytes: 1 });
+    const made = receiver.create(bytes, {});
+    receiver.deliver(bytes, made.id, { body: token('1') });
+    receiver.deliver(bytes, made.id, { body: token('2') });
+    const drained = receiver.drain(bytes, made.id, 0);
+    assert.strictEqual(drained.events.length, 1,
+        'The inbox cap never falls below one event, so the newest fits.');
+    assert.strictEqual(drained.events[0].claims.n, '2');
+    assert.strictEqual(drained.inbox.dropped, 1);
+    receiver.reset();
+  });
+  check('an inbox may ask for LESS than the ceilings, and is told what it got',
+    function () {
+      const ceilings = Object.assign({}, config, { ssfReceiverTtlMs: 60000,
+        ssfReceiverIdleTtlMs: 30000, ssfReceiverMaxInboxBytes: 4096 });
+      const asked = receiver.create(ceilings,
+          { ttlMs: 20000, idleTtlMs: 10000, maxInboxBytes: 1024 });
+      assert.ok(asked.ok, asked.error);
+      assert.strictEqual(asked.inbox.ttlMs, 20000);
+      assert.strictEqual(asked.inbox.idleTtlMs, 10000);
+      assert.strictEqual(asked.inbox.maxInboxBytes, 1024);
+      assert.ok(asked.inbox.expiresAt);
+      const omitted = receiver.create(ceilings, {});
+      assert.strictEqual(omitted.inbox.ttlMs, 60000,
+          'An omitted value takes the setting as its default.');
+      assert.strictEqual(omitted.inbox.idleTtlMs, 30000);
+      assert.strictEqual(omitted.inbox.maxInboxBytes, 4096);
+      receiver.sweep(ceilings, Date.now() + 15000);
+      assert.strictEqual(receiver.get(ceilings, asked.id), null,
+          'The inbox that asked for a 10 s idle TTL is gone at 15 s.');
+      assert.ok(receiver.get(ceilings, omitted.id),
+          'The one on the 30 s default is still there.');
+      receiver.reset();
+    });
+  check('a value above a ceiling is REFUSED naming the setting', function () {
+    const ceilings = Object.assign({}, config, { ssfReceiverTtlMs: 60000,
+      ssfReceiverIdleTtlMs: 30000, ssfReceiverMaxInboxBytes: 4096 });
+    [['ttlMs', 60001, 'ssfReceiverTtlMs'],
+     ['idleTtlMs', 30001, 'ssfReceiverIdleTtlMs'],
+     ['maxInboxBytes', 4097, 'ssfReceiverMaxInboxBytes']]
+      .forEach(function (row) {
+        const asked = {};
+        asked[row[0]] = row[1];
+        const out = receiver.create(ceilings, asked);
+        assert.ok(!out.ok, row[0] + ' above its ceiling was accepted.');
+        assert.ok(out.error.indexOf(row[2]) >= 0, out.error);
+      });
+    assert.ok(!receiver.create(ceilings, { ttlMs: -5 }).ok);
+    assert.ok(!receiver.create(ceilings, { ttlMs: 'soon' }).ok);
+    assert.ok(!receiver.create(ceilings, { maxInboxBytes: 10 }).ok,
+        'Smaller than one event (ssfReceiverMaxEventBytes) is refused.');
+    assert.ok(receiver.limits(ceilings).ceilings.indexOf('CEILING') >= 0);
+    receiver.reset();
+  });
+  check('the drain cursor counts PUSHES, so a drop skips nothing new',
+    function () {
+      const made = receiver.create(config, {});
+      receiver.deliver(config, made.id, { body: token('a') });
+      const first = receiver.drain(config, made.id, 0);
+      let i;
+      for (i = 0; i < 3; i++) {
+        receiver.deliver(config, made.id, { body: token('b' + i) });
+      }
+      // Four held now; two more pushes drop the two oldest.
+      receiver.deliver(config, made.id, { body: token('c0') });
+      receiver.deliver(config, made.id, { body: token('c1') });
+      const next = receiver.drain(config, made.id, first.total);
+      assert.deepStrictEqual(next.events.map(function (one) {
+        return one.claims.n;
+      }), ['b1', 'b2', 'c0', 'c1'],
+          'Every event pushed after the first drain and still held is ' +
+          'handed back.');
+      assert.strictEqual(next.total, 6);
+      receiver.reset();
+    });
   receiver.reset();
   log.info("[api receiver] OK.");
+}
+
+function theVerificationAlgorithmComesFromTheHeaderAndTheKey() {
+  log.info("[verify] The algorithm is the SET's header alg, held against " +
+      "the key. A mismatch is refused rather than tried, and alg: none is " +
+      "never verified.");
+  const ec = { kty: 'EC', crv: 'P-256', x: 'x', y: 'y', kid: 'k1' };
+  check('a JWK that agrees gives the header alg', function () {
+    const out = ssf.resolveVerification({ alg: 'ES256', kid: 'k1' }, ec);
+    assert.ok(out.ok, out.problem);
+    assert.strictEqual(out.alg, 'ES256');
+  });
+  check('alg: none and a missing alg are refused', function () {
+    assert.ok(!ssf.resolveVerification({ alg: 'none' }, ec).ok);
+    assert.ok(!ssf.resolveVerification({}, ec).ok);
+  });
+  check('a key whose own alg differs is REFUSED, not tried', function () {
+    const out = ssf.resolveVerification({ alg: 'ES384' },
+        Object.assign({}, ec, { alg: 'ES256' }));
+    assert.ok(!out.ok);
+    assert.ok(/REFUSED/.test(out.problem), out.problem);
+  });
+  check('a key of the wrong type or curve is refused', function () {
+    assert.ok(!ssf.resolveVerification({ alg: 'RS256' }, ec).ok);
+    assert.ok(!ssf.resolveVerification({ alg: 'ES384' }, ec).ok);
+    assert.ok(!ssf.resolveVerification({ alg: 'ES256' },
+        Object.assign({}, ec, { use: 'enc' })).ok);
+  });
+  check('a JWK Set is narrowed by kid, and an unknown kid refused',
+    function () {
+      const set = { keys: [ec, { kty: 'RSA', n: 'n', e: 'AQAB', kid: 'r' }] };
+      const out = ssf.resolveVerification({ alg: 'ES256', kid: 'k1' }, set);
+      assert.ok(out.ok, out.problem);
+      assert.strictEqual(out.key.kid, 'k1');
+      assert.ok(!ssf.resolveVerification({ alg: 'ES256', kid: 'r' }, set).ok,
+          'kid r is an RSA key and the header says ES256.');
+      assert.ok(!ssf.resolveVerification({ alg: 'ES256', kid: 'zz' },
+          set).ok);
+    });
+  check('EdDSA takes its curve from the key', function () {
+    const out = ssf.resolveVerification({ alg: 'EdDSA' },
+        { kty: 'OKP', crv: 'Ed448', x: 'x' });
+    assert.ok(out.ok, out.problem);
+    assert.strictEqual(out.alg, 'EdDSA-Ed448');
+  });
+  check('an algorithm this build does not implement is refused', function () {
+    assert.ok(!ssf.resolveVerification({ alg: 'XX999' }, ec).ok);
+  });
+  log.info("[verify] OK.");
 }
 
 // A compact JWS-shaped string with readable claims, for the receiver tests.
@@ -1711,6 +1920,7 @@ function test() {
   theHistoriesCapAndRedact();
   theApiProxyRefusesWhatItShould();
   theApiReceiverIsBounded();
+  theVerificationAlgorithmComesFromTheHeaderAndTheKey();
   // The signing round trip is the only asynchronous section, so it closes.
   return everySignatureFamilyRoundTrips().then(function () {
     // A count, and it is ASSERTED rather than only printed: this file needs

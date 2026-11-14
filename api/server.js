@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 'use strict';
 
 var appconfig = require(process.env.CONFIG_FILE);
@@ -11,8 +14,20 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
+// THE TWO SHARED MODULES, beside this file in the image and in common/ in a
+// checkout. api/Dockerfile copies common/data.js and common/xmldsig.js in
+// flat, so the image finds them here; a checkout run with `node server.js`
+// (which is how the api runs natively on Windows and macOS, where a container
+// cannot reach the host's smart-card service) finds them in ../common. The
+// image's copy wins when both exist. No logging here: the module logger is
+// created further down, after these requires.
+function requireShared(name) {
+  const beside = path.join(__dirname, name);
+  return require(fs.existsSync(beside) ? beside :
+                 path.join(__dirname, '..', 'common', name));
+}
 const {
-  convertToOAuth2Format  } = require('./data.js');
+  convertToOAuth2Format  } = requireShared('data.js');
 const ssrfGuard = require('./ssrf_guard.js');
 const connectTimeout = require('./connect_timeout.js');
 const krb5Relay = require('./krb5_relay.js');
@@ -228,7 +243,7 @@ const MAX_REDIRECTS = resolveNonNegativeInteger(
 const DEFAULT_USER_AGENT = 'Identity Protocol Debugger/{{VERSION}}';
 
 /**
- * The application version, M.N.O.
+ * The application version, M.N.P.B.
  *
  * api/Dockerfile stamps version.json into this directory at image build time and
  * copies the client's version.js beside it — one implementation of the scheme for
@@ -313,6 +328,27 @@ const USER_AGENT = resolveUserAgent();
  * @returns {boolean}
  */
 /**
+ * Answers with TEXT that may carry a caller's, an identity provider's or an
+ * exception's words. Express's res.send(string) labels a string text/html,
+ * so an error message quoting a crafted SAMLart, RelayState or upstream body
+ * would be rendered as markup in the browser that was redirected here (CodeQL
+ * js/xss-through-exception). text/plain plus nosniff keeps it text.
+ *
+ * @param {object} res - the express response.
+ * @param {number} status - the HTTP status.
+ * @param {string} text - what to send.
+ * @returns {object} the express response.
+ */
+function sendPlainText(res, status, text) {
+  log.debug("Entering sendPlainText(). status=" + status);
+  res.status(status);
+  res.type('text/plain; charset=utf-8');
+  res.set('X-Content-Type-Options', 'nosniff');
+  log.debug("Leaving sendPlainText().");
+  return res.send(String(text));
+}
+
+/**
  * The browser origins allowed to call this api, derived from the configured URLs.
  *
  * Until now this was `origin: '*'`, which tells every site on the internet that
@@ -333,9 +369,9 @@ const USER_AGENT = resolveUserAgent();
  * never does, so each is reduced to scheme://host:port before comparison.
  *
  * @param {object} config - the appconfig for this environment.
- * @returns {string[]|string} the allowlist, or '*' when nothing usable is
- *   configured — a deployment missing both keys keeps working rather than
- *   refusing its own UI, with the reason logged.
+ * @returns {string[]} the allowlist, EMPTY when nothing usable is configured
+ *   — a deployment missing both keys refuses every cross-origin caller, its
+ *   own UI included, with the reason logged as an error.
  */
 function resolveAllowedOrigins(config) {
   log.debug("Entering resolveAllowedOrigins().");
@@ -364,11 +400,16 @@ function resolveAllowedOrigins(config) {
     if (origins.indexOf(parsed.origin) === -1) origins.push(parsed.origin);
   });
   if (!origins.length) {
-    log.warn("Neither uiUrl nor apiUrl gives a usable origin, so CORS falls " +
-             "back to '*'. " +
-             "Set uiUrl to the browser origin that calls this api.");
+    // Fail CLOSED. This used to fall back to '*', which let any site on the
+    // web drive an api that fetches URLs its caller chooses (CodeQL
+    // js/cors-permissive-configuration). Every shipped configuration sets
+    // uiUrl, so this is only ever a misconfiguration, and a browser refusing
+    // every cross-origin call names the problem where '*' hides it.
+    log.error("Neither uiUrl nor apiUrl gives a usable origin, so NO browser " +
+              "origin may call this api. " +
+              "Set uiUrl to the browser origin that calls this api.");
     log.debug("Leaving resolveAllowedOrigins().");
-    return "*";
+    return [];
   }
   log.debug("Leaving resolveAllowedOrigins().");
   return origins;
@@ -597,8 +638,8 @@ log.info("Outbound User-Agent: " + USER_AGENT);
 log.info("Outbound connection pooling (keepAlive): " + (KEEP_ALIVE ?
          "on" : "off") + ".");
 log.info("CORS allowed origins: " +
-         (ALLOWED_ORIGINS === "*" ?
-          "* (any site) — uiUrl is not configured" : ALLOWED_ORIGINS.join(
+         (ALLOWED_ORIGINS.length === 0 ?
+          "none — uiUrl is not configured" : ALLOWED_ORIGINS.join(
           ", ")) + ".");
 
 // ---------------------------------------------------------------------------
@@ -853,7 +894,13 @@ function publicBaseUrl(req) {
   return base;
 }
 
-app.use(bodyParser.json());
+// The JSON limit is an OUTER bound only. The caps that mean something are
+// scimMaxRequestBytes (1 MiB), ssfMaxRequestBytes and gnapMaxRequestBytes
+// (256 KiB each), enforced in their proxies where the answer can name the
+// setting. At body-parser's default of 100 KB none of them was reachable:
+// a body between 100 KB and the configured cap got body-parser's bare 413
+// instead of the documented refusal. Keep this above the largest of them.
+app.use(bodyParser.json({ limit: '5mb' }));
 // SAML ACS receives application/x-www-form-urlencoded POSTs (SAMLResponse,
 // RelayState, SAMLart) from the IdP; enable urlencoded parsing for those.
 app.use(bodyParser.urlencoded({
@@ -1065,9 +1112,8 @@ app.get('/samlmetadata', function (req, res) {
     log.error('Error fetching SAML metadata from ' + target + ': ' + (error &&
               error.stack ? error.stack : error));
     if (error && error.response) {
-      res.status(error.response.status ||
-                 STATUS_500).send(String(error.response.data ||
-                 'metadata fetch failed'));
+      sendPlainText(res, error.response.status || STATUS_500,
+                    String(error.response.data || 'metadata fetch failed'));
     } else {
       res.status(STATUS_500).json({
         error: 'metadata fetch failed: ' + (error && error.message ?
@@ -1115,7 +1161,7 @@ function xmlTextEscape(s) {
 var xmldom = require('@xmldom/xmldom');
 if (!global.DOMParser) global.DOMParser = xmldom.DOMParser;
 if (!global.XMLSerializer) global.XMLSerializer = xmldom.XMLSerializer;
-var xmldsig = require('./xmldsig.js');
+var xmldsig = requireShared('xmldsig.js');
 
 function signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg) {
   log.debug("Entering signXmlEnveloped().");
@@ -1159,6 +1205,15 @@ app.post('/samlsign', function (req, res) {
     if (!xml || !privateKeyPem) {
       return res.status(STATUS_400).json({
         error: 'xml and privateKeyPem are required.' });
+    }
+    // The api signs with RSA only (it holds no post-quantum signer), and
+    // sigAlg is the caller's choice. An ECDSA, HMAC or misspelt URI is the
+    // caller's error, so it is a 400 naming the methods on offer rather than
+    // the 500 the signer's throw would become in the catch below.
+    var refusal = xmldsig.rsaSigAlgRefusal(sigAlg, 'samlsign');
+    if (refusal) {
+      log.debug('Leaving POST /samlsign. ' + refusal);
+      return res.status(STATUS_400).json({ error: refusal });
     }
 
     if (binding === 'post') {
@@ -1435,9 +1490,14 @@ function resolveArtifact(artifact, relayState) {
       timeout: CALL_TIMEOUT,
       maxContentLength: MAX_CONTENT_LENGTH,
       maxRedirects: MAX_REDIRECTS,
+      // SOAPAction: SAML 1.1's SOAP binding (saml-bindings-1.1 section 3.1)
+      // gives requesters http://www.oasis-open.org/committees/security as
+      // the value to send, and a responder must not depend on it. 2.0 keeps
+      // the empty value it has always sent.
       headers: withUserAgent({
         'Content-Type': 'text/xml; charset=utf-8',
-        'SOAPAction': '""'
+        'SOAPAction': ctx.samlVersion === '1.1'
+          ? '"http://www.oasis-open.org/committees/security"' : '""'
       }),
       httpAgent: outboundHttpAgent(),
       httpsAgent: outboundHttpsAgent(false),
@@ -1483,7 +1543,7 @@ function handleSamlAcs(req, res) {
         (req.body && req.body.TARGET) || req.query.TARGET || '';
     if (typeof relayState !== 'string') {
       log.debug("Leaving handleSamlAcs().");
-      return res.status(STATUS_400).send('ACS: invalid RelayState.');
+      return sendPlainText(res, STATUS_400, 'ACS: invalid RelayState.');
     }
     var artifact = (req.body && req.body.SAMLart) || req.query.SAMLart;
 
@@ -1508,20 +1568,27 @@ function handleSamlAcs(req, res) {
         })
         .catch(function (e) {
           log.error('artifact resolve: ' + (e && e.stack ? e.stack : e));
-          res.status(STATUS_500).send('Artifact resolution failed: ' + (e &&
-                     e.message ? e.message : String(e)));
+          sendPlainText(res, STATUS_500, 'Artifact resolution failed: ' +
+                        (e && e.message ? e.message : String(e)));
         });
     }
-    res.status(STATUS_400).send('ACS: no SAMLResponse or SAMLart present.');
+    sendPlainText(res, STATUS_400,
+                  'ACS: no SAMLResponse or SAMLart present.');
   } catch (e) {
     log.error('samlacs: ' + (e && e.stack ? e.stack : e));
-    res.status(STATUS_500).send('ACS error: ' + (e && e.message ?
-               e.message : String(e)));
+    sendPlainText(res, STATUS_500, 'ACS error: ' + (e && e.message ?
+                  e.message : String(e)));
   }
   log.debug("Leaving handleSamlAcs().");
 }
 app.post('/samlacs', handleSamlAcs);
 app.get('/samlacs', handleSamlAcs);
+// SAML 1.1's Browser/Artifact consumer, at a location of its own. A SAML 1.1
+// service provider picks the browser profile by which assertion consumer its
+// shire names (the profile bound to that AssertionConsumerService in its
+// metadata), so POST and artifact cannot share /samlacs. Same handler: what
+// arrives here is a SAMLart and TARGET on a GET.
+app.get('/samlacs/artifact', handleSamlAcs);
 
 // Single Logout service. Receives the IdP's LogoutResponse (or an IdP-initiated
 // LogoutRequest) and shows it on the results page. Reuses the ACS handler,
@@ -1588,8 +1655,8 @@ function handleWsFedLanding(req, res) {
     res.end();
   } catch (e) {
     log.error('wsfed: ' + (e && e.stack ? e.stack : e));
-    res.status(STATUS_500).send('WS-Fed landing error: ' + (e && e.message ?
-               e.message : String(e)));
+    sendPlainText(res, STATUS_500, 'WS-Fed landing error: ' +
+                  (e && e.message ? e.message : String(e)));
   }
   log.debug("Leaving handleWsFedLanding().");
 }
@@ -2927,6 +2994,16 @@ const scimProxy = require('./scim_proxy.js');
 // and every cap with no listener and no transmitter.
 const ssfProxy = require('./ssf_proxy.js');
 const ssfReceiver = require('./ssf_receiver.js');
+// GNAP signs in the browser. This module only decides what may be
+// forwarded. The private key never arrives here. See api/gnap_proxy.js.
+const gnapProxy = require('./gnap_proxy.js');
+// YubiCloud verification posts a form the page already signed. The
+// decision half has no axios, same as the SCIM proxy.
+const otpVerify = require('./otp_verify.js');
+// PC/SC is optional. Requiring this file does not load the native
+// library and does not stop the process when it is absent.
+const smartcardReader = require('./smartcard_reader.js');
+const otpHid = require('./otp_hid.js');
 // The LDAP client reuses the guard's address DECISION for the same reason the
 // Kerberos relay does: the guard's INSTALLATION is hooks on the axios agents,
 // and this transport is a raw socket with no axios in the path. Two
@@ -3375,6 +3452,236 @@ app.get('/scim/limits', function (req, res) {
   return res.status(STATUS_200).json(scimProxy.limits(appconfig));
 });
 
+// YubiCloud OTP validation. The page signs the request. This sends it
+// as Validation Protocol 2.0 says, an HTTP GET with the signed
+// parameters as the query string. A verifier answer, including
+// BAD_OTP, is a 200. See otp_verify.js.
+app.post('/otp/verify', function (req, res) {
+  log.debug('Entering POST /otp/verify.');
+  var described = otpVerify.describeRequest(req.body || {});
+  if (!described.ok) {
+    log.debug('Leaving POST /otp/verify. Refused: ' + described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  var wantsTrace = (req.body || {}).http_trace === true ||
+      (req.body || {}).http_trace === 'true';
+  var sink = {};
+  var startedAt = Date.now();
+  var sentHeaders = withUserAgent({});
+  var target = described.url + '?' + described.body;
+  axios({
+    method: 'get',
+    url: target,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      var answer = otpVerify.readResponse(response.status, sink.raw);
+      var trace = buildHttpTrace({ method: 'GET', url: target,
+          headers: sentHeaders, body: '' },
+          response, sink.raw, startedAt, null);
+      log.debug('Leaving POST /otp/verify. The verifier answered ' +
+          answer.status + '.');
+      return res.status(STATUS_200).json(withHttpTrace(answer, trace,
+          wantsTrace));
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message : String(error);
+      log.warn('POST /otp/verify to ' + described.url + ' failed: ' +
+          message);
+      var trace = buildHttpTrace({ method: 'GET', url: target,
+          headers: sentHeaders, body: '' },
+          null, sink.raw, startedAt, message);
+      log.debug('Leaving POST /otp/verify. 502.');
+      return res.status(502).json(withHttpTrace({
+        error: 'The verifier could not be reached: ' + message,
+        code: (error && error.code) || '' }, trace, wantsTrace));
+    });
+});
+
+app.get('/otp/limits', function (req, res) {
+  log.debug('Entering GET /otp/limits.');
+  log.debug('Leaving GET /otp/limits.');
+  return res.status(STATUS_200).json(otpVerify.limits());
+});
+
+// A sequence of APDUs on one connection, with GET RESPONSE. The reader
+// is this machine, and the relay is off unless smartcardReaderEnabled
+// is true (403 otherwise). A card status word is a 200. A missing
+// library, reader or card is a 502.
+app.get('/smartcard/limits', function (req, res) {
+  log.debug('Entering GET /smartcard/limits.');
+  var limits = smartcardReader.limits(appconfig);
+  // HID, for OTP challenge-response: a YubiKey on USB does not answer it
+  // over CCID. Reported only when the relay is on, like the rest.
+  limits.hid = limits.enabled ? otpHid.availability() :
+      { available: false, reason: limits.reason };
+  log.debug('Leaving GET /smartcard/limits.');
+  return res.status(STATUS_200).json(limits);
+});
+
+// SESSIONS: one exclusive connection across several requests, for PIV's
+// management-key authentication, which the page computes from the card's
+// answer. Same switch as the relay; closed with a card reset. See
+// smartcard_reader.js.
+app.post('/smartcard/session', function (req, res) {
+  log.debug('Entering POST /smartcard/session.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving POST /smartcard/session. Relay off.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
+  var reader = smartcardReader.checkReaderName((req.body || {}).reader);
+  if (!reader.ok) {
+    log.debug('Leaving POST /smartcard/session. Bad reader.');
+    return res.status(STATUS_400).json({ error: reader.error });
+  }
+  smartcardReader.openSession(reader.reader)
+    .then(function (opened) {
+      return res.status(STATUS_200).json(opened);
+    })
+    .catch(function (error) {
+      log.warn('POST /smartcard/session failed: ' + error.message);
+      return res.status(502).json({ error: error.message });
+    });
+  log.debug('Leaving POST /smartcard/session. Opening.');
+});
+
+app.post('/smartcard/session/transmit', function (req, res) {
+  log.debug('Entering POST /smartcard/session/transmit.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving POST /smartcard/session/transmit. Relay off.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
+  var body = req.body || {};
+  if (!smartcardReader.checkSessionId(body.id)) {
+    log.debug('Leaving POST /smartcard/session/transmit. Bad id.');
+    return res.status(STATUS_400).json({ error: 'The session id is 32 ' +
+        'hex characters.' });
+  }
+  // The same APDU checks as /smartcard/transmit, with a placeholder reader.
+  var described = smartcardReader.describeTransmit(
+      Object.assign({}, body, { reader: 'session' }));
+  if (!described.ok) {
+    log.debug('Leaving POST /smartcard/session/transmit. Refused.');
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  smartcardReader.sessionTransmit(body.id, described.apdus,
+      { getResponse: described.getResponse,
+        remainingIns: described.remainingIns })
+    .then(function (answer) {
+      return res.status(STATUS_200).json(answer);
+    })
+    .catch(function (error) {
+      log.warn('POST /smartcard/session/transmit failed: ' + error.message);
+      return res.status(502).json({ error: error.message });
+    });
+  log.debug('Leaving POST /smartcard/session/transmit. Sent.');
+});
+
+app.post('/smartcard/session/close', function (req, res) {
+  log.debug('Entering POST /smartcard/session/close.');
+  var id = (req.body || {}).id;
+  if (!smartcardReader.checkSessionId(id)) {
+    log.debug('Leaving POST /smartcard/session/close. Bad id.');
+    return res.status(STATUS_400).json({ error: 'The session id is 32 ' +
+        'hex characters.' });
+  }
+  smartcardReader.closeSession(id).then(function (closed) {
+    return res.status(STATUS_200).json({ closed: closed });
+  });
+  log.debug('Leaving POST /smartcard/session/close.');
+});
+
+// OTP-slot challenge-response over HID, for a browser with no WebHID. The
+// same switch as the reader relay; needs a native api (see otp_hid.js). A
+// key's answer is a 200, a bad request a 400, no HID or no key a 502.
+app.post('/smartcard/otp/challenge', function (req, res) {
+  log.debug('Entering POST /smartcard/otp/challenge.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving POST /smartcard/otp/challenge. Relay off.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
+  var described = otpHid.describeChallenge(req.body || {});
+  if (!described.ok) {
+    log.debug('Leaving POST /smartcard/otp/challenge. Refused.');
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  otpHid.challenge(described.slot, described.challenge,
+      { variable: described.variable })
+    .then(function (answer) {
+      return res.status(STATUS_200).json(answer);
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message :
+          String(error);
+      log.warn('POST /smartcard/otp/challenge failed: ' + message);
+      return res.status(502).json({ error: message });
+    });
+  log.debug('Leaving POST /smartcard/otp/challenge. Sent.');
+});
+
+app.get('/smartcard/readers', function (req, res) {
+  log.debug('Entering GET /smartcard/readers.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving GET /smartcard/readers. Disabled.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
+  smartcardReader.listReaders()
+    .then(function (names) {
+      log.debug('Leaving GET /smartcard/readers.');
+      return res.status(STATUS_200).json({ readers: names });
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message :
+          String(error);
+      log.warn('GET /smartcard/readers failed: ' + message);
+      log.debug('Leaving GET /smartcard/readers. 502.');
+      return res.status(502).json({ error: message });
+    });
+});
+
+app.post('/smartcard/transmit', function (req, res) {
+  log.debug('Entering POST /smartcard/transmit.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving POST /smartcard/transmit. Disabled.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
+  var described = smartcardReader.describeTransmit(req.body || {});
+  if (!described.ok) {
+    log.debug('Leaving POST /smartcard/transmit. Refused: ' +
+        described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  smartcardReader.transmit(described.reader, described.apdus,
+      { getResponse: described.getResponse,
+        remainingIns: described.remainingIns })
+    .then(function (answer) {
+      log.debug('Leaving POST /smartcard/transmit. Answered ' +
+          answer.status + '.');
+      return res.status(STATUS_200).json(answer);
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message :
+          String(error);
+      log.warn('POST /smartcard/transmit failed: ' + message);
+      log.debug('Leaving POST /smartcard/transmit. 502.');
+      return res.status(502).json({ error: message });
+    });
+});
+
 /**
  * ---------------------------------------------------------------------------
  * SHARED SIGNALS (SSF 1.0). One call to a transmitter, on the caller's behalf.
@@ -3396,7 +3703,8 @@ app.get('/scim/limits', function (req, res) {
  * thing this workflow can put on the screen.
  * ---------------------------------------------------------------------------
  * @route POST /ssf/call
- * @param {object} request.body - url, method, headers, body, sslValidate
+ * @param {object} request.body - url, method, headers, body, sslValidate,
+ *     and for the mtls proof clientCertificatePem and clientKeyPem
  * @returns {object} 200 - the transmitter's answer, whatever its status
  * @returns {object} 400 - this service refused to send it
  * @returns {object} 502 - the transmitter could not be reached
@@ -3478,6 +3786,126 @@ app.get('/ssf/limits', function (req, res) {
 });
 
 /**
+ * One signed GNAP request, forwarded as the page built it.
+ *
+ * The proof covers the URL and the body. This handler sends that URL
+ * and that body string. A GNAP error is a 200 carrying the status,
+ * because the error code is the thing the page is here to show. A
+ * refusal by this service is a 400. A network failure is a 502.
+ * @route POST /gnap/call
+ * @param {object} request.body - url, method, headers, body, sslValidate
+ * @returns {object} 200 - the authorization server's answer
+ * @returns {object} 400 - this service refused to send it
+ * @returns {object} 502 - the authorization server could not be reached
+ */
+/**
+ * The https agent for one mtls-proved GNAP call. It is the guard's
+ * agent, so the address policy is the shared one, with the connect
+ * deadline every other outbound agent has.
+ * @param {object} described - gnapProxy.describeRequest()'s answer
+ * @returns {https.Agent} an agent to destroy after the call
+ */
+function gnapClientCertificateAgent(described) {
+  log.debug('Entering gnapClientCertificateAgent().');
+  var agent = connectTimeout.withConnectTimeout(
+      guard.createAgent('https', {
+        keepAlive: false,
+        timeout: OUTBOUND_IDLE_SOCKET_TIMEOUT,
+        rejectUnauthorized: described.sslValidate !== false,
+        cert: described.clientCertificatePem,
+        key: described.clientKeyPem
+      }), CONNECTION_TIMEOUT, log);
+  log.debug('Leaving gnapClientCertificateAgent().');
+  return agent;
+}
+
+app.post('/gnap/call', function (req, res) {
+  log.debug('Entering POST /gnap/call.');
+  var described = gnapProxy.describeRequest(req.body || {}, appconfig);
+  if (!described.ok) {
+    log.debug('Leaving POST /gnap/call. Refused: ' + described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  var sink = {};
+  var sentHeaders = withUserAgent(described.headers);
+  // THE mtls PROOF: an agent of its own, made by the same guard and the
+  // same connect deadline as the shared ones, never cached (it holds the
+  // caller's private key) and never kept alive, and destroyed below.
+  var clientAgent = described.clientCertificatePem
+    ? gnapClientCertificateAgent(described) : null;
+  // http_trace asks for this service's own account of the call — the
+  // request as it left here and the raw answer — for the page's HTTP tab,
+  // exactly as POST /token does. It is attached as http_exchange.
+  var wantsTrace = (req.body || {}).http_trace === true ||
+      (req.body || {}).http_trace === 'true';
+  var startedAt = Date.now();
+  var sentRequest = { method: described.method, url: described.url,
+      headers: sentHeaders,
+      body: described.body === null ? '' : described.body };
+  axios({
+    method: described.method.toLowerCase(),
+    url: described.url,
+    data: described.body === null ? undefined : described.body,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    // The body is the string the page signed. Leave it alone.
+    transformRequest: [function (data) {
+      return data;
+    }],
+    transformResponse: [captureRawBody(sink)],
+    validateStatus: function () {
+      return true; },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: clientAgent ||
+        outboundHttpsAgent(described.sslValidate),
+    headers: sentHeaders
+  })
+    .finally(function () {
+      if (clientAgent) {
+        clientAgent.destroy();
+      }
+    })
+    .then(function (response) {
+      var answer = gnapProxy.readResponse(response.status,
+          traceHeaders(response.headers), sink.raw);
+      var trace = buildHttpTrace(sentRequest, response, sink.raw, startedAt,
+          null);
+      log.debug('Leaving POST /gnap/call. Answered ' + answer.status +
+          (answer.error ? ' ' + answer.error : '') + '.');
+      return res.status(STATUS_200).json(withHttpTrace(answer, trace,
+          wantsTrace));
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message
+          : String(error);
+      log.warn('POST /gnap/call to ' + described.url + ' failed: ' +
+          message);
+      var failed = buildHttpTrace(sentRequest, null, sink.raw, startedAt,
+          message);
+      log.debug('Leaving POST /gnap/call. 502.');
+      return res.status(502).json(withHttpTrace({
+        error: 'The authorization server could not be reached: ' +
+            message,
+        code: (error && error.code) || ''
+      }, failed, wantsTrace));
+    });
+});
+
+/**
+ * What the GNAP relay will forward. A static deployment gets no answer
+ * here, and the page then calls the authorization server itself.
+ * @route GET /gnap/limits
+ * @returns {object} 200 - methods, refused headers and caps
+ */
+app.get('/gnap/limits', function (req, res) {
+  log.debug('Entering GET /gnap/limits.');
+  log.debug('Leaving GET /gnap/limits.');
+  return res.status(STATUS_200).json(gnapProxy.limits(appconfig));
+});
+
+/**
  * ---------------------------------------------------------------------------
  * THE PUSH RECEIVER. A browser cannot be an HTTP server, so it cannot be the
  * far end of RFC 8935 push delivery — which is a property of the specification
@@ -3485,10 +3913,12 @@ app.get('/ssf/limits', function (req, res) {
  *
  * `api/ssf_receiver.js` holds every decision and every bound; these handlers
  * are wiring. The one thing worth knowing at this layer is that
- * `POST /ssf/receiver/:id` is UNAUTHENTICATED AND ACCEPTS DATA, because what
- * pushes to it is somebody else's transmitter — the bounds are structural (an
- * unguessable id, an expiry, three caps and a configuration switch) rather
- * than a gate.
+ * `POST /ssf/receiver/:id` ACCEPTS DATA from somebody else's transmitter. An
+ * inbox created with an `authorization` requires exactly that Authorization
+ * header on every push (401 `authentication_failed` otherwise); one created
+ * without is open, bounded only structurally (an unguessable id, two
+ * expiries, the caps and a configuration switch). The caller's address is
+ * what `ssfReceiverMaxInboxesPerCaller` counts.
  * ---------------------------------------------------------------------------
  * @route POST /ssf/receiver
  * @returns {object} 200 - the inbox and the URL to put in a stream
@@ -3496,7 +3926,7 @@ app.get('/ssf/limits', function (req, res) {
  */
 app.post('/ssf/receiver', function (req, res) {
   log.debug('Entering POST /ssf/receiver.');
-  var made = ssfReceiver.create(appconfig, req.body || {});
+  var made = ssfReceiver.create(appconfig, req.body || {}, req.ip);
   if (!made.ok) {
     log.debug('Leaving POST /ssf/receiver. Refused: ' + made.error);
     return res.status(STATUS_400).json({ error: made.error });
@@ -3516,7 +3946,12 @@ app.post('/ssf/receiver', function (req, res) {
     deliveryEndpoint: base + '/ssf/receiver/' + made.id,
     note: 'Put deliveryEndpoint in the stream\'s delivery.endpoint_url. The ' +
         'TRANSMITTER has to be able to reach it, which is why it is this ' +
-        'api\'s address as you reached it rather than a configured one.'
+        'api\'s address as you reached it rather than a configured one.',
+    authentication: made.inbox.authenticated
+      ? 'Every push must carry the authorization_header this inbox was ' +
+        'created with, or it is answered 401 authentication_failed.'
+      : 'OPEN: this inbox was created with no authorization_header, so ' +
+        'anybody who has its URL can push to it.'
   });
 });
 
@@ -3545,6 +3980,11 @@ app.post('/ssf/receiver/:id', function (req, res) {
   }
   log.debug('Leaving POST /ssf/receiver/:id. ' + answer.status + ' ' +
       answer.err);
+  if (answer.status === 401) {
+    // RFC 7235: a 401 names the scheme it wants. What the receiver chose is
+    // opaque to it, so the challenge is the generic one.
+    res.set('WWW-Authenticate', 'Bearer realm="ssf-receiver"');
+  }
   return res.status(answer.status).json({ err: answer.err,
     description: answer.description });
 });

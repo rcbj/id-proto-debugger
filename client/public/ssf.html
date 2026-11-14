@@ -252,6 +252,35 @@ Who you are, and the tokens this session has used</legend>
                  title="Never written to localStorage."></td>
       <td class="ssf-source">you</td>
     </tr>
+    <tr id="ssf_inbox_settings_row">
+      <td><label class="ssf-label" for="ssf_inbox_idle_minutes">pushInbox
+      </label></td>
+      <td>
+        <label class="ssf-radio">idle TTL
+          <input class="ssf-field ssf-tiny" type="number" min="1" step="1"
+                 id="ssf_inbox_idle_minutes" placeholder="default"
+                 title="Minutes the api keeps a push inbox this page creates with no push, drain or clear. Empty takes the api's default, ssfReceiverIdleTtlMs, which is also the most you may ask for.">
+          min</label>
+        <label class="ssf-radio">lifetime
+          <input class="ssf-field ssf-tiny" type="number" min="1" step="1"
+                 id="ssf_inbox_ttl_minutes" placeholder="default"
+                 title="Minutes the inbox lives however busy it is. Empty takes the api's default, ssfReceiverTtlMs, which is also the most you may ask for.">
+          min</label>
+        <label class="ssf-radio">byte cap
+          <input class="ssf-field ssf-tiny" type="number" min="1" step="1"
+                 id="ssf_inbox_max_kib" placeholder="default"
+                 title="KiB of events the inbox holds before the oldest is dropped. Empty takes the api's default, ssfReceiverMaxInboxBytes, which is also the most you may ask for; less than one event (ssfReceiverMaxEventBytes) is refused.">
+          KiB</label>
+        <p class="ssf-note">Applied to the NEXT inbox the Stream pane asks
+        the api for. Each may be lowered here and never raised: a value above
+        the api&rsquo;s ceiling is refused with the setting&rsquo;s name.
+        Raising a ceiling, or the two counts below, means editing
+        <code>ssfReceiver*</code> in the api&rsquo;s env file.</p>
+        <p class="ssf-note" id="ssf_receiver_ceilings">The api&rsquo;s
+        ceilings are read from GET /ssf/limits&hellip;</p>
+      </td>
+      <td class="ssf-source">you, within the api&rsquo;s ceilings</td>
+    </tr>
   </table>
   <p class="ssf-limits" id="ssf_limits">Asking the api what it will
   do&hellip;</p>
@@ -535,10 +564,10 @@ are about</legend>
        WHICH SIGN-IN THIS SESSION CAME FROM.
 
        CAEP is a vocabulary about SESSIONS and says nothing about the
-       protocol that minted one — which is why the mock emits for every
-       browser sign-in it has, through one funnel. This pane read an ID
-       Token and nothing else until 2026-09-03, which made the whole
-       workflow look like an OAuth2 / OIDC feature it never was.
+       protocol that minted one. This pane takes a session from any of
+       the sign-in workflows, so the event is not tied to one protocol.
+       It read an ID Token and nothing else until 2026-09-03, which made
+       the whole workflow look like an OAuth2 / OIDC feature it never was.
 
        The options are built from `session_handoff.js`'s own table so a
        sixth protocol is a row there rather than an edit here.
@@ -694,13 +723,13 @@ are about</legend>
   <details class="ssf-more">
     <summary>What each button sends, and which of them a real transmitter
       sends on its own</summary>
-    <p class="ssf-note">Three of the eight describe things a transmitter can
-    actually observe &mdash; a session starting, being presented and ending
-    &mdash; and this stack&rsquo;s mock sends those <strong>by itself</strong>
-    when you sign in, sign in again and sign out. The other five describe
-    things nothing observes for you: no device reports compliance to a mock and
-    no risk engine talks to one. Every button here builds the event this page
-    would send as the <em>transmitter</em>, whichever half you are testing.</p>
+    <p class="ssf-note">A transmitter sends one of these when it observes
+    the act, on a stream that asked for the type. This page does not
+    assume which acts a given transmitter observes. Every button here
+    builds the event this page would send as the
+    <em>transmitter</em>. A type this catalogue does not name is printed
+    in the message history as the JSON that arrived, and it is not added
+    to the menu.</p>
   </details>
   <div class="ssf-buttons" id="caep_simulate"></div>
   <p class="ssf-status" id="caep_simulate_status"></p>
@@ -912,13 +941,13 @@ are about</legend>
   <details class="ssf-more">
     <summary>What each button sends, and the two that are not what they
       look like</summary>
-    <p class="ssf-note">Four of the fourteen describe things a transmitter can
-    actually observe in its own directory &mdash; a person deleted, an account
-    marked inactive or active again, an identifier moving &mdash; and this
-    stack&rsquo;s mock sends those <strong>by itself</strong> when the
-    directory changes over SCIM, over LDAP or from its console. That is a
-    <em>different</em> observer from CAEP&rsquo;s, watching the provisioning
-    layer rather than the authentication one.</p>
+    <p class="ssf-note">A transmitter sends a RISC event when it observes
+    the account act the specification describes, on a stream that asked
+    for the type. This page does not assume which of those acts a given
+    transmitter observes. Every button here still builds any of the
+    fourteen. A type this catalogue does not name is printed in the
+    message history as the JSON that arrived, and it is not added to
+    the menu.</p>
     <p class="ssf-note"><strong>The four opt-out buttons ARE state
     transitions</strong>, not reports of one: RISC section 2.8 words each as
     <em>the account is in this state</em>, so pressing one moves the account
@@ -997,13 +1026,16 @@ are about</legend>
                 title="A public key as a JWK, a JWK Set or a PEM. Left empty, the signature is reported as NOT CHECKED rather than as valid — which is the honest answer and the one a receiver has to act on."></textarea>
     </div>
     <div>
-      <label class="ssf-label" for="ssf_verify_alg">Algorithm</label>
-      <select class="ssf-field" id="ssf_verify_alg"></select>
       <details class="ssf-more">
-        <summary>Why the verifier chooses the algorithm</summary>
-        <p class="ssf-note">The <em>verifier</em> chooses the algorithm, never
-        the token (RFC 8725 section 3.1). A mismatch with the header is
-        reported rather than accommodated.</p>
+        <summary>Which algorithm a SET is verified with</summary>
+        <p class="ssf-note">The SET's header <code>alg</code>, and only when
+        the key agrees with it. A JWK Set is narrowed to one key by
+        <code>kid</code>; that key's own <code>alg</code>, <code>kty</code>,
+        <code>crv</code> and <code>use</code> must not contradict the header,
+        and a mismatch is REFUSED rather than tried (RFC 8725 section 3.1).
+        <code>alg: none</code> is never verified. A PEM carries no algorithm,
+        so the header's is used and a key of the wrong type fails to
+        import.</p>
       </details>
       <input type="button" class="ssf-btn ssf-btn-quiet"
              id="btn_ssf_fetch_jwks" value="Fetch the transmitter's JWKS"

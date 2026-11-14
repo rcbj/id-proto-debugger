@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: saml_tools.js
 //
 // SAML Assertion Tool UI test. A fully client-side page needing no IdP:

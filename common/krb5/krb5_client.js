@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_client.js
 //
 // ---------------------------------------------------------------------------
@@ -67,8 +70,11 @@ function randomNonce() {
 // implementations treat the field as signed and a negative value then reads as
 // out of order.
 function randomSequenceNumber() {
+  log.debug("Entering randomSequenceNumber().");
   var b = kcrypto.randomBytes(4);
-  return (((b[0] & 0x7f) << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0;
+  var n = (((b[0] & 0x7f) << 24) | (b[1] << 16) | (b[2] << 8) | b[3]) >>> 0;
+  log.debug("Leaving randomSequenceNumber().");
+  return n;
 }
 
 // ---------------------------------------------------------------------------

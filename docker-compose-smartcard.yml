@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
+# The smart-card reader relay, ON, for a key plugged into THIS machine.
+#
+#   CONFIG_FILE=./env/local.js docker-compose -f docker-compose.yml \
+#     -f docker-compose-smartcard.yml up
+#
+# Layered over docker-compose.yml (the local stack). It does two things to
+# the api and nothing else:
+#
+#   * mounts the host's /run/pcscd, so the PC/SC client library in the api
+#     image talks to the HOST's pcscd — the daemon that owns the reader.
+#     The container runs no pcscd and needs no USB device passed through.
+#     The host needs pcscd running (`systemctl status pcscd.socket`), and a
+#     host GnuPG scdaemon holding the key makes a multi-APDU sequence fail
+#     with a sharing violation: `gpgconf --kill scdaemon`.
+#   * sets SMARTCARD_READER_ENABLED=true, which api/env/local.js turns into
+#     smartcardReaderEnabled. The relay sends ANY APDU the page is given to
+#     the card — a few wrong-PIN VERIFYs block a PIN, and PIV and OpenPGP
+#     have reset commands — which is why it is a separate file and not the
+#     default. See docs/smartcard.md.
+#
+# With it, the smart-card page's Reader pane lists the key and transmits,
+# and challenge-response works in a browser with no WebHID (Firefox) by
+# going over CCID through this relay.
+services:
+  api:
+    environment:
+      SMARTCARD_READER_ENABLED: "true"
+    volumes:
+      - /run/pcscd:/run/pcscd

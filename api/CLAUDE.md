@@ -63,7 +63,7 @@ All four go through one of those two resolvers, which is also what keeps the sta
 
 A sixth setting, **`keepAlive`** (a boolean, default **true**, and only an explicit `false` turns it off), pools outbound connections, so a session that calls the token endpoint then introspection then userinfo on one host stops paying for a TCP connection and a TLS handshake each time. It is **why the outbound agents are cached** (`agentFor()` + `outboundAgentCache`) rather than built per call, and the two changes are not separable: an agent owns its idle-socket pool, so a per-call keep-alive agent reuses nothing *and* parks that call's socket in a pool nobody will ever read — a leaked descriptor per outbound call, strictly worse than not pooling. `tests/api_connect_timeout.js` reproduces that leak on a throwaway agent, which is what documents the reasoning. Sharing is safe because everything on these agents is stateless policy; the only per-call choice is `rejectUnauthorized`, now normalised so that **only an explicit `false`** disables verification — which bounds the cache to three agents (no growth from a caller-supplied value) and means a missing or oddly-typed `sslValidate` in a request body can no longer quietly stop certificates being checked. Two consequences of pooling: a reused socket never goes through `createConnection`, so it carries no connect timeout (correct — it is already connected, but it means `connectionTimeout` is not a per-request guarantee once pooling is on); and a reused socket goes back to the address that was already validated, so pooling narrows the DNS-rebinding window rather than widening it.
 
-A fifth setting is not a limit but an identity: **`userAgent`**, default `Identity Protocol Debugger/{{VERSION}}`, sent as the `User-Agent` on all eleven calls (`withUserAgent()`, applied per call for the same reason the agents are — a per-call `headers` object replaces the defaults). Without it axios announces `axios/1.18.1`, which tells the operator of somebody else's identity provider nothing about who is calling, and this service turns up in other people's access logs by design. `{{VERSION}}` is the same placeholder the client's footer and error pages use, and it is replaced with the **build** version: `api/Dockerfile` now copies the repo-root `VERSION` and **the client's `version.js`** (one implementation of the M.N.O scheme for both services) and runs `--stamp .`, so the header names the build and does not change when a container restarts — `resolveAppVersion()` falls back to the client's copy and then to `api/package.json` so a bare checkout still starts. Both `BUILD_NUMBER` and `GIT_COMMIT` are now build args on the api service in all three compose files, as they already were on the client. A blank or non-string `userAgent` is refused with the default, because axios would otherwise send a `User-Agent:` with nothing after the colon — worse than what it replaced. Note that adding this made the api the **second** image that must `COPY VERSION`, and the existing warning applies unchanged: omit it and the version silently reads `0.0.x`, which `tests/api_connect_timeout.js` asserts against directly.
+A fifth setting is not a limit but an identity: **`userAgent`**, default `Identity Protocol Debugger/{{VERSION}}`, sent as the `User-Agent` on all eleven calls (`withUserAgent()`, applied per call for the same reason the agents are — a per-call `headers` object replaces the defaults). Without it axios announces `axios/1.18.1`, which tells the operator of somebody else's identity provider nothing about who is calling, and this service turns up in other people's access logs by design. `{{VERSION}}` is the same placeholder the client's footer and error pages use, and it is replaced with the **build** version: `api/Dockerfile` now copies the repo-root `VERSION` and **the client's `version.js`** (one implementation of the M.N.P.B scheme for both services) and runs `--stamp .`, so the header names the build and does not change when a container restarts — `resolveAppVersion()` falls back to the client's copy and then to `api/package.json` so a bare checkout still starts. Both `BUILD_NUMBER` and `GIT_COMMIT` are now build args on the api service in all three compose files, as they already were on the client. A blank or non-string `userAgent` is refused with the default, because axios would otherwise send a `User-Agent:` with nothing after the colon — worse than what it replaced. Note that adding this made the api the **second** image that must `COPY VERSION`, and the existing warning applies unchanged: omit it and the version silently reads `0.0.x`, which `tests/api_connect_timeout.js` asserts against directly.
 
 `tests/api_connect_timeout.js` covers this (node only, never skipped), and the case that earns its keep is the second one: a host that **connects and then says nothing** must still be waiting well past the connect budget, failing only at `callTimeout`. That assertion fails against an `AbortSignal` implementation and passes against this one. It also checks a stalled TLS handshake, that wrapping a guarded agent keeps the guard's refusal (and keeps it immediate), that an oversized response is refused while the same body is accepted with no cap set (the control that makes the first half mean something, given axios's unlimited default), and — by reading `server.js` — that every axios call site carries all four limits, the User-Agent, and no bare `https.Agent`, which is the only thing that would catch a *new* call site added without them.
 
@@ -336,6 +336,49 @@ themselves belong to `tests/api_ssrf_guard.js`, which drives the guard module
 directly and needs no network. The SCHEME check (`file:`, `data:`) is not
 configurable and is on either way. `tests/api_ssf.js` drives the routes;
 `tests/ssf_engine.js` drives both modules with no listener. See `docs/ssf.md`.
+
+## GNAP: the page signs, and this service forwards the signed request
+
+`POST /gnap/call` (`api/gnap_proxy.js`) performs one GNAP request on the
+caller's behalf. The page is a client instance. It builds the body and
+the proof (`httpsig`, `jwsd` or `jws`) in the browser, and this endpoint
+sends that URL, those headers and that body string. The private key
+never arrives here. A signature covers the body, so re-encoding it
+would make a valid proof fail at the authorization server.
+
+**THE THREE OUTCOMES ARE THE SAME THREE.** A refusal by this service is
+a **400**. A network failure is a **502**. A GNAP error from the
+authorization server is a **200** carrying that status and the error
+code, whether the error is a string or `{code, description}`. An
+`invalid_client` on a key the server has not seen is the authorization
+server answering, and it is the answer the page is here to show.
+
+**The address policy is not re-implemented here.** This is an axios
+call, so the guard installed once on the shared instance already covers
+it, redirects included. There is no `gnapAllowedPorts`. The setting is
+**`gnapMaxRequestBytes`** (default 262144), a cap on the request beside
+`maxContentLength` on the response. `GET` and `OPTIONS` refuse a body.
+The hop-by-hop headers are refused, including `Content-Length`, because
+the length is a property of the body this service sends. `GET
+/gnap/limits` publishes the methods, the refused headers and the caps,
+and it is how the page learns there is an api at all. A static
+deployment has no api. The page can then call the authorization server
+from the browser, which works when that server allows the origin. See
+`docs/gnap.md`.
+
+**mtls is the one GNAP proof this service MAKES rather than forwards**
+(RFC 9635 section 7.3.2): the key is the TLS client certificate and a
+browser cannot choose which certificate a fetch presents, so the page
+sends `clientCertificatePem` and `clientKeyPem` with the request. The
+proxy checks the pair before anything is sent (both or neither, https
+only, PEM, at most 64 KiB each, the key is the certificate's) and
+`gnapClientCertificateAgent()` in `server.js` builds an https agent
+for that one call through `guard.createAgent()` and the connect
+deadline, the same two layers `agentFor()` uses — so the address
+policy, the call timeout, `maxContentLength` and `maxRedirects` are
+unchanged. It is never cached and never kept alive (it holds the
+caller's private key) and is destroyed when the call settles. Neither
+PEM is logged. `tests/api_gnap.js` drives the route end to end.
 
 ## SPIFFE: gRPC, and the only endpoint here that dials a filesystem path
 
@@ -628,6 +671,21 @@ call fails rather than reporting its own limits as somebody else's fault. And **
 no-response branch must answer**, as everywhere else here: a refusal by policy is
 a 400, a network failure is a 502, and a failed HANDSHAKE is neither — it
 resolves with a report, because the alert is the answer. See `docs/pki.md`.
+
+## Smart cards: a reader on THIS machine, off by default
+
+`POST /smartcard/transmit` and `GET /smartcard/readers`
+(`api/smartcard_reader.js`) reach a card in a PC/SC reader on the machine
+the api runs on. There is no address to police, so the address policy has
+nothing to say, and the thing to guard is the CARD: any APDU the caller
+sends reaches it, and a handful of wrong-PIN VERIFYs blocks a PIN while
+PIV and OpenPGP both have reset and terminate commands. So the relay
+answers 403 unless the env file sets **`smartcardReaderEnabled: true`**,
+and all four `api/env/*.js` ship it `false`. A transmit is a sequence of
+up to 16 APDUs on one connection (exclusive when there is more than one),
+with GET RESPONSE and the 6Cxx retry; see `docs/smartcard.md`.
+`POST /otp/verify` (`api/otp_verify.js`) is an ordinary outbound call on
+the shared agents, sent as the HTTP GET Validation Protocol 2.0 specifies.
 
 ## SAML signing: the same module the browser uses, staged in
 

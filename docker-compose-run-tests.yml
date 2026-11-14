@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #version: '3'
 # ---------------------------------------------------------------------------
 # EVERY IMAGE THIS STACK PULLS COMES FROM ghcr.io, AND SO DOES EVERY IMAGE IT
@@ -13,9 +16,13 @@
 #     `additional_contexts` below: BuildKit resolves `FROM ubuntu:latest`
 #     against a named context called `ubuntu` before it goes to any registry,
 #     so every stage, intermediate ones included, is built from the mirror.
-#     That is what covers sts/Dockerfile, which is the iya-sts submodule's
-#     and is not edited here. (`ubuntu`, not `ubuntu:latest`: BuildKit drops
-#     `:latest` when it looks a name up.)
+#
+# A third kind of mirror image is BUILT rather than copied, because it has
+# no upstream: the Shibboleth side-car's archives and iya-sts's companion
+# (.github/image-mirror-builds.txt, .github/scripts/mirror-builds.sh). The
+# first is a named context below; the second is an `image:`.
+#     (`ubuntu`, not `ubuntu:latest`: BuildKit drops `:latest` when it looks a
+#     name up.)
 #
 # The images built here are named under ${IMAGE_REGISTRY} (default
 # ghcr.io/rcbj/id-proto-debugger) with tag ${IMAGE_TAG} (default `latest`);
@@ -31,6 +38,10 @@ x-mirror-contexts: &mirror-contexts
   ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
   "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
   "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
+  # Not a copy of anything upstream: the Shibboleth side-car's two archives,
+  # built into an image by .github/scripts/mirror-builds.sh
+  # (.github/image-mirror-builds.txt) so that build downloads nothing.
+  "shibboleth-idp-dist:4.3.3": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/shibboleth-idp-dist:4.3.3
 services:
   postgres:
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/postgres:18
@@ -223,36 +234,36 @@ services:
     # IYA STS'S OWN RELEASE IMAGE, PULLED RATHER THAN BUILT (2026-11-12).
     #
     # iya-sts publishes a release image, ghcr.io/rcbj/iya-sts:<version>,
-    # built by its own pipeline from the tag the sts/ gitlink pins. This
-    # stack runs that image rather than building sts/Dockerfile itself: it is
-    # the artifact iya-sts ships, so a run here exercises what a deployment
-    # gets rather than this checkout's rebuild of it, and the five minutes of
-    # npm and tsc a cold build cost are gone.
+    # built by its own pipeline from its release tag. This stack runs that
+    # image: it is the artifact iya-sts ships, so a run here exercises what a
+    # deployment gets, and the five minutes of npm and tsc a cold build cost
+    # are gone. It pulls the PRIVATE MIRROR COPY of it (mirror path
+    # iya-sts:<version>, .github/image-mirror.txt), like every other image
+    # here, so a run touches no package outside this repository's area; the
+    # Mirror Images workflow refreshes that copy from iya-sts's release.
     #
-    # THE SUBMODULE IS STILL NEEDED, for everything that READS iya-sts's
-    # files rather than running them: tests/Dockerfile copies modules out of
-    # the sts/ checkout for the in-process jobs, the companion below is built
-    # from sts/companion (iya-sts publishes no image of it), and the host-side
-    # checks (krb5_codec_sync.js, spiffe_engine.js) compare against it. So
-    # the image and the checkout must be the SAME RELEASE, and
-    # ./docker-run-tests.sh refuses to start when the image's
-    # org.opencontainers.image.revision label is not the commit sts/ is
-    # checked out at. Bump the two together: move the gitlink to the tag and
-    # this default to the version.
+    # THE IMAGE IS ALSO WHERE iya-sts'S CODE COMES FROM. This repository has
+    # no checkout of it (the sts/ submodule was removed on 2026-11-13).
+    # tests/Dockerfile copies the image's /usr/src/sts into the tests image
+    # (the `iyasts` context below), and a host run copies the same tree into a
+    # cache (tests/module_paths.js, iyaStsTree()), so the jobs that load
+    # iya-sts's modules in process load the release the stack is running.
+    #
+    # THIS DEFAULT IS THE ONE PLACE THE RELEASE IS NAMED. The other compose
+    # files repeat it because compose has no include for a default, and
+    # tests/image_mirror_coverage.js fails when any of them disagrees — or
+    # when the companion's IYA_STS_COMPANION_IMAGE tag is not this
+    # version's. tests/module_paths.js and common/common.sh read it from here.
     #
     # IYA_STS_IMAGE overrides it, for a candidate image or a digest pin.
-    # (STS_IMAGE, which named a tag of this checkout's own build, is no
-    # longer read by this file: the machine-wide-tag hazard it existed for —
-    # two repositories building `rcbj/sts` from different trees — cannot arise
-    # for an image nothing here builds.)
-    image: ${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:1.0.0}
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
     # ---------------------------------------------------------------------
     # THE SAME UID AS THE TESTS CONTAINER, BECAUSE THE SPIRE SOCKET IS
     # PRIVATE NOW.
     #
     # Every image this repository builds runs as uid 10001 (see the block at
     # the foot of each Dockerfile). This one is not this repository's image —
-    # sts/ is the iya-sts submodule — and it used to stay root because it
+    # it is iya-sts's release — and it used to stay root because it
     # binds 88 (the KDC, TCP and UDP), 389 and 636 (the directory), all
     # privileged. `net.ipv4.ip_unprivileged_port_start: 0` below removes
     # that reason without touching the image: the sysctl is per network
@@ -654,6 +665,30 @@ services:
       - keycloak
     ports:
       - "8082:8080"
+  # SAML 1.1 peer: Shibboleth IdP 4.3.3 on Jetty 10, for the Shibboleth half
+  # of tests/saml11_peers.js (the AuthnRequest profile at
+  # /idp/profile/Shibboleth/SSO, answered with a signed Browser/POST
+  # response). Only the tests container talks to it, over plain HTTP on this
+  # network, so it publishes no host port. See shibboleth-idp/CLAUDE.md.
+  shibboleth-idp:
+    container_name: id-proto-debugger-shibboleth-idp
+    hostname: shibboleth-idp
+    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/shibboleth-idp:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: shibboleth-idp/Dockerfile
+      additional_contexts: *mirror-contexts
+    # /idp/status answers only once the IdP's services have loaded, and only
+    # to the loopback address (conf/access-control.xml), which is where the
+    # probe runs.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf -o /dev/null http://localhost:8080/idp/status || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 18
+      start_period: 60s
+    networks:
+      - keycloak
   # IYA-STS'S DEVELOPMENT COMPANION (iya-sts #594, #595): the click-through
   # demonstrations iya-sts moved out of its runtime — the OpenID4VCI issuer's
   # offer pages, the SPNEGO-protected page and the Kerberos-protected TCP
@@ -668,10 +703,16 @@ services:
   companion:
     container_name: id-proto-debugger-companion
     hostname: companion
-    image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/companion:${IMAGE_TAG:-latest}
-    build:
-      context: ./sts/companion
-      additional_contexts: *mirror-contexts
+    # PULLED FROM THE MIRROR, BUILT ONCE PER RELEASE ELSEWHERE. iya-sts
+    # publishes no image of the companion and its release image leaves the
+    # directory out, so .github/scripts/mirror-builds.sh builds it from the
+    # iya-sts repository at the tag that made IYA_STS_IMAGE
+    # (.github/image-mirror-builds.txt), with the mirror contexts, and pushes
+    # it to the private mirror as iya-sts-companion:v<version>. A test run
+    # therefore fetches no source from GitHub. tests/image_mirror_coverage.js
+    # holds this tag to IYA_STS_IMAGE's release. IYA_STS_COMPANION_IMAGE
+    # overrides it, for a companion built by hand from a candidate tag.
+    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.0.0}
     environment:
       - COMPANION_PORT=9700
       - COMPANION_PUBLIC_URL=http://companion:9700
@@ -791,7 +832,7 @@ services:
         # iya-sts's release image, the same one the `sts` service runs. The
         # tests image copies its whole /usr/src/sts tree in for the jobs that
         # load iya-sts's modules in process; see stage 2 of tests/Dockerfile.
-        iyasts: docker-image://${IYA_STS_IMAGE:-ghcr.io/rcbj/iya-sts:1.0.0}
+        iyasts: docker-image://${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report
@@ -825,6 +866,8 @@ services:
       waltid-verifier:
         condition: service_healthy
       keycloak-wsfed:
+        condition: service_healthy
+      shibboleth-idp:
         condition: service_healthy
       companion:
         condition: service_healthy

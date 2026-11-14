@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: build.js — emits the three unpacked builds from one source tree.
 //
 //   dist/chrome    what a user loads through chrome://extensions
@@ -11,7 +14,7 @@
 // test-only bypass inside the arm path would mean CI exercising a code path
 // users never run.
 //
-// The version is the repo's M.N.O, stamped here, because an unpacked extension
+// The version is the repo's M.N.P.B, stamped here, because an unpacked extension
 // does not auto-update and the debugger's pages compare their build against the
 // extension's. Omit the stamp and it silently reads 0.0.0 — the same trap the
 // client and api images carry a COPY VERSION for.
@@ -58,13 +61,13 @@ const BASE = JSON.parse(fs.readFileSync(path.join(HERE, "manifest.base.json"),
 
 function version() {
   log.debug("Entering version().");
-  // client/version.js owns the M.N.O scheme for the whole repository; reuse it
+  // client/version.js owns the M.N.P.B scheme for the whole repository; reuse it
   // rather than reimplementing, so a release bump moves everything at once.
   try {
     const out = execFileSync(process.execPath,
       [path.join(HERE, "..", "client", "version.js"), "--print"],
        { encoding: "utf8" }).trim();
-    if (/^\d+\.\d+\.\d+$/.test(out)) {
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(out)) {
       log.debug("Leaving version().");
       return out;
     }
@@ -86,15 +89,25 @@ function version() {
 }
 
 // A Chrome extension version must be up to four dot-separated integers, each
-// under 65536. The M.N.O stamp is YYYYMMDDHHMMSS, far past that, so it is split
-// into parts the browser will accept while staying recognisable.
+// under 65536. M.N.P.B is five numbers' worth — the release and a
+// YYYYMMDDHHMMSS build — so the manifest's `version` is the release plus the
+// build's DAY, counted from 2020-01-01: still rising from build to build (to
+// the day), and inside 65535 until the twenty-second century. The full
+// M.N.P.B goes in `version_name`, which is the one every reader here uses
+// (background.js and bridge.js prefer it). A BUILD_NUMBER that is not a
+// timestamp is reduced into range instead.
 function manifestVersion(v) {
   log.debug("Entering manifestVersion().");
   const parts = v.split(".");
-  const stamp = parts[2] || "0";
+  const stamp = parts[3] || "0";
+  let fourth = Number(stamp) % 65536;
+  const day = /^(\d{4})(\d{2})(\d{2})\d{6}$/.exec(stamp);
+  if (day) {
+    fourth = Math.floor((Date.UTC(+day[1], +day[2] - 1, +day[3]) -
+                         Date.UTC(2020, 0, 1)) / 86400000);
+  }
   log.debug("Leaving manifestVersion().");
-  return [parts[0], parts[1], stamp.slice(0, 8) % 65536 || 1,
-          stamp.slice(8) % 65536 || 0].join(".");
+  return [parts[0], parts[1], parts[2] || 0, fourth || 0].join(".");
 }
 
 // ONE run of this script emits THREE builds, and they must all carry the SAME

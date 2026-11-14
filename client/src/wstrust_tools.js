@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wstrust_tools.js
 //
 // WS-Trust Test Tools — configuration page. Builds a SOAP

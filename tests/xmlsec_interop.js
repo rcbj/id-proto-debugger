@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: xmlsec_interop.js
 //
 // XML Signature & XML Encryption interoperability test for the WS-Trust
@@ -828,6 +831,36 @@ function generalSignatureTests() {
   check("a KeyName is what a MAC key can be identified by",
     /<ds:KeyName>shared-key-1<\/ds:KeyName>/.test(hmacSigned.xml));
 
+  // --- The enveloped verifier behind the SAML / WS-* response pages. It
+  //     implements RSA only, and it used to check every other
+  //     SignatureMethod as RSA-SHA256 and call the result "invalid". Now a
+  //     method it cannot verify is reported as not verified (references
+  //     still checked), and a caller's verifier is used when one is given.
+  [["ECDSA-SHA256", ecSigned.xml, ecVerifier],
+   ["HMAC-SHA256", hmacSigned.xml, hmacVerifier]].forEach(function (row) {
+    const bare = xd.verifyXmlSignature(row[1]);
+    check("verifyXmlSignature reports " + row[0] + " as not verified " +
+      "rather than as a failed RSA check",
+      bare.unsupported === true && bare.valid === false &&
+      new RegExp(row[0]).test(bare.error || "") && bare.referencesValid,
+      JSON.stringify({ error: bare.error, refs: bare.referencesValid }));
+    const given = xd.verifyXmlSignature(row[1], { verifier: row[2] });
+    check("verifyXmlSignature verifies " + row[0] + " with the caller's " +
+      "verifier", given.valid && !given.unsupported, given.error || "");
+    const tampered = xd.verifyXmlSignature(
+      row[1].replace("Widget", "Gadget"), { verifier: row[2] });
+    check("and refuses a modified " + row[0] + " document",
+      !tampered.valid);
+  });
+  const misspelt = ecSigned.xml.replace(
+    "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256",
+    "http://www.w3.org/2000/09/xmldsig#rsa-sha256");
+  const unknown = xd.verifyXmlSignature(misspelt);
+  check("an unknown SignatureMethod is reported as unknown, not checked " +
+    "as RSA-SHA256", unknown.unsupported === true &&
+    /is not one this module knows/.test(unknown.error || ""),
+    unknown.error || "");
+
   // --- The refusals. Each of these is a chain that cannot mean anything, and
   //     each is named rather than producing a signature that verifies nowhere.
   let message = "";
@@ -1105,6 +1138,50 @@ function rsaBackendTests() {
     xd.signQueryString(query, { privateKeyPem: kp.privateKeyPem }) ===
     xd.forge.util.encode64(xd.rsaSign(kp.privateKeyPem, "sha256",
       query, "v1_5", true)));
+  // The RSA-only signers write the SignatureMethod they were given, so they
+  // must sign with it. A PSS URI used to fall to sigAlgSpec()'s SHA-256
+  // default and come out PKCS#1 v1.5 under a PSS label; an ECDSA or HMAC URI
+  // came out RSA-SHA256 under that label.
+  ["sha256", "sha384", "sha512"].forEach(function (hash) {
+    const uri = "http://www.w3.org/2007/05/xmldsig-more#" + hash +
+      "-rsa-MGF1";
+    const signed = xd.signEnveloped(assertion20("_pss_" + hash), {
+      privateKeyPem: kp.privateKeyPem, certPem: kp.certPem, sigAlg: uri });
+    const own = xd.verifyXmlSignature(signed);
+    check("signEnveloped " + hash + "-rsa-MGF1 is PSS and verifies",
+      own.valid && signed.indexOf('Algorithm="' + uri + '"') !== -1,
+      own.error || "");
+    const engine = xd.verifyXml(signed, { certPem: kp.certPem });
+    check("and the general engine reads it as " + hash + "-rsa-MGF1 too",
+      engine.valid, engine.error || "");
+    const q = "SAMLRequest=abc&SigAlg=" + encodeURIComponent(uri);
+    const qs = xd.signQueryString(q, { privateKeyPem: kp.privateKeyPem,
+                                       sigAlg: uri });
+    const qv = xd.verifyQueryString(q, { signature: qs, sigAlg: uri,
+                                         certPem: kp.certPem });
+    check("signQueryString " + hash + "-rsa-MGF1 is PSS and verifies",
+      qv.valid, qv.error || "");
+  });
+  [["signEnveloped", function (uri) {
+    return xd.signEnveloped(assertion20("_refused"), {
+      privateKeyPem: kp.privateKeyPem, certPem: kp.certPem, sigAlg: uri });
+  }], ["signQueryString", function (uri) {
+    return xd.signQueryString("SAMLRequest=abc", {
+      privateKeyPem: kp.privateKeyPem, sigAlg: uri });
+  }]].forEach(function (row) {
+    ["http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256",
+     "http://www.w3.org/2001/04/xmldsig-more#hmac-sha256",
+     "http://www.w3.org/2000/09/xmldsig#rsa-sha256"].forEach(function (uri) {
+      let refused = false;
+      try {
+        row[1](uri);
+      } catch (e) {
+        refused = /is not an RSA method/.test(e.message);
+      }
+      check(row[0] + " refuses " + uri.split("#")[1] + " rather than " +
+        "signing RSA-SHA256 under it", refused);
+    });
+  });
   // selfSignedCertFor() signs its TBSCertificate through the same boundary;
   // the result must still be a certificate OpenSSL accepts as self-signed.
   const x509 = new crypto.X509Certificate(kp.certPem);
@@ -1115,8 +1192,9 @@ function rsaBackendTests() {
 
 // --- Issue #304: three canonicalization defects the W3C cases found ---------
 // Small inline reproductions of what merlin-c14n-three and
-// merlin-xmldsig-twenty-three exercise, so the suite needs no network. The
-// published cases themselves are run by iya-sts's tests/w3c_xmlsec.js.
+// merlin-xmldsig-twenty-three exercise. publishedMerlinTests() then
+// holds the same three to the published documents in tests/w3c-merlin.
+// Those files are the W3C interop corpus, pinned by sha256 below.
 function canonicalizationDefectTests() {
   log.debug("Entering canonicalizationDefectTests().");
   log.info("== Canonicalization: xml:* inheritance, comments, #xpointer " +
@@ -1241,6 +1319,179 @@ function canonicalizationDefectTests() {
   log.debug("Leaving canonicalizationDefectTests().");
 }
 
+// The two Merlin documents and the canonical forms issue #304 names,
+// pinned to the bytes fetched from lists.w3.org
+// (01-merlin-c14n-three.tar.gz
+// 6081bcd691295d5f6da0804c939013c6f45bb51146cba426f40a731259e5d24f,
+// 01-merlin-xmldsig-twenty-three.tar.gz
+// 781be470bb2d2b6805a2de4936443f815c4dd6fa5b1aa196d6f15c30f0b76081).
+const MERLIN = path.join(__dirname, "w3c-merlin");
+const MERLIN_SHA256 = {
+  "merlin-c14n-three/c14n-27.txt":
+    "f45df7432a4187e409988a39fbb28ddc6fae8ee09ade75c692c2cb37dd9f8873",
+  "merlin-c14n-three/signature.xml":
+    "9dc810709e07f57c71d50d092433b4b7e7cbe09b42205dd7dfa668a60fa4b7c8",
+  "merlin-xmldsig-twenty-three/signature-c14n-12.txt":
+    "8255987c1349cc8c24c21edf17c551847f832257df8820dd07097ed6d4f60f82",
+  "merlin-xmldsig-twenty-three/signature-c14n-13.txt":
+    "2ef492a891f630e7fa5cdfcc2f3d5fb6f13c196f6e4f602cb62937f4ad91f8ea",
+  "merlin-xmldsig-twenty-three/signature-c14n-17.txt":
+    "cf7eb241fcd33a91fe6b353f39bf5915734ba567bb911158adcbf3f39b451e01",
+  "merlin-xmldsig-twenty-three/signature-c14n-2.txt":
+    "3c293137f57eabb8611fa736b17e33937958e44b59778668971888262de7b321",
+  "merlin-xmldsig-twenty-three/signature-c14n-5.txt":
+    "7423237a1ed2f62039bde140b2f8e3996d3243415721990bb974a6c2fb34974e",
+  "merlin-xmldsig-twenty-three/signature.xml":
+    "d1a562ad63d3a651e97073fecb6de1bfe96d4272479781692e192316ed7623a8"
+};
+
+function pinnedMerlin(rel) {
+  log.debug("Entering pinnedMerlin().");
+  const bytes = fs.readFileSync(path.join(MERLIN, rel));
+  const digest = crypto.createHash("sha256").update(bytes).digest("hex");
+  log.debug("Leaving pinnedMerlin().");
+  return { bytes: bytes, digest: digest, pinned: MERLIN_SHA256[rel] };
+}
+
+function directChild(node, name) {
+  log.debug("Entering directChild().");
+  let found = null;
+  for (let c = node.firstChild; c; c = c.nextSibling) {
+    if (c.nodeType === 1 && c.localName === name) {
+      found = c;
+      break;
+    }
+  }
+  log.debug("Leaving directChild().");
+  return found;
+}
+
+function referencesOf(si) {
+  log.debug("Entering referencesOf().");
+  const out = [];
+  for (let c = si.firstChild; c; c = c.nextSibling) {
+    if (c.nodeType === 1 && c.localName === "Reference") out.push(c);
+  }
+  log.debug("Leaving referencesOf().");
+  return out;
+}
+
+function referenceTransforms(ref) {
+  log.debug("Entering referenceTransforms().");
+  const out = [];
+  const box = directChild(ref, "Transforms");
+  if (box) {
+    for (let c = box.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType === 1 && c.localName === "Transform") {
+        out.push({ algorithm: c.getAttribute("Algorithm") || "" });
+      }
+    }
+  }
+  log.debug("Leaving referenceTransforms().");
+  return out;
+}
+
+function merlinSignature(rel) {
+  log.debug("Entering merlinSignature().");
+  const loaded = pinnedMerlin(rel);
+  const doc = new DOMParser().parseFromString(
+    loaded.bytes.toString("utf8"), "application/xml");
+  const sig = doc.getElementsByTagNameNS(DSIG_NS, "Signature")[0];
+  log.debug("Leaving merlinSignature().");
+  return {
+    doc: doc, sig: sig, si: directChild(sig, "SignedInfo")
+  };
+}
+
+function referenceOctets(doc, sig, ref) {
+  log.debug("Entering referenceOctets().");
+  const uri = ref.getAttribute("URI") || "";
+  const deref = xd.dereferenceSameDocument(uri, doc, doc);
+  const out = xd.transformOctets(deref.node, referenceTransforms(ref), {
+    doc: doc, sigNode: sig, stripComments: !deref.keepComments
+  }).octets;
+  log.debug("Leaving referenceOctets().");
+  return out;
+}
+
+function sameOctets(octets, rel) {
+  log.debug("Entering sameOctets().");
+  const got = Buffer.from(octets, "binary");
+  const want = fs.readFileSync(path.join(MERLIN, rel));
+  const equal = got.equals(want);
+  const detail = equal ? "" :
+    ("got " + got.length + " octets, file has " + want.length);
+  log.debug("Leaving sameOctets().");
+  return { equal: equal, detail: detail };
+}
+
+function digestMatches(octets, ref) {
+  log.debug("Entering digestMatches().");
+  const declared = (directChild(ref, "DigestValue").textContent || "")
+    .replace(/\s+/g, "");
+  const got = crypto.createHash("sha1")
+    .update(Buffer.from(octets, "binary")).digest("base64");
+  log.debug("Leaving digestMatches().");
+  return got === declared;
+}
+
+function publishedMerlinTests() {
+  log.debug("Entering publishedMerlinTests().");
+  log.info("== Published Merlin C14N cases (issue #304) ==");
+  Object.keys(MERLIN_SHA256).forEach(function (rel) {
+    const loaded = pinnedMerlin(rel);
+    check(rel + " is the pinned file", loaded.digest === loaded.pinned,
+      loaded.digest);
+  });
+  const c14n = merlinSignature("merlin-c14n-three/signature.xml");
+  const cm = c14n.si.getElementsByTagNameNS(DSIG_NS,
+    "CanonicalizationMethod")[0];
+  const signedInfo = sameOctets(xd.canonicalizeBy(
+    cm.getAttribute("Algorithm"), c14n.si),
+    "merlin-c14n-three/c14n-27.txt");
+  check("inclusive C14N of its SignedInfo is c14n-27.txt",
+    signedInfo.equal, signedInfo.detail);
+
+  const twenty = merlinSignature(
+    "merlin-xmldsig-twenty-three/signature.xml");
+  const refs = referencesOf(twenty.si);
+  const cases = [
+    [7, "signature-c14n-13.txt",
+      "URI=\"\" without comments is signature-c14n-13"],
+    [8, "signature-c14n-13.txt",
+      "URI=\"\" WithComments still drops the comments"],
+    [9, "signature-c14n-13.txt",
+      "#xpointer(/) without comments is signature-c14n-13"],
+    [10, "signature-c14n-12.txt",
+      "#xpointer(/) WithComments is signature-c14n-12"],
+    [11, "signature-c14n-2.txt",
+      "URI=\"#object-3\" without comments is signature-c14n-2"],
+    [12, "signature-c14n-2.txt",
+      "URI=\"#object-3\" WithComments still drops the comments"],
+    [13, "signature-c14n-2.txt",
+      "#xpointer(id()) without comments is signature-c14n-2"],
+    [14, "signature-c14n-5.txt",
+      "#xpointer(id()) WithComments keeps the comments"]
+  ];
+  cases.forEach(function (row) {
+    const octets = referenceOctets(twenty.doc, twenty.sig, refs[row[0]]);
+    const compared = sameOctets(octets,
+      "merlin-xmldsig-twenty-three/" + row[1]);
+    const digested = digestMatches(octets, refs[row[0]]);
+    check(row[2], compared.equal && digested,
+      compared.equal ? (digested ? "" : "digest differs") :
+        compared.detail);
+  });
+  const cm2 = twenty.si.getElementsByTagNameNS(DSIG_NS,
+    "CanonicalizationMethod")[0];
+  const twentyInfo = sameOctets(xd.canonicalizeBy(
+    cm2.getAttribute("Algorithm"), twenty.si),
+    "merlin-xmldsig-twenty-three/signature-c14n-17.txt");
+  check("its SignedInfo is signature-c14n-17.txt",
+    twentyInfo.equal, twentyInfo.detail);
+  log.debug("Leaving publishedMerlinTests().");
+}
+
 async function main() {
   log.debug("Entering main().");
   try {
@@ -1252,6 +1503,7 @@ async function main() {
     apiSignatureTests();
     rsaBackendTests();
     canonicalizationDefectTests();
+    publishedMerlinTests();
   } catch (e) {
     log.error("Unexpected error: " + (e && e.stack ? e.stack : e));
     process.exit(1);

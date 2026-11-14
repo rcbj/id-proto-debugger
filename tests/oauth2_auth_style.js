@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oauth2_auth_style.js
 //
 // The AUTH STYLE radios on oauth2_oidc_2.html — POST or Header — on the two

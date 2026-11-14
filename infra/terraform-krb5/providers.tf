@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Single region. Nothing here is global: no CloudFront, no ACM, no Route 53, so
 # unlike the two site modules this one needs no us-east-1 alias.
 provider "aws" {

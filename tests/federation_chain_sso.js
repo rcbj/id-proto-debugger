@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: federation_chain_sso.js
 //
 // ===========================================================================
@@ -693,7 +696,7 @@ async function prepareAuthorizationRequest(driver, appBase, callbackUri) {
 // federation_matrix_sso.js's header), so there is one screen, one button, and
 // the thing to read is what the screen SAYS it is answering.
 // ---------------------------------------------------------------------------
-async function signInAtWsFed(driver, user) {
+async function signInAtWsFed(driver, user, password) {
   log.debug("Entering signInAtWsFed(). user=" + user);
   const username = By.id("username");
   try {
@@ -712,7 +715,7 @@ async function signInAtWsFed(driver, user) {
   const passwords = await driver.findElements(By.id("password"));
   if (passwords.length) {
     await passwords[0].clear();
-    await passwords[0].sendKeys("no password is checked here");
+    await passwords[0].sendKeys(password || "no password is checked here");
   }
   // `kc-login`, not `wsfed-login`: WS-Federation reaches the SHARED sign-in
   // screen since 2026-08-26 rather than drawing one of its own. See the note
@@ -1061,7 +1064,7 @@ async function test() {
     "it does not publish fedAuthnMechanism in the federation schema at GET " +
     "/admin-api/ldap/federations, so no relationship can authenticate " +
     "through another and the bridge realm this test is about cannot exist. " +
-    "Either the sts/ submodule predates the attribute (bump it) or that " +
+    "Either the iya-sts image predates the attribute (bump it) or that " +
     "endpoint has moved again.");
   const appBase = stsBase + "/realm/" + APP_REALM;
   const bridgeBase = stsBase + "/realm/" + BRIDGE_REALM;
@@ -1092,6 +1095,17 @@ async function test() {
   await createServiceProviderSide(bridgeBase, REL_4_TO_5, "wsfed",
     wsfedPartner, "realm 4's WS-Federation relationship with realm 5");
   await createBridgeRelationship(bridgeBase, spEntityId);
+  // Both hops are NameIDs, so the subject is the username at each. The
+  // password is typed only at realm 5. Product links each hop; development
+  // returns null and the dummy password still signs in.
+  const atRealm5 = await admin.prepareFederatedSignIn({
+    spBase: bridgeBase, idpBase: idpBase, relationship: REL_4_TO_5,
+    username: user, subjectKind: "nameid"
+  });
+  await admin.prepareFederatedSignIn({
+    spBase: appBase, idpBase: bridgeBase, relationship: REL_3_TO_4,
+    username: user, subjectKind: "nameid"
+  });
 
   // ---------------------------------------------------------------------
   // THE SHAPE OF THE REGISTER, before anybody signs in. Three realms, four
@@ -1257,7 +1271,7 @@ async function test() {
       "partner(s). It is the end of the chain and has no relationships.");
     await assertOnlyOtherButtonIsKerberos(driver, "Realm 5's screen");
 
-    await signInAtWsFed(driver, user);
+    await signInAtWsFed(driver, user, atRealm5.password);
 
     // ---------------------------------------------------------------------
     // AND BACK, THROUGH BOTH OF THEM. The browser goes realm 5 → realm 4's

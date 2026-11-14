@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: krb5_codec_sync.js
 //
 // The Kerberos codec exists TWICE, and this is the test that makes that safe.
@@ -5,14 +8,11 @@
 // ---------------------------------------------------------------------------
 // Why there are two copies.
 //
-// The KDC needs the same codec the browser uses — it is the other end of the same
-// wire. But the KDC lives in the rcbj/iya-sts SUBMODULE, and compose builds that
-// service with `context: ./sts`. A Docker build cannot COPY from outside its
-// context, so `../common/krb5` is simply unreachable from there. The options were
-// to publish a package (too much ceremony for four files), to move the KDC into
-// this repository as a side-car like keycloak-wsfed/ (rejected: the mock STS is
-// where every other mock protocol lives), or to vendor a copy and test it. This is
-// the test.
+// The KDC needs the same codec the browser uses — it is the other end of the
+// same wire. But the KDC is iya-sts's (rcbj/iya-sts), a separate repository
+// whose codec has been that service's own since iya-sts #1280, and this
+// repository runs it only as a release image. Two implementations of one
+// wire, separately maintained, and this is the test that they agree.
 //
 // ---------------------------------------------------------------------------
 // Why a file comparison is not enough on its own.
@@ -31,13 +31,14 @@
 //      and copy B DECRYPTS. A divergence in key usage numbers, in what the MAC
 //      covers, in string-to-key, or in a context tag fails this and nothing else
 //      would.
-//   2. **A file comparison**, which catches drift before it has consequences and
-//      names the one command that fixes it.
+//   2. **A file comparison**, retired on 2026-11-12 (see the note above
+//      test()): iya-sts's codec is its own now.
 //
-// If the submodule is not initialised there is nothing to compare, and this test
-// says so and passes rather than pretending: an uninitialised submodule is an
-// EMPTY DIRECTORY, and reporting that as a codec failure would send somebody
-// looking in the wrong place entirely.
+// iya-sts's copy comes out of its release image (IYA_STS_IMAGE): the tests
+// image carries that tree at ./sts, and a host run copies it out of the image
+// into a cache (tests/module_paths.js, iyaStsRoot()). When neither can be had
+// this test FAILS, naming the image: a comparison that did not happen must
+// not be reported as one that passed.
 //
 // No browser and no services: node only.
 // ---------------------------------------------------------------------------
@@ -77,7 +78,7 @@ const MODULES = ["krb5_primitives.js", "krb5_asn1.js", "krb5_crypto.js",
 // tree at all — those modules are copied FLAT beside the test scripts — so the
 // flat copies are the canonical ones there, and the comparison is still the one
 // that matters: the flat files came from common/krb5 and the sts/ ones came
-// from the submodule.
+// from iya-sts's release image.
 //
 // Without this the test failed in the containerized suite with "common/krb5/...
 // is missing", which reads as a broken checkout rather than as a layout
@@ -90,76 +91,41 @@ const CANONICAL_DIR = (function () {
   return __dirname;
 })();
 
-// The vendored copy, wherever it is in this layout. The tests image copies the
-// submodule's files in under sts/, a checkout has them in the submodule, and a
-// developer mid-loop has them in a sibling checkout.
+// iya-sts's copy, wherever iyaStsRoot() puts its tree: ./sts in the tests
+// image, a cache directory copied out of the image on a host run, or
+// MOCK_STS_DIR.
 //
-// AND IT IS NO LONGER THE ROOT OF ANY OF THE THREE. iya-sts 0f986b3
-// ("Reorganizing source code.") moved every module into a subdirectory, so the
-// vendored codec now lives in the mock's `kerberos/` folder. Rather than write
-// that name down here — a second transcription of somebody else's layout, in
-// this repository, wrong again at the next reshuffle — each root is EXPANDED
-// into the directories module_paths.js already knows how to search, and the
-// one holding a complete set of MODULES wins. The old flat layout still
-// matches, because the root itself is the first directory searched.
-function expandRoots(roots) {
-  log.debug("Entering expandRoots().");
-  const out = [];
-  roots.forEach(function (root) {
-    paths.mockStsSearchDirs(root.dir).forEach(function (dir) {
-      out.push({ dir: dir, what: root.what });
-    });
-  });
-  log.debug("Leaving expandRoots(). " + out.length + " directory(ies).");
-  return out;
-}
-
+// AND IT IS NOT THE ROOT OF THAT TREE. iya-sts 0f986b3 ("Reorganizing source
+// code.") moved every module into a subdirectory, so the codec lives in its
+// `kerberos/` folder. Rather than write that name down here — a second
+// transcription of somebody else's layout, wrong again at the next reshuffle
+// — the root is EXPANDED into the directories module_paths.js already knows
+// how to search, and the one holding a complete set of MODULES wins.
 function findVendoredDir() {
   log.debug("Entering findVendoredDir().");
-  const candidates = expandRoots([
-    { dir: path.join(__dirname, "..", "sts"), what: "the sts/ submodule" },
-    { dir: path.join(__dirname, "sts"), what: "sts/ inside the tests image" },
-    {
-      dir: path.join(__dirname, "..", "..", "iya-sts"),
-      what: "a sibling iya-sts checkout"
-    }
-  ]).filter(function (candidate) {
+  const root = paths.iyaStsRoot(function (message) {
+    log.warn(message);
+  });
+  const candidates = paths.mockStsSearchDirs(root).filter(function (dir) {
     // Never compare the canonical directory with itself. In the flat container
     // layout CANONICAL_DIR is __dirname, and a candidate resolving to the same
     // place would make this test compare a thing with itself and pass
     // vacuously.
-    return path.resolve(candidate.dir) !== path.resolve(CANONICAL_DIR);
+    return path.resolve(dir) !== path.resolve(CANONICAL_DIR);
   });
-  for (const candidate of candidates) {
-    if (MODULES.every(function (m) { return fs.existsSync(path.join(candidate.dir,
-        m)); })) {
+  for (const dir of candidates) {
+    const complete = MODULES.every(function (m) {
+      return fs.existsSync(path.join(dir, m));
+    });
+    if (complete) {
       log.debug("Leaving findVendoredDir().");
-      return candidate;
+      return { dir: dir, what: "iya-sts's tree at " + root };
     }
   }
-  // Partial is worse than absent and must be reported as a failure: it means a
-  // sync half happened, and half a codec is a codec that does not load.
-  for (const candidate of candidates) {
-    const present = MODULES.filter(function (m) { return fs.existsSync(path.join(candidate.dir,
-        m)); });
-    // HALF the set, not one of it. Expanding each root into its
-    // subdirectories means a directory holding one or two of these names by
-    // coincidence is now a candidate, and reporting that as "the sync half
-    // happened" would send somebody to run a script that is not the problem.
-    // A genuine partial sync leaves most of the eight in place.
-    if (present.length >= MODULES.length / 2) {
-      log.debug("Leaving findVendoredDir().");
-      throw new Error("the vendored codec in " + candidate.what +
-          " is INCOMPLETE: it has " +
-        present.join(", ") + " but not " +
-            MODULES.filter(function (m) { return present.indexOf(m) === -1; }).join(", ") +
-        ". Run common/krb5/sync-to-mock-sts.sh — a partial copy will fail to " +
-            "load rather than " +
-        "merely disagree.");
-    }
-  }
-  log.debug("Leaving findVendoredDir().");
-  return null;
+  log.debug("Leaving findVendoredDir(). Not found.");
+  throw new Error("iya-sts's tree at " + root + " has no directory holding " +
+    "all of " + MODULES.join(", ") + ". Either that release moved its " +
+    "Kerberos codec, or the tree is not iya-sts's.");
 }
 
 // ---------------------------------------------------------------------------
@@ -172,7 +138,7 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
   // fallback the other tests get for free from requireSharedModule — so it is
   // applied explicitly here. Without it the codec loads until it reaches its
   // own `require("bunyan")`, which resolves relative to where the MODULE lives
-  // (common/krb5, or the submodule) rather than to this test's node_modules.
+  // (common/krb5, or iya-sts's tree) rather than to this test's node_modules.
   paths.addTestsModulesToResolutionPath();
 
   // Two independent module instances. require() caches by resolved path, so
@@ -606,9 +572,9 @@ async function theTwoCopiesAgreeOnTheWire(vendoredDir) {
 // eventually stops being cosmetic. iya-sts #1280 ended the premise: those
 // modules are that service's OWN now — they carry its SPDX lines (BUSL-1.1),
 // its style rules and its logging — so there is no longer one file in two
-// places for a hash to hold together, and common/krb5/sync-to-mock-sts.sh,
-// which that assertion told you to run, would overwrite somebody else's
-// licensed source with this repository's.
+// places for a hash to hold together, and the sync script that assertion told
+// you to run (common/krb5/sync-to-mock-sts.sh, since deleted) would have
+// overwritten somebody else's licensed source with this repository's.
 //
 // What remains is the check that was always the point: the two
 // IMPLEMENTATIONS still agree on the wire, cross-wise, above. Two codecs that
@@ -627,21 +593,6 @@ async function test() {
   });
 
   const vendored = findVendoredDir();
-  if (!vendored) {
-    // Said plainly, and passing. An uninitialised submodule is an empty
-    // directory, and reporting that as a codec failure sends somebody looking
-    // in the wrong place. What is NOT acceptable is being silent about it,
-    // because then a green run looks like the comparison happened.
-    log.warn("NO VENDORED COPY FOUND, so the two copies were NOT compared. " +
-        "The mock STS is the " +
-      "sts/ SUBMODULE: run `git submodule update --init sts`. An " +
-          "uninitialised submodule is an " +
-      "EMPTY DIRECTORY rather than a missing one, which is why this is a " +
-          "warning about the " +
-      "checkout and not a failure of the codec.");
-    log.info("Test completed successfully.");
-    return;
-  }
   log.info("comparing common/krb5 against " + vendored.what + " (" +
       vendored.dir + ")");
   await theTwoCopiesAgreeOnTheWire(vendored.dir);

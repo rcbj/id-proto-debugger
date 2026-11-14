@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 locals {
   # Content bucket is named after the primary hostname, matching the reference
   # (e.g. "www.iyasec.io"). Both apex and www serve from this single bucket.

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 const { Builder, By, until, logging } = require("selenium-webdriver");
 const browserFlags = require("./browser_flags.js");
 const chrome = require("selenium-webdriver/chrome");
@@ -55,17 +58,17 @@ async function waitVisible(driver, locator) {
   return driver.findElement(locator);
 }
 
-// M.N.O, shown in the footer of every page. The build number must be identical
+// M.N.P.B, shown in the footer of every page. The build number must be identical
 // everywhere — it identifies the build being served, not the moment of the
 // request — so the first one seen becomes the expectation for the rest.
-var VERSION_RE = /^v\d+\.\d+\.\d+$/;
+var VERSION_RE = /^v\d+\.\d+\.\d+\.\d+$/;
 var seenVersion = null;
 async function checkFooterVersion(driver, where) {
   log.debug("Entering checkFooterVersion().");
   var el = await waitVisible(driver, By.css('.footer-version'));
   var text = (await el.getText()).trim();
   assert.ok(VERSION_RE.test(text),
-    "[" + where + "] the footer should show a M.N.O version, found: '" + text +
+    "[" + where + "] the footer should show a M.N.P.B version, found: '" + text +
         "'");
   var title = await el.getAttribute('title');
   assert.ok(/Build \S+ — built /.test(title || ''),
@@ -114,8 +117,12 @@ async function checkFooterVersion(driver, where) {
 // The prefix is listed anyway so that the day it does, or the day another page
 // borrows an `ldap-` class, the guard is already in force rather than being
 // remembered. tests/ldap_page.js makes the same check for that page directly.
+// `xacml` is listed for the same reason. The page ships on the static sites,
+// and tests/xacml_engine.js checks that xacml.css defines the classes the
+// page draws. The walk below does not open it. `gnap` is the same shape:
+// tests/gnap_engine.js checks gnap.css, and the walk does not open the page.
 
-var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki|ldap)-/;
+var STYLED_PREFIXES = /^(saml|wst|wsfed|vc|vp|wa|wl|krb|pki|ldap|xacml|gnap)-/;
 
 async function checkStylesheetsLoaded(driver, where) {
   log.debug("Entering checkStylesheetsLoaded(). where=" + where);
@@ -137,6 +144,13 @@ async function checkStylesheetsLoaded(driver, where) {
     "        defined[sel.slice(1)] = true; });" +
     "    } else if (rule.cssRules) {" +
     "      Array.prototype.slice.call(rule.cssRules).forEach(collect);" +
+    // An @import's rules are under its .styleSheet, not .cssRules:
+    // saml_common.css imports panes.css, which defines the pane switch.
+    "    } else if (rule.styleSheet) {" +
+    "      var inner = null;" +
+    "      try { inner = rule.styleSheet.cssRules; } catch (e) { " +
+        "inner = null; }" +
+    "      Array.prototype.slice.call(inner || []).forEach(collect);" +
     "    }" +
     "  });" +
     "});" +

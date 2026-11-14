@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # embedded/Dockerfile — the debugger tree the mock STS embeds, as an image.
 #
 #   docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:<tag> .
@@ -59,7 +62,7 @@ COPY api/ ./api/
 COPY common/ ./common/
 COPY embedded/build.sh ./embedded/build.sh
 
-# The build number is fixed HERE, once, so the tree reports the same M.N.O for
+# The build number is fixed HERE, once, so the tree reports the same M.N.P.B for
 # as long as the image exists. GIT_COMMIT has to be passed: the context has no
 # .git to ask.
 ARG BUILD_NUMBER
@@ -70,6 +73,14 @@ RUN chmod +x embedded/build.sh \
     && cat /debugger/version.json
 
 FROM scratch
+# PUBLISHED by Docker Image CI from master as id-proto-debugger-embedded
+# (rcbj/iya-sts#1717), beside the api and client images. The source label is
+# what links the ghcr.io package to this repository; the image has no
+# README of its own to point Artifact Hub at, so it is not indexed there.
+LABEL org.opencontainers.image.source="https://github.com/rcbj/id-proto-debugger" \
+      org.opencontainers.image.title="id-proto-debugger-embedded" \
+      org.opencontainers.image.description="id-proto-debugger built for embedding in IYA STS: /debugger/ui, /debugger/api, /debugger/common" \
+      org.opencontainers.image.licenses="MIT"
 COPY --from=build /debugger/ui /debugger/ui
 COPY --from=build /debugger/api /debugger/api
 COPY --from=build /debugger/common /debugger/common

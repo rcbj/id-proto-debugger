@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: saml_response_decoder_page.js
 //
 // The SAML Response Decoder (saml_response_decoder.html) — decode, validate,

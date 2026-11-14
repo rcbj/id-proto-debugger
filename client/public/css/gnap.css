@@ -1,0 +1,98 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
+/* The GNAP page. Loaded last so it wins over bootstrap, common.css and
+   saml_common.css, whose saml-pane pattern the panes use. */
+
+.container {
+  width: 96%;
+  max-width: 1100px;
+}
+
+.gnap-return {
+  font-size: 0.85em;
+  margin: 4px 0 2px;
+}
+
+h3 {
+  margin: 4px 0 6px;
+}
+
+/* A row of inline controls, compact: the saml-row of saml_common.css with
+   the labels kept beside their controls. */
+.saml-pane .saml-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 10px 0 0;
+  font-size: 0.85em;
+}
+
+.saml-pane .saml-row select {
+  width: auto;
+  margin: 0;
+}
+
+.gnap-mono {
+  font-family: monospace;
+  font-size: 0.85em;
+}
+
+.gnap-links {
+  margin: 0 0 4px;
+  font-size: 0.85em;
+}
+
+.gnap-note {
+  color: #135;
+  font-size: 0.85em;
+  margin: 0 0 6px;
+}
+
+.gnap-note:empty {
+  display: none;
+}
+
+.gnap-warn {
+  color: #8a1f1f;
+  min-height: 1.2em;
+}
+
+#gnap_redirect,
+#gnap_user_code_uri {
+  word-break: break-all;
+}
+
+/* Tighter than the SAML pages: a narrow label column so the controls
+   start near their names, and less air between and inside the panes. */
+.saml-pane {
+  margin: 0 0 8px;
+  padding: 2px 10px 8px;
+}
+
+.saml-pane > legend {
+  margin: 0 0 2px;
+}
+
+.saml-field {
+  margin: 0 0 4px;
+}
+
+.saml-field > label {
+  flex: 0 0 170px;
+  max-width: 170px;
+}
+
+.saml-pane button {
+  padding: 1px 8px;
+  font-size: 0.85em;
+}
+
+.saml-controls {
+  margin: 2px 0 6px;
+}
+
+.gnap-inspect {
+  margin-left: 6px;
+  font-weight: normal;
+}

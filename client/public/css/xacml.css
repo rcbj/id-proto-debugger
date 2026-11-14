@@ -1,0 +1,155 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
+/* The XACML page. Loaded last so it wins over bootstrap, common.css and
+   saml_common.css, whose saml-pane pattern the panes use. */
+
+.container {
+  width: 96%;
+  max-width: 1100px;
+}
+
+.xacml-return {
+  font-size: 0.85em;
+  margin: 4px 0 2px;
+}
+
+h3 {
+  margin: 4px 0 6px;
+}
+
+/* A row of inline controls, compact: the saml-row of saml_common.css with
+   the labels kept beside their controls. */
+.saml-pane .saml-row label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 10px 0 0;
+  font-size: 0.85em;
+}
+
+.saml-pane .saml-row input[type="text"],
+.saml-pane .saml-row select {
+  width: auto;
+  margin: 0;
+}
+
+#xacml_import,
+#xacml_request {
+  font-family: monospace;
+  font-size: 0.85em;
+}
+
+.xacml-note {
+  color: #1f4a6b;
+  font-size: 0.85em;
+  margin: 0 0 6px;
+}
+
+.xacml-note:empty {
+  display: none;
+}
+
+.xacml-warn {
+  color: #8a1f1f;
+  font-size: 0.9em;
+}
+
+.xacml-tree {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 4px 0;
+  font-size: 0.85em;
+}
+
+.xacml-tree th,
+.xacml-tree td {
+  border-bottom: 1px solid #ddd;
+  vertical-align: top;
+  padding: 2px 6px;
+  text-align: left;
+}
+
+.xacml-sub {
+  font-size: 0.85em;
+  color: #555;
+  margin-top: 2px;
+}
+
+.xacml-edit {
+  display: inline;
+  margin: 2px 0;
+}
+
+.xacml-edit select,
+.xacml-edit input,
+.xacml-edit button {
+  max-width: 100%;
+  margin: 1px 2px 1px 0;
+}
+
+.xacml-indent-0 { padding-left: 4px; }
+.xacml-indent-1 { padding-left: 1.2em; }
+.xacml-indent-2 { padding-left: 2.4em; }
+.xacml-indent-3 { padding-left: 3.6em; }
+.xacml-indent-4 { padding-left: 4.8em; }
+.xacml-indent-5 { padding-left: 6em; }
+.xacml-indent-6 { padding-left: 7.2em; }
+.xacml-indent-7 { padding-left: 8.4em; }
+.xacml-indent-8 { padding-left: 9.6em; }
+.xacml-indent-9 { padding-left: 10.8em; }
+
+.xacml-attr {
+  margin: 2px 0;
+}
+
+.xacml-attr input {
+  margin-right: 4px;
+}
+
+#xacml_editor pre,
+#xacml_decision pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+#xacml_decision table {
+  border-collapse: collapse;
+}
+
+#xacml_decision th,
+#xacml_decision td {
+  border-bottom: 1px solid #ddd;
+  text-align: left;
+  vertical-align: top;
+  padding: 4px 8px;
+}
+
+/* Tighter than the SAML pages: a narrow label column so the controls
+   start near their names, and less air between and inside the panes. */
+.saml-pane {
+  margin: 0 0 8px;
+  padding: 2px 10px 8px;
+}
+
+.saml-pane > legend {
+  margin: 0 0 2px;
+}
+
+.saml-field {
+  margin: 0 0 4px;
+}
+
+.saml-field > label {
+  flex: 0 0 170px;
+  max-width: 170px;
+}
+
+.saml-pane button {
+  padding: 1px 8px;
+  font-size: 0.85em;
+}
+
+.saml-controls {
+  margin: 2px 0 6px;
+}

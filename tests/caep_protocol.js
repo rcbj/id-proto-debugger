@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: caep_protocol.js
 //
 // ---------------------------------------------------------------------------
@@ -37,16 +40,17 @@
 // THE SIGN-IN IS DRIVEN OVER HTTP AND STOPS AT THE SESSION. This file wants a
 // SESSION and not a token: `startSession()` is where the session-established
 // event is emitted, and it happens at the sign-in screen's POST, well before
-// any code is redeemed. Driving the rest of the authorization flow would mean
-// answering the consent screen — which is somebody else's test, and turning
-// `oauth2.consentRequired` off here would reconfigure a setting this job does
-// not hold a lock on.
+// any code is redeemed. Turning `oauth2.consentRequired` off here would
+// reconfigure a setting this job holds no lock on, so the SINGLE SIGN-ON
+// presentations answer the consent screen instead, through consent_screen.js
+// (see present()): an unanswered screen holds the presentation back.
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
 const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
 const authnSignin = require("./authn_signin.js");
+const consentScreen = require("./consent_screen.js");
 
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
@@ -291,10 +295,28 @@ async function signIn() {
 // sign-in's own return trip and a conforming transmitter does not report it —
 // otherwise `session-presented` would arrive milliseconds after
 // `session-established` on every flow and would mean nothing.
+//
+// AND THROUGH THE CONSENT SCREEN, answered Allow, when one is drawn. This
+// job's person is new on every run, so `oauth2.consentRequired` (ON by
+// default) sends the first presentation to /oauth2/consent — and iya-sts
+// HOLDS the next presentation of a session whose request went to that screen
+// (authn.ts holdPresentation()), because the request comes back to the
+// endpoint from it. Left unanswered, each presentation re-armed the hold and
+// none was ever reported: "Nothing arrived for the second presentation" on
+// every run where nothing else had happened to make the screen unnecessary.
+// Answered, the request completes, consent is on record, and the second
+// presentation is single sign-on with nothing in the way.
 async function present() {
   log.debug("Entering present().");
   const out = await call('GET', authorizeUrl(), null,
       { anonymous: true, redirect: 'manual', headers: cookieHeader() });
+  if (consentScreen.isConsentScreen(String(out.location || ''))) {
+    const settled = await consentScreen.settleAuthorization({
+      base: stsUrl, location: out.location, cookie: sessionCookie });
+    log.debug("Leaving present(). " + out.status + " and " +
+              settled.screens + " consent screen(s) answered.");
+    return out;
+  }
   log.debug("Leaving present(). " + out.status);
   return out;
 }
@@ -798,10 +820,8 @@ async function autoEmitOffStopsIt() {
 // 5. EVERY ONE OF THE EIGHT, BY HAND.
 // ---------------------------------------------------------------------------
 async function everyEventEmittedByHand() {
-  log.info("[emit] All eight through POST /admin-api/caep/emit. Five of them " +
-      "have no act here that could cause them — no device reports " +
-      "compliance to this service and no risk engine talks to it — so this " +
-      "is the only way they are ever produced.");
+  log.info("[emit] All eight through POST /admin-api/caep/emit, " +
+      "on the session just signed in.");
   const signed = await signIn();
   if (!signed.ok) {
     skip('emitting by hand', signed.why);

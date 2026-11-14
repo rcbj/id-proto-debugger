@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 'use strict';
 
 // Static-site build for the OAuth2/OIDC Debugger client.
@@ -200,6 +203,7 @@ const BUNDLES = [
   ['did_tools', 'didtools'],
   ['webauthn_lab', 'webauthnlab'],
   ['webauthn_analyzer', 'webauthnanalyzer'],
+  ['smartcard', 'smartcard'],
   ['wsfed_request', 'wsfed_request'],
   ['wsfed_response', 'wsfed_response'],
   ['kerberos_decoder', 'kerberos_decoder'],
@@ -213,6 +217,8 @@ const BUNDLES = [
   ['scim', 'scim'],
   ['spiffe', 'spiffe'],
   ['ssf', 'ssf'],
+  ['xacml', 'xacml'],
+  ['gnap', 'gnap'],
 ];
 
 const CALLBACK_HTML = `<!DOCTYPE html>
@@ -262,7 +268,7 @@ log.info('cleaning ' + path.relative(CLIENT_DIR, DIST));
 fs.rmSync(DIST, { recursive: true, force: true });
 fs.mkdirSync(path.join(DIST, 'js'), { recursive: true });
 
-// 1b. Fix this build's identity (M.N.O) and ship it as dist/version.json.
+// 1b. Fix this build's identity (M.N.P.B) and ship it as dist/version.json.
 const appversion = require('./version');
 const VERSION = appversion.stamp(DIST);
 const BUILD_INFO = appversion.buildInfo(VERSION);
@@ -533,8 +539,13 @@ function resolveIncludes(dir) {
       try {
         return fs.readFileSync(incPath, 'utf8');
       } catch (e) {
-        console.error('[build] include failed: ' + inc + ' (' + e.message +
-                      ')');
+        // A MISSING PARTIAL FAILS THE BUILD. It used to log a line and
+        // substitute nothing, which is how gnap.html and smartcard.html
+        // shipped including a /partials/bottom.html that never existed —
+        // and how gnap.html's footer went out in a wrapper with no styles,
+        // with nothing anywhere saying so. Same rule as the dead links below.
+        includeFailures.push(path.relative(DIST, full) + ' includes ' + inc +
+                             ' (' + e.message + ')');
         return '';
       }
     });
@@ -545,7 +556,13 @@ function resolveIncludes(dir) {
   }
   log.debug("Leaving resolveIncludes().");
 }
+const includeFailures = [];
 resolveIncludes(DIST);
+if (includeFailures.length) {
+  log.error('[build] ' + includeFailures.length + ' include(s) failed:\n  ' +
+            includeFailures.join('\n  '));
+  process.exit(1);
+}
 
 // 4a. Nothing that ships may link to something that did not. Run AFTER the
 //     includes are resolved, since a header or footer partial is where a link
@@ -580,7 +597,7 @@ if (!EMBEDDED) {
   assertNoLinksToExcluded(DIST);
 }
 
-// 4b. Stamp the current year and the M.N.O version into every page. The
+// 4b. Stamp the current year and the M.N.P.B version into every page. The
 //     {{YEAR}} / {{VERSION}} / {{BUILD_INFO}} placeholders ship in the footer
 //     partial (now inlined into every page above) and in the error pages. The
 //     version record was written to dist/version.json at the top of this build,

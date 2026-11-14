@@ -1,0 +1,29 @@
+# THE MIRROR IMAGES THAT ARE BUILT RATHER THAN COPIED.
+#
+# .github/image-mirror.txt lists images that exist upstream and are copied
+# into the private mirror. The images here exist nowhere upstream: each is
+# BUILT from a pinned source and pushed to
+#
+#   ghcr.io/rcbj/id-proto-debugger/mirror/<mirror path>
+#
+# by .github/scripts/mirror-builds.sh, so that no build in a test run
+# downloads anything or fetches source from GitHub. The Mirror Images
+# workflow runs it beside the copy step (weekly refresh, and `missing` at the
+# start of every tests.yml run) and holds these packages private too.
+#
+# Two columns: the mirror path, and where it is built from —
+#
+#   * a directory in this repository holding a Dockerfile (`./<dir>`), whose
+#     downloads are pinned by `ADD --checksum`;
+#   * a git build context (`https://...git#<tag>:<dir>`), a release tag of
+#     another repository.
+#
+# Every build is given the mirror's named contexts (one per line of
+# image-mirror.txt), so its FROMs resolve against the mirror as well.
+# tests/image_mirror_coverage.js reads this list: the compose files may name
+# these paths, the companion's tag must be iya-sts's release, and every
+# remote ADD in a listed Dockerfile must carry a checksum.
+#
+# mirror path                            source
+shibboleth-idp-dist:4.3.3                ./shibboleth-idp/dist
+iya-sts-companion:v1.0.0                 https://github.com/rcbj/iya-sts.git#v1.0.0:companion

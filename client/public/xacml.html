@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Identity Protocol Debugger &mdash; XACML</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
+    <link href="/css/xacml.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/xacml.js">
+</script>
+
+<p class="xacml-return">
+  <a id="return_link" href="/">&larr; Return to debugger</a>
+</p>
+
+<h3>XACML Editor</h3>
+
+<details class="saml-explain">
+  <summary>About this page</summary>
+  <p>Edit an XACML 3.0 Policy or PolicySet and ask the same document
+  for a decision. The repository lives in this browser. Nothing is
+  sent to a server, and there is no directory behind the decision: the
+  attributes in the request are the only ones the PDP sees. An empty
+  deny-unless-permit policy denies every request until a rule permits
+  one. ALFA on this page is written in the <code>example</code>
+  namespace. A document pasted from anywhere else still imports.</p>
+</details>
+
+<p id="xacml_status" class="xacml-note"></p>
+
+<p class="saml-controls">
+  <label class="saml-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="xacml_toggle_all" checked="checked"
+           onchange="return xacml.setAllPanes(this.checked);">
+    <span class="saml-toggle-slider"></span>
+    <span class="saml-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="saml-controls-hint">Tip: click a pane's title to
+  collapse/expand it.</span>
+</p>
+
+<fieldset class="saml-pane" id="xacml_pane_repository">
+  <legend class="saml-legend"
+          onclick="return xacml.togglePane('xacml_pane_repository_body');"
+          title="Click to collapse or expand this pane.">Repository</legend>
+  <div class="saml-pane-body" id="xacml_pane_repository_body">
+  <details class="saml-explain">
+    <summary>What the repository is</summary>
+    <p>Every policy here is kept in this browser's storage. Create a
+    blank Policy or PolicySet, load the one-rule sample, or import a
+    document as XACML XML or ALFA (or upload a file, in the next pane).
+    Creating or loading one opens it in the Editor pane.</p>
+  </details>
+  <div class="saml-row">
+    <label title="The name the new policy is kept under in this browser's repository. Not the PolicyId.">Name
+      <input type="text" id="xacml_name" size="20" value="policy"
+             title="The name the new policy is kept under in this browser's repository. Not the PolicyId.">
+    </label>
+    <label title="Policy holds Rules; PolicySet holds Policies and other PolicySets.">Kind
+      <select id="xacml_kind"
+              title="Policy holds Rules; PolicySet holds Policies and other PolicySets.">
+        <option value="policy">Policy</option>
+        <option value="policyset">PolicySet</option>
+      </select>
+    </label>
+    <button type="button" title="Create an empty policy of this kind and name, and open it in the Editor."
+            onclick="return xacml.createBlank();">Create blank</button>
+    <button type="button" title="Load the one-rule sample (permits alice, denies everyone else) and open it in the Editor."
+            onclick="return xacml.loadSample();">Load sample</button>
+  </div>
+  <div class="saml-field">
+    <label for="xacml_import_name" title="The repository name for the imported document. Empty uses its PolicyId or PolicySetId.">Import as</label>
+    <input type="text" id="xacml_import_name"
+           placeholder="defaults to the policy id"
+           title="The repository name for the imported document. Empty uses its PolicyId or PolicySetId.">
+  </div>
+  <div class="saml-field">
+    <label for="xacml_import" title="An XACML 3.0 Policy or PolicySet document, or ALFA source, to add to the repository.">XACML XML or ALFA</label>
+    <textarea id="xacml_import" rows="4"
+              title="An XACML 3.0 Policy or PolicySet document, or ALFA source, to add to the repository."></textarea>
+  </div>
+  <div class="saml-row">
+    <button type="button" title="Parse the document above and add it to the repository."
+            onclick="return xacml.importPolicy();">Import</button>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="xacml_pane_files">
+  <legend class="saml-legend"
+          onclick="return xacml.togglePane('xacml_pane_files_body');"
+          title="Click to collapse or expand this pane.">Upload / Download</legend>
+  <div class="saml-pane-body" id="xacml_pane_files_body">
+  <details class="saml-explain">
+    <summary>What these do</summary>
+    <p>Upload adds an XACML XML or ALFA file to the repository, named by
+    "Import as" or, when that is empty, by the file name, and opens it in
+    the Editor. Download and Copy take the policy open in the Editor, as
+    XACML 3.0 XML: formatted is indented the way the editor writes it,
+    unformatted has no whitespace between elements.</p>
+  </details>
+  <div class="saml-row">
+    <label title="An XACML 3.0 Policy or PolicySet document (.xml), or ALFA source, to add to the repository.">File
+      <input type="file" id="xacml_upload" accept=".xml,.alfa,.txt,application/xml,text/xml,text/plain"
+             title="An XACML 3.0 Policy or PolicySet document (.xml), or ALFA source, to add to the repository.">
+    </label>
+    <button type="button" title="Read the chosen file and add it to the repository."
+            onclick="return xacml.uploadPolicy();">Upload</button>
+  </div>
+  <div class="saml-row">
+    <label title="Formatted: indented as the editor writes it. Unformatted: no whitespace between elements.">Layout
+      <select id="xacml_export_layout"
+              title="Formatted: indented as the editor writes it. Unformatted: no whitespace between elements.">
+        <option value="formatted">Formatted</option>
+        <option value="unformatted">Unformatted</option>
+      </select>
+    </label>
+    <button type="button" title="Save the policy open in the Editor as an .xml file."
+            onclick="return xacml.downloadPolicy();">Download</button>
+    <button type="button" title="Copy the policy open in the Editor to the clipboard."
+            onclick="return xacml.copyPolicy();">Copy</button>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="xacml_pane_editor">
+  <legend class="saml-legend"
+          onclick="return xacml.togglePane('xacml_pane_editor_body');"
+          title="Click to collapse or expand this pane.">Editor</legend>
+  <div class="saml-pane-body" id="xacml_pane_editor_body">
+  <details class="saml-explain">
+    <summary>How editing works</summary>
+    <p>Choose the policy to edit. Each element of the open document is a
+    row below with its own small form; saving a form changes that
+    element and redraws the document. Only an enabled policy takes part
+    in decisions, and the decision root is the policy a request is asked
+    of when "Try a decision" names no other.</p>
+  </details>
+  <div class="saml-row">
+    <label title="The policy shown in the editor below.">Open
+      <select id="xacml_open" title="The policy shown in the editor below."
+              onchange="return xacml.openPolicy();"></select>
+    </label>
+    <label title="Only an enabled policy takes part in a decision.">
+      <input type="checkbox" id="xacml_enabled"
+             title="Only an enabled policy takes part in a decision."
+             onchange="return xacml.toggleEnabled();">
+      Enabled
+    </label>
+    <span id="xacml_is_root"></span>
+    <button type="button" title="Make the open policy the one a request is decided against by default."
+            onclick="return xacml.makeRoot();">Make decision root</button>
+    <button type="button" title="Delete the open policy from this browser's repository."
+            onclick="return xacml.removePolicy();">Remove</button>
+  </div>
+  <div id="xacml_editor"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="xacml_pane_decision">
+  <legend class="saml-legend"
+          onclick="return xacml.togglePane('xacml_pane_decision_body');"
+          title="Click to collapse or expand this pane.">Try a decision</legend>
+  <div class="saml-pane-body" id="xacml_pane_decision_body">
+  <details class="saml-explain">
+    <summary>What the request is made of</summary>
+    <p>The subject, the action, the resource and any extra rows below
+    are the whole request. A pasted XACML Request, or a JSON Profile
+    request, is used instead of those fields when the box is not empty.
+    The policy is the one named here, or the decision root when the list
+    says the root.</p>
+  </details>
+  <div class="saml-row">
+    <label title="The policy the request is decided against. The root entry means the decision root.">Policy
+      <select id="xacml_decide_policy"
+              title="The policy the request is decided against. The root entry means the decision root."></select>
+    </label>
+    <label title="The subject-id attribute (access-subject category).">Subject
+      <input type="text" id="xacml_subject" size="14" value="alice"
+             title="The subject-id attribute (access-subject category).">
+    </label>
+    <label title="The action-id attribute (action category).">Action
+      <input type="text" id="xacml_action" size="8" value="GET"
+             title="The action-id attribute (action category).">
+    </label>
+    <label title="The resource-id attribute (resource category).">Resource
+      <input type="text" id="xacml_resource" size="26"
+             value="https://example.com/a"
+             title="The resource-id attribute (resource category).">
+    </label>
+  </div>
+  <div id="xacml_attributes"></div>
+  <div class="saml-row">
+    <button type="button" title="Add a row for one more attribute: category, id, data type and value."
+            onclick="return xacml.addAttribute();">Add attribute</button>
+  </div>
+  <div class="saml-field">
+    <label for="xacml_request" title="An XACML 3.0 Request document or a JSON Profile request. When not empty it is used instead of the fields above.">Request XML or JSON Profile</label>
+    <textarea id="xacml_request" rows="4"
+              title="An XACML 3.0 Request document or a JSON Profile request. When not empty it is used instead of the fields above."></textarea>
+  </div>
+  <div class="saml-row">
+    <button type="button" title="Evaluate the request against the chosen policy and show the decision."
+            onclick="return xacml.decide();">Ask</button>
+  </div>
+  <div id="xacml_decision"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="xacml_pane_saml_tools">
+  <legend class="saml-legend"
+          onclick="return xacml.togglePane('xacml_pane_saml_tools_body');"
+          title="Click to collapse or expand this pane.">SAML Tools</legend>
+  <div class="saml-pane-body" id="xacml_pane_saml_tools_body">
+  <p class="saml-note">Standalone utilities for working with SAML and its
+  XML security layers.</p>
+  <table class="saml-table">
+    <tbody>
+      <tr>
+        <td><a href="/saml_authnrequest.html?from=xacml.html">SAML Request Decoder</a> &mdash; take an <code>AuthnRequest</code> off the wire and read it: paste a redirect URL, a POST form body, a bare <code>SAMLRequest</code>, an artifact or the XML, and get the pretty-printed message, its important values, an optional signature check (enveloped for POST, query-string for Redirect) and optional decryption.</td>
+      </tr>
+      <tr>
+        <td><a href="/saml_response_decoder.html?from=xacml.html">SAML Response Decoder</a> &mdash; take a SAML <strong>response</strong> off the wire and read it, in SAML 2.0 or SAML 1.1: paste a POST form body, a redirect URL, a bare <code>SAMLResponse</code>, an artifact, a bare <code>&lt;saml:Assertion&gt;</code> or the XML, and get the status, every assertion and its attributes, a check of <strong>every</strong> signature it carries (message, assertion and query-string, reported separately) and optional decryption.</td>
+      </tr>
+      <tr>
+        <td><a href="/saml_tools.html?from=xacml.html">SAML Assertion Tool</a> &mdash; compose a spec-compliant SAML 1.0/1.1/2.0 assertion (optional elements, NameID, custom attributes), sign it with XML Signature, and encrypt it with XML Encryption.</td>
+      </tr>
+      <tr>
+        <td><a href="/saml_cert.html?from=xacml.html">Certificate Details</a> &mdash; parse an X.509 certificate (PEM or bare base64 DER) and inspect its subject, issuer, validity, key, extensions, and fingerprints.</td>
+      </tr>
+      <tr>
+        <td><a href="/pki.html?from=xacml.html">Certificate Authority &amp; X.509 Tools</a> &mdash; build a Root, Intermediate and Issuing <strong>certificate authority</strong>, issue TLS server/client, code-signing, S/MIME and other certificates with every X.509v3 extension, and test a real TLS or mutual-TLS handshake with what you issued.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</fieldset>
+
+<link rel="apple-touch-icon" sizes="57x57"
+      href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60"
+      href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72"
+      href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76"
+      href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114"
+      href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120"
+      href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144"
+      href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152"
+      href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180"
+      href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"
+      href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32"
+      href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96"
+      href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16"
+      href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

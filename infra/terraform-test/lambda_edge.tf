@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # --- Lambda@Edge: the landings that receive an IdP's POST --------------------
 #
 # The static site has no server, and two protocols return their result as an

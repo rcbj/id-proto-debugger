@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: rfc9700_flows.js
 //
 // ---------------------------------------------------------------------------
@@ -860,18 +863,24 @@ async function runFlow(driver, flowKey, stsUrl, landing) {
     "in its query string without it (" + landing + " landing here), and the " +
     "page reads both — so this is where that goes wrong.");
 
-  // The Token Request's scope is the one the authorization request asked
-  // for. The page seeds that field with EVERY value in scopes_supported, and
-  // since iya-sts #110 the mock advertises its own protected scopes there
-  // (scim:*, ssf:*) while issuing them only to a client whose registration
-  // declares them — so the seeded field is refused with invalid_scope, which
-  // is RFC 6749 section 5.2 working rather than anything this job is about.
-  const tokenScope = By.id("token_scope");
-  await driver.wait(until.elementLocated(tokenScope), waitTime);
-  await driver.executeScript("arguments[0].scrollIntoView({block:'center'});",
-    await driver.findElement(tokenScope));
-  await driver.findElement(tokenScope).clear();
-  await driver.findElement(tokenScope).sendKeys(flow.scope);
+  // RFC 6749 section 4.1.3 defines no scope parameter on the
+  // authorization-code token request. Populate used to seed #token_scope
+  // with every scopes_supported value, and iya-sts then refused the
+  // exchange with invalid_scope. The field must be empty, and the
+  // preview — which is what Get Token sends — must not carry scope=.
+  const tokenScopeEl = await driver.findElement(By.id("token_scope"));
+  const tokenScope = await tokenScopeEl.getAttribute("value");
+  assert.strictEqual(tokenScope, "",
+    "A populated-metadata code exchange seeded #token_scope with \"" +
+    tokenScope + "\". RFC 6749 section 4.1.3 defines no scope parameter " +
+    "on this request.");
+  await driver.executeScript(
+    "oauth2_oidc_2.recalculateTokenRequestDescription();");
+  const tokenPreview = await driver.findElement(
+    By.id("display_token_request_form_textarea1")).getAttribute("value");
+  assert.ok(!/(?:^|[&\n])scope=/.test(tokenPreview),
+    "A populated-metadata code exchange still sends a scope. The token " +
+    "request preview was:\n" + tokenPreview);
 
   // Exchange it.
   await driver.executeScript("arguments[0].scrollIntoView({block:'center'});",

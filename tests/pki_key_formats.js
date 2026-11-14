@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: pki_key_formats.js
 //
 // client/src/key_material.js — key generation and every keystore format, read

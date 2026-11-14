@@ -1,7 +1,8 @@
-# THE THIRD-PARTY IMAGES THE TEST STACK USES, AND WHERE THEIR COPIES LIVE.
+# THE THIRD-PARTY IMAGES THE STACKS USE, AND WHERE THEIR COPIES LIVE.
 #
-# Every image docker-compose-run-tests.yml (and the coverage overlay on top of
-# it) pulls or builds FROM is copied into a PRIVATE package under
+# Every image the four compose files (docker-compose-run-tests.yml,
+# docker-compose.yml, local-tests.yml, keycloak-tests.yml, and the overlays on
+# top of them) pull or build FROM is copied into a PRIVATE package under
 #
 #   ghcr.io/rcbj/id-proto-debugger/mirror/<mirror path>
 #
@@ -17,11 +18,15 @@
 #   * an `image:` in the compose file, written as
 #       ${IMAGE_MIRROR:-...}/<mirror path>
 #   * a base image some Dockerfile names in a FROM, redirected by an entry in
-#     that service's build.additional_contexts — which is how the mock STS's
-#     Dockerfile, in a submodule this repository does not edit, is covered.
+#     that service's build.additional_contexts (or a --build-context where a
+#     Dockerfile is built outside compose).
 #
-# tests/image_mirror_coverage.js fails when a FROM or an `image:` in the test
-# stack is not covered here, so a new base image cannot silently go back to
+# Images with no upstream are BUILT into the same mirror instead, and listed
+# in .github/image-mirror-builds.txt rather than here: that list's columns
+# are a mirror path and a source, not an upstream.
+#
+# tests/image_mirror_coverage.js fails when a FROM or an `image:` in any of
+# those compose files is not covered here, so a new base image cannot silently go back to
 # Docker Hub. Add it here in the same commit, and the next test run's mirror
 # job copies it before the stack is built.
 #
@@ -34,3 +39,9 @@ postgres:18                              postgres:18
 quay.io/keycloak/keycloak:26.6.4         keycloak/keycloak:26.6.4
 waltid/issuer-api2:0.23.0                waltid/issuer-api2:0.23.0
 waltid/verifier-api2:0.23.0              waltid/verifier-api2:0.23.0
+# iya-sts's own release image, published PUBLIC by iya-sts's pipeline. The
+# stacks run this private copy so a run depends on no package outside this
+# repository's area; the weekly refresh re-copies the tag. A release bump
+# changes this line together with the IYA_STS_IMAGE defaults in the compose
+# files, which tests/image_mirror_coverage.js holds to it.
+ghcr.io/rcbj/iya-sts:1.0.0               iya-sts:1.0.0

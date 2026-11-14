@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
 /* WS-Trust Test Tools — small additions on top of saml_common.css (which the
    WS-Trust pages also link and whose .saml-* pane/field/tab/table classes they
    reuse). Only WS-Trust-specific bits live here. */

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # ---------------------------------------------------------------------------
 # A VPC of this stack's own, and that is a deliberate cost rather than laziness
 # avoided.

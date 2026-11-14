@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 //
 // run-report.js — lightweight test runner + report generator for the
 // Selenium tests in this directory.
@@ -319,13 +322,17 @@ const JOB_LOCKS = {
   // that a REPLAYED AP-REQ is refused — which a concurrent job spending its
   // own tickets against the same acceptor would disturb.
   "krb5_mit_client.js": "sts-spnego-signin",
+  // (`caep_session_protocols.js` with CAEP_SIGNIN_PROTOCOL=spnego holds this
+  // lock too, for the same two reasons — see its descriptor in buildJobs().)
   // The mock's SSF configuration. `ssf_protocol.js` turns
   // `ssf.pushAllowHttp` ON (its own RFC 8935 listener is plain http) and
   // flips both deliberate defects — `ssf.legacySubClaim` and
-  // `ssf.breakSetSignature` — one at a time. Each is restored, and not
-  // instantly: a job polling that transmitter inside that window gets a SET
-  // whose signature does not verify, which `ssf_page.js` would report as its
-  // own failure with nothing to say which other job did it.
+  // `ssf.breakSetSignature` — one at a time. Product refuses those two
+  // writes, so they are not left on; the lock stays, because development
+  // still flips them. Each is restored, and not instantly: a job polling
+  // that transmitter inside that window gets a SET whose signature does not
+  // verify, which `ssf_page.js` would report as its own failure with nothing
+  // to say which other job did it.
   //
   // It also DELETES the streams it made, and a stream is named by an id the
   // other job does not know — so what actually collides is the settings and
@@ -353,8 +360,18 @@ const JOB_LOCKS = {
   // of it, so a caep_protocol.js or ssf_protocol.js run overlapping
   // one would see events about somebody else's session arriving in
   // the middle of its own poll — which is the exact hazard the
-  // sts-ssf lock was created for when caep.autoEmit landed.
+  // sts-ssf lock was created for when caep.autoEmit landed. The SPNEGO
+  // one ALSO holds `sts-spnego-signin` — a `lock` list on its descriptor
+  // in buildJobs(), since this table names one lock per script.
   "caep_session_protocols.js": "sts-ssf",
+  // The two GNAP jobs that APPROVE grants: they sign people in at iya-sts
+  // and revoke approved grants and tokens, and each of those is a CAEP
+  // event (session-revoked about gnap-grant:/gnap-token:) on any stream
+  // scoped to that application. A stream another job is reading must not
+  // be handed one it did not cause. gnap_engine.js and api_gnap.js
+  // approve nothing, so nobody is told about their grants.
+  "gnap_protocol.js": "sts-ssf",
+  "gnap_page.js": "sts-ssf",
   // `ssf_engine.js` is deliberately absent: it needs no transmitter at all,
   // so nothing it does can collide with this. `api_ssf.js` is absent for a
   // different reason — it drives the api's own receiver and never touches
@@ -373,11 +390,26 @@ const CONCURRENCY = (function () {
 // The lock a job holds while it runs, or null. A job may name its own (`lock`
 // on the descriptor) for a case the table cannot see; otherwise it is the
 // script's.
+//
+// A descriptor's `lock` may also be a LIST, for a job that drives two shared
+// services at once and must exclude both families: the SPNEGO CAEP job agrees
+// streams on the transmitter (`sts-ssf`) AND spends tickets at the SPNEGO
+// door that `sts-spnego-signin` jobs close on purpose. It holds every name in
+// the list, and starts only when none of them is held.
 function lockOf(job) {
   log.debug("Entering lockOf().");
   const lock = job.lock || JOB_LOCKS[job.script] || null;
   log.debug("Leaving lockOf(). " + (lock || "none"));
   return lock;
+}
+
+// lockOf(), always as a list — empty for an unlocked job.
+function locksOf(job) {
+  log.debug("Entering locksOf().");
+  const lock = lockOf(job);
+  const locks = !lock ? [] : (Array.isArray(lock) ? lock.slice() : [lock]);
+  log.debug("Leaving locksOf(). " + locks.length);
+  return locks;
 }
 
 // Mirror of the *active* (non-commented) test invocations in
@@ -433,8 +465,8 @@ function buildJobs() {
   // WHERE THE STACK'S IMAGES COME FROM. docker-compose-run-tests.yml takes
   // every third-party image, and every base image it builds FROM, from a
   // private mirror on ghcr.io — and a FROM the mirror does not cover is not
-  // an error, it is a pull from Docker Hub. This fails on one, including a
-  // submodule bump that moves sts/Dockerfile to a new tag. Node only.
+  // an error, it is a pull from Docker Hub. This fails on one, and on compose
+  // files that name different iya-sts releases. Node only.
   jobs.push({
     name: "Image mirror coverage (every pulled and FROM image is on ghcr.io)",
     script: "image_mirror_coverage.js",
@@ -1232,6 +1264,56 @@ function buildJobs() {
     },
   });
 
+  // RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens), in node with
+  // no browser and no network. The checks are a reading of a token
+  // the debugger already holds. A provider's behaviour is not an
+  // input, so the job never skips and takes no env.
+  jobs.push({
+    name: "RFC 9068 (JWT Profile for OAuth 2.0 Access Tokens, in node)",
+    script: "rfc9068_engine.js",
+    env: {},
+  });
+
+  // OpenID Connect RP Metadata Choices 1.0, in node with no browser
+  // and no network. The registration request and the reading of a
+  // registration response are this client's obligations. A provider's
+  // behaviour is not an input, so the job never skips and takes no env.
+  jobs.push({
+    name: "RP Metadata Choices (OpenID Connect RP Metadata Choices " +
+        "1.0, in node)",
+    script: "rp_metadata_choices_engine.js",
+    env: {},
+  });
+
+  // The token-request scope. scopes_supported is not a default for a
+  // code exchange, a refresh, or a dynamic registration. No browser
+  // and no network: the decision is a function, and the pages are
+  // checked by reading them.
+  jobs.push({
+    name: "OAuth2 token-request scope (in node)",
+    script: "oauth_scope_engine.js",
+    env: {},
+  });
+
+  // Client secrets and passwords are never stored, and the DCR and
+  // introspection bearer tokens live in sessionStorage only. The engine
+  // runs in node and every module under client/src is read for a write
+  // that breaks either rule.
+  jobs.push({
+    name: "OAuth2 secrets are never stored (in node)",
+    script: "secret_storage_engine.js",
+    env: {},
+  });
+
+  // Every script a job above or below names must be in the tests image.
+  // A missing COPY otherwise surfaces minutes into a run as
+  // `Cannot find module`, and it reached develop three times in a row.
+  jobs.push({
+    name: "Every job script reaches the tests image (in node)",
+    script: "job_scripts_in_image.js",
+    env: {},
+  });
+
   // OIDC Dynamic Client Registration (OpenID Connect Registration 1.0 /
   // RFC 7591 / RFC 7592). Creates a client using an initial access token, then
   // reads, updates, and deletes it via the client configuration endpoint.
@@ -1306,6 +1388,111 @@ function buildJobs() {
     name: "Hashing engine (FIPS 180-4 / 202 vs OpenSSL, SP 800-185 vectors " +
         "and KMAC vs OpenSSL, in node)",
     script: "hash_engine.js",
+    env: {},
+  });
+
+  // XACML editor and decision test, in node with no browser and no
+  // network. The page evaluates a repository in the browser. A PDP
+  // at the far end is not an input, so the job never skips.
+  jobs.push({
+    name: "XACML editor and decision test (in node)",
+    script: "xacml_engine.js",
+    env: {},
+  });
+
+  // Every rule- and policy-combining algorithm against XACML 3.0 Appendix
+  // C, exhaustively over up to four child decisions: the decision and how
+  // many children were evaluated, which decides the obligations. In node.
+  jobs.push({
+    name: "XACML combining algorithms against Appendix C (in node)",
+    script: "xacml_combiners.js",
+    env: {},
+  });
+
+  // The PDP end to end from XML: only-one-applicable, variables, the
+  // environment attributes it supplies, the PIP and MustBePresent, and
+  // legacy permit-overrides over an error. In node.
+  jobs.push({
+    name: "XACML PDP paths: only-one-applicable, variables, environment, " +
+      "PIP (in node)",
+    script: "xacml_pdp_paths.js",
+    env: {},
+  });
+
+  // The XACML editor page in a browser: decisions, a Match edit, an
+  // ill-typed edit refused, a rule added and removed, the ALFA view
+  // imported back, the decision root, a reload, and Remove. Every action
+  // runs inside one in-page script, so no element handle outlives a
+  // re-render. Needs the client only.
+  jobs.push({
+    name: "XACML editor page (edits, ALFA round trip and decisions, " +
+        "in the browser)",
+    script: "xacml_page.js",
+    env: {},
+  });
+
+  // Every XACML 3.0 standard function and datatype, as a table of 482
+  // policies with the decision Appendix A gives each
+  // (xacml_function_cases.js): in node against the workbench, with each
+  // case also written as ALFA and read back; then the same table in the
+  // browser through the page's Import and Ask controls. Needs the client
+  // only, for the second.
+  jobs.push({
+    name: "XACML functions and datatypes (every case, in node)",
+    script: "xacml_functions_engine.js",
+    env: {},
+  });
+  jobs.push({
+    name: "XACML functions and datatypes (every case, through xacml.html)",
+    script: "xacml_functions_page.js",
+    env: {},
+  });
+
+  // GNAP client instance. The signature checks need no network. The
+  // live half must obtain a grant from iya-sts with each of httpsig,
+  // jwsd and jws for the page's default sample (subject information),
+  // which development mode grants with no administrator involved. A
+  // product-mode server refuses the unprovisioned key, and only the
+  // proofs are checked there.
+  jobs.push({
+    name: "GNAP client (RFC 9635 proofs, and one grant against iya-sts)",
+    script: "gnap_engine.js",
+    env: {},
+  });
+
+  // The whole life of a GNAP grant against iya-sts, for httpsig, jwsd,
+  // jws and mtls: the SSF scope declared through /admin-api, the
+  // interaction approved in Chrome, the finish hash, continuation past
+  // too_fast, the token used at the Shared Signals transmitter, token
+  // rotation, client key rotation (not mtls: RFC 9635 section 7.3.2.1),
+  // token and grant revocation. Development mode only; it fails, and
+  // says why, in product mode.
+  jobs.push({
+    name: "GNAP protocol (every proof through a grant's whole life " +
+        "against iya-sts, the interaction approved in a browser)",
+    script: "gnap_protocol.js",
+    env: {
+      STS_URL: env.STS_URL || "https://localhost:8081",
+    },
+  });
+
+  // ISO 7816 command and response APDUs and BER-TLV, in node, with no
+  // browser and no reader. PIV, the OpenPGP card, OATH and YubiHSM Auth
+  // share this one reader. The vectors are the short and extended
+  // cases, including a length that overruns and a nested tag. No
+  // service, so it never skips.
+  jobs.push({
+    name: "Smart card engine (ISO 7816, OTP, OATH, PIV, " +
+        "OpenPGP, YubiHSM Auth, in node)",
+    script: "smartcard_engine.js",
+    env: {},
+  });
+
+  // The smart-card page. Types an OTP and refuses a bad string. It does
+  // not click Verify and it does not call YubiCloud. Needs the client.
+  jobs.push({
+    name: "Smart card page (OTP decode and layout, in the browser)",
+    script: "smartcard_page.js",
     env: {},
   });
 
@@ -2253,10 +2440,10 @@ function buildJobs() {
     env: {},
   });
 
-  // The Kerberos codec exists TWICE — common/krb5 for the browser and the api, and
-  // a vendored copy in the sts/ submodule for the KDC, because compose builds that
-  // service with `context: ./sts` and a Docker build cannot COPY from outside its
-  // context. This is the test that makes that safe.
+  // The Kerberos codec exists TWICE — common/krb5 for the browser and the api,
+  // and iya-sts's own for its KDC (separately maintained since iya-sts #1280,
+  // loaded here out of its release image's tree). This is the test that keeps
+  // the two agreeing.
   //
   // A file comparison alone would not be enough. The failure mode of a vendored
   // wire codec is not "one copy is broken" — it is that BOTH copies are
@@ -2264,16 +2451,15 @@ function buildJobs() {
   // passing, and the symptom is an integrity failure indistinguishable from a wrong
   // password. So the copies are cross-checked behaviourally: messages built by one
   // and read by the other, and — the assertion nothing else can make — one copy
-  // ENCRYPTS and the other DECRYPTS. Then the files are compared too, which catches
-  // drift before it has consequences and names the one command that fixes it
-  // (common/krb5/sync-to-mock-sts.sh).
+  // ENCRYPTS and the other DECRYPTS. (The files are no longer compared: the two
+  // are separate implementations now, and only the wire has to agree.)
   //
   // Proved against five real drift scenarios, each caught by a different assertion:
   // a key usage number, a MAC over the ciphertext instead of the plaintext, a
-  // context tag, a comment-only edit, and a reader silently dropping a field.
-  // With the submodule uninitialised it says so and passes — an uninitialised
-  // submodule is an EMPTY DIRECTORY, and reporting that as a codec failure sends
-  // somebody looking in the wrong place. Node only, never skipped.
+  // context tag, and a reader silently dropping a field.
+  // When iya-sts's tree cannot be had (no docker, an image that will not pull)
+  // it FAILS naming the image: a comparison that did not happen is not a pass.
+  // Node only, never skipped.
   jobs.push({
     name: "Kerberos codec sync (common/krb5 against the mock STS's vendored copy, cross-wise)",
     script: "krb5_codec_sync.js",
@@ -2381,9 +2567,20 @@ function buildJobs() {
   // same terms as krb5_real_dc.js: it costs money and no launcher starts it.
   {
     const delegationIdps = [
-      // The iya-sts half (the in-process KDC) moved to iya-sts's own suite
-      // on 2026-10-23: it tested that service rather than this debugger.
-      // The Windows half stays — it drives this project's Kerberos client.
+      // The iya-sts half: iya-sts's KDC in-process, out of the release
+      // image's tree, with its directory and application registry loaded so
+      // the delegation policy is the one the service runs. Node only, no
+      // services. It left this list on 2026-10-23 and came back on
+      // 2026-11-13: run by hand it had drifted (a made-up subject and no
+      // registry) and failed, and nothing had noticed because nothing ran it.
+      {
+        key: "mock",
+        label: "iya-sts KDC, in-process",
+        skip: null,
+        env: { KRB5_DELEG_TARGET: "mock" },
+      },
+      // The Windows half drives this project's Kerberos client against a
+      // real domain controller.
       {
         key: "windows",
         label: "real Windows KDC",
@@ -3038,6 +3235,61 @@ function buildJobs() {
   if (ssfApiSkip) ssfApiJob.skip = ssfApiSkip;
   jobs.push(ssfApiJob);
 
+  // GNAP through the api. POST /gnap/call is how the page reaches an
+  // authorization server that sends no CORS headers, and the ONLY way
+  // it can make the mtls proof: a browser cannot choose the client
+  // certificate a request presents. Both jobs need the api, so they
+  // ride the same fact the SSF api job does. A static site still ships
+  // gnap.html, with the browser path only.
+  const gnapApiSkip = ldapOff
+    ? "POST /gnap/call is the api's, and a static site has no api. " +
+      "gnap.html still ships there and calls the authorization server " +
+      "from the browser, which cannot make the mtls proof."
+    : null;
+  const gnapApiJob = {
+    name: "GNAP api (the limits document, every refusal as a 400, the " +
+        "address policy, signed bytes forwarded unchanged, and the mtls " +
+        "proof made by the api)",
+    script: "api_gnap.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+    },
+  };
+  if (gnapApiSkip) gnapApiJob.skip = gnapApiSkip;
+  jobs.push(gnapApiJob);
+  // The api's Yubico OTP validation relay and its smart-card reader relay,
+  // over HTTP. The job is its own Validation Protocol 2.0 verifier, on an
+  // HTTPS port the api reaches by the compose name `tests`, and checks the
+  // signed fields arrive unchanged, the answer comes back verbatim, every
+  // malformed request is a 400 that sends nothing, and the reader relay is
+  // off (403) on this stack. A static site has no api.
+  const otpApiJob = {
+    name: "OTP verify and smart-card relay (api, against a verifier this " +
+        "job runs)",
+    script: "api_otp_smartcard.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+    },
+  };
+  if (ldapOff) {
+    otpApiJob.skip = "POST /otp/verify and the reader relay are the " +
+        "api's, and a static site has no api.";
+  }
+  jobs.push(otpApiJob);
+  const gnapPageJob = {
+    name: "GNAP page (a grant's whole life through gnap.html and the " +
+        "api: approval in the browser, the token used, rotated and " +
+        "revoked, the client key rotated, and mtls)",
+    script: "gnap_page.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+      STS_URL: env.STS_URL || "https://localhost:8081",
+    },
+  };
+  if (gnapApiSkip) gnapPageJob.skip = gnapApiSkip;
+  jobs.push(gnapPageJob);
+
   // THE PAGE. It is NOT gated on the api, for the reason the SCIM page job is
   // not: the browser call path is the one a static deployment has, and this
   // job's callPath section is the only place the disabled BackEnd option is
@@ -3164,11 +3416,15 @@ function buildJobs() {
   // is the property that mattered about the grid: a failure says `SAML 1.1`
   // rather than being one row of forty.
   //
-  // Gated on a transmitter the way the other CAEP jobs are. The SPNEGO one is
-  // scheduled and SKIPS ITSELF with a reason — it needs a Kerberos service
-  // ticket to answer the acceptor's 401, which only krb5_mit_client.js has
-  // the machinery for — and that is deliberately a scheduled skip rather than
-  // an absent job, because a job nobody schedules is a gap nobody can see.
+  // Gated on a transmitter the way the other CAEP jobs are. The SPNEGO one
+  // answers the acceptor's 401 with a REAL Kerberos ticket: `kinit` against
+  // iya-sts's own KDC, then `curl --negotiate` at /authn/spnego — the MIT
+  // tools krb5_mit_client.js uses, which tests/Dockerfile installs. So it
+  // carries that job's KRB5_TEST_* (this process's view of the KDC, not the
+  // api's), and it holds TWO locks: `sts-ssf` like its four siblings, and
+  // `sts-spnego-signin`, because the jobs under that name switch
+  // `krb5.spnegoAuthentication` off to assert the closed door, and a
+  // sign-in inside that window is a 403 this job would report as its own.
   // ------------------------------------------------------------------------
   ["oidc", "saml2", "saml11", "wsfed", "spnego"].forEach(function (which) {
     jobs.push({
@@ -3179,8 +3435,13 @@ function buildJobs() {
           "page is not an HTTP server — and every one put through the " +
           "debugger's own catalogue rather than merely counted)",
       script: "caep_session_protocols.js",
+      lock: which === "spnego" ? ["sts-ssf", "sts-spnego-signin"] : null,
       env: {
         CAEP_SIGNIN_PROTOCOL: which,
+        // Read by the SPNEGO job only. See krb5_mit_client.js's job.
+        KRB5_TEST_KDC_HOST: env.KRB5_TEST_KDC_HOST || "localhost",
+        KRB5_TEST_KDC_PORT: env.KRB5_TEST_KDC_PORT || "88",
+        KRB5_REALM: env.KRB5_REALM || "EXAMPLE.COM",
         API_URL: env.API_URL || "https://localhost:4000",
         // The push half only. See ssfPushAvailable above: on a target with
         // no api the job still runs and the POLL half — the delivery those
@@ -4084,11 +4345,15 @@ function buildJobs() {
   // same device the SAML 2.0 job's `SAML_STS_METADATA_URL` is and computed the
   // same way. Nothing has to be provisioned: that service accepts any
   // identifier and mints the document on the ask.
-  for (const SAML_BINDING of ["redirect", "post", "artifact"]) {
+  //
+  // ONE JOB PER BROWSER PROFILE (#307). The SAML 1.1 request is always a GET
+  // (Shibboleth's AuthnRequest profile defines no form POST), so the old
+  // "Redirect" and "POST" jobs were the same flow; the profile is chosen by
+  // which assertion consumer the shire names.
+  for (const SAML_BINDING of ["post", "artifact"]) {
     const job = {
-      name: `SAML 1.1 SSO — HTTP ${SAML_BINDING === 'post' ?
-          'POST' : SAML_BINDING === 'artifact' ?
-          'Artifact' : 'Redirect'} binding (mock STS)`,
+      name: `SAML 1.1 SSO — Browser/${SAML_BINDING === 'artifact' ?
+          'Artifact' : 'POST'} profile (iya-sts)`,
       script: "saml11_sso.js",
       env: {
         SAML_BINDING,
@@ -4134,6 +4399,31 @@ function buildJobs() {
         "the Shibboleth request shape, the 1.1 SP metadata)",
     script: "saml11_options.js",
     env: {},
+  });
+
+  // The SAML 1.1 request the page builds, held against iya-sts and, when
+  // SHIBBOLETH_IDP_URL names one, a Shibboleth identity provider, with no
+  // browser. The fixture half (the request's exact parameters, and both
+  // SAML 1.1 attribute-name shapes in a Browser/POST response) always runs.
+  // The containerized stack starts one (shibboleth-idp/, Shibboleth IdP
+  // 4.3.3) and run-tests-in-container.sh points SHIBBOLETH_IDP_URL at it;
+  // anywhere else that half runs only where one is configured.
+  jobs.push({
+    name: "SAML 1.1 peers (the Shibboleth request profile against iya-sts " +
+        "and a Shibboleth IdP)",
+    script: "saml11_peers.js",
+    env: {
+      SAML11_METADATA_URL: env.SAML11_METADATA_URL,
+      SAML11_METADATA_FILE: env.SAML11_METADATA_FILE,
+      WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+      STS_URL: env.STS_URL,
+      STS_ADMIN_URL: env.STS_ADMIN_URL,
+      SHIBBOLETH_IDP_URL: env.SHIBBOLETH_IDP_URL,
+      SHIBBOLETH_IDP_USER: env.SHIBBOLETH_IDP_USER,
+      SHIBBOLETH_IDP_PASSWORD: env.SHIBBOLETH_IDP_PASSWORD,
+      SHIBBOLETH_SP_ENTITY_ID: env.SHIBBOLETH_SP_ENTITY_ID,
+      SHIBBOLETH_ACS_URL: env.SHIBBOLETH_ACS_URL,
+    },
   });
 
   // SAML 2.0 EncryptedAssertion decryption: SSO against a SAML client with
@@ -4750,7 +5040,7 @@ function buildJobs() {
   // they are misleading, which is what happened on 2026-08-15 and 2026-08-16:
   // remote-run-tests.sh sets CONFIG_FILE=./env/test-idptools-com.js, and
   // sts/helpers.js resolves a relative CONFIG_FILE against sts/ rather than
-  // tests/ — where no such file exists, the submodule shipping only local.js,
+  // tests/ — where no such file exists, iya-sts shipping only local.js,
   // docker-tests.js and test.js. Both mock-KDC jobs died with "Cannot find
   // module './env/test-idptools-com.js'", naming a config file, on a run whose
   // target has nothing to do with the mock. Two red tests, twice, for a
@@ -4767,7 +5057,7 @@ function buildJobs() {
       "landing cards are greyed out. The codec and mock-KDC jobs are skipped " +
       "here too: they exercise local code and report nothing about the " +
       "deployed site, so running them adds noise and, when the run's " +
-      "CONFIG_FILE does not resolve inside the sts/ submodule, spurious " +
+      "CONFIG_FILE does not resolve inside iya-sts's tree, spurious " +
       "failures. Run them against the containerized stack " +
       "(./docker-run-tests.sh) or a local dev server. Set " +
       "KERBEROS_AVAILABLE=true for a remote target that IS api-backed.";
@@ -5207,8 +5497,10 @@ function nextRunnableJob(jobs, started, held) {
     if (started[i]) {
       continue;
     }
-    const lock = lockOf(jobs[i]);
-    if (lock && held.has(lock)) {
+    const blocked = locksOf(jobs[i]).some(function (one) {
+      return held.has(one);
+    });
+    if (blocked) {
       continue;
     }
     log.debug("Leaving nextRunnableJob(). " + i);
@@ -5239,11 +5531,12 @@ function runPool(jobs, results, started, total) {
           break;
         }
         const job = jobs[i];
-        const lock = lockOf(job);
+        const locks = locksOf(job);
+        const lock = locks.join(", ");
         started[i] = true;
-        if (lock) {
-          held.add(lock);
-        }
+        locks.forEach(function (one) {
+          held.add(one);
+        });
         active = active + 1;
         log.info(`===== [${i + 1}/${total}] ${job.name} — started` +
             `${lock ? " (lock: " + lock + ")" : ""} =====`);
@@ -5253,9 +5546,9 @@ function runPool(jobs, results, started, total) {
         // slot occupied and the pool would hang with no line saying why.
         const settle = function (result) {
           results[i] = result;
-          if (lock) {
-            held.delete(lock);
-          }
+          locks.forEach(function (one) {
+            held.delete(one);
+          });
           active = active - 1;
           remaining = remaining - 1;
           reportOne(result, i, total);
@@ -5675,9 +5968,9 @@ function coverageExcludes(jobs) {
   // matched against. It fails silently — the report simply lists the test
   // scripts as though they were product code.
   //
-  // The mock STS is somebody else's checkout (a submodule), and node-ldapjs is
-  // vendored unmodified. A test that starts either one in-process would
-  // otherwise drag its files into this repository's report.
+  // iya-sts is somebody else's code (its release image's tree), and
+  // node-ldapjs is vendored unmodified. A test that starts either one
+  // in-process would otherwise drag its files into this repository's report.
   const out = Array.from(names).sort().map((name) => "**/" + name)
     .concat(["**/node_modules/**", "**/sts/**", "**/node-ldapjs/**"]);
   log.debug("Leaving coverageExcludes(). " + out.length + " pattern(s).");
@@ -6025,8 +6318,55 @@ async function ensureAdminApiToken() {
   log.debug("Leaving ensureAdminApiToken().");
 }
 
+// THE IMAGE HAS EVERY SCRIPT THIS RUNNER SCHEDULES. `node run-report.js
+// --check-scripts` builds the job list and exits 1, naming them, if any job's
+// script is not in TESTS_DIR. tests/Dockerfile runs it as a build step, so a
+// test added to buildJobs() without its COPY fails the IMAGE BUILD — in
+// Docker Image CI's `build` job, before a suite runs — instead of failing one
+// job with MODULE_NOT_FOUND in 0.0s that reads as a broken test. #405, #406
+// and #415 each merged exactly that on 2026-11-12/13.
+// jwk_pem_encoding.js has the same check over tests/Dockerfile's text, and it
+// can only run from a checkout; this one runs where the scripts have to be.
+function missingJobScripts(jobs) {
+  log.debug("Entering missingJobScripts().");
+  const missing = [];
+  jobs.forEach(function (job) {
+    const script = job.script;
+    if (!script || missing.indexOf(script) !== -1) {
+      return;
+    }
+    if (!fs.existsSync(path.join(TESTS_DIR, script))) {
+      missing.push(script);
+    }
+  });
+  log.debug("Leaving missingJobScripts(). " + missing.length + " missing.");
+  return missing;
+}
+
+function checkJobScripts() {
+  log.debug("Entering checkJobScripts().");
+  const jobs = buildJobs();
+  const missing = missingJobScripts(jobs);
+  if (missing.length > 0) {
+    log.error("run-report.js schedules these scripts and they are not in " +
+        TESTS_DIR + ", so each job would fail with MODULE_NOT_FOUND: " +
+        missing.join(", ") + ". Add a COPY for each to tests/Dockerfile.");
+    log.debug("Leaving checkJobScripts(). Missing scripts.");
+    return 1;
+  }
+  log.info("All " + jobs.length + " scheduled jobs have their script in " +
+      TESTS_DIR + ".");
+  log.debug("Leaving checkJobScripts().");
+  return 0;
+}
+
 async function main() {
   log.debug("Entering main().");
+  if (process.argv.includes("--check-scripts")) {
+    const code = checkJobScripts();
+    log.debug("Leaving main(). --check-scripts.");
+    process.exit(code);
+  }
   const demo = process.argv.includes("--demo");
   let results;
 

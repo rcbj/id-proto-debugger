@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: federation_matrix_sso.js
 //
 // ===========================================================================
@@ -1235,15 +1238,17 @@ async function driveApplicationTier(driver, spBase, callbackUri) {
 //
 // The screen is `authn.js`'s, whichever protocol asked for it and whichever
 // realm is showing it — it reuses Keycloak's field ids, which is why every test
-// in this suite drives it the same way. It checks no password, so the username
-// typed here is the identity every artifact downstream describes.
+// in this suite drives it the same way. Development checks no password, so
+// the dummy typed below is the identity. Product checks it, and `password`
+// is the one prepareFederatedSignIn() set; null keeps the dummy. On the
+// passwordless path the field is still filled and the service ignores it.
 //
 // WHAT MAKES THIS THE ASSERTION AND NOT A STEP: a relationship whose
 // `fedAuthnMechanism` never reached the screen produces the ORDINARY password
 // box, and the flow then completes perfectly. So a WebAuthn point requires the
 // ceremony page and a password point requires its absence, and each says why.
 // ---------------------------------------------------------------------------
-async function signInAtIdp(driver, user, idpBase) {
+async function signInAtIdp(driver, user, idpBase, password) {
   log.debug("Entering signInAtIdp(). mechanism=" + MECHANISM);
   const username = By.id("username");
   try {
@@ -1313,11 +1318,12 @@ async function signInAtIdp(driver, user, idpBase) {
   await driver.findElement(username).sendKeys(user);
   const passwordBoxes = await driver.findElements(By.id("password"));
   if (passwordBoxes.length) {
-    // Typed on both paths, and ignored on both: this service checks no
-    // password, and on the passwordless path `handleLogin()` never looks at
-    // the field. Filling it in anyway keeps the two paths one code path here.
+    // Typed on both paths. Development ignores it. Product checks it on the
+    // password path; on the passwordless path `handleLogin()` never looks
+    // at the field. Filling it either way keeps the two paths one code path.
     await passwordBoxes[0].clear();
-    await passwordBoxes[0].sendKeys("no password is checked here");
+    await passwordBoxes[0].sendKeys(password ||
+                                    "no password is checked here");
   }
   await driver.findElement(By.id("kc-login")).click();
 
@@ -1371,6 +1377,36 @@ async function signInAtIdp(driver, user, idpBase) {
 // Three attempts, because two consecutive refusals on a virtual authenticator
 // that is present and consenting are not a scheduling accident.
 // ---------------------------------------------------------------------------
+// THE CEREMONY PAGE'S HEADING, read on the page that is actually there.
+// iya-sts draws that page in the browser, so an <h1> located the moment
+// #wa-go appears can be replaced before getText() reaches it, and the read
+// fails with "Node with given id does not belong to the document". That
+// took a section of webauthn_oidc_mfa.js out of the integration run on
+// 7ddc3cc (2026-11-13) from the identical read; this is the same remedy.
+// Re-find and read again on a stale reference.
+async function headingText(driver) {
+  log.debug("Entering headingText().");
+  const deadline = Date.now() + waitTime * 4;
+  for (;;) {
+    try {
+      const text = await driver.findElement(By.css("h1")).getText();
+      log.debug("Leaving headingText().");
+      return text;
+    } catch (e) {
+      const stale = e.name === "StaleElementReferenceError" ||
+          /does not belong to the document|stale element/i.test(
+              e.message || "");
+      if (!stale || Date.now() > deadline) {
+        log.debug("Leaving headingText(). " + e.message);
+        throw e;
+      }
+      log.info("the ceremony page was replaced under the heading; " +
+          "reading it again");
+      await driver.sleep(100);
+    }
+  }
+}
+
 async function runTheCeremony(driver, user) {
   log.debug("Entering runTheCeremony().");
   // The ceremony page. With no key enrolled for this username it REGISTERS one
@@ -1379,7 +1415,7 @@ async function runTheCeremony(driver, user) {
   await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 6,
     "Realm 2's relationship configures a passwordless security key and no " +
     "WebAuthn ceremony page appeared after the username was submitted.");
-  const heading = await driver.findElement(By.css("h1")).getText();
+  const heading = await headingText(driver);
   // "Create a passkey" / "Sign in with your passkey" since iya-sts #571.
   assert.ok(/Enrol|security key|passkey/i.test(heading),
     "The page after the username is not the WebAuthn step; its heading " +
@@ -1879,7 +1915,7 @@ async function test() {
   const known = await mockKnowsTheAttributes(stsBase);
   mustBeAbleTo(known.ok,
     "The mock STS at " + stsBase + " is reachable, but",
-    known.why + ". Either the sts/ submodule predates the attribute (bump " +
+    known.why + ". Either the iya-sts image predates the attribute (bump " +
     "it) or the schema endpoint has moved again.");
   mustBeAbleTo(await mockRoutesWsFedThroughTheFunnel(stsBase),
     "The mock STS at " + stsBase + " is reachable, but",
@@ -1891,7 +1927,7 @@ async function test() {
      : "as its federation protocol, so realm 2 would honour no " +
        "fedAuthnMechanism and sign the person in with a password whatever " +
        "the relationship configured") +
-    ". Bump the sts/ submodule.");
+    ". Bump IYA_STS_IMAGE.");
 
   const spBase = stsBase + "/realm/" + SP_REALM;
   const idpBase = stsBase + "/realm/" + IDP_REALM;
@@ -1910,12 +1946,31 @@ async function test() {
   // then be testing whatever the mock happened to be configured with.
   // ---------------------------------------------------------------------
   await createRealms(stsBase);
+  // Product refuses passkey enrolment on first use (STS-AUTHN-0206) before
+  // the ceremony page. This point depends on that enrolment. Password
+  // points still run. Development still enrols on first use.
+  if (MECHANISM === "webauthn" && await admin.realmIsProduct(idpBase)) {
+    declineToRun(log, IDP_REALM + " is in product mode, which refuses " +
+      "passkey enrolment on first use (STS-AUTHN-0206). This point " +
+      "depends on that enrolment. Password points still run.");
+    log.debug("Leaving test(). Skipped.");
+    return;
+  }
   await trustRealm2BackChannel(spBase);
   await registerApplication(spBase, callbackUri);
   await registerPartnerAtIdp(idpBase, spBase, partnerAppId);
   const partner = await readPartnerMetadata(idpBase, partnerAppId);
   await createRelationship(spBase, partner, partnerAppId, callbackUri);
   await createIdpRelationship(idpBase, partnerAppId);
+  // Product links the person and returns the password to type. Development
+  // returns null. An OAuth 2.0 or OpenID Connect hop's subject is the IdP's
+  // urn:uuid; every other protocol here sends a NameID.
+  const prepared = await admin.prepareFederatedSignIn({
+    spBase: spBase, idpBase: idpBase, relationship: RELATIONSHIP,
+    username: user,
+    subjectKind: (FED_PROTOCOL === "oidc" || FED_PROTOCOL === "oauth2")
+      ? "partner-subject" : "nameid"
+  });
   const localIssuer = await readLocalIssuer(spBase);
 
   // THE ADDRESS THE CONSOLE TELLS AN OPERATOR TO GIVE THE PARTNER must be the
@@ -1973,7 +2028,7 @@ async function test() {
     await driver.manage().deleteAllCookies();
 
     const sent = await driveApplicationTier(driver, spBase, callbackUri);
-    await signInAtIdp(driver, user, idpBase);
+    await signInAtIdp(driver, user, idpBase, prepared.password);
 
     // ---------------------------------------------------------------------
     // WHO REALM 1 NOW CALLS THE PERSON TYPED AT REALM 2. Everything below

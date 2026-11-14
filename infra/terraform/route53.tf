@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # --- Route 53 hosted zone (authoritative DNS for the domain) ---
 #
 # Create this zone FIRST, then paste its name servers into the Namecheap

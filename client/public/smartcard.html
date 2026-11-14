@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Smart cards</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
+    <link href="/css/smartcard.css" rel="stylesheet">
+  </head>
+  <body>
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+    <div class="container">
+<script type="text/javascript" src="/js/smartcard.js">
+</script>
+
+<p class="saml-return"><a id="return_link" href="/index.html">&larr; Return to home</a></p>
+
+<p class="saml-intro">Decode a YubiKey's Yubico OTP, OATH, PIV, OpenPGP card and YubiHSM Auth traffic. FIDO2 and FIDO U2F stay on the <a href="/webauthn.html">WebAuthn</a> page. USB and NFC are the same bytes. A pasted trace needs no reader. A PIN, an OTP key, an OATH seed and an API key are not saved unless the box next to that field is checked, and a PIN is never saved.</p>
+
+<p id="sc_backend_notice" class="saml-notice saml-hidden">This is the static deployment. Decoding and the OATH calculator work here. Verifying an OTP with YubiCloud, and talking to a reader, need the API. A container does not see a key on the host unless the operator passes the device through.</p>
+
+<p class="sc-detect sc-detect-no" id="sc_detect" role="status" aria-live="polite">&#9675; Looking for a key&hellip;</p>
+
+<p class="saml-status" id="sc_status"></p>
+
+<p class="saml-controls">
+  <label class="saml-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="sc_toggle_all" checked="checked"
+           onchange="return smartcard.setAllPanes(this.checked);">
+    <span class="saml-toggle-slider"></span>
+    <span class="saml-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="saml-controls-hint">Tip: click a pane's title to
+  collapse/expand it.</span>
+</p>
+
+<fieldset class="saml-pane" id="sc_pane_config">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_config_body');"
+          title="Click to collapse or expand this pane.">Configuration</legend>
+  <div class="saml-pane-body" id="sc_pane_config_body">
+    <p class="sc-apps">
+      <label title="How this page reaches a key plugged into this machine. Decoding a pasted trace needs neither.">Talk to the key through
+        <select id="sc_transport" onchange="smartcard.onTransportChange();">
+          <option value="browser">this browser (WebHID: Chrome, Edge)</option>
+          <option value="api">the API (the OS's PC/SC: any browser, every application)</option>
+        </select>
+      </label>
+      <span class="sc-transport-note" id="sc_transport_note"></span>
+    </p>
+
+    <p class="sc-apps">
+      <label>Application
+        <select id="sc_app" onchange="smartcard.showApplication(this.value);">
+          <option value="otp">Yubico OTP</option>
+          <option value="oath">OATH</option>
+          <option value="piv">PIV</option>
+          <option value="pgp">OpenPGP card</option>
+          <option value="hsm">YubiHSM Auth</option>
+          <option value="reader">Reader</option>
+      <option value="reset">Reset (wipe an application)</option>
+        </select>
+      </label>
+    </p>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="sc_pane_otp">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_otp_body');"
+          title="Click to collapse or expand this pane.">Yubico OTP</legend>
+  <div class="saml-pane-body" id="sc_pane_otp_body">
+    <p class="saml-note">Touch the key and it types the token. The public identity is the first twelve characters of a current 44-character OTP. The AES key decrypts the rest. The CRC is how a wrong key is recognised.</p>
+    <div class="saml-row">
+      <label class="saml-grow">Token
+        <textarea id="sc_otp_token" class="sc-trace" spellcheck="false" placeholder="Click here and touch the key: it types the OTP and the page decodes it." oninput="smartcard.onOtpTyped();"></textarea>
+      </label>
+    </div>
+    <div class="saml-row">
+      <label class="saml-grow">AES key (32 hex characters)
+        <input id="sc_otp_aes_key" class="sc-field" type="password"
+            autocomplete="off" spellcheck="false"
+            oninput="smartcard.onSaveChange('otp');" />
+      </label>
+    </div>
+    <label class="saml-toggle">
+      <input type="checkbox" id="sc_save_otp_key"
+          onchange="smartcard.onSaveChange('otp');" />
+      <span>Save the AES key in this browser</span>
+    </label>
+    <p>
+      <button type="button" class="saml-btn" id="sc_otp_decode" onclick="smartcard.decodeOtp();">Decode</button>
+    </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">YubiCloud validation</div>
+      <p class="saml-note">The API key stays in this browser. The page signs the request and the API posts it. A BAD_OTP answer is still an answer.</p>
+      <div class="saml-row">
+        <label>Client id
+          <input id="sc_otp_id" class="sc-field" spellcheck="false" />
+        </label>
+      </div>
+      <div class="saml-row">
+        <label>API key (base64)
+          <input id="sc_otp_api_key" class="sc-field" type="password"
+              autocomplete="off" spellcheck="false"
+              oninput="smartcard.onSaveChange('api');" />
+        </label>
+      </div>
+      <label class="saml-toggle">
+        <input type="checkbox" id="sc_save_api_key"
+            onchange="smartcard.onSaveChange('api');" />
+        <span>Save the API key in this browser</span>
+      </label>
+      <div class="saml-row">
+        <label>Server
+          <select id="sc_otp_server">
+            <option value="1">api.yubico.com</option>
+            <option value="2">api2.yubico.com</option>
+            <option value="3">api3.yubico.com</option>
+            <option value="4">api4.yubico.com</option>
+            <option value="5">api5.yubico.com</option>
+          </select>
+        </label>
+      </div>
+      <div class="saml-row">
+        <label class="saml-grow">Verifier URL (optional, https)
+          <input id="sc_otp_verifier" class="sc-field" spellcheck="false" />
+        </label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn saml-hidden" id="sc_verify_button" onclick="smartcard.verifyOtp();">Verify</button>
+      </p>
+    </div>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Program a slot</div>
+      <details class="saml-explain">
+        <summary>How programming works</summary>
+        <p>Writes a configuration to OTP slot 1 (a short touch) or 2 (a long touch) through the API, after you confirm it. Slot 1 normally holds the key's factory Yubico OTP credential, which YubiCloud knows: overwriting it cannot be undone. Generate fills the secrets from this browser's random source and leaves them on screen, because the key never gives a secret back. The access code is only needed for a slot that has one. Static passwords are not offered: their scan codes depend on the keyboard layout.</p>
+      </details>
+      <div class="saml-row">
+        <label>Slot
+          <select id="sc_slot_number"><option value="2" selected>2 (long touch)</option><option value="1">1 (short touch)</option></select>
+        </label>
+        <label>Program it as
+          <select id="sc_slot_type" onchange="smartcard.onSlotTypeChange();">
+            <option value="hmac">HMAC-SHA1 challenge-response</option>
+            <option value="yubico-otp">Yubico OTP</option>
+            <option value="hotp">HOTP</option>
+          </select>
+        </label>
+        <label>Current access code (hex, if the slot has one)
+          <input id="sc_slot_access_code" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+      </div>
+      <div class="saml-row" id="sc_slot_hmac">
+        <label class="saml-grow">HMAC key (hex, up to 20 bytes)
+          <input id="sc_slot_hmac_key" class="sc-field" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_slot_hmac_key', 'hex:20');" title="Fill with a new random value.">Generate</button>
+        </label>
+        <label><input type="checkbox" id="sc_slot_touch" /> Require a touch</label>
+      </div>
+      <div class="saml-row saml-hidden" id="sc_slot_otp">
+        <label>Public identity (modhex)
+          <input id="sc_slot_public_id" class="sc-field" spellcheck="false" />
+        </label>
+        <label>Private identity (12 hex)
+          <input id="sc_slot_private_id" class="sc-field" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_slot_private_id', 'hex:6');" title="Fill with a new random value.">Generate</button>
+        </label>
+        <label class="saml-grow">AES key (32 hex)
+          <input id="sc_slot_aes_key" class="sc-field" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_slot_aes_key', 'hex:16');" title="Fill with a new random value.">Generate</button>
+        </label>
+      </div>
+      <div class="saml-row saml-hidden" id="sc_slot_hotp">
+        <label class="saml-grow">Secret
+          <input id="sc_slot_hotp_key" class="sc-field" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_slot_hotp_key', 'base32:20');" title="Fill with a new random value.">Generate</button>
+        </label>
+        <label>as
+          <select id="sc_slot_hotp_format"><option value="base32">base32</option><option value="hex">hex</option></select>
+        </label>
+        <label>Digits
+          <select id="sc_slot_hotp_digits"><option>6</option><option>8</option></select>
+        </label>
+        <label>Starting counter (multiple of 16)
+          <input id="sc_slot_hotp_counter" class="sc-field sc-narrow" value="0" />
+        </label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn" id="sc_slot_generate" onclick="smartcard.generateSlotSecrets();">Generate secrets</button>
+        <button type="button" class="saml-btn" id="sc_slot_program" onclick="smartcard.programSlot();">Program the slot</button>
+        <button type="button" class="saml-btn" id="sc_slot_delete" onclick="smartcard.deleteSlot();">Delete the slot</button>
+        <button type="button" class="saml-btn" id="sc_slot_swap" onclick="smartcard.swapSlots();">Swap slots 1 and 2</button>
+      </p>
+    </div>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_otp_read" onclick="smartcard.readFromKey('otp');" title="Which OTP slots are programmed, read through the API's reader relay. Nothing is written.">Read from the key</button>
+      <span class="sc-read-note">through the API; which slots are programmed</span>
+    </p>
+    <div id="sc_otp_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_oath">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_oath_body');"
+          title="Click to collapse or expand this pane.">OATH</legend>
+  <div class="saml-pane-body" id="sc_pane_oath_body">
+    <p class="saml-note">The calculator needs no key. Six digits is what an authenticator shows. The applet trace is YKOATH: PUT builds an APDU and does not send it.</p>
+    <div class="saml-row">
+      <label>Secret (hex or text)
+        <input id="sc_oath_secret" class="sc-field" type="password"
+            autocomplete="off" spellcheck="false"
+            oninput="smartcard.onSaveChange('oath');" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_oath_secret', 'hex:20');" title="Fill with a new random value.">Generate</button>
+      </label>
+    </div>
+    <label class="saml-toggle">
+      <input type="checkbox" id="sc_save_oath_secret"
+          onchange="smartcard.onSaveChange('oath');" />
+      <span>Save the OATH secret in this browser</span>
+    </label>
+    <div class="saml-row">
+      <label>Digits
+        <select id="sc_oath_digits">
+          <option value="6" selected>6</option>
+          <option value="7">7</option>
+          <option value="8">8</option>
+        </select>
+      </label>
+      <label>Algorithm
+        <select id="sc_oath_algorithm">
+          <option>SHA-1</option>
+          <option>SHA-256</option>
+          <option>SHA-512</option>
+        </select>
+      </label>
+      <label>HOTP counter
+        <input id="sc_oath_counter" value="0" />
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_oath_hotp" onclick="smartcard.calculateHotp();">HOTP</button>
+      <button type="button" class="saml-btn" id="sc_oath_totp" onclick="smartcard.calculateTotp();">TOTP</button>
+    </p>
+    <div class="saml-row">
+      <label class="saml-grow">Applet trace (hex APDU or response)
+        <textarea id="sc_oath_trace" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_oath_command" onclick="smartcard.decodeOathCommand();">Decode command</button>
+      <button type="button" class="saml-btn" id="sc_oath_response" onclick="smartcard.decodeOathResponse();">Decode response</button>
+    </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Add an account to the key</div>
+      <details class="saml-explain">
+        <summary>How adding works</summary>
+        <p>Paste the <code>otpauth://</code> link a site's setup QR code holds, or fill in the fields with the base32 secret the site shows. The account is written to the key's OATH applet through the API, after you confirm it; an account with the same name is replaced. The key never gives a secret back. A TOTP period other than 30 seconds is kept in the name (<code>60/Issuer:account</code>), as Yubico Authenticator writes it.</p>
+      </details>
+      <div class="saml-row">
+        <label class="saml-grow">otpauth:// link (optional; it fills everything)
+          <input id="sc_oath_add_uri" class="sc-field" spellcheck="false" placeholder="otpauth://totp/Issuer:alice@example.com?secret=…&amp;issuer=Issuer" />
+        </label>
+      </div>
+      <div class="saml-row">
+        <label>Issuer <input id="sc_oath_add_issuer" class="sc-field" spellcheck="false" value="IdpDebugger" /></label>
+        <label>Account <input id="sc_oath_add_account" class="sc-field" spellcheck="false" value="debugger@example.com" /></label>
+        <label class="saml-grow">Secret (base32)
+          <input id="sc_oath_add_secret" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_oath_add_secret', 'base32:20');" title="Fill with a new random value.">Generate</button>
+        </label>
+      </div>
+      <div class="saml-row">
+        <label>Type
+          <select id="sc_oath_add_type"><option>TOTP</option><option>HOTP</option></select>
+        </label>
+        <label>Algorithm
+          <select id="sc_oath_add_algorithm"><option>SHA-1</option><option>SHA-256</option><option>SHA-512</option></select>
+        </label>
+        <label>Digits
+          <select id="sc_oath_add_digits"><option>6</option><option>7</option><option>8</option></select>
+        </label>
+        <label>Period (s) <input id="sc_oath_add_period" class="sc-field sc-narrow" value="30" /></label>
+        <label>HOTP counter <input id="sc_oath_add_counter" class="sc-field sc-narrow" value="0" /></label>
+        <label><input type="checkbox" id="sc_oath_add_touch" /> Require a touch</label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn" id="sc_oath_add" onclick="smartcard.addOathAccount();">Add to the key</button>
+      </p>
+      <div class="saml-row">
+        <label class="saml-grow">Delete the account named
+          <input id="sc_oath_del_name" class="sc-field" list="sc_oath_names" spellcheck="false" placeholder="read the key to list its accounts" />
+          <datalist id="sc_oath_names"></datalist>
+        </label>
+        <button type="button" class="saml-btn" id="sc_oath_delete" onclick="smartcard.deleteOathAccount();">Delete from the key</button>
+      </div>
+    </div>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_oath_read" onclick="smartcard.readFromKey('oath');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
+      <span class="sc-read-note">through the API; read-only</span>
+    </p>
+    <div id="sc_oath_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_piv">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_piv_body');"
+          title="Click to collapse or expand this pane.">PIV</legend>
+  <div class="saml-pane-body" id="sc_pane_piv_body">
+    <p class="saml-note">NIST SP 800-73. A certificate sits in tag 70 inside tag 53. GENERAL AUTHENTICATE is decoded and not performed. Paste the response, including the status word, or the command.</p>
+    <div class="saml-row">
+      <label class="saml-grow">Trace
+        <textarea id="sc_piv_trace" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_piv_command" onclick="smartcard.decodePivCommand();">Decode command</button>
+      <button type="button" class="saml-btn" id="sc_piv_response" onclick="smartcard.decodePivResponse();">Decode response</button>
+    </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Change the key</div>
+      <details class="saml-explain">
+        <summary>How PIV writing works</summary>
+        <p>Keys, certificates and the management key itself are changed under the card management key: the page authenticates with it (mutual 3DES or AES, the algorithm read from the key's metadata), sends the change, and closes the connection, which resets the card. The key never leaves this browser. The PIN and PUK are changed with their current values, and a wrong one costs a try (three by default) — the page never retries. Generate shows the public key; most software also wants a certificate for it, which Import stores. Nothing typed here is stored.</p>
+      </details>
+      <div class="saml-row">
+        <label class="saml-grow">Management key (hex)
+          <input id="sc_piv_mgm_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <label>if the key cannot say, it is
+          <select id="sc_piv_mgm_alg"><option value="3des">3DES</option><option value="aes128">AES-128</option><option value="aes192">AES-192</option><option value="aes256">AES-256</option></select>
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.usePivDefaultKey();">Factory default</button>
+      </div>
+      <div class="saml-row">
+        <label>Slot <select id="sc_piv_slot"><option value="9a">9A authentication</option><option value="9c">9C digital signature</option><option value="9d">9D key management</option><option value="9e">9E card authentication</option><option value="82">82 retired</option><option value="83">83 retired</option><option value="84">84 retired</option><option value="85">85 retired</option><option value="86">86 retired</option><option value="87">87 retired</option><option value="88">88 retired</option><option value="89">89 retired</option><option value="8a">8A retired</option><option value="8b">8B retired</option><option value="8c">8C retired</option><option value="8d">8D retired</option><option value="8e">8E retired</option><option value="8f">8F retired</option><option value="90">90 retired</option><option value="91">91 retired</option><option value="92">92 retired</option><option value="93">93 retired</option><option value="94">94 retired</option><option value="95">95 retired</option></select></label>
+        <label>Key
+          <select id="sc_piv_gen_alg"><option value="eccp256">ECC P-256</option><option value="eccp384">ECC P-384</option><option value="ed25519">Ed25519</option><option value="x25519">X25519</option><option value="rsa2048">RSA 2048</option><option value="rsa3072">RSA 3072</option><option value="rsa4096">RSA 4096</option><option value="rsa1024">RSA 1024</option></select>
+        </label>
+        <label>PIN policy
+          <select id="sc_piv_gen_pin"><option value="0">slot default</option><option value="1">never</option><option value="2">once</option><option value="3">always</option></select>
+        </label>
+        <label>Touch policy
+          <select id="sc_piv_gen_touch"><option value="0">slot default</option><option value="1">never</option><option value="2">always</option><option value="3">cached</option></select>
+        </label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn" onclick="smartcard.pivGenerate();">Generate a key</button>
+        <button type="button" class="saml-btn" onclick="smartcard.pivDeleteKey();">Delete the key</button>
+        <button type="button" class="saml-btn" onclick="smartcard.pivDeleteCertificate();">Delete the certificate</button>
+      </p>
+      <div class="saml-row">
+        <label class="saml-grow">Certificate (PEM)
+          <textarea id="sc_piv_cert_pem" class="sc-trace" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+        </label>
+      </div>
+      <p><button type="button" class="saml-btn" onclick="smartcard.pivImportCertificate();">Import the certificate into the slot</button></p>
+      <div class="saml-row">
+        <label>Current PIN <input id="sc_piv_pin_old" class="sc-field" type="password" autocomplete="off" /></label>
+        <label>New PIN <input id="sc_piv_pin_new" class="sc-field" type="password" autocomplete="off" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pivPinWrite('pin');">Change the PIN</button>
+      </div>
+      <div class="saml-row">
+        <label>Current PUK <input id="sc_piv_puk_old" class="sc-field" type="password" autocomplete="off" /></label>
+        <label>New PUK <input id="sc_piv_puk_new" class="sc-field" type="password" autocomplete="off" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pivPinWrite('puk');">Change the PUK</button>
+        <button type="button" class="saml-btn" onclick="smartcard.pivPinWrite('unblock');">Unblock the PIN (PUK and new PIN)</button>
+      </div>
+      <div class="saml-row">
+        <label class="saml-grow">New management key (hex)
+          <input id="sc_piv_new_mgm_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_piv_new_mgm_key', 'pivmgm');" title="Fill with a new random value.">Generate</button>
+        </label>
+        <label>as
+          <select id="sc_piv_new_mgm_alg"><option value="aes192">AES-192</option><option value="aes128">AES-128</option><option value="aes256">AES-256</option><option value="3des">3DES</option></select>
+        </label>
+        <label><input type="checkbox" id="sc_piv_new_mgm_touch" /> Require a touch</label>
+        <button type="button" class="saml-btn" onclick="smartcard.pivSetManagementKey();">Change the management key</button>
+      </div>
+    </div>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_piv_read" onclick="smartcard.readFromKey('piv');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
+      <span class="sc-read-note">through the API; read-only</span>
+    </p>
+    <div id="sc_piv_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_pgp">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_pgp_body');"
+          title="Click to collapse or expand this pane.">OpenPGP card</legend>
+  <div class="saml-pane-body" id="sc_pane_pgp_body">
+    <p class="saml-note">Application related data and the public key. There is no OpenPGP message here. A signature or a decipher is decoded and not performed.</p>
+    <div class="saml-row">
+      <label class="saml-grow">Trace
+        <textarea id="sc_pgp_trace" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_pgp_command" onclick="smartcard.decodePgpCommand();">Decode command</button>
+      <button type="button" class="saml-btn" id="sc_pgp_response" onclick="smartcard.decodePgpResponse();">Decode response</button>
+    </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Change the card</div>
+      <details class="saml-explain">
+        <summary>How OpenPGP writing works</summary>
+        <p>Every change is checked against the Admin PIN first, in the same sequence; three wrong tries block it, and the page never retries. Generate sets the key's algorithm, generates it on the card, and writes its OpenPGP fingerprint and creation time so GnuPG recognises it — the key that was in that slot is destroyed. A FIXED touch policy cannot be turned off without resetting the OpenPGP applet. Nothing typed here is stored.</p>
+      </details>
+      <div class="saml-row">
+        <label class="saml-grow">Admin PIN
+          <input id="sc_pgp_admin_pin" class="sc-field" type="password" autocomplete="off" />
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.useOpenPgpDefaultAdminPin();">Factory default</button>
+      </div>
+      <div class="saml-row">
+        <label>Name (Surname&lt;&lt;Given) <input id="sc_pgp_name" class="sc-field" spellcheck="false" /></label>
+        <label>Login <input id="sc_pgp_login" class="sc-field" spellcheck="false" /></label>
+        <label class="saml-grow">Public key URL <input id="sc_pgp_url" class="sc-field" spellcheck="false" /></label>
+        <label>Language <input id="sc_pgp_lang" class="sc-field sc-narrow" spellcheck="false" placeholder="en" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpSaveCardholder();">Save cardholder data</button>
+      </div>
+      <div class="saml-row">
+        <label>Key
+          <select id="sc_pgp_gen_key"><option value="sig">signature</option><option value="dec">decryption</option><option value="aut">authentication</option></select>
+        </label>
+        <label>Algorithm
+          <select id="sc_pgp_gen_alg"><option value="ed25519">Ed25519 (sig, aut)</option><option value="cv25519">Curve25519 (dec)</option><option value="nistp256-ecdsa">NIST P-256 ECDSA (sig, aut)</option><option value="nistp256-ecdh">NIST P-256 ECDH (dec)</option><option value="nistp384-ecdsa">NIST P-384 ECDSA (sig, aut)</option><option value="rsa2048">RSA 2048</option><option value="rsa3072">RSA 3072</option><option value="rsa4096">RSA 4096</option></select>
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpGenerate();">Generate the key</button>
+      </div>
+      <div class="saml-row">
+        <label>Touch policy for
+          <select id="sc_pgp_touch_key"><option value="sig">signature</option><option value="dec">decryption</option><option value="aut">authentication</option></select>
+        </label>
+        <label>is
+          <select id="sc_pgp_touch_policy"><option value="0">off</option><option value="1">on</option><option value="3">cached</option><option value="2">fixed (permanent)</option><option value="4">cached-fixed (permanent)</option></select>
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpSetTouch();">Set the touch policy</button>
+      </div>
+      <div class="saml-row">
+        <label>Current PIN <input id="sc_pgp_pin_old" class="sc-field" type="password" autocomplete="off" /></label>
+        <label>New PIN <input id="sc_pgp_pin_new" class="sc-field" type="password" autocomplete="off" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpChangePin('user');">Change the PIN</button>
+      </div>
+      <div class="saml-row">
+        <label>Current Admin PIN <input id="sc_pgp_admin_old" class="sc-field" type="password" autocomplete="off" /></label>
+        <label>New Admin PIN <input id="sc_pgp_admin_new" class="sc-field" type="password" autocomplete="off" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpChangePin('admin');">Change the Admin PIN</button>
+      </div>
+    </div>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_pgp_read" onclick="smartcard.readFromKey('pgp');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
+      <span class="sc-read-note">through the API; read-only</span>
+    </p>
+    <div id="sc_pgp_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_hsm">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_hsm_body');"
+          title="Click to collapse or expand this pane.">YubiHSM Auth</legend>
+  <div class="saml-pane-body" id="sc_pane_hsm_body">
+    <p class="saml-note">This is the applet that authenticates to a YubiHSM 2. CALCULATE's 48 bytes are the session keys a host would hand to that HSM. This page does not open a session. The management key and the credential password are not saved.</p>
+    <div class="saml-row">
+      <label class="saml-grow">Trace
+        <textarea id="sc_hsm_trace" class="sc-trace" spellcheck="false"></textarea>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_hsm_command" onclick="smartcard.decodeHsmCommand();">Decode command</button>
+      <button type="button" class="saml-btn" id="sc_hsm_response" onclick="smartcard.decodeHsmResponse();">Decode response</button>
+    </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Add or delete a credential</div>
+      <details class="saml-explain">
+        <summary>How writing works</summary>
+        <p>Each write carries the applet's management key. A wrong one costs one of its retries, so the page never fills it in: the factory default (16 zero bytes) is a button you press. A credential is AES-128 — derived from a password the way <code>yubihsm-auth</code> and ykman derive it (PBKDF2-SHA256, salt "Yubico", 10000 rounds), or from the two keys themselves — or EC P-256 from a private key. Its credential password (up to 16 bytes) is what a session asks for. Nothing typed here is stored.</p>
+      </details>
+      <div class="saml-row">
+        <label class="saml-grow">Management key (32 hex)
+          <input id="sc_hsm_mgmt_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.useHsmDefaultKey();">Factory default</button>
+      </div>
+      <div class="saml-row">
+        <label>Label <input id="sc_hsm_add_label" class="sc-field" spellcheck="false" /></label>
+        <label>Type
+          <select id="sc_hsm_add_type" onchange="smartcard.onHsmTypeChange();">
+            <option value="derived">AES-128, derived from a password</option>
+            <option value="keys">AES-128, from two keys</option>
+            <option value="ec">EC P-256, from a private key</option>
+          </select>
+        </label>
+        <label>Credential password
+          <input id="sc_hsm_add_password" class="sc-field" type="password" autocomplete="off" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_password', 'password:16');" title="Fill with a new random value.">Generate</button>
+        </label>
+        <label><input type="checkbox" id="sc_hsm_add_touch" /> Require a touch</label>
+      </div>
+      <div class="saml-row" id="sc_hsm_add_derived">
+        <label class="saml-grow">Derivation password
+          <input id="sc_hsm_add_derivation" class="sc-field" type="password" autocomplete="off" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_derivation', 'password:16');" title="Fill with a new random value.">Generate</button>
+        </label>
+      </div>
+      <div class="saml-row saml-hidden" id="sc_hsm_add_keys">
+        <label class="saml-grow">Encryption key (32 hex) <input id="sc_hsm_add_enc" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_enc', 'hex:16');" title="Fill with a new random value.">Generate</button></label>
+        <label class="saml-grow">MAC key (32 hex) <input id="sc_hsm_add_mac" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_mac', 'hex:16');" title="Fill with a new random value.">Generate</button></label>
+      </div>
+      <div class="saml-row saml-hidden" id="sc_hsm_add_ec">
+        <label class="saml-grow">P-256 private key (64 hex) <input id="sc_hsm_add_ec_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_ec_key', 'p256');" title="Fill with a new random value.">Generate</button></label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn" id="sc_hsm_add" onclick="smartcard.addHsmCredential();">Add to the key</button>
+      </p>
+      <div class="saml-row">
+        <label class="saml-grow">Delete the credential labelled
+          <input id="sc_hsm_del_label" class="sc-field" spellcheck="false" />
+        </label>
+        <button type="button" class="saml-btn" id="sc_hsm_delete" onclick="smartcard.deleteHsmCredential();">Delete from the key</button>
+      </div>
+    </div>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_hsm_read" onclick="smartcard.readFromKey('hsm');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
+      <span class="sc-read-note">through the API; read-only</span>
+    </p>
+    <div id="sc_hsm_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_reader">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_reader_body');"
+          title="Click to collapse or expand this pane.">Reader</legend>
+  <div class="saml-pane-body" id="sc_pane_reader_body">
+    <p class="saml-note">The reader is the machine the API runs on. <code>localhost</code> on this pane is that machine. A container does not see a USB key unless the operator passes the device through. PC/SC is optional: if the library is not installed, listing readers says so and the API stays up.</p>
+    <p class="saml-note saml-hidden" id="sc_reader_disabled">The reader relay is off on this API. Set <code>smartcardReaderEnabled: true</code> in its env file to list readers and transmit. It is off by default because any APDU reaches the card, including a wrong-PIN VERIFY that blocks the PIN.</p>
+    <p class="saml-note saml-hidden sc-warn" id="sc_reader_unavailable"></p>
+    <p class="saml-note" id="sc_hid_note">Challenge-response to an OTP slot. Over WebHID the page polls the key the way yubikit does and waits up to 15 seconds for a touch. Through the API — any browser, Firefox included — the api asks the key over HID itself (it must run natively: <code>node api/native.js --smartcard</code>), because a YubiKey on USB answers challenge-response only on HID; for a key on an NFC reader it falls back to SELECT and CALCULATE over CCID. The keyboard OTP field on the first pane works in every browser.</p>
+    <div class="saml-row">
+      <label>Challenge (hex: 6 bytes for an OTP slot, up to 64 for HMAC-SHA1)
+        <input id="sc_hid_challenge" class="sc-field" value="000000000000" spellcheck="false" />
+      </label>
+      <label>Slot
+        <select id="sc_hid_slot">
+          <option value="20">OTP slot 1 (20)</option>
+          <option value="28">OTP slot 2 (28)</option>
+          <option value="30">HMAC-SHA1 slot 1 (30)</option>
+          <option value="38">HMAC-SHA1 slot 2 (38)</option>
+        </select>
+      </label>
+      <label>HMAC challenge length
+        <select id="sc_hid_hmac_mode">
+          <option value="variable" selected>variable, up to 63 bytes (HMAC_LT64; what ykman programs)</option>
+          <option value="fixed">fixed, all 64 bytes (zero filled)</option>
+        </select>
+      </label>
+    </div>
+    <p>
+      <button type="button" class="saml-btn" id="sc_hid_send" onclick="smartcard.sendHid();">Send challenge</button>
+    </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">CCID</div>
+      <div class="saml-row">
+        <label>PIN (not stored)
+          <input id="sc_pin" class="sc-field" type="password" autocomplete="off" />
+        </label>
+        <button type="button" class="saml-btn" id="sc_build_verify" onclick="smartcard.buildVerify();">Build VERIFY</button>
+      </div>
+      <div class="saml-row">
+        <label class="saml-grow">Reader name
+          <input id="sc_reader_name" class="sc-field" spellcheck="false" />
+        </label>
+      </div>
+      <div class="saml-row">
+        <label class="saml-grow">APDUs (hex, one per line, up to 16, sent in order on one exclusive connection)
+          <textarea id="sc_reader_apdu" class="sc-trace" spellcheck="false"></textarea>
+        </label>
+      </div>
+      <div class="saml-row">
+        <label><input type="checkbox" id="sc_reader_get_response" checked /> Follow 61xx with GET RESPONSE and resend 6Cxx with the Le the card asks for</label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn saml-hidden" id="sc_readers_button" onclick="smartcard.listReaders();">List readers</button>
+        <button type="button" class="saml-btn saml-hidden" id="sc_transmit_button" onclick="smartcard.transmitApdu();">Transmit</button>
+      </p>
+    </div>
+    <div id="sc_reader_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_reset">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_reset_body');"
+          title="Click to collapse or expand this pane.">Reset</legend>
+  <div class="saml-pane-body" id="sc_pane_reset_body">
+    <p class="sc-warning" role="alert"><strong>&#9888; Warning: a reset permanently erases.</strong> Each button wipes one application on the key back to its factory state, through the API. Keys, seeds and certificates erased here are gone for good &mdash; anything encrypted to them can no longer be decrypted, and every account that used them must be re-enrolled. Each reset asks you to type its name first.</p>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('oath');">Reset OATH</button>
+        <span class="sc-reset-what">Erases every OATH account and the applet's password.</span>
+      </div>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('hsm');">Reset YubiHSM Auth</button>
+        <span class="sc-reset-what">Erases every credential; the management key goes back to 16 zero bytes.</span>
+      </div>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('piv');">Reset PIV</button>
+        <span class="sc-reset-what">Blocks the PIN and PUK on purpose (the applet requires it), then erases every key and certificate. PIN 123456, PUK 12345678, factory management key afterwards.</span>
+      </div>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('pgp');">Reset OpenPGP card</button>
+        <span class="sc-reset-what">Blocks the PIN and Admin PIN on purpose, then erases all three keys and the cardholder data. PIN 123456, Admin PIN 12345678 afterwards.</span>
+      </div>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('otp');">Reset both OTP slots</button>
+        <span class="sc-reset-what">Deletes slots 1 and 2, including slot 1's factory Yubico OTP credential, which nothing can restore.</span>
+      </div>
+    <p class="saml-note">Not here: FIDO2 and U2F, whose reset is a CTAP command over HID within seconds of plugging the key in (use Yubico Authenticator or <code>ykman fido reset</code>), and smart cards from other vendors, which have no standard reset.</p>
+    <div id="sc_reset_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+  </body>
+</html>

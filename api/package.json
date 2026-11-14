@@ -1,6 +1,6 @@
 {
   "name": "id-proto-debugger-api",
-  "version": "0.9.0",
+  "version": "0.9.3",
   "private": true,
   "description": "id-proto-debugger api service",
   "author": "Robert C. Broeckelmann Jr. <info@iyasec.io>",
@@ -30,5 +30,9 @@
     },
     "brace-expansion@1": "^1.1.17",
     "brace-expansion@2": "^2.1.3"
+  },
+  "optionalDependencies": {
+    "node-hid": "3.4.0",
+    "pcsclite": "1.0.1"
   }
 }

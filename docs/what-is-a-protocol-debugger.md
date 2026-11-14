@@ -159,7 +159,9 @@ consequences are worth stating plainly.
   `localStorage`, passwords are never stored, and every workflow that
   generates a key pair carries a checkbox that turns storage off — clearing
   which also **removes what was already written**, since an opt-out that
-  leaves yesterday's private key behind is not one.
+  leaves yesterday's private key behind is not one. The SAML Assertion
+  Tool is the exception: it stores its private keys and has no such
+  checkbox. JWT Tools and Digital Signature do not store keys at all.
 * **Where the exchange happens.** The hosted site is static, so an
   authorization code redirected back to it arrives through the hosting
   provider as part of an ordinary page request. Nothing is logged, and every
@@ -180,7 +182,11 @@ the tree. Each protocol has its own page here:
 
 | | |
 |---|---|
+| using the OAuth2 / OIDC workflow, registration, and the token pages | [oauth2-oidc](oauth2-oidc/index.md) |
+| using the SAML 2.0 workflow, the assertion tool, and the decoders | [saml.md](saml.md), [saml-assertion.md](saml-assertion.md), [saml-decoders.md](saml-decoders.md) |
 | SAML 1.1, as a different protocol rather than an older spelling | [saml11.md](saml11.md) |
+| using the WS-Trust workflow | [wstrust.md](wstrust.md) |
+| JWT Tools and Digital Signature | [jwt-tools.md](jwt-tools.md), [digital-signature.md](digital-signature.md) |
 | WS-Federation | [wsfed.md](wsfed.md) |
 | the OAuth 2.0 Security BCP | [rfc9700.md](rfc9700.md) |
 | what is worth building next in OAuth 2.0 / OIDC | [spec-roadmap.md](spec-roadmap.md) |

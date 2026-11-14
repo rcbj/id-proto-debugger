@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // coverage_beacon.js
 //
 // Ships browser-side code coverage to the client server so it survives page

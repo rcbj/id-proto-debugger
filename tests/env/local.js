@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // TEST_WAIT_TIME_MS overrides `waitTime` here, and env/test.js carries the
 // whole reasoning — the short version is that ./run-coverage.sh serves
 // instrumented bundles and two seconds is not the right timeout for them.

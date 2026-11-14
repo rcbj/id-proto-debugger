@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 FROM ubuntu:latest
 
 ARG CONFIG_FILE
@@ -83,7 +86,26 @@ RUN npm -version
 # that loses the .npmrc does not quietly start shipping them.
 COPY api/.npmrc ./
 COPY api/node-ldapjs ./node-ldapjs
-RUN npm install --omit=dev
+# PC/SC FOR THE SMART-CARD READER RELAY (POST /smartcard/transmit). The
+# `pcsclite` module is an OPTIONAL dependency with a native binding, so it
+# builds here, where libpcsclite's headers and a compiler are installed for
+# the purpose, and a host `npm install` without them simply skips it. The
+# build tools and headers are removed again; libpcsclite1, the client library
+# the binding links against, stays. The library talks to a pcscd over its
+# socket, and this image runs none: docker-compose-smartcard.yml mounts the
+# HOST's /run/pcscd, which is how a container reaches a key plugged into the
+# host. pcsc-lite 2.4 here was checked against a host's pcscd 1.9.5 on
+# 2026-11-13. The relay itself stays off unless smartcardReaderEnabled is
+# true — see docs/smartcard.md.
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -y install \
+        --no-install-recommends libpcsclite1 libpcsclite-dev python3 make g++
+RUN npm install --omit=dev \
+    && node -e "require('pcsclite'); console.log('pcsclite loads')"
+RUN DEBIAN_FRONTEND=noninteractive apt-get -y purge libpcsclite-dev \
+        python3 make g++ \
+    && apt-get -y autoremove \
+    && rm -rf /var/lib/apt/lists/*
 # If you are building your code for production
 # RUN npm ci --only=production
 
@@ -109,14 +131,14 @@ COPY common/spiffe/ /usr/src/common/spiffe/
 # form posts to an http api is a form Chrome does not submit at all.
 COPY common/tls_listener.js /usr/src/common/tls_listener.js
 
-# Application version: the repo-root VERSION file (M.N) plus the shared stamping
+# Application version: the repo-root VERSION file (M.N.P) plus the shared stamping
 # module, which is the client's — there is one implementation of the scheme and
 # both services read it, rather than a second copy that could drift. Without the
 # VERSION file the module falls back to 0.0, so this COPY is load-bearing.
 COPY VERSION /usr/src/app/VERSION
 COPY client/version.js /usr/src/app/version.js
 
-# Fix this image's build number (M.N.O) and ship it in version.json, so the
+# Fix this image's build number (M.N.P.B) and ship it in version.json, so the
 # User-Agent this service sends names the build it came from and does not change
 # when the container restarts. Supplied by CI as --build-arg BUILD_NUMBER=...
 ARG BUILD_NUMBER

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Keycloak 8.0.1 (WildFly) + cloudtrust keycloak-wsfed module.
 #
 # DEDICATED side-car IdP for the WS-Federation debugger test. The main stack runs

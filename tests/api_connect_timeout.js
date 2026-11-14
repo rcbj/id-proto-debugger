@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: api_connect_timeout.js
 //
 // The api's outbound LIMITS: api/connect_timeout.js, and the four settings in
@@ -699,8 +702,8 @@ function userAgentIsConfigured() {
   if (fs.existsSync(versionModule)) {
     var appversion = require(versionModule);
     var resolved = appversion.load(path.join(repoRoot, "api"));
-    assert.ok(/^\d+\.\d+\.\S+$/.test(resolved.version),
-      "the version must come out as M.N.O, got: " + resolved.version);
+    assert.ok(/^\d+\.\d+\.\d+\.\S+$/.test(resolved.version),
+      "the version must come out as M.N.P.B, got: " + resolved.version);
     assert.ok(!/^0\.0\./.test(resolved.version),
       "a version of 0.0.x means the VERSION file was not found — " +
           "which is what " +
@@ -987,7 +990,12 @@ function manifestDeclaresEveryRequire() {
     return;
   }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  const declared = Object.keys(manifest.dependencies || {});
+  // optionalDependencies count: `npm install` installs them as well, and
+  // the two here (pcsclite, node-hid) are native bindings whose callers
+  // (api/smartcard_reader.js, api/otp_hid.js, api/native.js) cope with
+  // their absence by saying so rather than dying at startup.
+  const declared = Object.keys(manifest.dependencies || {})
+    .concat(Object.keys(manifest.optionalDependencies || {}));
 
   // Everything that ends up on the image's require path: the api's own sources,
   // plus whatever the Dockerfile stages in beside them. A staged file's

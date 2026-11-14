@@ -648,7 +648,12 @@ function dbgSetAllPanes(expand) {
               <td><a href="/encoding_tools.html?from=oauth2_oidc_1.html" onclick="return oauth2_oidc_1.clickLink();">Encoding / Hashing Tools</a> — Base64 and URI encode/decode, CRC-32 checksums, SHA-1/SHA-2 hashing, and the post-quantum hash functions: SHA-3 and SHAKE (FIPS 202) plus cSHAKE, KMAC, TupleHash and ParallelHash (SP 800-185).</td>
             </tr>
             <tr>
-              <td><a href="/digital_signature.html?from=oauth2_oidc_1.html" onclick="return oauth2_oidc_1.clickLink();">Digital Signature</a> — generate an SLH-DSA (post-quantum) key pair, sign a value, and validate the signature.</td>
+              <td><a href="/digital_signature.html?from=oauth2_oidc_1.html"
+                  onclick="return oauth2_oidc_1.clickLink();">Digital
+                  Signature</a> — generate keys, sign or MAC a value,
+                  and check the result. Twelve panes: SLH-DSA, LMS/HSS
+                  and XMSS, RSA, ECC, ML-DSA, composite ML-DSA, BBS,
+                  JWS, XML Signature, and three MAC families.</td>
             </tr>
             <tr>
               <td><a href="/encryption_tools.html?from=oauth2_oidc_1.html" onclick="return oauth2_oidc_1.clickLink();">Encryption / Decryption</a> &mdash; encrypt and decrypt with AES (every mode), ChaCha20-Poly1305, 3DES/DES, RSA, ECC (ECIES), the post-quantum ML-KEM, the finite-field family DSA belongs to, JWE, and password-based encryption.</td>
@@ -832,7 +837,15 @@ function dbgSetAllPanes(expand) {
         <tbody>
           <tr>
             <td>&nbsp;</td>
-            <td><p>Create, read, update, and delete a client on the Identity Provider using the OIDC Dynamic Client Registration protocol. See the <a rel="noopener noreferrer" href="https://openid.net/specs/openid-connect-registration-1_0.html" onclick="return oauth2_oidc_1.clickLink();">OIDC Registration spec</a> (and <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7591" onclick="return oauth2_oidc_1.clickLink();">RFC 7591</a> / <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7592" onclick="return oauth2_oidc_1.clickLink();">RFC 7592</a>).</p></td>
+            <td><p>Create, read, update, and delete a client on the Identity Provider using the OIDC Dynamic Client Registration protocol. See the <a rel="noopener noreferrer" href="https://openid.net/specs/openid-connect-registration-1_0.html" onclick="return oauth2_oidc_1.clickLink();">OIDC Registration spec</a> (and <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7591" onclick="return oauth2_oidc_1.clickLink();">RFC 7591</a> / <a rel="noopener noreferrer" href="https://www.rfc-editor.org/rfc/rfc7592" onclick="return oauth2_oidc_1.clickLink();">RFC 7592</a>).</p>
+              <p><a rel="noopener noreferrer"
+                  href="https://openid.net/specs/openid-connect-rp-metadata-choices-1_0-final.html"
+                  onclick="return oauth2_oidc_1.clickLink();">OpenID
+                Connect RP Metadata Choices 1.0</a> sends each value
+                this client supports as an array, with the preferred
+                value in the single-valued partner. Apply RP metadata
+                choices writes that request. The line under the metadata
+                checks it before anything is sent.</p></td>
           </tr>
           <tr>
             <td>
@@ -863,6 +876,17 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
+              <input class="btn2" type="button"
+                  value="Apply RP metadata choices"
+                  onclick="return oauth2_oidc_1.applyRpMetadataChoices();" />
+            </td>
+            <td>
+              <div id="dcr_choices_verdict"
+                  style="white-space: pre-wrap;"></div>
+            </td>
+          </tr>
+          <tr>
+            <td>
               <div class="tooltip"><label>Request: </label><span class="tooltiptext">The HTTP request that "Register New Client" will send to the Registration Endpoint (a POST of the client metadata).</span>
               </div>
             </td>
@@ -888,11 +912,11 @@ function dbgSetAllPanes(expand) {
           </tr>
           <tr>
             <td>
-              <div class="tooltip"><label>Registration Access Token: </label><span class="tooltiptext">The registration_access_token returned at registration. Presented as a bearer token to read, update, and delete the client (RFC 7592).</span>
+              <div class="tooltip"><label>Registration Access Token: </label><span class="tooltiptext">The registration_access_token returned at registration. Presented as a bearer token to read, update, and delete the client (RFC 7592). Kept in this tab's sessionStorage only, and gone when the tab closes.</span>
               </div>
             </td>
             <td>
-              <input class="stored" id="registration_access_token" name="registration_access_token" type="text" size="64" />
+              <input id="registration_access_token" name="registration_access_token" type="text" size="64" />
             </td>
           </tr>
           <tr>
@@ -911,6 +935,25 @@ function dbgSetAllPanes(expand) {
             </td>
             <td>
               <textarea id="dcr_response_textarea" name="dcr_response_textarea" rows="14" cols="70" readonly></textarea>
+            </td>
+          </tr>
+          <tr id="dcr_issued_client_secret_row" style="display: none;">
+            <td>
+              <div class="tooltip"><label>Issued Client Secret: </label><span class="tooltiptext">The client_secret this registration issued. It is shown here once and is not saved anywhere. Copy it now and type it into Client Secret on step 2.</span>
+              </div>
+            </td>
+            <td>
+              <input id="dcr_issued_client_secret" name="dcr_issued_client_secret" type="text" size="64" readonly autocomplete="off" />
+              <input class="btn2" type="button" value="Copy" onclick="return oauth2_oidc_1.copyIssuedClientSecret();" />
+              <p id="dcr_issued_client_secret_note"><strong>Not saved.</strong> This secret is not stored in the browser and is not carried to step 2. Copy it now; step 2 asks for it again.</p>
+            </td>
+          </tr>
+          <tr>
+            <td>&nbsp;</td>
+            <td>
+              <div id="dcr_choices_response_note"
+                  style="white-space: pre-wrap;"></div>
+              <div id="dcr_choices_result"></div>
             </td>
           </tr>
         </tbody>

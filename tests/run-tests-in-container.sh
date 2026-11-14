@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 set -x
 #
 # IN-CONTAINER entrypoint for the tests image (tests/Dockerfile CMD). It runs
@@ -112,6 +115,11 @@ init()
   # SAML: must match the client bundle's baked env (service DNS names).
   API_BASE_URL="${API_BASE_URL:-https://api:4000}"
   SAML_SP_ENTITY_ID="${SAML_SP_ENTITY_ID:-https://client:3000/saml/sp}"
+  # Exported HERE, not only by configureKeycloak() (common.sh's declare -gx):
+  # a focused run with no Keycloak in its stack (--saml-only=sts) never calls
+  # that, and every SAML job then died with "SAML_SP_ENTITY_ID environment
+  # variable is not set".
+  export SAML_SP_ENTITY_ID
   # THE api AND THE MOCK STS AS THIS CONTAINER REACHES THEM, and neither is
   # API_BASE_URL above. That one is the SAML / WS-Federation variable — the
   # address the identity provider is told to POST to, which common.sh registers
@@ -354,13 +362,28 @@ init()
   KEYCLOAK_WSFED_BASE_URL="${KEYCLOAK_WSFED_BASE_URL:-}"
   KEYCLOAK_WSFED_LOCALHOST_BASE_URL="${KEYCLOAK_WSFED_LOCALHOST_BASE_URL:-}"
   export KEYCLOAK_WSFED_BASE_URL KEYCLOAK_WSFED_LOCALHOST_BASE_URL
+  # The SAML 1.1 peer: a Shibboleth IdP (shibboleth-idp/), for the Shibboleth
+  # half of saml11_peers.js. Only this test container talks to it, with no
+  # browser, so the compose name is the whole address. Same rule as walt.id:
+  # only the containerized stack has one, and unset elsewhere skips that half.
+  # The user, password, SP entity ID and ACS are the test's own defaults,
+  # which shibboleth-idp/ is configured for.
+  case "${DEBUGGER_BASE_URL}" in
+    https://client:*|http://client:*)
+      local shib_default="http://shibboleth-idp:8080/idp"
+      SHIBBOLETH_IDP_URL="${SHIBBOLETH_IDP_URL:-${shib_default}}"
+      ;;
+  esac
+  SHIBBOLETH_IDP_URL="${SHIBBOLETH_IDP_URL:-}"
+  export SHIBBOLETH_IDP_URL
   # WHICH SERVICES THE LAUNCHER STARTED. ./docker-run-tests.sh's focused modes
   # (--saml-only=sts, --wsfed-only, --federation-only, ...) bring up only part
   # of the stack and say which part here; unset means the whole stack, which
-  # is the ordinary run. Only Keycloak and its WS-Federation side-car are
-  # consulted — the mock STS, the api and the client are in every subset.
-  # A service that is absent is not waited for and not provisioned, so its
-  # jobs are left to TEST_SELECT to leave out rather than to fail on.
+  # is the ordinary run. Only Keycloak, its WS-Federation side-car and the
+  # Shibboleth IdP are consulted — the mock STS, the api and the client are
+  # in every subset. A service that is absent is not waited for and not
+  # provisioned, so its jobs are left to TEST_SELECT to leave out rather than
+  # to fail on.
   if [ -n "${TEST_STACK_SERVICES:-}" ];
   then
     echo "Partial stack: ${TEST_STACK_SERVICES}"
@@ -368,6 +391,10 @@ init()
     then
       KEYCLOAK_WSFED_BASE_URL=""
       KEYCLOAK_WSFED_LOCALHOST_BASE_URL=""
+    fi
+    if ! stackHas shibboleth-idp;
+    then
+      SHIBBOLETH_IDP_URL=""
     fi
   fi
   # THE MOCK STS'S BASE, as THIS container reaches it. The compose name on

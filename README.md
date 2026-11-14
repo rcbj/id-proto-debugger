@@ -32,16 +32,16 @@ This project currently supports the following specs & features:
 * [OAuth2 Token Exchange - RFC8693](https://www.rfc-editor.org/rfc/rfc8693.html) -- Exchange one token for another: impersonation or delegation, with a `subject_token`, an optional `actor_token`, and `audience` / `resource` / `scope` / `requested_token_type`. It has **its own card on the landing page**, which opens `oauth2_oidc_1.html` — you need a subject token before you can exchange one, so the exchange pane itself is on the results page (`oauth2_oidc_2.html`). Currently only tested with Keycloak v26.x.
 * [OAuth2 Token Revocation - RFC7009](https://www.rfc-editor.org/info/rfc7009/)
 * [OIDC Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html) -- a Relying Party registers itself at the OP's registration endpoint, sending its client metadata and getting back a `client_id` (plus a Registration Access Token and `registration_client_uri` for reading the registration back). Read/update/delete of an existing registration follow [RFC 7592](https://www.rfc-editor.org/info/rfc7592/), and the request/response bodies are [RFC 7591](https://www.rfc-editor.org/info/rfc7591/)'s. It has **its own card on the landing page**, which opens the Dynamic Client Registration pane on `oauth2_oidc_1.html` — the same page as the OAuth2 / OIDC workflow, because a registration is what that workflow then uses.
-* [SAML 2.0](https://www.oasis-open.org/standard/saml/) -- SP-initiated SSO against an IdP over the HTTP-Redirect, HTTP-POST and HTTP-Artifact bindings, with Single Logout, a signed (and optionally encrypted) `AuthnRequest`, and the IdP's response decoded on a page of its own.
+* [SAML 2.0](https://www.oasis-open.org/standard/saml/) -- SP-initiated SSO against an IdP over the HTTP-Redirect, HTTP-POST and HTTP-Artifact bindings, with Single Logout, a signed (and optionally encrypted) `AuthnRequest`, and the IdP's response decoded on a page of its own. Setup is in [Using the SAML workflow](docs/saml.md). The decoders are in [SAML decoders and certificate details](docs/saml-decoders.md).
 * [SAML 1.1](https://www.oasis-open.org/committees/download.php/3406/oasis-sstc-saml-bindings-1.1.pdf) -- the same workflow's second protocol version, over the same three bindings: **Browser/POST** and **Browser/Artifact**, requested with Shibboleth's `urn:mace:shibboleth:1.0:profiles:AuthnRequest` profile, with the artifact resolved over the SOAP binding at the identity provider's SAML responder. It is **a different protocol, not an older spelling** — there is no request message, no Single Logout, nothing to sign and nothing to encrypt — so the settings that do not apply are greyed out and switched off when 1.1 is selected. See [docs/saml11.md](docs/saml11.md).
-* A **SAML Assertion Tool** that composes a spec-compliant SAML 1.0 / 1.1 / 2.0 assertion and signs and encrypts it in the browser. See the SAML Assertion Tool section below.
+* A **SAML Assertion Tool** that composes a spec-compliant SAML 1.0 / 1.1 / 2.0 assertion and signs and encrypts it in the browser. See [SAML Assertion Tool](docs/saml-assertion.md).
 * [WS-Federation v1.2 Passive Requestor Profile](https://docs.oasis-open.org/wsfed/federation/v1.2/os/ws-federation-1.2-spec-os.html) -- An older protocol, but still common with Microsoft ADFS.
 * [SD-JWT — Selective Disclosure for JWTs, RFC 9901](https://www.rfc-editor.org/rfc/rfc9901.html) -- the format the credential workflows below are built on: salted claim Disclosures hashed into an `_sd` array, a Combined Serialization joined by `~`, and a **Key Binding JWT** (section 4.3) whose `sd_hash` commits to exactly the bytes presented. In-browser: nothing is disclosed that you did not tick.
 * [SD-JWT VC — SD-JWT-based Verifiable Credentials](https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/) -- the credential type on top of SD-JWT: a `dc+sd-jwt` typed JWT with a `vct`, an issuer resolvable by `iss` (an HTTPS identifier with JWT VC Issuer Metadata, or a `did:jwk`), and holder binding through `cnf`.
 * [OpenID for Verifiable Credential Issuance 1.0 (OID4VCI)](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) -- the **VC Issuance workflow**: credential issuer metadata (including RFC 8414 well-known *path insertion*), the authorization code and **pre-authorized code** grants, Credential Offers by value / by `credential_offer_uri` / by QR code with a Transaction Code, `authorization_details` → `credential_identifier`, a nonce endpoint and `openid4vci-proof+jwt` proof of possession, batch issuance, deferred issuance, encrypted Credential Responses, the Notification Endpoint, and **credential refresh** (section 14.5). Appendix H use cases H.1, H.2, H.3 and H.6. See the VC Issuance section below.
 * [OpenID for Verifiable Presentations 1.0 (OID4VP)](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html) -- the **VC Presentation workflow**: an Authorization Request with `response_type=vp_token` and `response_mode=direct_post`, a **DCQL** query decoded into the claim paths being asked for, Client Identifier Prefixes, the request by value or as a signed Request Object by reference, cross-device by QR code, and a `vp_token` keyed by DCQL credential-query id. See the VC Presentation section below.
 * [JAR — JWT-Secured Authorization Request, RFC 9101](https://www.rfc-editor.org/rfc/rfc9101.html) -- how a Verifier's OID4VP request is passed **by reference and signed**, and verified in the browser before anything is disclosed.
-* [WS-Trust 1.0–1.4](https://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html) -- Issue / Renew / Validate / Cancel against an STS, selectable protocol version (1.0/1.1/1.2 pre-OASIS, 1.3/1.4 OASIS ws-sx), with WS-Security (UsernameToken / SAML token), WS-Addressing, and optional XML Signature / XML Encryption. See the WS-Trust Test Tools section below.
+* [WS-Trust 1.0–1.4](https://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html) -- Issue / Renew / Validate / Cancel against an STS, selectable protocol version (1.0/1.1/1.2 pre-OASIS, 1.3/1.4 OASIS ws-sx), with WS-Security (UsernameToken / SAML token), WS-Addressing, and optional XML Signature / XML Encryption. See [Using the WS-Trust workflow](docs/wstrust.md).
 * [Kerberos v5 — RFC 4120](https://www.rfc-editor.org/rfc/rfc4120) -- the **Kerberos workflow**: get a ticket-granting ticket from a real Key Distribution Center (a Windows domain controller, MIT or Heimdal krb5, or this project's mock KDC), spend it on a service ticket, and present that to a service with mutual authentication — every field of every message shown on the way past, and the encrypted parts opened when you supply the key. Plus a **Kerberos Decoder** that parses a pasted message, ticket, GSS-API token, keytab or PAC with no network at all. Unlike every other workflow here this one is **not available on the hosted site** and its card there is greyed out: Kerberos speaks DER over TCP and UDP port 88, and a browser cannot open a socket, so it needs the api service running locally. The decoder needs no network of its own, but it ships with the rest of the workflow rather than alone — run the debugger locally for any of it.
 * [Kerberos encryption — RFC 3961, RFC 3962, RFC 8009, RFC 4757](https://www.rfc-editor.org/rfc/rfc3961) -- the encryption framework and the types actually in use: `aes128/256-cts-hmac-sha1-96` (17, 18), the SHA-2 pair (19, 20) and `arcfour-hmac-md5` (23), implemented in the browser. DES is decode-only — Windows Server 2025 removed it — so an old capture still renders without pretending the protocol is still safe.
 * [GSS-API Kerberos mechanism — RFC 4121](https://www.rfc-editor.org/rfc/rfc4121) -- the AP exchange as a service actually receives it, including the **0x8003 checksum** (which is not a checksum: it carries the channel bindings and the delegation and mutual-authentication flags, with its integers little-endian in a protocol that is otherwise big-endian), and per-message MIC and Wrap tokens.
@@ -89,7 +89,7 @@ If sending authorization codes to a third-party hosting provider is not acceptab
 sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
 
-Then use the debugger at `https://localhost:3000`, and register `https://localhost:3000/callback` as your redirect URI with your Identity Provider. The certificate is self-signed and generated per checkout by `./generate-tls-cert.sh`, so your browser will ask you to accept it once; that script prints its SHA-256 fingerprint. In a local build, the authorization code is delivered to the debugger running on your own machine and never transits a third-party host.
+Then use the debugger at `https://localhost:3000`, and register `https://localhost:3000/callback` as your redirect URI with your Identity Provider. The services present a leaf from a local issuing CA. `./generate-tls-cert.sh` creates the root once and reuses it, and prints that root's SHA-256 fingerprint first. Trust the root. A later run issues a new leaf from the same root, so the browser keeps that trust. `--rotate-ca` starts a new root. In a local build, the authorization code is delivered to the debugger running on your own machine and never transits a third-party host.
 
 # AI Coding Tool Disclosure
 As of Q1, 2026, Anthropic Claude was used to implement some new features of this project. All code is reviewed by a human before being merged into the main branch.
@@ -147,33 +147,26 @@ sudo CONFIG_FILE=./env/local.js docker-compose up
 ```
 Note, you will need at least 950MB of disk space ree in order to build this Docker image.
 
-`--recurse-submodules` matters: the mock STS the test suite and the local stack
-run against lives in its own repository, [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts),
-and is linked here as the `sts/` submodule. Cloned without it, `sts/` is an empty
-directory and the build fails with `failed to read dockerfile`. In a checkout that
-is already in that state:
+`--recurse-submodules` fetches the one submodule,
+[`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs) at `api/node-ldapjs/`
+(branch `master`): a fork of `ldapjs` for the LDAP support of issue #257, pinned
+at the final commit its maintainer left behind when the project was
+decommissioned on 2024-05-14 — which is why it is a submodule rather than a
+dependency in `api/package.json`. An uninitialised submodule is an *empty
+directory* rather than a missing one, so the api image builds and dies at
+startup with `Cannot find module 'ldapjs'`. In a checkout cloned without it:
 ```
 git submodule update --init
 ```
-**`--recursive`, not plain `--init`.** The mock STS has a submodule of its own —
-[`node-ldapjs`](https://github.com/rcbj/node-ldapjs), which its `package.json`
-takes as `"ldapjs": "file:node-ldapjs"` — and `--init` alone stops one level
-short of it. An uninitialised submodule is an *empty directory* rather than a
-missing one, so the image builds perfectly well, npm installs a package with no
-`main`, and the `sts` container dies at startup with `Cannot find module
-'ldapjs'`: a message naming a package, not a submodule.
+The test launchers do this for you (`requireApiLdapjsCheckout()` in
+[`common/common.sh`](common/common.sh)); a bare `docker-compose build` does not.
 
-The test launchers do this for you — `requireMockStsCheckout()` in
-[`common/common.sh`](common/common.sh), which checks the nested one too — but a
-bare `docker-compose build` does not.
-
-There is a **second submodule**, [`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs)
-at `api/node-ldapjs/` (branch `master`): a fork of `ldapjs` for the LDAP support
-of issue #257, pinned at the final commit its maintainer left behind when the
-project was decommissioned on 2024-05-14 — which is why it is a submodule rather
-than a dependency in `api/package.json`. Nothing builds from it yet, so an
-uninitialised `api/node-ldapjs/` does not break anything today; the bare
-`git submodule update --init` above takes it along with `sts/` regardless.
+The mock STS the test suite and the local stack run against,
+[`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), is **not** a submodule: every
+compose file runs its published release image — the private copy of
+`ghcr.io/rcbj/iya-sts:<version>` in this repository's image mirror,
+`ghcr.io/rcbj/id-proto-debugger/mirror/iya-sts:<version>`, which needs
+`docker login ghcr.io` (see *The mock STS runs from its release image* below).
 
 From a bash command prompt on Fedora or RHEL 7.x, run the following::
 ```
@@ -197,14 +190,14 @@ This is a nuclear option to cleanup docker. You may not want to do this if you h
 * Remove all volumes: ```sudo docker volume rm $(sudo docker volume ls | awk '{ print $2 }')```
 * Remmove all networks: ```sudo docker network prune -f```
 
-On other systems, the commands needed to start the debugger in a local docker container will be similar. The docker Sinatra/Ruby runtime will have to be able to establish connections to remote IdP endpoint (whether locally in other docker containers, on the host VM, or over the network/internet). On the test system, it was necessary to add "--net=host" to the "docker run" args. The network connectivity details for docker may vary from platform-to-platform.
+On other systems, the commands needed to start the debugger in a local docker container will be similar. The API container has to be able to establish connections to a remote IdP endpoint (whether locally in other docker containers, on the host VM, or over the network/internet). On the test system, it was necessary to add "--net=host" to the "docker run" args. The network connectivity details for docker may vary from platform-to-platform.
 
 ### Running
 **Step-by-step guides with screenshots** for every OAuth2 grant and OIDC flow
 are in [docs/oauth2-oidc](docs/oauth2-oidc/index.md):
 [OAuth 2.0 authorization grants](docs/oauth2-oidc/oauth2-grants.md) and
 [OpenID Connect authentication flows](docs/oauth2-oidc/oidc-flows.md). The
-summary below is the short version.
+summary below is the short version. The same guide covers [dynamic client registration](docs/oauth2-oidc/dynamic-client-registration.md) and the [token detail, introspection, UserInfo, and JWKS pages](docs/oauth2-oidc/related-tools.md). SAML 2.0 is [Using the SAML workflow](docs/saml.md). WS-Trust is [Using the WS-Trust workflow](docs/wstrust.md).
 
 * Open your favorite browser and enter "https://localhost:3000" in the address bar.
 * Choose the OAuth2 Grant or OIDC Flow that you want to test.
@@ -223,7 +216,7 @@ summary below is the short version.
 * Enter the client secret if this is a confidential client.
 * Enter the scope information.
 * If a resource is needed, click Yes.  Enter the resource information in the Resource field.
-* If the IdP is using a self-signed certificate or a cert issued from a non-public CA, click No next to the "Validate IdP Certificate?" question.  Note, certificates signed by public CAs are validated against the trusted CAs included with the Ruby 2.4.0 docker image.
+* If the provider's certificate is not in the API image's trust store, set **SSL Certificate Validation** to **No**. That switch applies when the token request is sent from the back end. A certificate from a public CA is checked against the trust store in the API container.
 * Click the Get Token button.
 * The standard tokens that are returned from the token endpoint are displayed at the bottom.
 #### OAuth2 Implicit Grant:
@@ -254,19 +247,16 @@ If you need to pop up the browser for troubleshooting, pass in the --browser opt
 
 To generate a code coverage report, run ```./run-coverage.sh```. The report will be under the coverage directory.
 
-### The mock STS is a submodule
-Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier and the `did:web` document — is one small Node service that used to live in `sts/` in this repository and now lives in [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts). This repository records a link to it (branch `main`) as the `sts/` submodule; the code is fetched, not vendored.
+### The mock STS runs from its release image
+Everything the suite needs on the *other* side of a protocol — the WS-Trust STS, the SAML 2.0 IdP endpoints, the OAuth 2.0 / OIDC authorization server, the OID4VCI Credential Issuer, the OID4VP Verifier, the KDC, the LDAP directory and the `did:web` document — is one Node service, [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts). It used to live in `sts/` in this repository and was then linked as the `sts/` submodule; since 2026-11-13 this repository holds no copy of it. Every compose file runs its published release image — not iya-sts's public package itself but the PRIVATE copy of it in this repository's image mirror (`.github/image-mirror.txt`), which the Mirror Images workflow refreshes from iya-sts's release, like every other image the stacks pull. Pulling it needs `docker login ghcr.io` with a token that can read packages:
 
-Two things build from it, and both fail unhelpfully if the submodule was never initialised:
+| What | How |
+|---|---|
+| the `sts` service | `image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:<version>}` — the default in `docker-compose-run-tests.yml` is the one place the release is named, and `tests/image_mirror_coverage.js` fails when another compose file disagrees or the default is not the mirror's copy |
+| its companion (demo pages, SPNEGO page, Kerberos TCP service) | built from iya-sts's repository at the matching tag into the private mirror by `.github/scripts/mirror-builds.sh`, and pulled as `${IYA_STS_COMPANION_IMAGE:-…/mirror/iya-sts-companion:v<version>}` |
+| tests that load iya-sts's code in process | the tests image copies the image's `/usr/src/sts`; a host run copies it once into `~/.cache/id-proto-debugger/iya-sts/` (`tests/module_paths.js`, `iyaStsTree()`) |
 
-| What | Where | What it says when `sts/` is empty |
-|---|---|---|
-| the STS image | `context: ./sts` in all four compose files | `failed to read dockerfile` |
-| the tests image | `COPY sts/common/crypto_impl/bbs2023.js` in `tests/Dockerfile`, so `tests/bbs2023_cryptosuite.js` can check the wallet's cryptosuite against the issuer's | `COPY sts/common/crypto_impl/bbs2023.js: not found` |
-
-Neither message mentions a submodule, so every launcher (`./docker-run-tests.sh`, `./local-run-tests.sh`, `./remote-run-tests.sh`, `./run-coverage.sh`) calls `requireMockStsCheckout()` from [`common/common.sh`](common/common.sh) before building: it initialises the submodule if it can and stops the run with the reason if it cannot. The CI workflows that build the stack check out with `submodules: true` for the same reason.
-
-By default the build uses the commit this repository records, which is what makes a run repeatable. To build against the tip of `main` instead, set `MOCK_STS_TRACK_REMOTE=1` — that is `git submodule update --remote`, so the run is no longer repeatable and `git status` will show the submodule pointer as modified.
+Set `IYA_STS_IMAGE` to run a candidate image, or `MOCK_STS_DIR` to load a working copy of iya-sts's tree in the in-process tests. A checkout from before 2026-11-13 keeps an `sts/` directory after pulling; nothing reads it, and it can be deleted.
 
 ### The SAML SP key pair
 The SAML tests sign the AuthnRequest and LogoutRequest, and decrypt an encrypted assertion, with a Service Provider key pair. **No key pair is stored in this repository.** `generateSpKeyPair()` in [`common/common.sh`](common/common.sh) creates a fresh self-signed RSA 2048 pair at the start of every run — in a temporary directory that is deleted as soon as the PEMs have been read — and exports it:
@@ -297,11 +287,11 @@ same tags from the same build — use whichever you prefer:
 | `ghcr.io/rcbj/id-proto-debugger-client` | `iyasec/id-proto-debugger-client` |
 
 Tags: `latest` (the newest `master` build), `develop` (the newest `develop`
-build), and one `M.N.O` per build.
+build), and one `M.N.P.B` per build.
 
-`M.N.O` (for example `0.9.20260928070000`) is the build's version, and the git
-tag of the same name marks the commit that image was built from — so
-`git checkout 0.9.20260928070000` is the source of
+`M.N.P.B` (for example `0.9.0.20260928070000`) is the build's version, and the
+git tag of the same name marks the commit that image was built from — so
+`git checkout 0.9.0.20260928070000` is the source of
 `ghcr.io/rcbj/id-proto-debugger-api:0.9.20260928070000`. The version is also in
 each running client's footer and in `/version.json`.
 
@@ -360,8 +350,8 @@ script wrote:
 
 ```yaml
 # id-proto-debugger from its published images on ghcr.io.
-# DEBUGGER_TAG selects the build: latest (default), develop, or an M.N.O
-# version such as 0.9.20260928070000.
+# DEBUGGER_TAG selects the build: latest (default), develop, or an M.N.P.B
+# version such as 0.9.0.20260928070000.
 services:
   api:
     image: ghcr.io/rcbj/id-proto-debugger-api:${DEBUGGER_TAG:-latest}
@@ -443,7 +433,7 @@ sudo docker run -p 3000:3000 -e CONFIG_FILE=./env/local.js -d rcbj/debugger-clie
 sudo docker build -t rcbj/debugger-api --build-arg CONFIG_FILE=./env/local.js -f api/Dockerfile .
 sudo docker run -p 4000:4000 -e CONFIG_FILE=./env/local.js -d rcbj/debugger-api
 ```
-On other systems, the commands needed to start the debugger in a local docker container will be similar. The docker Sinatra/Ruby runtime will have to be able to establish connections to remote IdP endpoint (whether locally in other docker containers, on the host VM, or over the network/internet).  On the test system, it was necessary to add "--net=host" to the "docker run" args. The network connectivity details for docker may vary from platform-to-platform.
+On other systems, the commands needed to start the debugger in a local docker container will be similar. The API container has to be able to establish connections to a remote IdP endpoint (whether locally in other docker containers, on the host VM, or over the network/internet).  On the test system, it was necessary to add "--net=host" to the "docker run" args. The network connectivity details for docker may vary from platform-to-platform.
 
 ## Embedded in the mock STS
 
@@ -455,11 +445,16 @@ on a unix socket behind its own proxy. This repository builds the tree that
 service consumes:
 
 ```bash
-git submodule update --init --recursive
+git submodule update --init
 embedded/build.sh --out /path/to/tree          # without docker
 docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:dev \
+  --build-context ubuntu=docker-image://ghcr.io/rcbj/id-proto-debugger/mirror/ubuntu:latest \
   --build-arg GIT_COMMIT=$(git rev-parse --short=12 HEAD) .
 ```
+
+The `--build-context` takes `ubuntu:latest` from this repository's private
+image mirror rather than Docker Hub, as every build here does; it needs
+`docker login ghcr.io`, and dropping it builds from Docker Hub instead.
 
 Nothing about the standalone debugger changes. The contract — the tree, the
 `DEBUGGER_*` environment the api child reads, and the address allow-list it
@@ -521,301 +516,97 @@ If the Logout URL can be read from the OIDC Discovery Endpoint, it will be autom
 The associated refresh token should be invalidated at this point. The corresponding JWT tokens could still be validated unless you compare them against the Introspection Endpoint.
 
 ## JWT Validation
-The detail view screen for tokens can validate a JWT token signature.
 
-It can take a JWKS Endpoint or certificate directly.
+The token detail page (`/token_detail.html`) checks a JWT signature. Open
+it by clicking the token's name on step 2. **Verification Type** defaults
+to **HMAC Secret**. The other choices are **X.509 Certificate (PEM)** (a
+certificate or a bare public key), **JWKS (JSON)**, and **JWKS (URL)**. A
+JWKS is selected by `kid` and verifies every algorithm this page can check,
+not only RSA.
+
+Field-by-field notes for that page, and for introspection, UserInfo, JWKS,
+and the logout status page, are in
+[Token detail, introspection, UserInfo, and JWKS](docs/oauth2-oidc/related-tools.md).
 
 ## JWT Tools
-The **JWT Tools** page (`/jwt_tools.html`) is a standalone, browser-only workbench for building, signing, encrypting, verifying, and decrypting JSON Web Tokens. It implements JWS ([RFC 7515](https://www.rfc-editor.org/rfc/rfc7515)), JWE ([RFC 7516](https://www.rfc-editor.org/rfc/rfc7516)), JWT ([RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)), and the JOSE algorithms of JWA ([RFC 7518](https://www.rfc-editor.org/rfc/rfc7518)) plus EdDSA ([RFC 8037](https://www.rfc-editor.org/rfc/rfc8037)).
 
-**All cryptography runs in your browser** via the Web Crypto API (`crypto.subtle`). No key material — private keys, HMAC secrets, generated key pairs, or passwords — is ever written to `localStorage` or sent to a server. Because Web Crypto is only available in a *secure context*, use the page over `https://` or `http://localhost`.
+**JWT Tools** (`/jwt_tools.html`) builds, signs, encrypts, verifies, and
+decrypts a token in the browser. Open it from the **Tools** pane on the
+OAuth2 / OIDC pages. Signing uses Web Crypto, so use the page over
+`https://` or `http://localhost`.
 
-Reach it from the **Tools** pane on `oauth2_oidc_1.html` or `oauth2_oidc_2.html`, or browse directly to `/jwt_tools.html`. The "← Return to debugger" link sends you back to whichever debugger page you came from. Every multi-line field has a **Copy** button, and hovering any field shows a tooltip describing it.
+The signing menu is `RS256` (the default) and the rest of `RS*` / `PS*`,
+`ES256` / `ES384` / `ES512`, `EdDSA` (Ed25519), and `HS256` / `HS384` /
+`HS512`. Ed448, secp256k1, and the post-quantum algorithms are on the
+Digital Signature page's JWS pane.
 
-The page is three side-by-side panes that map to the lifecycle of a token:
+Encryption pairs a key-management algorithm with a content-encryption
+algorithm. **Key Management** defaults to `RSA-OAEP` (also `RSA-OAEP-256`
+and `ECDH-ES`, `ECDH-ES+A128KW`, `+A192KW`, `+A256KW`, all on P-256).
+**Content Encryption** defaults to `A256GCM` (also `A192GCM`, `A128GCM`,
+`A128CBC-HS256`, `A192CBC-HS384`, `A256CBC-HS512`). `RSA1_5` is not
+offered. AES-192 (`A192GCM`, `A192CBC-HS384`, and `ECDH-ES+A192KW`) fails
+in Chromium-based browsers. Nothing on this page is written to
+`localStorage`.
 
-| Pane | Title | What it does |
-|---|---|---|
-| **#1** | Compose | Build the JWT Header and Payload; decode a pasted token |
-| **#2** | Sign (JWS) | Generate keys, sign the token, and **validate a signature** |
-| **#3** | Encrypt (JWE) | Generate keys, encrypt the token, and **decrypt a JWE** |
-
-The typical order is **Compose (#1) → Sign (#2) → Encrypt (#3)**, and the reverse for inspection: **Decrypt (#3) → Validate signature (#2)**.
-
-### Pane #1 — Compose
-Author the token. Three text areas plus helpers:
-
-* **JWT Header** — the JOSE header, as JSON. Pre-populated with a sample (`alg`, `typ`, `kid`).
-* **JWT Payload** — the claims set, as JSON. Pre-populated with RFC 7519 registered claims (`iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`) and placeholder values.
-* **Encoded JWT** — the compact-serialized token. This field is **two-way**: editing the Header or Payload rebuilds it as `BASE64URL(header).BASE64URL(payload).` (an *unsigned* token — note the trailing dot); pasting a token into it decodes the header and payload back into the fields on the left. If the pasted token carries a signature, the whole token is also copied into the Sign pane's **JWT to Verify** and **Signed JWT** fields.
-
-A status line reports the sync state or any JSON parse error.
-
-**Add Custom Claim** — insert a claim without hand-editing JSON: enter a **name** and **value**, pick a **value type** (`String`, `Number`, `Boolean`, or `JSON` — the last parses arbitrary JSON), pick a **target** (`Payload` or `Header`), and click **Add**.
-
-**Buttons:**
-* **Generate RFC 9068 Token** — overwrites the Header/Payload/Encoded JWT with a sample OAuth 2.0 JWT access token ([RFC 9068](https://www.rfc-editor.org/rfc/rfc9068)): header `typ` is `at+jwt` with the required access-token claims. The sample is *unsigned* — sign it in Pane #2.
-* **JWT RFC Compliance** — validates the current token against the JWT/JWS specs (RFC 7519 / RFC 7515) and writes a PASS/FAIL report to **Compliance Output**.
-* **RFC 9068 Compliance** — validates the current token specifically as an OAuth 2.0 JWT access token.
-
-### Pane #2 — Sign (JWS)
-Generate a signing key pair (or HMAC secret), sign the composed token, and validate signatures. **The Signing Algorithm dropdown drives everything in this pane** — it determines what key material *Generate Keys* produces and how the token is signed.
-
-| Option | Family | Key generated |
-|---|---|---|
-| `RS256` / `RS384` / `RS512` | RSASSA-PKCS1-v1_5 | RSA key pair (size from the Key Size dropdown) |
-| `PS256` / `PS384` / `PS512` | RSASSA-PSS | RSA key pair (size from the Key Size dropdown) |
-| `ES256` / `ES384` / `ES512` | ECDSA | EC key pair on P-256 / P-384 / P-521 |
-| `EdDSA` | EdDSA (RFC 8037) | OKP key pair on Ed25519 |
-| `HS256` / `HS384` / `HS512` | HMAC (symmetric) | a random shared secret (no key pair) |
-
-> The dropdown is read when you click a button and is **not "sticky"** to already-generated keys. Pick the algorithm *first*, then Generate Keys → Sign. If you switch to a different algorithm family after generating keys, regenerate them before signing.
-
-**Key generation & display:**
-* **Generate Keys** — creates key material for the selected algorithm and fills the key fields.
-* **RSA Key Size** — for the RSA families (`RS*`/`PS*`), selects the modulus size: **2048** (default), **3072**, **4096**, or **1024** (insecure). Ignored for EC, EdDSA, and HMAC, whose sizes follow the chosen curve/algorithm.
-* **Private Key (PKCS#8) / HMAC Secret** and **Public Key (SPKI)** — the key pair (HMAC shows only a base64url secret; the public field carries a notice). You may also paste your own PEM or JWK material.
-* **Show keys as JWK (off = PEM)** — a toggle that converts *both* key fields between PEM (default) and JWK in place.
-
-**Downloading keys:** choose a **Keystore format** (`PEM`, `JWK`, `DER`, `PKCS#12`) and an optional **Password** (which encrypts the private key: PBES2-encrypted PEM/DER, a PBES2 JWE for JWK, and *required* for PKCS#12), then **Download Keys**. DER produces two files (private + public). *PKCS#12 export is not available for EdDSA keys in-browser — use PEM, DER, or JWK.*
-
-**Signing:** **Generate Signed JWT** signs `BASE64URL(header).BASE64URL(payload)` with the Private Key / HMAC Secret and forces the header `alg` to match your selection. The result is written to **Signed JWT** (read-only), the **Encoded JWT** box in Pane #1, the **JWT to Verify** box below, and the **Payload to Encrypt** box in Pane #3 (ready to nest inside a JWE).
-
-**Validate a Signature (sub-section):** verify any JWS — the one you just produced or one you paste in.
-1. **JWT to Verify** — defaults to the just-signed token. Verification uses the **`alg` in the pasted token's header**, not the dropdown above.
-2. **Verification Type**:
-   * `HMAC Secret` — verify a symmetric (`HS*`) signature with the secret.
-   * `X.509 Certificate (PEM)` — verify with a public key / certificate (auto-populated from the public key you generated).
-   * `JWKS (JSON)` — paste a JWKS document; the key is chosen by the token's `kid`. *(Currently supports RSA keys.)*
-   * `JWKS (URL)` — same, but the JWKS is fetched from a URL.
-3. **Verification Key / URL** — the secret, PEM/cert, JWKS JSON, or URL.
-4. **Verify** — writes `Signature Verified: true|false` (or an error) to **Verification Output**.
-
-### Pane #3 — Encrypt (JWE)
-Encrypt the token (or any payload) into a JWE, and decrypt JWEs. JOSE encryption uses two algorithms: a **key-management** algorithm (`alg`, which uses the recipient's key pair) and a **content-encryption** algorithm (`enc`, which encrypts the body with a symmetric Content Encryption Key).
-
-**Key Management (`alg`):**
-
-| Option | Mechanism | Recipient key |
-|---|---|---|
-| `RSA-OAEP` | RSA-OAEP (SHA-1), wraps a random CEK | RSA key pair |
-| `RSA-OAEP-256` | RSA-OAEP (SHA-256), wraps a random CEK | RSA key pair |
-| `ECDH-ES` | ECDH key agreement, *direct* (the agreed key is the CEK) | EC key pair (P-256) |
-| `ECDH-ES+A128KW` / `+A192KW` / `+A256KW` | ECDH agreement derives a key-wrapping key that AES-KW-wraps a random CEK | EC key pair (P-256) |
-
-**Content Encryption (`enc`):** `A256GCM`, `A192GCM`, `A128GCM` (AES-GCM authenticated encryption).
-
-**Key generation & display:** **Generate Keys** creates the recipient key pair for the selected key-management algorithm (RSA for `RSA-OAEP*`; EC P-256 for all `ECDH-ES*`), shown as **Recipient Public Key (SPKI)** and **Recipient Private Key (PKCS#8)**. A **RSA Key Size** dropdown (**2048** default / **3072** / **4096**, or **1024** insecure) sets the modulus for the `RSA-OAEP*` algorithms and is ignored for `ECDH-ES*`. The **Show keys as JWK** toggle and the keystore **format / password / Download Keys** controls behave exactly as in Pane #2.
-
-**Encrypting:** **Payload to Encrypt** defaults to the Signed JWT from Pane #2 (a nested JWT); you can encrypt any text. **Encrypt JWT** produces a 5-part compact JWE (`protected.encrypted_key.iv.ciphertext.tag`) using the recipient **public** key, the selected `alg`/`enc`, and a fresh random IV. If the payload is itself a JWS, the protected header is marked `cty:"JWT"` (RFC 7519 §5.2); for `ECDH-ES*` the ephemeral public key is added as `epk`. The result is written to **Encrypted JWT (JWE)**, the **JWE to Decrypt** box below, and the Encoded JWT box in Pane #1. Encryption adds the JWE parameters (`enc`, `cty`, `epk`, …) to the Pane #1 Header but **preserves** the JWS signing `alg` (a JWS `alg` and a JWE `alg` are distinct header parameters).
-
-**Decrypt a JWE (sub-section):** **JWE to Decrypt** defaults to the JWE you just produced (paste any compact JWE); decryption uses the **Recipient Private Key** above. **Decrypt JWT** recovers the plaintext (for a nested JWT, the inner JWS) into **Decryption Output**. The `alg`/`enc` are read from the JWE's own protected header.
-
-### Valid algorithm combinations
-Signing (Pane #2) is a single choice, while encryption (Pane #3) is a **combination** of a key-management algorithm (`alg`) and a content-encryption algorithm (`enc`). Signing and encryption are independent stages, so a signed-then-encrypted (nested) token can pair *any* signing algorithm with *any* valid encryption combination.
-
-**Signing algorithms (Pane #2)** — 13 standalone choices; pick one:
-
-| Family | Algorithms |
-|---|---|
-| HMAC (symmetric) | `HS256`, `HS384`, `HS512` |
-| RSASSA-PKCS1-v1_5 | `RS256`, `RS384`, `RS512` |
-| RSASSA-PSS | `PS256`, `PS384`, `PS512` |
-| ECDSA | `ES256` (P-256), `ES384` (P-384), `ES512` (P-521) |
-| EdDSA | `EdDSA` (Ed25519) |
-
-**Encryption combinations (Pane #3)** — every `alg` × `enc` pairing is cryptographically valid (18 total). Choose one cell — one Key Management algorithm and one Content Encryption algorithm:
-
-| Key Management (`alg`) ↓ / Content Encryption (`enc`) → | `A128GCM` | `A192GCM` \* | `A256GCM` |
-|---|---|---|---|
-| `RSA-OAEP` | ✓ | ✓ \* | ✓ |
-| `RSA-OAEP-256` | ✓ | ✓ \* | ✓ |
-| `ECDH-ES` (P-256, direct) | ✓ | ✓ \* | ✓ |
-| `ECDH-ES+A128KW` (P-256) | ✓ | ✓ \* | ✓ |
-| `ECDH-ES+A192KW` (P-256) \* | ✓ \* | ✓ \* | ✓ \* |
-| `ECDH-ES+A256KW` (P-256) | ✓ | ✓ \* | ✓ |
-
-> **\* AES-192 caveat.** The 192-bit AES algorithms — content encryption `A192GCM` and key management `ECDH-ES+A192KW` — are **not supported in Chromium-based browsers** (Chrome, Edge, and the Selenium test harness) because BoringSSL omits 192-bit AES; attempting them raises a "192-bit AES keys are not supported" error. They work in Firefox and in Node/OpenSSL. If you need broad browser compatibility, use the 128- or 256-bit variants. The other 12 combinations work everywhere.
-
-**Nested (signed + encrypted) tokens.** Because you sign in Pane #2 and then encrypt the resulting JWS in Pane #3, any of the 13 signing algorithms can be nested inside any of the 18 encryption combinations (subject to the AES-192 caveat above).
-
-### End-to-end walkthrough
-**Build → sign → encrypt:**
-1. **Pane #1 – Compose.** Edit the Header and Payload, or click *Generate RFC 9068 Token*. Optionally check compliance.
-2. **Pane #2 – Sign.** Choose a Signing Algorithm, click *Generate Keys*, then *Generate Signed JWT*. The signed token flows into Pane #3's *Payload to Encrypt*.
-3. **Pane #3 – Encrypt (optional).** Choose Key Management + Content Encryption, click *Generate Keys*, then *Encrypt JWT* to wrap the signed JWT in a JWE.
-
-**Inspect an existing token — decrypt → validate:**
-1. **Pane #3 – Decrypt.** Paste the JWE into *JWE to Decrypt*, provide/generate the recipient private key, and click *Decrypt JWT*. The inner JWS appears in *Decryption Output*.
-2. **Pane #1.** Paste the JWS into *Encoded JWT* to decode its header and payload (this also loads it into the Sign pane's *JWT to Verify*).
-3. **Pane #2 – Validate a Signature.** Pick the Verification Type, supply the key/JWKS/secret, and click *Verify*.
-
-### Notes & limitations
-* **Web Crypto only.** Algorithms are limited to what the browser's Web Crypto API supports. `RSA1_5` (RSAES-PKCS1-v1_5 key management) and Ed448 are spec-defined but unavailable in Web Crypto, and are not offered.
-* **HMAC** is symmetric — no key pair, no X.509 form, and JWK-only export.
-* **JWKS verification** matches on `kid` and currently supports RSA keys.
-* **Secure context required.** `crypto.subtle` is only present over HTTPS or on `localhost`.
-* **No persistence.** Keys and secrets live only in the page for the current session.
+The fields, the defaults, and the trust-chain checkbox are in
+[JWT Tools](docs/jwt-tools.md).
 
 ## Encoding / Hashing Tools
-The **Encoding / Hashing Tools** page (`/encoding_tools.html`) is a standalone, browser-only utility for the small conversions that come up constantly when working with tokens: Base64, URI (percent) encoding, checksums, and SHA hashing. Everything runs in your browser and **nothing is stored or sent to a server**.
 
-Reach it from the **Tools** pane on `oauth2_oidc_1.html` or `oauth2_oidc_2.html`, or browse directly to `/encoding_tools.html`. The "← Return to debugger" link sends you back to whichever debugger page you came from. Every field has a **Copy** button and a hover tooltip, and on load each *Unencoded value* is pre-populated with a sample and its Encode/hash is run automatically so the *Encoded* fields are filled immediately.
+**Encoding / Hashing Tools** (`/encoding_tools.html`) is six panes. Open it
+from the **Tools** pane. Nothing is stored.
 
-The page has four panes. Each follows the same layout — an **Unencoded value** box, an **Encoded** box, and one or two action buttons — with a status line reporting the result or any error:
+| Pane | Buttons | Default |
+|---|---|---|
+| Base64 | Encode, Decode | standard Base64, not base64url |
+| URI Encoding | Encode, Decode | the same transform as `encodeURIComponent` |
+| Checksum (CRC-32) | Encode | IEEE CRC-32, eight hex digits |
+| SHA-1 / SHA-2 (FIPS 180-4) | Encode | SHA-256, input text, output hex |
+| SHA-3 / SHAKE (FIPS 202) | Encode | SHA3-256. Keccak-256 and Keccak-512 are in this menu and are not SHA-3 |
+| cSHAKE / KMAC / TupleHash / ParallelHash (SP 800-185) | Compute | KMAC128. The message box starts as hex. TupleHash is one element per line |
 
-| Pane | Title | Buttons | Direction |
-|---|---|---|---|
-| **#1** | Base64 | Encode, Decode | two-way |
-| **#2** | URI Encoding | Encode, Decode | two-way |
-| **#3** | Checksum (CRC-32) | Encode | one-way |
-| **#4** | SHA Hashing | Encode (+ size dropdown) | one-way |
-
-### Pane #1 — Base64
-* **Encode** — Base64-encodes the *Unencoded value* (UTF-8) into the *Encoded* box.
-* **Decode** — Base64-decodes the *Encoded* value back into *Unencoded value*.
-
-Uses standard Base64 ([RFC 4648](https://www.rfc-editor.org/rfc/rfc4648), i.e. the `+` / `/` alphabet with `=` padding), not base64url, and is UTF-8 aware. The status line reports the byte count, or a clear error if the *Encoded* text is not valid Base64.
-
-### Pane #2 — URI Encoding
-* **Encode** — percent-encodes the *Unencoded value* (equivalent to JavaScript `encodeURIComponent`), so reserved characters such as space, `&`, `=`, `/`, `?`, and `#` become `%NN`.
-* **Decode** — reverses it (`decodeURIComponent`).
-
-The status line reports success, or an error for malformed percent-encoding.
-
-### Pane #3 — Checksum (CRC-32)
-A checksum is **one-way**, so this pane has only an **Encode** button (no Decode — a checksum cannot be reversed to recover the input). **Encode** computes the CRC-32 (IEEE 802.3, reflected) of the *Unencoded value* and writes it to the read-only *Encoded* box as 8 hexadecimal digits.
-
-CRC-32 is a fast, non-cryptographic *integrity* check (detects accidental corruption). It is **not** a secure hash — do not use it where collision resistance matters.
-
-### Pane #4 — SHA Hashing
-Also **one-way** (Encode only). Choose a digest from the size dropdown and click **Encode** to write the hex digest to the read-only *Encoded* box.
-
-| Option | Digest length |
-|---|---|
-| `SHA-256` (default) | 256-bit (64 hex chars) |
-| `SHA-1` | 160-bit (40 hex chars) |
-| `SHA-384` | 384-bit (96 hex chars) |
-| `SHA-512` | 512-bit (128 hex chars) |
-
-SHA hashing uses the Web Crypto API (`crypto.subtle.digest`), which is only available in a *secure context* — use the page over `https://` or `http://localhost`. `SHA-1` is offered for interoperability with legacy systems but is cryptographically broken; prefer `SHA-256` or larger for security.
-
-### Notes & limitations
-* **Base64, URI, and CRC-32** are pure JavaScript and work in any browser (no secure context required). **SHA hashing** requires Web Crypto, hence a secure context.
-* **Checksum and SHA are one-way** — there is intentionally no Decode.
-* **No persistence** — all values live only in the page for the current session.
+The hash panes do not use Web Crypto. `crypto.subtle` has no SHA-3 and
+none of SP 800-185, and it is absent outside a secure context. What each
+function is for, including its post-quantum role, is in
+[Hashing](docs/hashing.md).
 
 ## Digital Signature
-The **Digital Signature** page (`/digital_signature.html`) is a standalone, browser-only workbench for generating keys, signing/MACing arbitrary values, and validating them across classical, elliptic-curve, and post-quantum signature schemes — plus symmetric MACs.
 
-**All cryptography runs in your browser** using pure-JavaScript libraries — [node-forge](https://github.com/digitalbazaar/forge) (RSA, AES), [`@noble/curves`](https://github.com/paulmillr/noble-curves) (ECC), [`@noble/post-quantum`](https://github.com/paulmillr/noble-post-quantum) (SLH-DSA / ML-DSA), and [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) (hashes, HMAC, KMAC, keyed BLAKE). BBS is this project's own implementation of [`draft-irtf-cfrg-bbs-signatures`](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/) over `@noble/curves`' BLS12-381 — the same module the SD-JWT VC workflow signs `bbs-2023` credentials with. Signing deliberately does **not** use the Web Crypto API: `crypto.subtle` supports only the SHA family, whereas these panes let you pair RSA/ECDSA with a wide range of hashes. **No key material is stored:** keys live only in this page and are never written to local storage.
+**Digital Signature** (`/digital_signature.html`) signs and MACs in the
+browser with pure JavaScript, so it does not need Web Crypto. Keys are not
+stored. Opening **View certificate details** is the exception: that
+certificate is passed to the certificate page through `localStorage`.
 
-Reach it from the **Tools** pane on `oauth2_oidc_1.html` or `oauth2_oidc_2.html`, or browse directly to `/digital_signature.html`. Every field has a **Copy** button and a hover tooltip, and the "← Return to debugger" link goes back to whichever page you came from. Each pane is **collapsible** — click its title to collapse/expand it, or use the **Expand all** / **Collapse all** buttons at the top — to save screen space on this long page.
+The page has twelve panes, in this order.
 
-Each pane carries an **Asymmetric** or **Symmetric (MAC)** badge. The asymmetric panes are true digital signatures (public/private key pair, non-repudiation); the symmetric panes are **MACs** — a shared secret gives integrity + origin but **no** non-repudiation or public verifiability, so a MAC is *not* a digital signature.
-
-**Asymmetric — digital signatures:**
-
-| Pane | Scheme | Algorithms |
+| # | Pane | Default |
 |---|---|---|
-| SLH-DSA (FIPS 205, post-quantum) | hash-based | 12 parameter sets (SHA2/SHAKE × 128/192/256 × s/f) |
-| RSA | PKCS#1 v1.5 & PSS, any hash | 2048/3072/4096/1024-bit keys |
-| ECC | ECDSA (P-256/384/521, secp256k1) any hash; EdDSA (Ed25519/Ed448); Schnorr (BIP-340); BLS (BLS12-381) | |
-| ML-DSA (FIPS 204, post-quantum) | lattice-based | ML-DSA-44 / 65 / 87 |
-| BBS (draft-irtf-cfrg-bbs-signatures) | pairing-based, multi-message + selective disclosure | `BLS12-381-SHA-256` and `BLS12-381-SHAKE-256` |
+| 1 | SLH-DSA | SLH-DSA-SHA2-128s, pure |
+| 2 | Stateful hash-based signatures (LMS/HSS and XMSS) | HSS, one tree. See [Stateful hash-based signatures](docs/hbs.md) |
+| 3 | RSA | PKCS#1 v1.5, SHA-256, 2048-bit |
+| 4 | ECC | ECDSA P-256, SHA-256 |
+| 5 | ML-DSA | ML-DSA-65, pure |
+| 6 | Composite ML-DSA (draft) | ML-DSA-44-ES256 |
+| 7 | BBS | BLS12-381-SHA-256, UTF-8 messages |
+| 8 | JWS | HS256, compact serialization |
+| 9 | XML Digital Signature | enveloped, RSA-SHA256, exclusive C14N, last child of the root |
+| 10 | Keyed-hash MACs | HMAC-SHA256 |
+| 11 | Block-cipher MACs | AES-CMAC |
+| 12 | Universal-hash MACs | Poly1305 |
 
-**Symmetric — MACs:**
+On load, the XML **SignatureMethod** menu gains the draft post-quantum
+group described in
+[Post-quantum XML Signature](docs/xmldsig-pqc.md). The introduction on
+the page numbers these twelve panes in this order, and the note on the
+XML pane says those methods are a draft. The Tools blurb on both
+OAuth2 / OIDC pages names the same twelve panes.
 
-| Pane | Family | Algorithms |
-|---|---|---|
-| Keyed-Hash MACs | keyed hashing | HMAC (SHA-256/384/512, SHA3-256/512, SHA-1); KMAC128/256; keyed BLAKE2b/BLAKE2s/BLAKE3 |
-| Block-Cipher MACs | AES | AES-CMAC; AES-CBC-MAC (legacy); AES-GMAC (fixed-nonce demo) |
-| Universal-Hash MACs | universal hashing | Poly1305 (one-time key); SipHash-2-4 |
-
-### Common layout
-Every pane has the same controls (the BBS pane adds to them — it signs a message *list* and has a proof section; see Pane #5):
-* **Value** — the message to sign or validate (any text).
-* **Signature (Base64)** — produced by *Sign*; paste one here to validate.
-* **Key Pair** — an algorithm/curve/parameter dropdown, a **Generate Keys** button, and the private + public key fields (PEM for RSA/SLH-DSA/ML-DSA; raw hex for ECC).
-* **Download Keys** — a keystore-format dropdown (PEM / JWK / DER / PKCS#12) and an optional password (see the matrix below).
-* **Sign** / **Validate Signature** buttons, and a status line reporting the result (`Signature VALID ✓` / `INVALID ✗`) or any error.
-
-> The algorithm/curve dropdown is read at click time and is **not** sticky to already-generated keys — pick the algorithm first, then Generate Keys → Sign. A mismatch is caught and reported in the status line.
-
-### Hashes (RSA and ECDSA)
-The RSA pane and the ECDSA curves let you choose the message-digest hash:
-
-| Hash | Status |
-|---|---|
-| `SHA-256` / `SHA-384` / `SHA-512` | recommended |
-| `SHA3-256` / `SHA3-384` / `SHA3-512` | recommended |
-| `BLAKE2b-512` | supported (RSA: **PSS only** — no PKCS#1 v1.5 DigestInfo OID) |
-| `BLAKE3-256` | supported (RSA: **PSS only** — no PKCS#1 v1.5 DigestInfo OID) |
-| `RIPEMD-160` | legacy |
-| `SHA-1` | insecure — interop/testing only |
-| `MD5` | broken — interop/testing only |
-
-EdDSA, Schnorr, and BLS hash the message internally, so the Hash selection does not apply to them.
-
-### Pane #1 — SLH-DSA
-Post-quantum, hash-based signatures (FIPS 205, formerly SPHINCS+). Choose one of the 12 parameter sets, Generate Keys, then Sign / Validate. **Note:** SLH-DSA runs in pure JavaScript, so key generation and especially signing can take several seconds — the small-signature (`s`) and 256-bit sets are the slowest.
-
-### Pane #2 — RSA
-RSA signatures with a selectable **Padding** (PKCS#1 v1.5 or PSS) × **Hash** (any of the above). A **Key Size** dropdown chooses the RSA modulus — **2048** (default), **3072**, **4096**, or **1024** (insecure); larger sizes are noticeably slower to generate in pure JS. Keys are shown as PEM. Padding math (EMSA-PKCS1-v1_5 / EMSA-PSS with MGF1) is implemented directly over a chosen digest, which is what enables the non-SHA hashes.
-
-### Pane #3 — ECC
-Elliptic-curve signatures, selected via the **Curve** dropdown:
-* **ECDSA** over `P-256`, `P-384`, `P-521`, and `secp256k1` — with any hash.
-* **EdDSA** over `Ed25519` and `Ed448`.
-* **Schnorr** (BIP-340, over secp256k1).
-* **BLS** (BLS12-381).
-
-Keys are shown as raw hex. Signatures are Base64.
-
-### Pane #4 — ML-DSA
-Post-quantum, lattice-based signatures (FIPS 204, formerly CRYSTALS-Dilithium) — the primary NIST post-quantum signature standard. Choose `ML-DSA-44`, `65`, or `87`, Generate Keys, then Sign / Validate. Unlike SLH-DSA, signing is fast.
-
-### Pane #5 — BBS
-[BBS signatures](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/) over BLS12-381 — the only pane that does not sign a single value, and the only one whose signature can be turned into something else. It signs an ordered **list** of messages; the holder can then derive a **proof** that reveals only the messages they choose, and because each derivation is freshly randomised, two proofs from one signature are **unlinkable**. That is the property selective disclosure with an SD-JWT cannot offer, where the issuer's signature is reused verbatim every time.
-
-Everything the draft parameterises is on the pane:
-
-* **Ciphersuite** — `BLS12-381-SHA-256` (the one `bbs-2023` uses) or `BLS12-381-SHAKE-256`. They are not two spellings of one scheme: they expand messages differently and each has its own fixed `P1` point, so a key, a signature and a proof all belong to **one** suite. Validating across suites fails, as it should.
-* **Input encoding** — every octet-string field (messages, header, presentation header, key info, key DST) is read as **UTF-8 text** or as **hex**. Choose hex to reproduce the draft's own test vectors byte for byte.
-* **Messages** — one per line; index 0 is the first line. Order and count are both bound into the signature. A blank line is an empty message; a single trailing newline is just the line ending, so to end the list *with* an empty message add one more newline.
-* **Header** — an octet string signed over but not a message: it cannot be selectively withheld.
-* **Key Pair** — BBS **KeyGen** rather than a random scalar: the key is derived from **Key Material** (≥ 32 bytes of hex — leave it empty and the page generates 32 random bytes and shows them), optional **Key Info**, and an optional **Key DST** (empty means the ciphersuite default, `ciphersuite_id || "KEYGEN_DST_"`). The same inputs always give the same key, so the pair on screen is reproducible from what is on screen. The private key is a 32-byte scalar and the public key a compressed 96-byte G2 point, both hex.
-* **Sign** / **Validate Signature** — an 80-byte signature (a 48-byte G1 point and a 32-byte scalar), Base64.
-* **Derived Proof** — **Disclosed Indexes** (comma- or space-separated; empty discloses nothing, which is a legitimate proof) and a **Presentation Header**, the verifier's nonce. **Derive Proof** produces the proof; **Verify Proof** checks it against the disclosed messages, their indexes, the header and the presentation header. Derive twice and the bytes differ — that is the unlinkability, not a bug.
-
-### Symmetric MAC panes
-Three panes (badged **Symmetric (MAC)**) authenticate with a single shared secret. Each has a Value box, a MAC (Base64) box, an algorithm dropdown, a Secret Key (hex) field with **Generate Key** (which sizes the key to the algorithm; changing the algorithm re-generates it), and **Compute MAC** / **Verify MAC** buttons. *Verify* recomputes the tag over the current value + key and compares it to the MAC box.
-
-* **Keyed-Hash MACs** — HMAC over SHA-256/384/512, SHA3-256/512, or SHA-1 (insecure); KMAC128/256; and keyed BLAKE2b / BLAKE2s / BLAKE3 (BLAKE3 needs a 32-byte key).
-* **Block-Cipher MACs** — AES-CMAC (RFC 4493); AES-CBC-MAC (legacy — insecure for variable-length messages); AES-GMAC (uses a fixed all-zero nonce here for a deterministic demo tag; real GMAC needs a unique nonce per message).
-* **Universal-Hash MACs** — Poly1305 (RFC 8439; a *one-time* authenticator — its 32-byte key must be unique per message) and SipHash-2-4. **UMAC, VMAC, and PMAC are not offered** — no maintained pure-JS implementation exists.
-
-The hand-rolled/derived MACs (CMAC, GMAC, Poly1305, SipHash) are verified against their official test vectors (RFC 4493, Node/OpenSSL, RFC 8439, and the SipHash reference).
-
-### Keystore download support
-An optional password encrypts the private material: PBES2 for PEM/DER (RSA), a PBES2 JWE for JWK, and native for PKCS#12. Not every key type supports every format — unsupported combinations report a clear status message rather than emit a broken file:
-
-| Pane | PEM | DER | JWK | PKCS#12 |
-|---|---|---|---|---|
-| RSA | ✓ (encrypted PKCS#8 w/ password) | ✓ | ✓ | ✓ (password required) |
-| ECC — ECDSA / EdDSA | ✗ | ✗ | ✓ | ✗ |
-| ECC — Schnorr / BLS | ✗ | ✗ | ✗ (copy the hex) | ✗ |
-| SLH-DSA / ML-DSA | ✓ (raw, unencrypted) | ✗ | ✓ | ✗ |
-| BBS | ✗ | ✗ | ✓ (OKP / `Bls12381G2`) | ✗ |
-
-### Notes & limitations
-* **Signatures vs MACs** — the asymmetric panes are digital signatures (non-repudiation, public verifiability); the symmetric MAC panes use a shared secret and provide neither, so they are *not* signatures despite living on the same page. They're grouped and badged separately.
-* **Pure JS, not Web Crypto** — chosen so RSA/ECDSA can use non-SHA hashes. (PBES2 for JWK password protection does use Web Crypto, which is fine — it's unrelated to the signing hash.)
-* **Interoperability** — standard combinations (RSA/ECDSA with SHA-2/SHA-3, EdDSA, HMAC/KMAC) verify against other tools; exotic ones (RIPEMD-160, BLAKE2b, BLAKE3, keyed-BLAKE MACs, some curve+hash pairings) may not be accepted elsewhere, as they go beyond the JOSE/PKIX registries.
-* **Not offered** (no maintained pure-JS/CJS support): Falcon/FN-DSA, finite-field DSA, Brainpool curves, SM2, GOST (signatures); UMAC, VMAC, PMAC (MACs).
-* **No persistence** — keys, signatures, and MACs live only in the page for the current session.
+The field list is in [Digital Signature](docs/digital-signature.md).
 
 ## Certificate Authority & X.509 Tools
+How the page is built, including the three ways a certificate here carries post-quantum keys, is in [PKI and TLS](docs/pki.md).
+
 The **Certificate Authority & X.509 Tools** page (`/pki.html`) builds the PKI the other protocols on this site run on, and then tests it. Reach it from the **Tools** pane on the OAuth2/OIDC, SAML, WS-Federation and Verifiable Credential pages, or browse directly to `/pki.html`.
 
 ### Building a hierarchy
@@ -873,70 +664,48 @@ Ask it to and it will connect **twice**, with the client certificate and without
 **This test is made by the API layer, and there is deliberately no option to make it from the browser.** A page cannot choose which client certificate to present (the browser picks from its own store, through its own UI), cannot be given a truststore, cannot read the negotiated version, cipher or chain, and receives a failed handshake as a generic network error with the alert — the one informative thing — discarded. So it is one of the few features here that needs the api service running.
 
 ## SAML Assertion Tool
-The **SAML Assertion Tool** page (`/saml_tools.html`) is a standalone, browser-only workbench for building a SAML assertion, signing it with [XML Signature](https://www.w3.org/TR/xmldsig-core/), and encrypting it with [XML Encryption](https://www.w3.org/TR/xmlenc-core1/). It emits a spec-compliant assertion for **SAML 1.0**, **SAML 1.1**, or **SAML 2.0** — the three schemas differ in more than a version number, and the page follows each one.
 
-Reach it from the **Tools** pane on `saml_request.html`, or browse directly to `/saml_tools.html`. The layout mirrors the JWT Tools page: three panes (Compose → Sign → Encrypt), each collapsible, with a Copy button on every multi-line field and a tooltip on every control. Nothing is sent to a server; all crypto runs in the browser on the shared XML security engine (`common/xmldsig.js`) that also backs the SAML and WS-Trust workflows.
+**SAML Assertion Tool** (`/saml_tools.html`) builds a SAML 1.0, 1.1, or 2.0
+assertion, signs it, and encrypts it, in the browser. It does not send
+anything. Open it from the **Tools** pane on the SAML pages. **Assertion
+Version** defaults to SAML 2.0. **Issuer** defaults to this debugger's
+origin plus `/issuer`.
 
-### Pane #1 — Compose
-* **Version** — SAML 2.0, 1.1, or 1.0. Switching versions rebuilds the assertion and hides the controls that do not exist in the selected version.
-* **Issuer** — defaults to this debugger's own URL plus an `/issuer` path (e.g. `https://localhost:3000/issuer`); override it with any entityID. SAML 2.0 emits a `<saml:Issuer>` element, SAML 1.x the `Issuer` attribute.
-* **Identifier and timestamps** — the assertion ID (`ID` in 2.0, `AssertionID` in 1.x) is generated as an NCName, and `IssueInstant`, `NotBefore`, `NotOnOrAfter`, `AuthnInstant`, and the confirmation/session expiries are populated from the current UTC time. A validity window and clock-skew allowance drive them; **Refresh Times** and **New ID** regenerate. Each field stays editable.
-* **NameID** — value, Format, NameQualifier, and (2.0 only) SPNameQualifier. Emitted as `<saml:NameID>` in 2.0 and `<saml:NameIdentifier>` in 1.x.
-* **Optional elements** — check the ones the assertion should carry: `Subject` / `SubjectConfirmation` (bearer, holder-of-key, sender-vouches, artifact — the URI follows the version), `Conditions` with the validity window, `AudienceRestriction` (`AudienceRestrictionCondition` in 1.x), `OneTimeUse` (`DoNotCacheCondition` in 1.1; absent from 1.0), `ProxyRestriction` (2.0), `Advice`, the authentication statement with `AuthnContextClassRef` (2.0) or `AuthenticationMethod` (1.x) and `SubjectLocality`, the `AttributeStatement`, and the authorization decision statement.
-* **Custom SAML attributes** — choose a value **type** (emitted as `xsi:type`), a **URI prefix**, a **name**, and a **value**. In SAML 2.0 the prefix is prepended to `Name` and switches `NameFormat` to `attrname-format:uri`; in SAML 1.x it becomes the required `AttributeNamespace` and the name stays in `AttributeName`. Added attributes are listed in a table and can be removed individually.
-* **SAML Compliance** — validates the generated assertion against the selected version's structural rules (identifier form, UTC instants, required Issuer, statement/Subject requirements, audience and resource URIs, attribute shape, condition ordering, and — once signed — the `<ds:Signature>` position), reporting PASS / FAIL / WARN per rule.
-* **Pretty Print / Download / Reset** — the **Generated Assertion** box sits at the top of the pane and updates as you type; there is no rebuild button. **Pretty Print** re-indents it (and re-signs, if signing is engaged), **Download** saves the furthest-along artifact (encrypted, else signed, else plain), and **Reset** restores every field in all three panes to its default, dropping the custom attributes, the generated key pairs, and any signed or encrypted output.
+The signature menu starts at RSA-SHA256. On load it gains the same draft
+post-quantum group as the SAML request page. Where `<ds:Signature>` sits
+follows the version: after `<saml:Issuer>` in 2.0, and the last child of
+the assertion in 1.1 and 1.0.
 
-### Pane #2 — Sign (XML Signature)
-An enveloped XML-DSIG over the whole assertion, with the same options the SAML Test Tools page offers for the AuthnRequest: signature algorithm (RSA-SHA1/256/384/512), canonicalization (exclusive or inclusive C14N 1.0), and RSA key size. **Generate Keys** produces a throwaway RSA key pair plus a self-signed certificate (downloadable as PEM, inspectable via the certificate details page), which is embedded in the signature's `<ds:KeyInfo>`.
+Every stored field on this page is written to `localStorage`, including
+the private keys. There is no checkbox to turn that off. Do not paste a
+production key. Timestamps are the exception: they are regenerated on each
+visit.
 
-Where the signature goes is version-specific, and the page handles it:
-
-| Version | Reference URI | `<ds:Signature>` position |
-|---|---|---|
-| SAML 2.0 | `#ID` | immediately after `<saml:Issuer>` |
-| SAML 1.1 | `#AssertionID` | last child of `<saml:Assertion>` |
-| SAML 1.0 | `""` (whole document) | last child of `<saml:Assertion>` |
-
-SAML 1.0's `AssertionID` is not an `xs:ID`, so the whole-document reference is the interoperable form there; 1.1 made it an `xs:ID`. A **Validate a Signature** box re-checks every reference digest and the `SignatureValue` — against the certificate in `KeyInfo` or one you paste — for the assertion just signed or any signed XML you drop in.
-
-Once **Sign Assertion** has been clicked, signing stays engaged: the Generated Assertion box in pane 1 switches to the signed assertion, and every later change — a different NameID, another attribute, a new signature algorithm, a freshly generated key — rebuilds the assertion and recomputes the signature, so what pane 1 shows is always what the tool would hand over. Reset (or clearing the private key) turns it back off.
-
-### Pane #3 — Encrypt (XML Encryption)
-Encrypts the signed assertion (sign-then-encrypt) with a random session key that is RSA-wrapped with a recipient certificate — paste the relying party's certificate or generate a throwaway recipient key pair. The algorithm knobs match the SAML Test Tools encryption pane: encrypted type (Element / Content), canonicalization, data encryption (AES-128/192/256 GCM or CBC, Triple DES CBC), key transport (RSA-OAEP with configurable digest and MGF, RSA-OAEP-MGF1P, RSA-1_5), and — for SAML 2.0 — wrapping the result in `<saml:EncryptedAssertion>` (SAML 1.x has no such element, so a bare `<xenc:EncryptedData>` is produced). A **Decrypt** box round-trips the result back to the signed assertion with the recipient private key. Encryption tracks changes the same way signing does: after the first **Encrypt Assertion**, any later edit re-runs the whole pipeline — rebuild, re-sign, re-encrypt. The **Assertion to Encrypt** box follows the current artifact automatically, but stops doing so once you type your own XML into it.
-
-### Notes & limitations
-* **Test keys only** — generated key pairs are throwaway. Like the other SAML pages, the page state (including the private keys) is persisted to `localStorage` so it survives a reload; do not paste a production key.
-* **Interoperability** — the signatures this page produces are verified against the independent `xml-crypto` library, and the encryption against `xml-encryption`, by `tests/xmlsec_interop.js`.
-* **Assertion only** — the page builds an assertion, not a `<samlp:Response>`. To exercise a full SSO round-trip against an IdP, use the SAML Test Tools page.
+The fields and the encryption defaults are in
+[SAML Assertion Tool](docs/saml-assertion.md).
 
 ## WS-Trust Test Tools
-Drive a [WS-Trust 1.4](https://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html) exchange against a Security Token Service (STS). Chosen from the landing page (the **WS-Trust Debugger** card), it builds a SOAP `RequestSecurityToken` (RST) in the browser, sends it to an STS, and shows the `RequestSecurityTokenResponse` (RSTR) on a dedicated response page. It is modeled on the SAML Test Tools workflow and reuses the same in-browser XML Signature / XML Encryption engine.
 
-### Operations
-All four WS-Trust operations are supported (via `wst:RequestType` + the matching `wsa:Action`):
-* **Issue** — request a new token for a relying party (`wsp:AppliesTo`).
-* **Renew** — renew an existing token (`wst:RenewTarget`).
-* **Validate** — validate a token; the response carries `wst:Status`/`wst:Code` (`.../status/valid` or `.../status/invalid`).
-* **Cancel** — cancel a token; the response carries `wst:RequestedTokenCancelled`.
+The **WS-Trust Protocol** card opens `wstrust_tools.html`. The page builds
+a SOAP `RequestSecurityToken` and shows the response on
+`wstrust_response.html`.
 
-Renew, Validate, and Cancel act on an existing token pasted into the **Target Token** field (e.g. the assertion from a prior Issue).
+**WS-Trust Version** defaults to 1.4. **SOAP Version** defaults to 1.2.
+**Operation** defaults to Issue, **Token Type** to SAML 2.0, and **Key
+Type** to Bearer. **STS URL** is empty in the form; while it stays empty
+the page fills `https://localhost:8081/sts` (iya-sts). The tooltip on that
+field still shows an `http://` example.
 
-### Protocol versions
-A **WS-Trust Version** selector (1.0 / 1.1 / 1.2 / 1.3 / 1.4) sets the trust namespace used to build the request — `http://schemas.xmlsoap.org/ws/2004/04/trust` (1.0), `http://schemas.xmlsoap.org/ws/2005/02/trust` (1.1/1.2), or `http://docs.oasis-open.org/ws-sx/ws-trust/200512` (1.3/1.4) — and gates the version-specific options: the **Bearer** key type appears only for 1.3+ (1.0–1.2 offer SymmetricKey / PublicKey), and **ActAs** delegation appears only for 1.4. Options that do not apply to the selected version are hidden.
+**Username** and **Password** default to `wstrust` / `wstrust`. The
+password is not stored. **Digitally sign the request** defaults to off.
+**Save this key pair in browser localStorage** defaults to on. **Encrypt
+the request body** defaults to off. **Add WS-Addressing headers**
+defaults to on.
+**Initiate STS Call From** defaults to **Backend (proxy)**. **Validate STS
+TLS certificate (backend)** defaults to on. On load the signature menu
+gains the draft post-quantum group.
 
-### Configuration (wstrust_tools.html)
-* **STS Endpoint** — the STS URL and the SOAP version (1.1 or 1.2).
-* **WS-Trust Version** — the protocol version (see above).
-* **Request Parameters** — operation, requested `wst:TokenType` (SAML 2.0, SAML 1.1, JWT, UsernameToken, Status), `wst:KeyType` (Bearer / SymmetricKey / PublicKey) and key size, `wsp:AppliesTo`, `wst:Lifetime`, requested `wst:Claims`, and delegation via `wst:OnBehalfOf` / `wst14:ActAs` (WS-Trust 1.4).
-* **Credentials / WS-Security** — a `wsse:Security` header with an optional `wsu:Timestamp` and a credential: a `wsse:UsernameToken` (PasswordText or PasswordDigest) or a **SAML token** (import the assertion from the SAML workflow, or paste one).
-* **Message Protection** — optionally sign the request (a WS-Security enveloped XML digital signature over the SOAP Body and, optionally, the Timestamp; RSA-SHA1/256/384/512) and/or encrypt the request body (W3C XML Encryption) — the same options as the SAML AuthnRequest.
-* **WS-Addressing** — `wsa:Action` (auto-derived from the operation), `wsa:To`, `wsa:MessageID`, `wsa:ReplyTo`, `wsa:From`.
-* **Routing** — a radio to originate the STS call from the **frontend** (browser) or the **backend** (the API proxy `POST /wstrust`), exactly like the OAuth2 token call. A SOAP STS rarely permits cross-origin browser calls (CORS), so backend routing is the reliable path. On the static (backend-less) build the backend option is disabled.
-
-### Response (wstrust_response.html)
-* **Exchange** pane — the SOAP request (RST) as pretty-printed XML, the full response (RSTR) as pretty-printed XML, and a **Fields** tab with the important values (operation, response `wsa:Action`, token type, key type, lifetime, AppliesTo, and — for Validate/Cancel — the status / cancelled marker).
-* **Issued Token** pane — the security token extracted from `wst:RequestedSecurityToken`, as XML and (for a SAML assertion or a JWT) decoded details including the signer certificate. Two in-browser options act on the token: **Validate Signature** verifies the enveloped XML digital signature on the assertion (reference digests + `SignatureValue`) using the certificate in `KeyInfo`; **Decrypt** decrypts an encrypted token — a `<xenc:EncryptedData>` / `<saml:EncryptedAssertion>` in the RSTR (or a message-level EncryptedData) — with the requestor private key. The SAML Response page (`saml_response.html`) offers the same Validate Signature / Decrypt options for the SAML assertion. Both reuse the shared XML-DSIG / XML-Encryption engine (`common/xmldsig.js`).
+The field list is in [Using the WS-Trust workflow](docs/wstrust.md).
 
 ### Mock authorization server
 The same `sts/` service also answers **every endpoint its RFC 8414 metadata advertises**, so the OAuth2 / OIDC panes have a complete server to talk to without an identity provider:
@@ -966,7 +735,7 @@ The service logs with **bunyan**, at the level its `CONFIG_FILE` names (`sts/env
 Set the level to `info` (`sts/env/test.js`) for a quiet run.
 
 ### STS for testing
-The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite it also runs against a small **WS-Trust STS mock** — [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), linked here as the `sts/` submodule (see *The mock STS is a submodule* above) — that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. **That port is HTTPS in every stack here** (`STS_HTTPS=true`), because the RFC 9700 pass is a trust realm on the same instance rather than a second container and a realm binds no socket of its own — see `docs/rfc9700.md`; the certificate is self-signed and regenerated on every start, and `trustStsCertificate()` in `common/common.sh` installs it as an anchor for node and as an exact key pin for Chrome. Against a **deployed static site** the same mock is started on the host and reached over loopback (`https://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would not resolve in a browser off that network. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
+The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite it also runs against a small **WS-Trust STS mock** — [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), run from its release image (see *The mock STS runs from its release image* above) — that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. **That port is HTTPS in every stack here** (`STS_HTTPS=true`), because the RFC 9700 pass is a trust realm on the same instance rather than a second container and a realm binds no socket of its own — see `docs/rfc9700.md`; the compose files hand iya-sts the same leaf `./generate-tls-cert.sh` writes for the api and the client (`STS_TLS_CERT_FILE`), so one root covers all three. Without that file, iya-sts still issues its own certificate at every start. `trustStsCertificate()` in `common/common.sh` fetches `GET /tls/server-certificate` and installs that PEM as an anchor for node and as an exact key pin for Chrome. Against a **deployed static site** the same mock is started on the host and reached over loopback (`https://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would not resolve in a browser off that network. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.
 
 ## VC Issuance (OID4VCI)
 
@@ -1306,19 +1075,20 @@ files — `docker-compose-run-tests.yml` and `local-tests.yml` — and the job i
 `WALTID_VERIFIER_URL` is unset.
 
 ## Versioning
-Releases are numbered **M.N.O**:
+Builds are numbered **M.N.P.B** — a three-part release and a build number:
 
 | Part | Meaning | Source |
 |---|---|---|
 | **M** | major | the repo-root [`VERSION`](VERSION) file |
 | **N** | minor | the repo-root [`VERSION`](VERSION) file |
-| **O** | build number | generated per build — the UTC build instant as `YYYYMMDDHHMMSS` |
+| **P** | patch | the repo-root [`VERSION`](VERSION) file |
+| **B** | build number | generated per build — the UTC build instant as `YYYYMMDDHHMMSS` |
 
-So a build of the current `0.9` line looks like **`0.9.20260726143205`**. The build number is a timestamp rather than a counter so that it is unique for every build without any shared state, always increases, and says when the artifact was produced. Set `BUILD_NUMBER` to override it (for example with a CI run number); if you do, keeping it unique and increasing is up to you.
+So a build of the current `0.9.0` release looks like **`0.9.0.20260726143205`**. (Until 2026-11-13 `VERSION` held two parts and builds were `M.N.B`, such as `0.9.20260726143205`; those tags remain.) The build number is a timestamp rather than a counter so that it is unique for every build without any shared state, always increases, and says when the artifact was produced. Set `BUILD_NUMBER` to override it (for example with a CI run number); if you do, keeping it unique and increasing is up to you.
 
-Each project's `package.json` (`api`, `client`, `tests`, `sts`) also carries the M.N version, as `M.N.0` — `package.json` requires a valid three-part semver, and the real build number lives in `VERSION` / `version.json` rather than in the patch slot.
+Each project's `package.json` (`api`, `client`, `tests`) carries the release, `M.N.P`, exactly — a valid semver as it stands. The build number lives only in `version.json`, because `M.N.P.B` is not a semver.
 
-To cut a new minor version, edit `VERSION`, then run `node client/version.js --sync-manifests` to bring the four manifests along. `node client/version.js --check-manifests` reports drift (non-zero exit), and the static build warns about it.
+To cut a new release, edit `VERSION` (for example `0.9.0` to `0.9.1`), then run `node client/version.js --sync-manifests` to bring the three manifests along. `node client/version.js --check-manifests` reports drift (non-zero exit), and the static build warns about it.
 
 **Where it comes from.** The build number is fixed when an artifact is *built*, not when it runs, so every page of a deployment reports the same build and restarting a container does not invent a new one:
 
@@ -1329,16 +1099,17 @@ To cut a new minor version, edit `VERSION`, then run `node client/version.js --s
 
 | Tag | Example | Behaviour |
 |---|---|---|
-| `M.N.O` | `0.9.20260726143205` | created once, never moved — the permanent record of one build |
-| `M.N` | `0.9` | **force-moved** to the newest build of that line on every build |
+| `M.N.P.B` | `0.9.0.20260726143205` | created once, never moved — the permanent record of one build |
+| `M.N.P` | `0.9.0` | **force-moved** to the newest build of that release on every build |
 
-The floating `M.N` tag is the usual moving-tag pattern (as `actions/checkout@v4` does), so anyone who has fetched it needs `git fetch --tags --force` to follow it. Docker Image CI tags only on pushes and manual runs, never on pull requests.
+The floating `M.N.P` tag (it was `M.N` — `0.9` — before 2026-11-13, and that tag no longer moves) is the usual moving-tag pattern (as `actions/checkout@v4` does), so anyone who has fetched it needs `git fetch --tags --force` to follow it. Docker Image CI tags only on pushes and manual runs, never on pull requests.
 
-**Where it shows.** The footer of every page carries `v M.N.O`; hovering it reveals the build number, the build time, and the commit it was built from. The same record is served as machine-readable JSON at **`/version.json`** on both deployment styles:
+**Where it shows.** The footer of every page carries `v M.N.P.B`; hovering it reveals the build number, the build time, and the commit it was built from. The same record is served as machine-readable JSON at **`/version.json`** on both deployment styles:
 
 ```json
-{ "version": "0.9.20260726143205", "major": "0", "minor": "9",
-  "build": "20260726143205", "commit": "228a63c63edd", "builtAt": "2026-07-26T14:32:05Z" }
+{ "version": "0.9.0.20260726143205", "release": "0.9.0", "major": "0",
+  "minor": "9", "patch": "0", "build": "20260726143205",
+  "commit": "228a63c63edd", "builtAt": "2026-07-26T14:32:05Z" }
 ```
 
 ## Version History

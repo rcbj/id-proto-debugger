@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: webauthn_oidc_mfa.js
 //
 // ---------------------------------------------------------------------------
@@ -195,6 +198,35 @@ async function clickCeremonyButton(driver) {
   throw lastError || new Error("the ceremony button never became clickable");
 }
 
+// THE CEREMONY PAGE'S HEADING, read on the page that is actually there.
+// iya-sts draws that page in the browser, so an <h1> located the moment
+// #wa-go appears can be replaced before getText() reaches it, and the read
+// fails with "Node with given id does not belong to the document" — which
+// took the second-sign-in section out of the integration run on 7ddc3cc
+// (2026-11-13). Re-find and read again on a stale reference.
+async function headingText(driver) {
+  log.debug("Entering headingText().");
+  const deadline = Date.now() + waitTime * 4;
+  for (;;) {
+    try {
+      const text = await driver.findElement(By.css("h1")).getText();
+      log.debug("Leaving headingText().");
+      return text;
+    } catch (e) {
+      const stale = e.name === "StaleElementReferenceError" ||
+          /does not belong to the document|stale element/i.test(
+              e.message || "");
+      if (!stale || Date.now() > deadline) {
+        log.debug("Leaving headingText(). " + e.message);
+        throw e;
+      }
+      log.info("the ceremony page was replaced under the heading; " +
+          "reading it again");
+      await driver.sleep(100);
+    }
+  }
+}
+
 async function codeFromRedirect(driver) {
   log.debug("Entering codeFromRedirect().");
   // THE CONSENT SCREEN FIRST, if there is one. It is PASSED rather than
@@ -336,7 +368,7 @@ async function test() {
       // signs in first and so was past that window by accident; the one on
       // the Lab page was not. See waitForFocus() in tests/wait_for.js.
       await waitForFocus(driver, waitTime * 8);
-      const heading = await driver.findElement(By.css("h1")).getText();
+      const heading = await headingText(driver);
       // "Create a passkey" since the sign-in screen became a static
       // surface (iya-sts #571); "Enrol…" before it.
       assert.ok(/Enrol|Create a passkey/i.test(heading),
@@ -374,7 +406,7 @@ async function test() {
         await signOutInBrowser(driver, STS, By, until, waitTime * 4);
         await signIn(driver, MFA_USER, authorizeUrl("&acr_values=mfa"));
         await driver.wait(until.elementLocated(By.id("wa-go")), waitTime * 4);
-        const heading = await driver.findElement(By.css("h1")).getText();
+        const heading = await headingText(driver);
         // "Sign in with your passkey" since iya-sts #571.
         assert.ok(/Use your security key|Sign in with your passkey/i
           .test(heading),

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: wstrust_msg.js
 //
 // Pure WS-Trust RequestSecurityToken (RST) construction, factored out of

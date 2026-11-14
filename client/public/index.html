@@ -170,6 +170,23 @@
       <span class="landing-card-title">WebAuthn</span>
       <span class="landing-card-desc">Run a ceremony against a security key, or decode and verify the artifacts of somebody else's: client data, authenticator data, attestation, COSE key.</span>
     </a>
+    <!-- Smart cards ship to the static sites. OTP, OATH, PIV, the OpenPGP
+         card and YubiHSM Auth all decode from a paste. Verifying an OTP and
+         talking to a reader need the api, and smartcard.html says so with
+         #sc_backend_notice — the same split as the PKI card below, which is
+         why this is not a data-not-on-static card. FIDO stays on WebAuthn. -->
+    <a class="landing-card" href="/smartcard.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="5" width="18" height="14" rx="2"/>
+          <rect x="6" y="9" width="5" height="4" rx="0.6"/>
+          <path d="M13.5 10.5h5"/>
+          <path d="M13.5 13.5h4"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">Smart cards</span>
+      <span class="landing-card-desc">Decode Yubico OTP, OATH, PIV, the OpenPGP card and YubiHSM Auth. FIDO2 and FIDO U2F stay on the WebAuthn page.</span>
+    </a>
     <!-- PKI is an ordinary card and ships to the static sites, although half of
          what it does needs the api: the certificate authority itself is Web
          Crypto and pkijs in the browser, and only the TLS test at the foot of
@@ -338,6 +355,42 @@
       </span>
       <span class="landing-card-title">Shared Signals</span>
       <span class="landing-card-desc">SSF 1.0 with CAEP and RISC over it: agree a stream, name who it is about, and send or receive Security Event Tokens by push or poll.</span>
+    </a>
+    <!-- THE EIGHTEENTH CARD. Smart cards took the tenth place, so
+         this card is no longer the seventeenth and the accent is
+         :nth-child(18). The editor and the decision test run in the
+         browser and call no API. NO data-not-on-static MARKER. -->
+    <a class="landing-card" href="/xacml.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M6 3h8l4 4v14H6z"/>
+          <path d="M14 3v4h4"/>
+          <path d="M8.5 13.2 11 15.7l4.5-5"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">XACML</span>
+      <span class="landing-card-desc">Edit an XACML 3.0 policy and ask it for a decision: subject, action and resource in, Permit or Deny out, with both PEP biases.</span>
+    </a>
+    <!-- THE NINETEENTH CARD. Eighteen at nine columns were a filled
+         9+9. Nineteen are 9+9+1, so the grid is ten columns of 105px.
+         css/landing.css records the sum. This card needs
+         :nth-child(19), or its icon falls back to the text colour.
+
+         NO data-not-on-static MARKER. The page signs in the browser.
+         The API path forwards a request that is already signed, and
+         the page can call the authorization server itself when that
+         server allows this origin. -->
+    <a class="landing-card" href="/gnap.html">
+      <span class="landing-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="15" r="3.2"/>
+          <path d="M10.4 12.8 19 4.2"/>
+          <path d="M16.2 7 18.6 9.4"/>
+          <path d="M14 9.2 16.2 11.4"/>
+        </svg>
+      </span>
+      <span class="landing-card-title">GNAP</span>
+      <span class="landing-card-desc">Negotiate a grant (RFC 9635): sign the request with the client key, follow the interaction, then continue, rotate or revoke.</span>
     </a>
   </div>
   <!-- The counterpart to the greyed cards above, and the only thing on this

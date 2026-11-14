@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: server.js
 // Author: Robert C. Broeckelmann Jr.
 // Date: 05/31/2020
@@ -53,7 +56,7 @@ if (process.env.COVERAGE === 'true') {
   log.info('Coverage collection enabled: POST /coverage -> ' + COVERAGE_DIR);
 }
 
-// Application version (M.N.O). Read once: the build number identifies the
+// Application version (M.N.P.B). Read once: the build number identifies the
 // build this server is serving, so it must not change between requests.
 const appversion = require('./version');
 const APP_VERSION = appversion.load(path.join(__dirname, 'public'));
@@ -128,7 +131,7 @@ app.use(function(req, res, next) {
     // current.
     processed =
         processed.split('{{YEAR}}').join(String(new Date().getFullYear()));
-    // ... and the M.N.O version. APP_VERSION is read once at startup from the
+    // ... and the M.N.P.B version. APP_VERSION is read once at startup from the
     // record stamped into public/ during the image build, so every page of a
     // deployment reports the same build number.
     processed = processed.split('{{VERSION}}').join(APP_VERSION.version);

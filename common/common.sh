@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 set -x
 
 check_return_code()
@@ -59,18 +62,6 @@ EOF
 common_setup()
 {
   echo "Entering common_setup()."
-  # The tag THIS checkout builds and runs the mock STS under. Overridable, so
-  # a run can be pointed at an image somebody else built; the default carries
-  # the compose project (the checkout's directory name unless it is set), so
-  # two checkouts of this repository do not collide either. See the note above
-  # COMPOSE_FORWARDED_VARS. Named under IMAGE_REGISTRY like the other images
-  # the test stack builds (docker-compose-run-tests.yml), and tagged
-  # IMAGE_TAG when a run sets one — tests.yml does, and pushes it.
-  local sts_repo="${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/sts"
-  local sts_tag="${IMAGE_TAG:-${COMPOSE_PROJECT_NAME:-id-proto-debugger}}"
-  STS_IMAGE="${STS_IMAGE:-${sts_repo}:${sts_tag}}"
-  export STS_IMAGE
-  echo "The mock STS image for this run is ${STS_IMAGE}."
   REV=/usr/bin/rev
   JQ=/usr/bin/jq
   CURL=/usr/bin/curl
@@ -115,15 +106,6 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} BUILD_NUMBER GIT_COMMIT"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_CONCURRENCY TEST_JOB_TIMEOUT_MS"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} TEST_WAIT_TIME_MS"
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_LOG_LEVEL"
-# THE MOCK STS IMAGE'S TAG, which is not this repository's alone: `sts/` is the
-# iya-sts submodule and that repository builds its own stack from the same
-# source. A docker tag is machine-wide, so both writing `rcbj/sts` means the
-# last build wins and a run here can start a mock built from another
-# checkout's tree — which is what happened on 2026-09-15, costing seven jobs
-# that failed on defects already fixed in the submodule this checkout points
-# at. That repository's launchers already tag `rcbj/sts:<project>` for the
-# same reason; these tag one of their own below.
-COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_IMAGE"
 # The stack TLS pair. Every compose file here mounts the DIRECTORY and
 # names the two files inside it, so all three have to cross sudo — and
 # STACK_TLS_CA_FILE is what the mock STS is given as NODE_EXTRA_CA_CERTS
@@ -169,9 +151,14 @@ COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IMAGE_TAG"
 # docker-compose-run-tests-external-sts.yml substitutes it into the
 # companion's environment, so it has to cross sudo like the rest.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} STS_EXTERNAL_URL"
-# Which iya-sts image docker-compose-run-tests.yml runs. Defaulted in that
-# file to the release the sts/ gitlink pins; set it to try a candidate.
+# Which iya-sts image every compose file runs, and which companion image runs
+# beside it. Both are defaulted in the compose files to the mirror's copies
+# of the same release (docker-compose-run-tests.yml names it;
+# tests/image_mirror_coverage.js holds the others to it); set them to try a
+# candidate. There is no iya-sts checkout here to build either from; the
+# companion is built from iya-sts's tag by .github/scripts/mirror-builds.sh.
 COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IYA_STS_IMAGE"
+COMPOSE_FORWARDED_VARS="${COMPOSE_FORWARDED_VARS} IYA_STS_COMPANION_IMAGE"
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +467,7 @@ generateStackTlsCertificate()
   # called, having built nothing and run no test. Reporting a missing install
   # is the right thing to do about a missing TOOL; a dependency of this
   # repository that this repository knows how to install is one this function
-  # installs, the way requireMockStsCheckout() initialises a submodule.
+  # installs, the way requireApiLdapjsCheckout() initialises a submodule.
   #
   # PLAIN `npm ci`, NOT `--omit=dev`. Only the runtime dependencies are needed
   # here (pkijs, asn1js, the @noble family, node-forge, bunyan — every one of
@@ -991,117 +978,6 @@ renderWaltidConfig()
 }
 
 # ---------------------------------------------------------------------------
-# Make sure the mock STS is on disk before anything tries to build it.
-#
-# sts/ is a SUBMODULE, not code in this repository: it is
-# https://github.com/rcbj/iya-sts.git on branch main, and what this repository
-# records is a link to it. Two things then depend on the checkout existing, and
-# both fail a long way from the cause when it does not:
-#
-#   * four compose files build the image with `context: ./sts`, and compose says
-#     "failed to read dockerfile" — a message about a path, not about a submodule;
-#   * tests/Dockerfile copies sts/common/crypto_impl/bbs2023.js into the tests
-#     image so that tests/bbs2023_cryptosuite.js can check the wallet's
-#     cryptosuite against the issuer's, and the build says
-#     "COPY sts/common/crypto_impl/bbs2023.js: not found".
-#
-# A `git clone` without --recurse-submodules leaves exactly that state: sts/
-# present and EMPTY. So this initialises it when it is missing and refuses the run
-# when it cannot, rather than letting either message stand as the explanation.
-#
-# WHICH COMMIT. By default the one this repository records, which is the point of
-# a submodule and is what makes a build repeatable. Set MOCK_STS_TRACK_REMOTE=1 to
-# take the tip of the branch .gitmodules names (main) instead — `git submodule
-# update --remote` — which resolves the link at build time in the strongest sense,
-# at the cost of the run not being repeatable and of leaving the submodule pointer
-# showing as modified in `git status`.
-# ---------------------------------------------------------------------------
-requireMockStsCheckout()
-{
-  echo "Entering requireMockStsCheckout()."
-  local root="${1:-.}"
-  local dir="${root}/sts"
-  local track_remote="${MOCK_STS_TRACK_REMOTE:-0}"
-
-  # Two FILES, not a directory test: an interrupted `git submodule update`, and
-  # compose itself, both leave an empty sts/ behind, so "the directory is there"
-  # is precisely the state this exists to catch. The Dockerfile is what compose
-  # reads and server.js is what the image runs, so between them they say the
-  # checkout is real rather than merely present.
-  #
-  # THREE files now, and the third is a level down. The mock STS has a submodule
-  # of ITS own — node-ldapjs, which its package.json takes as
-  # `"ldapjs": "file:node-ldapjs"` — so an sts/ that has a Dockerfile and a
-  # server.js can still be half-initialised. An uninitialised submodule is an
-  # empty DIRECTORY, so the image builds, npm installs a package with no `main`,
-  # and the container dies at startup with `Cannot find module 'ldapjs'`, naming
-  # a package. Checking only the first two files here would declare that state
-  # good and never run the update that fixes it.
-  if [ -f "${dir}/Dockerfile" ] && [ -f "${dir}/server.js" ] && \
-     [ -f "${dir}/node-ldapjs/package.json" ] && [ "${track_remote}" != "1" ];
-  then
-    # The mock STS has a submodule OF ITS OWN — node-ldapjs, which its embedded
-    # LDAP directory is built on and which its Dockerfile COPYs before npm runs.
-    # `git submodule update --init -- sts` stops one level short of it, so a
-    # checkout can be perfectly populated here and still fail the sts image
-    # build. Handled separately below rather than by adding --recursive to every
-    # call, because the diagnosis differs: an empty sts/ is "the mock is not
-    # checked out", an empty sts/node-ldapjs is "the mock is, but its own
-    # dependency is not".
-    requireNestedLdapjsCheckout "${dir}" || return 1
-    echo "Leaving requireMockStsCheckout(). ${dir} is populated."
-    return 0
-  fi
-
-  if [ ! -d "${root}/.git" ] && [ ! -f "${root}/.git" ];
-  then
-    echo "ERROR: ${dir} has no checkout of the mock STS in it, and ${root} is not a git" >&2
-    echo "       working tree, so the submodule cannot be initialised here. Clone it directly:" >&2
-    echo "         git clone -b main https://github.com/rcbj/iya-sts.git ${dir}" >&2
-    return 1
-  fi
-  if [ ! -f "${root}/.gitmodules" ] || ! grep -q '^[[:space:]]*path[[:space:]]*=[[:space:]]*sts[[:space:]]*$' "${root}/.gitmodules";
-  then
-    echo "ERROR: ${dir} has no checkout of the mock STS in it and ${root}/.gitmodules does not" >&2
-    echo "       declare it, so there is nothing to initialise. The STS lives in its own" >&2
-    echo "       repository now; see the 'Mock STS' section of CLAUDE.md." >&2
-    return 1
-  fi
-
-  # --recursive is not optional: see the note above the populated-check.
-  local update_args="--init --recursive"
-  if [ "${track_remote}" = "1" ];
-  then
-    # --remote checks out the tip of the branch named in .gitmodules rather than
-    # the recorded commit. Deliberately opt-in: see the note above.
-    update_args="--init --recursive --remote"
-    echo "MOCK_STS_TRACK_REMOTE=1: taking the tip of the branch .gitmodules names, not the recorded commit."
-  fi
-  echo "Initialising the mock STS submodule in ${dir}."
-  git -C "${root}" submodule update ${update_args} -- sts
-  if [ $? -ne 0 ];
-  then
-    echo "ERROR: 'git submodule update ${update_args} -- sts' failed in ${root}." >&2
-    echo "       The mock STS is fetched over https from https://github.com/rcbj/iya-sts.git," >&2
-    echo "       so this is usually network access or a proxy rather than credentials." >&2
-    return 1
-  fi
-
-  # Asked again rather than assumed: `git submodule update` exits 0 for a
-  # submodule it does not know about, which is the one case that would otherwise
-  # walk straight into the compose error this function exists to prevent.
-  if [ ! -f "${dir}/Dockerfile" ] || [ ! -f "${dir}/server.js" ];
-  then
-    echo "ERROR: ${dir} is still empty after 'git submodule update ${update_args} -- sts'." >&2
-    echo "       Run 'git submodule status sts' in ${root} to see what it thinks is there." >&2
-    return 1
-  fi
-  requireNestedLdapjsCheckout "${dir}" || return 1
-  echo "Leaving requireMockStsCheckout(). ${dir} is populated."
-  return 0
-}
-
-# ---------------------------------------------------------------------------
 # CAN THIS MACHINE READ THE PRIVATE IMAGE MIRROR ON ghcr.io?
 #
 # docker-compose-run-tests.yml pulls its third-party images, and builds every
@@ -1147,40 +1023,53 @@ requireGhcrMirror()
 }
 
 # ---------------------------------------------------------------------------
-# THE iya-sts IMAGE AND THE sts/ CHECKOUT MUST BE THE SAME RELEASE.
+# WHICH iya-sts IMAGE THIS RUN USES, AND CAN THIS MACHINE PULL IT?
 #
-# docker-compose-run-tests.yml runs iya-sts's published release image
-# (IYA_STS_IMAGE, defaulted there to ghcr.io/rcbj/iya-sts:<version>) rather
-# than building sts/Dockerfile. Everything that READS iya-sts's files still
-# reads the submodule — tests/Dockerfile copies modules out of it, the
-# companion is built from it, krb5_codec_sync.js and spiffe_engine.js compare
-# against it — so an image from one release and a checkout from another is a
-# run in which the jobs drive one service and load another's code. That fails
-# naming a protocol, never a version.
+# Every stack here runs iya-sts's published release image (IYA_STS_IMAGE,
+# defaulted in docker-compose-run-tests.yml — the one place the release is
+# named) and builds nothing of iya-sts's: this repository has no checkout of
+# it. So the image is resolved and pulled here, before compose is called,
+# because a pull that fails inside `up` names a manifest, not the remedy.
 #
-# So the image is pulled here and its org.opencontainers.image.revision label
-# compared with the commit sts/ is checked out at. A mismatch is fatal, and
-# the message says both ways to fix it. An image with no revision label
-# cannot be checked and is allowed with a warning: that is a candidate
-# somebody built by hand and asked for by name.
+# The default is the PRIVATE MIRROR COPY of that release, and it nests a
+# second default: `${IYA_STS_IMAGE:-${IMAGE_MIRROR:-<prefix>}/iya-sts:<v>}`.
+# So it is read in two parts — the IMAGE_MIRROR default, then what follows
+# it — and IMAGE_MIRROR is honoured when set, as compose honours it.
 #
-# $1 the repository root; $2 the compose file the default is read from.
+# It is exported, resolved, so that compose, the tests' module_paths.js and
+# warmIyaStsTree() below all mean the same image even if the default moves
+# under a long run. Fatal on failure, like any service a launcher starts.
+#
+# $1 the repository root.
 # ---------------------------------------------------------------------------
-requireIyaStsImageMatchesCheckout()
+requireIyaStsImage()
 {
-  echo "Entering requireIyaStsImageMatchesCheckout()."
-  local root="$1"
-  local compose_file="${2:-docker-compose-run-tests.yml}"
+  echo "Entering requireIyaStsImage()."
+  local root="${1:-.}"
   local image="${IYA_STS_IMAGE:-}"
   if [ -z "${image}" ];
   then
-    image="$(sed -n 's/.*\${IYA_STS_IMAGE:-\([^}]*\)}.*/\1/p' \
-               "${root}/${compose_file}" | head -1)"
+    local line mirror rest
+    line="$(grep -o '\${IYA_STS_IMAGE:-.*' \
+              "${root}/docker-compose-run-tests.yml" | head -1)"
+    line="${line#\$\{IYA_STS_IMAGE:-}"
+    case "${line}" in
+      '${IMAGE_MIRROR:-'*)
+        line="${line#\$\{IMAGE_MIRROR:-}"
+        mirror="${line%%\}*}"
+        rest="${line#*\}}"
+        image="${IMAGE_MIRROR:-${mirror}}${rest%%\}*}"
+        ;;
+      *)
+        image="${line%%\}*}"
+        ;;
+    esac
   fi
   if [ -z "${image}" ];
   then
-    echo "ERROR: ${compose_file} names no IYA_STS_IMAGE default." >&2
-    echo "Leaving requireIyaStsImageMatchesCheckout(). No image."
+    echo "ERROR: docker-compose-run-tests.yml names no IYA_STS_IMAGE" \
+         "default, and IYA_STS_IMAGE is unset." >&2
+    echo "Leaving requireIyaStsImage(). No image."
     return 1
   fi
   resolveDockerSudo
@@ -1191,95 +1080,15 @@ requireIyaStsImageMatchesCheckout()
   fi
   if ! ${docker_cmd} pull -q "${image}" >/dev/null;
   then
-    echo "ERROR: could not pull ${image}. It is a PRIVATE package on" \
-         "ghcr.io; the login requireGhcrMirror() describes covers it." >&2
-    echo "Leaving requireIyaStsImageMatchesCheckout(). Pull failed."
+    echo "ERROR: could not pull ${image}, the iya-sts release this run" \
+         "uses. It is the private mirror copy on ghcr.io; the login" \
+         "requireGhcrMirror() describes covers it, or set IYA_STS_IMAGE" \
+         "to an image this machine has." >&2
+    echo "Leaving requireIyaStsImage(). Pull failed."
     return 1
   fi
-  local revision head
-  revision="$(${docker_cmd} image inspect --format \
-    '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
-    "${image}" 2>/dev/null)"
-  head="$(git -C "${root}/sts" rev-parse HEAD 2>/dev/null)"
-  if [ -z "${revision}" ] || [ "${revision}" = "<no value>" ];
-  then
-    echo "WARNING: ${image} carries no org.opencontainers.image.revision" \
-         "label, so it cannot be checked against sts/ (${head:0:9})." >&2
-    echo "Leaving requireIyaStsImageMatchesCheckout(). Unlabelled."
-    return 0
-  fi
-  if [ "${revision}" != "${head}" ];
-  then
-    echo "ERROR: ${image} was built from iya-sts ${revision:0:9}, but sts/" \
-         "is checked out at ${head:0:9}." >&2
-    echo "       The suite runs the image and reads the checkout, so the two" \
-         "must be the same release. Either move the gitlink to the image's" \
-         "tag (git -C sts checkout <tag>), or point IYA_STS_IMAGE at the" \
-         "image of the commit sts/ is at." >&2
-    echo "Leaving requireIyaStsImageMatchesCheckout(). Mismatch."
-    return 1
-  fi
-  echo "Leaving requireIyaStsImageMatchesCheckout(). ${image} is" \
-       "${revision:0:9}, the commit sts/ is at."
-  return 0
-}
-
-# ---------------------------------------------------------------------------
-# The node-ldapjs submodule INSIDE the mock STS.
-#
-# The mock's embedded LDAP directory (sts/ldap/ldap_server.js) is built on ldapjs,
-# and that dependency is `"ldapjs": "file:node-ldapjs"` — the submodule, pinned
-# by commit and used unmodified. sts/Dockerfile COPYs it into the build context
-# before npm runs.
-#
-# It needs its own function because it is a submodule of a submodule, which is
-# exactly the level `git submodule update --init -- sts` does not reach. The
-# failure without it is not "the file is missing": an UNINITIALISED SUBMODULE IS
-# AN EMPTY DIRECTORY, so the COPY succeeds, npm installs a package with no main,
-# and the container dies at startup with `Cannot find module 'ldapjs'` — naming
-# a package rather than a submodule, from a service whose other eleven protocol
-# families were about to work perfectly.
-# ---------------------------------------------------------------------------
-requireNestedLdapjsCheckout()
-{
-  echo "Entering requireNestedLdapjsCheckout()."
-  local dir="${1:-./sts}"
-  local nested="${dir}/node-ldapjs"
-
-  # A FILE, not the directory: see the note in requireMockStsCheckout() about
-  # why "the directory is there" is the state these checks exist to catch.
-  if [ -f "${nested}/package.json" ];
-  then
-    echo "Leaving requireNestedLdapjsCheckout(). ${nested} is populated."
-    return 0
-  fi
-  if [ ! -f "${dir}/.gitmodules" ];
-  then
-    # An older recorded commit of the mock STS, from before it had a directory.
-    # Not an error: that build simply has no LDAP in it, and the LDAP jobs skip
-    # with their own named reason. Saying so here is what stops it looking like
-    # a broken checkout.
-    echo "Note: ${dir} declares no submodules, so this commit of the mock STS predates"
-    echo "      its embedded LDAP directory. The LDAP jobs will skip."
-    echo "Leaving requireNestedLdapjsCheckout(). Nothing to initialise."
-    return 0
-  fi
-  echo "Initialising the node-ldapjs submodule in ${nested}."
-  git -C "${dir}" submodule update --init -- node-ldapjs
-  if [ $? -ne 0 ];
-  then
-    echo "ERROR: 'git submodule update --init -- node-ldapjs' failed in ${dir}." >&2
-    echo "       It is fetched over https from https://github.com/rcbj/node-ldapjs.git," >&2
-    echo "       so this is usually network access or a proxy rather than credentials." >&2
-    return 1
-  fi
-  if [ ! -f "${nested}/package.json" ];
-  then
-    echo "ERROR: ${nested} is still empty. The mock STS's LDAP directory cannot build" >&2
-    echo "       without it, and the failure at runtime is 'Cannot find module ldapjs'." >&2
-    return 1
-  fi
-  echo "Leaving requireNestedLdapjsCheckout(). ${nested} is populated."
+  declare -gx IYA_STS_IMAGE="${image}"
+  echo "Leaving requireIyaStsImage(). IYA_STS_IMAGE=${IYA_STS_IMAGE}"
   return 0
 }
 
@@ -1992,11 +1801,11 @@ trustStsCertificate()
 #
 # IT IS ALSO THE CAPABILITY PROBE, and it replaced a worse one. local-run-tests.sh
 # used to decide whether to schedule those jobs by looking for `oauth2_bcp.js`
-# in the sts/ submodule — a path test, which silently took its else branch and
-# printed a confident, wrong explanation when iya-sts reorganised its
-# directories. Asking the running service to create the realm answers the same
-# question about the code that is actually running, and answers it about REALMS
-# too, which that probe could not have seen at all.
+# in the sts/ submodule (removed since) — a path test, which silently took
+# its else branch and printed a confident, wrong explanation when iya-sts
+# reorganised its directories. Asking the running service to create the realm
+# answers the same question about the code that is actually running, and
+# answers it about REALMS too, which that probe could not have seen at all.
 #
 # $1 the STS base URL, https, no trailing slash. Prints nothing to stdout that a
 # caller should parse; returns non-zero when the realm is not there afterwards,
@@ -2168,7 +1977,7 @@ configureStsRfc9700Realm()
     echo >&2
     echo "         The mock STS is probably older than \`realmRuntime\` on" \
          "oauth2.rfc9700 — before that, the setting could only be given to a" >&2
-    echo "         whole process. Bump the sts/ submodule. The five RFC 9700" \
+    echo "         whole process. Bump IYA_STS_IMAGE. The five RFC 9700" \
          "flow jobs will be SKIPPED rather than run against a permissive" >&2
     echo "         server, which would pass while proving nothing." >&2
     echo "Leaving configureStsRfc9700Realm(). Not configured."
@@ -3333,96 +3142,57 @@ configureKeycloakWsfed()
 }
 
 # ---------------------------------------------------------------------------
-# A MOCK STS TREE THE HOST CAN RUN, TAKEN OUT OF THE IMAGE THAT WAS JUST BUILT.
+# iya-sts'S COMPILED TREE, ON THE HOST, BEFORE THE JOB POOL STARTS.
 #
-# A host-run job that loads the mock's own modules needs a complete tree:
-# sources, node_modules, and since iya-sts #50 the COMPILED TypeScript. (The
-# job this was written for, `sts_persistence_postgres.js`, started the mock
-# itself; it moved to iya-sts on 2026-10-23 as that repository's own test.) A checkout has none of the third. `server.js` refuses to
-# start from one with STS-CORE-0093, naming 188 sources with no `.js` beside
-# them, and that job self-skipped for want of a build.
+# Several host-run jobs load iya-sts's own modules in process (the codec and
+# bbs-2023 cross-checks, the mock-KDC jobs, the WebAuthn comparison). There is
+# no checkout of iya-sts here, and a checkout would not do anyway: since
+# iya-sts #50 its sources are TypeScript, and only its image carries them
+# compiled, with their node_modules. tests/module_paths.js (iyaStsTree())
+# copies /usr/src/sts out of IYA_STS_IMAGE into a cache directory keyed by the
+# image, once; tests/tools/iya-sts-tree.js is its command-line way in.
 #
-# IT IS COPIED RATHER THAN BUILT, and that is the whole point of doing it here.
-# `sts/build-typescript.sh` refuses to run on a host checkout on purpose —
-# issue #50, no compiled files on the host — and it needs a `tsc` that exists
-# nowhere in this tree: the submodule has no `tests/node_modules`, and neither
-# does this repository. Building would mean an npm install of somebody else's
-# devDependencies on every run, and an offline run could not do it at all.
+# Called here so that it happens ONCE, before a pool of jobs could all race to
+# make the first copy, and so that a run which cannot get the tree stops here
+# naming the image instead of as a dozen jobs failing to load a module. The
+# cache outlives the run on purpose: the next run of the same image reuses it.
+# MOCK_STS_DIR, when the caller sets it, names a tree to use instead, and this
+# leaves it alone.
 #
-# The image compose has just built ALREADY CONTAINS the answer: `/usr/src/sts`,
-# compiled, with its `.ts` stripped and its runtime node_modules installed. It
-# is the very tree the stack is running, so the job tests what the rest of the
-# suite is talking to rather than something assembled beside it.
-#
-# THE SUBMODULE IS LEFT ALONE. A build in place would leave ~188 untracked
-# `.js` files in somebody else's checkout — iya-sts cannot gitignore them,
-# because tsconfig.build.json compiles in place — and `git status` would report
-# `sts` as dirty from then on.
-#
-# Best effort: a failure here leaves MOCK_STS_DIR unset and that job skips
-# exactly as it did before, which is the state this function exists to improve
-# and not one worth stopping a 300-job run over.
+# $1 the repository root.
 # ---------------------------------------------------------------------------
-extractMockStsTree()
+warmIyaStsTree()
 {
-  echo "Entering extractMockStsTree()."
+  echo "Entering warmIyaStsTree()."
+  local root="${1:-.}"
   if [ -n "${MOCK_STS_DIR:-}" ];
   then
-    echo "MOCK_STS_DIR was supplied by the caller (${MOCK_STS_DIR}); using it."
-    echo "Leaving extractMockStsTree(). Supplied."
+    echo "MOCK_STS_DIR was supplied by the caller (${MOCK_STS_DIR});" \
+         "using it rather than the image's tree."
+    echo "Leaving warmIyaStsTree(). Supplied."
     return 0
   fi
-  local image="${STS_IMAGE:-rcbj/sts}"
-  local dir cid
-  dir="$(mktemp -d)"
-  # `docker create` makes a container without starting it, which is the
-  # documented way to read a filesystem out of an image.
-  cid="$(docker create "${image}" 2>/dev/null)"
-  if [ -z "${cid}" ];
+  resolveDockerSudo
+  local docker_cmd="docker"
+  if [ -n "${DOCKER_SUDO}" ];
   then
-    echo "extractMockStsTree(): could not create a container from ${image}," \
-         "so the persistence job will skip. This is not fatal."
-    rm -rf "${dir}"
-    echo "Leaving extractMockStsTree(). No image."
-    return 0
+    docker_cmd="sudo -n docker"
   fi
-  if ! docker cp "${cid}:/usr/src/sts/." "${dir}/" >/dev/null 2>&1;
+  local dir
+  dir="$(IYA_STS_DOCKER="${docker_cmd}" \
+         node "${root}/tests/tools/iya-sts-tree.js")"
+  if [ $? -ne 0 ] || [ -z "${dir}" ];
   then
-    echo "extractMockStsTree(): could not copy /usr/src/sts out of" \
-         "${image}, so the persistence job will skip. This is not fatal."
-    docker rm -f "${cid}" >/dev/null 2>&1 || true
-    rm -rf "${dir}"
-    echo "Leaving extractMockStsTree(). Nothing copied."
-    return 0
+    echo "ERROR: could not copy iya-sts's tree out of" \
+         "${IYA_STS_IMAGE:-the default iya-sts image}; the jobs that load" \
+         "its modules cannot run. The reason is printed above." >&2
+    echo "Leaving warmIyaStsTree(). Failed."
+    return 1
   fi
-  docker rm -f "${cid}" >/dev/null 2>&1 || true
-  # The two files mockStsRoot() tests for before it will use a tree at all.
-  if [ ! -f "${dir}/server.js" ] || [ ! -d "${dir}/node_modules/pg" ];
-  then
-    echo "extractMockStsTree(): ${image} has no runnable tree at" \
-         "/usr/src/sts (server.js or node_modules/pg is missing), so the" \
-         "persistence job will skip. This is not fatal."
-    rm -rf "${dir}"
-    echo "Leaving extractMockStsTree(). Incomplete."
-    return 0
-  fi
-  declare -gx MOCK_STS_DIR="${dir}"
-  declare -gx MOCK_STS_DIR_IS_OURS="yes"
-  echo "extractMockStsTree(): the mock STS tree from ${image} is at ${dir}."
-  echo "Leaving extractMockStsTree(). MOCK_STS_DIR=${MOCK_STS_DIR}"
-  return 0
-}
-
-# Remove what extractMockStsTree() made, and only that: a MOCK_STS_DIR the
-# caller supplied is somebody's working copy and is never deleted.
-removeMockStsTree()
-{
-  echo "Entering removeMockStsTree()."
-  if [ "${MOCK_STS_DIR_IS_OURS:-}" = "yes" ] && [ -n "${MOCK_STS_DIR:-}" ];
-  then
-    rm -rf "${MOCK_STS_DIR}"
-    echo "removeMockStsTree(): removed ${MOCK_STS_DIR}."
-  fi
-  echo "Leaving removeMockStsTree()."
+  # The jobs find the same directory themselves (it is keyed by the image);
+  # IYA_STS_DOCKER is exported so that a job that has to look again reaches
+  # the daemon the way this did.
+  declare -gx IYA_STS_DOCKER="${docker_cmd}"
+  echo "Leaving warmIyaStsTree(). ${dir}"
   return 0
 }

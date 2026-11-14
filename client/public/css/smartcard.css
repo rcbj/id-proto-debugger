@@ -1,0 +1,65 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
+.sc-apps { margin: 8px 0 12px; }
+.sc-apps select { margin-left: 8px; }
+
+.sc-trace,
+.saml-pane textarea.sc-trace {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  min-height: 8em;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+
+.sc-out {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-width: 100%;
+}
+
+.sc-out .saml-table { table-layout: fixed; width: 100%; }
+.sc-out .saml-table td { overflow-wrap: anywhere; }
+
+.sc-field { width: 100%; max-width: 36em; box-sizing: border-box; }
+
+/* The api is relaying but cannot reach PC/SC: what is missing, in its words. */
+.sc-warn { color: #8a4a2f; }
+.sc-transport-note { font-size: 0.85em; color: #555; margin-left: 8px; }
+.sc-read-note { font-size: 0.8em; color: #777; margin-left: 6px; }
+
+/* The status line stays in view: a message about a pane far down the page
+   was written to the top of it, out of sight. */
+#sc_status {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #fff;
+  padding: 4px 0;
+}
+#sc_status:empty { padding: 0; }
+.sc-narrow { width: 5em; }
+
+/* Is a key reachable, for the chosen transport: green or red. */
+.sc-detect {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-radius: 4px;
+  font-weight: 600;
+  border: 1px solid;
+}
+.sc-detect-ok { color: #11632b; background: #e6f4ea; border-color: #8cc8a0; }
+.sc-detect-no { color: #8a1f1f; background: #fbe9e9; border-color: #e0a3a3; }
+.sc-gen { margin-left: 4px; }
+
+/* The Reset pane: a warning that cannot be missed, and red buttons. */
+.sc-warning {
+  color: #8a1f1f;
+  background: #fbe9e9;
+  border: 1px solid #e0a3a3;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.sc-danger { color: #fff; background: #b42318; border-color: #8a1f1f; }
+.sc-reset-what { font-size: 0.85em; color: #8a1f1f; margin-left: 8px; }

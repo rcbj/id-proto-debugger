@@ -4,11 +4,13 @@ Scope: the **Protocol Version** selector on `saml_request.html` and everything
 that follows from choosing **SAML 1.1** — what is sent, what comes back, which
 settings stop applying, and what the four tests hold it to. SAML 2.0 is the
 workflow's default and is not described here except where the two differ.
+How to drive that sign-in, including every field this note only mentions
+where the two versions differ, is in [Using the SAML workflow](saml.md).
 
 Read this before touching `client/src/saml_request.js`,
 `client/src/saml_response.js`, `POST /samlartifactctx` or `handleSamlAcs()` in
 `api/server.js`. The identity provider at the other end is `sts/saml/saml11_sso.js`,
-whose own notes are in that submodule's `saml/CLAUDE.md`.
+whose own notes are in iya-sts's `saml/CLAUDE.md`.
 
 ---
 
@@ -27,47 +29,48 @@ expect the opposite:
 
 | | SAML 2.0 | SAML 1.1 |
 |---|---|---|
-| the request | a signed, optionally encrypted `<samlp:AuthnRequest>` | four query parameters, unsigned, and **not a standard** |
-| the service provider names itself | `<saml:Issuer>` on the request | it cannot — `providerId`, a path segment, or the identity provider GUESSES from the `TARGET`'s origin |
-| where the response goes | `AssertionConsumerServiceURL` on the request | Shibboleth's `shire` parameter, or nothing |
-| choosing a response binding | `ProtocolBinding` on the request | **nothing in the protocol** — the identity provider decides |
+| the request | a signed, optionally encrypted `<samlp:AuthnRequest>` | Shibboleth's four query parameters, unsigned, on a GET |
+| the service provider names itself | `<saml:Issuer>` on the request | `providerId`; failing it, a path segment, or the identity provider GUESSES from the relay value's origin |
+| where the response goes | `AssertionConsumerServiceURL` on the request | Shibboleth's `shire` parameter |
+| choosing a response binding | `ProtocolBinding` on the request | **which assertion consumer the `shire` names** — each one in the SP metadata is bound to one profile |
 | Single Logout | both directions | **does not exist** |
-| the relay state | `RelayState` | `TARGET`, which is also supposed to be a URL |
+| the relay state | `RelayState` | `target` on the request, `TARGET` on the response |
 
-## WHAT THIS PAGE ACTUALLY SENDS, AND WHY IT IS NOT A STANDARD
+## WHAT THIS PAGE SENDS: SHIBBOLETH'S AUTHNREQUEST PROFILE, EXACTLY
 
-Shibboleth 1.x bolted a request onto the profile and it is the one every real
-SAML 1.1 service provider sends: a redirect to the identity provider carrying
-`shire`, `target`, `providerId` and `time`, identified by the profile URI
+Shibboleth 1.x defined the request every real SAML 1.1 service provider sends:
+a redirect to the identity provider identified by the profile URI
 `urn:mace:shibboleth:1.0:profiles:AuthnRequest` and advertised in metadata as a
-`SingleSignOnService`. **It is supported, it is not a standard, and the page says
-so** — a SAML 1.1 service provider that could not tell an identity provider where
-to send the assertion would be a debugger nobody could point at anything.
+`SingleSignOnService`. SAML 1.1 itself has no request message, so this profile
+is the specification the request is held to.
 
-`saml11RequestParams()` builds it. Six parameters, and **two of them are
-non-spec and are named as such everywhere they appear**:
+`saml_message.saml11AuthnRequestParams()` builds it, `saml11RequestParams()` on
+the page calls it, and it emits **exactly four parameters, in this spelling, and
+nothing else** (since #307):
 
 | Parameter | What it is |
 |---|---|
-| `TARGET` | the relay state. See below — this is the one worth reading twice. |
-| `shire` | the assertion consumer URL. Shibboleth's name for the ACS. |
-| `providerId` | this service provider's identifier. Becomes the assertion's audience. |
-| `time` | seconds since the epoch. Read, logged and enforced nowhere by the mock. |
-| `profile` | **non-spec.** `post` or `artifact` — which browser profile to answer with. |
-| `format` | **non-spec.** A NameIdentifier format, when one is selected. |
+| `providerId` | this service provider's entity ID. Becomes the assertion's audience. **Required**: an empty one is refused, not left out. |
+| `shire` | the assertion consumer location. **Required.** It must be one of the `AssertionConsumerService` elements in this service provider's metadata, and the profile bound to the one it names is how the identity provider answers. |
+| `target` | the relay value. Lower case on the request; the identity provider returns it as `TARGET`. |
+| `time` | seconds since the epoch, as decimal digits. |
 
-An identity provider that does not know the last two ignores them, which is why
-sending them costs nothing. Without `profile` the identity provider's own default
-decides, and the binding a test *thinks* it is exercising is not the one that ran.
+**Until #307 the page also sent three things no specification defines**, and
+they are gone: the relay value spelled `TARGET` (the response's name for it,
+which a Shibboleth identity provider does not read on the request), a
+`profile=post|artifact` parameter, and a `format` NameIdentifier parameter.
+iya-sts no longer reads `profile` or `format` either: the browser profile is the
+binding registered for the `shire`, and the NameIdentifier format is the
+relying party's setting.
 
-### `TARGET` carries the relay state, and that deserves a paragraph
+### The relay value carries the API's context handle, and that deserves a paragraph
 
-The profile intends `TARGET` as the URL of the resource the person was trying to
-reach. What the binding actually **guarantees** is that it comes back byte for
-byte, and that guarantee is the whole of what this page needs from it — exactly
-as `RelayState` is used on the 2.0 side. The Browser/Artifact flow carries the
-API's `art:<id>` context handle in it, and **there is nowhere else in SAML 1.1 to
-put one**: `RelayState` did not exist until 2.0.
+The profile intends the relay value as the URL of the resource the person was
+trying to reach. What the binding actually **guarantees** is that it comes back
+byte for byte, and that guarantee is the whole of what this page needs from it —
+exactly as `RelayState` is used on the 2.0 side. The Browser/Artifact flow
+carries the API's `art:<id>` context handle in it, and **there is nowhere else in
+SAML 1.1 to put one**: `RelayState` did not exist until 2.0.
 
 That is why `handleSamlAcs()` in `api/server.js` reads `TARGET` as well as
 `RelayState`. Reading only `RelayState` made every 1.1 artifact resolution fail
@@ -76,51 +79,48 @@ parameter the handler never looked at.
 
 ---
 
-## THE TWO BINDING SELECTORS, AND WHAT EACH ONE MEANS HERE
+## THE BINDING SELECTORS, AND WHAT EACH ONE MEANS HERE
 
-Since issue #307 the page has **two** selectors where it had one, in both
-protocol versions: the **request binding** (how the request travels — Redirect
-or POST, the bindings a `SingleSignOnService` can name) and the **response
-binding** (the SAML 2.0 `ProtocolBinding`; in SAML 1.1, the browser profile).
-They keep their *shape* in 1.1; only the spellings change, because
-"HTTP-Redirect" names a SAML 2.0 binding URI that does not exist in 1.1, and
-the response options read **Browser/POST** and **Browser/Artifact**.
+Since issue #307 the page has **two** selectors where it had one: the **request
+binding** (how the request travels) and the **response binding** (the SAML 2.0
+`ProtocolBinding`; in SAML 1.1, the browser profile).
 
-| Request binding | The request travels |
-|---|---|
-| **Redirect** | a top-level `GET` to the inter-site transfer service |
-| **POST** | a form POST of the same parameters |
+**On SAML 1.1 the request binding selector is switched off.** The request is
+always a top-level `GET` to the inter-site transfer service: Shibboleth's
+AuthnRequest profile defines no form POST. The selector keeps whatever it was
+set to, because that is the SAML 2.0 preference.
 
-| Response binding | The response comes back | `profile=` |
+| Response binding | The response comes back | The `shire` sent |
 |---|---|---|
-| **Browser/POST** | a form POST of `SAMLResponse` to `shire` (section 4.2) | `post` |
-| **Browser/Artifact** | a redirect to `shire` with `SAMLart`, resolved by the API over SOAP (section 4.1) | `artifact` |
+| **Browser/POST** | a form POST of `SAMLResponse` to the shire (section 4.2) | the **ACS URL** (`/samlacs`) |
+| **Browser/Artifact** | a redirect to the shire with `SAMLart`, resolved by the API over SOAP (section 4.1) | the **artifact ACS URL** (`/samlacs/artifact`) |
 
-Any request binding pairs with any response binding. What the single selector
-used to call **Artifact** is Redirect + Browser/Artifact, and a configuration
-saved with it is migrated to exactly that on load
+The two consumers are at **different locations** on purpose. A SAML 1.1 service
+provider has no parameter for choosing a profile; the identity provider answers
+with the profile bound to the `AssertionConsumerService` the `shire` names, so
+two profiles at one location would leave the `shire` saying nothing. The SP
+metadata this page builds lists both, each with its profile URI, and the
+round-trip test registers the debugger with iya-sts by uploading that metadata
+(`POST /admin-api/saml2/upload-metadata`), the way a federation would.
+
+A configuration saved before #307 with **Artifact** in the single selector is
+migrated to Redirect + Browser/Artifact on load
 (`migrateLegacyArtifactBinding()`).
 
 **The response binding is offered whatever the metadata's
 `SingleSignOnService` entries say.** Those name the bindings a REQUEST may
 arrive on; an HTTP-Artifact one would be an `AuthnRequest` sent *as* an
-artifact, which nothing here sends. The mock STS stopped advertising one in its
+artifact, which nothing here sends. iya-sts stopped advertising one in its
 SAML 2.0 descriptor (iya-sts #191) after SimpleSAMLphp read it literally and did
-exactly that, and a page that derived the artifact choice from it would have
-lost the choice with it. What an artifact response actually needs from the
-identity provider is somewhere to **resolve** it — the
-`ArtifactResolutionService` (in 1.1, the SAML responder) — so that is what the
-note under the response selector reports on, and Call IdP refuses by name when
-the field is empty rather than sending a request whose answer nothing could
-resolve.
+exactly that. What an artifact response actually needs from the identity
+provider is somewhere to **resolve** it — the `ArtifactResolutionService` (in
+1.1, the SAML responder) — so that is what the note under the response selector
+reports on, and Call IdP refuses by name when the field is empty.
 
-Two notes on those tables.
-
-**Redirect and POST differ only in how the REQUEST travels**, which is the same
-thing the SAML 2.0 request selector means and is worth saying because the
-response is decided by the other selector. **SAML 1.1 defines no POST-bound
-request at all** — that option sends the same non-standard parameters as a
-form, which the mock STS reads and a Shibboleth identity provider would not.
+The SOAP request that resolves a SAML 1.1 artifact is a `<samlp:Request>`
+carrying an `<AssertionArtifact>`, sent with `SOAPAction:
+"http://www.oasis-open.org/committees/security"`, the value SAML 1.1's SOAP
+binding gives a requester.
 
 **There is no redirect-bound RESPONSE in SAML 1.1**, so the fallback the 2.0
 workflow uses on a backend-less deployment has no equivalent. A static site needs
@@ -246,8 +246,9 @@ Three things about reading that document:
 The SP metadata `buildSpMetadata()` produces for 1.1 differs from the 2.0 one in
 four ways, and every one of them is a claim an identity provider acts on:
 `protocolSupportEnumeration` names the 1.1 protocol, the assertion consumer
-endpoints carry the two profile URIs, there is **no** `SingleLogoutService`, and
-there is **no** `AuthnRequestsSigned`.
+endpoints carry the two profile URIs **at two different locations** (the ACS URL
+and the artifact ACS URL), there is **no** `SingleLogoutService`, and there is
+**no** `AuthnRequestsSigned`.
 
 ---
 

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 var config = {
   apiUrl: "https://localhost:4000",
   uiUrl: "https://localhost:3000",
@@ -83,7 +86,7 @@ var config = {
   // rather than to anything intended here.
   maxRedirects: 5,
   // The User-Agent sent on every outbound call. `{{VERSION}}` is replaced with
-  // the build version (M.N.O), the same placeholder the client's footer uses.
+  // the build version (M.N.P.B), the same placeholder the client's footer uses.
   //
   // Without this axios announces itself as "axios/<its version>", which tells
   // the operator of an identity provider nothing about who is calling — and
@@ -220,6 +223,14 @@ var config = {
   // carry 80, 443 and every alternate somebody runs a service on.
   ssfMaxRequestBytes: 262144,
   // ---------------------------------------------------------------------------
+  // GNAP (client/public/gnap.html, docs/gnap.md).
+  //
+  // POST /gnap/call forwards one request the page has already signed.
+  // This bounds that request body. maxContentLength bounds the
+  // response. There is no gnapAllowedPorts: GNAP is HTTP, and the
+  // address policy on the shared axios instance already covers it.
+  gnapMaxRequestBytes: 262144,
+  // ---------------------------------------------------------------------------
   // THE PUSH RECEIVER, WHICH IS THE ONE THING IN THIS WORKFLOW A BROWSER
   // GENUINELY CANNOT DO — and not for CORS or a certificate. RFC 8935 push
   // delivery is the transmitter POSTing each event to a URL the receiver gave
@@ -240,14 +251,26 @@ var config = {
   ssfReceiverEnabled: true,
   // How long an inbox lives. A page that closed its tab leaves nothing behind
   // for longer than this.
+  // ssfReceiverTtlMs, ssfReceiverIdleTtlMs and ssfReceiverMaxInboxBytes are
+  // each the DEFAULT for one inbox and its CEILING: the SSF page may ask an
+  // inbox for less, and a request for more is refused naming the setting.
   ssfReceiverTtlMs: 3600000,
+  // How long an inbox lives with no push, drain or clear. The TTL above
+  // still applies however busy it is.
+  ssfReceiverIdleTtlMs: 1800000,
   // How many inboxes, how many events in each, and how large one event may be.
   // A transmitter that pushed in a loop fills one bounded ring and stops; the
   // oldest event goes rather than the newest, because a receiver that has
   // stopped draining most wants what has happened lately.
   ssfReceiverMaxInboxes: 20,
+  // One caller's share of those inboxes, by its address, so one client
+  // cannot hold them all.
+  ssfReceiverMaxInboxesPerCaller: 5,
   ssfReceiverMaxEvents: 200,
   ssfReceiverMaxEventBytes: 65536,
+  // The most one inbox holds in total, oldest dropped first. Without it
+  // the three caps above multiply out to a quarter of a gigabyte.
+  ssfReceiverMaxInboxBytes: 1048576,
   // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
   // TLS test the PKI page (client/public/pki.html) runs.
   //
@@ -314,6 +337,15 @@ var config = {
   // in use — naming something that is not the problem), and a path that exists
   // and is not a socket is refused rather than dialled.
   spiffeAllowedSocketPaths: ["/tmp/spire-agent/", "/tmp/spire-server/"],
+  // POST /smartcard/transmit and GET /smartcard/readers reach a card in
+  // a reader on the machine this api runs on, with any APDU the caller
+  // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
+  // reset/terminate commands). Off unless this is true. See
+  // docs/smartcard.md. On a local stack it follows SMARTCARD_READER_ENABLED,
+  // which only docker-compose-smartcard.yml sets (with the host's pcscd
+  // socket mounted beside it), so a plain `docker-compose up` keeps it off.
+  // The boolean, exactly: any other value is off.
+  smartcardReaderEnabled: process.env.SMARTCARD_READER_ENABLED === "true",
   // How many messages POST /spiffe/call will read from a STREAM before it stops
   // and says so. A NUMBER.
   //

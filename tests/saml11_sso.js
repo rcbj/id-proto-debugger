@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 const { Builder, By, until, logging } = require("selenium-webdriver");
 const chrome = require("selenium-webdriver/chrome");
 const assert = require("assert");
@@ -6,6 +9,7 @@ const { Command, Option } = require('commander');
 // The SP key pair is generated per run and passed in through the environment;
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
+const crypto = require("crypto");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
 const { loadUrl } = require("./page_load.js");
@@ -100,7 +104,9 @@ var waitTime = appconfig.waitTime;
 //                         Its absence is the skip.
 //   SAML_SP_ENTITY_ID     this service provider, sent as `providerId`.
 //   SAML_USER             who to sign in as.
-//   SAML_BINDING          redirect | post | artifact.
+//   SAML_BINDING          post | artifact: the browser profile under test.
+//                         `redirect` is accepted as the old name of post —
+//                         the SAML 1.1 request is always a GET (#307).
 //
 // The HTTP Artifact profile additionally needs the API: resolving an artifact
 // is a SOAP call over the back channel, which a browser cannot make. The runner
@@ -117,6 +123,10 @@ var LOGIN_BUTTONS = ["kc-login", "saml11-login", "saml2-login"];
 // The two confirmation methods, and which profile each belongs to.
 var CM_BEARER = "urn:oasis:names:tc:SAML:1.0:cm:bearer";
 var CM_ARTIFACT = "urn:oasis:names:tc:SAML:1.0:cm:artifact";
+// The SAML 1.1 profile URIs an AssertionConsumerService is bound with in the
+// SP metadata. The "1.0" is right: the URIs were never renamed for 1.1.
+var PROFILE_POST = "urn:oasis:names:tc:SAML:1.0:profiles:browser-post";
+var PROFILE_ARTIFACT = "urn:oasis:names:tc:SAML:1.0:profiles:artifact-01";
 
 async function elementExists(driver, id) {
   log.debug("Entering elementExists().");
@@ -433,11 +443,16 @@ function previewParams(text) {
   return out;
 }
 
-// 1.1: THE REQUEST IS NOT A DOCUMENT. Whatever the binding, what goes out is
-// Shibboleth's four parameters plus the two non-spec ones — so the Generated
-// request box must hold them and must NOT hold an AuthnRequest.
+// 1.1: THE REQUEST IS NOT A DOCUMENT. What goes out is Shibboleth's
+// AuthnRequest profile and nothing else (#307): exactly providerId, shire,
+// target and time, as a GET at the inter-site transfer service. The shire is
+// the assertion consumer for the profile under test — that is how a SAML 1.1
+// relying party chooses Browser/POST or Browser/Artifact — and there is no
+// TARGET (the response's name for the relay value), `profile` or `format`.
+var SAML11_REQUEST_PARAMS = ['providerId', 'shire', 'target', 'time'];
+
 async function assertRequestIsShibbolethShaped(driver, binding, spEntityId,
-                                               acsUrl) {
+                                               shire) {
   log.debug("Entering assertRequestIsShibbolethShaped(). binding=" + binding);
   var text =
       await driver.findElement(By.id("saml_authn_request")).getAttribute(
@@ -448,37 +463,27 @@ async function assertRequestIsShibbolethShaped(driver, binding, spEntityId,
   assert(text.indexOf('<samlp:AuthnRequest') < 0,
     "SAML 1.1 has no <samlp:AuthnRequest>; the page built one anyway:\n" +
         text.substring(0, 800));
-  assert.strictEqual(params.shire, acsUrl,
-    "the request must carry Shibboleth's shire parameter — the only way a " +
-    "SAML 1.1 relying party can say where the assertion goes. want=" +
-    acsUrl + " got=" + params.shire);
+  assert(text.indexOf("POST ") !== 0 && text.indexOf("/saml11/sso") >= 0,
+    "the SAML 1.1 request is a GET: a URL at the inter-site transfer " +
+    "service:\n" + text);
+  assert.deepStrictEqual(Object.keys(params).sort(),
+    SAML11_REQUEST_PARAMS.slice().sort(),
+    "the request must carry exactly Shibboleth's AuthnRequest parameters " +
+    "(providerId, shire, target, time):\n" + text);
+  assert.strictEqual(params.shire, shire,
+    "shire must be the assertion consumer bound to the " +
+    (binding === "artifact" ? "artifact" : "browser-post") + " profile. " +
+    "want=" + shire + " got=" + params.shire);
   assert.strictEqual(params.providerId, spEntityId,
     "the request must carry providerId, which is the only way a SAML 1.1 " +
     "relying party names itself. want=" + spEntityId + " got=" +
     params.providerId);
-  assert(params.TARGET,
-    "the request must carry TARGET, which is SAML 1.1's relay state:\n" +
-        text);
+  assert(params.target,
+    "the request must carry target, the relay value the response returns " +
+    "as TARGET:\n" + text);
   assert(/^[0-9]+$/.test(params.time || ''),
     "the request must carry Shibboleth's time parameter, in seconds since " +
     "the epoch; it is: " + params.time);
-  // The profile parameter is what chooses between the two browser profiles.
-  // Nothing in SAML 1.1 lets a relying party ask, so it is non-spec and named
-  // as such on the page — but it has to be SENT, or the identity provider's own
-  // default decides and the binding under test is not the one exercised.
-  var wantProfile = binding === "artifact" ? "artifact" : "post";
-  assert.strictEqual(params.profile, wantProfile,
-    "the request should ask for the " + wantProfile + " browser profile " +
-    "(binding=" + binding + "), and asks for: " + params.profile);
-  if (binding === "post") {
-    assert(text.indexOf("POST ") === 0,
-      "with the POST binding the request is a form, so the box should show " +
-      "the endpoint and the fields rather than a URL:\n" + text);
-  } else {
-    assert(text.indexOf("/saml11/sso") >= 0,
-      "with the " + binding + " binding the request is a URL at the " +
-      "inter-site transfer service:\n" + text);
-  }
   log.debug("Leaving assertRequestIsShibbolethShaped().");
 }
 
@@ -658,12 +663,38 @@ async function assertHistoryClosedAsSuccess(driver, binding, loginWait) {
   assert(history.indexOf("1.1") >= 0,
     "the Operations History row should record the protocol version as 1.1:\n" +
         history);
-  var wantBinding = binding === "post" ? "HTTP-POST"
-    : binding === "artifact" ? "HTTP-Artifact" : "HTTP-Redirect";
+  // The SAML 1.1 request is always a GET, so the row names the Redirect
+  // binding unless the artifact profile answered.
+  var wantBinding = binding === "artifact" ? "HTTP-Artifact" : "HTTP-Redirect";
   assert(history.indexOf(wantBinding) >= 0,
     "the Operations History row should record the binding as " + wantBinding +
         ":\n" + history);
   log.debug("Leaving assertHistoryClosedAsSuccess().");
+}
+
+// This job's relying party: the suite's SP entity ID with a /saml11 suffix,
+// so that consuming its SAML 1.1 metadata never touches the SAML 2.0 entry.
+function saml11EntityId(base) {
+  log.debug("Entering saml11EntityId().");
+  log.debug("Leaving saml11EntityId().");
+  return String(base).replace(/\/+$/, '') + '/saml11';
+}
+
+// iya-sts addresses a relying party's metadata by a slug it derives from the
+// identifier: "app-" and the first 12 hex digits of its SHA-256 (as
+// tests/run-tests-in-container.sh computes SAML_STS_SP_SLUG). A URL whose last
+// segment is such a slug is re-addressed to this job's own relying party; any
+// other URL is left as given.
+function saml11MetadataUrl(url, entityId) {
+  log.debug("Entering saml11MetadataUrl().");
+  if (!url || !/\/app-[0-9a-f]{12}$/.test(url)) {
+    log.debug("Leaving saml11MetadataUrl(). Unchanged.");
+    return url;
+  }
+  const slug = "app-" + crypto.createHash("sha256").update(entityId)
+      .digest("hex").slice(0, 12);
+  log.debug("Leaving saml11MetadataUrl(). " + slug);
+  return url.replace(/app-[0-9a-f]{12}$/, slug);
 }
 
 async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
@@ -722,57 +753,75 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
   // declaring its own family. That is why `saml11` is declared here and
   // `saml2` is not: what this job is entitled to assert is what IT did.
   // ---------------------------------------------------------------------
+  //
+  // ITS TWO ASSERTION CONSUMERS, EACH BOUND TO ITS PROFILE (#307). SAML 1.1
+  // gives a relying party no parameter for choosing Browser/POST or
+  // Browser/Artifact: the identity provider answers with the profile bound to
+  // the AssertionConsumerService the shire names. So the identity provider is
+  // given this page's own SAML 1.1 SP METADATA — both consumers, at different
+  // locations, each with its profile URI — the way a federation registers a
+  // service provider. iya-sts consumes it into the entry (upload-metadata).
+  // ---------------------------------------------------------------------
   var acsUrl = await driver.findElement(By.id("saml_acs_url"))
       .getAttribute("value");
-  log.info("Assertion consumer service (Shibboleth's shire): " + acsUrl);
+  var artifactAcsUrl = await driver.findElement(
+      By.id("saml11_artifact_acs_url")).getAttribute("value");
+  assert(acsUrl && artifactAcsUrl && acsUrl !== artifactAcsUrl,
+    "the page must hold two different SAML 1.1 assertion consumers, one " +
+    "per profile; it holds ACS=" + acsUrl + " artifact ACS=" +
+    artifactAcsUrl);
+  log.info("Assertion consumers: Browser/POST " + acsUrl +
+           ", Browser/Artifact " + artifactAcsUrl);
   await registry.provision(registry.stsBaseFor(metadataUrl), {
     identifier: spEntityId,
     name: "SAML 1.1 test relying party",
     protocols: ["saml11"],
-    fields: Object.assign({
+    fields: {
       samlEntityId: [spEntityId]
-    }, acsUrl ? { samlAssertionConsumerService: [acsUrl] } : {}),
+    },
     why: "the relying party providerId names and the assertion is audienced to"
   });
+  var spMetadata = await driver.executeScript(
+    "return window.saml_request.buildSpMetadata();");
+  assert(spMetadata.indexOf(PROFILE_POST) >= 0 &&
+         spMetadata.indexOf(PROFILE_ARTIFACT) >= 0,
+    "the page's SAML 1.1 SP metadata must bind both profiles:\n" +
+        spMetadata);
+  var consumed = await registry.adminPost(registry.stsBaseFor(metadataUrl),
+      "/saml2/upload-metadata", { sp: spEntityId, document: spMetadata,
+                                  family: "saml11" });
+  assert(consumed && consumed.ok !== false && !consumed.error,
+    "iya-sts did not consume this service provider's SAML 1.1 metadata: " +
+        JSON.stringify(consumed).slice(0, 600));
+  log.info("iya-sts consumed the SP metadata: " +
+           JSON.stringify(consumed).slice(0, 300));
 
-  // Two selectors since issue #307: the request binding (how Shibboleth's
-  // parameters travel) and the response binding, which in SAML 1.1 is the
-  // browser profile. This job's "artifact" is a GET asking for
-  // Browser/Artifact, as it always was.
-  var requestBinding = binding === "post" ? "post" : "redirect";
+  // The response binding is the browser profile. The request binding does
+  // not apply to SAML 1.1 (always a GET), so it is not set.
   var responseBinding = binding === "artifact" ? "artifact" : "post";
-  log.info("Select request binding: " + requestBinding +
-           ", response binding: " + responseBinding);
+  log.info("Select response binding (browser profile): " + responseBinding);
   await driver.executeScript(
-    "var s=document.getElementById('saml_binding'); if(s){ s.value = " +
-        "arguments[0]; s.dispatchEvent(new Event('change')); }" +
     "var r=document.getElementById('saml_response_binding'); if(r){ " +
-        "r.value = arguments[1]; r.dispatchEvent(new Event('change')); }",
-    requestBinding, responseBinding
+        "r.value = arguments[0]; r.dispatchEvent(new Event('change')); }",
+    responseBinding
   );
-  var selected =
-      await driver.findElement(By.id("saml_binding")).getAttribute("value");
-  assert.strictEqual(selected, requestBinding, "Request binding '" +
-                     requestBinding + "' is not available in the selector.");
   var selectedResponse = await driver.findElement(
       By.id("saml_response_binding")).getAttribute("value");
   assert.strictEqual(selectedResponse, responseBinding, "Response binding '" +
                      responseBinding + "' is not available in the selector.");
 
-  // The request is rebuilt by the change handler; wait for it to name the
-  // profile this binding asks for rather than reading whatever was there
+  // The request is rebuilt by the change handler; wait for its shire to be
+  // the consumer for this profile rather than reading whatever was there
   // before the selection.
-  var wantProfile = binding === "artifact" ? "artifact" : "post";
+  var wantShire = binding === "artifact" ? artifactAcsUrl : acsUrl;
   await waitForValue(driver, By.id("saml_authn_request"),
-    function (v) { return v.indexOf("profile=" + wantProfile) >= 0; },
-    "The Generated request was not rebuilt for the " + binding + " binding.",
-    loginWait);
-  // Re-read rather than reusing the value the registration above took: the
-  // binding selection rebuilds the request, and `shire` has to be asserted
-  // against what the page holds NOW.
-  acsUrl = await driver.findElement(By.id('saml_acs_url'))
-      .getAttribute('value');
-  await assertRequestIsShibbolethShaped(driver, binding, spEntityId, acsUrl);
+    function (v) {
+      return previewParams(v).shire === wantShire;
+    },
+    "The Generated request was not rebuilt for the " + binding +
+    " profile (its shire should be " + wantShire + ").", loginWait);
+  await assertRequestIsShibbolethShaped(driver, binding, spEntityId,
+                                        wantShire);
 
   log.info("Call IdP (SAML 1.1, " + binding + ").");
   await clickByValue(driver, "Call IdP");
@@ -825,19 +874,32 @@ async function test() {
   // Record the failure, let the finally quit the driver, THEN exit.
   let testFailed = false;
   try {
-    const metadataUrl = process.env.SAML11_METADATA_URL;
     const metadataFile = process.env.SAML11_METADATA_FILE;
-    const spEntityId = process.env.SAML_SP_ENTITY_ID;
+    assert(process.env.SAML_SP_ENTITY_ID,
+           "SAML_SP_ENTITY_ID environment variable is not set.");
+    // A RELYING PARTY OF ITS OWN (#307). This job registers its consumers by
+    // having iya-sts CONSUME its SAML 1.1 SP metadata, and consuming metadata
+    // replaces an entry's consumers, NameIDFormats and certificates. Shared
+    // with saml_sso.js's SAML 2.0 entry, that would change what the SAML 2.0
+    // jobs are held to. So SAML 1.1 uses SAML_SP_ENTITY_ID + "/saml11", and
+    // the per-relying-party metadata URL is re-addressed to its slug.
+    const spEntityId = saml11EntityId(process.env.SAML_SP_ENTITY_ID);
+    const metadataUrl = saml11MetadataUrl(process.env.SAML11_METADATA_URL,
+                                          spEntityId);
     const user = process.env.SAML_USER || "saml";
-    const binding = (process.env.SAML_BINDING || "redirect").toLowerCase();
+    // `redirect` is the old name of the Browser/POST job: the request is a
+    // GET either way since #307, so the two were the same flow.
+    let binding = (process.env.SAML_BINDING || "post").toLowerCase();
+    if (binding === "redirect") {
+      binding = "post";
+    }
     assert(metadataUrl || metadataFile,
       "Set SAML11_METADATA_URL (URL load) or SAML11_METADATA_FILE (file " +
       "upload). It names the mock STS's per-relying-party SAML 1.1 " +
       "descriptor; nothing has to be provisioned first, because that service " +
       "mints one for any identifier asked for.");
-    assert(spEntityId, "SAML_SP_ENTITY_ID environment variable is not set.");
-    assert(["redirect", "post", "artifact"].indexOf(binding) >= 0,
-           "SAML_BINDING must be redirect, post, or artifact.");
+    assert(["post", "artifact"].indexOf(binding) >= 0,
+           "SAML_BINDING must be post or artifact (the browser profile).");
     log.info("metadata=" + (metadataUrl || metadataFile) + " sp=" +
              spEntityId + " binding=" + binding);
 

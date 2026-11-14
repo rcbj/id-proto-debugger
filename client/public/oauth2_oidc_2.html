@@ -609,7 +609,12 @@ function dbgSetAllPanes(expand) {
               <td><a href="/encoding_tools.html?from=oauth2_oidc_2.html" onclick="return oauth2_oidc_2.clickLink();">Encoding / Hashing Tools</a> — Base64 and URI encode/decode, CRC-32 checksums, SHA-1/SHA-2 hashing, and the post-quantum hash functions: SHA-3 and SHAKE (FIPS 202) plus cSHAKE, KMAC, TupleHash and ParallelHash (SP 800-185).</td>
             </tr>
             <tr>
-              <td><a href="/digital_signature.html?from=oauth2_oidc_2.html" onclick="return oauth2_oidc_2.clickLink();">Digital Signature</a> — generate an SLH-DSA (post-quantum) key pair, sign a value, and validate the signature.</td>
+              <td><a href="/digital_signature.html?from=oauth2_oidc_2.html"
+                  onclick="return oauth2_oidc_2.clickLink();">Digital
+                  Signature</a> — generate keys, sign or MAC a value,
+                  and check the result. Twelve panes: SLH-DSA, LMS/HSS
+                  and XMSS, RSA, ECC, ML-DSA, composite ML-DSA, BBS,
+                  JWS, XML Signature, and three MAC families.</td>
             </tr>
             <tr>
               <td><a href="/encryption_tools.html?from=oauth2_oidc_2.html" onclick="return oauth2_oidc_2.clickLink();">Encryption / Decryption</a> &mdash; encrypt and decrypt with AES (every mode), ChaCha20-Poly1305, 3DES/DES, RSA, ECC (ECIES), the post-quantum ML-KEM, the finite-field family DSA belongs to, JWE, and password-based encryption.</td>
@@ -700,7 +705,7 @@ function dbgSetAllPanes(expand) {
             </div>
           </td>
           <td>
-            <input class="input" id="token_client_secret" name="client_secret" type="text" />
+            <input class="input" id="token_client_secret" name="client_secret" type="text" placeholder="Not saved. Type it after each page load." autocomplete="off" />
           </td>
         </tr>
         <tr>
@@ -1030,7 +1035,7 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>
-                <input class="input" id="refresh_client_secret" name="refresh_client_secret" type="text" />
+                <input class="input" id="refresh_client_secret" name="refresh_client_secret" type="text" placeholder="Not saved. Type it after each page load." autocomplete="off" />
               </td>
             </tr>
             <tr>
@@ -1221,7 +1226,7 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>
-                <input class="input" id="revocation_client_secret" name="revocation_client_secret" type="text" />
+                <input class="input" id="revocation_client_secret" name="revocation_client_secret" type="text" placeholder="Not saved. Type it after each page load." autocomplete="off" />
               </td>
             </tr>
             <tr>
@@ -1415,7 +1420,7 @@ function dbgSetAllPanes(expand) {
                 </div>
               </td>
               <td>
-                <input class="input" id="tokenexchange_client_secret" name="tokenexchange_client_secret" type="text" />
+                <input class="input" id="tokenexchange_client_secret" name="tokenexchange_client_secret" type="text" placeholder="Not saved. Type it after each page load." autocomplete="off" />
               </td>
             </tr>
             <tr>

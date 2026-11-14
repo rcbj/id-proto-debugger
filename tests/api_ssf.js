@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: api_ssf.js
 //
 // ---------------------------------------------------------------------------
@@ -420,7 +423,109 @@ async function theReceiverHostsAnEndpoint() {
     function () {
       assert.strictEqual(alsoGone.status, 404);
     });
+  check('an inbox made with no authorization_header says it is OPEN',
+    function () {
+      assert.strictEqual(made.body.inbox.authenticated, false);
+      assert.ok(/OPEN/.test(String(made.body.authentication || '')),
+          'The answer has to say plainly that anybody with the URL can ' +
+          'push: ' + JSON.stringify(made.body.authentication));
+    });
+
+  // AN INBOX THAT REQUIRES ITS STREAM'S authorization_header, over HTTP,
+  // because the Authorization header reaching deliver() is server.js's
+  // wiring and no module test can see it.
+  const secret = 'Bearer api-ssf-' + Date.now();
+  const guarded = await json('POST', '/ssf/receiver',
+      { label: 'api_ssf.js guarded', authorization: secret });
+  assert.strictEqual(guarded.status, 200,
+      'POST /ssf/receiver answered ' + guarded.status + ': ' + guarded.text);
+  madeInboxes.push(guarded.body.inbox.id);
+  const guardedPath = '/ssf/receiver/' + guarded.body.inbox.id;
+  const without = await json('POST', guardedPath, token,
+      { 'Content-Type': ssf.SET_MEDIA_TYPE });
+  const wrongSecret = await json('POST', guardedPath, token,
+      { 'Content-Type': ssf.SET_MEDIA_TYPE, Authorization: secret + 'x' });
+  const withSecret = await json('POST', guardedPath, token,
+      { 'Content-Type': ssf.SET_MEDIA_TYPE, Authorization: secret });
+  const guardedHeld = await json('GET', guardedPath + '/events?after=0');
+  check('a push without the authorization_header is a 401 ' +
+      'authentication_failed', function () {
+    assert.strictEqual(guarded.body.inbox.authenticated, true);
+    assert.ok(guarded.text.indexOf(secret) < 0,
+        'The secret is never handed back.');
+    assert.strictEqual(without.status, 401, without.text);
+    assert.strictEqual((without.body || {}).err, 'authentication_failed');
+    assert.strictEqual(wrongSecret.status, 401, wrongSecret.text);
+    assert.strictEqual(withSecret.status, 202, withSecret.text);
+    assert.strictEqual(guardedHeld.body.events.length, 1,
+        'Only the push that carried the header was stored.');
+  });
+  // Gone now rather than in cleanUp(), for the per-caller cap: every job in
+  // the tests container is one caller.
+  await json('DELETE', guardedPath);
+  await perInboxSettingsAreCeilinged();
   log.info("[receiver] OK.");
+}
+
+// What a page may ask one inbox to be: its own idle TTL, lifetime and byte
+// cap, each at most the setting that is also its default. Over HTTP, because
+// what reaches create() is server.js's JSON body.
+async function perInboxSettingsAreCeilinged() {
+  log.debug("Entering perInboxSettingsAreCeilinged().");
+  const ceilings = limits.receiver;
+  check('/ssf/limits publishes the three ceilings and the two counts',
+    function () {
+      ['ttlMs', 'idleTtlMs', 'maxInboxBytes', 'maxInboxes',
+        'maxInboxesPerCaller'].forEach(function (name) {
+        assert.ok(Number(ceilings[name]) > 0, name + ' is ' + ceilings[name]);
+      });
+      assert.ok(/CEILING/.test(String(ceilings.ceilings || '')));
+    });
+  const above = await json('POST', '/ssf/receiver',
+      { label: 'api_ssf.js above', idleTtlMs: ceilings.idleTtlMs + 1 });
+  if (above.body && above.body.inbox) {
+    madeInboxes.push(above.body.inbox.id);
+  }
+  check('a value above its ceiling is a 400 naming the setting', function () {
+    assert.strictEqual(above.status, 400, above.text);
+    assert.ok(String((above.body || {}).error || '')
+      .indexOf('ssfReceiverIdleTtlMs') >= 0, above.text);
+  });
+  const asked = { label: 'api_ssf.js within',
+    idleTtlMs: Math.max(1, ceilings.idleTtlMs - 1000),
+    ttlMs: Math.max(1, ceilings.ttlMs - 1000),
+    maxInboxBytes: ceilings.maxInboxBytes };
+  const within = await json('POST', '/ssf/receiver', asked);
+  if (within.body && within.body.inbox) {
+    madeInboxes.push(within.body.inbox.id);
+  }
+  check('a value within its ceiling is honoured and reported', function () {
+    assert.strictEqual(within.status, 200, within.text);
+    assert.strictEqual(within.body.inbox.idleTtlMs, asked.idleTtlMs);
+    assert.strictEqual(within.body.inbox.ttlMs, asked.ttlMs);
+    assert.strictEqual(within.body.inbox.maxInboxBytes, asked.maxInboxBytes);
+    assert.ok(within.body.inbox.expiresAt);
+  });
+  const omitted = await json('POST', '/ssf/receiver',
+      { label: 'api_ssf.js omitted' });
+  if (omitted.body && omitted.body.inbox) {
+    madeInboxes.push(omitted.body.inbox.id);
+  }
+  check('an omitted value gets the default', function () {
+    assert.strictEqual(omitted.status, 200, omitted.text);
+    assert.strictEqual(omitted.body.inbox.idleTtlMs, ceilings.idleTtlMs);
+    assert.strictEqual(omitted.body.inbox.ttlMs, ceilings.ttlMs);
+    assert.strictEqual(omitted.body.inbox.maxInboxBytes,
+        ceilings.maxInboxBytes);
+  });
+  // Deleted now rather than in cleanUp(): each holds a slot against
+  // ssfReceiverMaxInboxesPerCaller, and this job has opened several.
+  for (const one of [within, omitted]) {
+    if (one.body && one.body.inbox) {
+      await json('DELETE', '/ssf/receiver/' + one.body.inbox.id);
+    }
+  }
+  log.debug("Leaving perInboxSettingsAreCeilinged().");
 }
 
 // ---------------------------------------------------------------------------

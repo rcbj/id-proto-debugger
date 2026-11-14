@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: api_tls_probe.js
 //
 // api/tls_probe.js — the TLS / mutual-TLS test connection behind

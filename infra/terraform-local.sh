@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Run Terraform for the idptools infrastructure — entirely inside Docker.
 # Nothing but Docker (and the AWS CLI, for auth) runs on your host.
@@ -62,8 +65,14 @@ if ! aws configure export-credentials --format env-no-export > "${CREDS_ENV_FILE
   exit 1
 fi
 
+# ubuntu:latest comes from the PRIVATE image mirror on ghcr.io rather than
+# Docker Hub (.github/image-mirror.txt), so this needs `docker login ghcr.io`
+# with a token that can read packages. IMAGE_MIRROR overrides the prefix.
+IMAGE_MIRROR="${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}"
 echo "==> Building terraform image: ${IMAGE_NAME}"
-"${DOCKER_CMD[@]}" build -t "${IMAGE_NAME}" -f "${REPO_ROOT}/infra/Dockerfile" "${REPO_ROOT}"
+"${DOCKER_CMD[@]}" build -t "${IMAGE_NAME}" \
+  --build-context "ubuntu=docker-image://${IMAGE_MIRROR}/ubuntu:latest" \
+  -f "${REPO_ROOT}/infra/Dockerfile" "${REPO_ROOT}"
 
 # The krb5 stack builds its security group from one address. Resolve it here
 # rather than in the container: the container's egress address is the host's, but

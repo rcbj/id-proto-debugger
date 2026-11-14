@@ -1,8 +1,14 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var $ = require("jquery");
 // A pasted access token may already be RFC 6750 credentials.
 var rfc6750 = require("./rfc6750");
+// No client secret is stored, and the bearer token lives in sessionStorage
+// only. See secret_storage.js.
+var secretStorage = require("./secret_storage");
 var log = bunyan.createLogger({name: 'introspection',
     level: appconfig.logLevel});
 log.info("Log initialized. logLevel=" + log.level());
@@ -185,9 +191,19 @@ function introspectionSuccess(data, textStatus, jqXHR) {
   log.debug("Leaving introspectionSuccess().");
 }
 
+// The client secret is never stored and the bearer token is kept for the
+// tab only (CLAUDE.md, State persistence). Every key either was written
+// under by an earlier build is removed from localStorage on each load.
+function purgeStoredSecrets() {
+  log.debug("Entering purgeStoredSecrets().");
+  secretStorage.purgeOnLoad(window.localStorage, window.sessionStorage);
+  log.debug("Leaving purgeStoredSecrets().");
+}
+
 function loadValuesFromLocalStorage() {
   log.debug("Entering loadValuesFromLocalStorage().");
   if(localStorage) {
+    purgeStoredSecrets();
     document.getElementById("introspection_endpoint").value =
                             localStorage.getItem("introspection_endpoint");
 
@@ -266,7 +282,8 @@ function loadValuesFromLocalStorage() {
   document.getElementById("introspection_client_id").value =
                           localStorage.getItem("introspection_client_id");
   document.getElementById("introspection_bearer_token").value =
-                          localStorage.getItem("introspection_bearer_token");
+      secretStorage.sessionGet(window.sessionStorage,
+          "introspection_bearer_token");
   $("#introspection_initiateFromFrontEnd").prop("checked",
     getLSBooleanItem("introspection_initiateFromFrontEnd"));
   $("#introspection_initiateFromBackEnd").prop("checked",
@@ -281,7 +298,8 @@ function writeValuesToLocalStorage() {
         document.getElementById("introspection_endpoint").value);
     localStorage.setItem("introspection_client_id",
         document.getElementById("introspection_client_id").value);
-    localStorage.setItem("introspection_bearer_token",
+    secretStorage.sessionSet(window.sessionStorage,
+        "introspection_bearer_token",
         document.getElementById("introspection_bearer_token").value);
     localStorage.setItem("introspection_initiateFromFrontEnd",
         $("#introspection_initiateFromFrontEnd").is(":checked"));

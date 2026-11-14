@@ -1,6 +1,6 @@
 {
   "name": "id-proto-debugger-client",
-  "version": "0.9.0",
+  "version": "0.9.3",
   "description": "id-proto-debugger client service",
   "author": "Robert C. Broeckelmann Jr. <robert@iyasec.io>",
   "main": "server.js",
@@ -15,6 +15,7 @@
     "@noble/curves": "1.4.0",
     "@noble/hashes": "1.4.0",
     "@noble/post-quantum": "^0.4.1",
+    "@xmldom/xmldom": "0.9.12",
     "asn1js": "^3.0.10",
     "bunyan": "latest",
     "create-hash": "^1.2.0",

@@ -18,18 +18,18 @@ There is a second consequence, less obvious and more expensive: **the URL in the
 
 Unlike the Kerberos relay, though, this is **not a byte relay**. The caller sends an operation described in JSON — a DN, a filter, a list of changes — and `api/ldap_client.js` encodes the bytes with `ldapjs`. The caller never chooses what goes on the wire. That is a much narrower primitive than `POST /krb5/kdc`, which is why `ldapAllowedPorts` is a convenience rather than the only thing standing between the endpoint and a port scanner.
 
-## The library is a submodule, in two places, and it is not modified
+## The library is a submodule on each side, and it is not modified
 
 `ldapjs` 3.0.7, pinned as [`rcbj/node-ldapjs`](https://github.com/rcbj/node-ldapjs) and used **unmodified**:
 
 * `api/node-ldapjs` — the CLIENT half, `"ldapjs": "file:node-ldapjs"` in `api/package.json`.
-* `sts/node-ldapjs` — the SERVER half, inside the mock STS submodule, `"ldapjs": "file:node-ldapjs"` in its own `package.json`.
+* `node-ldapjs` inside iya-sts — the SERVER half, a submodule of THAT repository (`"ldapjs": "file:node-ldapjs"` in its own `package.json`), which reaches this one only built into iya-sts's release image.
 
 **Two copies rather than one shared, and the reason is npm rather than taste.** npm installs a `file:` dependency as a symlink, and node then resolves that package's own requires by walking up from where the *real* directory lives — not from the symlink. A copy one level above `api/` walks `…/node_modules`, `/node_modules`, and never reaches the `node_modules` the install just wrote. The failure is `Cannot find module 'abstract-logging'` from inside ldapjs, naming a package nobody here has heard of. The submodule has to sit **inside the package root**; that is the whole rule.
 
 Three more things about the dependency:
 
-* **`git submodule update --init` is not enough.** `sts/node-ldapjs` is a submodule of a submodule, and `--init` stops one level short of it. Use `--recursive`; the launchers call `requireMockStsCheckout()` and `requireApiLdapjsCheckout()` in `common/common.sh`, and the CI workflows check out with `submodules: recursive`. An uninitialised submodule is an **empty directory**, so the COPY succeeds, npm installs a package with no `main`, and the failure arrives at runtime as `Cannot find module 'ldapjs'` — which names a package rather than a submodule.
+* **Initialise it.** `git submodule update --init` is enough here since 2026-11-13 (until then `sts/node-ldapjs` was a submodule of the `sts/` submodule and `--recursive` was required); the launchers call `requireApiLdapjsCheckout()` in `common/common.sh`, and the CI workflows check out with `submodules: true`. An uninitialised submodule is an **empty directory**, so the COPY succeeds, npm installs a package with no `main`, and the failure arrives at runtime as `Cannot find module 'ldapjs'` — which names a package rather than a submodule.
 * **`npm install` on a `file:` dependency installs that package's devDependencies too.** ldapjs's are `tap` and `eslint` and their trees: about 200 extra packages and a dozen advisories that have nothing to do with either service. Both repositories carry an `.npmrc` with `omit=dev`, and both Dockerfiles pass `--omit=dev` as well. The duplication is deliberate — a build that loses the `.npmrc` should not quietly start shipping them.
 * **Neither side patches the library.** That is a promise worth keeping: the point of pinning a fork is to have a *usable* copy of ldapjs, not a fork nobody else can consume, and it means both halves of this workflow run the same code anybody else's ldapjs would.
 

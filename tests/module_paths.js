@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: module_paths.js
 //
 // ---------------------------------------------------------------------------
@@ -79,26 +82,27 @@ function requireSharedModule(candidates, what) {
 }
 
 // ---------------------------------------------------------------------------
-// Locating a module that lives in the mock STS.
+// Locating a module that lives in iya-sts.
 //
-// sts/ is a SUBMODULE — a separate repository (rcbj/iya-sts) — so a change to the
-// mock KDC is written in a sibling checkout, pushed there, and only then does this
-// repository's gitlink move. Between those two steps the submodule does not carry the
-// change, and a test that could not run until the push would make that loop unusable.
+// iya-sts is a separate repository (rcbj/iya-sts), and this one no longer
+// carries a checkout of it: the stack RUNS its release image
+// (IYA_STS_IMAGE, defaulted in docker-compose-run-tests.yml), and a job that
+// loads iya-sts's modules in process loads them out of THAT image's
+// /usr/src/sts — compiled, with its own node_modules — so the code a job
+// loads is the code the stack is talking to. Three orders of preference:
 //
-// Hence three orders of preference, and the middle one is the one that had to be added
-// after it cost a debugging round:
+//  1. `MOCK_STS_DIR=../iya-sts` — an EXPLICIT override, for verifying a
+//     change in a working copy before iya-sts releases it. It WARNS, because
+//     a green run against an unreleased tree corresponds to no image.
+//  2. The tests image, where tests/Dockerfile copied the image's tree into
+//     ./sts (`COPY --from=iyasts /usr/src/sts ./sts`).
+//  3. A host run: the same tree, copied out of the image once into a cache
+//     directory keyed by the image (iyaStsTree() below).
 //
-//  1. Normally: the submodule, then the tests image's flat copies.
-//  2. `MOCK_STS_DIR=../iya-sts` — an EXPLICIT override, for verifying a change to a
-//     module that ALREADY EXISTS in the submodule. The fallback below cannot help
-//     there: the file is present, just stale, so it is found and used and the change
-//     under test is silently not exercised. That failure is genuinely confusing,
-//     because the test fails asserting something the developer just implemented.
-//  3. Otherwise, a sibling checkout if the submodule lacks the file entirely.
-//
-// Cases 2 and 3 both WARN, naming the reason. A green run against an unpushed working
-// copy corresponds to no commit, and that has to be impossible to miss.
+// When none of the three can be had — no docker, an image that cannot be
+// pulled — iyaStsTree() THROWS, naming the image and the way out. A job that
+// needs iya-sts's code and cannot get it has failed; reporting it as a skip
+// is how a check stops running without anybody noticing.
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // THE MOCK'S OWN LAYOUT IS NOT FLAT ANY MORE, AND THIS IS WHERE THAT IS
@@ -228,54 +232,257 @@ function alignConfigFileForMockSts(stsRoot, say) {
   return here;
 }
 
-function mockStsModule(name, warn) {
+// ---------------------------------------------------------------------------
+// WHICH iya-sts IMAGE, AND WHERE ITS TREE IS ON THIS HOST.
+//
+// The image is IYA_STS_IMAGE when that is set, and otherwise the default
+// docker-compose-run-tests.yml gives `${IYA_STS_IMAGE:-...}` — read out of
+// that file rather than written here a second time, so a release bump is one
+// edit. (The file sits at the repository root in a checkout and flat beside
+// the tests in the tests image.)
+//
+// That default NESTS another one: it is the private mirror copy,
+// `${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:<version>`,
+// so it is read by matching braces rather than up to the first `}`, and the
+// inner `${NAME:-default}` is expanded the way compose expands it (the
+// variable when set and non-empty, the default otherwise).
+// ---------------------------------------------------------------------------
+const IYA_STS_IMAGE_OPEN = "${IYA_STS_IMAGE:-";
+
+function expandComposeDefaults(value) {
+  log.debug("Entering expandComposeDefaults().");
+  const out = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*):-([^}]*)\}/g,
+    function (all, name, fallback) {
+      return process.env[name] ? process.env[name] : fallback;
+    });
+  log.debug("Leaving expandComposeDefaults().");
+  return out;
+}
+
+function iyaStsImageDefault(text) {
+  log.debug("Entering iyaStsImageDefault().");
+  const start = text.indexOf(IYA_STS_IMAGE_OPEN);
+  if (start < 0) {
+    log.debug("Leaving iyaStsImageDefault(). None.");
+    return null;
+  }
+  let depth = 1;
+  for (let i = start + IYA_STS_IMAGE_OPEN.length; i < text.length; i++) {
+    if (text.startsWith("${", i)) {
+      depth++;
+      i++;
+    } else if (text.charAt(i) === "}") {
+      depth--;
+      if (depth === 0) {
+        log.debug("Leaving iyaStsImageDefault(). Found.");
+        return expandComposeDefaults(
+          text.slice(start + IYA_STS_IMAGE_OPEN.length, i));
+      }
+    } else if (text.charAt(i) === "\n") {
+      break;
+    }
+  }
+  log.debug("Leaving iyaStsImageDefault(). Unbalanced.");
+  return null;
+}
+
+function iyaStsImage() {
+  log.debug("Entering iyaStsImage().");
+  if (process.env.IYA_STS_IMAGE) {
+    log.debug("Leaving iyaStsImage(). From IYA_STS_IMAGE.");
+    return process.env.IYA_STS_IMAGE;
+  }
+  const candidates = [
+    path.join(__dirname, "..", "docker-compose-run-tests.yml"),
+    path.join(__dirname, "docker-compose-run-tests.yml")
+  ];
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) continue;
+    const image = iyaStsImageDefault(fs.readFileSync(candidate, "utf8"));
+    if (image) {
+      log.debug("Leaving iyaStsImage(). Default from " + candidate + ".");
+      return image;
+    }
+  }
+  log.debug("Leaving iyaStsImage(). No default found.");
+  throw new Error("no iya-sts image: IYA_STS_IMAGE is unset and no " +
+    "docker-compose-run-tests.yml names a ${IYA_STS_IMAGE:-...} default " +
+    "(looked in: " + candidates.join(", ") + ").");
+}
+
+// The docker command, as an argv prefix. IYA_STS_DOCKER is how a launcher
+// that reaches the daemon through sudo (common.sh, resolveDockerSudo) says
+// so; a plain host run uses `docker`.
+function iyaStsDockerArgv() {
+  log.debug("Entering iyaStsDockerArgv().");
+  const words = (process.env.IYA_STS_DOCKER || "docker").trim().split(/\s+/);
+  log.debug("Leaving iyaStsDockerArgv().");
+  return words;
+}
+
+function iyaStsDocker(args, options) {
+  log.debug("Entering iyaStsDocker().");
+  const argv = iyaStsDockerArgv();
+  const result = require("child_process").spawnSync(argv[0],
+    argv.slice(1).concat(args),
+    Object.assign({ encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+                  options || {}));
+  log.debug("Leaving iyaStsDocker().");
+  return result;
+}
+
+function iyaStsCacheRoot() {
+  log.debug("Entering iyaStsCacheRoot().");
+  if (process.env.IYA_STS_TREE_CACHE) {
+    log.debug("Leaving iyaStsCacheRoot(). From IYA_STS_TREE_CACHE.");
+    return process.env.IYA_STS_TREE_CACHE;
+  }
+  const base = process.env.XDG_CACHE_HOME ||
+    path.join(require("os").homedir(), ".cache");
+  log.debug("Leaving iyaStsCacheRoot().");
+  return path.join(base, "id-proto-debugger", "iya-sts");
+}
+
+// The image's id, pulling it first when it is not on this machine. The id —
+// not only the tag — is in the cache key, so a tag that is moved (a
+// candidate re-pushed under the same name) cannot be served from a stale
+// copy.
+function iyaStsImageId(image) {
+  log.debug("Entering iyaStsImageId().");
+  let inspected = iyaStsDocker(["image", "inspect", "--format", "{{.Id}}",
+                                image]);
+  if (inspected.status !== 0) {
+    const pulled = iyaStsDocker(["pull", "-q", image]);
+    if (pulled.status !== 0) {
+      log.debug("Leaving iyaStsImageId(). Pull failed.");
+      throw new Error("could not pull " + image + " (" +
+        ((pulled.stderr || "") + (pulled.error ? pulled.error.message : ""))
+          .trim() +
+        "). It is a package on ghcr.io; `docker login ghcr.io` with a " +
+        "token that can read packages, or set MOCK_STS_DIR to a tree of " +
+        "iya-sts that has server.js and node_modules.");
+    }
+    inspected = iyaStsDocker(["image", "inspect", "--format", "{{.Id}}",
+                              image]);
+  }
+  const id = (inspected.stdout || "").trim().replace(/^sha256:/, "");
+  if (inspected.status !== 0 || !id) {
+    log.debug("Leaving iyaStsImageId(). Inspect failed.");
+    throw new Error("could not inspect " + image + ": " +
+      (inspected.stderr || "").trim());
+  }
+  log.debug("Leaving iyaStsImageId().");
+  return id;
+}
+
+// ---------------------------------------------------------------------------
+// iya-sts's compiled tree on THIS host, copied out of the image once.
+//
+// `docker create` makes a container without starting it — the documented way
+// to read a filesystem out of an image — and `docker cp` takes /usr/src/sts
+// out of it into a scratch directory beside the cache entry, which is then
+// RENAMED into place. A rename is atomic, so a pool of jobs that all ask at
+// once can only ever see a complete tree or none; the losers of that race
+// throw their copy away. The cache is keyed by the image reference and its
+// id, so a release bump is a new directory and the old one is never reused.
+// ---------------------------------------------------------------------------
+function iyaStsTree() {
+  log.debug("Entering iyaStsTree().");
+  const image = iyaStsImage();
+  const id = iyaStsImageId(image);
+  const key = image.replace(/[^A-Za-z0-9._-]+/g, "_") + "-" + id.slice(0, 12);
+  const root = iyaStsCacheRoot();
+  const dir = path.join(root, key);
+  if (fs.existsSync(path.join(dir, "server.js"))) {
+    log.debug("Leaving iyaStsTree(). Cached at " + dir + ".");
+    return dir;
+  }
+  fs.mkdirSync(root, { recursive: true });
+  const scratch = fs.mkdtempSync(path.join(root, ".extract-"));
+  const created = iyaStsDocker(["create", image]);
+  const cid = (created.stdout || "").trim();
+  if (created.status !== 0 || !cid) {
+    fs.rmSync(scratch, { recursive: true, force: true });
+    log.debug("Leaving iyaStsTree(). docker create failed.");
+    throw new Error("could not create a container from " + image + ": " +
+      (created.stderr || "").trim());
+  }
+  let copied;
+  try {
+    copied = iyaStsDocker(["cp", cid + ":/usr/src/sts/.", scratch + "/"]);
+  } finally {
+    iyaStsDocker(["rm", "-f", cid]);
+  }
+  if (copied.status !== 0 ||
+      !fs.existsSync(path.join(scratch, "server.js")) ||
+      !fs.existsSync(path.join(scratch, "node_modules"))) {
+    fs.rmSync(scratch, { recursive: true, force: true });
+    log.debug("Leaving iyaStsTree(). Nothing usable copied.");
+    throw new Error("could not copy a runnable /usr/src/sts out of " + image +
+      " (server.js or node_modules missing): " +
+      (copied.stderr || "").trim());
+  }
+  try {
+    fs.renameSync(scratch, dir);
+  } catch (e) {
+    // Another job got there first; its tree is the same image's.
+    fs.rmSync(scratch, { recursive: true, force: true });
+    if (!fs.existsSync(path.join(dir, "server.js"))) {
+      log.debug("Leaving iyaStsTree(). Rename failed.");
+      throw e;
+    }
+  }
+  log.debug("Leaving iyaStsTree(). Extracted to " + dir + ".");
+  return dir;
+}
+
+// The root a job loads iya-sts's modules from, in the order the note at the
+// top of this section gives. Never null: it throws instead.
+function iyaStsRoot(warn) {
+  log.debug("Entering iyaStsRoot().");
   const say = warn || function () {};
   const override = process.env.MOCK_STS_DIR;
   if (override) {
-    const overridden = findInMockSts(override, name);
-    if (overridden) {
-      say("MOCK_STS_DIR is set, so " + overridden + " is being used INSTEAD of the sts/ " +
-        "submodule. This run reflects a working copy rather than the commit the gitlink points " +
-        "at. Unset MOCK_STS_DIR to test what is committed.");
-      alignConfigFileForMockSts(override, say);
-      return overridden;
-    }
-    say("MOCK_STS_DIR is set to " + override + " but it does not contain " + name +
-      "; falling back to the submodule.");
+    say("MOCK_STS_DIR is set, so " + override + " is being used INSTEAD " +
+      "of the iya-sts image (" + (process.env.IYA_STS_IMAGE || "the " +
+      "default") + "). This run reflects that tree rather than a release. " +
+      "Unset MOCK_STS_DIR to test what the stack runs.");
+    log.debug("Leaving iyaStsRoot(). MOCK_STS_DIR.");
+    return override;
   }
-  const roots = [
-    // a checkout with the submodule initialised, then the tests image
-    path.join(__dirname, "..", "sts"),
-    path.join(__dirname, "sts")
-  ];
-  for (const root of roots) {
-    const found = findInMockSts(root, name);
-    if (found) {
-      alignConfigFileForMockSts(root, say);
-      return found;
-    }
+  const inImage = path.join(__dirname, "sts");
+  if (fs.existsSync(path.join(inImage, "server.js"))) {
+    log.debug("Leaving iyaStsRoot(). The tests image's copy.");
+    return inImage;
   }
-  // The tests image also flattens two modules with a prefix, because they are
-  // loaded on their own and have no relative requires to satisfy.
-  const flattened = path.join(__dirname, "sts_" + name);
-  if (fs.existsSync(flattened)) return flattened;
-  const siblingRoot = path.join(__dirname, "..", "..", "iya-sts");
-  const sibling = findInMockSts(siblingRoot, name);
-  if (sibling) {
-    alignConfigFileForMockSts(siblingRoot, say);
-    say("USING AN UNPUSHED WORKING COPY: " + sibling + ". The sts/ submodule does not carry " +
-      name + " yet, so this run reflects a sibling checkout rather than the commit this " +
-      "repository's gitlink points at. Push iya-sts and bump the gitlink before trusting a " +
-      "green result here.");
-    return sibling;
+  const extracted = iyaStsTree();
+  log.debug("Leaving iyaStsRoot(). Extracted from the image.");
+  return extracted;
+}
+
+function mockStsModule(name, warn) {
+  log.debug("Entering mockStsModule().");
+  const say = warn || function () {};
+  const root = iyaStsRoot(say);
+  const found = findInMockSts(root, name);
+  if (found) {
+    alignConfigFileForMockSts(root, say);
   }
-  return null;
+  log.debug("Leaving mockStsModule().");
+  return found;
 }
 
 module.exports = {
   addTestsModulesToResolutionPath: addTestsModulesToResolutionPath,
   requireSharedModule: requireSharedModule,
   mockStsModule: mockStsModule,
+  // Where iya-sts's tree is, for a test that needs a whole DIRECTORY rather
+  // than one file (tests/krb5_codec_sync.js, tests/spiffe_engine.js), and
+  // the image it comes from; tests/tools/iya-sts-tree.js is the launchers'
+  // way in to the same answer.
+  iyaStsRoot: iyaStsRoot,
+  iyaStsTree: iyaStsTree,
+  iyaStsImage: iyaStsImage,
   // Exported for tests/krb5_codec_sync.js, which needs the same "where does
   // the mock keep its modules now" answer for a whole DIRECTORY rather than
   // for one file, and must not grow a second copy of the layout.

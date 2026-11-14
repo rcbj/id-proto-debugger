@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Identity Protocol Debugger &mdash; GNAP</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/saml_common.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/gnap.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+<script type="text/javascript" src="/js/gnap.js">
+</script>
+
+<p class="gnap-return">
+  <a id="return_link" href="/">&larr; Return to debugger</a>
+</p>
+
+<h3>GNAP</h3>
+
+<details class="saml-explain">
+  <summary>About this page</summary>
+  <p>Grant Negotiation and Authorization Protocol (RFC 9635). This page
+  is a client instance. It builds a grant request, proves the client key
+  with an HTTP message signature, a JWS or a TLS client certificate, and
+  shows what the authorization server answers. A signing key stays in
+  this browser, and the API path forwards a request that is already
+  signed. Mutual TLS is a property of the connection, which a browser
+  cannot choose, so an mtls request goes through the API with the
+  certificate and its key.</p>
+</details>
+
+<p id="gnap_status" class="gnap-note"></p>
+
+<p class="saml-controls">
+  <label class="saml-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="gnap_toggle_all" checked="checked"
+           onchange="return gnap.setAllPanes(this.checked);">
+    <span class="saml-toggle-slider"></span>
+    <span class="saml-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="saml-controls-hint">Tip: click a pane's title to
+  collapse/expand it.</span>
+</p>
+
+<fieldset class="saml-pane" id="gnap_pane_key">
+  <legend class="saml-legend"
+          onclick="return gnap.togglePane('gnap_pane_key_body');"
+          title="Click to collapse or expand this pane.">Client key</legend>
+  <div class="saml-pane-body" id="gnap_pane_key_body">
+  <details class="saml-explain">
+    <summary>About the client key</summary>
+    <p>The key this client instance proves itself with. It is sent in the grant request (client.key) and every request is signed with it. The private key stays in this browser; the API path forwards a request that is already signed.</p>
+  </details>
+  <div class="saml-row">
+    <label title="The signing algorithm, and so the kind of key Generate makes.">Algorithm
+      <select id="gnap_alg" title="The signing algorithm, and so the kind of key Generate makes.">
+        <option value="ES256">ES256</option>
+        <option value="ES384">ES384</option>
+        <option value="EdDSA">EdDSA</option>
+        <option value="RS256">RS256</option>
+      </select>
+    </label>
+    <button type="button" id="gnap_generate" title="Generate a new key pair for the chosen algorithm." onclick="return gnap.generate();">
+      Generate</button>
+    <button type="button" id="gnap_use_pasted" title="Use the private key pasted below (a JWK) instead of a generated one." onclick="return gnap.usePasted();">
+      Use pasted key</button>
+    <label title="Keep the private key in this browser's storage. Clearing it removes the stored key.">
+      <input type="checkbox" id="gnap_save_keypair" checked
+             title="Keep the private key in this browser's storage. Clearing it removes the stored key."
+             onchange="return gnap.onSaveChange();">
+      Save the private key in this browser
+    </label>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_public" title="The public half as a JWK. It is what the grant request sends as client.key.">Public key</label>
+    <textarea id="gnap_public" class="gnap-mono" rows="4" readonly
+              title="The public half as a JWK. It is what the grant request sends as client.key."></textarea>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_private" title="The private key as a JWK. Paste one here and press Use pasted key to sign with it.">Private key</label>
+    <textarea id="gnap_private" class="gnap-mono" rows="4"
+              title="The private key as a JWK. Paste one here and press Use pasted key to sign with it."></textarea>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="gnap_pane_mtls">
+  <legend class="saml-legend"
+          onclick="return gnap.togglePane('gnap_pane_mtls_body');"
+          title="Click to collapse or expand this pane.">Client certificate (mtls)</legend>
+  <div class="saml-pane-body" id="gnap_pane_mtls_body">
+  <details class="saml-explain">
+    <summary>About the client certificate</summary>
+    <p>Used only when the proof is <code>mtls</code> (RFC 9635 section 7.3.2). The grant request carries the certificate as <code>client.key.cert</code>, and the API presents it, with this key, in the TLS handshake of that one call. The PKI page issues one. The key follows the save box above. Section 7.3.2.1 defines no key rotation for mtls.</p>
+  </details>
+  <div class="saml-field">
+    <label for="gnap_mtls_cert" title="The client certificate the API presents in the TLS handshake, as PEM.">Certificate (PEM)</label>
+    <textarea id="gnap_mtls_cert" class="gnap-mono" rows="6"
+              title="The client certificate the API presents in the TLS handshake, as PEM."></textarea>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_mtls_key" title="The certificate's private key, as PEM. Sent to the API for this one call; never shown in the HTTP tab.">Private key (PEM)</label>
+    <textarea id="gnap_mtls_key" class="gnap-mono" rows="6"
+              title="The certificate's private key, as PEM. Sent to the API for this one call; never shown in the HTTP tab."></textarea>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="gnap_pane_server">
+  <legend class="saml-legend"
+          onclick="return gnap.togglePane('gnap_pane_server_body');"
+          title="Click to collapse or expand this pane.">Authorization server</legend>
+  <div class="saml-pane-body" id="gnap_pane_server_body">
+  <div class="dbg-tabs" role="tablist">
+    <button type="button" class="dbg-tab dbg-tab-on" role="tab" id="gnap_tab_form_server" aria-selected="true" aria-controls="gnap_tabpanel_form_server" title="The fields and actions of this pane." onclick="return gnap.selectTab('server', 'form');">Form</button>
+    <button type="button" class="dbg-tab" role="tab" id="gnap_tab_http_server" aria-selected="false" aria-controls="gnap_tabpanel_http_server" title="The last HTTP request this pane sent and the response, headers and bodies." onclick="return gnap.selectTab('server', 'http');">HTTP</button>
+  </div>
+  <div class="dbg-tabpanel" id="gnap_tabpanel_form_server" role="tabpanel" aria-labelledby="gnap_tab_form_server">
+  <details class="saml-explain">
+    <summary>About the authorization server settings</summary>
+    <p>Where the grant request goes and how its proof travels. Through the API, the debugger's server forwards a request this browser already signed; from this browser, the request is sent directly and needs the server to allow it (CORS). Mutual TLS is a property of the connection, which a browser cannot choose, so the mtls proof goes through the API only.</p>
+  </details>
+  <div class="saml-field">
+    <label for="gnap_grant" title="The authorization server's grant request endpoint (RFC 9635 section 2).">Grant endpoint</label>
+    <input type="text" id="gnap_grant" value="https://localhost:8081/gnap"
+           title="The authorization server's grant request endpoint (RFC 9635 section 2).">
+  </div>
+  <div class="saml-row">
+    <label title="How the client key is proved: an HTTP message signature (httpsig), a detached JWS (jwsd) or an attached JWS (jws).">Proof
+      <select id="gnap_proof" title="How the client key is proved: an HTTP message signature (httpsig), a detached JWS (jwsd) or an attached JWS (jws).">
+        <option value="httpsig">httpsig</option>
+        <option value="jwsd">jwsd</option>
+        <option value="jws">jws</option>
+        <option value="mtls">mtls (through the API)</option>
+      </select>
+    </label>
+    <label title="Send through the debugger's API, or straight from this browser.">Send
+      <select id="gnap_via" title="Send through the debugger's API, or straight from this browser.">
+        <option value="api">through the API</option>
+        <option value="browser">from this browser</option>
+      </select>
+    </label>
+    <label title="On the API path, do not verify the authorization server's TLS certificate. For test servers only.">
+      <input type="checkbox" id="gnap_insecure"
+             title="On the API path, do not verify the authorization server's TLS certificate. For test servers only.">
+      Skip certificate verification on the API path
+    </label>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_api" title="The debugger API that forwards the signed request. Empty uses this deployment's API.">API base URL</label>
+    <input type="text" id="gnap_api"
+           title="The debugger API that forwards the signed request. Empty uses this deployment's API.">
+  </div>
+  <div class="saml-row">
+    <button type="button" id="gnap_discover" title="Read the server's discovery document (OPTIONS on the grant endpoint) and show what it supports." onclick="return gnap.discover();">
+      Discover</button>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_display" title="client.display.name: the name the authorization server shows the person approving the grant.">Display name</label>
+    <input type="text" id="gnap_display" value="GNAP debugger"
+           title="client.display.name: the name the authorization server shows the person approving the grant.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_class" title="client.class_id: the registered client this key is an instance of, when there is one.">class_id</label>
+    <input type="text" id="gnap_class"
+           placeholder="registered client, when this key is an instance"
+           title="client.class_id: the registered client this key is an instance of, when there is one.">
+  </div>
+  </div>
+  <div class="dbg-tabpanel dbg-tabpanel-off" id="gnap_tabpanel_http_server" role="tabpanel" aria-labelledby="gnap_tab_http_server">
+    <div id="gnap_http_server" class="dbg-http-host"><div class="dbg-http-note">Nothing has been sent from this pane yet.</div></div>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="gnap_pane_grant">
+  <legend class="saml-legend"
+          onclick="return gnap.togglePane('gnap_pane_grant_body');"
+          title="Click to collapse or expand this pane.">Grant request</legend>
+  <div class="saml-pane-body" id="gnap_pane_grant_body">
+  <div class="dbg-tabs" role="tablist">
+    <button type="button" class="dbg-tab dbg-tab-on" role="tab" id="gnap_tab_form_grant" aria-selected="true" aria-controls="gnap_tabpanel_form_grant" title="The fields and actions of this pane." onclick="return gnap.selectTab('grant', 'form');">Form</button>
+    <button type="button" class="dbg-tab" role="tab" id="gnap_tab_http_grant" aria-selected="false" aria-controls="gnap_tabpanel_http_grant" title="The last HTTP request this pane sent and the response, headers and bodies." onclick="return gnap.selectTab('grant', 'http');">HTTP</button>
+  </div>
+  <div class="dbg-tabpanel" id="gnap_tabpanel_form_grant" role="tabpanel" aria-labelledby="gnap_tab_form_grant">
+  <details class="saml-explain">
+    <summary>What is sent</summary>
+    <p>The client key is added when you send, unless the JSON already names <code>client.key</code> or a string <code>client</code>. The box below is the logical request. The signed body is the one in the Exchange pane.</p>
+  </details>
+  <div class="saml-field">
+    <label for="gnap_request" title="The grant request (RFC 9635 section 2): access_token, subject, client, interact.">Request JSON</label>
+    <textarea id="gnap_request" class="gnap-mono" rows="8"
+              title="The grant request (RFC 9635 section 2): access_token, subject, client, interact."></textarea>
+  </div>
+  <div class="saml-row">
+    <button type="button" id="gnap_fill_sample" title="Fill the request box with a sample grant request." onclick="return gnap.fillSample();">
+      Fill a sample</button>
+    <button type="button" id="gnap_fill_ssf_sample" title="Fill the request box with a sample asking for SSF stream access, which iya-sts grants only once ssf.read is declared on the application." onclick="return gnap.fillSsfSample();">
+      Fill an SSF access sample</button>
+    <button type="button" id="gnap_send" title="Sign the request with the client key and send it to the grant endpoint." onclick="return gnap.sendGrant();">
+      Send grant request</button>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_client_nonce" title="interact.finish.nonce: this client's nonce, one input to the interaction hash.">Client finish nonce</label>
+    <input type="text" id="gnap_client_nonce"
+           title="interact.finish.nonce: this client's nonce, one input to the interaction hash.">
+  </div>
+  </div>
+  <div class="dbg-tabpanel dbg-tabpanel-off" id="gnap_tabpanel_http_grant" role="tabpanel" aria-labelledby="gnap_tab_http_grant">
+    <div id="gnap_http_grant" class="dbg-http-host"><div class="dbg-http-note">Nothing has been sent from this pane yet.</div></div>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="gnap_pane_interaction">
+  <legend class="saml-legend"
+          onclick="return gnap.togglePane('gnap_pane_interaction_body');"
+          title="Click to collapse or expand this pane.">Interaction</legend>
+  <div class="saml-pane-body" id="gnap_pane_interaction_body">
+  <details class="saml-explain">
+    <summary>How interaction works</summary>
+    <p>Open the redirect, approve at the authorization server, and come back. If the finish URI is this page, the hash and interact_ref arrive in the query string.</p>
+  </details>
+  <p class="gnap-links"><a id="gnap_redirect" href="" title="The interaction redirect the authorization server returned."></a></p>
+  <p class="gnap-links" title="The user code to enter at the user code URI.">User code: <span id="gnap_user_code"></span></p>
+  <p class="gnap-links"><a id="gnap_user_code_uri" href="" title="Where the user code is entered."></a></p>
+  <div class="saml-field">
+    <label for="gnap_as_nonce" title="interact.finish from the response: the server's nonce, the other input to the hash.">Authorization server nonce</label>
+    <input type="text" id="gnap_as_nonce"
+           title="interact.finish from the response: the server's nonce, the other input to the hash.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_finish_url" title="The redirect back from the authorization server, pasted here if it did not land on this page.">Finish URL</label>
+    <input type="text" id="gnap_finish_url"
+           placeholder="paste the redirect back, if it did not land here"
+           title="The redirect back from the authorization server, pasted here if it did not land on this page.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_interact_ref" title="The interaction reference from the redirect back. It is sent when continuing.">interact_ref</label>
+    <input type="text" id="gnap_interact_ref"
+           title="The interaction reference from the redirect back. It is sent when continuing.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_hash" title="The hash the authorization server sent back with the redirect.">hash</label>
+    <input type="text" id="gnap_hash"
+           title="The hash the authorization server sent back with the redirect.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_hash_expected" title="The hash this client computes from both nonces, the interact_ref and the grant endpoint (RFC 9635 section 4.2.3).">Expected hash</label>
+    <input type="text" id="gnap_hash_expected" readonly
+           title="The hash this client computes from both nonces, the interact_ref and the grant endpoint (RFC 9635 section 4.2.3).">
+  </div>
+  <div class="saml-row">
+    <button type="button" id="gnap_check_hash" title="Compare the received hash with the expected one." onclick="return gnap.checkFinish();">
+      Check interaction hash</button>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="gnap_pane_continuation">
+  <legend class="saml-legend"
+          onclick="return gnap.togglePane('gnap_pane_continuation_body');"
+          title="Click to collapse or expand this pane.">Continuation</legend>
+  <div class="saml-pane-body" id="gnap_pane_continuation_body">
+  <div class="dbg-tabs" role="tablist">
+    <button type="button" class="dbg-tab dbg-tab-on" role="tab" id="gnap_tab_form_continuation" aria-selected="true" aria-controls="gnap_tabpanel_form_continuation" title="The fields and actions of this pane." onclick="return gnap.selectTab('continuation', 'form');">Form</button>
+    <button type="button" class="dbg-tab" role="tab" id="gnap_tab_http_continuation" aria-selected="false" aria-controls="gnap_tabpanel_http_continuation" title="The last HTTP request this pane sent and the response, headers and bodies." onclick="return gnap.selectTab('continuation', 'http');">HTTP</button>
+  </div>
+  <div class="dbg-tabpanel" id="gnap_tabpanel_form_continuation" role="tabpanel" aria-labelledby="gnap_tab_form_continuation">
+  <details class="saml-explain">
+    <summary>About continuation</summary>
+    <p>A grant that is not finished at once returns a continue URI and token. Continue asks again, with the interact_ref when there was interaction; Revoke ends the grant. The access token's management URI rotates or revokes the token itself.</p>
+  </details>
+  <div class="saml-field">
+    <label for="gnap_continue_uri" title="continue.uri from the response: where the grant is continued.">Continue URI</label>
+    <input type="text" id="gnap_continue_uri"
+           title="continue.uri from the response: where the grant is continued.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_continue_token" title="continue.access_token.value: presented when continuing or revoking the grant.">Continue token</label>
+    <input type="text" id="gnap_continue_token"
+           title="continue.access_token.value: presented when continuing or revoking the grant.">
+  </div>
+  <div class="saml-row">
+    <button type="button" id="gnap_continue" title="Continue the grant at the continue URI." onclick="return gnap.continueGrant();">
+      Continue</button>
+    <button type="button" id="gnap_revoke_grant" title="Delete the grant at the continue URI." onclick="return gnap.revokeGrant();">
+      Revoke grant</button>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_token" title="The access token the grant issued.">Access token
+      <a href="/token_detail.html?type=gnap_access&amp;from=gnap.html" id="gnap_inspect_token" class="gnap-inspect" title="Open the token detail page the OAuth2 workflow uses: decode, verify and check the token." onclick="return gnap.inspectToken();">Inspect</a></label>
+    <textarea id="gnap_token" class="gnap-mono" rows="2"
+              title="The access token the grant issued."></textarea>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_manage_uri" title="access_token.manage.uri: where the token is rotated or revoked.">Token management URI</label>
+    <input type="text" id="gnap_manage_uri"
+           title="access_token.manage.uri: where the token is rotated or revoked.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_manage_token" title="access_token.manage.access_token: presented at the management URI.">Management token</label>
+    <input type="text" id="gnap_manage_token"
+           title="access_token.manage.access_token: presented at the management URI.">
+  </div>
+  <div class="saml-row">
+    <button type="button" id="gnap_rotate_token" title="Rotate the access token at its management URI (RFC 9635 section 6.1)." onclick="return gnap.rotateToken();">
+      Rotate the access token</button>
+    <button type="button" id="gnap_rotate_key" title="Rotate to a new client key at the continue URI, signed with both keys (RFC 9635 section 7.3.4)." onclick="return gnap.rotateKey();">
+      Rotate the client key</button>
+    <button type="button" id="gnap_revoke_token"
+            onclick="return gnap.revokeToken();">
+      Revoke the access token</button>
+  </div>
+  </div>
+  <div class="dbg-tabpanel dbg-tabpanel-off" id="gnap_tabpanel_http_continuation" role="tabpanel" aria-labelledby="gnap_tab_http_continuation">
+    <div id="gnap_http_continuation" class="dbg-http-host"><div class="dbg-http-note">Nothing has been sent from this pane yet.</div></div>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="gnap_pane_call">
+  <legend class="saml-legend"
+          onclick="return gnap.togglePane('gnap_pane_call_body');"
+          title="Click to collapse or expand this pane.">Signed call</legend>
+  <div class="saml-pane-body" id="gnap_pane_call_body">
+  <div class="dbg-tabs" role="tablist">
+    <button type="button" class="dbg-tab dbg-tab-on" role="tab" id="gnap_tab_form_call" aria-selected="true" aria-controls="gnap_tabpanel_form_call" title="The fields and actions of this pane." onclick="return gnap.selectTab('call', 'form');">Form</button>
+    <button type="button" class="dbg-tab" role="tab" id="gnap_tab_http_call" aria-selected="false" aria-controls="gnap_tabpanel_http_call" title="The last HTTP request this pane sent and the response, headers and bodies." onclick="return gnap.selectTab('call', 'http');">HTTP</button>
+  </div>
+  <div class="dbg-tabpanel" id="gnap_tabpanel_form_call" role="tabpanel" aria-labelledby="gnap_tab_form_call">
+  <details class="saml-explain">
+    <summary>What a signed call is for</summary>
+    <p>Any other request proved with the same key: present the access token, introspect it as a resource server, or read <code>/.well-known/gnap-as-rs</code>. Introspection is signed by the resource server's key.</p>
+  </details>
+  <div class="saml-row">
+    <label title="The HTTP method of the signed call.">Method
+      <select id="gnap_call_method" title="The HTTP method of the signed call.">
+        <option>POST</option>
+        <option>GET</option>
+        <option>PATCH</option>
+        <option>DELETE</option>
+        <option>OPTIONS</option>
+      </select>
+    </label>
+    <button type="button" id="gnap_fill_introspect" title="Fill the call with a token introspection request (RFC 9767)." onclick="return gnap.fillIntrospect();">
+      Fill introspection</button>
+    <button type="button" id="gnap_fill_resource"
+            onclick="return gnap.fillResourceCall();">
+      Fill a Shared Signals call</button>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_call_url" title="The URL the signed call is sent to.">URL</label>
+    <input type="text" id="gnap_call_url"
+           title="The URL the signed call is sent to.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_call_token" title="An access token presented in the Authorization header and, for a JWS proof, bound in ath.">GNAP token</label>
+    <input type="text" id="gnap_call_token"
+           placeholder="bound into Authorization and, for a JWS, ath"
+           title="An access token presented in the Authorization header and, for a JWS proof, bound in ath.">
+  </div>
+  <div class="saml-field">
+    <label for="gnap_call_body" title="The request body, signed with the client key.">Body</label>
+    <textarea id="gnap_call_body" class="gnap-mono" rows="3"
+              title="The request body, signed with the client key."></textarea>
+  </div>
+  <div class="saml-row">
+    <button type="button" id="gnap_send_call" title="Sign and send the call." onclick="return gnap.sendCall();">
+      Send</button>
+  </div>
+  </div>
+  <div class="dbg-tabpanel dbg-tabpanel-off" id="gnap_tabpanel_http_call" role="tabpanel" aria-labelledby="gnap_tab_http_call">
+    <div id="gnap_http_call" class="dbg-http-host"><div class="dbg-http-note">Nothing has been sent from this pane yet.</div></div>
+  </div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane" id="gnap_pane_exchange">
+  <legend class="saml-legend"
+          onclick="return gnap.togglePane('gnap_pane_exchange_body');"
+          title="Click to collapse or expand this pane.">Exchange</legend>
+  <div class="saml-pane-body" id="gnap_pane_exchange_body">
+  <div class="saml-field">
+    <label for="gnap_signed" title="The last request exactly as signed and sent: method, URI, headers and body.">Signed request</label>
+    <textarea id="gnap_signed" class="gnap-mono" rows="8" readonly
+              title="The last request exactly as signed and sent: method, URI, headers and body."></textarea>
+  </div>
+  <div class="saml-field">
+    <label for="gnap_response" title="The authorization server's answer to the last request.">Response</label>
+    <textarea id="gnap_response" class="gnap-mono" rows="10" readonly
+              title="The authorization server's answer to the last request."></textarea>
+  </div>
+  </div>
+</fieldset>
+
+    </div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="apple-touch-icon" sizes="60x60" href="/apple-icon-60x60.png">
+<link rel="apple-touch-icon" sizes="72x72" href="/apple-icon-72x72.png">
+<link rel="apple-touch-icon" sizes="76x76" href="/apple-icon-76x76.png">
+<link rel="apple-touch-icon" sizes="114x114" href="/apple-icon-114x114.png">
+<link rel="apple-touch-icon" sizes="120x120" href="/apple-icon-120x120.png">
+<link rel="apple-touch-icon" sizes="144x144" href="/apple-icon-144x144.png">
+<link rel="apple-touch-icon" sizes="152x152" href="/apple-icon-152x152.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-icon-180x180.png">
+<link rel="icon" type="image/png" sizes="192x192"
+      href="/android-icon-192x192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="96x96" href="/favicon-96x96.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="msapplication-TileColor" content="#ffffff">
+<meta name="msapplication-TileImage" content="/ms-icon-144x144.png">
+<meta name="theme-color" content="#ffffff">
+
+
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+
+  </body>
+</html>

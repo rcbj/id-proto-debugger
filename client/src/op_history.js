@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: op_history.js
 //
 // The Operations History store, shared by the protocol workflows. Each workflow

@@ -1,4 +1,7 @@
 #!/bin/bash
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 #
 # Runs the full Selenium test suite with code-coverage collection enabled and
 # renders the reports. Frontend (browser) coverage is gathered from
@@ -181,6 +184,62 @@ fi
 # ---------------------------------------------------------------------------
 # The base file plus the coverage override, which touches only api and client.
 COMPOSE="docker_compose -f docker-compose-run-tests.yml -f docker-compose-coverage.yml"
+
+# ---------------------------------------------------------------------------
+# THE HOST PORTS, AND RUNNING BESIDE A STACK THAT HOLDS THEM.
+#
+# The same rule ./docker-run-tests.sh follows, which this script did not: the
+# stack publishes 3000, 4000, 8080, 8081, 8082, 7003, 7005 and 5432 for a
+# person looking from the host, and the suite uses none of them. When one is
+# already held — an iya-sts container on 8081/8082 — `up` refuses with "port
+# is already allocated" and no job runs; on 2026-11-13 that was the Keycloak
+# WS-Federation side-car's 8082, and the run ended before its first test. So
+# publishing is dropped instead (docker-compose-run-tests-no-host-ports.yml)
+# and nothing outside this stack is touched. NO_HOST_PORTS=1 forces it,
+# NO_HOST_PORTS=0 never does it; the default decides from what is held.
+# ---------------------------------------------------------------------------
+NO_HOST_PORTS="${NO_HOST_PORTS:-auto}"
+heldHostPorts()
+{
+  echo "Entering heldHostPorts()." >&2
+  local wanted held="" port
+  # Ports read from the merged configuration, so one added to a compose file
+  # is covered without an edit here. The JSON is cut to its outermost braces
+  # because docker_compose()'s own "Leaving" line is glued to the last one.
+  wanted="$(${COMPOSE} config --format json 2>/dev/null |
+            grep -v '^Entering\|^Leaving' |
+            node -e 'let r="";process.stdin.on("data",d=>r+=d).on("end",
+              ()=>{try{const c=JSON.parse(r.slice(r.indexOf("{"),
+                r.lastIndexOf("}")+1));const out=[];
+              for(const s of Object.values(c.services||{}))
+                for(const p of (s.ports||[]))
+                  if(p.published)out.push(p.published);
+              console.log(out.join(" "))}catch(e){}})' 2>/dev/null)"
+  for port in ${wanted};
+  do
+    if ss -Hltn "sport = :${port}" 2>/dev/null | grep -q .;
+    then
+      held="${held} ${port}"
+    fi
+  done
+  echo "Leaving heldHostPorts().${held:- none}" >&2
+  echo "${held# }"
+}
+if [ "${NO_HOST_PORTS}" = "auto" ];
+then
+  HELD_PORTS="$(heldHostPorts)"
+  if [ -n "${HELD_PORTS}" ];
+  then
+    echo "Host port(s) ${HELD_PORTS} are already held by something outside" \
+         "this stack, so it will publish no host ports at all and leave" \
+         "those alone. The suite does not need them."
+    NO_HOST_PORTS=1
+  fi
+fi
+if [ "${NO_HOST_PORTS}" = "1" ];
+then
+  COMPOSE="${COMPOSE} -f docker-compose-run-tests-no-host-ports.yml"
+fi
 # The BASE file alone is enough for `ps` / `logs` / a single-service `up` below:
 # compose scopes those to this directory's project, and the override changes
 # nothing about the side-cars.
@@ -241,14 +300,10 @@ EXTENSION_AUTOARM_ORIGINS="https://sts:8081" \
   buildBrowserExtension "${CURRENT_DIR}"   # same stack as docker-run-tests.sh
 check_return_code $?
 
-# The mock STS is a submodule (https://github.com/rcbj/iya-sts.git): the same
-# class of hazard as the walt.id render above, and for the same reason it is
-# checked here rather than left to the build. This run uses --abort-on-container-
-# exit, so a service that cannot be built or started takes the whole run down.
-requireMockStsCheckout "${CURRENT_DIR}"
-# The api needs node-ldapjs too — the same library on the client side of
-# the LDAP exchange, pinned as api/node-ldapjs. A separate submodule from
-# the mock's, because npm resolves a `file:` dependency's own requires from
+# The api needs node-ldapjs — the same library iya-sts's directory is built
+# on, here on the client side of
+# the LDAP exchange, pinned as api/node-ldapjs (this repository's one
+# submodule), because npm resolves a `file:` dependency's own requires from
 # where the real directory lives, so a copy outside api/ never reaches
 # api/node_modules. Uninitialised, the image builds fine and the service
 # dies at startup with `Cannot find module 'ldapjs'`.
@@ -259,9 +314,11 @@ check_return_code $?
 # login the build fails on a pull error that names neither; this says which.
 requireGhcrMirror
 check_return_code $?
-# iya-sts runs from its published release image while the tests image reads
-# the sts/ checkout; see requireIyaStsImageMatchesCheckout() in common.sh.
-requireIyaStsImageMatchesCheckout "${CURRENT_DIR}" docker-compose-run-tests.yml
+# iya-sts runs from its published release image, and the tests image copies
+# its tree out of the same one; see requireIyaStsImage() in common.sh. This
+# run uses --abort-on-container-exit, so a service that cannot be started
+# takes the whole run down — better here, naming the image.
+requireIyaStsImage "${CURRENT_DIR}"
 check_return_code $?
 
 # THE BIND MOUNTS, CREATED HERE AND MADE WRITABLE BY ANY UID.
@@ -412,11 +469,31 @@ check_return_code $?
 #
 # These URLs are host-facing and for this wait only: the tests container derives
 # its own compose-DNS ones in tests/run-tests-in-container.sh.
-${COMPOSE} up --build -d waltid-issuer waltid-verifier
-check_return_code $?
-WALTID_ISSUER_URL=http://localhost:7005 WALTID_VERIFIER_URL=http://localhost:7003 \
-  waitForWaltid "${BASE_COMPOSE_FILE}"
-check_return_code $?
+#
+# WITH NO HOST PORTS there is nothing on localhost:7005/7003 to ask, so the
+# wait is the proxies' own healthchecks instead, which run the same two probes
+# from inside each container. `--wait` fails when either turns unhealthy or
+# the timeout passes, and the JVMs' logs are printed as they are above.
+if [ "${NO_HOST_PORTS}" = "1" ];
+then
+  ${COMPOSE} up --build -d --wait --wait-timeout "${WALTID_WAIT_SECONDS:-180}" \
+    waltid-issuer waltid-verifier
+  rc=$?
+  if [ ${rc} -ne 0 ];
+  then
+    echo "ERROR: walt.id's proxies never reported healthy." >&2
+    reportContainerLog "${BASE_COMPOSE_FILE}" "waltid-issuer-api"
+    reportContainerLog "${BASE_COMPOSE_FILE}" "waltid-verifier-api"
+  fi
+  check_return_code ${rc}
+else
+  ${COMPOSE} up --build -d waltid-issuer waltid-verifier
+  check_return_code $?
+  WALTID_ISSUER_URL=http://localhost:7005 \
+    WALTID_VERIFIER_URL=http://localhost:7003 \
+    waitForWaltid "${BASE_COMPOSE_FILE}"
+  check_return_code $?
+fi
 
 # Run the suite. Services are torn down when the tests container exits; stopping
 # the API container lets c8 flush its coverage to ./coverage/api. Capture the

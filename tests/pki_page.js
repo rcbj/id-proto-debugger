@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: pki_page.js
 //
 // The PKI page (client/public/pki.html): building a CA hierarchy through the

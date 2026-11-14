@@ -17,6 +17,11 @@ These pages show how to use it:
 * **[OpenID Connect authentication flows](oidc-flows.md)**: the Authorization
   Code flow, both Implicit flows, all three Hybrid flows, and DPoP-bound
   tokens.
+* **[Dynamic client registration](dynamic-client-registration.md)**: the
+  registration pane on step 1.
+* **[Token detail, introspection, UserInfo, and JWKS](related-tools.md)**:
+  the pages step 2 opens for a token you already hold, and the logout
+  status page.
 
 This page covers the parts every grant and flow have in common. Read it first.
 
@@ -26,7 +31,8 @@ Selenium job that drives that grant or flow (see
 authorization server in them is the project's mock STS
 ([`rcbj/iya-sts`](https://rcbj.github.io/iya-sts/)), running at
 `https://localhost:8081`. It is the same server the test suite uses, and it
-signs anybody in with any password, so you can repeat every step here exactly.
+signs anybody in with any password except the literal `invalid`, so you can
+repeat every step here and still reach a refusal.
 To follow along against your own identity provider, use its discovery URL,
 client IDs and secrets in place of the ones shown.
 
@@ -41,7 +47,7 @@ From a checkout, follow *Getting Started* in the repository's
 [README](../../README.md#getting-started). In short:
 
 ```bash
-git submodule update --init --recursive
+git submodule update --init
 ./generate-tls-cert.sh
 CONFIG_FILE=./env/local.js docker-compose up
 ```
@@ -100,6 +106,20 @@ Every grant and flow starts the same way. In **Metadata Retrieval**:
 4. Click **Populate Meta Data** below the table. This copies the endpoints
    and the advertised capabilities into the Configuration Parameters pane.
 
+**Populate never sends every advertised scope.** `scopes_supported` stays
+in the metadata table for you to pick from. The authorization request's
+**Scope** starts as `openid profile email`, limited to what the provider
+advertises, for an OIDC flow, and empty for an OAuth 2.0 grant. On step 2
+the token request's scope is empty for a code exchange and a refresh
+(RFC 6749 sections 4.1.3 and 6). Resource-owner password starts from the
+authorization scope, or `openid profile email` when that is empty. Client
+credentials starts from the authorization scope without `openid`,
+`profile`, `email`, `address`, `phone` and `offline_access`, which are
+about a user that grant does not have, and sends no scope when nothing is
+left. Once you type into a token or refresh scope field, that value is
+kept across reloads, even when it matches the default. Pressing
+**Populate Meta Data** again resets both fields to the default.
+
 ![Metadata Retrieval pane after Retrieve, showing the provider's discovery document as a table](images/oauth2-authorization-code-01-metadata.png)
 
 If you have no metadata document, skip this step and type the endpoints into
@@ -117,6 +137,7 @@ request:
 | **RFC 9700 compliance mode** | Makes the debugger refuse to send anything the OAuth 2.0 Security Best Current Practice forbids. Off by default, so you can test providers that do not comply. See [RFC 9700 compliance mode](../rfc9700.md). |
 | **Authorization Grant** | Chooses the grant or flow. The rest of both pages changes to match it. |
 | **Endpoints** | Authorization, token, introspection, revocation, registration, UserInfo and JWKS. Filled in by **Populate Meta Data**. |
+| **Device Authorization Endpoint** | The RFC 8628 endpoint. The row stays hidden until discovery advertises `device_authorization_endpoint`, or until a value saved earlier is restored. **Populate Meta Data** fills it and shows the row. |
 | **Provider metadata** | The rest of the discovery document, for reference. |
 | **Display OIDC Related Artifacts?** | Shows or hides the ID token, nonce and UserInfo controls. |
 | **SSL Certificate Validation** | Set to **No** when the provider uses a self-signed certificate and token requests go through the back end. |
@@ -171,10 +192,11 @@ Results appear in panes below the token request:
 
 Each token comes with buttons and links:
 
-* **The token's name** (for example *Access Token*) opens the token detail
-  page. It decodes the JWT, explains each claim using the IANA registry, and
-  lets you verify the signature with a shared secret, a certificate or the
-  provider's JWKS.
+* **The token's name** (for example *Access Token*) opens the
+  [token detail page](related-tools.md#token-detail). It decodes the JWT,
+  explains each claim using the IANA registry, and lets you verify the
+  signature with a shared secret, a certificate, or the provider's JWKS.
+  JWKS verification is by `kid` and is not limited to RSA.
 * **Introspect Token** sends it to the introspection endpoint (RFC 7662).
 * **Get UserInfo Data** calls the UserInfo endpoint with the access token.
 * **Revoke Token** sends it to the revocation endpoint (RFC 7009).
@@ -199,7 +221,23 @@ Further down step 2 are panes that work with the tokens you now hold:
 ## What the debugger remembers
 
 Everything you type is saved in the browser's `localStorage`, so the forms are
-filled in again next time. **Passwords are never saved.** To start over, click
+filled in again next time, with two exceptions:
+
+* **Client secrets and passwords are never saved**, in any storage. That
+  includes the Client Secret fields on step 2 (token request, refresh,
+  revocation, token exchange), the resource-owner password, the
+  introspection and UserInfo client secrets, the HMAC key on the token
+  detail page, and a `client_secret` a dynamic registration issues. A
+  secret typed on a page is used for that page load only. After the
+  identity provider redirects you back to step 2, or after you return from
+  a token detail page, type the secret again.
+* **Bearer tokens that are inputs**, the registration access token, the
+  initial access token and the introspection page's bearer token, are kept
+  in `sessionStorage`: they survive the redirect in the same tab and are
+  gone when the tab closes.
+
+Copies an older version saved are removed when the pages load. To start
+over, click
 **Clear Storage** in the Metadata Retrieval pane or clear the site data for
 the debugger in your browser.
 

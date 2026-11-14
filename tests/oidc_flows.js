@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oidc_flows.js
 //
 // Every OIDC authentication flow, with DPoP and without, driven through

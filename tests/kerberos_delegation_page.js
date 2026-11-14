@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: kerberos_delegation_page.js
 //
 // The delegation page (kerberos_delegation.html): S4U2Self, S4U2Proxy with both

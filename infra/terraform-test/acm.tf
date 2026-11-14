@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # --- ACM certificate for the test subdomain (us-east-1 for CloudFront) ---
 
 resource "aws_acm_certificate" "site" {

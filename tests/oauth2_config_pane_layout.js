@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oauth2_config_pane_layout.js
 //
 // The Configuration Parameters pane on oauth2_oidc_1.html and

@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 name: Docker Image CI
 
 on:
@@ -22,19 +25,11 @@ jobs:
          with:
            # Tags are pushed from here; fetch them so an existing tag is seen.
            fetch-depth: 0
-           # docker-compose.yml builds the STS image from the sts/ submodule
-           # (https://github.com/rcbj/iya-sts.git), so this job cannot build
-           # without it: compose would report only a missing Dockerfile.
-           # `recursive`, not `true`, and the difference is load-bearing: there
-           # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP
-           # library the api's client uses, and sts/node-ldapjs is the same
-           # library inside the mock STS, which its embedded directory is built
-           # on. `true` stops one level short of the second, and an
-           # uninitialised submodule is an EMPTY DIRECTORY — so the sts image
-           # builds, npm installs a package with no main, and the container
-           # dies at startup with `Cannot find module 'ldapjs'`, naming a
-           # package rather than a submodule.
-           submodules: recursive
+           # api/node-ldapjs is a submodule, and the api image built here dies
+           # at startup with `Cannot find module 'ldapjs'` without it.
+           # iya-sts is not built here: docker-compose.yml runs the mirror
+           # copy of its release image (IYA_STS_IMAGE).
+           submodules: true
        - name: Compute version
          id: version
          run: |
@@ -44,12 +39,12 @@ jobs:
            V="$(node client/version.js --json)"
            VERSION="$(jq -r .version <<<"$V")"
            BUILD="$(jq -r .build <<<"$V")"
-           MN="$(jq -r '.major + "." + .minor' <<<"$V")"
+           RELEASE="$(jq -r .release <<<"$V")"
            SHA="$(git rev-parse HEAD)"
            {
              echo "version=${VERSION}"
              echo "build=${BUILD}"
-             echo "major_minor=${MN}"
+             echo "release=${RELEASE}"
              echo "sha=${SHA}"
            } >> "$GITHUB_OUTPUT"
            echo "Building version ${VERSION} (build ${BUILD}) from ${SHA}"
@@ -67,6 +62,14 @@ jobs:
          uses: KengoTODA/actions-setup-docker-compose@v1
          with:
            version: '5.2.0'
+       # docker-compose.yml takes iya-sts and every base image its builds
+       # name in a FROM from the PRIVATE mirror on ghcr.io, so the build
+       # needs a login that can read packages (this job has packages: write).
+       # The publishing login further down is a separate step because it is
+       # skipped on pull requests and off master; this one never is.
+       - name: Log in to GitHub Container Registry to read the image mirror
+         run: echo "${{ secrets.GITHUB_TOKEN }}" |
+              docker login ghcr.io -u "${{ github.actor }}" --password-stdin
        - name: build
          env:
            # Bake the computed build number into the image (client/Dockerfile
@@ -75,20 +78,45 @@ jobs:
            GIT_COMMIT: ${{ steps.version.outputs.sha }}
          run: CONFIG_FILE=./env/local.js docker-compose -f docker-compose.yml build
 
+       # THE EMBEDDED BUILD (rcbj/iya-sts#1717): the UI and api built for
+       # IYA STS to serve, from embedded/Dockerfile — a FROM scratch image
+       # holding /debugger/{ui,api,common} and version.json, which that
+       # service's Dockerfile takes with COPY --from. Built on every run like
+       # the other two, published beside them from master only. The same
+       # build number, so its version.json names the same M.N.P.B as the tag.
+       # Its FROM ubuntu:latest resolves against the mirror, the way the
+       # compose builds' additional_contexts do (login above).
+       - name: build embedded
+         env:
+           BUILD_NUMBER: ${{ steps.version.outputs.build }}
+           GIT_COMMIT: ${{ steps.version.outputs.sha }}
+           IMAGE_MIRROR: ghcr.io/rcbj/id-proto-debugger/mirror
+         run: |
+           docker build -f embedded/Dockerfile \
+             --build-context "ubuntu=docker-image://${IMAGE_MIRROR}/ubuntu:latest" \
+             --build-arg BUILD_NUMBER="${BUILD_NUMBER}" \
+             --build-arg GIT_COMMIT="${GIT_COMMIT}" \
+             -t rcbj/embedded .
+
        # ---------------------------------------------------------------------
-       # PUBLISH THE TWO PROJECT IMAGES (issue #154), the api and the client
-       # this job just built, as PUBLIC images, to TWO registries with the
-       # SAME tags from the SAME build:
+       # PUBLISH THE THREE PROJECT IMAGES (issue #154; the third since
+       # rcbj/iya-sts#1717), the api, the client and the embedded build this
+       # job just built, as PUBLIC images, to TWO registries with the SAME
+       # tags from the SAME build:
        #
-       #   ghcr.io/rcbj/id-proto-debugger-api      docker.io/iyasec/id-proto-debugger-api
-       #   ghcr.io/rcbj/id-proto-debugger-client   docker.io/iyasec/id-proto-debugger-client
+       #   ghcr.io/rcbj/id-proto-debugger-api        docker.io/iyasec/id-proto-debugger-api
+       #   ghcr.io/rcbj/id-proto-debugger-client     docker.io/iyasec/id-proto-debugger-client
+       #   ghcr.io/rcbj/id-proto-debugger-embedded   docker.io/iyasec/id-proto-debugger-embedded
        #
-       # Tagged M.N.O — the SAME string as the git tag the next step puts on
+       # The embedded image is what IYA STS's Dockerfile takes its debugger
+       # from (`DEBUGGER_IMAGE`), pinned to an M.N.P.B tag.
+       #
+       # Tagged M.N.P.B — the SAME string as the git tag the next step puts on
        # this commit, so an image names its commit and a commit names its
        # image — and `latest`, because a master build is what a release is.
        #
        # FROM MASTER ONLY (2026-10-02). develop used to publish too, under a
-       # floating `develop` tag and its own M.N.O, and that put every
+       # floating `develop` tag and its own M.N.P.B, and that put every
        # half-finished integration on two public registries. develop and pull
        # requests still BUILD the images, so a Dockerfile that breaks is still
        # caught there; only the push waits for master. A workflow_dispatch run
@@ -103,8 +131,8 @@ jobs:
        # Never from a pull request: its GITHUB_TOKEN may not write packages and
        # its images are nobody's to keep.
        #
-       # A NEW PACKAGE STARTS PRIVATE. The OCI `source` label in both
-       # Dockerfiles links it to this public repository, but ghcr.io still
+       # A NEW PACKAGE STARTS PRIVATE. The OCI `source` label in each
+       # Dockerfile links it to this public repository, but ghcr.io still
        # creates a first push as private, and no API can change that: make
        # each package public ONCE, under Package settings -> Danger Zone ->
        # Change visibility. Every later push keeps the setting.
@@ -116,7 +144,7 @@ jobs:
        # should publish and has neither FAILS rather than publishing to one
        # registry of two, which would leave the tags disagreeing. A repository
        # a first push creates takes the organization's default visibility —
-       # set iyasec's default to public, or create both repositories public
+       # set iyasec's default to public, or create each repository public
        # before the first push.
        # ---------------------------------------------------------------------
        - name: Log in to GitHub Container Registry
@@ -152,7 +180,7 @@ jobs:
            esac
            published=""
            rows=""
-           for name in api client; do
+           for name in api client embedded; do
              src="rcbj/${name}"
              docker image inspect "${src}" >/dev/null
              for registry in ${REGISTRIES}; do
@@ -174,6 +202,8 @@ jobs:
              done
            done
            echo "images=${published# }" >> "$GITHUB_OUTPUT"
+           # The same table, for the GitHub release's notes further down.
+           printf '%s' "${rows}" > "${RUNNER_TEMP}/published-images.md"
            {
              echo ""
              echo "### Published images${FLOAT:+ (also \`${FLOAT}\`)}"
@@ -216,7 +246,7 @@ jobs:
          if: ${{ github.event_name != 'pull_request' }}
          env:
            VERSION: ${{ steps.version.outputs.version }}
-           MAJOR_MINOR: ${{ steps.version.outputs.major_minor }}
+           RELEASE: ${{ steps.version.outputs.release }}
            BUILD: ${{ steps.version.outputs.build }}
            IMAGES: ${{ steps.publish.outputs.images }}
          run: |
@@ -224,7 +254,7 @@ jobs:
            SHA="$(git rev-parse HEAD)"
            git config user.name  "github-actions[bot]"
            git config user.email "github-actions[bot]@users.noreply.github.com"
-           # M.N.O — one per build, so it is created once and never moved.
+           # M.N.P.B — one per build, so it is created once and never moved.
            if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
              echo "::warning::tag ${VERSION} already exists; leaving it as it is"
            else
@@ -235,10 +265,80 @@ jobs:
              git push origin "refs/tags/${VERSION}"
              echo "Tagged ${SHA} as ${VERSION}"
            fi
-           # M.N — a floating tag that always points at the newest build of this
+           # M.N.P — a floating tag that always points at the newest build of this
            # line, so it is force-moved on every build.
-           git tag -f -a "${MAJOR_MINOR}" -m "Latest ${MAJOR_MINOR} build: ${VERSION} (Docker Image CI)"
-           git push -f origin "refs/tags/${MAJOR_MINOR}"
-           echo "Moved ${MAJOR_MINOR} to ${SHA}"
-           echo "Tagged \`${VERSION}\` and moved \`${MAJOR_MINOR}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+           git tag -f -a "${RELEASE}" -m "Latest ${RELEASE} build: ${VERSION} (Docker Image CI)"
+           git push -f origin "refs/tags/${RELEASE}"
+           echo "Moved ${RELEASE} to ${SHA}"
+           echo "Tagged \`${VERSION}\` and moved \`${RELEASE}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
 
+       # ---------------------------------------------------------------------
+       # THE GITHUB RELEASE, release-M.N.P — the series release-0.8 through
+       # release-0.9.2 was made by hand, and this continues it under the same
+       # name. Modelled on IYA STS's "Create the GitHub release" step
+       # (rcbj/iya-sts .github/workflows/build-container.yml).
+       #
+       # ONE PER M.N.P, made by the FIRST master build of that line and left
+       # alone by every later one. Its tag, release-M.N.P, is created here
+       # on that build's commit and never moved: the floating M.N.P tag
+       # above is force-moved on every build, and a release whose tag moves
+       # would describe a commit it was not made from. A newer build of the
+       # same line is the floating tag's and the images' business; a new
+       # release is a new VERSION.
+       #
+       # The notes are the published images with their digests, the build
+       # it was cut from, and GitHub's generated list of merged pull
+       # requests since the previous release-* tag. The job's token creates
+       # it, so it starts no other workflow. A failure here leaves the
+       # images and tags published and the run red; a re-run makes it.
+       # ---------------------------------------------------------------------
+       - name: Create the GitHub release
+         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+         env:
+           GH_TOKEN: ${{ github.token }}
+           VERSION: ${{ steps.version.outputs.version }}
+           RELEASE: ${{ steps.version.outputs.release }}
+           SHA: ${{ steps.version.outputs.sha }}
+         run: |
+           set -euo pipefail
+           repo="${GITHUB_REPOSITORY}"
+           tag="release-${RELEASE}"
+           if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
+             echo "Release ${tag} already exists; it is left as it is."
+             exit 0
+           fi
+           if git ls-remote --exit-code --tags origin "refs/tags/${tag}" \
+               >/dev/null 2>&1; then
+             echo "Tag ${tag} exists with no release; releasing it as it is."
+           else
+             git tag -a "${tag}" -m "Release ${RELEASE} (${VERSION})"
+             git push origin "refs/tags/${tag}"
+           fi
+           # The previous release: the highest release-* tag below this one.
+           previous="$(git ls-remote --tags origin 'refs/tags/release-*' |
+             sed -n 's#^[0-9a-f]*[[:space:]]*refs/tags/\(release-[0-9.]*\)$#\1#p' |
+             { cat; echo "${tag}"; } | sort -uV |
+             awk -v r="${tag}" '$0 == r { print p; exit } { p = $0 }')"
+           notes="${RUNNER_TEMP}/release-notes.md"
+           {
+             echo "## Images"
+             echo ""
+             echo "Images tagged \`${VERSION}\` and \`latest\`."
+             echo ""
+             echo "| Image | Digest |"
+             echo "|---|---|"
+             cat "${RUNNER_TEMP}/published-images.md"
+             echo ""
+             echo "Commit \`${SHA}\`; git tags \`${VERSION}\` and \`${tag}\`."
+             echo ""
+           } > "${notes}"
+           args=(--repo "${repo}" --verify-tag --latest
+                 --title "Release ${RELEASE}" --notes-file "${notes}"
+                 --generate-notes)
+           if [ -n "${previous}" ]; then
+             args+=(--notes-start-tag "${previous}")
+           fi
+           gh release create "${tag}" "${args[@]}"
+           echo "Created release ${tag}${previous:+ (since ${previous})}."
+           echo "GitHub release: \`${tag}\`${previous:+, since \`${previous}\`}." \
+             >> "$GITHUB_STEP_SUMMARY"

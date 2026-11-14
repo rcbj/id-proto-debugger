@@ -1,13 +1,28 @@
 # embedded/ — the debugger as the mock STS embeds it
 
-**The consumer is the mock STS** (`rcbj/iya-sts`, the `sts/` submodule here).
+**The consumer is the mock STS** (`rcbj/iya-sts`, which this repository runs
+from its release image and no longer carries as an `sts/` submodule).
 It serves this debugger's UI as STATIC FILES from a listener of its own — its
 own origin, e.g. `https://host:8444/` — behind an OIDC sign-in, and proxies
-everything under `https://host:8444/api/*`, after checking an access token and
-with **`/api` stripped**, to this debugger's api, which it runs as a **forked
-child process listening on a unix socket, plain HTTP**. All authentication
-lives in the mock STS; the api has none and needs none, because its only peer
-is that proxy.
+everything under `https://host:8444/api/*`, after checking the sign-in session
+and with **`/api` stripped**, to this debugger's api, which it runs as a
+**forked child process listening on a unix socket, plain HTTP**. All
+authentication lives in the mock STS; the api has none and needs none, because
+its only peer is that proxy.
+
+**The api's `Authorization` header is the debugger's own (rcbj/iya-sts#1717,
+2026-11-13).** The mock STS's gate is its sign-in session cookie and NOTHING
+else: it is one confidential OIDC client for the UI and the api together
+(`sts-debugger-ui`, authorization code, `private_key_jwt`, tokens held
+server-side), it accepts no access token, and it forwards `Authorization` and
+`DPoP` to the api UNTOUCHED — so `/api/userinfo`'s Bearer token,
+`/api/introspection`'s Basic client credentials and every other header this
+debugger sends as part of a call arrive as sent, and no DPoP proof's `jti` is
+reserved on the way. It still drops `Cookie` (its sessions never reach the
+api) and the api's `Set-Cookie`. Until #1717 the gate also took a Bearer token
+on `Authorization` and the forwarder stripped the header, which broke both of
+those calls. **A change here that starts depending on a cookie, or on the
+proxy reading a header, is a change to that contract.**
 
 **Nothing here changes the standalone debugger.** client:3000 / api:4000, the
 compose stacks and the idptools.com static build behave exactly as before:
@@ -31,7 +46,7 @@ path or variable in it is a change to the mock STS too.
 <OUT>/ui/            client/build.js, DEPLOYMENT=embedded, CONFIG_FILE=./env/embedded.js
 <OUT>/api/           a runnable api: `cd <OUT>/api && node server.js`
 <OUT>/common/        tls_listener.js and spiffe/ — what the api requires as ../common/...
-<OUT>/version.json   the build's M.N.O (the same record as api/version.json)
+<OUT>/version.json   the build's M.N.P.B (the same record as api/version.json)
 ```
 
 `<OUT>/api` is what `api/Dockerfile` stages at `/usr/src/app`: every file under
@@ -57,10 +72,21 @@ uncommitted work is in the build, as it would be in a `docker build`. It sets
 BuildKit on the machines this runs on, so no `# syntax`, `--mount` or
 `--build-context`), Node 24.22.1 installed as the other images do, and a final
 `FROM scratch` stage holding exactly `/debugger/ui`, `/debugger/api`,
-`/debugger/common` and `/debugger/version.json`. Tag it
-`rcbj/id-proto-debugger-embedded:<tag>`; the mock STS's Dockerfile does
-`COPY --from=rcbj/id-proto-debugger-embedded:<tag> /debugger/ …`. Pass
+`/debugger/common` and `/debugger/version.json`. Pass
 `--build-arg GIT_COMMIT=…` — there is no `.git` in the context to ask.
+
+**It is PUBLISHED (rcbj/iya-sts#1717).** Docker Image CI builds it on every run
+and, from master only, pushes it beside the api and client images with the
+same tags — M.N.P.B and `latest` — as
+`ghcr.io/rcbj/id-proto-debugger-embedded` and
+`docker.io/iyasec/id-proto-debugger-embedded`. The mock STS's Dockerfile takes
+`ARG DEBUGGER_IMAGE` and does `COPY --from=<that image> /debugger/ …`; a
+release of it pins an M.N.P.B tag, so the debugger it ships is a tagged build of
+this repository rather than whatever a checkout held. A local build is still
+`docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:dev
+--build-context ubuntu=docker-image://ghcr.io/rcbj/id-proto-debugger/mirror/ubuntu:latest .`
+passed the same way — the `--build-context` takes its base from the private
+image mirror (after `docker login ghcr.io`), as `dockerimage.yml` does.
 
 ## B. The api child's environment
 

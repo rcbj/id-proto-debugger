@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: caep_page.js
 //
 // ---------------------------------------------------------------------------
@@ -950,6 +953,11 @@ async function preconditions() {
 
 // An RFC 8935 inbox at the api; answers the delivery URL a transmitter is
 // given. The api answers `{ ok, inbox: { id, … }, deliveryEndpoint }`.
+// The inboxes this job opened, deleted in cleanUp(). One left behind holds
+// a slot against ssfReceiverMaxInboxesPerCaller until it goes idle, and every
+// job in the tests container is the same caller.
+const openedInboxes = [];
+
 async function openApiInbox() {
   log.debug("Entering openApiInbox().");
   const made = await fetch(apiUrl + "/ssf/receiver", {
@@ -964,6 +972,9 @@ async function openApiInbox() {
   assert.ok(made.status < 300 && endpoint,
       "The api at " + apiUrl + " would not open a push inbox: " +
       made.status + " " + JSON.stringify(json));
+  if (json.inbox && json.inbox.id) {
+    openedInboxes.push(String(json.inbox.id));
+  }
   log.debug("Leaving openApiInbox().");
   return endpoint;
 }
@@ -982,7 +993,14 @@ async function cleanUp() {
       return null;
     });
   }
-  log.debug("Leaving cleanUp(). " + created.length + " stream(s).");
+  for (id of openedInboxes) {
+    await fetch(apiUrl + "/ssf/receiver/" + encodeURIComponent(id),
+      { method: "DELETE" }).catch(function () {
+      return null;
+    });
+  }
+  log.debug("Leaving cleanUp(). " + created.length + " stream(s), " +
+      openedInboxes.length + " inbox(es).");
 }
 
 async function test() {

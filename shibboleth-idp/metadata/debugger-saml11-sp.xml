@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+  SPDX-License-Identifier: MIT
+
+  The debugger as a SAML 1.1 service provider, as tests/saml11_peers.js
+  presents itself: SHIBBOLETH_SP_ENTITY_ID and SHIBBOLETH_ACS_URL at
+  their defaults. Change those and this file has to change with them,
+  or the IdP answers "Unsupported Request".
+-->
+<EntityDescriptor entityID="https://debugger.example.test/saml11"
+    xmlns="urn:oasis:names:tc:SAML:2.0:metadata">
+  <SPSSODescriptor protocolSupportEnumeration="urn:oasis:names:tc:SAML:1.1:protocol urn:oasis:names:tc:SAML:1.0:protocol">
+    <AssertionConsumerService
+        Binding="urn:oasis:names:tc:SAML:1.0:profiles:browser-post"
+        Location="https://debugger.example.test/acs"
+        index="1" isDefault="true"/>
+  </SPSSODescriptor>
+</EntityDescriptor>

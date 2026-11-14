@@ -1,3 +1,6 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
 /* Digital-signature-style panes for the OAuth2 / OIDC debugger page. Mirrors the
    pane look from digital_signature.css (a bordered, rounded, light-grey box with
    a clickable legend that collapses/expands via a triangle indicator) without

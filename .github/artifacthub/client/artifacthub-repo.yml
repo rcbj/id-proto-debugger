@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Artifact Hub repository metadata for
 #   oci://ghcr.io/rcbj/id-proto-debugger-client
 # Not read from git: .github/workflows/dockerimage.yml pushes it to that image

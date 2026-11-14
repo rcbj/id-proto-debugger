@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: saml11_options.js
 //
 // ===========================================================================
@@ -16,7 +19,7 @@
 // The browser profiles (saml-profile-1.1 sections 4.1 and 4.2) are
 // IDENTITY-PROVIDER-INITIATED. There is no `<samlp:AuthnRequest>`; what a real
 // SAML 1.1 service provider sends is Shibboleth's request profile — the query
-// parameters `TARGET`, `shire`, `providerId` and `time`. So:
+// parameters `providerId`, `shire`, `target` and `time`, as a GET. So:
 //
 //   the username hint      belongs in <saml:Subject> on an AuthnRequest
 //   sign the request       there is nothing to sign
@@ -41,10 +44,11 @@
 // ---------------------------------------------------------------------------
 // THE OTHER HALF: WHAT IT MUST START OFFERING.
 //
-//   * The request preview holds Shibboleth's parameters and NOT an
-//     <AuthnRequest> — per binding, since the `profile` parameter is what
-//     chooses between the two browser profiles and nothing in SAML 1.1 lets a
-//     relying party ask.
+//   * The request preview holds exactly Shibboleth's four parameters and NOT
+//     an <AuthnRequest>, as a GET whatever the request binding was left on —
+//     per browser profile, because the shire is what chooses between them:
+//     the ACS URL for Browser/POST and the artifact ACS URL for
+//     Browser/Artifact (#307).
 //   * `Call IdP` refuses BY NAME rather than navigating, when there is no
 //     inter-site transfer service address and when there is no `shire`.
 //   * `Logout` refuses BY NAME, naming the protocol rather than an
@@ -53,7 +57,8 @@
 //     provider: `protocolSupportEnumeration` names the 1.1 protocol, the
 //     assertion consumer endpoints are bound with the two PROFILE URIs (a 1.1
 //     descriptor's Binding attribute carries a profile identifier, which is
-//     what Shibboleth's own metadata does), there is no SingleLogoutService and
+//     what Shibboleth's own metadata does) at two different locations, there
+//     is no SingleLogoutService and
 //     no `AuthnRequestsSigned`. A document that advertised the SAML 2.0
 //     bindings here describes endpoints no SAML 1.1 identity provider will use,
 //     and nothing about it looks wrong.
@@ -346,58 +351,68 @@ function previewParams(text) {
   return out;
 }
 
-async function assertRequestPreview(driver, binding, its, acs, sp) {
-  log.debug("Entering assertRequestPreview(). binding=" + binding);
-  // Two selectors since issue #307. "artifact" here is a GET asking for the
-  // Browser/Artifact profile — the request binding is Redirect and the
-  // response binding (the profile) is the artifact one.
-  await selectValue(driver, 'saml_binding',
-                    binding === 'post' ? 'post' : 'redirect');
-  await selectValue(driver, 'saml_response_binding',
-                    binding === 'artifact' ? 'artifact' : 'post');
-  var wantProfile = binding === 'artifact' ? 'artifact' : 'post';
+// THE REQUEST IS SHIBBOLETH'S AUTHNREQUEST PROFILE AND NOTHING ELSE (#307):
+// exactly providerId, shire, target and time, as a GET at the inter-site
+// transfer service. The browser profile is chosen by which assertion
+// consumer the shire names: the ACS URL for Browser/POST, the artifact ACS
+// URL for Browser/Artifact. No TARGET (the response's name for the relay
+// value), no `profile` and no `format`, which no specification defines.
+var SAML11_REQUEST_PARAMS = ['providerId', 'shire', 'target', 'time'];
+
+async function assertRequestPreview(driver, profile, its, acs, artifactAcs,
+    sp) {
+  log.debug("Entering assertRequestPreview(). profile=" + profile);
+  await selectValue(driver, 'saml_response_binding', profile);
+  var wantShire = profile === 'artifact' ? artifactAcs : acs;
   await driver.wait(async function () {
     var v = await valueOf(driver, 'saml_authn_request');
-    return previewParams(v).profile === wantProfile;
-  }, waitTime, "the request preview was not rebuilt for binding=" + binding +
-     ". It should ask for the " + wantProfile + " browser profile: nothing " +
-     "in SAML 1.1 lets a relying party choose between them, so the page has " +
-     "to send the non-standard profile parameter or the identity provider's " +
-     "own default decides.");
+    return previewParams(v).shire === wantShire;
+  }, waitTime, "the request preview was not rebuilt for the " + profile +
+     " profile. Its shire should be " + wantShire + ": in SAML 1.1 the " +
+     "assertion consumer the shire names is what chooses the profile.");
   var text = await valueOf(driver, 'saml_authn_request');
   var params = previewParams(text);
-  log.info("Preview (" + binding + "):\n" + text);
+  log.info("Preview (" + profile + "):\n" + text);
 
   assert(text.indexOf('<samlp:AuthnRequest') < 0,
     "SAML 1.1 has no <samlp:AuthnRequest> and the page built one:\n" + text);
-  assert.strictEqual(params.shire, acs,
-    "shire must be the ACS URL — it is the only way a SAML 1.1 relying party " +
-    "can say where the assertion goes. want=" + acs + " got=" + params.shire);
+  assert(text.indexOf(its + '?') === 0,
+    "the SAML 1.1 request is a GET: a URL at the inter-site transfer " +
+    "service:\n" + text);
+  assert.deepStrictEqual(Object.keys(params).sort(),
+    SAML11_REQUEST_PARAMS.slice().sort(),
+    "the request must carry exactly Shibboleth's AuthnRequest parameters " +
+    "(providerId, shire, target, time) — no TARGET, profile or format:\n" +
+        text);
   assert.strictEqual(params.providerId, sp,
-    "providerId must be the SP entityID — the only way a SAML 1.1 relying " +
-    "party names itself, and what becomes the assertion's audience " +
-    "restriction. want=" + sp + " got=" + params.providerId);
+    "providerId must be the SP entityID. want=" + sp + " got=" +
+        params.providerId);
   assert(/^[0-9]+$/.test(params.time || ''),
-    "Shibboleth's time parameter must be present and numeric (seconds since " +
-    "the epoch); it is: " + params.time);
-  assert(params.TARGET,
-    "TARGET must be present — it is SAML 1.1's relay state, the only value " +
-    "the browser profiles round-trip, and the artifact flow has nowhere else " +
-    "to carry the API's context handle:\n" + text);
-
-  if (binding === 'post') {
-    assert(text.indexOf('POST ' + its) === 0,
-      "with the POST binding the parameters travel in a form body, so the " +
-      "preview shows the endpoint and the fields rather than a URL:\n" + text);
-    assert(text.indexOf('application/x-www-form-urlencoded') >= 0,
-      "the POST preview should name the content type the form will use:\n" +
-          text);
-  } else {
-    assert(text.indexOf(its + '?') === 0,
-      "with the " + binding + " binding the request is a URL at the " +
-      "inter-site transfer service:\n" + text);
-  }
+    "time must be seconds since the epoch; it is: " + params.time);
+  assert(params.target,
+    "target must be present — the relay value the response returns as " +
+    "TARGET, and where the artifact flow carries the API's context " +
+    "handle:\n" + text);
   log.debug("Leaving assertRequestPreview().");
+}
+
+// The request binding selector does not apply to SAML 1.1: the profile
+// defines no form-POST request. It is switched off, and the request stays a
+// GET whatever it was left on for SAML 2.0.
+async function assertRequestBindingOff(driver, its) {
+  log.debug("Entering assertRequestBindingOff().");
+  var off = await driver.executeScript(
+    "var s=document.getElementById('saml_binding'); return s && s.disabled;");
+  assert.strictEqual(off, true, "the request binding selector must be " +
+    "disabled on SAML 1.1: Shibboleth's AuthnRequest profile is a GET.");
+  await driver.executeScript(
+    "var s=document.getElementById('saml_binding'); s.value='post';" +
+    "s.dispatchEvent(new Event('change'));");
+  var text = await valueOf(driver, 'saml_authn_request');
+  assert(text.indexOf(its + '?') === 0 && text.indexOf('POST ') !== 0,
+    "a request binding left on POST must still send SAML 1.1 as a GET:\n" +
+        text);
+  log.debug("Leaving assertRequestBindingOff().");
 }
 
 // Issue #307: the artifact choice is the RESPONSE binding and is offered with
@@ -489,7 +504,7 @@ async function assertLogoutRefused(driver) {
 // The SP metadata this page builds. Read out of the page rather than off a
 // downloaded file: the download goes through a browser save dialogue and what
 // is under test is the DOCUMENT.
-async function assertSpMetadataIsSaml11(driver) {
+async function assertSpMetadataIsSaml11(driver, acs, artifactAcs) {
   log.debug("Entering assertSpMetadataIsSaml11().");
   var xml = await driver.executeScript(
     "return window.saml_request.buildSpMetadata ? " +
@@ -513,6 +528,15 @@ async function assertSpMetadataIsSaml11(driver) {
   assert(xml.indexOf('urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST') < 0,
     "a SAML 1.1 descriptor must not advertise the SAML 2.0 POST binding:\n" +
         xml);
+  // The shire picks the profile by location, so each profile's consumer is
+  // at its own location (#307).
+  assert(xml.indexOf('Binding="' + PROFILE_POST + '" Location="' + acs +
+      '"') >= 0,
+    "the browser-post consumer must be at the ACS URL:\n" + xml);
+  assert(xml.indexOf('Binding="' + PROFILE_ARTIFACT + '" Location="' +
+      artifactAcs + '"') >= 0,
+    "the artifact-01 consumer must be at the artifact ACS URL, apart from " +
+    "the POST one:\n" + xml);
   assert(xml.indexOf('SingleLogoutService') < 0,
     "SAML 1.1 has no Single Logout, so its SP metadata must publish no " +
     "SingleLogoutService — declaring one invites a LogoutRequest this " +
@@ -542,6 +566,7 @@ async function optionActivities(driver) {
   log.debug("Entering optionActivities().");
   var its = 'http://localhost:8081/saml11/sso';
   var acs = 'http://localhost:4000/samlacs';
+  var artifactAcs = 'http://localhost:4000/samlacs/artifact';
   var sp = 'http://localhost:3000/saml/sp';
 
   await loadUrl(driver, baseUrl + "/saml_request.html");
@@ -566,21 +591,25 @@ async function optionActivities(driver) {
 
   log.info("Select SAML 1.1.");
   await chooseVersion(driver, '1.1');
+  // Shown only on SAML 1.1, so typed after the version is chosen.
+  await setInput(driver, 'saml11_artifact_acs_url', artifactAcs);
   await assertControlsOffForSaml11(driver);
   await assertVersionNoticeExplains(driver);
 
   await assertArtifactResponseOffered(driver);
 
-  for (var i = 0; i < ['redirect', 'post', 'artifact'].length; i++) {
-    var binding = ['redirect', 'post', 'artifact'][i];
-    await assertRequestPreview(driver, binding, its, acs, sp);
+  for (var i = 0; i < ['post', 'artifact'].length; i++) {
+    var profile = ['post', 'artifact'][i];
+    await assertRequestPreview(driver, profile, its, acs, artifactAcs, sp);
   }
+  await assertRequestBindingOff(driver, its);
+  await selectValue(driver, 'saml_response_binding', 'post');
 
   await assertLogoutRefused(driver);
   await assertCallRefusedWithoutShire(driver);
   await setInput(driver, 'saml_acs_url', acs);
 
-  await assertSpMetadataIsSaml11(driver);
+  await assertSpMetadataIsSaml11(driver, acs, artifactAcs);
 
   // assertSpMetadataIsSaml11() left the page on 2.0; assert the way back.
   await assertControlsOnForSaml20(driver);

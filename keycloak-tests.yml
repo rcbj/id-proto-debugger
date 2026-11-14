@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 # Minimal Keycloak for running the Selenium suite against a deployed (or local)
 # debugger site via remote-run-tests.sh.
 #
@@ -5,9 +8,22 @@
 # keycloak/keycloak, HTTP bound to host port 8080 via host networking. The
 # realm/clients are created at run time by common.sh configureKeycloak.
 version: '2.4'
+# ---------------------------------------------------------------------------
+# EVERY IMAGE THIS FILE PULLS, AND EVERY BASE IMAGE IT BUILDS FROM, COMES
+# FROM THE PRIVATE ghcr.io MIRROR — the same arrangement as
+# docker-compose-run-tests.yml, whose header explains it. `image:` names the
+# mirror directly; a Dockerfile's FROM is redirected by the build's
+# `additional_contexts`, which is this anchor. Pulls need
+# `docker login ghcr.io` with a token that can read packages.
+# tests/image_mirror_coverage.js holds this file to it.
+# ---------------------------------------------------------------------------
+x-mirror-contexts: &mirror-contexts
+  ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
+  "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
+  "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.6.4
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/keycloak/keycloak:26.6.4
     # Already non-root: the Keycloak image declares USER 1000 itself.
     # DPoP (RFC 9449) is a PREVIEW feature in Keycloak 26 and is off unless it is
     # named here: without it the server ignores the DPoP header entirely, issues a
@@ -32,27 +48,31 @@ services:
   # WS-Trust STS (mock) for remote-run-tests.sh against a local dev site. The
   # host-run browser / local api reach it at https://localhost:8081/sts.
   sts:
-    # THE TAG IS MACHINE-WIDE AND THIS IS NOT THE ONLY REPOSITORY THAT BUILDS
-    # IT (2026-09-15). `sts/` is the iya-sts submodule and that repository
-    # builds its own stack from the same source; both wrote `rcbj/sts`, so
-    # whichever ran last owned the tag — and a run here then started a mock
-    # built from somebody else's working tree. It cost a run of this suite:
-    # seven jobs failed on two defects that had been fixed in the submodule
-    # this checkout points at, because the container was not built from it.
-    # The launchers set STS_IMAGE to a tag of their own (see common.sh);
-    # a bare `docker-compose up` still gets `rcbj/sts`, which is what the
-    # documentation names.
-    image: ${STS_IMAGE:-rcbj/sts}
-    # ROOT, and the only container here that is. It binds 88 (TCP and UDP),
-    # 389 and 636 — all privileged — so it needs uid 0 or
-    # CAP_NET_BIND_SERVICE; and sts/ is the iya-sts submodule, somebody
-    # else's checkout. Every image THIS repository builds now runs as an
-    # unprivileged user; see the block at the foot of each Dockerfile.
+    # iya-sts's RELEASE IMAGE, pulled rather than built — the same one
+    # docker-compose-run-tests.yml runs, where the release is named
+    # (IYA_STS_IMAGE; tests/image_mirror_coverage.js holds this default to
+    # that one). This repository has no iya-sts checkout to build from.
+    image: ${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
+    # ROOT, and the only container here that is. The image runs as uid 10001
+    # and this service binds 88 (TCP and UDP), 389 and 636 — all privileged —
+    # on the HOST's network namespace, where the per-namespace sysctl the
+    # bridged stacks use to lower that bar cannot be set from a container.
+    user: "0:0"
     hostname: sts
     network_mode: "host"
     environment:
-      # Log level, chosen the same way as for api and client.
-      - CONFIG_FILE=./env/local.js
+      # EdDSA signing is OFF by default since iya-sts v1.0.0 (#1292), and
+      # the suite drives it (the UserInfo, JWKS and JWS jobs).
+      # docker-compose-run-tests.yml turns it on the same way.
+      - STS_KEYS_EDDSA_SIGNING=true
+      # iya-sts's TEST configuration, as docker-compose-run-tests.yml gives
+      # it: env/local.js keeps the production sign-in limits (20 attempts
+      # per address, 5 per identity, per minute), and a pool of browser
+      # jobs signing in from one runner hits them — the federation grid
+      # read "Too many attempts. Wait 10 seconds" on the live-site runs.
+      # env/test.js raises them to 500 and 100 and changes nothing else
+      # this stack relies on. STS_CONFIG_FILE overrides it, as there.
+      - CONFIG_FILE=${STS_CONFIG_FILE:-./env/test.js}
       # Host networking: Keycloak is on the same loopback.
       #
       # Where the WALLET is, as a base URL the browser can use. This launcher runs
@@ -116,10 +136,6 @@ services:
       # two stacks pin it: remote-run-tests.sh mints its /admin-api token
       # with it, and the companion below registers itself with it.
       - ADMIN_API_CLIENT_SECRET=${ADMIN_API_CLIENT_SECRET:-}
-    build:
-      # The submodule's own root: see docker-compose.yml for why the context is
-      # ./sts rather than this repository with dockerfile: sts/Dockerfile.
-      context: ./sts
   # IYA-STS'S DEVELOPMENT COMPANION (iya-sts #594, #595): the issuer's and the
   # Verifier's websites the VC workflows start at, and the SPNEGO-protected
   # page and Kerberos TCP service the Kerberos jobs present tickets to. Host
@@ -131,9 +147,9 @@ services:
   # docs/docker-compose.md does for a development stack.
   companion:
     container_name: idptools-kctest-companion
-    image: rcbj/companion
-    build:
-      context: ./sts/companion
+    # iya-sts's release tag, built into the mirror; see
+    # docker-compose-run-tests.yml.
+    image: ${IYA_STS_COMPANION_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts-companion:v1.0.0}
     network_mode: "host"
     environment:
       - COMPANION_PORT=9700
@@ -152,7 +168,7 @@ services:
   # loopback. Its signing key comes from the environment
   # (generateWaltidIssuerKey in common/common.sh); no private key is committed.
   waltid-issuer-api:
-    image: waltid/issuer-api2:0.23.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/waltid/issuer-api2:0.23.0
     # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
     # its own. It needs none: its configuration is bind-mounted READ-ONLY,
     # persistence.conf puts sessions in memory, and its signing key comes
@@ -175,7 +191,7 @@ services:
   # issuer's baseUrl names, because every URL walt.id publishes is built from it.
   # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
   waltid-issuer:
-    image: node:24.22.1-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -209,7 +225,7 @@ services:
   # localhost:7003, and its request-signing key comes from the environment
   # (generateWaltidVerifierKey in common/common.sh).
   waltid-verifier-api:
-    image: waltid/verifier-api2:0.23.0
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/waltid/verifier-api2:0.23.0
     # A Jib-built image, and Jib's default is uid 0 — walt.id set no user of
     # its own. It needs none: its configuration is bind-mounted READ-ONLY,
     # persistence.conf puts sessions in memory, and its signing key comes
@@ -228,7 +244,7 @@ services:
   # URL it hands the wallet (the request_uri it fetches, the response_uri it POSTs
   # to) is one the browser can use.
   waltid-verifier:
-    image: node:24.22.1-alpine
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
@@ -269,6 +285,7 @@ services:
     network_mode: "host"
     build:
       context: .
+      additional_contexts: *mirror-contexts
       dockerfile: keycloak-wsfed/Dockerfile
     command: ["-b", "0.0.0.0", "-Djboss.socket.binding.port-offset=2"]
     environment:

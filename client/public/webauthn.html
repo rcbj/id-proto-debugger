@@ -11,6 +11,7 @@
     <link href="/css/bootstrap-responsive.css" rel="stylesheet">
     <link href="/css/debugger.css" rel="stylesheet">
     <link href="/css/webauthn.css" rel="stylesheet">
+    <link href="/css/panes.css" rel="stylesheet">
   </head>
 
   <body>
@@ -28,151 +29,200 @@
 
 <h3 class="wa-title">WebAuthn Lab &mdash; run a real ceremony against your authenticator</h3>
 
-<p class="wa-intro">This page is the <strong>relying party</strong>. Build the options, press the button, and a
-real authenticator &mdash; a YubiKey, a platform authenticator, whatever this browser can reach &mdash; performs
-a real <a href="https://www.w3.org/TR/webauthn-3/" target="_blank" rel="noopener noreferrer">WebAuthn</a>
-ceremony. Every artifact below is genuine.</p>
+<details class="saml-explain">
+  <summary>About this page</summary>
+  <p>This page is the <strong>relying party</strong>. Build the options, press the button, and a
+  real authenticator &mdash; a YubiKey, a platform authenticator, whatever this browser can reach &mdash; performs
+  a real <a href="https://www.w3.org/TR/webauthn-3/" target="_blank" rel="noopener noreferrer">WebAuthn</a>
+  ceremony. Every artifact below is genuine.</p>
+</details>
 
-<p class="wa-intro"><strong>The RP ID is not a free field.</strong> WebAuthn binds a ceremony to the calling
-origin: the RP ID must be this page's host, or a registrable parent of it. This page cannot run a ceremony for
-a domain it does not own &mdash; and that refusal is the phishing resistance, not a limitation to route around.
-To examine a ceremony belonging to someone else's relying party, use the
-<a href="/webauthn_analyzer.html">Analyzer</a> (paste the artifacts) or the browser extension (watch the call
-as it happens).</p>
+<details class="saml-explain">
+  <summary>Why the RP ID is not a free field</summary>
+  <p><strong>The RP ID is not a free field.</strong> WebAuthn binds a ceremony to the calling
+  origin: the RP ID must be this page's host, or a registrable parent of it. This page cannot run a ceremony for
+  a domain it does not own &mdash; and that refusal is the phishing resistance, not a limitation to route around.
+  To examine a ceremony belonging to someone else's relying party, use the
+  <a href="/webauthn_analyzer.html">Analyzer</a> (paste the artifacts) or the browser extension (watch the call
+  as it happens).</p>
+</details>
 
-<fieldset class="wa-pane">
-  <legend>What this browser can do</legend>
-  <div id="wl_caps_body"></div>
-</fieldset>
+<p class="saml-controls">
+  <label class="saml-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="wl_toggle_all" checked="checked"
+           onchange="return webauthnlab.setAllPanes(this.checked);">
+    <span class="saml-toggle-slider"></span>
+    <span class="saml-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="saml-controls-hint">Tip: click a pane's title to
+  collapse/expand it.</span>
+</p>
 
-<fieldset class="wa-pane">
-  <legend>1 &mdash; Registration <code>navigator.credentials.create()</code></legend>
-  <div class="wa-grid">
-    <div>
-      <label for="wl_rp_name">Relying party name</label>
-      <input type="text" id="wl_rp_name" class="wa-field" value="OAuth2/OIDC Debugger">
-      <label for="wl_rp_id">RP ID (must match this origin)</label>
-      <input type="text" id="wl_rp_id" class="wa-field">
-      <label for="wl_user_name">User name</label>
-      <input type="text" id="wl_user_name" class="wa-field" value="debugger@example.com">
-      <label for="wl_user_display">User display name</label>
-      <input type="text" id="wl_user_display" class="wa-field" value="Debugger User">
-      <label for="wl_user_id">User handle (base64url)</label>
-      <input type="text" id="wl_user_id" class="wa-field">
-    </div>
-    <div>
-      <label for="wl_reg_challenge">Challenge (base64url)</label>
-      <input type="text" id="wl_reg_challenge" class="wa-field">
-      <input type="button" id="wl_reg_challenge_button" class="btn2" value="New challenge">
-      <label>Algorithms (<code>pubKeyCredParams</code>)</label>
-      <label class="wa-check"><input type="checkbox" id="wl_alg_es256" checked> ES256 (&minus;7)</label>
-      <label class="wa-check"><input type="checkbox" id="wl_alg_rs256"> RS256 (&minus;257)</label>
-      <label class="wa-check"><input type="checkbox" id="wl_alg_eddsa"> EdDSA (&minus;8)</label>
-      <label for="wl_resident_key">Resident key (discoverable)</label>
-      <select id="wl_resident_key" class="wa-field">
-        <option value="discouraged">discouraged</option>
-        <option value="preferred" selected>preferred</option>
-        <option value="required">required</option>
-      </select>
-      <label for="wl_reg_uv">User verification</label>
-      <select id="wl_reg_uv" class="wa-field">
-        <option value="discouraged">discouraged</option>
-        <option value="preferred" selected>preferred</option>
-        <option value="required">required</option>
-      </select>
-      <label for="wl_attestation">Attestation</label>
-      <select id="wl_attestation" class="wa-field">
-        <option value="none">none</option>
-        <option value="indirect">indirect</option>
-        <option value="direct" selected>direct</option>
-        <option value="enterprise">enterprise</option>
-      </select>
-      <label for="wl_attachment">Authenticator attachment</label>
-      <select id="wl_attachment" class="wa-field">
-        <option value="">(no preference)</option>
-        <option value="cross-platform">cross-platform (a security key)</option>
-        <option value="platform">platform (built in)</option>
-      </select>
-      <label for="wl_timeout">Timeout (ms)</label>
-      <input type="text" id="wl_timeout" class="wa-field" value="60000">
-    </div>
+<fieldset class="wa-pane" id="wl_pane_what_this_browser">
+  <legend class="saml-legend"
+          onclick="return webauthnlab.togglePane('wl_pane_what_this_browser_body');"
+          title="Click to collapse or expand this pane.">What this browser can do</legend>
+  <div class="saml-pane-body" id="wl_pane_what_this_browser_body">
+    <div id="wl_caps_body"></div>
   </div>
-  <label for="wl_reg_request">The call this page is about to make</label>
-  <textarea id="wl_reg_request" class="wa-raw" rows="12" spellcheck="false" readonly></textarea>
-  <div class="wa-buttons">
-    <input type="button" id="wl_create_button" class="btn2" value="Create Credential">
-    <input type="button" id="wl_show_options_button" class="btn2" value="Refresh the call">
-    <input type="button" id="wl_forget_button" class="btn2" value="Forget registered credentials">
-  </div>
-  <div id="wl_reg_status" class="wa-status"></div>
-  <label for="wl_reg_result">The credential, as WebAuthn Level 3 JSON</label>
-  <textarea id="wl_reg_result" class="wa-raw" rows="10" spellcheck="false" readonly></textarea>
-  <input type="button" id="wl_reg_to_analyzer" class="btn2" value="Open this in the Analyzer">
 </fieldset>
 
-<fieldset class="wa-pane">
-  <legend>2 &mdash; Authentication <code>navigator.credentials.get()</code></legend>
-  <div class="wa-grid">
-    <div>
-      <label for="wl_credential_select">Credential</label>
-      <select id="wl_credential_select" class="wa-field"></select>
-      <div id="wl_credential_count" class="wa-subtle"></div>
-      <label for="wl_auth_rpid">RP ID</label>
-      <input type="text" id="wl_auth_rpid" class="wa-field">
+<fieldset class="wa-pane" id="wl_pane_registration_navigator_credentials">
+  <legend class="saml-legend"
+          onclick="return webauthnlab.togglePane('wl_pane_registration_navigator_credentials_body');"
+          title="Click to collapse or expand this pane.">1 &mdash; Registration <code>navigator.credentials.create()</code></legend>
+  <div class="saml-pane-body" id="wl_pane_registration_navigator_credentials_body">
+    <div class="wa-grid">
+      <div>
+        <label for="wl_rp_name">Relying party name</label>
+        <input type="text" id="wl_rp_name" class="wa-field" value="OAuth2/OIDC Debugger">
+        <label for="wl_rp_id">RP ID (must match this origin)</label>
+        <input type="text" id="wl_rp_id" class="wa-field">
+        <label for="wl_user_name">User name</label>
+        <input type="text" id="wl_user_name" class="wa-field" value="debugger@example.com">
+        <label for="wl_user_display">User display name</label>
+        <input type="text" id="wl_user_display" class="wa-field" value="Debugger User">
+        <label for="wl_user_id">User handle (base64url)</label>
+        <input type="text" id="wl_user_id" class="wa-field">
+      </div>
+      <div>
+        <label for="wl_reg_challenge">Challenge (base64url)</label>
+        <input type="text" id="wl_reg_challenge" class="wa-field">
+        <input type="button" id="wl_reg_challenge_button" class="btn2" value="New challenge">
+        <label>Algorithms (<code>pubKeyCredParams</code>)</label>
+        <label class="wa-check"><input type="checkbox" id="wl_alg_es256" checked> ES256 (&minus;7)</label>
+        <label class="wa-check"><input type="checkbox" id="wl_alg_rs256"> RS256 (&minus;257)</label>
+        <label class="wa-check"><input type="checkbox" id="wl_alg_eddsa"> EdDSA (&minus;8)</label>
+        <label for="wl_resident_key">Resident key (discoverable)</label>
+        <select id="wl_resident_key" class="wa-field">
+          <option value="discouraged">discouraged</option>
+          <option value="preferred" selected>preferred</option>
+          <option value="required">required</option>
+        </select>
+        <label for="wl_reg_uv">User verification</label>
+        <select id="wl_reg_uv" class="wa-field">
+          <option value="discouraged">discouraged</option>
+          <option value="preferred" selected>preferred</option>
+          <option value="required">required</option>
+        </select>
+        <label for="wl_attestation">Attestation</label>
+        <select id="wl_attestation" class="wa-field">
+          <option value="none">none</option>
+          <option value="indirect">indirect</option>
+          <option value="direct" selected>direct</option>
+          <option value="enterprise">enterprise</option>
+        </select>
+        <label for="wl_attachment">Authenticator attachment</label>
+        <select id="wl_attachment" class="wa-field">
+          <option value="">(no preference)</option>
+          <option value="cross-platform">cross-platform (a security key)</option>
+          <option value="platform">platform (built in)</option>
+        </select>
+        <label for="wl_timeout">Timeout (ms)</label>
+        <input type="text" id="wl_timeout" class="wa-field" value="60000">
+      </div>
     </div>
-    <div>
-      <label for="wl_auth_challenge">Challenge (base64url)</label>
-      <input type="text" id="wl_auth_challenge" class="wa-field">
-      <input type="button" id="wl_auth_challenge_button" class="btn2" value="New challenge">
-      <label for="wl_auth_uv">User verification</label>
-      <select id="wl_auth_uv" class="wa-field">
-        <option value="discouraged">discouraged</option>
-        <option value="preferred" selected>preferred</option>
-        <option value="required">required</option>
-      </select>
+    <label for="wl_reg_request">The call this page is about to make</label>
+    <textarea id="wl_reg_request" class="wa-raw" rows="12" spellcheck="false" readonly></textarea>
+    <div class="wa-buttons">
+      <input type="button" id="wl_create_button" class="btn2" value="Create Credential">
+      <input type="button" id="wl_show_options_button" class="btn2" value="Refresh the call">
+      <input type="button" id="wl_forget_button" class="btn2" value="Forget registered credentials">
     </div>
+    <div id="wl_reg_status" class="wa-status"></div>
+    <label for="wl_reg_result">The credential, as WebAuthn Level 3 JSON</label>
+    <textarea id="wl_reg_result" class="wa-raw" rows="10" spellcheck="false" readonly></textarea>
+    <input type="button" id="wl_reg_to_analyzer" class="btn2" value="Open this in the Analyzer">
   </div>
-  <label for="wl_auth_request">The call this page is about to make</label>
-  <textarea id="wl_auth_request" class="wa-raw" rows="8" spellcheck="false" readonly></textarea>
-  <div class="wa-buttons">
-    <input type="button" id="wl_get_button" class="btn2" value="Get Assertion &amp; Verify">
+</fieldset>
+
+<fieldset class="wa-pane" id="wl_pane_authentication_navigator_credentials">
+  <legend class="saml-legend"
+          onclick="return webauthnlab.togglePane('wl_pane_authentication_navigator_credentials_body');"
+          title="Click to collapse or expand this pane.">2 &mdash; Authentication <code>navigator.credentials.get()</code></legend>
+  <div class="saml-pane-body" id="wl_pane_authentication_navigator_credentials_body">
+    <div class="wa-grid">
+      <div>
+        <label for="wl_credential_select">Credential</label>
+        <select id="wl_credential_select" class="wa-field"></select>
+        <div id="wl_credential_count" class="wa-subtle"></div>
+        <label for="wl_auth_rpid">RP ID</label>
+        <input type="text" id="wl_auth_rpid" class="wa-field">
+      </div>
+      <div>
+        <label for="wl_auth_challenge">Challenge (base64url)</label>
+        <input type="text" id="wl_auth_challenge" class="wa-field">
+        <input type="button" id="wl_auth_challenge_button" class="btn2" value="New challenge">
+        <label for="wl_auth_uv">User verification</label>
+        <select id="wl_auth_uv" class="wa-field">
+          <option value="discouraged">discouraged</option>
+          <option value="preferred" selected>preferred</option>
+          <option value="required">required</option>
+        </select>
+      </div>
+    </div>
+    <label for="wl_auth_request">The call this page is about to make</label>
+    <textarea id="wl_auth_request" class="wa-raw" rows="8" spellcheck="false" readonly></textarea>
+    <div class="wa-buttons">
+      <input type="button" id="wl_get_button" class="btn2" value="Get Assertion &amp; Verify">
+    </div>
+    <div id="wl_auth_status" class="wa-status"></div>
+    <div id="wl_verify_body"></div>
+    <label for="wl_auth_result">The assertion, as WebAuthn Level 3 JSON</label>
+    <textarea id="wl_auth_result" class="wa-raw" rows="8" spellcheck="false" readonly></textarea>
+    <input type="button" id="wl_auth_to_analyzer" class="btn2" value="Open this in the Analyzer">
   </div>
-  <div id="wl_auth_status" class="wa-status"></div>
-  <div id="wl_verify_body"></div>
-  <label for="wl_auth_result">The assertion, as WebAuthn Level 3 JSON</label>
-  <textarea id="wl_auth_result" class="wa-raw" rows="8" spellcheck="false" readonly></textarea>
-  <input type="button" id="wl_auth_to_analyzer" class="btn2" value="Open this in the Analyzer">
 </fieldset>
 
-<fieldset class="wa-pane">
-  <legend>Ceremony Trace</legend>
-  <div id="wl_trace_body"></div>
+<fieldset class="wa-pane" id="wl_pane_ceremony_trace">
+  <legend class="saml-legend"
+          onclick="return webauthnlab.togglePane('wl_pane_ceremony_trace_body');"
+          title="Click to collapse or expand this pane.">Ceremony Trace</legend>
+  <div class="saml-pane-body" id="wl_pane_ceremony_trace_body">
+    <div id="wl_trace_body"></div>
+  </div>
 </fieldset>
 
-<fieldset class="wa-pane">
-  <legend>Client Data</legend>
-  <div id="wl_clientdata_body"></div>
-  <label for="wl_clientdata_raw">Raw clientDataJSON</label>
-  <textarea id="wl_clientdata_raw" class="wa-raw" rows="4" spellcheck="false" readonly></textarea>
+<fieldset class="wa-pane" id="wl_pane_client_data">
+  <legend class="saml-legend"
+          onclick="return webauthnlab.togglePane('wl_pane_client_data_body');"
+          title="Click to collapse or expand this pane.">Client Data</legend>
+  <div class="saml-pane-body" id="wl_pane_client_data_body">
+    <div id="wl_clientdata_body"></div>
+    <label for="wl_clientdata_raw">Raw clientDataJSON</label>
+    <textarea id="wl_clientdata_raw" class="wa-raw" rows="4" spellcheck="false" readonly></textarea>
+  </div>
 </fieldset>
 
-<fieldset class="wa-pane">
-  <legend>Authenticator Data</legend>
-  <div id="wl_authdata_body"></div>
+<fieldset class="wa-pane" id="wl_pane_authenticator_data">
+  <legend class="saml-legend"
+          onclick="return webauthnlab.togglePane('wl_pane_authenticator_data_body');"
+          title="Click to collapse or expand this pane.">Authenticator Data</legend>
+  <div class="saml-pane-body" id="wl_pane_authenticator_data_body">
+    <div id="wl_authdata_body"></div>
+  </div>
 </fieldset>
 
-<fieldset class="wa-pane">
-  <legend>Attestation Object</legend>
-  <div id="wl_attestation_body"></div>
-  <label for="wl_attestation_raw">Attestation statement</label>
-  <textarea id="wl_attestation_raw" class="wa-raw" rows="6" spellcheck="false" readonly></textarea>
+<fieldset class="wa-pane" id="wl_pane_attestation_object">
+  <legend class="saml-legend"
+          onclick="return webauthnlab.togglePane('wl_pane_attestation_object_body');"
+          title="Click to collapse or expand this pane.">Attestation Object</legend>
+  <div class="saml-pane-body" id="wl_pane_attestation_object_body">
+    <div id="wl_attestation_body"></div>
+    <label for="wl_attestation_raw">Attestation statement</label>
+    <textarea id="wl_attestation_raw" class="wa-raw" rows="6" spellcheck="false" readonly></textarea>
+  </div>
 </fieldset>
 
-<fieldset class="wa-pane">
-  <legend>Credential Public Key (COSE_Key)</legend>
-  <div id="wl_cose_body"></div>
-  <label for="wl_cose_pem">SubjectPublicKeyInfo PEM</label>
-  <textarea id="wl_cose_pem" class="wa-raw" rows="5" spellcheck="false" readonly></textarea>
+<fieldset class="wa-pane" id="wl_pane_credential_public_key">
+  <legend class="saml-legend"
+          onclick="return webauthnlab.togglePane('wl_pane_credential_public_key_body');"
+          title="Click to collapse or expand this pane.">Credential Public Key (COSE_Key)</legend>
+  <div class="saml-pane-body" id="wl_pane_credential_public_key_body">
+    <div id="wl_cose_body"></div>
+    <label for="wl_cose_pem">SubjectPublicKeyInfo PEM</label>
+    <textarea id="wl_cose_pem" class="wa-raw" rows="5" spellcheck="false" readonly></textarea>
+  </div>
 </fieldset>
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">

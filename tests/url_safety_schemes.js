@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: url_safety.js
 //
 // client/src/url_safety.js — the scheme allowlist applied before this app

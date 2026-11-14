@@ -235,9 +235,26 @@ the
 ML-KEM round trip with its encapsulation lengths, its self-describing
 derivation, and the two refusals.
 
-## Keeping the two copies in step
+## Two implementations
 
-`common/xmldsig.js` is vendored into the mock STS as
-`sts/common/crypto_impl/xmldsig.js`, **byte-identical**, so both ends of a SAML
-exchange canonicalize with the same code. A change here is copied there in the
-same commit; `sts/common/crypto_impl/CLAUDE.md` carries the rule.
+`common/xmldsig.js` is this repository's XML Signature and XML Encryption
+code. iya-sts has its own at `common/crypto_impl/xmldsig.js`. The two were
+byte-identical until 2026-11-12; since iya-sts #1280 they evolve
+independently. A change in this file stays in this repository.
+
+This file stays the engine the browser runs. The static sites sign SAML,
+WS-Trust, WS-Federation and the XML Signature pane with no Node process, so
+forge is what those pages sign with. Under Node, `rsaSign()` signs RSA with
+`crypto.sign()` (issue #302). A bundle keeps forge: the `crypto` module name
+is not a literal `require`, which browserify would replace with
+`crypto-browserify`. `tests/xmlsec_interop.js` checks this file's two RSA
+backends against each other. It does not read iya-sts's copy.
+
+Issue #304's three canonicalization rules are proved here against Merlin's
+published bytes in `tests/w3c-merlin/`. `tests/xmlsec_interop.js` holds
+inclusive C14N of `merlin-c14n-three`'s SignedInfo to `c14n-27.txt`, so the
+apex keeps the `xml:lang` it inherits. It holds
+`merlin-xmldsig-twenty-three` references 7–14 to the published forms.
+`URI=""` and `URI="#id"` drop comments before a `#WithComments` method
+renders them. `#xpointer(/)` and `#xpointer(id('…'))` keep them, including
+the comments and processing instructions outside the document element.

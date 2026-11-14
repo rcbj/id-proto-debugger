@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: spiffe_client.js
 //
 // ---------------------------------------------------------------------------
@@ -1770,7 +1773,11 @@ function createSpiffeClient(appconfig, guard, log, deps) {
     options = options || {};
     const service = String(options.service || '');
     const method = String(options.method || '');
-    if (!Object.prototype.hasOwnProperty.call(SERVICES, service)) {
+    // Own property AND a constructor: the name is the caller's, and it is
+    // used to pick what `new` is applied to below (CodeQL
+    // js/unvalidated-dynamic-method-call).
+    if (!Object.prototype.hasOwnProperty.call(SERVICES, service) ||
+        typeof SERVICES[service] !== 'function') {
       log.debug("Leaving call(). No such service.");
       throw refuse('There is no SPIFFE service called ' +
         JSON.stringify(service) + ' here. The surfaces are ' +

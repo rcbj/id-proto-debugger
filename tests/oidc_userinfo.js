@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+
 // File: oidc_userinfo.js
 //
 // The UserInfo endpoint (OIDC Core section 5.3) reached the way a user reaches
