@@ -122,6 +122,11 @@
    * the headroom a container font has cost before. Measured at
    * 1366x768: ten and nine, the lowest card ending at 573px of a
    * 625px headless viewport, inside the 640px budget.
+   *
+   * The TWENTIETH card (Digital signatures & Hashing) fills the second
+   * row, ten and ten, so the column count did not change. It adds no
+   * row; the lowest card moves only if its own text is the tallest in
+   * that row. landingFitsOnOneScreen() measures it.
    */
   grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
   gap: 6px;
@@ -253,6 +258,8 @@
 .landing-card:nth-child(18) .landing-icon { color: #5f7a3f; }
 /* The nineteenth card is GNAP. Ten columns, in the grid note above. */
 .landing-card:nth-child(19) .landing-icon { color: #0b6e4f; }
+/* The twentieth is Digital signatures & Hashing, the second row's tenth. */
+.landing-card:nth-child(20) .landing-icon { color: #9e2a5b; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 
