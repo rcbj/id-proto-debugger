@@ -1766,7 +1766,7 @@ function addHsmCredential() {
     var opts = {
       managementKey: hsmManagementKey(),
       label: label,
-      algorithm: type === "ec" ? "EC_P256" : "AES128",
+      algorithm: type === "ec" ? hsm.EC_P256 : hsm.AES128,
       credentialPassword: valueOf("sc_hsm_add_password"),
       touch: checked("sc_hsm_add_touch")
     };
