@@ -888,6 +888,36 @@ class XacmlEditor {
         }
         const node = located.node;
         // ---------------------------------------------------------------------
+        // AN EDIT NAMES THE KIND OF NODE IT EDITS, AND ANY OTHER IS REFUSED.
+        //
+        // These six wrote their fields onto whatever the path named, so an
+        // `edit-rule` sent to a Match gave the Match an `effect` and said
+        // "Rule updated." — a document that typechecks, serializes the extra
+        // field nowhere, and has changed nothing the user meant. `edit-match`,
+        // `edit-selector` and the rest already checked; these now do too.
+        // ---------------------------------------------------------------------
+        const editsKind = {
+            'edit-policy': ['policy', 'policySet'],
+            'edit-rule': ['rule'],
+            'edit-obligation': ['obligation'],
+            'edit-assignment': ['assignment'],
+            'edit-variable': ['variable']
+        };
+        if (editsKind[action] &&
+            editsKind[action].indexOf(self.kindAt(path, node)) < 0) {
+            log.debug('Leaving XacmlEditor.applyEdit(). ' + action +
+                ' on a ' + self.kindAt(path, node) + '.');
+            return { ok: false,
+                why: action + ' edits a ' + editsKind[action].join(' or ') +
+                    ', and that node is a ' + self.kindAt(path, node) + '.' };
+        }
+        if (action === 'edit-designator' &&
+            (!node || node.kind !== 'designator')) {
+            log.debug('Leaving XacmlEditor.applyEdit(). Not a designator.');
+            return { ok: false,
+                why: 'That node is not an AttributeDesignator.' };
+        }
+        // ---------------------------------------------------------------------
         // AN EFFECT IS ONE OF TWO WORDS, AND A THIRD IS REFUSED.
         //
         // Reading anything but exactly `Deny` as a PERMIT would make `deny`,
