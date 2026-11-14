@@ -266,6 +266,18 @@ services:
     user: "0:0"
     network_mode: "host"
     environment:
+      # EdDSA signing is OFF by default since iya-sts v1.0.0 (#1292), and
+      # the suite drives it (the UserInfo, JWKS and JWS jobs).
+      # docker-compose-run-tests.yml turns it on the same way.
+      - STS_KEYS_EDDSA_SIGNING=true
+      # iya-sts's TEST configuration, as docker-compose-run-tests.yml gives
+      # it: env/local.js keeps the production sign-in limits (20 attempts
+      # per address, 5 per identity, per minute), and a pool of browser
+      # jobs signing in from one runner hits them — the federation grid
+      # read "Too many attempts. Wait 10 seconds" on the live-site runs.
+      # env/test.js raises them to 500 and 100 and changes nothing else
+      # this stack relies on. STS_CONFIG_FILE overrides it, as there.
+      - CONFIG_FILE=${STS_CONFIG_FILE:-./env/test.js}
       # ---------------------------------------------------------------------
       # THE MANAGEMENT API'S CLIENT SECRET, PINNED FOR THIS RUN.
       #

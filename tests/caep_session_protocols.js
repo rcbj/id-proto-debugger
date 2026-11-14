@@ -522,15 +522,40 @@ async function openApiInbox() {
   return { id: inbox.id, url: endpoint };
 }
 
+// EVERY SET READ SO FAR, by jti, ACKNOWLEDGED AS IT IS READ (RFC 8936
+// section 2.4). The stream covers everybody, so under the pool it also holds
+// every other job's events, and a poll that acknowledges nothing returns the
+// same first `maxEvents` of them each time: this session's session-revoked,
+// emitted last, then never comes into view however long the loop waits —
+// which failed the 54395140 run with seven of the eight arrived by poll and
+// all eight by push. Acknowledging what was read moves the window on.
+const polledSoFar = new Map();
 async function pollSets(stream, who) {
   log.debug("Entering pollSets().");
-  const got = await call('POST', stsUrl + '/ssf/poll', {
-    stream_id: stream.stream_id, maxEvents: 200, returnImmediately: true
-  }, { Authorization: basic(who) });
-  const sets = (got.json && got.json.sets) || {};
-  log.debug("Leaving pollSets(). " + Object.keys(sets).length + " set(s).");
-  return Object.keys(sets).map(function (jti) {
-    return sets[jti];
+  for (let round = 0; round < 20; round++) {
+    const got = await call('POST', stsUrl + '/ssf/poll', {
+      stream_id: stream.stream_id, maxEvents: 200, returnImmediately: true,
+      ack: Array.from(polledSoFar.keys()).filter(function (jti) {
+        return polledSoFar.get(jti).acked !== true;
+      })
+    }, { Authorization: basic(who) });
+    polledSoFar.forEach(function (one) {
+      one.acked = true;
+    });
+    const sets = (got.json && got.json.sets) || {};
+    const fresh = Object.keys(sets).filter(function (jti) {
+      return !polledSoFar.has(jti);
+    });
+    fresh.forEach(function (jti) {
+      polledSoFar.set(jti, { token: sets[jti], acked: false });
+    });
+    if (!fresh.length) {
+      break;
+    }
+  }
+  log.debug("Leaving pollSets(). " + polledSoFar.size + " set(s).");
+  return Array.from(polledSoFar.values()).map(function (one) {
+    return one.token;
   });
 }
 

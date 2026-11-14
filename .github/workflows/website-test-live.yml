@@ -109,8 +109,17 @@ jobs:
       # xmllint is what the WS-Trust schema test validates with when the optional
       # native libxmljs2 binding is unusable. The tests image installs
       # libxml2-utils for that reason; here the suite runs on the host instead.
-      - name: Install xmllint
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq libxml2-utils
+      # xmllint for the schema checks, and MIT Kerberos (kinit, klist, kvno)
+      # for the jobs that sign in to iya-sts by SPNEGO: they drive a real
+      # Kerberos client, which tests/Dockerfile installs for the containerized
+      # suite and an ubuntu-latest runner does not have. Without it those jobs
+      # stop at "this machine has no kinit". DEBIAN_FRONTEND keeps krb5-user's
+      # realm prompt from waiting for an answer.
+      - name: Install xmllint and MIT Kerberos
+        run: |
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+            libxml2-utils krb5-user
 
       # Selenium drives the runner's own Chrome (preinstalled on ubuntu-latest)
       # and fetches a matching driver itself. Printed so that a browser-version

@@ -990,7 +990,12 @@ function manifestDeclaresEveryRequire() {
     return;
   }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-  const declared = Object.keys(manifest.dependencies || {});
+  // optionalDependencies count: `npm install` installs them as well, and
+  // the two here (pcsclite, node-hid) are native bindings whose callers
+  // (api/smartcard_reader.js, api/otp_hid.js, api/native.js) cope with
+  // their absence by saying so rather than dying at startup.
+  const declared = Object.keys(manifest.dependencies || {})
+    .concat(Object.keys(manifest.optionalDependencies || {}));
 
   // Everything that ends up on the image's require path: the api's own sources,
   // plus whatever the Dockerfile stages in beside them. A staged file's
