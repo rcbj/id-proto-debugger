@@ -1412,6 +1412,23 @@ function buildJobs() {
     env: {},
   });
 
+  // Every XACML 3.0 standard function and datatype, as a table of 482
+  // policies with the decision Appendix A gives each
+  // (xacml_function_cases.js): in node against the workbench, with each
+  // case also written as ALFA and read back; then the same table in the
+  // browser through the page's Import and Ask controls. Needs the client
+  // only, for the second.
+  jobs.push({
+    name: "XACML functions and datatypes (every case, in node)",
+    script: "xacml_functions_engine.js",
+    env: {},
+  });
+  jobs.push({
+    name: "XACML functions and datatypes (every case, through xacml.html)",
+    script: "xacml_functions_page.js",
+    env: {},
+  });
+
   // GNAP client instance. The signature checks need no network. The
   // live half must obtain a grant from iya-sts with each of httpsig,
   // jwsd and jws for the page's default sample (subject information),
@@ -3222,6 +3239,25 @@ function buildJobs() {
   };
   if (gnapApiSkip) gnapApiJob.skip = gnapApiSkip;
   jobs.push(gnapApiJob);
+  // The api's Yubico OTP validation relay and its smart-card reader relay,
+  // over HTTP. The job is its own Validation Protocol 2.0 verifier, on an
+  // HTTPS port the api reaches by the compose name `tests`, and checks the
+  // signed fields arrive unchanged, the answer comes back verbatim, every
+  // malformed request is a 400 that sends nothing, and the reader relay is
+  // off (403) on this stack. A static site has no api.
+  const otpApiJob = {
+    name: "OTP verify and smart-card relay (api, against a verifier this " +
+        "job runs)",
+    script: "api_otp_smartcard.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+    },
+  };
+  if (ldapOff) {
+    otpApiJob.skip = "POST /otp/verify and the reader relay are the " +
+        "api's, and a static site has no api.";
+  }
+  jobs.push(otpApiJob);
   const gnapPageJob = {
     name: "GNAP page (a grant's whole life through gnap.html and the " +
         "api: approval in the browser, the token used, rotated and " +

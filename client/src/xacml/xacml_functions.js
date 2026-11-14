@@ -256,8 +256,24 @@ const COMPARISONS = [
   } }
 ];
 
+// THE COMPARISON FAMILY IS SIX TYPES, NOT EVERY ORDERED ONE. A.3.6 defines
+// greater-than, greater-than-or-equal, less-than and less-than-or-equal for
+// integer and double, and A.3.7 for string, time, dateTime and date. The two
+// durations are ordered (their rows keep `compare`, which the PDP uses
+// internally) but XACML defines NO comparison function over either: until
+// 2026-11-13 this registered eight such functions under the OASIS namespace,
+// which a policy could name here and no other PDP would know.
+function comparisonTypes() {
+  log.debug("Entering comparisonTypes().");
+  const types = typesWith('compare').filter(function (uri) {
+    return uri !== TYPE.DAYTIME_DURATION && uri !== TYPE.YEARMONTH_DURATION;
+  });
+  log.debug("Leaving comparisonTypes().");
+  return types;
+}
+
 COMPARISONS.forEach(function (comparison) {
-  generic(comparison.suffix, typesWith('compare'), function (row, uri) {
+  generic(comparison.suffix, comparisonTypes(), function (row, uri) {
     return { body: {
       returns: { kind: 'primitive', type: TYPE.BOOLEAN },
       args: [{ kind: 'primitive', type: uri },

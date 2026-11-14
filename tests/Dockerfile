@@ -759,6 +759,11 @@ COPY tests/hash_engine.js ./
 # has just staged, and a flat copy would make the workbench exist
 # twice. The stylesheet is not in that HTML copy, so it is named.
 COPY tests/xacml_engine.js tests/xacml_page.js ./
+COPY tests/xacml_function_cases.js tests/xacml_functions_engine.js \
+     tests/xacml_functions_page.js ./
+# The api's OTP validation relay and reader relay, over HTTP. It builds its
+# verifier's certificate with client/src/x509.js from the tree staged above.
+COPY tests/api_otp_smartcard.js ./
 COPY client/public/css/xacml.css /usr/src/client/public/css/xacml.css
 # The GNAP client instance, in node, and one signed grant against
 # iya-sts. The stylesheet is not in the HTML copy above. The proxy

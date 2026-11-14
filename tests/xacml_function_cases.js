@@ -176,10 +176,10 @@ const SAMPLES = [
     bad: "2020-02-30T10:00:00Z", ordered: true },
   // 14 months and 15; P1Y2M and P14M are the same duration.
   { type: "yearMonthDuration", lo: "P1Y2M", hi: "P15M", same: "P14M",
-    bad: "P1D", ordered: true },
+    bad: "P1D" },
   // 36 hours and 37; PT36H and P1DT12H are the same duration.
   { type: "dayTimeDuration", lo: "PT36H", hi: "P1DT13H", same: "P1DT12H",
-    bad: "P1Y", ordered: true },
+    bad: "P1Y" },
   // B.13: the domain part is compared without regard to case, the local
   // part with it.
   { type: "rfc822Name", lo: "Anne@example.com", hi: "bob@example.com",
@@ -769,9 +769,20 @@ function lexicalCases() {
     kase("a duration with no fields is refused", "Indeterminate",
          a("dayTimeDuration-equal", v("dayTimeDuration", "P"),
            v("dayTimeDuration", "PT0S"))),
-    kase("a negative yearMonthDuration", "Permit",
-         a("yearMonthDuration-less-than", v("yearMonthDuration", "-P1M"),
-           v("yearMonthDuration", "P0M"))),
+    kase("a negative yearMonthDuration", "NotApplicable",
+         a("yearMonthDuration-equal", v("yearMonthDuration", "-P1M"),
+           v("yearMonthDuration", "P1M"))),
+    // A.3.6/A.3.7 define no ordering functions over the durations.
+    kase("there is no yearMonthDuration-less-than", "Refused",
+         unknownApply("urn:oasis:names:tc:xacml:3.0:function:" +
+                      "yearMonthDuration-less-than",
+                      v("yearMonthDuration", "P1M"),
+                      v("yearMonthDuration", "P2M"))),
+    kase("there is no dayTimeDuration-greater-than", "Refused",
+         unknownApply("urn:oasis:names:tc:xacml:3.0:function:" +
+                      "dayTimeDuration-greater-than",
+                      v("dayTimeDuration", "PT2H"),
+                      v("dayTimeDuration", "PT1H"))),
     kase("double INF is greater than any finite double", "Permit",
          a("double-greater-than", dbl("INF"), dbl("1E308"))),
     // XML Schema's value space has ONE NaN, so it equals itself; the OASIS
