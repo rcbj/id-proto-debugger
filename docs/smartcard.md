@@ -45,6 +45,21 @@ and a missing module is a limit the page shows. The reader relay is
 **off** unless the api's env sets `smartcardReaderEnabled: true` (see
 [Reader](#reader)).
 
+## Specifications
+
+| Area | Specifications | Used for |
+|---|---|---|
+| Transport | [ISO/IEC 7816-4](https://www.iso.org/standard/77180.html) APDUs, status words and BER-TLV; [PC/SC](https://pcscworkgroup.com/specifications/); [USB CCID 1.1](https://www.usb.org/document-library/smart-card-ccid-version-11); [WebHID](https://wicg.github.io/webhid/) | Every applet's commands; the api's reader relay; the browser path to the OTP interface |
+| Yubico OTP | [Yubico OTP and modhex](https://developers.yubico.com/OTP/OTPs_Explained.html); [Validation Protocol 2.0](https://developers.yubico.com/OTP/Specifications/OTP_validation_protocol.html); [challenge-response](https://developers.yubico.com/OTP/OTP_challenge-response.html) with HMAC-SHA1 ([RFC 2104](https://www.rfc-editor.org/rfc/rfc2104)) | Decoding and verifying an OTP; slot challenge-response; programming, swapping and deleting slots |
+| OATH | [YKOATH](https://developers.yubico.com/OATH/YKOATH_Protocol.html); HOTP [RFC 4226](https://www.rfc-editor.org/rfc/rfc4226); TOTP [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238); base32 [RFC 4648](https://www.rfc-editor.org/rfc/rfc4648); the [Key URI Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) | Reading, adding and deleting accounts; computing codes; `otpauth://` links |
+| PIV | [NIST SP 800-73-4](https://csrc.nist.gov/pubs/sp/800/73/pt1/4/upd1/final); [SP 800-78-5](https://csrc.nist.gov/pubs/sp/800/78/5/final); [FIPS 201-3](https://csrc.nist.gov/pubs/fips/201-3/final); [Yubico PIV extensions](https://developers.yubico.com/PIV/Introduction/Yubico_extensions.html); [PIV attestation](https://developers.yubico.com/PIV/Introduction/PIV_attestation.html); management-key authentication with [Triple DES](https://csrc.nist.gov/pubs/sp/800/67/r2/final) or AES ([FIPS 197](https://csrc.nist.gov/pubs/fips/197/final)); gzip [RFC 1952](https://www.rfc-editor.org/rfc/rfc1952) | Objects, certificates and attestation (ML-DSA-87, FIPS 204, on Yubico's 2026 preview); key generation, certificates, PINs, the management key, metadata and reset |
+| OpenPGP card | [OpenPGP smart card application 3.4.1](https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.1.pdf); v4 fingerprints by [RFC 4880](https://www.rfc-editor.org/rfc/rfc4880) and [RFC 9580](https://www.rfc-editor.org/rfc/rfc9580), ECC by [RFC 6637](https://www.rfc-editor.org/rfc/rfc6637); Yubico's touch policy ([UIF](https://developers.yubico.com/PGP/)) | Cardholder and security data, key generation and its fingerprint, touch policy, PINs and reset |
+| YubiHSM Auth | [YubiHSM Auth](https://developers.yubico.com/yubikey-manager/YubiHSM_Auth.html); PBKDF2 [RFC 8018](https://www.rfc-editor.org/rfc/rfc8018) | Credentials (AES-128 derived or from keys, EC P-256), session keys from a trace, reset |
+
+The [supported standards page](https://idptools.com/supported_standards.html#smartcard)
+inside the debugger lists the same, row by row, with what the page does
+with each.
+
 ## Browser or API
 
 The page asks once, at the top, how to reach a key: **this browser** or

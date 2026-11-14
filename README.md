@@ -23,20 +23,27 @@ guide, a page per workflow, and how to run, test and release it.
 
 ## What it debugs
 
-| Workflow | Major specifications | Page |
+| Family | Major specifications | What it is |
 |---|---|---|
-| OAuth 2.0 and OpenID Connect | RFC 6749, OIDC Core 1.0, PKCE, RFC 8628, RFC 8693, RFC 7009, RFC 7662, Dynamic Client Registration, RP-Initiated Logout | [User guide](docs/oauth2-oidc/index.md) |
-| OAuth security | RFC 9700, RFC 9449 (DPoP) | [RFC 9700 mode](docs/rfc9700.md), [DPoP](docs/dpop.md) |
-| SAML | SAML 2.0 (Redirect, POST, Artifact, Single Logout), SAML 1.1 | [SAML 2.0](docs/saml.md), [SAML 1.1](docs/saml11.md), [Assertion Tool](docs/saml-assertion.md), [decoders](docs/saml-decoders.md) |
-| WS-* | WS-Trust 1.0–1.4, WS-Federation 1.2 | [WS-Trust](docs/wstrust.md), [WS-Federation](docs/wsfed.md) |
-| Verifiable credentials | OID4VCI 1.0, OID4VP 1.0, SD-JWT (RFC 9901), SD-JWT VC, DIDs | [Issuance](docs/sd-jwt-vc-issuance.md), [presentation](docs/sd-jwt-vc-presentation.md), [DIDs](docs/dids.md) |
-| Authentication | WebAuthn Level 3, ISO 7816 smart cards (PIV, OpenPGP, OATH, Yubico OTP, YubiHSM Auth) | [WebAuthn](docs/webauthn.md), [smart cards](docs/smartcard.md) |
-| Kerberos | RFC 4120, RFC 4121, MS-PAC, MS-SFU, SPNEGO (RFC 4178) | [Kerberos v5](docs/kerberos.md), [SPNEGO](docs/spnego.md) |
-| Directories and provisioning | LDAP (RFC 4511), SCIM 2.0 (RFC 7643, RFC 7644) | [LDAP](docs/ldap.md), [SCIM](docs/scim.md) |
-| Workload identity | SPIFFE, the SPIRE Server API | [SPIFFE](docs/spiffe.md) |
-| Authorization | XACML 3.0 with ALFA and the JSON Profile, GNAP (RFC 9635) | [XACML](docs/xacml.md), [GNAP](docs/gnap.md) |
-| Shared Signals | OpenID SSF 1.0, CAEP, RISC, RFC 8417, RFC 8935/8936 | [SSF](docs/ssf.md), [CAEP](docs/caep.md), [RISC](docs/risc.md) |
-| PKI and cryptography | X.509 / RFC 5280, TLS and mutual TLS, JOSE, XML Signature and Encryption, ML-DSA, SLH-DSA, ML-KEM, LMS/XMSS | [PKI](docs/pki.md), [encryption](docs/encryption.md), [hashing](docs/hashing.md), [JWT Tools](docs/jwt-tools.md), [Digital Signature](docs/digital-signature.md), [hash-based signatures](docs/hbs.md) |
+| [OAuth 2.0 and OpenID Connect](docs/oauth2-oidc/index.md) | RFC 6749, OIDC Core 1.0, RFC 7636, RFC 8414, RFC 8628, RFC 8693, RFC 7009, RFC 7662, RFC 7591/7592, OIDC Discovery, RP-Initiated Logout | A client and relying party for every grant and the three OIDC flows, with token detail, introspection, revocation, token exchange, the device grant and dynamic registration. |
+| [OAuth security](docs/rfc9700.md) | RFC 9700, RFC 9449 (DPoP) | A compliance mode that enforces the OAuth 2.0 Security BCP, and DPoP proof of possession. |
+| [SAML 2.0](docs/saml.md) | SAML 2.0 Core, Bindings, Profiles | SP-initiated SSO over Redirect, POST and Artifact, Single Logout, signed and encrypted messages, an Assertion Tool and decoders. |
+| [SAML 1.1](docs/saml11.md) | SAML 1.1, the Shibboleth AuthnRequest profile | Browser/POST and Browser/Artifact sign-in. |
+| [WS-Trust](docs/wstrust.md) | WS-Trust 1.0–1.4, WS-Security, WS-Addressing | Issue, renew, validate and cancel against a security token service. |
+| [WS-Federation](docs/wsfed.md) | WS-Federation 1.2 | The passive requestor profile: sign-in and sign-out, signed requests, encrypted tokens. |
+| [Verifiable credentials](docs/sd-jwt-vc-issuance.md) | OID4VCI 1.0, OID4VP 1.0, SD-JWT (RFC 9901), SD-JWT VC, DCQL, JAR (RFC 9101), DIDs | A wallet: credential issuance and presentation with selective disclosure. |
+| [WebAuthn](docs/webauthn.md) | WebAuthn Level 3, FIDO U2F | Registration and authentication ceremonies decoded, with a read-only browser extension. |
+| [Smart cards](docs/smartcard.md) | ISO/IEC 7816-4, PC/SC, USB CCID, WebHID, Yubico OTP, YKOATH (RFC 4226, RFC 6238), NIST SP 800-73-4, FIPS 201-3, OpenPGP card 3.4.1, YubiHSM Auth | Decode, read, write and reset a YubiKey's applets, from the browser or through the api's PC/SC relay. |
+| [Kerberos v5](docs/kerberos.md) | RFC 4120, RFC 3961, RFC 3962, RFC 8009, RFC 4121, MS-PAC, MS-SFU | A TGT, a service ticket and the AP exchange against a real KDC, the PAC, delegation, and a decoder. |
+| [SPNEGO](docs/spnego.md) | RFC 4178, RFC 4559 | Kerberos over HTTP Negotiate. |
+| [LDAP](docs/ldap.md) | RFC 4511 | Bind, search and modify against a directory, through the api. |
+| [SCIM 2.0](docs/scim.md) | RFC 7643, RFC 7644 | Every SCIM request, and scenario batches that provision and deprovision populations. |
+| [SPIFFE / SPIRE](docs/spiffe.md) | SPIFFE ID, X509-SVID, JWT-SVID, Workload API, SPIRE Server API | SVIDs from a Workload API, and the SPIRE Server API over gRPC. |
+| [XACML 3.0](docs/xacml.md) | XACML 3.0, ALFA, the JSON Profile | An editor and a local PDP: every function held to Appendix A and every combining algorithm to Appendix C. |
+| [GNAP](docs/gnap.md) | RFC 9635, RFC 9421, RFC 9530 | A client instance: grant requests with key proofs, interaction and continuation. |
+| [Shared Signals](docs/ssf.md) | OpenID SSF 1.0, CAEP, RISC, RFC 8417, RFC 9493, RFC 8935, RFC 8936 | Streams and Security Event Tokens by push or poll, with the CAEP and RISC vocabularies. |
+| [PKI and TLS](docs/pki.md) | RFC 5280, RFC 9881, RFC 9909, RFC 9935, TLS 1.3 | A certificate authority hierarchy and its certificates, post-quantum included, and TLS and mutual-TLS tests. |
+| [Cryptography tools](docs/encryption.md) | RFC 7515–7518, XML Signature, XML Encryption, FIPS 180-4, FIPS 202, SP 800-185, FIPS 203–205, RFC 8554, RFC 8391 | Encryption, hashing, JWT, digital signature and stateful hash-based signature tools. |
 
 The full list, with every specification linked, is
 [Supported specifications and features](docs/supported-specs.md). The
