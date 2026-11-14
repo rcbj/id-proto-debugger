@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+#
+# The build context of api/Dockerfile ONLY. BuildKit reads
+# <Dockerfile>.dockerignore beside the Dockerfile in place of the
+# repository's .dockerignore, so this file is that one plus what the api
+# image has no use for. It is separate rather than added to the root
+# .dockerignore because the tests image builds from the same context and
+# copies api/Dockerfile and reads the api's sources.
+#
+# embedded/build.sh excludes the same api files from the embedded tree; keep
+# the two lists in step.
+
+# ---- the repository's .dockerignore ----
+**/node_modules
+client/dist
+coverage
+tests/report
+tests/node_modules
+.git
+.idea
+**/.terraform
+**/*.tfstate
+**/*.tfstate.*
+
+# ---- not needed at run time in the api image ----
+# Repository files that sit in api/.
+api/CLAUDE.md
+api/Dockerfile
+api/Dockerfile.dockerignore
+api/.gitignore
+api/example.json
+# Runs the api outside a container; there is nothing for it to do inside one.
+api/native.js
+# ldapjs needs lib/, package.json and LICENSE. Its own test suites, docs,
+# examples, build scripts and tool configuration stay out.
+api/node-ldapjs/test
+api/node-ldapjs/test-integration
+api/node-ldapjs/docs
+api/node-ldapjs/examples
+api/node-ldapjs/scripts
+api/node-ldapjs/.github
+api/node-ldapjs/.git
+api/node-ldapjs/docker-compose.yml
+api/node-ldapjs/.eslintrc.js
+api/node-ldapjs/.eslintignore
+api/node-ldapjs/.taprc.yml
+api/node-ldapjs/dt.png
+api/node-ldapjs/CHANGES.md
+api/node-ldapjs/README.md
+api/node-ldapjs/.gitignore

@@ -140,6 +140,10 @@ trap cleanup EXIT
 #    client/dist, the version stamps, and the four files api/Dockerfile copies
 #    INTO api/ (a stale one left in a checkout must not be what ships — they
 #    are written fresh in step 4). `.git` is the submodule's pointer FILE.
+#    Then what the api has no use for at run time: its repository files,
+#    native.js, and everything of ldapjs but lib/, package.json and LICENSE.
+#    api/Dockerfile.dockerignore keeps the same out of the api image; keep
+#    the two lists in step.
 # ---------------------------------------------------------------------------
 log "copying sources to ${WORK}/tree"
 mkdir -p "${WORK}/tree"
@@ -156,6 +160,26 @@ tar -C "${REPO_ROOT}" \
     --exclude=api/version.js \
     --exclude=api/version.json \
     --exclude=api/sts-ca.pem \
+    --exclude=api/CLAUDE.md \
+    --exclude=api/Dockerfile \
+    --exclude=api/Dockerfile.dockerignore \
+    --exclude=api/.gitignore \
+    --exclude=api/example.json \
+    --exclude=api/native.js \
+    --exclude=api/node-ldapjs/test \
+    --exclude=api/node-ldapjs/test-integration \
+    --exclude=api/node-ldapjs/docs \
+    --exclude=api/node-ldapjs/examples \
+    --exclude=api/node-ldapjs/scripts \
+    --exclude=api/node-ldapjs/.github \
+    --exclude=api/node-ldapjs/docker-compose.yml \
+    --exclude=api/node-ldapjs/.eslintrc.js \
+    --exclude=api/node-ldapjs/.eslintignore \
+    --exclude=api/node-ldapjs/.taprc.yml \
+    --exclude=api/node-ldapjs/dt.png \
+    --exclude=api/node-ldapjs/CHANGES.md \
+    --exclude=api/node-ldapjs/README.md \
+    --exclude=api/node-ldapjs/.gitignore \
     -cf - VERSION client api common \
   | tar -C "${WORK}/tree" -xf -
 
