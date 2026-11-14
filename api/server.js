@@ -3528,6 +3528,80 @@ app.get('/smartcard/limits', function (req, res) {
   return res.status(STATUS_200).json(limits);
 });
 
+// SESSIONS: one exclusive connection across several requests, for PIV's
+// management-key authentication, which the page computes from the card's
+// answer. Same switch as the relay; closed with a card reset. See
+// smartcard_reader.js.
+app.post('/smartcard/session', function (req, res) {
+  log.debug('Entering POST /smartcard/session.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving POST /smartcard/session. Relay off.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
+  var reader = smartcardReader.checkReaderName((req.body || {}).reader);
+  if (!reader.ok) {
+    log.debug('Leaving POST /smartcard/session. Bad reader.');
+    return res.status(STATUS_400).json({ error: reader.error });
+  }
+  smartcardReader.openSession(reader.reader)
+    .then(function (opened) {
+      return res.status(STATUS_200).json(opened);
+    })
+    .catch(function (error) {
+      log.warn('POST /smartcard/session failed: ' + error.message);
+      return res.status(502).json({ error: error.message });
+    });
+  log.debug('Leaving POST /smartcard/session. Opening.');
+});
+
+app.post('/smartcard/session/transmit', function (req, res) {
+  log.debug('Entering POST /smartcard/session/transmit.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving POST /smartcard/session/transmit. Relay off.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
+  var body = req.body || {};
+  if (!smartcardReader.checkSessionId(body.id)) {
+    log.debug('Leaving POST /smartcard/session/transmit. Bad id.');
+    return res.status(STATUS_400).json({ error: 'The session id is 32 ' +
+        'hex characters.' });
+  }
+  // The same APDU checks as /smartcard/transmit, with a placeholder reader.
+  var described = smartcardReader.describeTransmit(
+      Object.assign({}, body, { reader: 'session' }));
+  if (!described.ok) {
+    log.debug('Leaving POST /smartcard/session/transmit. Refused.');
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  smartcardReader.sessionTransmit(body.id, described.apdus,
+      { getResponse: described.getResponse,
+        remainingIns: described.remainingIns })
+    .then(function (answer) {
+      return res.status(STATUS_200).json(answer);
+    })
+    .catch(function (error) {
+      log.warn('POST /smartcard/session/transmit failed: ' + error.message);
+      return res.status(502).json({ error: error.message });
+    });
+  log.debug('Leaving POST /smartcard/session/transmit. Sent.');
+});
+
+app.post('/smartcard/session/close', function (req, res) {
+  log.debug('Entering POST /smartcard/session/close.');
+  var id = (req.body || {}).id;
+  if (!smartcardReader.checkSessionId(id)) {
+    log.debug('Leaving POST /smartcard/session/close. Bad id.');
+    return res.status(STATUS_400).json({ error: 'The session id is 32 ' +
+        'hex characters.' });
+  }
+  smartcardReader.closeSession(id).then(function (closed) {
+    return res.status(STATUS_200).json({ closed: closed });
+  });
+  log.debug('Leaving POST /smartcard/session/close.');
+});
+
 // OTP-slot challenge-response over HID, for a browser with no WebHID. The
 // same switch as the reader relay; needs a native api (see otp_hid.js). A
 // key's answer is a 200, a bad request a 400, no HID or no key a 502.

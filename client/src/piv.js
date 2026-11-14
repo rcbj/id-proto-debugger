@@ -27,6 +27,7 @@ var log = bunyan.createLogger({
 });
 
 var iso = require("./iso7816.js");
+var forge = require("node-forge");
 
 // The full PIV application identifier. A SELECT of the RID alone
 // (A000000308) is the same application and is named as such.
@@ -685,7 +686,342 @@ function describeResponse(input, inflate) {
   return { summary: summary, rows: rows, certificate: certificate };
 }
 
+// ---------------------------------------------------------------------------
+// WRITING (SP 800-73-4 part 2, and Yubico's PIV extensions as yubikit sends
+// them). DOM-free: the page sends what these build through the api's relay.
+// ---------------------------------------------------------------------------
+
+// The card management key's algorithms: SP 800-78-4 identifiers, the
+// cipher's block size and the key length.
+var MGM_ALGORITHMS = {
+  "3des": { id: 0x03, block: 8, keyLen: 24, forge: "3DES-ECB" },
+  "aes128": { id: 0x08, block: 16, keyLen: 16, forge: "AES-ECB" },
+  "aes192": { id: 0x0a, block: 16, keyLen: 24, forge: "AES-ECB" },
+  "aes256": { id: 0x0c, block: 16, keyLen: 32, forge: "AES-ECB" }
+};
+var MGM_BY_ID = { "3": "3des", "8": "aes128", "10": "aes192",
+                  "12": "aes256" };
+var DEFAULT_MANAGEMENT_KEY = "010203040506070801020304050607080102030405060708";
+
+// The key algorithms GENERATE takes.
+var KEY_ALGORITHMS = {
+  "rsa1024": 0x06, "rsa2048": 0x07, "rsa3072": 0x05, "rsa4096": 0x16,
+  "eccp256": 0x11, "eccp384": 0x14, "ed25519": 0xe0, "x25519": 0xe1
+};
+
+// Slot -> the data object its certificate lives in.
+function certificateObject(slot) {
+  log.debug("Entering certificateObject().");
+  var fixed = { 0x9a: "5fc105", 0x9c: "5fc10a", 0x9d: "5fc10b",
+                0x9e: "5fc101", 0xf9: "5fff01" };
+  var hex = fixed[slot];
+  if (!hex && slot >= RETIRED_FIRST && slot <= RETIRED_LAST) {
+    hex = (0x5fc10d + (slot - RETIRED_FIRST)).toString(16);
+  }
+  if (!hex) {
+    log.debug("Leaving certificateObject(). Unknown slot.");
+    reject("The slot is 9A, 9C, 9D, 9E or a retired slot 82 to 95.");
+  }
+  log.debug("Leaving certificateObject().");
+  return hex;
+}
+
+function mgmAlgorithm(name) {
+  log.debug("Entering mgmAlgorithm().");
+  var alg = MGM_ALGORITHMS[String(name || "").toLowerCase()];
+  if (!alg) {
+    log.debug("Leaving mgmAlgorithm(). Unknown.");
+    reject("The management key algorithm is 3DES, AES-128, AES-192 or " +
+        "AES-256.");
+  }
+  log.debug("Leaving mgmAlgorithm().");
+  return alg;
+}
+
+// One ECB block operation with no padding, which is what mutual
+// authentication encrypts: single blocks.
+function ecb(algName, key, data, decrypt) {
+  log.debug("Entering ecb().");
+  var alg = mgmAlgorithm(algName);
+  var k = Buffer.from(key);
+  if (k.length !== alg.keyLen) {
+    log.debug("Leaving ecb(). Wrong key length.");
+    reject("A " + algName.toUpperCase() + " management key is " +
+        alg.keyLen + " bytes (" + alg.keyLen * 2 + " hex characters).");
+  }
+  var cipher = decrypt ?
+      forge.cipher.createDecipher(alg.forge, forge.util.createBuffer(
+          k.toString("binary"))) :
+      forge.cipher.createCipher(alg.forge, forge.util.createBuffer(
+          k.toString("binary")));
+  cipher.start();
+  cipher.update(forge.util.createBuffer(Buffer.from(data)
+      .toString("binary")));
+  cipher.finish(function () {
+    return true;
+  });
+  var out = Buffer.from(cipher.output.getBytes(), "binary");
+  log.debug("Leaving ecb().");
+  return out;
+}
+
+// Mutual authentication with the card management key, step 1: ask for a
+// witness. 7C { 80 (empty) }.
+function authWitnessApdu(algName) {
+  log.debug("Entering authWitnessApdu().");
+  var alg = mgmAlgorithm(algName);
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0x87, p1: alg.id,
+      p2: 0x9b, data: iso.encodeTlv(0x7c, iso.encodeTlv(0x80,
+          Buffer.alloc(0))), le: 256 });
+  log.debug("Leaving authWitnessApdu().");
+  return apdu;
+}
+
+// Step 2: decrypt the witness the card sent and send it back with a
+// challenge of our own. Returns { apdu, expected }: the card's answer
+// (tag 82) must equal `expected`, the challenge encrypted under the key —
+// which is how the page knows the card holds the same key.
+function authResponseApdu(algName, key, witnessAnswer, challenge) {
+  log.debug("Entering authResponseApdu().");
+  var alg = mgmAlgorithm(algName);
+  var outer = iso.parseElements(Buffer.from(witnessAnswer));
+  var dyn = outer.filter(function (n) {
+    return n.tag === 0x7c;
+  })[0];
+  var witness = dyn ? iso.parseElements(dyn.value).filter(function (n) {
+    return n.tag === 0x80;
+  })[0] : null;
+  if (!witness || witness.value.length !== alg.block) {
+    log.debug("Leaving authResponseApdu(). No witness.");
+    reject("The card did not send a witness of one " + alg.block +
+        "-byte block. Is the algorithm right?");
+  }
+  var chal = Buffer.from(challenge);
+  if (chal.length !== alg.block) {
+    log.debug("Leaving authResponseApdu(). Bad challenge.");
+    reject("The challenge is one " + alg.block + "-byte block.");
+  }
+  var decrypted = ecb(algName, key, witness.value, true);
+  var data = iso.encodeTlv(0x7c, Buffer.concat([
+    iso.encodeTlv(0x80, decrypted), iso.encodeTlv(0x81, chal)]));
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0x87, p1: alg.id,
+      p2: 0x9b, data: data, le: 256 });
+  log.debug("Leaving authResponseApdu().");
+  return { apdu: apdu, expected: ecb(algName, key, chal, false) };
+}
+
+// Whether the card's answer to step 2 proves it holds the key.
+function authCardProven(answer, expected) {
+  log.debug("Entering authCardProven().");
+  var outer = iso.parseElements(Buffer.from(answer));
+  var dyn = outer.filter(function (n) {
+    return n.tag === 0x7c;
+  })[0];
+  var got = dyn ? iso.parseElements(dyn.value).filter(function (n) {
+    return n.tag === 0x82;
+  })[0] : null;
+  var ok = !!got && Buffer.from(got.value).equals(Buffer.from(expected));
+  log.debug("Leaving authCardProven(). " + ok);
+  return ok;
+}
+
+// Yubico GET METADATA (INS F7) of a slot; for 9B its algorithm tells
+// which cipher the management key uses.
+function metadataApdu(slot) {
+  log.debug("Entering metadataApdu().");
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0xf7, p1: 0x00, p2: slot,
+      le: 256 });
+  log.debug("Leaving metadataApdu().");
+  return apdu;
+}
+
+function managementAlgorithmFromMetadata(body) {
+  log.debug("Entering managementAlgorithmFromMetadata().");
+  var node = iso.parseElements(Buffer.from(body)).filter(function (n) {
+    return n.tag === 0x01;
+  })[0];
+  var name = node && node.value.length ? MGM_BY_ID[String(node.value[0])] :
+      null;
+  log.debug("Leaving managementAlgorithmFromMetadata(). " + name);
+  return name || null;
+}
+
+// GENERATE ASYMMETRIC KEY PAIR in a slot, with optional PIN and touch
+// policies (Yubico tags AA and AB; 0 or absent is the slot's default).
+function generateApdu(slot, algorithm, pinPolicy, touchPolicy) {
+  log.debug("Entering generateApdu().");
+  var alg = KEY_ALGORITHMS[String(algorithm || "").toLowerCase()];
+  if (alg === undefined) {
+    log.debug("Leaving generateApdu(). Unknown algorithm.");
+    reject("The key algorithm is one of " +
+        Object.keys(KEY_ALGORITHMS).join(", ") + ".");
+  }
+  var inner = [iso.encodeTlv(0x80, Buffer.from([alg]))];
+  if (pinPolicy) {
+    inner.push(iso.encodeTlv(0xaa, Buffer.from([pinPolicy])));
+  }
+  if (touchPolicy) {
+    inner.push(iso.encodeTlv(0xab, Buffer.from([touchPolicy])));
+  }
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0x47, p1: 0x00, p2: slot,
+      data: iso.encodeTlv(0xac, Buffer.concat(inner)), le: 256 });
+  log.debug("Leaving generateApdu().");
+  return apdu;
+}
+
+function derInteger(bytes) {
+  log.debug("Entering derInteger().");
+  var b = Buffer.from(bytes);
+  var i = 0;
+  while (i < b.length - 1 && b[i] === 0) {
+    i += 1;
+  }
+  b = b.slice(i);
+  if (b[0] & 0x80) {
+    b = Buffer.concat([Buffer.from([0]), b]);
+  }
+  log.debug("Leaving derInteger().");
+  return iso.encodeTlv(0x02, b);
+}
+
+// The public key GENERATE answered with (7F49), as a DER
+// SubjectPublicKeyInfo.
+function generatedPublicKey(answer, algorithm) {
+  log.debug("Entering generatedPublicKey().");
+  var outer = iso.parseElements(Buffer.from(answer));
+  var tmpl = outer.filter(function (n) {
+    return n.tag === 0x7f49;
+  })[0];
+  if (!tmpl) {
+    log.debug("Leaving generatedPublicKey(). No 7F49.");
+    reject("The card's answer has no public key template (7F49).");
+  }
+  var parts = {};
+  iso.parseElements(tmpl.value).forEach(function (n) {
+    parts[n.tag] = n.value;
+  });
+  var name = String(algorithm || "").toLowerCase();
+  var oid = function (hex) {
+    return iso.encodeTlv(0x06, Buffer.from(hex, "hex"));
+  };
+  var spki = null;
+  if (/^rsa/.test(name)) {
+    var rsaKey = iso.encodeTlv(0x30, Buffer.concat([derInteger(parts[0x81]),
+        derInteger(parts[0x82])]));
+    spki = iso.encodeTlv(0x30, Buffer.concat([
+      iso.encodeTlv(0x30, Buffer.concat([oid("2a864886f70d010101"),
+          Buffer.from([0x05, 0x00])])),
+      iso.encodeTlv(0x03, Buffer.concat([Buffer.from([0]), rsaKey]))]));
+  } else if (name === "eccp256" || name === "eccp384") {
+    spki = iso.encodeTlv(0x30, Buffer.concat([
+      iso.encodeTlv(0x30, Buffer.concat([oid("2a8648ce3d0201"),
+          oid(name === "eccp256" ? "2a8648ce3d030107" : "2b81040022")])),
+      iso.encodeTlv(0x03, Buffer.concat([Buffer.from([0]), parts[0x86]]))]));
+  } else if (name === "ed25519" || name === "x25519") {
+    spki = iso.encodeTlv(0x30, Buffer.concat([
+      iso.encodeTlv(0x30, oid(name === "ed25519" ? "2b6570" : "2b656e")),
+      iso.encodeTlv(0x03, Buffer.concat([Buffer.from([0]), parts[0x86]]))]));
+  } else {
+    log.debug("Leaving generatedPublicKey(). Unknown algorithm.");
+    reject("Unknown key algorithm " + algorithm + ".");
+  }
+  log.debug("Leaving generatedPublicKey().");
+  return spki;
+}
+
+// PUT DATA of a slot's certificate object: 53 { 70 cert, 71 00, FE }.
+// An empty `der` deletes the certificate.
+function putCertificateApdu(slot, der) {
+  log.debug("Entering putCertificateApdu().");
+  var object = Buffer.from(certificateObject(slot), "hex");
+  var value = der && der.length ? Buffer.concat([
+    iso.encodeTlv(0x70, Buffer.from(der)),
+    iso.encodeTlv(0x71, Buffer.from([0x00])),
+    iso.encodeTlv(0xfe, Buffer.alloc(0))]) : Buffer.alloc(0);
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0xdb, p1: 0x3f, p2: 0xff,
+      data: Buffer.concat([iso.encodeTlv(0x5c, object),
+                           iso.encodeTlv(0x53, value)]) });
+  log.debug("Leaving putCertificateApdu().");
+  return apdu;
+}
+
+// Yubico MOVE KEY (INS F6) to slot FF, which deletes the key in `slot`
+// (firmware 5.7 and later).
+function deleteKeyApdu(slot) {
+  log.debug("Entering deleteKeyApdu().");
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0xf6, p1: 0xff, p2: slot });
+  log.debug("Leaving deleteKeyApdu().");
+  return apdu;
+}
+
+function pinBlock(pin, what) {
+  log.debug("Entering pinBlock().");
+  var bytes = Buffer.from(String(pin == null ? "" : pin), "utf8");
+  if (bytes.length < 6 || bytes.length > PIN_LENGTH) {
+    log.debug("Leaving pinBlock(). Wrong length.");
+    reject(what + " is 6 to 8 characters.");
+  }
+  log.debug("Leaving pinBlock().");
+  return Buffer.concat([bytes, Buffer.alloc(PIN_LENGTH - bytes.length,
+                                            0xff)]);
+}
+
+// CHANGE REFERENCE DATA for the PIN (80) or PUK (81): old then new.
+function changeReferenceApdu(reference, oldValue, newValue) {
+  log.debug("Entering changeReferenceApdu().");
+  var what = reference === 0x81 ? "A PUK" : "A PIN";
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0x24, p1: 0x00,
+      p2: reference, data: Buffer.concat([pinBlock(oldValue, what),
+                                          pinBlock(newValue, what)]) });
+  log.debug("Leaving changeReferenceApdu().");
+  return apdu;
+}
+
+// RESET RETRY COUNTER: unblock the PIN with the PUK.
+function unblockPinApdu(puk, newPin) {
+  log.debug("Entering unblockPinApdu().");
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0x2c, p1: 0x00, p2: 0x80,
+      data: Buffer.concat([pinBlock(puk, "A PUK"),
+                           pinBlock(newPin, "A PIN")]) });
+  log.debug("Leaving unblockPinApdu().");
+  return apdu;
+}
+
+// Yubico SET MANAGEMENT KEY (INS FF): P2 FE requires a touch to use it.
+function setManagementKeyApdu(algName, key, requireTouch) {
+  log.debug("Entering setManagementKeyApdu().");
+  var alg = mgmAlgorithm(algName);
+  var k = Buffer.from(key);
+  if (k.length !== alg.keyLen) {
+    log.debug("Leaving setManagementKeyApdu(). Wrong length.");
+    reject("A " + algName.toUpperCase() + " management key is " +
+        alg.keyLen + " bytes.");
+  }
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0xff, p1: 0xff,
+      p2: requireTouch ? 0xfe : 0xff,
+      data: Buffer.concat([Buffer.from([alg.id, 0x9b, k.length]), k]) });
+  log.debug("Leaving setManagementKeyApdu().");
+  return apdu;
+}
+
 module.exports = {
+  MGM_ALGORITHMS: MGM_ALGORITHMS,
+  KEY_ALGORITHMS: KEY_ALGORITHMS,
+  DEFAULT_MANAGEMENT_KEY: DEFAULT_MANAGEMENT_KEY,
+  certificateObject: certificateObject,
+  ecb: ecb,
+  authWitnessApdu: authWitnessApdu,
+  authResponseApdu: authResponseApdu,
+  authCardProven: authCardProven,
+  metadataApdu: metadataApdu,
+  managementAlgorithmFromMetadata: managementAlgorithmFromMetadata,
+  generateApdu: generateApdu,
+  generatedPublicKey: generatedPublicKey,
+  putCertificateApdu: putCertificateApdu,
+  deleteKeyApdu: deleteKeyApdu,
+  changeReferenceApdu: changeReferenceApdu,
+  unblockPinApdu: unblockPinApdu,
+  setManagementKeyApdu: setManagementKeyApdu,
   PIV_AID: PIV_AID,
   slotName: slotName,
   algorithmName: algorithmName,

@@ -513,9 +513,18 @@ function transmit(readerName, apdus, opts) {
             });
           });
         }
+        // A sequence that VERIFYs a PIN or authenticates with a key leaves
+        // the card in that security state on a LEAVE_CARD disconnect, for
+        // whatever connects next to inherit. Such a sequence ends with a
+        // card reset instead, which clears it.
+        var authed = list.some(function (apdu) {
+          return apdu.length > 1 && (apdu[1] === 0x20 || apdu[1] === 0x87);
+        });
+        var ending = authed && reader.SCARD_RESET_CARD !== undefined ?
+            reader.SCARD_RESET_CARD : reader.SCARD_LEAVE_CARD;
         runSequence(send, list, getResponse, options.remainingIns)
             .then(function (results) {
-          reader.disconnect(reader.SCARD_LEAVE_CARD, function () {
+          reader.disconnect(ending, function () {
             var last = results[results.length - 1];
             finish(null, {
               data: last.data,
@@ -525,7 +534,7 @@ function transmit(readerName, apdus, opts) {
             });
           });
         }, function (err) {
-          reader.disconnect(reader.SCARD_LEAVE_CARD, function () {
+          reader.disconnect(ending, function () {
             finish(err);
           });
         });
@@ -545,7 +554,198 @@ function transmit(readerName, apdus, opts) {
   return pending;
 }
 
+// ---------------------------------------------------------------------------
+// SESSIONS: one exclusive connection kept open across several requests.
+//
+// PIV's management-key authentication is a challenge-response the page
+// computes from the card's own answer (SP 800-73-4 part 2, 3.2.4), so the
+// command after it cannot be in a sequence written in advance; and the
+// card forgets the authentication when the connection closes. A session
+// holds the connection, exclusively, until it is closed or sits idle for
+// SESSION_IDLE_MS, and is closed with a card RESET, which clears every PIN
+// and key the card accepted on it. At most MAX_SESSIONS at once, one
+// request at a time in each. The key material never comes here: the page
+// does the arithmetic and sends APDUs.
+// ---------------------------------------------------------------------------
+var SESSION_IDLE_MS = 60000;
+var MAX_SESSIONS = 4;
+var sessions = {};
+
+function endSession(id, why) {
+  log.debug("Entering endSession(). " + why);
+  var session = sessions[id];
+  if (!session) {
+    log.debug("Leaving endSession(). Unknown.");
+    return Promise.resolve(false);
+  }
+  delete sessions[id];
+  clearTimeout(session.timer);
+  var ended = new Promise(function (resolve) {
+    var mode = session.reader.SCARD_RESET_CARD !== undefined ?
+        session.reader.SCARD_RESET_CARD : session.reader.SCARD_LEAVE_CARD;
+    try {
+      session.reader.disconnect(mode, function () {
+        closePcsc(session.pcsc, session.seen);
+        resolve(true);
+      });
+    } catch (e) {
+      closePcsc(session.pcsc, session.seen);
+      resolve(true);
+    }
+  });
+  log.debug("Leaving endSession().");
+  return ended;
+}
+
+function touchSession(id) {
+  log.debug("Entering touchSession().");
+  var session = sessions[id];
+  if (session) {
+    clearTimeout(session.timer);
+    session.timer = setTimeout(function () {
+      endSession(id, "idle");
+    }, SESSION_IDLE_MS);
+    if (session.timer.unref) {
+      session.timer.unref();
+    }
+  }
+  log.debug("Leaving touchSession().");
+}
+
+// Open a session on a reader. Resolves to { id, idleMs }.
+function openSession(readerName, opts) {
+  log.debug("Entering openSession().");
+  var options = opts || {};
+  if (Object.keys(sessions).length >= MAX_SESSIONS) {
+    log.debug("Leaving openSession(). Too many.");
+    return Promise.reject(new Error("Too many open sessions (" +
+        MAX_SESSIONS + "); close one or wait " + (SESSION_IDLE_MS / 1000) +
+        " seconds."));
+  }
+  var loaded = options.factory ? { factory: options.factory } :
+      loadFactory();
+  if (!loaded.factory) {
+    log.debug("Leaving openSession(). No PC/SC.");
+    return Promise.reject(new Error(loaded.reason));
+  }
+  var opened = new Promise(function (resolve, reject) {
+    var pcsc = null;
+    var seen = [];
+    var settled = false;
+    function fail(err) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      closePcsc(pcsc, seen);
+      reject(err);
+    }
+    try {
+      pcsc = loaded.factory();
+    } catch (e) {
+      fail(e);
+      return;
+    }
+    pcsc.on("error", function (err) {
+      fail(err || new Error("The reader subsystem reported an error."));
+    });
+    pcsc.on("reader", function (reader) {
+      if (reader) {
+        seen.push(reader);
+      }
+      if (!reader || reader.name !== readerName || settled) {
+        return;
+      }
+      reader.connect({ share_mode: reader.SCARD_SHARE_EXCLUSIVE },
+          function (err, protocol) {
+        if (err) {
+          fail(new Error("Could not open " + readerName + " exclusively. " +
+              "PC/SC said: " + (err.message || String(err))));
+          return;
+        }
+        if (settled) {
+          return;
+        }
+        settled = true;
+        var id = require("crypto").randomBytes(16).toString("hex");
+        sessions[id] = { pcsc: pcsc, reader: reader, protocol: protocol,
+                         seen: seen, busy: false, timer: null };
+        touchSession(id);
+        resolve({ id: id, idleMs: SESSION_IDLE_MS });
+      });
+    });
+    setTimeout(function () {
+      fail(new Error("No reader named \"" + readerName + "\"."));
+    }, LIST_WAIT_MS);
+  });
+  log.debug("Leaving openSession().");
+  return opened;
+}
+
+// Run a sequence in an open session. Same answer as transmit().
+function sessionTransmit(id, apdus, opts) {
+  log.debug("Entering sessionTransmit().");
+  var options = opts || {};
+  var session = sessions[id];
+  if (!session) {
+    log.debug("Leaving sessionTransmit(). Unknown.");
+    return Promise.reject(new Error("No such session: it was closed, or " +
+        "it was idle for " + (SESSION_IDLE_MS / 1000) + " seconds."));
+  }
+  if (session.busy) {
+    log.debug("Leaving sessionTransmit(). Busy.");
+    return Promise.reject(new Error("The session is still answering the " +
+        "previous request."));
+  }
+  session.busy = true;
+  touchSession(id);
+  function send(apdu) {
+    return new Promise(function (ok, bad) {
+      session.reader.transmit(apdu, MAX_APDU_BYTES, session.protocol,
+          function (err, data) {
+        if (err) {
+          bad(err);
+          return;
+        }
+        ok(Buffer.from(data || []));
+      });
+    });
+  }
+  var list = Buffer.isBuffer(apdus) ? [apdus] : apdus;
+  var ran = runSequence(send, list, options.getResponse !== false,
+      options.remainingIns).then(function (results) {
+    session.busy = false;
+    touchSession(id);
+    var last = results[results.length - 1];
+    return { data: last.data, status: last.status, steps: last.steps,
+             results: results };
+  }, function (err) {
+    session.busy = false;
+    throw err;
+  });
+  log.debug("Leaving sessionTransmit().");
+  return ran;
+}
+
+function closeSession(id) {
+  log.debug("Entering closeSession().");
+  log.debug("Leaving closeSession().");
+  return endSession(id, "closed");
+}
+
+function checkSessionId(id) {
+  log.debug("Entering checkSessionId().");
+  var ok = typeof id === "string" && /^[0-9a-f]{32}$/.test(id);
+  log.debug("Leaving checkSessionId(). " + ok);
+  return ok;
+}
+
 module.exports = {
+  openSession: openSession,
+  sessionTransmit: sessionTransmit,
+  closeSession: closeSession,
+  checkSessionId: checkSessionId,
+  SESSION_IDLE_MS: SESSION_IDLE_MS,
   MAX_APDU_BYTES: MAX_APDU_BYTES,
   MAX_SEQUENCE: MAX_SEQUENCE,
   DISABLED_MESSAGE: DISABLED_MESSAGE,

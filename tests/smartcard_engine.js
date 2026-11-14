@@ -1844,6 +1844,159 @@ async function hidExchangeEndToEnd() {
   log.debug("Leaving hidExchangeEndToEnd().");
 }
 
+// PIV WRITING, against yubikit (python3-ykman 4.0.7's PivSession over a
+// connection that records what it sends). yubikit encodes these as
+// extended APDUs and this tree as short ones — ISO 7816-4 allows both —
+// so the comparison is of instruction, parameters and data.
+var PIV_YUBIKIT = {
+  generate: ["00", "47", "00", "9c", "ac09800114aa0103ab0102"],
+  changePin: ["00", "24", "00", "80", "313233343536ffff363534333231ffff"],
+  changePuk: ["00", "24", "00", "81", "31323334353637383837363534333231"],
+  unblock: ["00", "2c", "00", "80", "3132333435363738363534333231ffff"],
+  setMgmAes192Touch: ["00", "ff", "ff", "fe", "0a9b18" + "11".repeat(24)],
+  setMgm3des: ["00", "ff", "ff", "ff", "039b18" +
+      "000102030405060708090a0b0c0d0e0f1011121314151617"],
+  deleteCert: ["00", "db", "3f", "ff", "5c035fc1055300"]
+};
+
+function sameCommand(apdu, expected, what) {
+  log.debug("Entering sameCommand().");
+  var c = iso.parseCommand(apdu);
+  var got = [c.cla, c.ins, c.p1, c.p2].map(function (b) {
+    return ("0" + b.toString(16)).slice(-2);
+  }).concat([Buffer.from(c.data).toString("hex")]);
+  assert.deepStrictEqual(got, expected, what + " differs from yubikit");
+  log.debug("Leaving sameCommand().");
+}
+
+function pivWriteCommands() {
+  log.debug("Entering pivWriteCommands().");
+  sameCommand(piv.generateApdu(0x9c, "eccp384", 3, 2), PIV_YUBIKIT.generate,
+      "GENERATE");
+  sameCommand(piv.changeReferenceApdu(0x80, "123456", "654321"),
+      PIV_YUBIKIT.changePin, "change PIN");
+  sameCommand(piv.changeReferenceApdu(0x81, "12345678", "87654321"),
+      PIV_YUBIKIT.changePuk, "change PUK");
+  sameCommand(piv.unblockPinApdu("12345678", "654321"), PIV_YUBIKIT.unblock,
+      "unblock PIN");
+  sameCommand(piv.setManagementKeyApdu("aes192", Buffer.alloc(24, 0x11),
+      true), PIV_YUBIKIT.setMgmAes192Touch, "set management key");
+  sameCommand(piv.setManagementKeyApdu("3des", Buffer.from(
+      "000102030405060708090a0b0c0d0e0f1011121314151617", "hex"), false),
+      PIV_YUBIKIT.setMgm3des, "set 3DES management key");
+  sameCommand(piv.putCertificateApdu(0x9a, null), PIV_YUBIKIT.deleteCert,
+      "delete certificate");
+  var put = iso.parseCommand(piv.putCertificateApdu(0x9a,
+      Buffer.from("010203", "hex")));
+  assert.strictEqual(Buffer.from(put.data).toString("hex"),
+      "5c035fc105530a7003010203710100fe00", "PUT certificate");
+  assert.strictEqual(piv.certificateObject(0x82), "5fc10d");
+  assert.strictEqual(piv.certificateObject(0x95), "5fc120");
+  assert.strictEqual(piv.ecb("aes128", Buffer.from(
+      "000102030405060708090a0b0c0d0e0f", "hex"), Buffer.from(
+      "00112233445566778899aabbccddeeff", "hex")).toString("hex"),
+      "69c4e0d86a7b0430d8cdb78070b4c55a", "AES-128 is not FIPS-197's");
+  assert.throws(function () {
+    piv.changeReferenceApdu(0x80, "12345", "654321");
+  }, /6 to 8/);
+
+  // Mutual authentication against a simulated card, for each cipher: the
+  // card encrypts a witness, the page decrypts it and challenges back, the
+  // card proves itself by encrypting the challenge. A card holding a
+  // different key is caught.
+  ["3des", "aes128", "aes192", "aes256"].forEach(function (alg) {
+    var spec = piv.MGM_ALGORITHMS[alg];
+    var key = crypto.randomBytes(spec.keyLen);
+    var witness = crypto.randomBytes(spec.block);
+    var challenge = crypto.randomBytes(spec.block);
+    var step1 = iso.parseCommand(piv.authWitnessApdu(alg));
+    assert.strictEqual(Buffer.from(step1.data).toString("hex"), "7c028000");
+    var cardWitness = iso.encodeTlv(0x7c, iso.encodeTlv(0x80,
+        piv.ecb(alg, key, witness, false)));
+    var step2 = piv.authResponseApdu(alg, key, cardWitness, challenge);
+    var sent = iso.parseElements(iso.parseElements(Buffer.from(
+        iso.parseCommand(step2.apdu).data))[0].value);
+    assert.ok(sent[0].value.equals(witness), alg + ": witness not decrypted");
+    assert.ok(sent[1].value.equals(challenge), alg + ": challenge not sent");
+    var cardProof = iso.encodeTlv(0x7c, iso.encodeTlv(0x82,
+        piv.ecb(alg, key, challenge, false)));
+    assert.ok(piv.authCardProven(cardProof, step2.expected), alg +
+        ": a card with the key is not believed");
+    var impostor = iso.encodeTlv(0x7c, iso.encodeTlv(0x82,
+        piv.ecb(alg, crypto.randomBytes(spec.keyLen), challenge, false)));
+    assert.ok(!piv.authCardProven(impostor, step2.expected), alg +
+        ": a card without the key is believed");
+  });
+  log.info("OK — PIV writes match yubikit, and mutual authentication " +
+      "proves the card in 3DES and three AES sizes.");
+  log.debug("Leaving pivWriteCommands().");
+}
+
+// OPENPGP CARD WRITING: the v4 fingerprints written after GENERATE, held to
+// GnuPG 2.2.27's own for three keys it generated (each rebuilt as the
+// card's 7F49 answer), and the command shapes of the 3.4 specification.
+var GPG_KEYS =
+  [
+    {
+      "alg": "ed25519",
+      "created": 1794621806,
+      "tlv": {
+        "86": "4d14ecd07e499552a9fc3d818a27512e9a911ff950ee68f9ff29b8a21c62fc54"
+      },
+      "fingerprint": "e66cc44cea126ec649872293ae36941908cb9bc1"
+    },
+    {
+      "alg": "cv25519",
+      "created": 1794621806,
+      "tlv": {
+        "86": "c6c82f49916c8eda723c35f70a34a3b73728c6405569c45d4cfe08e912c94449"
+      },
+      "fingerprint": "6bf4773f1363aadba4f54271bf8b4ca586fdbd5f"
+    },
+    {
+      "alg": "rsa2048",
+      "created": 1794621806,
+      "tlv": {
+        "81": "a9dcf73c080f989d58b1b3dd28ba6df97b387b14a31bac7825ffc843d6be70990b90eefa51dd408e90931c78312adce40a4c17195e99d5774cd4179ad4510d6ff5f2af8a37ae217d87e906fbf4be4877657c43a084b02427f574c92912200c9dd3f94cd022411f94d38c2d73540fb4885042d121b71a7166a64489ed112feecc43cd7712e79efe1d0f764e7c1378140c0ca0e1085fd16b36ebe8344b33bcaa3348bc3e7e2b54d670d1a6e28b0054a1fae5696318b9f23fa6eb9131a21e53472ff99033331c106aa51b8e678fb6065b213ebd7a196b5181f378a6a376a08ab78e84100c62bc073dbbedaf2466344dc9607e758d4ec8433d824267aee852d65d37",
+        "82": "010001"
+      },
+      "fingerprint": "b0a37febdb420404212b0482c5883fdb8279ca6d"
+    }
+  ];
+
+function pgpWriteCommands() {
+  log.debug("Entering pgpWriteCommands().");
+  GPG_KEYS.forEach(function (k) {
+    var inner = Buffer.concat(Object.keys(k.tlv).map(function (tag) {
+      return iso.encodeTlv(parseInt(tag, 16), Buffer.from(k.tlv[tag], "hex"));
+    }));
+    var answer = iso.encodeTlv(Buffer.from("7f49", "hex"), inner);
+    assert.strictEqual(pgp.v4Fingerprint(k.alg, answer, k.created)
+        .fingerprint.toString("hex"), k.fingerprint, k.alg +
+        " fingerprint differs from GnuPG's");
+  });
+  sameCommand(pgp.verifyApdu(pgp.PW3, "12345678"),
+      ["00", "20", "00", "83", "3132333435363738"], "VERIFY PW3");
+  sameCommand(pgp.changePinApdu(pgp.PW1, "123456", "654321"),
+      ["00", "24", "00", "81", "313233343536363534333231"], "change PW1");
+  sameCommand(pgp.putDataApdu(0x5b, Buffer.from("Doe<<John")),
+      ["00", "da", "00", "5b", "446f653c3c4a6f686e"], "PUT DATA name");
+  sameCommand(pgp.putDataApdu(0x5f50, Buffer.from("https://x")),
+      ["00", "da", "5f", "50", "68747470733a2f2f78"], "PUT DATA URL");
+  sameCommand(pgp.algorithmAttributesApdu("sig", "ed25519"),
+      ["00", "da", "00", "c1", "162b06010401da470f01"], "attributes");
+  sameCommand(pgp.generateApdu("dec"), ["00", "47", "80", "00", "b800"],
+      "GENERATE");
+  sameCommand(pgp.touchPolicyApdu("aut", 1), ["00", "da", "00", "d8",
+      "0120"], "touch policy");
+  assert.throws(function () {
+    pgp.verifyApdu(pgp.PW3, "1234567");
+  }, /Admin PIN/);
+  log.info("OK — OpenPGP fingerprints match GnuPG's, and the writes have " +
+      "the 3.4 specification's shapes.");
+  log.debug("Leaving pgpWriteCommands().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
@@ -1867,6 +2020,8 @@ async function test() {
   oathAccountInput();
   otpSlotConfigs();
   await hidExchangeEndToEnd();
+  pivWriteCommands();
+  pgpWriteCommands();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

@@ -26,6 +26,7 @@ var log = bunyan.createLogger({
 
 var iso = require("./iso7816.js");
 var bytesLib = require("./crypto_bytes.js");
+var sha1 = require("@noble/hashes/sha1").sha1;
 
 var AID_PREFIX = "d27600012401";
 
@@ -430,7 +431,205 @@ function describeResponse(input) {
   return described;
 }
 
+// ---------------------------------------------------------------------------
+// WRITING (OpenPGP smart card application 3.4). DOM-free; the page sends
+// these through the api's relay. Every write is preceded by VERIFY of the
+// right password in the same sequence: PW3 (the Admin PIN) for PUT DATA
+// and GENERATE, PW1 for the user PIN's own change.
+// ---------------------------------------------------------------------------
+var PW1 = 0x81;
+var PW3 = 0x83;
+var KEY_REFS = {
+  sig: { crt: 0xb6, attr: 0xc1, fpr: 0xc7, time: 0xce },
+  dec: { crt: 0xb8, attr: 0xc2, fpr: 0xc8, time: 0xcf },
+  aut: { crt: 0xa4, attr: 0xc3, fpr: 0xc9, time: 0xd0 }
+};
+// Algorithm attributes (4.4.3.9): RSA is 01, modulus bits, public
+// exponent bits (32), import format 00; ECC is the algorithm ID and the
+// curve's OID without its tag and length.
+var ATTRIBUTES = {
+  "rsa2048": "010800002000", "rsa3072": "010c00002000",
+  "rsa4096": "011000002000",
+  "nistp256-ecdsa": "132a8648ce3d030107",
+  "nistp384-ecdsa": "132b81040022",
+  "nistp256-ecdh": "122a8648ce3d030107",
+  "ed25519": "162b06010401da470f01",
+  "cv25519": "122b060104019755010501"
+};
+
+function pinBytes(pin, min, what) {
+  log.debug("Entering pinBytes().");
+  var bytes = Buffer.from(String(pin == null ? "" : pin), "utf8");
+  if (bytes.length < min || bytes.length > 127) {
+    log.debug("Leaving pinBytes(). Wrong length.");
+    reject(what + " is at least " + min + " characters.");
+  }
+  log.debug("Leaving pinBytes().");
+  return bytes;
+}
+
+// VERIFY PW1 for signing (81), PW1 for everything else (82), or PW3 (83).
+function verifyApdu(reference, pin) {
+  log.debug("Entering verifyApdu().");
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0x20, p1: 0x00,
+      p2: reference, data: pinBytes(pin, reference === PW3 ? 8 : 6,
+          reference === PW3 ? "The Admin PIN" : "The PIN") });
+  log.debug("Leaving verifyApdu().");
+  return apdu;
+}
+
+// CHANGE REFERENCE DATA: PW1 (81) or PW3 (83), old then new.
+function changePinApdu(reference, oldPin, newPin) {
+  log.debug("Entering changePinApdu().");
+  var min = reference === PW3 ? 8 : 6;
+  var what = reference === PW3 ? "The Admin PIN" : "The PIN";
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0x24, p1: 0x00,
+      p2: reference, data: Buffer.concat([pinBytes(oldPin, min, what),
+                                          pinBytes(newPin, min, what)]) });
+  log.debug("Leaving changePinApdu().");
+  return apdu;
+}
+
+// PUT DATA of a data object: name 5B, login 5E, URL 5F50, language 5F2D,
+// sex 5F35, an algorithm attribute C1-C3, a fingerprint C7-C9, a
+// generation time CE-D0, a touch policy D6-D8.
+function putDataApdu(tag, value) {
+  log.debug("Entering putDataApdu().");
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0xda, p1: (tag >> 8) & 0xff,
+      p2: tag & 0xff, data: Buffer.from(value || []) });
+  log.debug("Leaving putDataApdu().");
+  return apdu;
+}
+
+function keyRef(which) {
+  log.debug("Entering keyRef().");
+  var ref = KEY_REFS[which];
+  if (!ref) {
+    log.debug("Leaving keyRef(). Unknown.");
+    reject("The key is sig, dec or aut.");
+  }
+  log.debug("Leaving keyRef().");
+  return ref;
+}
+
+function algorithmAttributesApdu(which, algorithm) {
+  log.debug("Entering algorithmAttributesApdu().");
+  var attr = ATTRIBUTES[algorithm];
+  if (!attr) {
+    log.debug("Leaving algorithmAttributesApdu(). Unknown.");
+    reject("The algorithm is one of " + Object.keys(ATTRIBUTES).join(", ") +
+        ".");
+  }
+  var apdu = putDataApdu(keyRef(which).attr, Buffer.from(attr, "hex"));
+  log.debug("Leaving algorithmAttributesApdu().");
+  return apdu;
+}
+
+// GENERATE ASYMMETRIC KEY PAIR (P1 80) for the sig, dec or aut key.
+function generateApdu(which) {
+  log.debug("Entering generateApdu().");
+  var apdu = iso.encodeCommand({ cla: 0x00, ins: 0x47, p1: 0x80, p2: 0x00,
+      data: Buffer.from([keyRef(which).crt, 0x00]), le: 256 });
+  log.debug("Leaving generateApdu().");
+  return apdu;
+}
+
+// Touch policy (Yubico UIF, D6-D8): 0 off, 1 on, 2 fixed, 3 cached,
+// 4 cached-fixed; the second byte is the button's feature flag.
+function touchPolicyApdu(which, policy) {
+  log.debug("Entering touchPolicyApdu().");
+  var tag = { sig: 0xd6, dec: 0xd7, aut: 0xd8 }[which];
+  if (!tag || [0, 1, 2, 3, 4].indexOf(Number(policy)) < 0) {
+    log.debug("Leaving touchPolicyApdu(). Bad input.");
+    reject("The key is sig, dec or aut, and the policy 0 to 4.");
+  }
+  var apdu = putDataApdu(tag, Buffer.from([Number(policy), 0x20]));
+  log.debug("Leaving touchPolicyApdu().");
+  return apdu;
+}
+
+function mpi(bytes) {
+  log.debug("Entering mpi().");
+  var b = Buffer.from(bytes);
+  var i = 0;
+  while (i < b.length - 1 && b[i] === 0) {
+    i += 1;
+  }
+  b = b.slice(i);
+  var bits = b.length === 0 ? 0 : (b.length - 1) * 8 +
+      (32 - Math.clz32(b[0]));
+  log.debug("Leaving mpi().");
+  return Buffer.concat([Buffer.from([bits >> 8, bits & 0xff]), b]);
+}
+
+// The v4 public-key packet body and fingerprint (RFC 4880 sections 5.5.2
+// and 12.2; RFC 6637 and draft-ietf-openpgp-crypto-refresh for ECC), as
+// GnuPG computes them — so the fingerprint written to the card is the one
+// gpg expects for the key it later sees there. `answer` is GENERATE's
+// 7F49; `created` is seconds since 1970.
+function v4Fingerprint(algorithm, answer, created) {
+  log.debug("Entering v4Fingerprint().");
+  var outer = iso.parseElements(Buffer.from(answer));
+  var tmpl = outer.filter(function (n) {
+    return n.tag === 0x7f49;
+  })[0];
+  if (!tmpl) {
+    log.debug("Leaving v4Fingerprint(). No 7F49.");
+    reject("The card's answer has no public key template (7F49).");
+  }
+  var parts = {};
+  iso.parseElements(tmpl.value).forEach(function (n) {
+    parts[n.tag] = n.value;
+  });
+  var time = Buffer.alloc(4);
+  time.writeUInt32BE(created >>> 0, 0);
+  var body = null;
+  var oidField = function (hex) {
+    var o = Buffer.from(hex, "hex");
+    return Buffer.concat([Buffer.from([o.length]), o]);
+  };
+  if (/^rsa/.test(algorithm)) {
+    body = Buffer.concat([Buffer.from([4]), time, Buffer.from([1]),
+        mpi(parts[0x81]), mpi(parts[0x82])]);
+  } else if (algorithm === "ed25519") {
+    body = Buffer.concat([Buffer.from([4]), time, Buffer.from([22]),
+        oidField("2b06010401da470f01"),
+        mpi(Buffer.concat([Buffer.from([0x40]), parts[0x86]]))]);
+  } else if (algorithm === "cv25519") {
+    body = Buffer.concat([Buffer.from([4]), time, Buffer.from([18]),
+        oidField("2b060104019755010501"),
+        mpi(Buffer.concat([Buffer.from([0x40]), parts[0x86]])),
+        Buffer.from([0x03, 0x01, 0x08, 0x07])]);
+  } else if (/^nistp/.test(algorithm)) {
+    var oidHex = /^nistp256/.test(algorithm) ? "2a8648ce3d030107" :
+        "2b81040022";
+    var ecdh = /ecdh$/.test(algorithm);
+    body = Buffer.concat([Buffer.from([4]), time,
+        Buffer.from([ecdh ? 18 : 19]), oidField(oidHex), mpi(parts[0x86]),
+        ecdh ? Buffer.from([0x03, 0x01, 0x08, 0x07]) : Buffer.alloc(0)]);
+  } else {
+    log.debug("Leaving v4Fingerprint(). Unknown.");
+    reject("Unknown algorithm " + algorithm + ".");
+  }
+  var packet = Buffer.concat([Buffer.from([0x99, body.length >> 8,
+      body.length & 0xff]), body]);
+  var fpr = Buffer.from(sha1(packet));
+  log.debug("Leaving v4Fingerprint().");
+  return { fingerprint: fpr, created: time, body: body };
+}
+
 module.exports = {
+  PW1: PW1,
+  PW3: PW3,
+  ATTRIBUTES: ATTRIBUTES,
+  verifyApdu: verifyApdu,
+  changePinApdu: changePinApdu,
+  putDataApdu: putDataApdu,
+  algorithmAttributesApdu: algorithmAttributesApdu,
+  generateApdu: generateApdu,
+  touchPolicyApdu: touchPolicyApdu,
+  v4Fingerprint: v4Fingerprint,
+  KEY_REFS: KEY_REFS,
   AID_PREFIX: AID_PREFIX,
   parseAlgorithmAttributes: parseAlgorithmAttributes,
   publicKeyPem: publicKeyPem,
