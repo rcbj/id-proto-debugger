@@ -45,6 +45,77 @@ and a missing module is a limit the page shows. The reader relay is
 **off** unless the api's env sets `smartcardReaderEnabled: true` (see
 [Reader](#reader)).
 
+## Browser or API
+
+The page asks once, at the top, how to reach a key: **this browser** or
+**the API**. It is remembered in the browser, and defaults to the browser
+where WebHID exists and to the API where it does not (Firefox).
+
+* **This browser** reaches what a page can: the typed OTP in any
+  browser, and OTP-slot challenge-response over WebHID in Chrome or
+  Edge. No browser opens CCID — WebUSB refuses the smart-card class,
+  and Chrome's Web Smart Card API is offered only to installed isolated
+  web apps — so PIV, OATH, the OpenPGP card and YubiHSM Auth say so and
+  point at the API rather than doing nothing.
+* **The API** sends everything through the reader relay, which uses the
+  OS's own PC/SC: pcsc-lite on Linux, the PCSC framework on macOS,
+  WinSCard on Windows (the `pcsclite` module binds to each). Every
+  application, any browser.
+
+**Read from the key**, on each of the OATH, PIV, OpenPGP and YubiHSM
+Auth panes, sends a fixed read plan through the relay and decodes every
+answer with the pane's own decoder: OATH's LIST and CALCULATE ALL;
+PIV's version, serial, CHUID, discovery object, the four certificates,
+the F9 attestation certificate and ATTEST of 9A; OpenPGP's application,
+cardholder and security data and its three public keys (GENERATE
+ASYMMETRIC KEY PAIR with P1=81, which reads); YubiHSM Auth's version
+and credential list. Each read is its own short sequence beginning with
+SELECT, because the relay stops a sequence at a status that is not
+`90xx`/`61xx` and an empty PIV slot answers 6A82. **Every command only
+reads** — no VERIFY, no PIN, no password, nothing written — and
+`tests/smartcard_engine.js` holds every plan to a list of read
+instructions. Against a YubiKey (the 2026 PIV ML preview) on
+2026-11-13 every plan ran; its F9 attestation certificate is 7,448
+bytes, signed with ML-DSA-87 by "Yubico 2026 PIV ML Preview CA", and the
+PKI code describes it.
+
+## Running the API natively
+
+A container on Linux reaches the host's pcscd through its socket
+(`docker-compose-smartcard.yml`). On macOS and Windows a container
+cannot reach the host's smart-card service at all, so the api runs as an
+ordinary process:
+
+```
+cd api && npm install && cd ..
+node api/native.js --smartcard
+```
+
+`api/native.js` uses only node's own modules and does what the image
+does at build time: it makes `CONFIG_FILE` absolute and sets `NODE_PATH`
+to `api/node_modules` (so `common/data.js` and `common/xmldsig.js`, which
+`server.js` loads from `../common` in a checkout, find their packages),
+makes the stack's TLS pair with `common/generate_tls_cert.js` when
+`generated-tls/` has none (it needs `npm ci --prefix client`), and with
+`--smartcard` turns the relay on and checks `pcsclite` loads, naming
+what this OS needs when it does not:
+
+| OS | PC/SC | To build the binding |
+|---|---|---|
+| Linux | `pcscd` running | `libpcsclite-dev`, python3, make, g++ |
+| macOS | built in (CryptoTokenKit) | Xcode command line tools |
+| Windows | built in (Smart Card service) | Visual Studio Build Tools (C++), Python 3 |
+
+Run the client and the rest from compose without the api, which would
+hold port 4000: `docker-compose up client sts`. Verified on Linux
+(Ubuntu 26.04, a YubiKey, the host's pcscd); macOS and Windows are the
+same code against their own PC/SC and have not been run here.
+
+Each relay call opens a PC/SC context and closes it, readers first:
+pcsclite gives every reader object its own monitoring thread, and
+closing only the context left one behind per listing and one or two per
+transmit (52 threads after forty calls) until 2026-11-13.
+
 ## Which browser does what
 
 | Feature | Chrome / Edge | Firefox |
@@ -52,6 +123,7 @@ and a missing module is a limit the page shows. The reader relay is
 | Keyboard OTP: decode, verify with YubiCloud (api) | yes | yes |
 | HOTP / TOTP calculator, every decoder | yes | yes |
 | OTP-slot challenge-response | WebHID, or CCID through the relay | CCID through the relay |
+| Read from the key (OATH, PIV, OpenPGP, YubiHSM Auth) | through the relay | through the relay |
 | Reader: list readers, transmit APDUs | through the relay | through the relay |
 
 Firefox has no WebHID and no browser opens CCID, so everything that
@@ -224,8 +296,8 @@ this exchange uses. Until 2026-11-13 the filter named usage page
 `0xF1D0`, the FIDO interface, which Chrome blocks from WebHID outright,
 so no key was ever offered and the button did nothing.
 
-**Over CCID** — the transport choice beside the slot, and the default
-in a browser with no `navigator.hid` — the same exchange is two APDUs
+**Over CCID** — when the page talks to the key through the API, which is
+the default in a browser with no `navigator.hid` — the same exchange is two APDUs
 through the reader relay on one connection: SELECT of the OTP
 application (`A0 00 00 05 27 20 01 01`), then CALCULATE (`00 01 <slot>
 00 40` and the same 64-byte payload the HID frame carries, padded the

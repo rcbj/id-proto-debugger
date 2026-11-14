@@ -252,6 +252,10 @@ function statusName(sw) {
     name = "success";
   } else if ((sw & 0xff00) === 0x6100) {
     name = "more data available";
+  } else if (sw === 0x6581) {
+    // ISO 7816-4 table 6. An OpenPGP card on a YubiKey also answers it to a
+    // read of a key slot that holds no key.
+    name = "memory failure";
   } else if (sw === 0x6982) {
     name = "security status not satisfied";
   } else if (sw === 0x6985) {

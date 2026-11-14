@@ -14,8 +14,20 @@ const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
 const crypto = require('crypto');
+// THE TWO SHARED MODULES, beside this file in the image and in common/ in a
+// checkout. api/Dockerfile copies common/data.js and common/xmldsig.js in
+// flat, so the image finds them here; a checkout run with `node server.js`
+// (which is how the api runs natively on Windows and macOS, where a container
+// cannot reach the host's smart-card service) finds them in ../common. The
+// image's copy wins when both exist. No logging here: the module logger is
+// created further down, after these requires.
+function requireShared(name) {
+  const beside = path.join(__dirname, name);
+  return require(fs.existsSync(beside) ? beside :
+                 path.join(__dirname, '..', 'common', name));
+}
 const {
-  convertToOAuth2Format  } = require('./data.js');
+  convertToOAuth2Format  } = requireShared('data.js');
 const ssrfGuard = require('./ssrf_guard.js');
 const connectTimeout = require('./connect_timeout.js');
 const krb5Relay = require('./krb5_relay.js');
@@ -1149,7 +1161,7 @@ function xmlTextEscape(s) {
 var xmldom = require('@xmldom/xmldom');
 if (!global.DOMParser) global.DOMParser = xmldom.DOMParser;
 if (!global.XMLSerializer) global.XMLSerializer = xmldom.XMLSerializer;
-var xmldsig = require('./xmldsig.js');
+var xmldsig = requireShared('xmldsig.js');
 
 function signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg) {
   log.debug("Entering signXmlEnveloped().");

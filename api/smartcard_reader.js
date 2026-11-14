@@ -354,8 +354,21 @@ function runSequence(send, apdus, getResponse, remainingIns) {
   });
 }
 
-function closePcsc(pcsc) {
+// CLOSE THE READERS, THEN THE CONTEXT. Every reader object pcsclite hands
+// out runs its own status-monitoring thread, and closing the context does
+// not stop them: until 2026-11-13 this closed only the context, and each
+// listing left a thread behind and each transmit one or two — 52 threads
+// after forty calls, measured against a YubiKey, and a long-running api
+// grows without bound.
+function closePcsc(pcsc, readers) {
   log.debug("Entering closePcsc().");
+  (readers || []).forEach(function (reader) {
+    try {
+      reader.close();
+    } catch (e) {
+      log.debug("closePcsc() ignored a reader close error.");
+    }
+  });
   try {
     if (pcsc) {
       pcsc.close();
@@ -376,6 +389,7 @@ function listReaders() {
   var pending = new Promise(function (resolve, reject) {
     var pcsc = null;
     var settled = false;
+    var seen = [];
     var names = [];
     function finish(err, value) {
       log.debug("Entering finish().");
@@ -384,7 +398,7 @@ function listReaders() {
         return;
       }
       settled = true;
-      closePcsc(pcsc);
+      closePcsc(pcsc, seen);
       if (err) {
         reject(err);
       } else {
@@ -399,6 +413,7 @@ function listReaders() {
       return;
     }
     pcsc.on("reader", function (reader) {
+      seen.push(reader);
       if (reader && reader.name && names.indexOf(reader.name) < 0) {
         names.push(reader.name);
       }
@@ -432,6 +447,7 @@ function transmit(readerName, apdus, opts) {
   var pending = new Promise(function (resolve, reject) {
     var pcsc = null;
     var settled = false;
+    var seen = [];
     var found = false;
     function finish(err, value) {
       log.debug("Entering finish().");
@@ -440,7 +456,7 @@ function transmit(readerName, apdus, opts) {
         return;
       }
       settled = true;
-      closePcsc(pcsc);
+      closePcsc(pcsc, seen);
       if (err) {
         reject(err);
       } else {
@@ -458,6 +474,9 @@ function transmit(readerName, apdus, opts) {
       finish(err || new Error("The reader subsystem reported an error."));
     });
     pcsc.on("reader", function (reader) {
+      if (reader) {
+        seen.push(reader);
+      }
       if (!reader || reader.name !== readerName || found) {
         return;
       }

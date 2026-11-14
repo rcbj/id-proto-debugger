@@ -584,7 +584,9 @@ code you write **as you write it**, not as a later sweep.
   bundles a handler with no dependencies), `common/sp_keypair.js` (`common/` is
   outside the reach of `tests/node_modules` — see the note in `common/tests.js`),
   the build scripts `client/version.js`, `client/build.js`,
-  `client/static_site.js`, `extension/build.js` plus `waltid/cors-proxy.js`,
+  `client/static_site.js`, `extension/build.js`, `api/native.js` (which
+  starts the api from a checkout before anything is known to be
+  installed) plus `waltid/cors-proxy.js`,
   which run before or outside an install (`static_site.js` is additionally read
   by `tests/static_site_exclusions.js`, which must not need
   `client/node_modules` either), and **`client/src/coverage_beacon.js`**, which looks like an

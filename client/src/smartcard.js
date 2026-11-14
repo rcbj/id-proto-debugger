@@ -798,17 +798,74 @@ function hidCollect(device) {
   return poll();
 }
 
-// Which way a challenge goes: WebHID from this browser, or CCID through the
-// api's reader relay. The page's choice, defaulting to WebHID where the
-// browser has it (Chrome, Edge) and CCID where it does not (Firefox).
+// HOW THE PAGE REACHES A KEY, chosen once for the whole page:
+//
+//   browser  from this page itself — the keyboard OTP in any browser, and
+//            OTP-slot challenge-response over WebHID where the browser has
+//            it (Chrome, Edge). No browser opens CCID: WebUSB refuses the
+//            smart-card class, and Chrome's Web Smart Card API is offered
+//            only to installed isolated web apps. So PIV, OATH, the
+//            OpenPGP card and YubiHSM Auth cannot be reached this way.
+//   api      through the api's reader relay, which uses the OS's own PC/SC
+//            (pcsc-lite, macOS's PCSC framework, WinSCard). Any browser,
+//            every application, challenge-response over CCID.
+//
+// The default is browser where WebHID exists and api where it does not
+// (Firefox). The choice is remembered in this browser.
+var TRANSPORT_KEY = "smartcard_transport";
+
+function hasWebHid() {
+  log.debug("Entering hasWebHid().");
+  var has = typeof navigator !== "undefined" && !!navigator.hid;
+  log.debug("Leaving hasWebHid(). " + has);
+  return has;
+}
+
+function transport() {
+  log.debug("Entering transport().");
+  var chosen = valueOf("sc_transport");
+  var value = chosen === "browser" || chosen === "api" ? chosen :
+      (hasWebHid() ? "browser" : "api");
+  log.debug("Leaving transport(). " + value);
+  return value;
+}
+
+// The note beside the choice: what this choice can and cannot reach here.
+function describeTransport() {
+  log.debug("Entering describeTransport().");
+  var note = document.getElementById("sc_transport_note");
+  if (!note) {
+    log.debug("Leaving describeTransport(). No note.");
+    return;
+  }
+  var text = "";
+  if (transport() === "browser") {
+    text = hasWebHid() ?
+      "OTP challenge-response over WebHID. PIV, OATH, OpenPGP and " +
+      "YubiHSM Auth need the API: no browser opens a smart card." :
+      "This browser has no WebHID, so only the typed OTP reaches the " +
+      "key this way. Choose the API for everything else.";
+  } else {
+    text = relayProblem() || "Every application, through the api's " +
+      "reader relay and this machine's PC/SC.";
+  }
+  note.textContent = text;
+  log.debug("Leaving describeTransport().");
+}
+
+function onTransportChange() {
+  log.debug("Entering onTransportChange().");
+  storageSet(TRANSPORT_KEY, transport());
+  describeTransport();
+  log.debug("Leaving onTransportChange().");
+}
+
+// The challenge goes over WebHID in browser mode and over CCID in api mode.
 function hidTransport() {
   log.debug("Entering hidTransport().");
-  var chosen = valueOf("sc_hid_transport");
-  var hasHid = typeof navigator !== "undefined" && !!navigator.hid;
-  var transport = chosen === "ccid" || chosen === "webhid" ? chosen :
-      (hasHid ? "webhid" : "ccid");
-  log.debug("Leaving hidTransport(). " + transport);
-  return transport;
+  var value = transport() === "api" ? "ccid" : "webhid";
+  log.debug("Leaving hidTransport(). " + value);
+  return value;
 }
 
 function sendHid() {
@@ -819,8 +876,8 @@ function sendHid() {
     return;
   }
   if (typeof navigator === "undefined" || !navigator.hid) {
-    setStatus("This browser has no WebHID. Choose CCID: it goes " +
-        "through the api's reader relay.");
+    setStatus("This browser has no WebHID. Choose \"the API\" above: " +
+        "the challenge then goes over CCID through the api's reader relay.");
     log.debug("Leaving sendHid(). No WebHID.");
     return;
   }
@@ -986,6 +1043,261 @@ function challengeOverCcid() {
   log.debug("Leaving challengeOverCcid(). Sent.");
 }
 
+// ---------------------------------------------------------------------------
+// READ FROM THE KEY, through the api's reader relay.
+//
+// Each application's read is a list of short sequences, each beginning with
+// that application's SELECT, because the relay stops a sequence at the first
+// answer that is not 90xx or 61xx — and a PIV slot with no certificate
+// answers 6A82, which must not end the read. Every command here only READS:
+// no VERIFY, no PIN, no password, nothing that changes the key. The answers
+// go through the same decoders a pasted trace does.
+// ---------------------------------------------------------------------------
+function hexOf(fields) {
+  log.debug("Entering hexOf().");
+  var hex = iso.encodeCommand(fields).toString("hex");
+  log.debug("Leaving hexOf().");
+  return hex;
+}
+
+function selectHex(aid) {
+  log.debug("Entering selectHex().");
+  var hex = hexOf({ cla: 0x00, ins: 0xa4, p1: 0x04, p2: 0x00,
+                    data: Buffer.from(aid, "hex") });
+  log.debug("Leaving selectHex().");
+  return hex;
+}
+
+// PIV GET DATA of a BER-TLV object tag (SP 800-73-4 part 2, 3.1.2).
+function pivGetData(tagHex) {
+  log.debug("Entering pivGetData().");
+  var tag = Buffer.from(tagHex, "hex");
+  var hex = hexOf({ cla: 0x00, ins: 0xcb, p1: 0x3f, p2: 0xff,
+                    data: Buffer.concat([Buffer.from([0x5c, tag.length]),
+                                         tag]), le: 256 });
+  log.debug("Leaving pivGetData().");
+  return hex;
+}
+
+// The steps of each application's read: [label, [apdu hex, ...]].
+function readPlan(app) {
+  log.debug("Entering readPlan().");
+  var plan = [];
+  if (app === "oath") {
+    var sel = oath.selectApdu().toString("hex");
+    var calcAll = hexOf({ cla: 0x00, ins: 0xa4, p1: 0x00, p2: 0x01,
+      data: iso.encodeTlv(0x74,
+          oath.totpChallenge(Math.floor(Date.now() / 1000))),
+      le: 256 });
+    plan = [
+      ["Credentials (LIST)", [sel, oath.listApdu().toString("hex")]],
+      ["Codes now (CALCULATE ALL, 30-second TOTP)", [sel, calcAll]]
+    ];
+  } else if (app === "piv") {
+    var psel = selectHex(piv.PIV_AID);
+    plan = [
+      ["Version (GET VERSION)", [psel, hexOf({ cla: 0x00, ins: 0xfd,
+                                                p1: 0x00, p2: 0x00,
+                                                le: 256 })]],
+      ["Serial (GET SERIAL)", [psel, hexOf({ cla: 0x00, ins: 0xf8,
+                                              p1: 0x00, p2: 0x00,
+                                              le: 256 })]],
+      ["CHUID", [psel, pivGetData("5fc102")]],
+      ["Discovery object", [psel, pivGetData("7e")]],
+      ["Certificate, slot 9A (authentication)",
+       [psel, pivGetData("5fc105")]],
+      ["Certificate, slot 9C (signature)", [psel, pivGetData("5fc10a")]],
+      ["Certificate, slot 9D (key management)",
+       [psel, pivGetData("5fc10b")]],
+      ["Certificate, slot 9E (card authentication)",
+       [psel, pivGetData("5fc101")]],
+      ["Attestation certificate, slot F9", [psel, pivGetData("5fff01")]],
+      ["Attestation of slot 9A (ATTEST)", [psel, hexOf({ cla: 0x00,
+                                                          ins: 0xf9,
+                                                          p1: 0x9a,
+                                                          p2: 0x00,
+                                                          le: 256 })]]
+    ];
+  } else if (app === "pgp") {
+    var gsel = selectHex(pgp.AID_PREFIX);
+    var getData = function (tag) {
+      return hexOf({ cla: 0x00, ins: 0xca, p1: 0x00, p2: tag, le: 256 });
+    };
+    var readKey = function (crt) {
+      return hexOf({ cla: 0x00, ins: 0x47, p1: 0x81, p2: 0x00,
+                     data: Buffer.from([crt, 0x00]), le: 256 });
+    };
+    plan = [
+      ["Application related data", [gsel, getData(0x6e)]],
+      ["Cardholder related data", [gsel, getData(0x65)]],
+      ["Security support template", [gsel, getData(0x7a)]],
+      ["Signature key", [gsel, readKey(0xb6)]],
+      ["Decryption key", [gsel, readKey(0xb8)]],
+      ["Authentication key", [gsel, readKey(0xa4)]]
+    ];
+  } else if (app === "hsm") {
+    var hsel = hsm.selectApdu().toString("hex");
+    plan = [
+      ["Version", [hsel, hsm.versionApdu().toString("hex")]],
+      ["Credentials (LIST)", [hsel, hsm.listApdu().toString("hex")]]
+    ];
+  }
+  log.debug("Leaving readPlan(). " + plan.length + " step(s).");
+  return plan;
+}
+
+var READ_DECODERS = {
+  oath: { out: "sc_oath_out", decode: function (hex) {
+    return oath.describeResponse(hex);
+  } },
+  piv: { out: "sc_piv_out", decode: function (hex) {
+    return piv.describeResponse(hex);
+  } },
+  pgp: { out: "sc_pgp_out", decode: function (hex) {
+    return pgp.describeResponse(hex);
+  } },
+  hsm: { out: "sc_hsm_out", decode: function (hex) {
+    return hsm.describeResponse(hex);
+  } }
+};
+
+function transmitSequence(reader, apdus) {
+  log.debug("Entering transmitSequence().");
+  var sent = fetch(apiBase() + "/smartcard/transmit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reader: reader, apdus: apdus, getResponse: true })
+  }).then(function (res) {
+    return res.json().then(function (body) {
+      if (!res.ok) {
+        throw new Error(body.error || "The relay refused the read.");
+      }
+      return body;
+    });
+  });
+  log.debug("Leaving transmitSequence().");
+  return sent;
+}
+
+// Rows for one step's answer, and — for a certificate or a public key —
+// a promise of the rows that describe it.
+function readRows(app, label, apdus, body) {
+  log.debug("Entering readRows().");
+  var results = body.results || [body];
+  var last = results[results.length - 1] || {};
+  if (results.length < apdus.length) {
+    log.debug("Leaving readRows(). SELECT failed.");
+    return { rows: [{ label: label, value: "SELECT answered " +
+        (last.status || "nothing") + "; the application is not there or " +
+        "is disabled" }], extra: null };
+  }
+  var described = null;
+  try {
+    described = READ_DECODERS[app].decode((last.data || "") +
+                                          (last.status || ""));
+  } catch (e) {
+    log.debug("Leaving readRows(). Undecodable.");
+    return { rows: [{ label: label, value: e.message }], extra: null };
+  }
+  var summary = described.summary;
+  // An OpenPGP key slot with nothing in it answers 6581 (a YubiKey) or 6A88
+  // to the read of its public key — not a fault, an empty slot.
+  if (app === "pgp" && /^(6581|6A88)$/i.test(last.status || "") &&
+      apdus[apdus.length - 1].slice(2, 4) === "47") {
+    summary = "no key in this slot (" + summary + ")";
+  }
+  var rows = [{ label: label, value: summary }];
+  described.rows.forEach(function (row) {
+    if (row.label !== "Status") {
+      rows.push({ label: "    " + row.label, value: row.value });
+    }
+  });
+  var extra = null;
+  var cert = described.certificate;
+  if (app === "piv" && cert && (cert.der || cert.deflated)) {
+    var der = cert.der ? Promise.resolve(cert.der) :
+        inflateGzip(cert.deflated);
+    extra = der.then(function (raw) {
+      return x509.describeCertificate(bytes.derToPem(raw, "CERTIFICATE"));
+    }).then(function (desc) {
+      return certRows(desc).map(function (row) {
+        return { label: "    " + row.label, value: row.value };
+      });
+    });
+  } else if (app === "pgp" && described.pem) {
+    extra = keys.describePublicPem(described.pem).then(function (desc) {
+      return [{ label: "    Key", value: desc ? desc.kind +
+          (desc.bits ? " " + desc.bits + "-bit" : "") +
+          (desc.curve ? " " + desc.curve : "") : "unrecognised" }];
+    });
+  }
+  log.debug("Leaving readRows().");
+  return { rows: rows, extra: extra };
+}
+
+function readFromKey(app) {
+  log.debug("Entering readFromKey(). " + app);
+  if (!READ_DECODERS[app]) {
+    log.debug("Leaving readFromKey(). Unknown application.");
+    return;
+  }
+  if (transport() !== "api") {
+    setStatus("Reading this application needs the API: no browser opens " +
+        "a smart card. Choose \"the API\" at the top of the page.");
+    log.debug("Leaving readFromKey(). Browser transport.");
+    return;
+  }
+  var problem = relayProblem();
+  if (problem) {
+    setStatus(problem);
+    log.debug("Leaving readFromKey(). " + problem);
+    return;
+  }
+  var plan = readPlan(app);
+  var out = READ_DECODERS[app].out;
+  var rows = [];
+  var extras = [];
+  setStatus("Reading from the key…");
+  chosenReader().then(function (reader) {
+    rows.push({ label: "Reader", value: reader });
+    var chain = Promise.resolve();
+    plan.forEach(function (step) {
+      chain = chain.then(function () {
+        return transmitSequence(reader, step[1]).then(function (body) {
+          var got = readRows(app, step[0], step[1], body);
+          var at = rows.length + got.rows.length;
+          rows = rows.concat(got.rows);
+          if (got.extra) {
+            extras.push(got.extra.then(function (more) {
+              return { at: at, rows: more };
+            }, function (e) {
+              return { at: at, rows: [{ label: "    Could not describe",
+                                        value: e.message }] };
+            }));
+          }
+          render(out, rows);
+        });
+      });
+    });
+    return chain;
+  }).then(function () {
+    return Promise.all(extras);
+  }).then(function (more) {
+    // Insert the described certificates and keys after their steps,
+    // last first so the earlier positions stay right.
+    more.sort(function (a, b) {
+      return b.at - a.at;
+    }).forEach(function (m) {
+      rows.splice.apply(rows, [m.at, 0].concat(m.rows));
+    });
+    render(out, rows);
+    setStatus("Read " + plan.length + " item(s) from the key.");
+  }).catch(function (e) {
+    setStatus(e.message);
+  });
+  log.debug("Leaving readFromKey(). Started.");
+}
+
 function readerLimits() {
   log.debug("Entering readerLimits().");
   fetch(apiBase() + "/smartcard/limits")
@@ -1001,6 +1313,7 @@ function readerLimits() {
       show("sc_reader_disabled", !on);
       show("sc_readers_button", on);
       show("sc_transmit_button", on);
+      describeTransport();
       var missing = document.getElementById("sc_reader_unavailable");
       if (missing) {
         missing.textContent = on && !relay.available ? relay.reason : "";
@@ -1028,17 +1341,13 @@ function onload() {
   restoreSecret(SAVE.otp[0], SAVE.otp[1]);
   restoreSecret(SAVE.oath[0], SAVE.oath[1]);
   restoreSecret(SAVE.api[0], SAVE.api[1]);
-  var hasHid = typeof navigator !== "undefined" && !!navigator.hid;
-  var transport = document.getElementById("sc_hid_transport");
-  if (transport) {
-    transport.value = hasHid ? "webhid" : "ccid";
+  var picker = document.getElementById("sc_transport");
+  if (picker) {
+    var saved = storageGet(TRANSPORT_KEY);
+    picker.value = saved === "browser" || saved === "api" ? saved :
+        (hasWebHid() ? "browser" : "api");
   }
-  var note = document.getElementById("sc_hid_note");
-  if (note && !hasHid) {
-    note.textContent = "This browser has no WebHID, so a challenge goes " +
-        "over CCID through the api's reader relay. The keyboard OTP " +
-        "field still works.";
-  }
+  describeTransport();
   log.debug("Leaving onload().");
 }
 
@@ -1049,6 +1358,11 @@ if (typeof window !== "undefined") {
 }
 
 module.exports = {
+  onTransportChange: onTransportChange,
+  readFromKey: readFromKey,
+  // Exported for tests/smartcard_engine.js, which holds every plan to
+  // read-only instructions.
+  readPlan: readPlan,
   // The collapsible panes and the collapse / expand all switch, shared with
   // the XACML and GNAP pages.
   togglePane: panes.togglePane,

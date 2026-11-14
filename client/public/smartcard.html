@@ -40,6 +40,16 @@
 </p>
 
 <p class="sc-apps">
+  <label title="How this page reaches a key plugged into this machine. Decoding a pasted trace needs neither.">Talk to the key through
+    <select id="sc_transport" onchange="smartcard.onTransportChange();">
+      <option value="browser">this browser (WebHID: Chrome, Edge)</option>
+      <option value="api">the API (the OS's PC/SC: any browser, every application)</option>
+    </select>
+  </label>
+  <span class="sc-transport-note" id="sc_transport_note"></span>
+</p>
+
+<p class="sc-apps">
   <label>Application
     <select id="sc_app" onchange="smartcard.showApplication(this.value);">
       <option value="otp">Yubico OTP</option>
@@ -172,6 +182,10 @@
       <button type="button" class="saml-btn" id="sc_oath_command" onclick="smartcard.decodeOathCommand();">Decode command</button>
       <button type="button" class="saml-btn" id="sc_oath_response" onclick="smartcard.decodeOathResponse();">Decode response</button>
     </p>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_oath_read" onclick="smartcard.readFromKey('oath');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
+      <span class="sc-read-note">through the API; read-only</span>
+    </p>
     <div id="sc_oath_out" class="sc-out"></div>
   </div>
 </fieldset>
@@ -190,6 +204,10 @@
     <p>
       <button type="button" class="saml-btn" id="sc_piv_command" onclick="smartcard.decodePivCommand();">Decode command</button>
       <button type="button" class="saml-btn" id="sc_piv_response" onclick="smartcard.decodePivResponse();">Decode response</button>
+    </p>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_piv_read" onclick="smartcard.readFromKey('piv');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
+      <span class="sc-read-note">through the API; read-only</span>
     </p>
     <div id="sc_piv_out" class="sc-out"></div>
   </div>
@@ -210,6 +228,10 @@
       <button type="button" class="saml-btn" id="sc_pgp_command" onclick="smartcard.decodePgpCommand();">Decode command</button>
       <button type="button" class="saml-btn" id="sc_pgp_response" onclick="smartcard.decodePgpResponse();">Decode response</button>
     </p>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_pgp_read" onclick="smartcard.readFromKey('pgp');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
+      <span class="sc-read-note">through the API; read-only</span>
+    </p>
     <div id="sc_pgp_out" class="sc-out"></div>
   </div>
 </fieldset>
@@ -228,6 +250,10 @@
     <p>
       <button type="button" class="saml-btn" id="sc_hsm_command" onclick="smartcard.decodeHsmCommand();">Decode command</button>
       <button type="button" class="saml-btn" id="sc_hsm_response" onclick="smartcard.decodeHsmResponse();">Decode response</button>
+    </p>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_hsm_read" onclick="smartcard.readFromKey('hsm');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
+      <span class="sc-read-note">through the API; read-only</span>
     </p>
     <div id="sc_hsm_out" class="sc-out"></div>
   </div>
@@ -252,12 +278,6 @@
           <option value="28">OTP slot 2 (28)</option>
           <option value="30">HMAC-SHA1 slot 1 (30)</option>
           <option value="38">HMAC-SHA1 slot 2 (38)</option>
-        </select>
-      </label>
-      <label>Send it over
-        <select id="sc_hid_transport">
-          <option value="webhid">WebHID, from this browser (Chrome, Edge)</option>
-          <option value="ccid">CCID, through the api's reader relay (any browser)</option>
         </select>
       </label>
       <label>HMAC challenge length

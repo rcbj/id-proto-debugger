@@ -1547,11 +1547,56 @@ function challengeOverCcid() {
       "the WebHID filter asks for the FIDO usage page, which Chrome blocks");
   var html = fs.readFileSync(path.join(REPO, "client", "public",
       "smartcard.html"), "utf8");
-  assert.ok(html.indexOf('id="sc_hid_transport"') >= 0,
-      "the page offers no CCID transport for challenge-response");
+  assert.ok(html.indexOf('id="sc_transport"') >= 0 &&
+      html.indexOf('value="browser"') >= 0 &&
+      html.indexOf('value="api"') >= 0,
+      "the page offers no choice between the browser and the api");
   log.info("OK — challenge-response over CCID is SELECT then CALCULATE " +
       "with the HID payload, and WebHID asks for the OTP interface.");
   log.debug("Leaving challengeOverCcid().");
+}
+
+// "READ FROM THE KEY" ONLY READS. Every APDU in every application's read
+// plan is SELECT, GET DATA, a LIST or CALCULATE, PIV's GET VERSION / GET
+// SERIAL / ATTEST, or OpenPGP's GENERATE ASYMMETRIC KEY PAIR with P1=0x81 —
+// which READS the public key and generates nothing. No VERIFY, no PIN, no
+// PUT, no DELETE, no RESET: a plan that grew one would be a button that
+// changes a key, and this fails it.
+function readPlansOnlyRead() {
+  log.debug("Entering readPlansOnlyRead().");
+  var page = paths.requireSharedModule(
+    [path.join(SRC, "smartcard.js")], "client/src/smartcard.js");
+  var allowed = {
+    oath: [0xa4, 0xa1],          // SELECT / CALCULATE ALL, LIST
+    piv: [0xa4, 0xcb, 0xfd, 0xf8, 0xf9],
+    pgp: [0xa4, 0xca, 0x47],
+    hsm: [0xa4, 0x05, 0x07]
+  };
+  var count = 0;
+  Object.keys(allowed).forEach(function (app) {
+    var plan = page.readPlan(app);
+    assert.ok(plan.length > 0, app + " has no read plan");
+    plan.forEach(function (step) {
+      assert.ok(/^00a40400/.test(step[1][0]),
+          app + " " + step[0] + " does not begin with SELECT");
+      step[1].forEach(function (hex) {
+        var ins = parseInt(hex.slice(2, 4), 16);
+        assert.ok(allowed[app].indexOf(ins) >= 0, app + " " + step[0] +
+            " sends INS " + hex.slice(2, 4) + ", which is not a read");
+        if (app === "pgp" && ins === 0x47) {
+          assert.strictEqual(hex.slice(4, 6), "81", "OpenPGP " + step[0] +
+              " would GENERATE a key: P1 must be 81 (read)");
+        }
+        if (app === "oath" && ins === 0xa4 && hex.slice(4, 8) !== "0400") {
+          assert.strictEqual(hex.slice(4, 8), "0001",
+              "OATH " + step[0] + " is not CALCULATE ALL");
+        }
+        count += 1;
+      });
+    });
+  });
+  log.info("OK — " + count + " APDUs across four read plans are all reads.");
+  log.debug("Leaving readPlansOnlyRead().");
 }
 
 async function test() {
@@ -1573,6 +1618,7 @@ async function test() {
   enginesStayOffTheDom();
   panesCollapse();
   challengeOverCcid();
+  readPlansOnlyRead();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

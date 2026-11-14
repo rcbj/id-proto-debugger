@@ -26,3 +26,5 @@
 
 /* The api is relaying but cannot reach PC/SC: what is missing, in its words. */
 .sc-warn { color: #8a4a2f; }
+.sc-transport-note { font-size: 0.85em; color: #555; margin-left: 8px; }
+.sc-read-note { font-size: 0.8em; color: #777; margin-left: 6px; }
