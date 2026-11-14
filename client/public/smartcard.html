@@ -65,6 +65,7 @@
           <option value="pgp">OpenPGP card</option>
           <option value="hsm">YubiHSM Auth</option>
           <option value="reader">Reader</option>
+      <option value="reset">Reset (wipe an application)</option>
         </select>
       </label>
     </p>
@@ -588,6 +589,37 @@
       </p>
     </div>
     <div id="sc_reader_out" class="sc-out"></div>
+  </div>
+</fieldset>
+
+<fieldset class="saml-pane saml-hidden" id="sc_pane_reset">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_reset_body');"
+          title="Click to collapse or expand this pane.">Reset</legend>
+  <div class="saml-pane-body" id="sc_pane_reset_body">
+    <p class="sc-warning" role="alert"><strong>&#9888; Warning: a reset permanently erases.</strong> Each button wipes one application on the key back to its factory state, through the API. Keys, seeds and certificates erased here are gone for good &mdash; anything encrypted to them can no longer be decrypted, and every account that used them must be re-enrolled. Each reset asks you to type its name first.</p>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('oath');">Reset OATH</button>
+        <span class="sc-reset-what">Erases every OATH account and the applet's password.</span>
+      </div>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('hsm');">Reset YubiHSM Auth</button>
+        <span class="sc-reset-what">Erases every credential; the management key goes back to 16 zero bytes.</span>
+      </div>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('piv');">Reset PIV</button>
+        <span class="sc-reset-what">Blocks the PIN and PUK on purpose (the applet requires it), then erases every key and certificate. PIN 123456, PUK 12345678, factory management key afterwards.</span>
+      </div>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('pgp');">Reset OpenPGP card</button>
+        <span class="sc-reset-what">Blocks the PIN and Admin PIN on purpose, then erases all three keys and the cardholder data. PIN 123456, Admin PIN 12345678 afterwards.</span>
+      </div>
+      <div class="saml-row sc-reset-row">
+        <button type="button" class="saml-btn sc-danger" onclick="smartcard.resetApplication('otp');">Reset both OTP slots</button>
+        <span class="sc-reset-what">Deletes slots 1 and 2, including slot 1's factory Yubico OTP credential, which nothing can restore.</span>
+      </div>
+    <p class="saml-note">Not here: FIDO2 and U2F, whose reset is a CTAP command over HID within seconds of plugging the key in (use Yubico Authenticator or <code>ykman fido reset</code>), and smart cards from other vendors, which have no standard reset.</p>
+    <div id="sc_reset_out" class="sc-out"></div>
   </div>
 </fieldset>
 

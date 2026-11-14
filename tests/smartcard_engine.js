@@ -1496,7 +1496,7 @@ function panesCollapse() {
   log.debug("Entering panesCollapse().");
   var page = fs.readFileSync(path.join(REPO, "client", "public",
       "smartcard.html"), "utf8");
-  ["config", "otp", "oath", "piv", "pgp", "hsm", "reader"]
+  ["config", "otp", "oath", "piv", "pgp", "hsm", "reader", "reset"]
     .forEach(function (name) {
     var id = "sc_pane_" + name;
     assert.ok(page.indexOf("smartcard.togglePane('" + id + "_body')") >= 0,
@@ -2020,6 +2020,61 @@ function handlersAreExported() {
   log.debug("Leaving handlersAreExported().");
 }
 
+// RESET: the PIN-blocking loops against simulated applets. A PIV applet
+// refuses RESET until PIN and PUK are blocked; an OpenPGP one TERMINATE
+// until PW1 and PW3 are. The loops must block both, then reset, and stop
+// — sending no wiping command — if a card ever ACCEPTS the wrong value.
+function simulatedApplet(rules) {
+  log.debug("Entering simulatedApplet().");
+  var tries = { a: 3, b: 3 };
+  var log2 = [];
+  var applet = function (hexes) {
+    var hex = hexes[0];
+    log2.push(hex.slice(0, 8));
+    var ins = hex.slice(2, 4);
+    var status = "9000";
+    if (ins === "a4") {
+      status = "9000";
+    } else if (hex.slice(0, 8) === rules.a) {
+      status = rules.acceptA ? "9000" : (tries.a > 1 ?
+          "63c" + (--tries.a).toString(16) : (tries.a = 0, "6983"));
+    } else if (hex.slice(0, 8) === rules.b) {
+      status = tries.b > 1 ? "63c" + (--tries.b).toString(16) :
+          (tries.b = 0, "6983");
+    } else if (rules.wipe.indexOf(ins) >= 0) {
+      status = tries.a === 0 && tries.b === 0 ? "9000" : "6985";
+    }
+    return Promise.resolve({ status: status, data: "" });
+  };
+  applet.sent = log2;
+  log.debug("Leaving simulatedApplet().");
+  return applet;
+}
+
+async function resetLoops() {
+  log.debug("Entering resetLoops().");
+  var pivCard = simulatedApplet({ a: "00200080", b: "002c0080",
+                                  wipe: ["fb"] });
+  var spent = await piv.reset(pivCard);
+  assert.strictEqual(spent, 6, "PIV: 3 PIN and 3 PUK tries");
+  assert.strictEqual(pivCard.sent[pivCard.sent.length - 1], "00fb0000",
+      "PIV: RESET is not last");
+  var pgpCard = simulatedApplet({ a: "00200081", b: "00200083",
+                                  wipe: ["e6", "44"] });
+  spent = await pgp.reset(pgpCard);
+  assert.strictEqual(spent, 6);
+  assert.deepStrictEqual(pgpCard.sent.slice(-2), ["00e60000", "00440000"],
+      "OpenPGP: TERMINATE then ACTIVATE");
+  var accepting = simulatedApplet({ a: "00200080", b: "002c0080",
+                                    wipe: ["fb"], acceptA: true });
+  await assert.rejects(piv.reset(accepting), /ACCEPTED/);
+  assert.ok(accepting.sent.indexOf("00fb0000") < 0,
+      "a card that accepted the wrong PIN was reset anyway");
+  log.info("OK — the reset loops block both PINs, then reset, and refuse " +
+      "to reset a card that accepts the wrong value.");
+  log.debug("Leaving resetLoops().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
@@ -2046,6 +2101,7 @@ async function test() {
   pivWriteCommands();
   pgpWriteCommands();
   handlersAreExported();
+  await resetLoops();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

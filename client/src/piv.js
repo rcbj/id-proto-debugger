@@ -1004,7 +1004,102 @@ function setManagementKeyApdu(algName, key, requireTouch) {
   return apdu;
 }
 
+// ---------------------------------------------------------------------------
+// RESET (Yubico INS FB). The applet refuses it until the PIN and the PUK
+// are both blocked, so a reset first spends their tries on purpose — as
+// yubikit's PivSession.reset() does, with values no PIN can be (eight
+// 0xFF bytes) — then sends RESET. Afterwards: PIN 123456, PUK 12345678,
+// the management key at its factory value, every key and certificate gone.
+//
+// `transmit(hexes)` sends APDUs on ONE connection (a relay session) and
+// resolves to the last result { status, data }. `progress(text)` is told
+// how it is going. Resolves to the number of tries spent.
+// ---------------------------------------------------------------------------
+var BLOCK_LIMIT = 256;
+
+function resetApdu() {
+  log.debug("Entering resetApdu().");
+  log.debug("Leaving resetApdu().");
+  return iso.encodeCommand({ cla: 0x00, ins: 0xfb, p1: 0x00, p2: 0x00 });
+}
+
+function blockPinApdu() {
+  log.debug("Entering blockPinApdu().");
+  log.debug("Leaving blockPinApdu().");
+  return iso.encodeCommand({ cla: 0x00, ins: 0x20, p1: 0x00, p2: 0x80,
+                             data: Buffer.alloc(8, 0xff) });
+}
+
+function blockPukApdu() {
+  log.debug("Entering blockPukApdu().");
+  log.debug("Leaving blockPukApdu().");
+  return iso.encodeCommand({ cla: 0x00, ins: 0x2c, p1: 0x00, p2: 0x80,
+                             data: Buffer.alloc(16, 0xff) });
+}
+
+// Spend tries with `apduHex` until the card answers 6983 (blocked).
+function blockWith(transmit, apduHex, what, progress) {
+  log.debug("Entering blockWith(). " + what);
+  var spent = 0;
+  function step() {
+    if (spent >= BLOCK_LIMIT) {
+      throw new Error(what + " did not block after " + BLOCK_LIMIT +
+          " tries; stopping.");
+    }
+    return transmit([apduHex]).then(function (r) {
+      var sw = parseInt(r.status, 16);
+      spent += 1;
+      if (sw === 0x6983) {
+        return spent;
+      }
+      if ((sw & 0xfff0) === 0x63c0 || sw === 0x6300) {
+        if (progress) {
+          progress(what + ": " + (sw & 0x0f) + " tries left");
+        }
+        return step();
+      }
+      if (sw === 0x9000) {
+        throw new Error(what + " was ACCEPTED by a value no PIN should " +
+            "be; stopping without resetting.");
+      }
+      throw new Error(what + " answered " + r.status + "; stopping.");
+    });
+  }
+  var done = step();
+  log.debug("Leaving blockWith().");
+  return done;
+}
+
+function reset(transmit, progress) {
+  log.debug("Entering reset().");
+  var total = 0;
+  var done = transmit([iso.encodeCommand({ cla: 0x00, ins: 0xa4, p1: 0x04,
+      p2: 0x00, data: Buffer.from(PIV_AID, "hex") }).toString("hex")])
+    .then(function () {
+      return blockWith(transmit, blockPinApdu().toString("hex"), "The PIN",
+                       progress);
+    }).then(function (n) {
+      total += n;
+      return blockWith(transmit, blockPukApdu().toString("hex"), "The PUK",
+                       progress);
+    }).then(function (n) {
+      total += n;
+      return transmit([resetApdu().toString("hex")]);
+    }).then(function (r) {
+      if (!/^9000$/i.test(r.status)) {
+        throw new Error("RESET answered " + r.status + ".");
+      }
+      return total;
+    });
+  log.debug("Leaving reset().");
+  return done;
+}
+
 module.exports = {
+  reset: reset,
+  resetApdu: resetApdu,
+  blockPinApdu: blockPinApdu,
+  blockPukApdu: blockPukApdu,
   MGM_ALGORITHMS: MGM_ALGORITHMS,
   KEY_ALGORITHMS: KEY_ALGORITHMS,
   DEFAULT_MANAGEMENT_KEY: DEFAULT_MANAGEMENT_KEY,

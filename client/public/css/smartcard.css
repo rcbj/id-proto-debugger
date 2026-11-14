@@ -52,3 +52,14 @@
 .sc-detect-ok { color: #11632b; background: #e6f4ea; border-color: #8cc8a0; }
 .sc-detect-no { color: #8a1f1f; background: #fbe9e9; border-color: #e0a3a3; }
 .sc-gen { margin-left: 4px; }
+
+/* The Reset pane: a warning that cannot be missed, and red buttons. */
+.sc-warning {
+  color: #8a1f1f;
+  background: #fbe9e9;
+  border: 1px solid #e0a3a3;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+.sc-danger { color: #fff; background: #b42318; border-color: #8a1f1f; }
+.sc-reset-what { font-size: 0.85em; color: #8a1f1f; margin-left: 8px; }

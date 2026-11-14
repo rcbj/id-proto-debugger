@@ -618,7 +618,100 @@ function v4Fingerprint(algorithm, answer, created) {
   return { fingerprint: fpr, created: time, body: body };
 }
 
+// ---------------------------------------------------------------------------
+// RESET (3.4 section 7.2.16-17): block PW1 and PW3 by spending their tries
+// with a wrong value (eight zero bytes, as yubikit's reset() sends), then
+// TERMINATE DF and ACTIVATE FILE. Afterwards: PIN 123456, Admin PIN
+// 12345678, no keys, no cardholder data. Same `transmit` and `progress`
+// as piv.reset().
+// ---------------------------------------------------------------------------
+var BLOCK_LIMIT = 256;
+
+function blockApdu(reference) {
+  log.debug("Entering blockApdu().");
+  log.debug("Leaving blockApdu().");
+  return iso.encodeCommand({ cla: 0x00, ins: 0x20, p1: 0x00, p2: reference,
+                             data: Buffer.alloc(8, 0x00) });
+}
+
+function terminateApdu() {
+  log.debug("Entering terminateApdu().");
+  log.debug("Leaving terminateApdu().");
+  return iso.encodeCommand({ cla: 0x00, ins: 0xe6, p1: 0x00, p2: 0x00 });
+}
+
+function activateApdu() {
+  log.debug("Entering activateApdu().");
+  log.debug("Leaving activateApdu().");
+  return iso.encodeCommand({ cla: 0x00, ins: 0x44, p1: 0x00, p2: 0x00 });
+}
+
+function blockReference(transmit, reference, what, progress) {
+  log.debug("Entering blockReference(). " + what);
+  var spent = 0;
+  var hex = blockApdu(reference).toString("hex");
+  function step() {
+    if (spent >= BLOCK_LIMIT) {
+      throw new Error(what + " did not block after " + BLOCK_LIMIT +
+          " tries; stopping.");
+    }
+    return transmit([hex]).then(function (r) {
+      var sw = parseInt(r.status, 16);
+      spent += 1;
+      if (sw === 0x6983) {
+        return spent;
+      }
+      if ((sw & 0xfff0) === 0x63c0 || sw === 0x6982) {
+        if (progress) {
+          progress(what + ": blocking");
+        }
+        return step();
+      }
+      if (sw === 0x9000) {
+        throw new Error(what + " was ACCEPTED by eight zero bytes; " +
+            "stopping without resetting.");
+      }
+      throw new Error(what + " answered " + r.status + "; stopping.");
+    });
+  }
+  var done = step();
+  log.debug("Leaving blockReference().");
+  return done;
+}
+
+function reset(transmit, progress) {
+  log.debug("Entering reset().");
+  var total = 0;
+  var done = transmit([iso.encodeCommand({ cla: 0x00, ins: 0xa4, p1: 0x04,
+      p2: 0x00, data: Buffer.from(AID_PREFIX, "hex") }).toString("hex")])
+    .then(function () {
+      return blockReference(transmit, PW1, "The PIN", progress);
+    }).then(function (n) {
+      total += n;
+      return blockReference(transmit, PW3, "The Admin PIN", progress);
+    }).then(function (n) {
+      total += n;
+      return transmit([terminateApdu().toString("hex")]);
+    }).then(function (r) {
+      if (!/^9000$/i.test(r.status)) {
+        throw new Error("TERMINATE answered " + r.status + ".");
+      }
+      return transmit([activateApdu().toString("hex")]);
+    }).then(function (r) {
+      if (!/^9000$/i.test(r.status)) {
+        throw new Error("ACTIVATE answered " + r.status + ".");
+      }
+      return total;
+    });
+  log.debug("Leaving reset().");
+  return done;
+}
+
 module.exports = {
+  reset: reset,
+  blockApdu: blockApdu,
+  terminateApdu: terminateApdu,
+  activateApdu: activateApdu,
   PW1: PW1,
   PW3: PW3,
   ATTRIBUTES: ATTRIBUTES,

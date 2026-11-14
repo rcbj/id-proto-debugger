@@ -41,7 +41,7 @@ var bytes = require("./crypto_bytes.js");
 // The collapsible panes and the collapse / expand all switch.
 var panes = require("./panes");
 
-var PANES = ["otp", "oath", "piv", "pgp", "hsm", "reader"];
+var PANES = ["otp", "oath", "piv", "pgp", "hsm", "reader", "reset"];
 var SAVE = {
   otp: ["sc_save_otp_key", "sc_otp_aes_key"],
   oath: ["sc_save_oath_secret", "sc_oath_secret"],
@@ -2370,6 +2370,94 @@ function generateSecret(id, kind) {
   log.debug("Leaving generateSecret().");
 }
 
+// ---------------------------------------------------------------------------
+// RESET: wipe one application back to its factory state. Confirmed by
+// typing "RESET <name>", never by a click alone. PIV and the OpenPGP card
+// first block their PINs on purpose (the applets require it), which runs
+// in a relay session; the others are one command.
+// ---------------------------------------------------------------------------
+var RESETS = {
+  oath: { name: "OATH", what: "every OATH account and the applet's " +
+      "password" },
+  hsm: { name: "YUBIHSM AUTH", what: "every YubiHSM Auth credential; the " +
+      "management key goes back to 16 zero bytes" },
+  piv: { name: "PIV", what: "every PIV key and certificate; the PIN goes " +
+      "back to 123456, the PUK to 12345678 and the management key to its " +
+      "factory value" },
+  pgp: { name: "OPENPGP", what: "all three OpenPGP keys and the cardholder " +
+      "data; the PIN goes back to 123456 and the Admin PIN to 12345678" },
+  otp: { name: "OTP", what: "both OTP slots, including slot 1's factory " +
+      "Yubico OTP credential, which nothing can put back" }
+};
+
+function resetApplication(app) {
+  log.debug("Entering resetApplication(). " + app);
+  var out = "sc_reset_out";
+  var spec = RESETS[app];
+  if (!spec) {
+    log.debug("Leaving resetApplication(). Unknown.");
+    return;
+  }
+  if (transport() !== "api" || relayProblem()) {
+    paneMessage(out, transport() !== "api" ? "Reset needs the API. Set " +
+        "\"Talk to the key through\" to the API." : relayProblem());
+    log.debug("Leaving resetApplication(). No relay.");
+    return;
+  }
+  var typed = typeof window !== "undefined" && window.prompt ?
+      window.prompt("This permanently erases " + spec.what + ".\n\n" +
+          "Type RESET " + spec.name + " to go ahead.") : null;
+  if (typed === null || typed.trim().toUpperCase() !==
+      "RESET " + spec.name) {
+    setStatus("Nothing was reset.");
+    log.debug("Leaving resetApplication(). Not confirmed.");
+    return;
+  }
+  setStatus("Resetting " + spec.name + "…");
+  var done = null;
+  if (app === "piv" || app === "pgp") {
+    done = withPivSession(function (transmit) {
+      return (app === "piv" ? piv : pgp).reset(transmit, function (text) {
+        setStatus("Resetting " + spec.name + ": " + text);
+      });
+    }).then(function (tries) {
+      return { ok: true, note: "blocked the PINs with " + tries +
+          " deliberate wrong tries first, as the applet requires" };
+    });
+  } else {
+    var apdus = {
+      oath: [oath.selectApdu().toString("hex"),
+             oath.resetApdu().toString("hex")],
+      hsm: [hsm.selectApdu().toString("hex"), hsm.resetApdu().toString("hex")],
+      otp: [otp.ccidSelectApdu(), otp.programSlotApdu(1, null),
+            otp.programSlotApdu(2, null)]
+    }[app];
+    done = writeToKey(out, apdus, null).then(function (result) {
+      if (!result) {
+        return null;
+      }
+      if (!result.ok) {
+        throw new Error(refusalText(result.status) +
+            (app === "otp" && result.status === "6982" ? " A slot has an " +
+            "access code: delete it on the Yubico OTP pane with the code." :
+            ""));
+      }
+      return { ok: true, note: "" };
+    });
+  }
+  done.then(function (r) {
+    if (!r) {
+      return;
+    }
+    render(out, [{ label: "Reset", value: spec.name + " is back to its " +
+        "factory state" + (r.note ? "; " + r.note : "") + "." }]);
+    setStatus("Reset " + spec.name + ".");
+  }).catch(function (e) {
+    paneMessage(out, e.message);
+  });
+  log.debug("Leaving resetApplication().");
+}
+
 // After a read, offer the account names for Delete.
 function offerOathNames(rows) {
   log.debug("Entering offerOathNames().");
@@ -2572,6 +2660,7 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   onTransportChange: onTransportChange,
+  resetApplication: resetApplication,
   generateSecret: generateSecret,
   usePivDefaultKey: usePivDefaultKey,
   pivGenerate: pivGenerate,
