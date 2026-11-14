@@ -571,21 +571,36 @@ define(F1 + 'n-of', {
 // because a shared one would have to pick a numeric representation and every
 // choice loses one of the two.
 // ---------------------------------------------------------------------------
-function arithmetic(name, uri, arity, compute) {
+//
+// ADD AND MULTIPLY TAKE TWO OR MORE. A.3.2 says of integer-add, double-add,
+// integer-multiply and double-multiply alike that "this function MUST accept
+// two or more arguments", so those four are declared with a variadic tail
+// (`more`) and folded left to right; subtract, divide and mod take exactly
+// two. Until 2026-11-13 all four were fixed at two, and a policy adding three
+// values was refused at load as not typechecking.
+function arithmetic(name, uri, arity, compute, more) {
   log.debug("Entering arithmetic().");
   const args = [];
   for (let i = 0; i < arity; i += 1) {
     args.push({ kind: 'primitive', type: uri });
   }
-  define(F1 + name, {
+  const definition = {
     returns: { kind: 'primitive', type: uri },
     args: args,
     apply: function (values) {
       log.debug("Entering apply().");
+      let result = compute.apply(null, values.slice(0, arity));
+      for (let i = arity; i < values.length; i += 1) {
+        result = compute(result, values[i]);
+      }
       log.debug("Leaving apply().");
-      return model.singleton(uri, compute.apply(null, values));
+      return model.singleton(uri, result);
     }
-  });
+  };
+  if (more) {
+    definition.variadic = { kind: 'primitive', type: uri };
+  }
+  define(F1 + name, definition);
   log.debug("Leaving arithmetic().");
 }
 
@@ -594,18 +609,20 @@ function arithmetic(name, uri, arity, compute) {
 // tests/jwk_pem_encoding.js bigIntLiteralsStayOutOfTheBundles()).
 var _B0 = BigInt(0);
 
-arithmetic('integer-add', TYPE.INTEGER, 2, function (a, b) { return a + b; });
+arithmetic('integer-add', TYPE.INTEGER, 2,
+           function (a, b) { return a + b; }, true);
 arithmetic('integer-subtract', TYPE.INTEGER, 2,
            function (a, b) { return a - b; });
 arithmetic('integer-multiply', TYPE.INTEGER, 2,
-           function (a, b) { return a * b; });
+           function (a, b) { return a * b; }, true);
 arithmetic('integer-abs', TYPE.INTEGER, 1,
            function (a) { return a < _B0 ? -a : a; });
-arithmetic('double-add', TYPE.DOUBLE, 2, function (a, b) { return a + b; });
+arithmetic('double-add', TYPE.DOUBLE, 2,
+           function (a, b) { return a + b; }, true);
 arithmetic('double-subtract', TYPE.DOUBLE, 2,
            function (a, b) { return a - b; });
 arithmetic('double-multiply', TYPE.DOUBLE, 2,
-           function (a, b) { return a * b; });
+           function (a, b) { return a * b; }, true);
 arithmetic('double-abs', TYPE.DOUBLE, 1, function (a) { return Math.abs(a); });
 
 define(F1 + 'integer-divide', {
@@ -1018,34 +1035,42 @@ temporalArithmetic('date-subtract-yearMonthDuration', TYPE.DATE,
 // ---------------------------------------------------------------------------
 // REGULAR EXPRESSIONS.
 //
-// XACML uses the XML Schema regular expression language, which is NOT
-// JavaScript's. Four differences matter and each one silently changes what a
-// policy matches:
+// A.3.13 defines string-regexp-match as "that of the xf:matches function with
+// the arguments reversed" — XQuery 1.0 and XPath 2.0 Functions and Operators
+// section 7.6.2 — and the five typed variants as converting their value to a
+// string and then applying it. xf:matches is a SEARCH: it is true when the
+// pattern matches any part of the input, and a policy that means the whole
+// input says so with the `^` and `$` anchors F&O 7.6.1 adds to the XML Schema
+// language. Its regex language is XML Schema's plus those anchors, plus
+// reluctant quantifiers and back-references, all of which JavaScript shares.
 //
-//   1. AN XML SCHEMA REGEX IS ANCHORED. `bc` matches the string `bc` and not
-//      `abcd`. JavaScript's is unanchored, so a policy meant to match one
-//      resource would match every resource containing its name — which is a
-//      permit granted far too widely, and the single most dangerous defect in
-//      this file.
-//   2. `\i` and `\c` are XML name-character classes that JavaScript has no
-//      equivalent for.
-//   3. A hyphen inside a character class can be a class-subtraction operator.
-//   4. `.` excludes the line terminators, as it does in JavaScript, so that
-//      one agrees.
+// UNTIL 2026-11-13 THIS ENGINE ANCHORED EVERY PATTERN, as an XML Schema
+// pattern facet is, and treated `^` and `$` as ordinary characters. That was
+// deliberate — an unanchored `bc` matches `abcd`, which grants a permit more
+// widely than an author who forgot the anchors meant — but it is not what
+// A.3.13 says, and a policy written for any other PDP that says `^admin$`
+// matched nothing here at all. It follows the specification now, and a policy
+// that wants the whole value matched writes the anchors.
 //
-// This handles 1 and 2, which are what the conformance suite exercises, and
-// refuses rather than guessing on 3 — a class subtraction silently
-// mistranslated is a regex that matches the wrong things.
+// Two differences from JavaScript remain and are handled:
+//
+//   1. `\i` and `\c` are XML name-character classes that JavaScript has no
+//      equivalent for, and are translated.
+//   2. A hyphen inside a character class can be a class-subtraction operator,
+//      which is refused rather than guessed at.
+//
+// `.` excludes the line terminators, as it does in JavaScript without the `s`
+// flag, so that one agrees.
 // ---------------------------------------------------------------------------
 /**
- * Translates an XML Schema regular expression into an anchored JavaScript
- * RegExp.
+ * Translates an xf:matches regular expression into a JavaScript RegExp that
+ * searches, as xf:matches does.
  *
- * Handles the anchoring and the `\i` and `\c` classes.
- * @param pattern - the XML Schema pattern
+ * Handles the `\i` and `\c` classes; `^` and `$` are anchors.
+ * @param pattern - the pattern
  * @returns the RegExp
  * @throws a processing error for character class subtraction, which is
- *   refused rather than approximated
+ *   refused rather than approximated, and for a pattern that does not compile
  */
 function xmlSchemaRegExp(pattern) {
   log.debug('Entering xmlSchemaRegExp().');
@@ -1064,11 +1089,16 @@ function xmlSchemaRegExp(pattern) {
     .replace(/\\I/g, '[^A-Za-z_:]')
     .replace(/\\c/g, '[A-Za-z0-9_:.\\-]')
     .replace(/\\C/g, '[^A-Za-z0-9_:.\\-]');
-  // ANCHORED — difference 1. The `^(?:` … `)$` wrapping rather than bare `^`
-  // and `$` so that a top-level alternation in the pattern cannot escape the
-  // anchors: `^a|b$` anchors only two of the branches.
-  log.debug('Leaving xmlSchemaRegExp(). Translated and anchored.');
-  return new RegExp('^(?:' + translated + ')$');
+  let compiled = null;
+  try {
+    compiled = new RegExp(translated);
+  } catch (e) {
+    log.debug('Leaving xmlSchemaRegExp(). Does not compile.');
+    throw model.processingError('The regular expression "' + pattern +
+                                '" is not valid: ' + e.message);
+  }
+  log.debug('Leaving xmlSchemaRegExp(). Translated; searches.');
+  return compiled;
 }
 
 function regexpMatch(name, subjectType, subjectText) {
@@ -1325,6 +1355,46 @@ higherOrder(F1, 'any-of-all', function (definition, bags, context) {
   });
 });
 
+// THE ONE BAG AMONG map's ARGUMENTS. A.3.12: map "SHALL take n+1 arguments",
+// a <Function> and then n-1 primitive values and ONE bag — in any position,
+// not necessarily last. Which argument is the bag is a property of the
+// EXPRESSION (a designator is always a bag, a literal never is, an <Apply> is
+// whatever its function returns), so it is read from the expressions rather
+// than from the evaluated values, every one of which is a bag at run time.
+// `null` when a shape cannot be told statically (a VariableReference).
+function expressionShape(expression) {
+  log.debug("Entering expressionShape().");
+  let shape = null;
+  if (expression.kind === 'value') {
+    shape = 'primitive';
+  } else if (expression.kind === 'designator' ||
+             expression.kind === 'selector') {
+    shape = 'bag';
+  } else if (expression.kind === 'apply') {
+    const definition = ownMembers.read(FUNCTIONS, expression.functionId);
+    const returns = definition ? declaredReturnType(definition) : null;
+    shape = returns ? returns.kind : null;
+  }
+  log.debug("Leaving expressionShape(). " + shape);
+  return shape;
+}
+
+// The index, among map's value arguments, of the one bag: the single
+// argument whose shape is a bag, or the last one when the shapes do not say
+// (which is how this function behaved before it took more than one).
+function mapBagIndex(valueExpressions) {
+  log.debug("Entering mapBagIndex().");
+  const bags = [];
+  valueExpressions.forEach(function (expression, index) {
+    if (expressionShape(expression) === 'bag') {
+      bags.push(index);
+    }
+  });
+  const index = bags.length === 1 ? bags[0] : valueExpressions.length - 1;
+  log.debug("Leaving mapBagIndex(). " + index);
+  return index;
+}
+
 define(F3 + 'map', {
   lazy: true,
   // The element type of the result is whatever the mapped function returns,
@@ -1332,22 +1402,53 @@ define(F3 + 'map', {
   // validator is told "a bag, of something I cannot name here" and is why it
   // skips the type half of the check rather than guessing.
   returns: { kind: 'bag', type: null },
-  args: [{ kind: 'function' }, { kind: 'bag' }],
+  // A <Function> and then n >= 1 more: `any`, because which of them is the
+  // bag is positional per policy and is checked below rather than declared.
+  args: [{ kind: 'function' }, { kind: 'any' }],
+  variadic: { kind: 'any' },
+  staticCheck: function (args, report) {
+    log.debug("Entering staticCheck(). map");
+    const values = args.slice(1);
+    const bags = values.filter(function (expression) {
+      return expressionShape(expression) === 'bag';
+    }).length;
+    const known = values.every(function (expression) {
+      return expressionShape(expression) !== null;
+    });
+    // A.3.12: the function named "returns a value of a primitive data-type",
+    // so one that returns a bag (string-bag, say) is refused here rather
+    // than left to happen to work on a bag of one member.
+    const named = args[0] && args[0].kind === 'function'
+      ? ownMembers.read(FUNCTIONS, args[0].functionId) : null;
+    const namedReturns = named ? declaredReturnType(named) : null;
+    if (namedReturns && namedReturns.kind === 'bag') {
+      report('urn:oasis:names:tc:xacml:3.0:function:map requires a function ' +
+             'that returns a primitive value, and ' + args[0].functionId +
+             ' returns a bag.');
+    }
+    if (known && bags !== 1) {
+      report('urn:oasis:names:tc:xacml:3.0:function:map takes exactly one ' +
+             'bag among its arguments after the <Function> and is given ' +
+             bags + '.');
+    }
+    log.debug("Leaving staticCheck(). map");
+  },
   apply: function (expressions, context, evaluate) {
     log.debug('Entering map().');
     const definition = functionReference(expressions[0], context, evaluate,
                                          'map');
-    const bags = expressions.slice(1).map(function (expression) {
+    const valueExpressions = expressions.slice(1);
+    const bags = valueExpressions.map(function (expression) {
       return evaluate(expression, context);
     });
-    // The LAST bag is the one mapped over; any earlier arguments are passed
-    // through unchanged to every application. With one bag that is just "apply
-    // to each member", which is what almost every use looks like.
-    const target = bags[bags.length - 1];
-    const fixed = bags.slice(0, bags.length - 1);
+    // The function is applied to the n-1 primitive arguments, in their
+    // places, and to each member of the bag in its place.
+    const at = mapBagIndex(valueExpressions);
+    const target = bags[at];
     let resultType = null;
     const values = target.values.map(function (candidate) {
-      const args = fixed.concat([model.singleton(target.type, candidate)]);
+      const args = bags.slice();
+      args[at] = model.singleton(target.type, candidate);
       const produced = invoke(definition, args, context);
       if (produced.values.length !== 1) {
         throw model.processingError(
@@ -1363,7 +1464,8 @@ define(F3 + 'map', {
     // unknowable from the data — the function's declared return type is the
     // only source. Falling back to the input's type would be wrong for a
     // mapping that changes type, which is most of them.
-    return model.bag(resultType || declaredReturnType(definition) ||
+    const declared = declaredReturnType(definition);
+    return model.bag(resultType || (declared && declared.type) ||
                      target.type, values);
   }
 });

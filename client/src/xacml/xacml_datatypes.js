@@ -129,6 +129,13 @@ function timezoneMinutes(text) {
   const sign = text[0] === '-' ? -1 : 1;
   const hours = parseInt(text.slice(1, 3), 10);
   const minutes = parseInt(text.slice(4, 6), 10);
+  // XML Schema Part 2, 3.2.7.3: a timezone is -14:00 to +14:00, and its
+  // minutes are 00-59. NaN is returned for anything outside, and every
+  // caller refuses a NaN offset. Accepted until 2026-11-13.
+  if (minutes > 59 || hours * 60 + minutes > 14 * 60) {
+    log.debug("Leaving timezoneMinutes(). Out of range.");
+    return NaN;
+  }
   log.debug("Leaving timezoneMinutes().");
   return sign * (hours * 60 + minutes);
 }
@@ -189,6 +196,17 @@ function daysFromCivil(year, month, day) {
   return era * 146097 + doe - 719468;
 }
 
+// The number of days in `month` of the proleptic Gregorian `year`. Year 0
+// exists in XML Schema 1.1's reading (1 BCE) and is a leap year, which the
+// arithmetic below gives without a special case.
+function daysInMonthOf(year, month) {
+  log.debug("Entering daysInMonthOf().");
+  const leap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  log.debug("Leaving daysInMonthOf().");
+  return days[month - 1];
+}
+
 function parseDateTimeish(lexical, shape) {
   log.debug("Entering parseDateTimeish().");
   const text = trimmed(lexical);
@@ -231,8 +249,21 @@ function parseDateTimeish(lexical, shape) {
     tz = timezoneMinutes(match[7]);
   }
   if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 24 ||
-      minute > 59 || second >= 61) {
+      minute > 59 || second >= 61 || Number.isNaN(tz)) {
     log.debug("Leaving parseDateTimeish().");
+    return null;
+  }
+  // XML Schema Part 2, D.2 / 3.2.7.1: the day must exist in its month
+  // ("Day-of-month Values"), so 2021-02-29 and 2020-02-30 are not dates; and
+  // hour 24 is allowed only as 24:00:00, the end of a day. Both were accepted
+  // until 2026-11-13, which made a policy's misspelt literal an ordinary
+  // value rather than the processing error it is.
+  if (shape !== 'time' && day > daysInMonthOf(year, month)) {
+    log.debug("Leaving parseDateTimeish(). No such day in that month.");
+    return null;
+  }
+  if (hour === 24 && (minute !== 0 || second !== 0)) {
+    log.debug("Leaving parseDateTimeish(). Hour 24 is only 24:00:00.");
     return null;
   }
   log.debug("Leaving parseDateTimeish().");
@@ -480,24 +511,75 @@ function x500Equal(left, right) {
 function parsePortRange(text) {
   log.debug("Entering parsePortRange().");
   if (text === undefined || text === '') {
-    log.debug("Leaving parsePortRange().");
+    log.debug("Leaving parsePortRange(). None.");
     return { low: null, high: null };
   }
-  const dash = text.indexOf('-');
-  if (dash < 0) {
-    const single = parseInt(text, 10);
-    if (isNaN(single)) {
-      log.debug("Leaving parsePortRange().");
-      return null;
-    }
-    log.debug("Leaving parsePortRange().");
-    return { low: single, high: single };
+  // portrange = portnumber | "-"portnumber | portnumber"-"[portnumber],
+  // each portnumber decimal. A bare "-" or a non-digit is refused.
+  const match = /^(\d*)(-?)(\d*)$/.exec(text);
+  if (!match || (match[1] === '' && match[3] === '') ||
+      (match[2] === '' && match[3] !== '')) {
+    log.debug("Leaving parsePortRange(). Malformed.");
+    return null;
   }
-  const low = text.slice(0, dash);
-  const high = text.slice(dash + 1);
-  log.debug("Leaving parsePortRange().");
-  return { low: low === '' ? null : parseInt(low, 10),
-           high: high === '' ? null : parseInt(high, 10) };
+  const low = match[1] === '' ? null : parseInt(match[1], 10);
+  if (match[2] === '') {
+    log.debug("Leaving parsePortRange(). One port.");
+    return { low: low, high: low };
+  }
+  log.debug("Leaving parsePortRange(). A range.");
+  return { low: low, high: match[3] === '' ? null : parseInt(match[3], 10) };
+}
+
+// RFC 2396 3.2.2 hostname, with XACML's left-most wildcard.
+//   hostname    = *( domainlabel "." ) toplabel [ "." ]
+//   domainlabel = alphanum | alphanum *( alphanum | "-" ) alphanum
+//   toplabel    = alpha | alpha *( alphanum | "-" ) alphanum
+function isRfc2396Hostname(host) {
+  log.debug("Entering isRfc2396Hostname().");
+  const labels = host.replace(/\.$/, '').split('.');
+  const domainLabel = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+  const topLabel = /^[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/;
+  const ok = labels.every(function (label, index) {
+    if (index === 0 && label === '*') {
+      return labels.length > 1;
+    }
+    return index === labels.length - 1 ? topLabel.test(label) :
+      domainLabel.test(label);
+  });
+  log.debug("Leaving isRfc2396Hostname(). " + ok);
+  return ok;
+}
+
+// RFC 2396 3.2.2 IPv4address = 1*digit "." 1*digit "." 1*digit "." 1*digit,
+// which is the syntax XACML B.4 names for an IPv4 address or mask. It is a
+// SYNTAX: RFC 2396 does not bound an octet, so neither does this.
+function isRfc2396Ipv4(text) {
+  log.debug("Entering isRfc2396Ipv4().");
+  const ok = /^\d+\.\d+\.\d+\.\d+$/.test(text);
+  log.debug("Leaving isRfc2396Ipv4(). " + ok);
+  return ok;
+}
+
+// The inside of an RFC 2732 ipv6reference: hex groups and colons, with at
+// most one "::" and an optional trailing dotted IPv4 part.
+function isIpv6Literal(text) {
+  log.debug("Entering isIpv6Literal().");
+  let ok = /^[0-9A-Fa-f:.]+$/.test(text) && text.indexOf(':') >= 0 &&
+    (text.match(/::/g) || []).length <= 1;
+  if (ok) {
+    const groups = text.split(':');
+    const last = groups[groups.length - 1];
+    if (last.indexOf('.') >= 0) {
+      ok = isRfc2396Ipv4(last);
+      groups.pop();
+    }
+    ok = ok && groups.every(function (group) {
+      return group === '' || /^[0-9A-Fa-f]{1,4}$/.test(group);
+    });
+  }
+  log.debug("Leaving isIpv6Literal(). " + ok);
+  return ok;
 }
 
 function parseDnsName(lexical) {
@@ -505,7 +587,12 @@ function parseDnsName(lexical) {
   const text = trimmed(lexical);
   const colon = text.indexOf(':');
   const host = colon < 0 ? text : text.slice(0, colon);
-  if (!host || /\s/.test(host)) {
+  // B.4 / 10.2.x: the hostname follows RFC 2396 section 3.2.2 — labels of
+  // letters, digits and interior hyphens, a top label that begins with a
+  // letter, an optional trailing dot — "except that a wildcard '*' may be
+  // used in the left-most component". Anything else is refused; until
+  // 2026-11-13 any text without whitespace was a dnsName.
+  if (!host || !isRfc2396Hostname(host)) {
     log.debug("Leaving parseDnsName().");
     return null;
   }
@@ -522,40 +609,39 @@ function parseDnsName(lexical) {
 function parseIpAddress(lexical) {
   log.debug("Entering parseIpAddress().");
   const text = trimmed(lexical);
-  if (!text) {
-    log.debug("Leaving parseIpAddress().");
-    return null;
-  }
-  // An IPv6 literal is bracketed, which is what makes its colons
-  // distinguishable from the port separator's. Getting this wrong turns
-  // `[::1]:80` into a host of `[` and is the one parsing mistake this grammar
-  // actually invites.
-  let address = text;
-  let rest = '';
+  // B.4: ipAddress = address [ "/" mask ] [ ":" [ portrange ] ], where an
+  // IPv4 address and mask are RFC 2396 IPv4address and an IPv6 address and
+  // mask are RFC 2732 ipv6reference — BRACKETED, which is what makes their
+  // colons distinguishable from the port separator's. Getting that wrong
+  // turns `[::1]:80` into a host of `[`, and until 2026-11-13 a bracketed
+  // MASK was not read at all, so `[a]/[m]:80` lost both mask and port.
+  const v6 = /^\[([^\]]*)\](?:\/\[([^\]]*)\])?(?::(.*))?$/.exec(text);
+  const v4 = /^([^/:]*)(?:\/([^:]*))?(?::(.*))?$/.exec(text);
+  let address = null;
+  let mask = null;
+  let portText = '';
   if (text[0] === '[') {
-    const close = text.indexOf(']');
-    if (close < 0) {
-      log.debug("Leaving parseIpAddress().");
+    if (!v6 || !isIpv6Literal(v6[1]) ||
+        (v6[2] !== undefined && !isIpv6Literal(v6[2]))) {
+      log.debug("Leaving parseIpAddress(). Not an IPv6 reference.");
       return null;
     }
-    address = text.slice(1, close);
-    rest = text.slice(close + 1);
+    address = v6[1];
+    mask = v6[2] === undefined ? null : v6[2].toLowerCase();
+    portText = v6[3] || '';
   } else {
-    const colon = text.indexOf(':');
-    if (colon >= 0) {
-      address = text.slice(0, colon);
-      rest = text.slice(colon);
+    if (!v4 || !isRfc2396Ipv4(v4[1]) ||
+        (v4[2] !== undefined && !isRfc2396Ipv4(v4[2]))) {
+      log.debug("Leaving parseIpAddress(). Not an IPv4 address.");
+      return null;
     }
+    address = v4[1];
+    mask = v4[2] === undefined ? null : v4[2];
+    portText = v4[3] || '';
   }
-  let mask = null;
-  const slash = address.indexOf('/');
-  if (slash >= 0) {
-    mask = address.slice(slash + 1);
-    address = address.slice(0, slash);
-  }
-  const ports = parsePortRange(rest.startsWith(':') ? rest.slice(1) : '');
+  const ports = parsePortRange(portText);
   if (!ports) {
-    log.debug("Leaving parseIpAddress().");
+    log.debug("Leaving parseIpAddress(). Bad port range.");
     return null;
   }
   log.debug("Leaving parseIpAddress().");
@@ -983,13 +1069,19 @@ define(TYPE.RFC822NAME, {
     if (!parsed) {
       throw fail('rfc822Name', lexical);
     }
+    // A.3.9: string-from-rfc822Name gives the value "in the form it was originally
+    // represented in XML form", and the typed regexp-match is defined
+    // through it — so the text is kept beside the parsed parts, and equality
+    // still compares the parts.
+    parsed.original = trimmed(lexical);
     log.debug("Leaving parse().");
     return parsed;
   },
   write: function (value) {
     log.debug("Entering write().");
     log.debug("Leaving write().");
-    return value.local + '@' + value.domain;
+    return typeof value.original === 'string' ? value.original
+      : value.local + '@' + value.domain;
   },
   // See defect 3: the domain was folded at parse time, the local part was not.
   equal: function (a, b) {
@@ -1007,11 +1099,20 @@ define(TYPE.X500NAME, {
     if (!parsed) {
       throw fail('x500Name', lexical);
     }
+    // A.3.9: string-from-x500Name gives the value "in the form it was originally
+    // represented in XML form", and the typed regexp-match is defined
+    // through it — so the text is kept beside the parsed parts, and equality
+    // still compares the parts.
+    parsed.original = trimmed(lexical);
     log.debug("Leaving parse().");
     return parsed;
   },
   write: function (value) {
     log.debug("Entering write().");
+    if (typeof value.original === 'string') {
+      log.debug("Leaving write(). As written.");
+      return value.original;
+    }
     log.debug("Leaving write().");
     return value.rdns.map(function (rdn) {
       return rdn.attribute.toUpperCase() + '=' + rdn.value;
@@ -1028,11 +1129,20 @@ define(TYPE.DNSNAME, {
     if (!parsed) {
       throw fail('dnsName', lexical);
     }
+    // A.3.9: string-from-dnsName gives the value "in the form it was originally
+    // represented in XML form", and the typed regexp-match is defined
+    // through it — so the text is kept beside the parsed parts, and equality
+    // still compares the parts.
+    parsed.original = trimmed(lexical);
     log.debug("Leaving parse().");
     return parsed;
   },
   write: function (value) {
     log.debug("Entering write().");
+    if (typeof value.original === 'string') {
+      log.debug("Leaving write(). As written.");
+      return value.original;
+    }
     if (value.ports.low === null && value.ports.high === null) {
       log.debug("Leaving write().");
       return value.host;
@@ -1058,13 +1168,37 @@ define(TYPE.IPADDRESS, {
     if (!parsed) {
       throw fail('ipAddress', lexical);
     }
+    // A.3.9: string-from-ipAddress gives the value "in the form it was originally
+    // represented in XML form", and the typed regexp-match is defined
+    // through it — so the text is kept beside the parsed parts, and equality
+    // still compares the parts.
+    parsed.original = trimmed(lexical);
     log.debug("Leaving parse().");
     return parsed;
   },
   write: function (value) {
     log.debug("Entering write().");
+    if (typeof value.original === 'string') {
+      log.debug("Leaving write(). As written.");
+      return value.original;
+    }
+    // Rebuilt from the parts: an IPv6 address and mask go back in their
+    // brackets, and the port range is kept. Until 2026-11-13 both were
+    // dropped, and what came out of an IPv6 value did not parse.
+    const v6 = value.address.indexOf(':') >= 0;
+    const wrap = function (part) {
+      return v6 ? '[' + part + ']' : part;
+    };
+    const ports = value.ports;
+    let portText = '';
+    if (ports.low !== null || ports.high !== null) {
+      portText = ':' + (ports.low === null ? '' : ports.low) +
+        (ports.low === ports.high ? ''
+          : '-' + (ports.high === null ? '' : ports.high));
+    }
     log.debug("Leaving write().");
-    return value.address + (value.mask ? '/' + value.mask : '');
+    return wrap(value.address) + (value.mask ? '/' + wrap(value.mask) : '') +
+      portText;
   },
   equal: function (a, b) {
     log.debug("Entering equal().");
