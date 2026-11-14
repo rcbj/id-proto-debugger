@@ -244,6 +244,18 @@ function fail(outId, error) {
   log.debug("Leaving fail().");
 }
 
+// A key types its OTP and then Enter. Decode as soon as that newline
+// arrives, so touching the key in the Token field is the whole gesture.
+function onOtpTyped() {
+  log.debug("Entering onOtpTyped().");
+  var field = document.getElementById("sc_otp_token");
+  if (field && /\n/.test(field.value)) {
+    field.value = field.value.replace(/\s+/g, "");
+    decodeOtp();
+  }
+  log.debug("Leaving onOtpTyped().");
+}
+
 function decodeOtp() {
   log.debug("Entering decodeOtp().");
   storeSecret(SAVE.otp[0], SAVE.otp[1]);
@@ -1083,7 +1095,10 @@ function pivGetData(tagHex) {
 function readPlan(app) {
   log.debug("Entering readPlan().");
   var plan = [];
-  if (app === "oath") {
+  if (app === "otp") {
+    plan = [["Slots (the OTP application's status)",
+             [otp.ccidSelectApdu()]]];
+  } else if (app === "oath") {
     var sel = oath.selectApdu().toString("hex");
     var calcAll = hexOf({ cla: 0x00, ins: 0xa4, p1: 0x00, p2: 0x01,
       data: iso.encodeTlv(0x74,
@@ -1146,7 +1161,38 @@ function readPlan(app) {
   return plan;
 }
 
+// The SELECT answer of the OTP application, as rows.
+function describeOtpStatus(hex) {
+  log.debug("Entering describeOtpStatus().");
+  var response = iso.parseResponse(hex);
+  if (response.sw !== 0x9000) {
+    log.debug("Leaving describeOtpStatus(). " + response.name);
+    return { summary: response.name, rows: [] };
+  }
+  var st = otp.parseStatus(response.data);
+  function slot(n, info) {
+    return { label: "Slot " + n, value: info.configured ?
+        "programmed" + (info.touch ? ", needs a touch" : "") : "empty" };
+  }
+  var described = {
+    summary: "firmware " + st.version + "; slot 1 " +
+        (st.slot1.configured ? "programmed" : "empty") + ", slot 2 " +
+        (st.slot2.configured ? "programmed" : "empty"),
+    rows: [{ label: "Firmware", value: st.version },
+           { label: "Programming sequence",
+             value: String(st.programSequence) },
+           slot(1, st.slot1), slot(2, st.slot2),
+           { label: "Note", value: "A programmed slot may hold a Yubico " +
+               "OTP, a static password or challenge-response; the status " +
+               "does not say which. Challenge-response on the Reader pane " +
+               "answers 6985 for a slot that is not challenge-response." }]
+  };
+  log.debug("Leaving describeOtpStatus().");
+  return described;
+}
+
 var READ_DECODERS = {
+  otp: { out: "sc_otp_out", decode: describeOtpStatus },
   oath: { out: "sc_oath_out", decode: function (hex) {
     return oath.describeResponse(hex);
   } },
@@ -1200,6 +1246,11 @@ function readRows(app, label, apdus, body) {
     return { rows: [{ label: label, value: e.message }], extra: null };
   }
   var summary = described.summary;
+  // An OATH applet with no accounts answers LIST and CALCULATE ALL with
+  // 9000 and nothing else, which reads as nothing having happened.
+  if (app === "oath" && /^9000$/.test(last.status || "") && !last.data) {
+    summary = "no OATH accounts on this key (" + summary + ")";
+  }
   // An OpenPGP key slot with nothing in it answers 6581 (a YubiKey) or 6A88
   // to the read of its public key — not a fault, an empty slot.
   if (app === "pgp" && /^(6581|6A88)$/i.test(last.status || "") &&
@@ -1235,21 +1286,32 @@ function readRows(app, label, apdus, body) {
   return { rows: rows, extra: extra };
 }
 
+// A message in the pane the user is looking at as well as on the status
+// line, which is at the top of the page and out of sight from a pane.
+function paneMessage(out, text) {
+  log.debug("Entering paneMessage().");
+  render(out, [{ label: "Not read", value: text }]);
+  setStatus(text);
+  log.debug("Leaving paneMessage().");
+}
+
 function readFromKey(app) {
   log.debug("Entering readFromKey(). " + app);
   if (!READ_DECODERS[app]) {
     log.debug("Leaving readFromKey(). Unknown application.");
     return;
   }
+  var target = READ_DECODERS[app].out;
   if (transport() !== "api") {
-    setStatus("Reading this application needs the API: no browser opens " +
-        "a smart card. Choose \"the API\" at the top of the page.");
+    paneMessage(target, "Reading the key needs the API: no browser opens " +
+        "a smart card. Set \"Talk to the key through\" at the top of the " +
+        "page to the API.");
     log.debug("Leaving readFromKey(). Browser transport.");
     return;
   }
   var problem = relayProblem();
   if (problem) {
-    setStatus(problem);
+    paneMessage(target, problem);
     log.debug("Leaving readFromKey(). " + problem);
     return;
   }
@@ -1293,6 +1355,8 @@ function readFromKey(app) {
     render(out, rows);
     setStatus("Read " + plan.length + " item(s) from the key.");
   }).catch(function (e) {
+    rows.push({ label: "Stopped", value: e.message });
+    render(out, rows);
     setStatus(e.message);
   });
   log.debug("Leaving readFromKey(). Started.");
@@ -1359,6 +1423,7 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   onTransportChange: onTransportChange,
+  onOtpTyped: onOtpTyped,
   readFromKey: readFromKey,
   // Exported for tests/smartcard_engine.js, which holds every plan to
   // read-only instructions.

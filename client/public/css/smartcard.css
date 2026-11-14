@@ -28,3 +28,14 @@
 .sc-warn { color: #8a4a2f; }
 .sc-transport-note { font-size: 0.85em; color: #555; margin-left: 8px; }
 .sc-read-note { font-size: 0.8em; color: #777; margin-left: 6px; }
+
+/* The status line stays in view: a message about a pane far down the page
+   was written to the top of it, out of sight. */
+#sc_status {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: #fff;
+  padding: 4px 0;
+}
+#sc_status:empty { padding: 0; }

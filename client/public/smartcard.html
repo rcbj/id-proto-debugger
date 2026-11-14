@@ -70,7 +70,7 @@
     <p class="saml-note">Touch the key and it types the token. The public identity is the first twelve characters of a current 44-character OTP. The AES key decrypts the rest. The CRC is how a wrong key is recognised.</p>
     <div class="saml-row">
       <label class="saml-grow">Token
-        <textarea id="sc_otp_token" class="sc-trace" spellcheck="false"></textarea>
+        <textarea id="sc_otp_token" class="sc-trace" spellcheck="false" placeholder="Click here and touch the key: it types the OTP and the page decodes it." oninput="smartcard.onOtpTyped();"></textarea>
       </label>
     </div>
     <div class="saml-row">
@@ -128,6 +128,10 @@
         <button type="button" class="saml-btn saml-hidden" id="sc_verify_button" onclick="smartcard.verifyOtp();">Verify</button>
       </p>
     </div>
+    <p class="sc-read">
+      <button type="button" class="saml-btn" id="sc_otp_read" onclick="smartcard.readFromKey('otp');" title="Which OTP slots are programmed, read through the API's reader relay. Nothing is written.">Read from the key</button>
+      <span class="sc-read-note">through the API; which slots are programmed</span>
+    </p>
     <div id="sc_otp_out" class="sc-out"></div>
   </div>
 </fieldset>

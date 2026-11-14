@@ -700,7 +700,35 @@ function ccidResponse(slot, data) {
   return buf.slice(0, size);
 }
 
+// THE OTP APPLICATION'S STATUS, which its SELECT answers with (and which a
+// HID status report carries too): firmware version (3 bytes), the
+// programming sequence (1), and a little-endian touch-level word whose low
+// five bits say which slots hold a configuration and which of those need a
+// touch (ykdef.h: CONFIG1_VALID 0x01, CONFIG2_VALID 0x02, CONFIG1_TOUCH
+// 0x04, CONFIG2_TOUCH 0x08, CONFIG_LED_INV 0x10). It says WHETHER a slot is
+// programmed, not with what: a Yubico OTP and an HMAC-SHA1
+// challenge-response slot look the same here.
+function parseStatus(data) {
+  log.debug("Entering parseStatus().");
+  var buf = Buffer.from(data || []);
+  if (buf.length < 6) {
+    log.debug("Leaving parseStatus(). Short.");
+    reject("An OTP status is 6 bytes; this is " + buf.length + ".");
+  }
+  var level = buf[4] | (buf[5] << 8);
+  var status = {
+    version: buf[0] + "." + buf[1] + "." + buf[2],
+    programSequence: buf[3],
+    slot1: { configured: !!(level & 0x01), touch: !!(level & 0x04) },
+    slot2: { configured: !!(level & 0x02), touch: !!(level & 0x08) },
+    ledInverted: !!(level & 0x10)
+  };
+  log.debug("Leaving parseStatus().");
+  return status;
+}
+
 module.exports = {
+  parseStatus: parseStatus,
   OTP_AID: OTP_AID,
   ccidSelectApdu: ccidSelectApdu,
   ccidCalculateApdu: ccidCalculateApdu,

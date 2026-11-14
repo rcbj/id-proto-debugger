@@ -1551,6 +1551,19 @@ function challengeOverCcid() {
       html.indexOf('value="browser"') >= 0 &&
       html.indexOf('value="api"') >= 0,
       "the page offers no choice between the browser and the api");
+  // The OTP application's status, as a YubiKey 5 with slot 1 programmed
+  // (needing a touch) and slot 2 empty answered SELECT on 2026-11-13.
+  var st = otp.parseStatus(Buffer.from("00000101050a", "hex"));
+  assert.strictEqual(st.version, "0.0.1");
+  assert.strictEqual(st.programSequence, 1);
+  assert.deepStrictEqual(st.slot1, { configured: true, touch: true });
+  assert.deepStrictEqual(st.slot2, { configured: false, touch: false });
+  var both = otp.parseStatus(Buffer.from("050402070300", "hex"));
+  assert.strictEqual(both.version, "5.4.2");
+  assert.deepStrictEqual(both.slot2, { configured: true, touch: false });
+  assert.throws(function () {
+    otp.parseStatus(Buffer.from("0102", "hex"));
+  }, /6 bytes/);
   log.info("OK — challenge-response over CCID is SELECT then CALCULATE " +
       "with the HID payload, and WebHID asks for the OTP interface.");
   log.debug("Leaving challengeOverCcid().");
@@ -1567,6 +1580,7 @@ function readPlansOnlyRead() {
   var page = paths.requireSharedModule(
     [path.join(SRC, "smartcard.js")], "client/src/smartcard.js");
   var allowed = {
+    otp: [0xa4],                 // SELECT, whose answer is the slot status
     oath: [0xa4, 0xa1],          // SELECT / CALCULATE ALL, LIST
     piv: [0xa4, 0xcb, 0xfd, 0xf8, 0xf9],
     pgp: [0xa4, 0xca, 0x47],
@@ -1595,7 +1609,8 @@ function readPlansOnlyRead() {
       });
     });
   });
-  log.info("OK — " + count + " APDUs across four read plans are all reads.");
+  log.info("OK — " + count + " APDUs across " + Object.keys(allowed).length +
+      " read plans are all reads.");
   log.debug("Leaving readPlansOnlyRead().");
 }
 
