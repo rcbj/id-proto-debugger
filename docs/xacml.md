@@ -4,9 +4,11 @@ Covers `client/public/xacml.html`, `client/src/xacml.js`,
 `client/src/xacml_workbench.js`, `client/src/xacml_draw.js`,
 `client/src/xacml_runtime.js`, the engine under `client/src/xacml/`,
 `client/public/css/xacml.css`, `tests/xacml_engine.js`,
-`tests/xacml_page.js`, and the function table with its two jobs
+`tests/xacml_page.js`, the function table with its two jobs
 (`tests/xacml_function_cases.js`, `tests/xacml_functions_engine.js`,
-`tests/xacml_functions_page.js`).
+`tests/xacml_functions_page.js`), and the three engine jobs added on
+2026-11-14 (`tests/xacml_combiners.js`, `tests/xacml_pdp_paths.js`,
+`tests/xacml_formats.js`).
 
 The page is the XACML editor and the "Try a decision" tool from the
 iya-sts admin console, as a debugger workflow. It was added for
@@ -89,7 +91,13 @@ went through the page would agree with itself whatever the engine did.
 
 `tests/xacml_page.js` drives the page in Chrome: decisions, a Match
 edit, an ill-typed edit refused, a rule added and removed, the ALFA
-view imported back, the decision root, a reload, and Remove.
+view imported back, the decision root, a reload, and Remove. Then it
+presses every Add the page offers, twice so the second pass reaches
+what the first one made, submits every edit form as drawn, and presses
+every Remove, deepest first. It imports one PolicySet for each of eight
+policy-combining algorithms and asks each about four subjects. Last, it
+asks through the request box with a JSON Profile request, an XML
+request, and one that does not parse.
 
 The page redraws the editor with `innerHTML` after every edit, so an
 element handle held across an edit goes stale. iya-sts's job for the
@@ -152,3 +160,78 @@ The table found these, all fixed on 2026-11-13:
 `double-equal(NaN, NaN)` is true here, which A.3.1's "according to
 IEEE 754" seems to contradict. XML Schema's value space has one NaN, and
 the OASIS conformance cases IIC350 and IIC358 expect Permit.
+
+## Every combining algorithm, against Appendix C
+
+`tests/xacml_combiners.js` holds the PDP's combiners to a second
+transcription of Appendix C of the OASIS Standard of 22 January 2013.
+It covers all 22 rule- and policy-combining identifiers, the ordered
+and legacy variants included. Each is given every sequence of up to
+four child decisions drawn from the six values (Permit, Deny,
+NotApplicable and the three extended Indeterminates), which is 1,555
+sequences per identifier and 34,210 cases in all. Two things are
+compared for each: the decision, and how many children were evaluated.
+
+The second matters as much as the first. The specification's
+pseudocode returns from inside the loop, so a `deny-overrides` set
+whose second policy denies never evaluates the third. A child that is
+never evaluated contributes no obligations. A combiner that reaches the
+right decision by evaluating every child returns the wrong Response.
+
+The job found two defects on its first run, both fixed on 2026-11-14
+and both in 0.9.3:
+
+* **Legacy permit-overrides at policy level returned Permit when a
+  policy failed to evaluate.** C.12 returns Deny if any policy denied,
+  then Indeterminate if any policy failed. A PolicySet under
+  `urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:permit-overrides`
+  whose policies could not be evaluated granted access. The rule-level
+  version was right.
+* **Legacy deny-overrides at policy level evaluated on past an
+  Indeterminate policy.** C.10 returns Deny at once. The decision was
+  the same; the policies after it ran and could add obligations.
+
+The OASIS conformance corpus has no case for either legacy algorithm
+at policy level, which is why the corpus did not catch them.
+
+`tests/xacml_pdp_paths.js` drives the same PDP end to end from XML:
+only-one-applicable with none, one and two applicable policies and a
+target that cannot be evaluated; a variable defined through another
+variable; the three environment attributes the PDP supplies from its
+clock, with a request's own value winning; a Policy Information Point
+consulted only when the request is silent; MustBePresent turning an
+empty bag into missing-attribute; and legacy permit-overrides over a
+policy that fails, which it shows granting on the code before the fix.
+
+## The editor refuses an edit sent to the wrong node
+
+Every edit names the kinds of node it edits. `edit-match`,
+`edit-selector` and the others always checked. Until 2026-11-14,
+`edit-policy`, `edit-rule`, `edit-obligation`, `edit-assignment`,
+`edit-variable` and `edit-designator` did not: they wrote their fields
+onto whatever node the path named, so an `edit-rule` sent to a Match
+gave the Match an effect and answered "Rule updated." They refuse
+another kind now, with the kind they found.
+
+`tests/xacml_engine.js` walks the sample through every addition the
+editor offers and every removal, and sends each of the six edits to
+every row of the wrong kind, which is 350 refusals.
+
+## Three formats, and what each refuses
+
+`tests/xacml_formats.js` writes a nested PolicySet (variables, an
+obligation on Permit, advice on Deny, an integer comparison, a nested
+set) to ALFA and back, then to XML and back. It asks the same four
+questions at every stage, because a round trip that changes a decision
+has rewritten the policy. It also drives the JSON Profile from a
+shorthand request and a long-form one to a JSON Response with
+obligations, advice and the policy identifier list. It reads an XML
+Response back, keeps CombinerParameters across a write, and checks the
+error each reader names for a malformed input.
+
+It found one defect. With `@xmldom/xmldom` 0.9 a fatal parse error,
+such as an unclosed tag, calls the error handler and then throws a
+`ParseError` of its own. The reader's check never ran, so a truncated
+policy or request reached the caller as a bare `ParseError` with no
+XACML status. It is reported as an XACML syntax error now, like every
+other malformed document.

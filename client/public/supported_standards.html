@@ -1734,7 +1734,8 @@
         <!-- ===================== Smart cards ===================== -->
         <h2 id="smartcard">Smart cards and YubiKey applications</h2>
         <p>The <a href="/smartcard.html">smart-card page</a> decodes what
-        a key exchanges, and reaches a key on this machine either from the
+        a key exchanges, reads and writes each application, and resets one
+        to its factory state. It reaches a key on this machine either from the
         browser or through the API's reader relay, which uses the
         operating system's own PC/SC. FIDO2 and FIDO U2F are on the
         <a href="#webauthn">WebAuthn</a> workflow.</p>
@@ -1803,25 +1804,69 @@
                  target="_blank" rel="noopener noreferrer">SP 800-78-5</a> algorithms, <a href="https://csrc.nist.gov/pubs/fips/201-3/final"
                  target="_blank" rel="noopener noreferrer">FIPS 201-3</a>
               <span class="std-where">NIST</span></td>
-            <td>Decode PIV commands and answers; read the version, serial, CHUID, discovery object and the certificates in 9A, 9C, 9D and 9E, decompressing a gzip one.</td>
+            <td>Decode PIV commands and answers; read the version, serial, CHUID, discovery object and the certificates in 9A, 9C, 9D and 9E. Write: generate a key in a slot, import or delete a certificate, change the PIN or PUK, and unblock the PIN.</td>
+          </tr>
+          <tr>
+            <td><a href="https://developers.yubico.com/PIV/Introduction/Yubico_extensions.html"
+                 target="_blank" rel="noopener noreferrer">Yubico PIV extensions</a>
+              <span class="std-where">Yubico</span></td>
+            <td>GET METADATA (a slot&rsquo;s algorithm, PIN and touch policy, and whether a value is still the default), the PIN and touch policy on a generated key, deleting a key (firmware 5.7+), changing the management key, and RESET.</td>
+          </tr>
+          <tr>
+            <td>Management-key mutual authentication (SP 800-73-4 GENERAL AUTHENTICATE), with <a href="https://csrc.nist.gov/pubs/sp/800/67/r2/final"
+                 target="_blank" rel="noopener noreferrer">Triple DES</a> or <a href="https://csrc.nist.gov/pubs/fips/197/final"
+                 target="_blank" rel="noopener noreferrer">AES (FIPS 197)</a>
+              <span class="std-where">NIST</span></td>
+            <td>Authenticate with the card management key before a PIV write: a challenge-response the page computes from the card&rsquo;s own answer, inside a relay session, with the algorithm read from GET METADATA of 9B (AES-192 on a 5.7+ key). The api never sees the key.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc1952"
+                 target="_blank" rel="noopener noreferrer">RFC 1952</a> gzip
+              <span class="std-where">IETF</span></td>
+            <td>A PIV certificate object stored compressed is inflated before it is described.</td>
           </tr>
           <tr>
             <td><a href="https://developers.yubico.com/PIV/Introduction/PIV_attestation.html"
                  target="_blank" rel="noopener noreferrer">PIV attestation</a>
               <span class="std-where">Yubico</span></td>
-            <td>Read the F9 attestation certificate and ATTEST a slot. A post-quantum preview key's attestation (ML-DSA, FIPS 204) is described like any other certificate.</td>
+            <td>Read the F9 attestation certificate and ATTEST a slot. A post-quantum preview key&rsquo;s attestation (ML-DSA-87, FIPS 204) is described like any other certificate.</td>
           </tr>
           <tr>
             <td><a href="https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.1.pdf"
-                 target="_blank" rel="noopener noreferrer">OpenPGP smart card application</a> 3.4
+                 target="_blank" rel="noopener noreferrer">OpenPGP smart card application</a> 3.4.1
               <span class="std-where">GnuPG</span></td>
-            <td>Decode commands and data objects; read the application, cardholder and security data and the three public keys.</td>
+            <td>Decode commands and data objects; read the application, cardholder and security data and the three public keys. Write: the cardholder data, generate a key in each of the three slots, change the PIN and the Admin PIN, and reset the applet (TERMINATE DF, then ACTIVATE FILE).</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4880"
+                 target="_blank" rel="noopener noreferrer">RFC 4880</a> and <a href="https://www.rfc-editor.org/rfc/rfc9580"
+                 target="_blank" rel="noopener noreferrer">RFC 9580</a> v4 fingerprints, <a href="https://www.rfc-editor.org/rfc/rfc6637"
+                 target="_blank" rel="noopener noreferrer">RFC 6637</a> ECC
+              <span class="std-where">IETF</span></td>
+            <td>After a key is generated, its v4 fingerprint and creation time are computed and written to the card, which is how GnuPG finds the key; checked against GnuPG 2.2.27 for Ed25519, Curve25519 and RSA.</td>
+          </tr>
+          <tr>
+            <td><a href="https://developers.yubico.com/PGP/"
+                 target="_blank" rel="noopener noreferrer">User Interaction Flag</a> (touch policy)
+              <span class="std-where">Yubico</span></td>
+            <td>The OpenPGP touch policy for each key (off, on, fixed, cached, cached-fixed), in data objects D6 to D8.</td>
           </tr>
           <tr>
             <td><a href="https://developers.yubico.com/yubikey-manager/YubiHSM_Auth.html"
                  target="_blank" rel="noopener noreferrer">YubiHSM Auth</a>
               <span class="std-where">Yubico</span></td>
-            <td>Decode the applet that authenticates to a YubiHSM 2, derive session keys from a trace, and read its version and credentials.</td>
+            <td>Decode the applet that authenticates to a YubiHSM 2, derive session keys from a trace, and read its version and credentials. Write: add an AES-128 credential (derived from a password or from two keys) or an EC P-256 one, and delete one, with the applet&rsquo;s management key.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc8018"
+                 target="_blank" rel="noopener noreferrer">RFC 8018</a> PBKDF2
+              <span class="std-where">IETF</span></td>
+            <td>A YubiHSM Auth credential derived from a password: PBKDF2-HMAC-SHA256, salt &ldquo;Yubico&rdquo;, 10,000 rounds, as the YubiHSM 2 itself derives it.</td>
+          </tr>
+          <tr>
+            <td>Application reset
+              <span class="std-where">Yubico</span></td>
+            <td>Return one applet to its factory state through the API: PIV and the OpenPGP card (whose PINs are blocked on purpose first, as they require), OATH, YubiHSM Auth, and both OTP slots. Confirmed by typing the reset phrase, never by a click.</td>
           </tr>
         </table>
 

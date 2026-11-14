@@ -477,6 +477,106 @@ function illTypedLiteralsAreRefused() {
   log.debug("Leaving illTypedLiteralsAreRefused().");
 }
 
+// A document grown by every offer the editor makes: the sample, then each
+// addition at every row, twice over, so the second pass reaches the rows the
+// first one made (a condition's arguments, an obligation's assignments).
+function grownSample() {
+  log.debug("Entering grownSample().");
+  var bench = fresh();
+  assert.strictEqual(bench.loadSample().ok, true);
+  var applied = 0;
+  for (var pass = 0; pass < 2; pass++) {
+    bench.editorView("sample").tree.forEach(function (row) {
+      (row.options.additions || []).forEach(function (one) {
+        var done = bench.edit({ policy: "sample", path: row.path,
+                                action: one.action });
+        assert.ok(done.ok || done.why, one.action + " at '" + row.path +
+          "' neither succeeded nor said why");
+        if (done.ok) {
+          applied += 1;
+        }
+      });
+    });
+  }
+  log.debug("Leaving grownSample(). " + applied + " additions.");
+  return { bench: bench, applied: applied };
+}
+
+// EVERY ADDITION THE EDITOR OFFERS IS ONE IT CAN MAKE, and the document it
+// leaves still loads, writes ALFA and decides; every removable row removes.
+function everyOfferedEditApplies() {
+  log.debug("Entering everyOfferedEditApplies().");
+  var grown = grownSample();
+  var bench = grown.bench;
+  assert.ok(grown.applied > 30, "only " + grown.applied + " additions applied");
+  var view = bench.editorView("sample");
+  assert.ok(view.document && view.alfa, "the grown document is drawn");
+  var answer = ask(bench, "alice");
+  assert.ok(["Permit", "Deny", "NotApplicable", "Indeterminate"]
+    .indexOf(answer.decision) >= 0, answer.decision);
+  var removable = view.tree.filter(function (row) {
+    return row.options.removable;
+  }).map(function (row) {
+    return row.path;
+  });
+  assert.ok(removable.length > 10, "removable rows: " + removable.length);
+  // Deepest first, so a removal never shifts an index a later one names.
+  removable.reverse().forEach(function (where) {
+    var gone = bench.edit({ policy: "sample", path: where,
+                            action: "remove" });
+    assert.ok(gone.ok || gone.why, "remove at '" + where + "'");
+  });
+  assert.ok(bench.editorView("sample").document, "still a document");
+  log.info("OK — " + grown.applied + " offered additions and " +
+    removable.length + " removals apply.");
+  log.debug("Leaving everyOfferedEditApplies().");
+}
+
+// AN EDIT SENT TO THE WRONG KIND OF NODE IS REFUSED, and the stored document
+// is unchanged: `edit-rule` on a Match used to give the Match an effect and
+// say "Rule updated."
+function wrongKindEditsAreRefused() {
+  log.debug("Entering wrongKindEditsAreRefused().");
+  var bench = grownSample().bench;
+  var edits = {
+    "edit-policy": ["policy", "policySet"],
+    "edit-rule": ["rule"],
+    "edit-obligation": ["obligation"],
+    "edit-assignment": ["assignment"],
+    "edit-variable": ["variable"],
+    "edit-designator": []
+  };
+  var refused = 0;
+  var seen = {};
+  bench.editorView("sample").tree.forEach(function (row) {
+    seen[row.kind] = true;
+    Object.keys(edits).forEach(function (action) {
+      if (edits[action].indexOf(row.kind) >= 0 ||
+          (action === "edit-designator" && row.edit && row.edit.node &&
+           row.edit.node.kind === "designator")) {
+        return;
+      }
+      var before = bench.editorView("sample").document;
+      var done = bench.edit({ policy: "sample", path: row.path,
+                              action: action, id: "urn:example:wrong",
+                              effect: "Deny", name: "wrong",
+                              attributeId: "urn:example:wrong" });
+      assert.strictEqual(done.ok, false, action + " on a " + row.kind +
+        " at '" + row.path + "' was accepted");
+      assert.ok(done.why, action + " says why");
+      assert.strictEqual(bench.editorView("sample").document, before,
+        action + " on a " + row.kind + " changed the document");
+      refused += 1;
+    });
+  });
+  ["rule", "match", "obligation", "assignment", "variable", "expression"]
+    .forEach(function (kind) {
+      assert.ok(seen[kind], "the grown sample has a " + kind);
+    });
+  log.info("OK — " + refused + " wrong-kind edits are refused.");
+  log.debug("Leaving wrongKindEditsAreRefused().");
+}
+
 function main() {
   log.debug("Entering main().");
   sampleAllowsAlice();
@@ -490,6 +590,8 @@ function main() {
   alfaKeepsEveryComparison();
   alfaKeepsMustBePresentAndIssuer();
   inheritedNamesAreUnknown();
+  everyOfferedEditApplies();
+  wrongKindEditsAreRefused();
   pageWiring();
   log.info("xacml_engine: all checks passed.");
   log.debug("Leaving main().");

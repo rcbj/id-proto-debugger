@@ -10,6 +10,25 @@ a CRC-32 — and three are hashing: **FIPS 180-4** (SHA-1, SHA-2), **FIPS 202**
 KMAC, TupleHash, ParallelHash). The last two were added on 2026-08-28. This
 file is what is worth knowing before editing any of it.
 
+## Overview
+
+**Encoding / Hashing Tools** (`/encoding_tools.html`) is six panes. Open it
+from the **Tools** pane. Nothing is stored.
+
+| Pane | Buttons | Default |
+|---|---|---|
+| Base64 | Encode, Decode | standard Base64, not base64url |
+| URI Encoding | Encode, Decode | the same transform as `encodeURIComponent` |
+| Checksum (CRC-32) | Encode | IEEE CRC-32, eight hex digits |
+| SHA-1 / SHA-2 (FIPS 180-4) | Encode | SHA-256, input text, output hex |
+| SHA-3 / SHAKE (FIPS 202) | Encode | SHA3-256. Keccak-256 and Keccak-512 are in this menu and are not SHA-3 |
+| cSHAKE / KMAC / TupleHash / ParallelHash (SP 800-185) | Compute | KMAC128. The message box starts as hex. TupleHash is one element per line |
+
+The hash panes do not use Web Crypto. `crypto.subtle` has no SHA-3 and
+none of SP 800-185, and it is absent outside a secure context. What each
+function is for, including its post-quantum role, is in
+[Hashing](hashing.md).
+
 ## Why the post-quantum half is a HASHING page and not a signature page
 
 The Digital Signature page already signs with ML-DSA and with all twelve

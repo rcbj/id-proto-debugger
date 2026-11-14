@@ -45,6 +45,21 @@ and a missing module is a limit the page shows. The reader relay is
 **off** unless the api's env sets `smartcardReaderEnabled: true` (see
 [Reader](#reader)).
 
+## Specifications
+
+| Area | Specifications | Used for |
+|---|---|---|
+| Transport | [ISO/IEC 7816-4](https://www.iso.org/standard/77180.html) APDUs, status words and BER-TLV; [PC/SC](https://pcscworkgroup.com/specifications/); [USB CCID 1.1](https://www.usb.org/document-library/smart-card-ccid-version-11); [WebHID](https://wicg.github.io/webhid/) | Every applet's commands; the api's reader relay; the browser path to the OTP interface |
+| Yubico OTP | [Yubico OTP and modhex](https://developers.yubico.com/OTP/OTPs_Explained.html); [Validation Protocol 2.0](https://developers.yubico.com/OTP/Specifications/OTP_validation_protocol.html); [challenge-response](https://developers.yubico.com/OTP/OTP_challenge-response.html) with HMAC-SHA1 ([RFC 2104](https://www.rfc-editor.org/rfc/rfc2104)) | Decoding and verifying an OTP; slot challenge-response; programming, swapping and deleting slots |
+| OATH | [YKOATH](https://developers.yubico.com/OATH/YKOATH_Protocol.html); HOTP [RFC 4226](https://www.rfc-editor.org/rfc/rfc4226); TOTP [RFC 6238](https://www.rfc-editor.org/rfc/rfc6238); base32 [RFC 4648](https://www.rfc-editor.org/rfc/rfc4648); the [Key URI Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) | Reading, adding and deleting accounts; computing codes; `otpauth://` links |
+| PIV | [NIST SP 800-73-4](https://csrc.nist.gov/pubs/sp/800/73/pt1/4/upd1/final); [SP 800-78-5](https://csrc.nist.gov/pubs/sp/800/78/5/final); [FIPS 201-3](https://csrc.nist.gov/pubs/fips/201-3/final); [Yubico PIV extensions](https://developers.yubico.com/PIV/Introduction/Yubico_extensions.html); [PIV attestation](https://developers.yubico.com/PIV/Introduction/PIV_attestation.html); management-key authentication with [Triple DES](https://csrc.nist.gov/pubs/sp/800/67/r2/final) or AES ([FIPS 197](https://csrc.nist.gov/pubs/fips/197/final)); gzip [RFC 1952](https://www.rfc-editor.org/rfc/rfc1952) | Objects, certificates and attestation (ML-DSA-87, FIPS 204, on Yubico's 2026 preview); key generation, certificates, PINs, the management key, metadata and reset |
+| OpenPGP card | [OpenPGP smart card application 3.4.1](https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.1.pdf); v4 fingerprints by [RFC 4880](https://www.rfc-editor.org/rfc/rfc4880) and [RFC 9580](https://www.rfc-editor.org/rfc/rfc9580), ECC by [RFC 6637](https://www.rfc-editor.org/rfc/rfc6637); Yubico's touch policy ([UIF](https://developers.yubico.com/PGP/)) | Cardholder and security data, key generation and its fingerprint, touch policy, PINs and reset |
+| YubiHSM Auth | [YubiHSM Auth](https://developers.yubico.com/yubikey-manager/YubiHSM_Auth.html); PBKDF2 [RFC 8018](https://www.rfc-editor.org/rfc/rfc8018) | Credentials (AES-128 derived or from keys, EC P-256), session keys from a trace, reset |
+
+The [supported standards page](https://idptools.com/supported_standards.html#smartcard)
+inside the debugger lists the same, row by row, with what the page does
+with each.
+
 ## Browser or API
 
 The page asks once, at the top, how to reach a key: **this browser** or
@@ -114,9 +129,29 @@ GENERATE the page computes the v4 fingerprint (`openpgp_card.v4Fingerprint`)
 and writes both; `tests/smartcard_engine.js` holds it to GnuPG 2.2.27's
 for Ed25519, Curve25519 and RSA keys gpg generated.
 
-Not offered: OTP static passwords (keyboard-layout scan codes), importing
-OpenPGP keys (the extended header list), and resetting the PIV or OpenPGP
-applet, which wipes it.
+Not offered: OTP static passwords (keyboard-layout scan codes) and
+importing OpenPGP keys (the extended header list).
+
+**Reset** is an application of its own on the page, with a warning, and
+wipes one applet back to its factory state. It goes through the api, and
+nothing happens until the exact phrase is typed (`RESET PIV`,
+`RESET OPENPGP`, `RESET OATH`, `RESET YUBIHSM AUTH` or `RESET OTP`); a
+click alone never resets anything.
+
+| Applet | What it erases, and what it goes back to |
+|---|---|
+| PIV | every key and certificate; PIN 123456, PUK 12345678, the factory management key |
+| OpenPGP card | all three keys and the cardholder data; PIN 123456, Admin PIN 12345678 |
+| OATH | every account and the applet's password |
+| YubiHSM Auth | every credential; the management key back to 16 zero bytes |
+| OTP | both slots, **including slot 1's factory Yubico OTP credential, which nothing can put back** |
+
+PIV and the OpenPGP card refuse a reset until their PINs are blocked, so
+the page blocks them on purpose first, in a relay session, by presenting
+wrong values until the counters reach zero. PIV blocks its PIN and then
+its PUK, and resets (INS FB). The OpenPGP card blocks its PIN and then
+its Admin PIN, then terminates and reactivates. The others are one
+command each.
 
 ## Running the API natively
 
@@ -513,8 +548,47 @@ nobody gave, a wedged reader) is a 502. A bad request is a 400. The APDU is not 
 A container sees a host key through the host's pcscd socket, which
 `docker-compose-smartcard.yml` mounts; pcsc-lite 2.4 in the api image
 was checked against a host pcscd 1.9.5 with a YubiKey 5 on 2026-11-13.
-No test launcher starts a reader: the containerized test stack keeps
-the relay off, and `tests/api_otp_smartcard.js` asserts it.
+No test launcher attaches a reader. The containerized test stack turns
+the relay **on** with nothing behind it (`smartcardReaderEnabled: true`
+in `api/env/docker-tests.js`, no pcscd socket and no HID device), so the
+relay's own refusals are exercised over HTTP. See [Tests](#tests).
+
+## Tests
+
+Three jobs, none of which needs a key.
+
+* `tests/smartcard_engine.js` drives every module in node: the codec,
+  each applet's plans and their status words, OpenPGP fingerprints
+  against GnuPG, and the HID challenge against a scripted device.
+* `tests/api_otp_smartcard.js` talks to the api's relay with the relay
+  on and no reader. Listing readers, a valid transmit and opening a
+  session answer 502; a bad reader name (empty, a URL, a host and port,
+  a path, too long, a control character), a bad APDU and a bad session
+  id answer 400; closing an unknown session answers 200 with
+  `closed: false`; and an OTP challenge reports that HID is unavailable.
+  `/smartcard/limits` says the relay is enabled and HID is not.
+* `tests/smartcard_page.js` drives the page in Chrome in two halves.
+  **Offline forms** sets the transport to the api and checks the red
+  key-detected bar, every Generate button's format, each form's
+  validation, and the no-reader refusal from every write, read and
+  reset. **Recorded key** replays a real YubiKey: a fetch stub installed
+  before the page loads answers `/smartcard/*` from
+  `tests/smartcard_recorded.json` (recorded answers, serial scrubbed to
+  12345678), so every read shows the key's real content (the OATH
+  account, the PIV certificate, the ML-DSA-87 attestation, the OpenPGP
+  card) and every write, reset and challenge-response runs to the end.
+  It asserts more than 30 relay calls were made.
+
+**On the deployed static sites** the page has no api at all, and it
+refuses every operation over CCID before it reads the form: "CCID needs
+the api, and this deployment has none." The page job accepts that
+refusal wherever a check names another one, and records that the
+deployment has no api; the recorded-key half, which answers the api
+relay's endpoints, then logs that it is not exercised. That refusal
+cannot appear where an api is configured, so a page that claimed it
+wrongly would fail the replay on the containerized stack. The static
+build also minifies the page and rewrites its `onclick` quotes, which
+the job's in-page reads allow for.
 
 ## What to check with a key
 

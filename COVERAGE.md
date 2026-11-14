@@ -42,6 +42,19 @@ is instrumented unless you explicitly enable it.
   dismissal, and `navigator.sendBeacon`/`fetch(keepalive)` reject payloads over
   ~64 KB, which coverage routinely exceeds. Repeated snapshots are harmless — the
   server writes each as its own file and `nyc` merges them.
+- **And once more before the browser closes.** `driver.quit()` kills the
+  browser and fires no page event, so whatever a job's last page ran after the
+  last tick — usually the assertions the job exists for — was never sent. Two
+  runs of the same tree differed by about a hundred frontend lines for that
+  reason (`webauthn.js` by 91, `pqc_x509.js` by 82), which made the frontend
+  floor a coin toss. `tests/tools/flush-coverage-on-quit.js` is preloaded into
+  every job (beside `attach-admin-token.js`) and, on `COVERAGE=true` runs only,
+  wraps `WebDriver.prototype.quit`: it POSTs `window.__coverage__`
+  synchronously from inside the page — the page is still alive, so this is not
+  the dismissal case above — bounded at five seconds and never failing the job,
+  and then quits. On 2026-11-14 that alone moved the frontend from 69.0% to
+  70.9%. The beacon's own exit sends try `navigator.sendBeacon` first and fall
+  back to the XHR when it declines a large payload.
 - The client server, when started with `COVERAGE=true`, exposes `POST /coverage`
   and writes each payload as an Istanbul coverage file under
   `COVERAGE_DIR` (default `/coverage/frontend/.nyc_output`).

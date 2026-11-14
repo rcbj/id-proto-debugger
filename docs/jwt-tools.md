@@ -26,6 +26,30 @@ those jobs were not re-run for this pass.
 * TOC
 {:toc}
 
+## Overview
+
+**JWT Tools** (`/jwt_tools.html`) builds, signs, encrypts, verifies, and
+decrypts a token in the browser. Open it from the **Tools** pane on the
+OAuth2 / OIDC pages. Signing uses Web Crypto, so use the page over
+`https://` or `http://localhost`.
+
+The signing menu is `RS256` (the default) and the rest of `RS*` / `PS*`,
+`ES256` / `ES384` / `ES512`, `EdDSA` (Ed25519), and `HS256` / `HS384` /
+`HS512`. Ed448, secp256k1, and the post-quantum algorithms are on the
+Digital Signature page's JWS pane.
+
+Encryption pairs a key-management algorithm with a content-encryption
+algorithm. **Key Management** defaults to `RSA-OAEP` (also `RSA-OAEP-256`
+and `ECDH-ES`, `ECDH-ES+A128KW`, `+A192KW`, `+A256KW`, all on P-256).
+**Content Encryption** defaults to `A256GCM` (also `A192GCM`, `A128GCM`,
+`A128CBC-HS256`, `A192CBC-HS384`, `A256CBC-HS512`). `RSA1_5` is not
+offered. AES-192 (`A192GCM`, `A192CBC-HS384`, and `ECDH-ES+A192KW`) fails
+in Chromium-based browsers. Nothing on this page is written to
+`localStorage`.
+
+The fields, the defaults, and the trust-chain checkbox are in
+[JWT Tools](jwt-tools.md).
+
 ## 1. Compose
 
 | Field or button | What it does |

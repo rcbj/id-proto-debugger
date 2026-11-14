@@ -1419,6 +1419,17 @@ function buildJobs() {
     env: {},
   });
 
+  // ALFA, the JSON Profile and XML: a nested PolicySet round-tripped
+  // through ALFA with every decision intact, a JSON request to a JSON
+  // Response, an XML Response read back, combiner parameters, and the
+  // syntax errors each reader names. In node.
+  jobs.push({
+    name: "XACML formats: ALFA round trip, JSON Profile, XML readers " +
+      "(in node)",
+    script: "xacml_formats.js",
+    env: {},
+  });
+
   // The XACML editor page in a browser: decisions, a Match edit, an
   // ill-typed edit refused, a rule added and removed, the ALFA view
   // imported back, the decision root, a reload, and Remove. Every action
@@ -5375,8 +5386,13 @@ function runJob(job, index, live, again) {
     // configure it through that API, each with an HTTP helper of its own. The
     // shim is a no-op when STS_ADMIN_API_TOKEN is unset, which is every run
     // against a service that is not gated. See tools/attach-admin-token.js.
+    // The second sends the page's browser coverage before driver.quit()
+    // kills the browser, on COVERAGE=true runs only; it is a no-op on every
+    // other. See tools/flush-coverage-on-quit.js.
     const child = spawn("node", ["--require",
         path.join(TESTS_DIR, "tools", "attach-admin-token.js"),
+        "--require",
+        path.join(TESTS_DIR, "tools", "flush-coverage-on-quit.js"),
         path.join(TESTS_DIR, job.script), "--url",
         BASE_URL], {
       env: childEnv,

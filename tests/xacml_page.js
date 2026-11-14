@@ -188,6 +188,55 @@ const SUBMIT_EDIT = `
   chosen.requestSubmit();
   return "";`;
 
+// What the editor offers right now, as [path, action] pairs: "add" is
+// every option of every Add menu, "edit" every edit form as drawn, and
+// "remove" every Remove button.
+const OFFERS = `
+  var kind = arguments[0];
+  var ed = document.getElementById("xacml_editor");
+  var out = [];
+  Array.prototype.forEach.call(ed.querySelectorAll("form.xacml-edit"),
+    function (f) {
+      var p = f.querySelector('input[type="hidden"][name="path"]');
+      var a = f.querySelector('input[type="hidden"][name="action"]');
+      var m = f.querySelector('select[name="action"]');
+      if (kind === "add" && m) {
+        Array.prototype.forEach.call(m.options, function (o) {
+          out.push([p.value, o.value]);
+        });
+      } else if (kind === "edit" && a && a.value !== "remove") {
+        out.push([p.value, a.value]);
+      } else if (kind === "remove" && a && a.value === "remove") {
+        out.push([p.value, a.value]);
+      }
+    });
+  return out;`;
+
+// Submit the one form at that path offering that action, as drawn.
+// Returns null when there is none any more, else the status it left.
+const SUBMIT_OFFER = `
+  var path = arguments[0], action = arguments[1];
+  var ed = document.getElementById("xacml_editor");
+  var st = document.getElementById("xacml_status");
+  var forms = ed.querySelectorAll("form.xacml-edit");
+  for (var i = 0; i < forms.length; i++) {
+    var f = forms[i];
+    var p = f.querySelector('input[type="hidden"][name="path"]');
+    var a = f.querySelector('input[type="hidden"][name="action"]');
+    var m = f.querySelector('select[name="action"]');
+    if (!p || p.value !== path) { continue; }
+    var offers = a ? a.value === action : (m && Array.prototype.some.call(
+      m.options, function (o) { return o.value === action; }));
+    if (!offers) { continue; }
+    if (m) { m.value = action; }
+    st.textContent = "";
+    st.className = "";
+    f.requestSubmit();
+    return { warn: st.className.indexOf("xacml-warn") >= 0,
+             text: st.textContent };
+  }
+  return null;`;
+
 // ---------------------------------------------------------------------------
 // Node-side helpers.
 // ---------------------------------------------------------------------------
@@ -434,6 +483,231 @@ async function policyRemoved(driver) {
   log.debug("Leaving policyRemoved().");
 }
 
+// EVERY ELEMENT THE PAGE OFFERS TO ADD IS ONE IT CAN ADD, every edit form
+// it draws submits, and every Remove removes — through the page's own
+// forms, so the editor and the drawing are exercised together in a browser.
+// One submission per executeScript call: the page redraws the whole editor
+// on each, and a hundred of them in one call outlasts the script timeout.
+async function submitOffers(driver, kind, plan, tally) {
+  log.debug("Entering submitOffers().");
+  for (const step of plan) {
+    const got = await driver.executeScript(SUBMIT_OFFER, step[0], step[1]);
+    if (got === null) {
+      continue;
+    }
+    tally[kind] += 1;
+    if (got.warn) {
+      tally[kind + "Refused"] += 1;
+      if (tally.refusals.length < 20) {
+        tally.refusals.push(step[1] + " at '" + step[0] + "': " + got.text);
+      }
+    }
+  }
+  log.debug("Leaving submitOffers().");
+}
+
+async function everyOfferWorks(driver) {
+  log.debug("Entering everyOfferWorks().");
+  await setFields(driver, { xacml_open: "sample" });
+  const tally = { add: 0, addRefused: 0, edit: 0, editRefused: 0,
+                  remove: 0, removeRefused: 0, refusals: [] };
+  for (let pass = 0; pass < 2; pass++) {
+    const adds = await driver.executeScript(OFFERS, "add");
+    await submitOffers(driver, "add", adds, tally);
+  }
+  await submitOffers(driver, "edit",
+    await driver.executeScript(OFFERS, "edit"), tally);
+  // Deepest first, so a removal never shifts an index a later one names.
+  const removes = (await driver.executeScript(OFFERS, "remove")).reverse();
+  await submitOffers(driver, "remove", removes, tally);
+  log.info("every offer: " + JSON.stringify(tally));
+  assert.ok(tally.add > 30, "only " + tally.add + " additions were offered");
+  assert.ok(tally.addRefused < tally.add / 4,
+    "too many offered additions refused: " + tally.refusals.join("; "));
+  assert.ok(tally.edit > 10, "only " + tally.edit + " edit forms drawn");
+  assert.ok(tally.remove > 10, "only " + tally.remove + " removals drawn");
+  const answer = await decide(driver, "alice", "sample");
+  assert.ok(["Permit", "Deny", "NotApplicable", "Indeterminate"]
+    .indexOf(answer) >= 0, "decision after the walk: " + answer);
+  log.info("PASS  every Add, edit and Remove the page draws applies");
+  log.debug("Leaving everyOfferWorks().");
+}
+
+// ---------------------------------------------------------------------------
+// EVERY POLICY-COMBINING ALGORITHM, DECIDED BY THE PAGE.
+//
+// One PolicySet per algorithm, imported as XML: a policy for alice that
+// permits, one for bob that denies, and one for carol whose only rule needs
+// an attribute nobody sends (MustBePresent), so it is Indeterminate. dave
+// matches none. The expected answers are XACML 3.0 Appendix C's — including
+// the two legacy rows, where an error is Deny under deny-overrides and
+// Indeterminate (never Permit) under permit-overrides.
+// ---------------------------------------------------------------------------
+const XNS = "urn:oasis:names:tc:xacml:3.0:core:schema:wd-17";
+const SUBJ = "urn:oasis:names:tc:xacml:1.0:subject-category:access-subject";
+const COMBINER_ROWS = [
+  // [ identifier, alice, bob, carol, dave ]
+  ["urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:deny-overrides",
+   "Permit", "Deny", "Indeterminate", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:" +
+   "ordered-permit-overrides",
+   "Permit", "Deny", "Indeterminate", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:" +
+   "deny-unless-permit", "Permit", "Deny", "Deny", "Deny"],
+  ["urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:" +
+   "permit-unless-deny", "Permit", "Deny", "Permit", "Permit"],
+  ["urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:" +
+   "first-applicable", "Permit", "Deny", "Indeterminate", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:" +
+   "only-one-applicable", "Permit", "Deny", "Indeterminate", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:deny-overrides",
+   "Permit", "Deny", "Deny", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:permit-overrides",
+   "Permit", "Deny", "Indeterminate", "NotApplicable"]
+];
+
+function combinerSetXml(id, alg) {
+  log.debug("Entering combinerSetXml().");
+  const sv = function (text) {
+    return '<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#' +
+      'string">' + text + "</AttributeValue>";
+  };
+  const des = function (attr, must) {
+    return '<AttributeDesignator Category="' + SUBJ + '" AttributeId="' +
+      attr + '" DataType="http://www.w3.org/2001/XMLSchema#string" ' +
+      'MustBePresent="' + must + '"/>';
+  };
+  const forWho = function (who) {
+    return "<Target><AnyOf><AllOf><Match MatchId=\"" + STRING_EQUAL +
+      "\">" + sv(who) +
+      des("urn:oasis:names:tc:xacml:1.0:subject:subject-id", "false") +
+      "</Match></AllOf></AnyOf></Target>";
+  };
+  const pol = function (pid, who, effect, condition) {
+    return '<Policy PolicyId="' + id + "-" + pid + '" Version="1.0" ' +
+      'RuleCombiningAlgId="urn:oasis:names:tc:xacml:3.0:rule-combining-' +
+      'algorithm:deny-overrides">' + forWho(who) + '<Rule RuleId="r" ' +
+      'Effect="' + effect + '"><Target/>' +
+      (condition ? "<Condition>" + condition + "</Condition>" : "") +
+      "</Rule></Policy>";
+  };
+  const needsClearance = '<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:' +
+    'function:string-is-in">' + sv("secret") +
+    des("urn:example:clearance", "true") + "</Apply>";
+  log.debug("Leaving combinerSetXml().");
+  return '<PolicySet xmlns="' + XNS + '" PolicySetId="' + id +
+    '" Version="1.0" PolicyCombiningAlgId="' + alg + '"><Target/>' +
+    pol("alice", "alice", "Permit") + pol("bob", "bob", "Deny") +
+    pol("carol", "carol", "Permit", needsClearance) + "</PolicySet>";
+}
+
+async function everyCombinerDecides(driver) {
+  log.debug("Entering everyCombinerDecides().");
+  let asked = 0;
+  for (let i = 0; i < COMBINER_ROWS.length; i++) {
+    const row = COMBINER_ROWS[i];
+    const name = "combine" + i;
+    await setFields(driver, {
+      xacml_import_name: name,
+      xacml_import: combinerSetXml(name, row[0])
+    });
+    const shot = await press(driver, "Import");
+    assert.ok(!shot.statusWarn, row[0] + ": " + shot.status);
+    const who = ["alice", "bob", "carol", "dave"];
+    for (let j = 0; j < who.length; j++) {
+      const got = await decide(driver, who[j], name);
+      assert.strictEqual(got, row[j + 1], row[0] + " for " + who[j]);
+      asked += 1;
+    }
+  }
+  log.info("PASS  " + COMBINER_ROWS.length + " policy-combining algorithms " +
+           "decide as Appendix C says (" + asked + " decisions)");
+  log.debug("Leaving everyCombinerDecides().");
+}
+
+// ---------------------------------------------------------------------------
+// A PASTED REQUEST DOCUMENT, IN BOTH OF ITS LANGUAGES.
+//
+// The request box takes a whole JSON Profile request or an XACML XML one in
+// place of the form, so a decision can be asked exactly as a PEP would send
+// it. One policy set with an obligation on Permit and advice on Deny, asked
+// in JSON and in XML, and once with a document that does not parse.
+// ---------------------------------------------------------------------------
+async function askWithDocument(driver, requestText, policy) {
+  log.debug("Entering askWithDocument().");
+  await setFields(driver, {
+    xacml_subject: "", xacml_action: "", xacml_resource: "",
+    xacml_request: requestText, xacml_decide_policy: policy
+  });
+  await driver.executeScript(
+      "document.getElementById('xacml_decision').innerHTML = '';");
+  const error = await driver.executeScript(PRESS, "Ask");
+  assert.strictEqual(error, "", error);
+  const shot = await waitFor(driver, function (s) {
+    return s.decision.length > 0 || s.decisionText.trim().length > 0;
+  }, "a pasted request drew nothing");
+  log.debug("Leaving askWithDocument(). " + shot.decision);
+  return shot;
+}
+
+async function pastedRequestsDecide(driver) {
+  log.debug("Entering pastedRequestsDecide().");
+  const subjectId = "urn:oasis:names:tc:xacml:1.0:subject:subject-id";
+  const assign = function (id, text) {
+    return '<AttributeAssignmentExpression AttributeId="' + id + '">' +
+      '<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">' +
+      text + "</AttributeValue></AttributeAssignmentExpression>";
+  };
+  const policyXml = '<Policy xmlns="' + XNS + '" PolicyId="pasted" ' +
+    'Version="1.0" RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:' +
+    'rule-combining-algorithm:first-applicable"><Target/>' +
+    '<Rule RuleId="alice" Effect="Permit"><Target><AnyOf><AllOf>' +
+    '<Match MatchId="' + STRING_EQUAL + '"><AttributeValue DataType="' +
+    'http://www.w3.org/2001/XMLSchema#string">alice</AttributeValue>' +
+    '<AttributeDesignator Category="' + SUBJ + '" AttributeId="' +
+    subjectId + '" DataType="http://www.w3.org/2001/XMLSchema#string" ' +
+    'MustBePresent="false"/></Match></AllOf></AnyOf></Target></Rule>' +
+    '<Rule RuleId="others" Effect="Deny"><Target/></Rule>' +
+    "<ObligationExpressions><ObligationExpression ObligationId=\"" +
+    "urn:sts:xacml:obligation:log\" FulfillOn=\"Permit\">" +
+    assign("urn:example:reason", "named") +
+    "</ObligationExpression></ObligationExpressions>" +
+    "<AdviceExpressions><AdviceExpression AdviceId=\"urn:example:why\" " +
+    "AppliesTo=\"Deny\">" + assign("urn:example:text", "not alice") +
+    "</AdviceExpression></AdviceExpressions></Policy>";
+  await setFields(driver, { xacml_import_name: "pasted",
+                            xacml_import: policyXml });
+  let shot = await press(driver, "Import");
+  assert.ok(!shot.statusWarn, shot.status);
+
+  const asJson = JSON.stringify({ Request: { ReturnPolicyIdList: true,
+    AccessSubject: { Attribute: [
+      { AttributeId: subjectId, Value: "alice" }] } } });
+  shot = await askWithDocument(driver, asJson, "pasted");
+  assert.strictEqual(shot.decision, "Permit",
+    "a JSON Profile request: " + shot.decisionText.slice(0, 300));
+
+  const asXml = '<Request xmlns="' + XNS + '" ReturnPolicyIdList="false" ' +
+    'CombinedDecision="false"><Attributes Category="' + SUBJ + '">' +
+    '<Attribute AttributeId="' + subjectId + '" IncludeInResult="true">' +
+    '<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">' +
+    "bob</AttributeValue></Attribute></Attributes></Request>";
+  shot = await askWithDocument(driver, asXml, "pasted");
+  assert.strictEqual(shot.decision, "Deny",
+    "an XML request: " + shot.decisionText.slice(0, 300));
+
+  shot = await askWithDocument(driver, "<Request", "pasted");
+  assert.ok(shot.decision === "" || shot.decision === "Indeterminate",
+    "a request that does not parse is not decided as if it did: " +
+    shot.decision);
+  assert.ok(/well-formed|parse|syntax/i.test(shot.decisionText + shot.status),
+    "and the page says why: " + shot.decisionText.slice(0, 300));
+  await setFields(driver, { xacml_request: "" });
+  log.info("PASS  a pasted JSON Profile request and an XML request decide, " +
+           "and a malformed one is refused");
+  log.debug("Leaving pastedRequestsDecide().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
@@ -454,6 +728,9 @@ async function test() {
     await decisionRootAnswers(driver);
     await survivesAReload(driver);
     await policyRemoved(driver);
+    await everyOfferWorks(driver);
+    await everyCombinerDecides(driver);
+    await pastedRequestsDecide(driver);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.stack || error.message);
