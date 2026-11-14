@@ -362,7 +362,14 @@ var config = {
   // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
   // reset/terminate commands). Off unless this is true. See
   // docs/smartcard.md.
-  smartcardReaderEnabled: false,
+  //
+  // ON on the containerized test stacks, because there it reaches NOTHING:
+  // the api container has no pcscd socket mounted and no HID device, so
+  // every request that gets past validation fails for want of a service.
+  // That is what tests/api_otp_smartcard.js drives — every refusal, the
+  // session lifecycle, and the answers with no reader — which an "off"
+  // relay (403 for everything) hid from the suite.
+  smartcardReaderEnabled: true,
   // How many messages POST /spiffe/call will read from a STREAM before it stops
   // and says so. A NUMBER.
   //

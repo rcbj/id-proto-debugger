@@ -27,10 +27,11 @@
 //
 // The smart-card reader relay sends ANY APDU to a card on the machine the api
 // runs on, which is why it is off unless an operator turns it on. On this
-// stack it is off, and that is asserted: /smartcard/limits says so and both
-// relay endpoints answer 403 rather than reaching for a reader. The relay's
-// exchange logic is driven in node by smartcard_engine.js with a scripted
-// card, which is the only card any test here has.
+// stack it is ON and reaches nothing — no pcscd socket, no HID device — so
+// every refusal the api makes, the session lifecycle and the no-reader
+// answers are driven over HTTP. The relay's exchange logic is driven in node
+// by smartcard_engine.js with a scripted card, which is the only card any
+// test here has.
 //
 // The api must be able to open a connection to this process, which on the
 // containerized stack it does by the compose name `tests`
@@ -149,27 +150,102 @@ async function limits() {
   assert.ok(otp.json.maxBodyBytes > 0);
   const card = await call("GET", "/smartcard/limits");
   assert.strictEqual(card.status, 200, card.text);
-  assert.strictEqual(card.json.enabled, false,
-      "the reader relay is on for this stack: " + card.text);
-  assert.strictEqual(card.json.available, false);
-  assert.ok(/off/i.test(card.json.reason), card.json.reason);
+  assert.strictEqual(card.json.enabled, true,
+      "the reader relay is off for this stack: " + card.text);
+  assert.strictEqual(card.json.maxSequence, 16);
+  assert.ok(card.json.hid && card.json.hid.available === false &&
+      /native|node-hid|yubico_otp/i.test(card.json.hid.reason || ""),
+      "HID should be unavailable in a container, and say why: " +
+      JSON.stringify(card.json.hid));
   log.info("PASS  /otp/limits names the protocol and servers; " +
-           "/smartcard/limits says the relay is off");
+           "/smartcard/limits says the relay is on and HID needs a native " +
+           "api");
   log.debug("Leaving limits().");
 }
 
-async function relayIsOff() {
-  log.debug("Entering relayIsOff().");
+// THE RELAY ON, WITH NO READER. This stack's api has no pcscd socket and no
+// HID device, so whatever passes validation fails for want of a service —
+// and everything before that is the api's own checking, which is the point:
+// every refusal is a 400 naming the problem, the session lifecycle answers
+// as documented, and nothing that could reach a card exists to reach.
+async function relayWithNoReader() {
+  log.debug("Entering relayWithNoReader().");
+  const READER = "Yubico YubiKey OTP+FIDO+CCID 00 00";
   const readers = await call("GET", "/smartcard/readers");
-  assert.strictEqual(readers.status, 403, readers.text);
+  assert.strictEqual(readers.status, 502, readers.text);
+  assert.ok(readers.json.error, "no reason given");
+  const badReaders = [
+    ["", /empty/], ["https://evil.example/r", /not a URL/],
+    ["host.example:443", /URI/], ["Yubico Reader:443", /host and port/],
+    ["/dev/hidraw0", /path/],
+    ["x".repeat(300), /longer/], ["a\u0001b", /control/]
+  ];
+  for (const [name, why] of badReaders) {
+    const r = await call("POST", "/smartcard/transmit",
+        { reader: name, apdus: ["00a4040000"] });
+    assert.strictEqual(r.status, 400, JSON.stringify(name) + " " + r.text);
+    assert.ok(why.test(r.json.error), r.json.error);
+  }
+  const badApdus = [[["zz"], /hex|APDU/i], [[], /1 to 16/],
+                    [Array(17).fill("00a4040000"), /1 to 16/],
+                    [["00"], /APDU|short|header/i]];
+  for (const [apdus, why] of badApdus) {
+    const r = await call("POST", "/smartcard/transmit",
+        { reader: READER, apdus: apdus });
+    assert.strictEqual(r.status, 400, JSON.stringify(apdus).slice(0, 60) +
+        " " + r.text);
+    assert.ok(why.test(r.json.error), r.json.error);
+  }
+  const remaining = await call("POST", "/smartcard/transmit",
+      { reader: READER, apdus: ["00a4040000"], remainingIns: "99" });
+  assert.strictEqual(remaining.status, 400, remaining.text);
   const sent = await call("POST", "/smartcard/transmit",
-      { reader: "Yubico YubiKey OTP+FIDO+CCID 00 00",
-        apdus: ["00a4040008a000000308000010"] });
-  assert.strictEqual(sent.status, 403, sent.text);
-  assert.ok(/off/i.test(sent.json.error), sent.json.error);
-  log.info("PASS  with the relay off, listing readers and sending an APDU " +
-           "are both 403");
-  log.debug("Leaving relayIsOff().");
+      { reader: READER, apdus: ["00a4040008a000000527200101"] });
+  assert.strictEqual(sent.status, 502, sent.text);
+
+  // Sessions: refused names, ids that are not ids, an id that names no
+  // session, a close that finds nothing, and an open with no service.
+  const noName = await call("POST", "/smartcard/session", { reader: "" });
+  assert.strictEqual(noName.status, 400, noName.text);
+  const open = await call("POST", "/smartcard/session", { reader: READER });
+  assert.strictEqual(open.status, 502, open.text);
+  const badId = await call("POST", "/smartcard/session/transmit",
+      { id: "not-an-id", apdus: ["00a4040000"] });
+  assert.strictEqual(badId.status, 400, badId.text);
+  const ghost = "0".repeat(32);
+  const unknown = await call("POST", "/smartcard/session/transmit",
+      { id: ghost, apdus: ["00a4040000"] });
+  assert.strictEqual(unknown.status, 502, unknown.text);
+  assert.ok(/No such session/.test(unknown.json.error), unknown.json.error);
+  const badSessionApdu = await call("POST", "/smartcard/session/transmit",
+      { id: ghost, apdus: ["xyz"] });
+  assert.strictEqual(badSessionApdu.status, 400, badSessionApdu.text);
+  const closeBad = await call("POST", "/smartcard/session/close",
+      { id: "nope" });
+  assert.strictEqual(closeBad.status, 400, closeBad.text);
+  const closeGhost = await call("POST", "/smartcard/session/close",
+      { id: ghost });
+  assert.strictEqual(closeGhost.status, 200, closeGhost.text);
+  assert.strictEqual(closeGhost.json.closed, false);
+
+  // OTP challenge-response over HID: the shape is checked, then a container
+  // has no HID to send it on.
+  const badSlot = await call("POST", "/smartcard/otp/challenge",
+      { slot: "40", challenge: "00" });
+  assert.strictEqual(badSlot.status, 400, badSlot.text);
+  const badChal = await call("POST", "/smartcard/otp/challenge",
+      { slot: "38", challenge: "zz" });
+  assert.strictEqual(badChal.status, 400, badChal.text);
+  const noHid = await call("POST", "/smartcard/otp/challenge",
+      { slot: "38", challenge: "0102030405" });
+  assert.strictEqual(noHid.status, 502, noHid.text);
+  assert.ok(/node-hid|yubico_otp|native|HID/i.test(noHid.json.error),
+      noHid.json.error);
+  log.info("PASS  with the relay on and no reader: " + (badReaders.length +
+           badApdus.length + 1) + " transmit refusals, the session " +
+           "lifecycle, and HID refusals all answer as documented; nothing " +
+           "reached a card");
+  log.debug("Leaving relayWithNoReader().");
 }
 
 async function verifiedThroughTheApi(verifier) {
@@ -282,7 +358,7 @@ async function test() {
   let verifier = null;
   try {
     await limits();
-    await relayIsOff();
+    await relayWithNoReader();
     verifier = await startVerifier();
     await verifiedThroughTheApi(verifier);
     await verifierRefusalsAreShown(verifier);
