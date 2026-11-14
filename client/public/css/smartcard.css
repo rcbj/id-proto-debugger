@@ -39,3 +39,4 @@
   padding: 4px 0;
 }
 #sc_status:empty { padding: 0; }
+.sc-narrow { width: 5em; }

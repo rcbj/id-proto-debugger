@@ -1614,6 +1614,65 @@ function readPlansOnlyRead() {
   log.debug("Leaving readPlansOnlyRead().");
 }
 
+// ADDING AN OATH ACCOUNT: base32 per RFC 4648's own test vectors, the
+// otpauth:// key-URI example, the period-in-name convention Yubico
+// Authenticator uses, long keys hashed to the block size, and a PUT built
+// from it that decodes back to the account.
+function oathAccountInput() {
+  log.debug("Entering oathAccountInput().");
+  var vectors = [["", null], ["MY======", "f"], ["MZXQ====", "fo"],
+                 ["MZXW6===", "foo"], ["MZXW6YQ=", "foob"],
+                 ["MZXW6YTB", "fooba"], ["MZXW6YTBOI======", "foobar"]];
+  vectors.forEach(function (v) {
+    if (v[1] === null) {
+      assert.throws(function () {
+        oath.base32Decode(v[0]);
+      }, /base32/);
+      return;
+    }
+    assert.strictEqual(oath.base32Decode(v[0]).toString("utf8"), v[1]);
+    assert.strictEqual(oath.base32Decode(v[0].toLowerCase()
+      .replace(/=/g, "")).toString("utf8"), v[1]);
+  });
+  assert.throws(function () {
+    oath.base32Decode("ABC1");
+  }, /base32/);
+  var link = oath.parseOtpauth("otpauth://totp/Example:alice@google.com" +
+      "?secret=JBSWY3DPEHPK3PXP&issuer=Example");
+  assert.deepStrictEqual([link.type, link.issuer, link.account,
+                          link.algorithm, link.digits, link.period],
+                         ["TOTP", "Example", "alice@google.com", "SHA-1",
+                          6, 30]);
+  var hotp = oath.parseOtpauth("otpauth://hotp/Acme:bob?secret=MZXW6&" +
+      "algorithm=SHA512&digits=8&counter=7");
+  assert.deepStrictEqual([hotp.type, hotp.issuer, hotp.account,
+                          hotp.algorithm, hotp.digits, hotp.counter],
+                         ["HOTP", "Acme", "bob", "SHA-512", 8, 7]);
+  assert.throws(function () {
+    oath.parseOtpauth("https://example.com");
+  }, /otpauth/);
+  assert.strictEqual(oath.credentialName({ issuer: "Example",
+      account: "alice", type: "TOTP", period: 30 }), "Example:alice");
+  assert.strictEqual(oath.credentialName({ issuer: "Example",
+      account: "alice", type: "TOTP", period: 60 }), "60/Example:alice");
+  assert.strictEqual(oath.credentialName({ account: "bob", type: "HOTP",
+      period: 60 }), "bob");
+  assert.strictEqual(oath.hmacKey(Buffer.alloc(64, 1), "SHA-1").length, 64);
+  assert.strictEqual(oath.hmacKey(Buffer.alloc(65, 1), "SHA-1").length, 20);
+  assert.strictEqual(oath.hmacKey(Buffer.alloc(100, 1), "SHA-512").length,
+                     100);
+  var key = oath.hmacKey(oath.base32Decode(link.secret), "SHA-1");
+  var put = oath.putApdu({ name: "Example:alice@google.com", type: "TOTP",
+      algorithm: "SHA-1", digits: 6, secret: key, touch: true });
+  var described = oath.describeCommand(put);
+  assert.ok(/PUT/.test(described.summary), described.summary);
+  assert.ok(JSON.stringify(described.rows).indexOf("Example:alice@google" +
+      ".com") >= 0, "the PUT does not carry the account's name");
+  log.info("OK — base32, otpauth links, period names and long keys turn " +
+      "into the PUT the applet takes.");
+  log.debug("Leaving oathAccountInput().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
@@ -1634,6 +1693,7 @@ async function test() {
   panesCollapse();
   challengeOverCcid();
   readPlansOnlyRead();
+  oathAccountInput();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

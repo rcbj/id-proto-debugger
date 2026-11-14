@@ -1353,6 +1353,9 @@ function readFromKey(app) {
       rows.splice.apply(rows, [m.at, 0].concat(m.rows));
     });
     render(out, rows);
+    if (app === "oath") {
+      offerOathNames(rows);
+    }
     setStatus("Read " + plan.length + " item(s) from the key.");
   }).catch(function (e) {
     rows.push({ label: "Stopped", value: e.message });
@@ -1360,6 +1363,201 @@ function readFromKey(app) {
     setStatus(e.message);
   });
   log.debug("Leaving readFromKey(). Started.");
+}
+
+// ---------------------------------------------------------------------------
+// WRITING TO THE KEY, through the api's reader relay.
+//
+// One path for every application: the API must be the transport, the person
+// confirms the exact change in a dialog first, and the result is shown in the
+// pane. PINs, passwords and management keys are typed at the moment they are
+// used and never stored, and nothing here ever sends a guessed one — a few
+// wrong PINs block a PIN.
+// ---------------------------------------------------------------------------
+function writeToKey(out, apdus, question) {
+  log.debug("Entering writeToKey().");
+  if (transport() !== "api") {
+    paneMessage(out, "Writing to the key needs the API. Set \"Talk to the " +
+        "key through\" at the top of the page to the API.");
+    log.debug("Leaving writeToKey(). Browser transport.");
+    return Promise.resolve(null);
+  }
+  var problem = relayProblem();
+  if (problem) {
+    paneMessage(out, problem);
+    log.debug("Leaving writeToKey(). " + problem);
+    return Promise.resolve(null);
+  }
+  if (typeof window !== "undefined" && window.confirm &&
+      !window.confirm(question)) {
+    setStatus("Nothing was written.");
+    log.debug("Leaving writeToKey(). Declined.");
+    return Promise.resolve(null);
+  }
+  setStatus("Writing to the key…");
+  var written = chosenReader().then(function (reader) {
+    return transmitSequence(reader, apdus);
+  }).then(function (body) {
+    var results = body.results || [body];
+    var last = results[results.length - 1] || {};
+    var ok = results.length === apdus.length &&
+        /^90/.test(String(last.status || ""));
+    return { ok: ok, status: last.status || "", data: last.data || "",
+             body: body, name: iso.statusName(parseInt(last.status, 16)) };
+  });
+  log.debug("Leaving writeToKey(). Sent.");
+  return written;
+}
+
+// The OATH applet's SELECT answer: whether a password guards it.
+function oathSelectState() {
+  log.debug("Entering oathSelectState().");
+  var state = chosenReader().then(function (reader) {
+    return transmitSequence(reader, [oath.selectApdu().toString("hex")]);
+  }).then(function (body) {
+    var last = (body.results || [body])[0] || {};
+    if (!/^90/.test(String(last.status || ""))) {
+      throw new Error("The OATH applet did not answer SELECT (" +
+          last.status + ").");
+    }
+    return oath.parseSelect(Buffer.from(last.data || "", "hex"));
+  });
+  log.debug("Leaving oathSelectState().");
+  return state;
+}
+
+var OATH_PASSWORD_MESSAGE = "This key's OATH applet has a password. This " +
+    "page does not send OATH passwords yet; remove it with Yubico " +
+    "Authenticator or `ykman oath access change --clear`, or add the " +
+    "account there.";
+
+// The account the form describes: from a pasted otpauth:// link when there
+// is one, otherwise from the fields.
+function oathFormAccount() {
+  log.debug("Entering oathFormAccount().");
+  var uri = valueOf("sc_oath_add_uri").trim();
+  var a = uri ? oath.parseOtpauth(uri) : {
+    type: valueOf("sc_oath_add_type") || "TOTP",
+    issuer: valueOf("sc_oath_add_issuer").trim(),
+    account: valueOf("sc_oath_add_account").trim(),
+    secret: valueOf("sc_oath_add_secret"),
+    algorithm: valueOf("sc_oath_add_algorithm") || "SHA-1",
+    digits: Number(valueOf("sc_oath_add_digits") || 6),
+    period: Number(valueOf("sc_oath_add_period") || 30),
+    counter: Number(valueOf("sc_oath_add_counter") || 0)
+  };
+  a.touch = checked("sc_oath_add_touch");
+  a.name = oath.credentialName(a);
+  a.key = oath.hmacKey(oath.base32Decode(a.secret), a.algorithm);
+  log.debug("Leaving oathFormAccount().");
+  return a;
+}
+
+function addOathAccount() {
+  log.debug("Entering addOathAccount().");
+  var out = "sc_oath_out";
+  var a = null;
+  var apdu = null;
+  try {
+    a = oathFormAccount();
+    apdu = oath.putApdu({ name: a.name, type: a.type,
+                          algorithm: a.algorithm, digits: a.digits,
+                          secret: a.key, touch: a.touch,
+                          counter: a.type === "HOTP" ? a.counter : 0 });
+  } catch (e) {
+    paneMessage(out, e.message);
+    log.debug("Leaving addOathAccount(). " + e.message);
+    return;
+  }
+  var question = "Write this OATH account to the key?\n\n  " + a.name +
+      "\n  " + a.type + ", " + a.algorithm + ", " + a.digits + " digits" +
+      (a.touch ? ", touch required" : "") +
+      "\n\nAn account with the same name on the key is replaced.";
+  var gate = transport() === "api" && !relayProblem() ? oathSelectState() :
+      Promise.resolve({});
+  gate.then(function (sel) {
+    if (sel && sel.challenge) {
+      paneMessage(out, OATH_PASSWORD_MESSAGE);
+      return null;
+    }
+    return writeToKey(out, [oath.selectApdu().toString("hex"),
+                            apdu.toString("hex")], question);
+  }).then(function (result) {
+    if (!result) {
+      return;
+    }
+    if (!result.ok) {
+      paneMessage(out, "The key refused the account: " + result.status +
+          " " + result.name + ".");
+      return;
+    }
+    setStatus("Added " + a.name + ".");
+    readFromKey("oath");
+  }).catch(function (e) {
+    paneMessage(out, e.message);
+  });
+  log.debug("Leaving addOathAccount().");
+}
+
+function deleteOathAccount() {
+  log.debug("Entering deleteOathAccount().");
+  var out = "sc_oath_out";
+  var name = valueOf("sc_oath_del_name").trim();
+  var apdu = null;
+  try {
+    apdu = oath.deleteApdu(name);
+  } catch (e) {
+    paneMessage(out, e.message);
+    log.debug("Leaving deleteOathAccount(). " + e.message);
+    return;
+  }
+  var gate = transport() === "api" && !relayProblem() ? oathSelectState() :
+      Promise.resolve({});
+  gate.then(function (sel) {
+    if (sel && sel.challenge) {
+      paneMessage(out, OATH_PASSWORD_MESSAGE);
+      return null;
+    }
+    return writeToKey(out, [oath.selectApdu().toString("hex"),
+                            apdu.toString("hex")],
+        "Delete the OATH account \"" + name + "\" from the key? Its " +
+        "secret is gone for good: the key does not give it back.");
+  }).then(function (result) {
+    if (!result) {
+      return;
+    }
+    if (!result.ok) {
+      paneMessage(out, "The key did not delete it: " + result.status + " " +
+          result.name + (result.status === "6984" ? " (no account by " +
+          "that name)" : "") + ".");
+      return;
+    }
+    setStatus("Deleted " + name + ".");
+    readFromKey("oath");
+  }).catch(function (e) {
+    paneMessage(out, e.message);
+  });
+  log.debug("Leaving deleteOathAccount().");
+}
+
+// After a read, offer the account names for Delete.
+function offerOathNames(rows) {
+  log.debug("Entering offerOathNames().");
+  var list = document.getElementById("sc_oath_names");
+  if (!list) {
+    log.debug("Leaving offerOathNames(). No list.");
+    return;
+  }
+  list.innerHTML = "";
+  rows.forEach(function (row) {
+    var name = String(row.label || "").trim();
+    if (/^    /.test(row.label) && /^(TOTP|HOTP)\b/.test(row.value)) {
+      var option = document.createElement("option");
+      option.value = name;
+      list.appendChild(option);
+    }
+  });
+  log.debug("Leaving offerOathNames().");
 }
 
 function readerLimits() {
@@ -1423,6 +1621,8 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   onTransportChange: onTransportChange,
+  addOathAccount: addOathAccount,
+  deleteOathAccount: deleteOathAccount,
   onOtpTyped: onOtpTyped,
   readFromKey: readFromKey,
   // Exported for tests/smartcard_engine.js, which holds every plan to

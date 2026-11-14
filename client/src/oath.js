@@ -596,7 +596,129 @@ function describeResponse(input) {
   return { summary: summary, rows: rows };
 }
 
+// ---------------------------------------------------------------------------
+// ADDING AN ACCOUNT: what a site hands out, turned into what the applet takes.
+// ---------------------------------------------------------------------------
+
+// RFC 4648 section 6 base32, the alphabet every authenticator setup uses.
+// Spaces, hyphens and padding are ignored, and lower case is accepted, as
+// they are when a person copies a secret off a setup page.
+function base32Decode(text) {
+  log.debug("Entering base32Decode().");
+  var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  var clean = String(text || "").toUpperCase().replace(/[\s=-]/g, "");
+  if (!clean || /[^A-Z2-7]/.test(clean)) {
+    log.debug("Leaving base32Decode(). Not base32.");
+    reject("The secret is not base32 (A-Z and 2-7).");
+  }
+  var bits = 0;
+  var value = 0;
+  var out = [];
+  var i = 0;
+  for (i = 0; i < clean.length; i++) {
+    value = (value << 5) | alphabet.indexOf(clean[i]);
+    bits += 5;
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff);
+      bits -= 8;
+    }
+  }
+  log.debug("Leaving base32Decode().");
+  return Buffer.from(out);
+}
+
+// An otpauth:// link — the text a setup QR code holds (Google
+// Authenticator's Key Uri Format): otpauth://TYPE/LABEL?secret=…&issuer=…
+// &algorithm=…&digits=…&period=…&counter=…
+function parseOtpauth(uri) {
+  log.debug("Entering parseOtpauth().");
+  var url = null;
+  try {
+    url = new URL(String(uri || "").trim());
+  } catch (e) {
+    log.debug("Leaving parseOtpauth(). Not a URL.");
+    reject("That is not an otpauth:// link.");
+  }
+  if (url.protocol !== "otpauth:") {
+    log.debug("Leaving parseOtpauth(). Wrong scheme.");
+    reject("That is not an otpauth:// link.");
+  }
+  var type = (url.host || url.hostname || "").toUpperCase();
+  if (type !== "TOTP" && type !== "HOTP") {
+    log.debug("Leaving parseOtpauth(). Unknown type.");
+    reject("An otpauth link is totp or hotp.");
+  }
+  var label = decodeURIComponent(url.pathname.replace(/^\//, ""));
+  var issuer = url.searchParams.get("issuer") || "";
+  var account = label;
+  var colon = label.indexOf(":");
+  if (colon >= 0) {
+    issuer = issuer || label.slice(0, colon);
+    account = label.slice(colon + 1).trim();
+  }
+  var algorithm = (url.searchParams.get("algorithm") || "SHA1")
+    .toUpperCase().replace(/^SHA(\d)/, "SHA-$1");
+  var parsed = {
+    type: type,
+    issuer: issuer,
+    account: account,
+    secret: url.searchParams.get("secret") || "",
+    algorithm: algorithm,
+    digits: Number(url.searchParams.get("digits") || 6),
+    period: Number(url.searchParams.get("period") || 30),
+    counter: Number(url.searchParams.get("counter") || 0)
+  };
+  log.debug("Leaving parseOtpauth().");
+  return parsed;
+}
+
+// The name the applet keys an account by, as ykman and Yubico Authenticator
+// write it: "issuer:account", with "period/" in front for a TOTP whose
+// period is not 30 seconds — the applet has no period field, so the period
+// travels in the name and an authenticator that reads it computes with it.
+function credentialName(opts) {
+  log.debug("Entering credentialName().");
+  var o = opts || {};
+  var account = String(o.account || "").trim();
+  if (!account) {
+    log.debug("Leaving credentialName(). No account.");
+    reject("The account name is empty.");
+  }
+  var name = (o.issuer ? String(o.issuer).trim() + ":" : "") + account;
+  var period = o.period === undefined ? 30 : Number(o.period);
+  if (o.type !== "HOTP" && period !== 30) {
+    if (!Number.isInteger(period) || period < 1) {
+      log.debug("Leaving credentialName(). Bad period.");
+      reject("The period is a whole number of seconds.");
+    }
+    name = period + "/" + name;
+  }
+  nameBytes(name);
+  log.debug("Leaving credentialName().");
+  return name;
+}
+
+// The HMAC key the applet stores. A key longer than the hash's block size is
+// hashed first, as HMAC itself would (RFC 2104) and as yubikit does before a
+// PUT — the applet takes 64 bytes at most, and the codes are the same.
+function hmacKey(secret, algorithm) {
+  log.debug("Entering hmacKey().");
+  var key = Buffer.from(secret);
+  var block = algorithm === "SHA-512" ? 128 : 64;
+  if (key.length > block) {
+    var hash = algorithm === "SHA-512" ? sha512 :
+        (algorithm === "SHA-256" ? sha256 : sha1);
+    key = Buffer.from(hash(key));
+  }
+  log.debug("Leaving hmacKey().");
+  return key;
+}
+
 module.exports = {
+  base32Decode: base32Decode,
+  parseOtpauth: parseOtpauth,
+  credentialName: credentialName,
+  hmacKey: hmacKey,
   AID: AID,
   hotp: hotp,
   totp: totp,

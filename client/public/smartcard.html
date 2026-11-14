@@ -186,6 +186,49 @@
       <button type="button" class="saml-btn" id="sc_oath_command" onclick="smartcard.decodeOathCommand();">Decode command</button>
       <button type="button" class="saml-btn" id="sc_oath_response" onclick="smartcard.decodeOathResponse();">Decode response</button>
     </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Add an account to the key</div>
+      <details class="saml-explain">
+        <summary>How adding works</summary>
+        <p>Paste the <code>otpauth://</code> link a site's setup QR code holds, or fill in the fields with the base32 secret the site shows. The account is written to the key's OATH applet through the API, after you confirm it; an account with the same name is replaced. The key never gives a secret back. A TOTP period other than 30 seconds is kept in the name (<code>60/Issuer:account</code>), as Yubico Authenticator writes it.</p>
+      </details>
+      <div class="saml-row">
+        <label class="saml-grow">otpauth:// link (optional; it fills everything)
+          <input id="sc_oath_add_uri" class="sc-field" spellcheck="false" placeholder="otpauth://totp/Issuer:alice@example.com?secret=…&amp;issuer=Issuer" />
+        </label>
+      </div>
+      <div class="saml-row">
+        <label>Issuer <input id="sc_oath_add_issuer" class="sc-field" spellcheck="false" /></label>
+        <label>Account <input id="sc_oath_add_account" class="sc-field" spellcheck="false" /></label>
+        <label class="saml-grow">Secret (base32)
+          <input id="sc_oath_add_secret" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+      </div>
+      <div class="saml-row">
+        <label>Type
+          <select id="sc_oath_add_type"><option>TOTP</option><option>HOTP</option></select>
+        </label>
+        <label>Algorithm
+          <select id="sc_oath_add_algorithm"><option>SHA-1</option><option>SHA-256</option><option>SHA-512</option></select>
+        </label>
+        <label>Digits
+          <select id="sc_oath_add_digits"><option>6</option><option>7</option><option>8</option></select>
+        </label>
+        <label>Period (s) <input id="sc_oath_add_period" class="sc-field sc-narrow" value="30" /></label>
+        <label>HOTP counter <input id="sc_oath_add_counter" class="sc-field sc-narrow" value="0" /></label>
+        <label><input type="checkbox" id="sc_oath_add_touch" /> Require a touch</label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn" id="sc_oath_add" onclick="smartcard.addOathAccount();">Add to the key</button>
+      </p>
+      <div class="saml-row">
+        <label class="saml-grow">Delete the account named
+          <input id="sc_oath_del_name" class="sc-field" list="sc_oath_names" spellcheck="false" placeholder="read the key to list its accounts" />
+          <datalist id="sc_oath_names"></datalist>
+        </label>
+        <button type="button" class="saml-btn" id="sc_oath_delete" onclick="smartcard.deleteOathAccount();">Delete from the key</button>
+      </div>
+    </div>
     <p class="sc-read">
       <button type="button" class="saml-btn" id="sc_oath_read" onclick="smartcard.readFromKey('oath');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
       <span class="sc-read-note">through the API; read-only</span>
