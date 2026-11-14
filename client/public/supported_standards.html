@@ -138,6 +138,7 @@
           <li><a href="#encoding">Encoding, registries and infrastructure</a></li>
           <li><a href="#xacml">XACML 3.0</a></li>
           <li><a href="#gnap">GNAP</a></li>
+          <li><a href="#smartcard">Smart cards and YubiKey applications</a></li>
           <li><a href="#notimpl">Named here, and deliberately not
               implemented</a></li>
         </ul>
@@ -1186,9 +1187,8 @@
         travel in and how they get there &mdash; and exactly two events of its
         own, both about the pipe. The vocabularies are <strong>CAEP</strong>
         (what happened to a session) and <strong>RISC</strong> (what happened
-        to an account); both are named in <em>deliberately not implemented</em>
-        below, and the page says so itself rather than leaving a two-item list
-        to be read as a broken page.</p>
+        to an account), and the page speaks both: a Profile selector
+        reconfigures it around the chosen vocabulary.</p>
         <table>
           <tr><th>Specification</th><th>What the debugger does with it</th></tr>
           <tr>
@@ -1207,6 +1207,28 @@
               <code>critical_subject_members</code> are implemented, and the
               page can also act as the <em>transmitter</em>: build any event,
               sign it, and push it at a receiver.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-caep-1_0-final.html"
+                   target="_blank" rel="noopener noreferrer">OpenID CAEP
+                   1.0</a> &mdash; Continuous Access Evaluation Profile
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>The session vocabulary: all eight event types, each checked
+              against its own members, and a simulated session on the CAEP
+              Session pane to drive them from &mdash; <em>this session is no
+              longer trustworthy</em>. Received from any compliant
+              transmitter; a type the catalogue does not name is shown as the
+              JSON that arrived.</td>
+          </tr>
+          <tr>
+            <td><a href="https://openid.net/specs/openid-risc-1_0-final.html"
+                   target="_blank" rel="noopener noreferrer">OpenID RISC
+                   1.0</a> &mdash; Risk Incident Sharing and Coordination
+              <span class="std-where">OpenID Foundation</span></td>
+            <td>The account vocabulary: all fourteen event types, and a
+              simulated account on the RISC Account pane &mdash; <em>this
+              account is no longer trustworthy</em>. Eleven of the fourteen
+              carry no members, so the subject is the whole message.</td>
           </tr>
           <tr>
             <td><a href="https://www.rfc-editor.org/rfc/rfc8417"
@@ -1709,6 +1731,100 @@
           </tr>
         </table>
 
+        <!-- ===================== Smart cards ===================== -->
+        <h2 id="smartcard">Smart cards and YubiKey applications</h2>
+        <p>The <a href="/smartcard.html">smart-card page</a> decodes what
+        a key exchanges, and reaches a key on this machine either from the
+        browser or through the API's reader relay, which uses the
+        operating system's own PC/SC. FIDO2 and FIDO U2F are on the
+        <a href="#webauthn">WebAuthn</a> workflow.</p>
+        <table>
+          <tr><th>Specification</th><th>What the debugger does with it</th></tr>
+          <tr>
+            <td><a href="https://www.iso.org/standard/77180.html"
+                 target="_blank" rel="noopener noreferrer">ISO/IEC 7816-4</a> Interindustry commands for interchange
+              <span class="std-where">ISO</span></td>
+            <td>The APDU and BER-TLV codec every smart-card application here uses: short and extended commands, status words, GET RESPONSE after <code>61xx</code> and the resend after <code>6Cxx</code>.</td>
+          </tr>
+          <tr>
+            <td><a href="https://pcscworkgroup.com/specifications/"
+                 target="_blank" rel="noopener noreferrer">PC/SC</a> Interoperability Specification, and <a href="https://www.usb.org/document-library/smart-card-ccid-version-11"
+                 target="_blank" rel="noopener noreferrer">USB CCID</a> 1.1
+              <span class="std-where">PC/SC Workgroup, USB-IF</span></td>
+            <td>How the API reaches a key: its reader relay uses the operating system's PC/SC (pcsc-lite, the macOS PCSC framework, WinSCard), which drives the key's CCID interface. A sequence of APDUs runs on one connection.</td>
+          </tr>
+          <tr>
+            <td><a href="https://developers.yubico.com/OTP/OTPs_Explained.html"
+                 target="_blank" rel="noopener noreferrer">Yubico OTP</a> and modhex
+              <span class="std-where">Yubico</span></td>
+            <td>Decode a typed OTP: public identity, modhex, CRC; with the AES key, the private identity, counters and timestamps.</td>
+          </tr>
+          <tr>
+            <td><a href="https://developers.yubico.com/OTP/Specifications/OTP_validation_protocol.html"
+                 target="_blank" rel="noopener noreferrer">Validation Protocol 2.0</a>
+              <span class="std-where">Yubico</span></td>
+            <td>Verify an OTP with YubiCloud or another verifier, through the API. The page signs the request; the API key stays in the browser.</td>
+          </tr>
+          <tr>
+            <td><a href="https://developers.yubico.com/OTP/OTP_challenge-response.html"
+                 target="_blank" rel="noopener noreferrer">OTP challenge-response</a>, over HID and CCID
+              <span class="std-where">Yubico</span></td>
+            <td>HMAC-SHA1 (RFC 2104) and Yubico OTP challenge-response to slot 1 or 2: over WebHID in Chrome and Edge, or over CCID through the API in any browser. Read which slots are programmed.</td>
+          </tr>
+          <tr>
+            <td><a href="https://wicg.github.io/webhid/"
+                 target="_blank" rel="noopener noreferrer">WebHID</a>
+              <span class="std-where">W3C Community Group</span></td>
+            <td>The browser path for challenge-response, on the key's OTP keyboard interface through feature reports. Firefox has no WebHID.</td>
+          </tr>
+          <tr>
+            <td><a href="https://www.rfc-editor.org/rfc/rfc4226"
+                 target="_blank" rel="noopener noreferrer">RFC 4226</a> HOTP, <a href="https://www.rfc-editor.org/rfc/rfc6238"
+                 target="_blank" rel="noopener noreferrer">RFC 6238</a> TOTP, <a href="https://www.rfc-editor.org/rfc/rfc4648"
+                 target="_blank" rel="noopener noreferrer">RFC 4648</a> base32
+              <span class="std-where">IETF</span></td>
+            <td>Compute HOTP and TOTP codes from a secret, with SHA-1, SHA-256 or SHA-512.</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/google/google-authenticator/wiki/Key-Uri-Format"
+                 target="_blank" rel="noopener noreferrer">Key URI Format</a> (<code>otpauth://</code>)
+              <span class="std-where">Google</span></td>
+            <td>Paste the link a setup QR code holds to fill an account.</td>
+          </tr>
+          <tr>
+            <td><a href="https://developers.yubico.com/OATH/YKOATH_Protocol.html"
+                 target="_blank" rel="noopener noreferrer">YKOATH</a>
+              <span class="std-where">Yubico</span></td>
+            <td>The key's OATH applet: decode its commands and answers, read its accounts and current codes, and add or delete an account.</td>
+          </tr>
+          <tr>
+            <td><a href="https://csrc.nist.gov/pubs/sp/800/73/pt1/4/upd1/final"
+                 target="_blank" rel="noopener noreferrer">NIST SP 800-73-4</a> PIV interfaces, <a href="https://csrc.nist.gov/pubs/sp/800/78/5/final"
+                 target="_blank" rel="noopener noreferrer">SP 800-78-5</a> algorithms, <a href="https://csrc.nist.gov/pubs/fips/201-3/final"
+                 target="_blank" rel="noopener noreferrer">FIPS 201-3</a>
+              <span class="std-where">NIST</span></td>
+            <td>Decode PIV commands and answers; read the version, serial, CHUID, discovery object and the certificates in 9A, 9C, 9D and 9E, decompressing a gzip one.</td>
+          </tr>
+          <tr>
+            <td><a href="https://developers.yubico.com/PIV/Introduction/PIV_attestation.html"
+                 target="_blank" rel="noopener noreferrer">PIV attestation</a>
+              <span class="std-where">Yubico</span></td>
+            <td>Read the F9 attestation certificate and ATTEST a slot. A post-quantum preview key's attestation (ML-DSA, FIPS 204) is described like any other certificate.</td>
+          </tr>
+          <tr>
+            <td><a href="https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.1.pdf"
+                 target="_blank" rel="noopener noreferrer">OpenPGP smart card application</a> 3.4
+              <span class="std-where">GnuPG</span></td>
+            <td>Decode commands and data objects; read the application, cardholder and security data and the three public keys.</td>
+          </tr>
+          <tr>
+            <td><a href="https://developers.yubico.com/yubikey-manager/YubiHSM_Auth.html"
+                 target="_blank" rel="noopener noreferrer">YubiHSM Auth</a>
+              <span class="std-where">Yubico</span></td>
+            <td>Decode the applet that authenticates to a YubiHSM 2, derive session keys from a trace, and read its version and credentials.</td>
+          </tr>
+        </table>
+
         <!-- ===================== not implemented ===================== -->
         <h2 id="notimpl">Named here, and deliberately not implemented</h2>
         <p>Things the pages mention, and that a reader could reasonably read
@@ -1716,31 +1832,16 @@
         <table>
           <tr><th>Specification</th><th>Why not</th></tr>
           <tr>
-            <td><a href="https://openid.net/specs/openid-caep-1_0-final.html"
-                   target="_blank" rel="noopener noreferrer">OpenID CAEP
-                   1.0</a> &mdash; Continuous Access Evaluation Profile
-              <span class="std-where">OpenID Foundation</span></td>
-            <td><strong>Not yet.</strong> CAEP is the enterprise
-              <em>session</em> vocabulary spoken over SSF &mdash; session
-              revoked, token claims change, credential change, assurance level
-              change, device compliance change &mdash; and it says <em>this
-              session is no longer trustworthy</em>. The Shared Signals page
-              names it and marks it absent rather than leaving a two-item
-              event list to be read as a broken page. The pipe it needs is all
-              there; adding it is rows in one table.</td>
-          </tr>
-          <tr>
-            <td><a href="https://openid.net/specs/openid-risc-1_0-final.html"
-                   target="_blank" rel="noopener noreferrer">OpenID RISC
-                   1.0</a> &mdash; Risk Incident Sharing and Coordination
-              <span class="std-where">OpenID Foundation</span></td>
-            <td><strong>Not yet.</strong> RISC is the account-lifecycle
-              vocabulary, aimed <em>across</em> providers rather than within
-              one enterprise &mdash; account disabled, purged, credentials
-              compromised, identifier changed or recycled &mdash; and it says
-              <em>this account is no longer trustworthy</em>, which is a
-              different sentence from CAEP&rsquo;s. Same position as CAEP
-              above.</td>
+            <td><a href="https://wicg.github.io/web-smart-card/"
+                   target="_blank" rel="noopener noreferrer">Web Smart Card
+                   API</a>
+              <span class="std-where">W3C Community Group</span></td>
+            <td><strong>Not usable from a web page.</strong> It would let a
+              browser speak PC/SC itself, but Chrome offers it only to
+              installed isolated web apps, and no other browser has it;
+              WebUSB refuses the smart-card class. So the smart-card page
+              reaches PIV, OATH, the OpenPGP card and YubiHSM Auth through
+              the API's reader relay instead.</td>
           </tr>
           <tr>
             <td>CTAP2 <span class="std-where">FIDO Alliance</span></td>
