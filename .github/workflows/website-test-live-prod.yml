@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+# SPDX-License-Identifier: MIT
+
 name: Live Site Test (idptools.com)
 
 # Runs the full Selenium suite against the DEPLOYED PROD site
@@ -26,6 +29,8 @@ on:
 
 permissions:
   contents: read
+  # Pulls the private image mirror; see the login step below.
+  packages: read
 
 jobs:
   live-test:
@@ -40,19 +45,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v7
         with:
-          # remote-run-tests.sh builds the STS locally (keycloak-tests.yml) to run
-          # the suite against the deployed site, and its source is the sts/
-          # submodule — https://github.com/rcbj/iya-sts.git.
-          # `recursive`, not `true`, and the difference is load-bearing: there
-          # are now submodules INSIDE submodules. api/node-ldapjs is the LDAP
-          # library the api's client uses, and sts/node-ldapjs is the same
-          # library inside the mock STS, which its embedded directory is built
-          # on. `true` stops one level short of the second, and an uninitialised
-          # submodule is an EMPTY DIRECTORY — so the sts image builds, npm
-          # installs a package with no main, and the container dies at startup
-          # with `Cannot find module 'ldapjs'`, naming a package rather than a
-          # submodule.
-          submodules: recursive
+          # api/node-ldapjs is a submodule — the LDAP library the api's client
+          # uses. iya-sts is not: remote-run-tests.sh runs the mirror copy of
+          # its release image (keycloak-tests.yml, IYA_STS_IMAGE), a private
+          # package on ghcr.io.
+          submodules: true
           # Full history, so the step below can check out whichever commit the
           # site was built from.
           fetch-depth: 0
@@ -77,6 +74,9 @@ jobs:
           fi
           echo "Deployed commit: $commit"
           git checkout --detach "$commit"
+          # --recursive: a deployed commit from before 2026-11-13 still
+          # carries the sts/ submodule (and its own node-ldapjs), which its
+          # launcher builds; a later one has only api/node-ldapjs.
           git submodule update --init --recursive
           git log -1 --oneline
 
@@ -101,6 +101,15 @@ jobs:
           node --version
           docker compose version
           google-chrome --version || true
+
+      # EVERY IMAGE keycloak-tests.yml PULLS IS A PRIVATE PACKAGE on ghcr.io
+      # (the image mirror, iya-sts's release included). GITHUB_TOKEN reads
+      # them with packages: read (above), granted because the packages give
+      # this repository's workflows access. Compose runs WITHOUT sudo on a
+      # runner, so this login is the one it uses.
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" |
+             docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
       # The script picks CONFIG_FILE from the URL (./env/prod.js for this one) and
       # derives the SAML/API env itself, so the URL is the only input. It exits
