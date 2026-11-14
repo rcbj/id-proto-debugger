@@ -202,6 +202,8 @@ jobs:
              done
            done
            echo "images=${published# }" >> "$GITHUB_OUTPUT"
+           # The same table, for the GitHub release's notes further down.
+           printf '%s' "${rows}" > "${RUNNER_TEMP}/published-images.md"
            {
              echo ""
              echo "### Published images${FLOAT:+ (also \`${FLOAT}\`)}"
@@ -270,3 +272,73 @@ jobs:
            echo "Moved ${RELEASE} to ${SHA}"
            echo "Tagged \`${VERSION}\` and moved \`${RELEASE}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
 
+       # ---------------------------------------------------------------------
+       # THE GITHUB RELEASE, release-M.N.P — the series release-0.8 through
+       # release-0.9.2 was made by hand, and this continues it under the same
+       # name. Modelled on IYA STS's "Create the GitHub release" step
+       # (rcbj/iya-sts .github/workflows/build-container.yml).
+       #
+       # ONE PER M.N.P, made by the FIRST master build of that line and left
+       # alone by every later one. Its tag, release-M.N.P, is created here
+       # on that build's commit and never moved: the floating M.N.P tag
+       # above is force-moved on every build, and a release whose tag moves
+       # would describe a commit it was not made from. A newer build of the
+       # same line is the floating tag's and the images' business; a new
+       # release is a new VERSION.
+       #
+       # The notes are the published images with their digests, the build
+       # it was cut from, and GitHub's generated list of merged pull
+       # requests since the previous release-* tag. The job's token creates
+       # it, so it starts no other workflow. A failure here leaves the
+       # images and tags published and the run red; a re-run makes it.
+       # ---------------------------------------------------------------------
+       - name: Create the GitHub release
+         if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+         env:
+           GH_TOKEN: ${{ github.token }}
+           VERSION: ${{ steps.version.outputs.version }}
+           RELEASE: ${{ steps.version.outputs.release }}
+           SHA: ${{ steps.version.outputs.sha }}
+         run: |
+           set -euo pipefail
+           repo="${GITHUB_REPOSITORY}"
+           tag="release-${RELEASE}"
+           if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
+             echo "Release ${tag} already exists; it is left as it is."
+             exit 0
+           fi
+           if git ls-remote --exit-code --tags origin "refs/tags/${tag}" \
+               >/dev/null 2>&1; then
+             echo "Tag ${tag} exists with no release; releasing it as it is."
+           else
+             git tag -a "${tag}" -m "Release ${RELEASE} (${VERSION})"
+             git push origin "refs/tags/${tag}"
+           fi
+           # The previous release: the highest release-* tag below this one.
+           previous="$(git ls-remote --tags origin 'refs/tags/release-*' |
+             sed -n 's#^[0-9a-f]*[[:space:]]*refs/tags/\(release-[0-9.]*\)$#\1#p' |
+             { cat; echo "${tag}"; } | sort -uV |
+             awk -v r="${tag}" '$0 == r { print p; exit } { p = $0 }')"
+           notes="${RUNNER_TEMP}/release-notes.md"
+           {
+             echo "## Images"
+             echo ""
+             echo "Images tagged \`${VERSION}\` and \`latest\`."
+             echo ""
+             echo "| Image | Digest |"
+             echo "|---|---|"
+             cat "${RUNNER_TEMP}/published-images.md"
+             echo ""
+             echo "Commit \`${SHA}\`; git tags \`${VERSION}\` and \`${tag}\`."
+             echo ""
+           } > "${notes}"
+           args=(--repo "${repo}" --verify-tag --latest
+                 --title "Release ${RELEASE}" --notes-file "${notes}"
+                 --generate-notes)
+           if [ -n "${previous}" ]; then
+             args+=(--notes-start-tag "${previous}")
+           fi
+           gh release create "${tag}" "${args[@]}"
+           echo "Created release ${tag}${previous:+ (since ${previous})}."
+           echo "GitHub release: \`${tag}\`${previous:+, since \`${previous}\`}." \
+             >> "$GITHUB_STEP_SUMMARY"

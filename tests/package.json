@@ -1,6 +1,6 @@
 {
   "name": "id-proto-debugger-tests",
-  "version": "0.9.1",
+  "version": "0.9.3",
   "private": true,
   "scripts": {
     "report": "node run-report.js",
