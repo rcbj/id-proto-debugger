@@ -160,7 +160,7 @@
       </div>
       <div class="saml-row" id="sc_slot_hmac">
         <label class="saml-grow">HMAC key (hex, up to 20 bytes)
-          <input id="sc_slot_hmac_key" class="sc-field" spellcheck="false" />
+          <input id="sc_slot_hmac_key" class="sc-field" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_slot_hmac_key', 'hex:20');" title="Fill with a new random value.">Generate</button>
         </label>
         <label><input type="checkbox" id="sc_slot_touch" /> Require a touch</label>
       </div>
@@ -169,15 +169,15 @@
           <input id="sc_slot_public_id" class="sc-field" spellcheck="false" />
         </label>
         <label>Private identity (12 hex)
-          <input id="sc_slot_private_id" class="sc-field" spellcheck="false" />
+          <input id="sc_slot_private_id" class="sc-field" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_slot_private_id', 'hex:6');" title="Fill with a new random value.">Generate</button>
         </label>
         <label class="saml-grow">AES key (32 hex)
-          <input id="sc_slot_aes_key" class="sc-field" spellcheck="false" />
+          <input id="sc_slot_aes_key" class="sc-field" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_slot_aes_key', 'hex:16');" title="Fill with a new random value.">Generate</button>
         </label>
       </div>
       <div class="saml-row saml-hidden" id="sc_slot_hotp">
         <label class="saml-grow">Secret
-          <input id="sc_slot_hotp_key" class="sc-field" spellcheck="false" />
+          <input id="sc_slot_hotp_key" class="sc-field" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_slot_hotp_key', 'base32:20');" title="Fill with a new random value.">Generate</button>
         </label>
         <label>as
           <select id="sc_slot_hotp_format"><option value="base32">base32</option><option value="hex">hex</option></select>
@@ -214,7 +214,7 @@
       <label>Secret (hex or text)
         <input id="sc_oath_secret" class="sc-field" type="password"
             autocomplete="off" spellcheck="false"
-            oninput="smartcard.onSaveChange('oath');" />
+            oninput="smartcard.onSaveChange('oath');" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_oath_secret', 'hex:20');" title="Fill with a new random value.">Generate</button>
       </label>
     </div>
     <label class="saml-toggle">
@@ -266,10 +266,10 @@
         </label>
       </div>
       <div class="saml-row">
-        <label>Issuer <input id="sc_oath_add_issuer" class="sc-field" spellcheck="false" /></label>
-        <label>Account <input id="sc_oath_add_account" class="sc-field" spellcheck="false" /></label>
+        <label>Issuer <input id="sc_oath_add_issuer" class="sc-field" spellcheck="false" value="IdpDebugger" /></label>
+        <label>Account <input id="sc_oath_add_account" class="sc-field" spellcheck="false" value="debugger@example.com" /></label>
         <label class="saml-grow">Secret (base32)
-          <input id="sc_oath_add_secret" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+          <input id="sc_oath_add_secret" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_oath_add_secret', 'base32:20');" title="Fill with a new random value.">Generate</button>
         </label>
       </div>
       <div class="saml-row">
@@ -371,7 +371,7 @@
       </div>
       <div class="saml-row">
         <label class="saml-grow">New management key (hex)
-          <input id="sc_piv_new_mgm_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+          <input id="sc_piv_new_mgm_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_piv_new_mgm_key', 'pivmgm');" title="Fill with a new random value.">Generate</button>
         </label>
         <label>as
           <select id="sc_piv_new_mgm_alg"><option value="aes192">AES-192</option><option value="aes128">AES-128</option><option value="aes256">AES-256</option><option value="3des">3DES</option></select>
@@ -496,21 +496,21 @@
           </select>
         </label>
         <label>Credential password
-          <input id="sc_hsm_add_password" class="sc-field" type="password" autocomplete="off" />
+          <input id="sc_hsm_add_password" class="sc-field" type="password" autocomplete="off" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_password', 'password:16');" title="Fill with a new random value.">Generate</button>
         </label>
         <label><input type="checkbox" id="sc_hsm_add_touch" /> Require a touch</label>
       </div>
       <div class="saml-row" id="sc_hsm_add_derived">
         <label class="saml-grow">Derivation password
-          <input id="sc_hsm_add_derivation" class="sc-field" type="password" autocomplete="off" />
+          <input id="sc_hsm_add_derivation" class="sc-field" type="password" autocomplete="off" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_derivation', 'password:16');" title="Fill with a new random value.">Generate</button>
         </label>
       </div>
       <div class="saml-row saml-hidden" id="sc_hsm_add_keys">
-        <label class="saml-grow">Encryption key (32 hex) <input id="sc_hsm_add_enc" class="sc-field" type="password" autocomplete="off" spellcheck="false" /></label>
-        <label class="saml-grow">MAC key (32 hex) <input id="sc_hsm_add_mac" class="sc-field" type="password" autocomplete="off" spellcheck="false" /></label>
+        <label class="saml-grow">Encryption key (32 hex) <input id="sc_hsm_add_enc" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_enc', 'hex:16');" title="Fill with a new random value.">Generate</button></label>
+        <label class="saml-grow">MAC key (32 hex) <input id="sc_hsm_add_mac" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_mac', 'hex:16');" title="Fill with a new random value.">Generate</button></label>
       </div>
       <div class="saml-row saml-hidden" id="sc_hsm_add_ec">
-        <label class="saml-grow">P-256 private key (64 hex) <input id="sc_hsm_add_ec_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" /></label>
+        <label class="saml-grow">P-256 private key (64 hex) <input id="sc_hsm_add_ec_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" /> <button type="button" class="saml-btn sc-gen" onclick="smartcard.generateSecret('sc_hsm_add_ec_key', 'p256');" title="Fill with a new random value.">Generate</button></label>
       </div>
       <p>
         <button type="button" class="saml-btn" id="sc_hsm_add" onclick="smartcard.addHsmCredential();">Add to the key</button>

@@ -2302,6 +2302,74 @@ function pgpChangePin(kind) {
   log.debug("Leaving pgpChangePin().");
 }
 
+// ---------------------------------------------------------------------------
+// GENERATE A SECRET for any field, in the format that field takes, from
+// the browser's random source. The field is switched to plain text so the
+// value can be copied: the key never gives a secret back.
+// ---------------------------------------------------------------------------
+var P256_ORDER = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+
+function randomPassword(length) {
+  log.debug("Entering randomPassword().");
+  // Letters and digits without the look-alikes 0/O, 1/l/I.
+  var alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  var out = "";
+  while (out.length < length) {
+    var b = randomBytes(1)[0];
+    if (b < 256 - (256 % alphabet.length)) {
+      out += alphabet[b % alphabet.length];
+    }
+  }
+  log.debug("Leaving randomPassword().");
+  return out;
+}
+
+function randomP256Scalar() {
+  log.debug("Entering randomP256Scalar().");
+  var hex = null;
+  do {
+    hex = randomBytes(32).toString("hex");
+  } while (/^0+$/.test(hex) || hex >= P256_ORDER);
+  log.debug("Leaving randomP256Scalar().");
+  return hex;
+}
+
+function generateSecret(id, kind) {
+  log.debug("Entering generateSecret(). " + id + " " + kind);
+  var field = document.getElementById(id);
+  if (!field) {
+    log.debug("Leaving generateSecret(). No field.");
+    return;
+  }
+  var value = "";
+  // kind: "hex:N", "base32:N" (N random bytes), "password:N" (N
+  // characters), "p256" (a private scalar), "pivmgm" (a key for the
+  // chosen management-key algorithm).
+  var m = /^(hex|base32|password):(\d+)$/.exec(kind || "");
+  if (kind === "p256") {
+    value = randomP256Scalar();
+  } else if (kind === "pivmgm") {
+    var alg = piv.MGM_ALGORITHMS[valueOf("sc_piv_new_mgm_alg") || "aes192"];
+    value = randomBytes(alg.keyLen).toString("hex");
+  } else if (m && m[1] === "hex") {
+    value = randomBytes(Number(m[2])).toString("hex");
+  } else if (m && m[1] === "base32") {
+    value = oathBase32(randomBytes(Number(m[2])));
+  } else if (m && m[1] === "password") {
+    value = randomPassword(Number(m[2]));
+  } else {
+    log.debug("Leaving generateSecret(). Unknown kind.");
+    return;
+  }
+  field.value = value;
+  if (field.type === "password") {
+    field.type = "text";
+  }
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+  setStatus("Generated. Copy it now: the key will not give it back.");
+  log.debug("Leaving generateSecret().");
+}
+
 // After a read, offer the account names for Delete.
 function offerOathNames(rows) {
   log.debug("Entering offerOathNames().");
@@ -2504,6 +2572,7 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   onTransportChange: onTransportChange,
+  generateSecret: generateSecret,
   usePivDefaultKey: usePivDefaultKey,
   pivGenerate: pivGenerate,
   pivImportCertificate: pivImportCertificate,
