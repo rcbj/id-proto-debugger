@@ -2136,7 +2136,11 @@ function pivPinWrite(kind) {
         return;
       }
       if (!result.ok) {
-        paneMessage(out, refusalText(result.status, what));
+        paneMessage(out, result.status === "6985" ? "The key refused the " +
+            "NEW value (6985). This key enforces PIN complexity: no " +
+            "sequences such as 123456 or 654321, and no repeated digits. " +
+            "The current value was right and no try was used." :
+            refusalText(result.status, what));
         return;
       }
       render(out, [{ label: "Done", value: question.replace(/\?.*$/, "") }]);
@@ -2230,7 +2234,27 @@ function pgpGenerate() {
       "encrypted to it can no longer be decrypted.", function (result) {
     var answer = Buffer.from(result.data, "hex");
     fpr = pgp.v4Fingerprint(alg, answer, created);
-    var described = pgp.describeResponse(result.data + result.status);
+    var found = {};
+    var tmpl = iso.parseElements(answer).filter(function (node) {
+      return node.tag === 0x7f49;
+    })[0];
+    (tmpl ? iso.parseElements(tmpl.value) : []).forEach(function (node) {
+      if (node.tag === 0x81) {
+        found.modulus = node.value;
+      } else if (node.tag === 0x82) {
+        found.exponent = node.value;
+      } else if (node.tag === 0x86) {
+        found.point = node.value;
+      }
+    });
+    found.curve = alg === "ed25519" ? "Ed25519" :
+        (alg === "cv25519" ? "X25519" : null);
+    var pem = null;
+    try {
+      pem = pgp.publicKeyPem(found);
+    } catch (e) {
+      pem = null;
+    }
     // The fingerprint and creation time, so GnuPG recognises the key.
     return pgpAdminWrite(function () {
       return [pgp.putDataApdu(pgp.KEY_REFS[which].fpr, fpr.fingerprint),
@@ -2241,7 +2265,7 @@ function pgpGenerate() {
         { label: "Fingerprint", value: fpr.fingerprint.toString("hex")
             .toUpperCase().replace(/(.{4})/g, "$1 ").trim() },
         { label: "Created", value: new Date(created * 1000).toISOString() },
-        { label: "Public key", value: described.pem || "(see the read)" },
+        { label: "Public key", value: pem || "(read the key to see it)" },
         { label: "Next", value: "In GnuPG: gpg --card-edit, then fetch or " +
             "generate a public key from the card's keys." }]);
       setStatus("Generated the " + names[which] + " key.");
@@ -2289,8 +2313,10 @@ function pgpChangePin(kind) {
         return;
       }
       if (!result.ok) {
-        paneMessage(out, refusalText(result.status, admin ? "The Admin PIN" :
-            "The PIN"));
+        paneMessage(out, result.status === "6985" ? "The key refused the " +
+            "NEW value (6985): it may enforce PIN complexity (no sequences " +
+            "or repeated digits)." : refusalText(result.status, admin ?
+            "The Admin PIN" : "The PIN"));
         return;
       }
       render(out, [{ label: "Done", value: "Changed the " +
