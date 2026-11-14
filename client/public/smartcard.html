@@ -28,6 +28,17 @@
 
 <p class="saml-status" id="sc_status"></p>
 
+<p class="saml-controls">
+  <label class="saml-toggle" title="Expand or collapse every pane.">
+    <input type="checkbox" id="sc_toggle_all" checked="checked"
+           onchange="return smartcard.setAllPanes(this.checked);">
+    <span class="saml-toggle-slider"></span>
+    <span class="saml-toggle-text">Collapse all panes</span>
+  </label>
+  <span class="saml-controls-hint">Tip: click a pane's title to
+  collapse/expand it.</span>
+</p>
+
 <p class="sc-apps">
   <label>Application
     <select id="sc_app" onchange="smartcard.showApplication(this.value);">
@@ -42,8 +53,10 @@
 </p>
 
 <fieldset class="saml-pane" id="sc_pane_otp">
-  <legend class="saml-legend">Yubico OTP</legend>
-  <div class="saml-pane-body">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_otp_body');"
+          title="Click to collapse or expand this pane.">Yubico OTP</legend>
+  <div class="saml-pane-body" id="sc_pane_otp_body">
     <p class="saml-note">Touch the key and it types the token. The public identity is the first twelve characters of a current 44-character OTP. The AES key decrypts the rest. The CRC is how a wrong key is recognised.</p>
     <div class="saml-row">
       <label class="saml-grow">Token
@@ -110,8 +123,10 @@
 </fieldset>
 
 <fieldset class="saml-pane saml-hidden" id="sc_pane_oath">
-  <legend class="saml-legend">OATH</legend>
-  <div class="saml-pane-body">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_oath_body');"
+          title="Click to collapse or expand this pane.">OATH</legend>
+  <div class="saml-pane-body" id="sc_pane_oath_body">
     <p class="saml-note">The calculator needs no key. Six digits is what an authenticator shows. The applet trace is YKOATH: PUT builds an APDU and does not send it.</p>
     <div class="saml-row">
       <label>Secret (hex or text)
@@ -162,8 +177,10 @@
 </fieldset>
 
 <fieldset class="saml-pane saml-hidden" id="sc_pane_piv">
-  <legend class="saml-legend">PIV</legend>
-  <div class="saml-pane-body">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_piv_body');"
+          title="Click to collapse or expand this pane.">PIV</legend>
+  <div class="saml-pane-body" id="sc_pane_piv_body">
     <p class="saml-note">NIST SP 800-73. A certificate sits in tag 70 inside tag 53. GENERAL AUTHENTICATE is decoded and not performed. Paste the response, including the status word, or the command.</p>
     <div class="saml-row">
       <label class="saml-grow">Trace
@@ -179,8 +196,10 @@
 </fieldset>
 
 <fieldset class="saml-pane saml-hidden" id="sc_pane_pgp">
-  <legend class="saml-legend">OpenPGP card</legend>
-  <div class="saml-pane-body">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_pgp_body');"
+          title="Click to collapse or expand this pane.">OpenPGP card</legend>
+  <div class="saml-pane-body" id="sc_pane_pgp_body">
     <p class="saml-note">Application related data and the public key. There is no OpenPGP message here. A signature or a decipher is decoded and not performed.</p>
     <div class="saml-row">
       <label class="saml-grow">Trace
@@ -196,8 +215,10 @@
 </fieldset>
 
 <fieldset class="saml-pane saml-hidden" id="sc_pane_hsm">
-  <legend class="saml-legend">YubiHSM Auth</legend>
-  <div class="saml-pane-body">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_hsm_body');"
+          title="Click to collapse or expand this pane.">YubiHSM Auth</legend>
+  <div class="saml-pane-body" id="sc_pane_hsm_body">
     <p class="saml-note">This is the applet that authenticates to a YubiHSM 2. CALCULATE's 48 bytes are the session keys a host would hand to that HSM. This page does not open a session. The management key and the credential password are not saved.</p>
     <div class="saml-row">
       <label class="saml-grow">Trace
@@ -213,8 +234,10 @@
 </fieldset>
 
 <fieldset class="saml-pane saml-hidden" id="sc_pane_reader">
-  <legend class="saml-legend">Reader</legend>
-  <div class="saml-pane-body">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_reader_body');"
+          title="Click to collapse or expand this pane.">Reader</legend>
+  <div class="saml-pane-body" id="sc_pane_reader_body">
     <p class="saml-note">The reader is the machine the API runs on. <code>localhost</code> on this pane is that machine. A container does not see a USB key unless the operator passes the device through. PC/SC is optional: if the library is not installed, listing readers says so and the API stays up.</p>
     <p class="saml-note saml-hidden" id="sc_reader_disabled">The reader relay is off on this API. Set <code>smartcardReaderEnabled: true</code> in its env file to list readers and transmit. It is off by default because any APDU reaches the card, including a wrong-PIN VERIFY that blocks the PIN.</p>
     <p class="saml-note" id="sc_hid_note">Challenge-response over WebHID, in a browser that has it. Firefox has no WebHID. The page polls the key the way yubikit does and waits up to 15 seconds for a touch. The keyboard OTP field on the first pane still works.</p>
@@ -271,9 +294,6 @@
 </fieldset>
 
     </div>
-<div class="bottom_debugger">
-<!--#include file="/partials/bottom.html"-->
-</div>
 <div class="footer_debugger">
 <!--#include file="/partials/footer.html"-->
 </div>

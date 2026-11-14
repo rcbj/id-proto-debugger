@@ -539,8 +539,13 @@ function resolveIncludes(dir) {
       try {
         return fs.readFileSync(incPath, 'utf8');
       } catch (e) {
-        console.error('[build] include failed: ' + inc + ' (' + e.message +
-                      ')');
+        // A MISSING PARTIAL FAILS THE BUILD. It used to log a line and
+        // substitute nothing, which is how gnap.html and smartcard.html
+        // shipped including a /partials/bottom.html that never existed —
+        // and how gnap.html's footer went out in a wrapper with no styles,
+        // with nothing anywhere saying so. Same rule as the dead links below.
+        includeFailures.push(path.relative(DIST, full) + ' includes ' + inc +
+                             ' (' + e.message + ')');
         return '';
       }
     });
@@ -551,7 +556,13 @@ function resolveIncludes(dir) {
   }
   log.debug("Leaving resolveIncludes().");
 }
+const includeFailures = [];
 resolveIncludes(DIST);
+if (includeFailures.length) {
+  log.error('[build] ' + includeFailures.length + ' include(s) failed:\n  ' +
+            includeFailures.join('\n  '));
+  process.exit(1);
+}
 
 // 4a. Nothing that ships may link to something that did not. Run AFTER the
 //     includes are resolved, since a header or footer partial is where a link
