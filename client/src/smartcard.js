@@ -38,6 +38,8 @@ var hsm = require("./yubihsm_auth.js");
 var x509 = require("./x509.js");
 var keys = require("./key_material.js");
 var bytes = require("./crypto_bytes.js");
+// The collapsible panes and the collapse / expand all switch.
+var panes = require("./panes");
 
 var PANES = ["otp", "oath", "piv", "pgp", "hsm", "reader"];
 var SAVE = {
@@ -898,6 +900,10 @@ if (typeof window !== "undefined") {
 }
 
 module.exports = {
+  // The collapsible panes and the collapse / expand all switch, shared with
+  // the XACML and GNAP pages.
+  togglePane: panes.togglePane,
+  setAllPanes: panes.setAllPanes,
   onload: onload,
   showApplication: showApplication,
   onSaveChange: onSaveChange,

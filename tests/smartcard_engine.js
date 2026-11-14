@@ -1484,6 +1484,32 @@ function enginesStayOffTheDom() {
   log.debug("Leaving enginesStayOffTheDom().");
 }
 
+// THE PANES COLLAPSE, LIKE THE XACML AND GNAP PAGES'. Every application
+// pane's legend toggles its own body, the body has the id the legend names,
+// the collapse / expand all switch is there, and the bundle exports the two
+// functions those handlers call — a handler naming a function the bundle
+// does not export is a click that throws in the page and does nothing.
+function panesCollapse() {
+  log.debug("Entering panesCollapse().");
+  var page = fs.readFileSync(path.join(REPO, "client", "public",
+      "smartcard.html"), "utf8");
+  ["otp", "oath", "piv", "pgp", "hsm", "reader"].forEach(function (name) {
+    var id = "sc_pane_" + name;
+    assert.ok(page.indexOf("smartcard.togglePane('" + id + "_body')") >= 0,
+        id + "'s legend does not toggle it");
+    assert.ok(page.indexOf('class="saml-pane-body" id="' + id + '_body"') >=
+        0, id + " has no body for its legend to toggle");
+  });
+  assert.ok(page.indexOf('onchange="return smartcard.setAllPanes(') >= 0,
+      "smartcard.html has no collapse / expand all switch");
+  var source = fs.readFileSync(path.join(SRC, "smartcard.js"), "utf8");
+  assert.ok(/togglePane:\s*panes\.togglePane/.test(source) &&
+      /setAllPanes:\s*panes\.setAllPanes/.test(source),
+      "smartcard.js does not export the pane functions its page calls");
+  log.info("OK — every smart-card pane collapses, and the switch is there.");
+  log.debug("Leaving panesCollapse().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
@@ -1501,6 +1527,7 @@ async function test() {
   readerRefusals();
   await readerExchanges();
   enginesStayOffTheDom();
+  panesCollapse();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }
