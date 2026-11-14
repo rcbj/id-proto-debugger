@@ -1400,6 +1400,15 @@ function buildJobs() {
     env: {},
   });
 
+  // Every rule- and policy-combining algorithm against XACML 3.0 Appendix
+  // C, exhaustively over up to four child decisions: the decision and how
+  // many children were evaluated, which decides the obligations. In node.
+  jobs.push({
+    name: "XACML combining algorithms against Appendix C (in node)",
+    script: "xacml_combiners.js",
+    env: {},
+  });
+
   // The XACML editor page in a browser: decisions, a Match edit, an
   // ill-typed edit refused, a rule added and removed, the ALFA view
   // imported back, the decision root, a reload, and Remove. Every action

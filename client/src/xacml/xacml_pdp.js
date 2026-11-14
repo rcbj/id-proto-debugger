@@ -923,38 +923,36 @@ combiner([model.RULE_ALG.LEGACY_PERMIT_OVERRIDES,
 combiner([model.POLICY_ALG.LEGACY_DENY_OVERRIDES,
           model.POLICY_ALG.LEGACY_ORDERED_DENY_OVERRIDES],
          function (children, evaluateChild) {
+  // C.10, policy combining: an Indeterminate policy returns Deny AT ONCE,
+  // inside the loop, as a Deny does. Evaluating on past it gave the same
+  // decision and ran the policies after it, whose obligations then reached
+  // the Response.
   const results = [];
-  let error = false;
   let permit = false;
   for (let i = 0; i < children.length; i += 1) {
     const result = evaluateChild(i);
     results.push(result);
     const decision = result.decision;
-    if (decision === DECISION.DENY) {
+    if (decision === DECISION.DENY || model.isIndeterminate(decision)) {
       return { decision: DECISION.DENY, results: results };
     }
     if (decision === DECISION.PERMIT) {
       permit = true;
-    } else if (model.isIndeterminate(decision)) {
-      error = true;
     }
   }
-  // DENY, not Indeterminate — the policy version differs from the rule version
-  // here and this is the whole of the difference.
-  let decision;
-  if (error) {
-    decision = DECISION.DENY;
-  } else if (permit) {
-    decision = DECISION.PERMIT;
-  } else {
-    decision = DECISION.NOT_APPLICABLE;
-  }
-  return { decision: decision, results: results };
+  return { decision: permit ? DECISION.PERMIT : DECISION.NOT_APPLICABLE,
+           results: results };
 });
 
 combiner([model.POLICY_ALG.LEGACY_PERMIT_OVERRIDES,
           model.POLICY_ALG.LEGACY_ORDERED_PERMIT_OVERRIDES],
          function (children, evaluateChild) {
+  // C.12, policy combining: a Deny is checked BEFORE an error, and an error
+  // is INDETERMINATE. This returned PERMIT on an error until 2026-11-14 —
+  // a policy set whose policies failed to evaluate granted access. The
+  // asymmetry with C.10 above is the specification's: deny-overrides turns
+  // an error into the safe answer, and for permit-overrides the safe answer
+  // is not Permit. tests/xacml_combiners.js holds both to Appendix C.
   const results = [];
   let error = false;
   let deny = false;
@@ -972,22 +970,16 @@ combiner([model.POLICY_ALG.LEGACY_PERMIT_OVERRIDES,
     }
   }
   let decision;
-  if (error) {
-    decision = DECISION.PERMIT;
-  } else if (deny) {
+  if (deny) {
     decision = DECISION.DENY;
+  } else if (error) {
+    decision = DECISION.INDETERMINATE;
   } else {
     decision = DECISION.NOT_APPLICABLE;
   }
   return { decision: decision, results: results };
 });
 
-// `only-one-applicable` is the one algorithm that cannot be written this way at
-// all: it has to know which children are APPLICABLE before evaluating any of
-// them, because "more than one applies" is itself the error it reports and
-// finding that out by evaluating would already have run the policies it is
-// about to say should not both have run. It lives in `evaluatePolicySet()`;
-// this entry exists so that `lookupCombiner()` reports it as known.
 combiner([model.POLICY_ALG.ONLY_ONE_APPLICABLE], function () {
   throw model.processingError(
     'only-one-applicable is evaluated in evaluatePolicySet(), not through ' +
