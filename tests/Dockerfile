@@ -758,7 +758,8 @@ COPY tests/hash_engine.js ./
 # hashing job above: the subject is the client source tree this image
 # has just staged, and a flat copy would make the workbench exist
 # twice. The stylesheet is not in that HTML copy, so it is named.
-COPY tests/xacml_engine.js tests/xacml_page.js tests/xacml_combiners.js ./
+COPY tests/xacml_engine.js tests/xacml_page.js tests/xacml_combiners.js \
+    tests/xacml_pdp_paths.js ./
 COPY tests/xacml_function_cases.js tests/xacml_functions_engine.js \
      tests/xacml_functions_page.js ./
 # The api's OTP validation relay and reader relay, over HTTP. It builds its

@@ -1409,6 +1409,16 @@ function buildJobs() {
     env: {},
   });
 
+  // The PDP end to end from XML: only-one-applicable, variables, the
+  // environment attributes it supplies, the PIP and MustBePresent, and
+  // legacy permit-overrides over an error. In node.
+  jobs.push({
+    name: "XACML PDP paths: only-one-applicable, variables, environment, " +
+      "PIP (in node)",
+    script: "xacml_pdp_paths.js",
+    env: {},
+  });
+
   // The XACML editor page in a browser: decisions, a Match edit, an
   // ill-typed edit refused, a rule added and removed, the ALFA view
   // imported back, the decision root, a reload, and Remove. Every action
