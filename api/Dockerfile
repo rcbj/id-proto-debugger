@@ -112,14 +112,14 @@ COPY common/spiffe/ /usr/src/common/spiffe/
 # form posts to an http api is a form Chrome does not submit at all.
 COPY common/tls_listener.js /usr/src/common/tls_listener.js
 
-# Application version: the repo-root VERSION file (M.N) plus the shared stamping
+# Application version: the repo-root VERSION file (M.N.P) plus the shared stamping
 # module, which is the client's — there is one implementation of the scheme and
 # both services read it, rather than a second copy that could drift. Without the
 # VERSION file the module falls back to 0.0, so this COPY is load-bearing.
 COPY VERSION /usr/src/app/VERSION
 COPY client/version.js /usr/src/app/version.js
 
-# Fix this image's build number (M.N.O) and ship it in version.json, so the
+# Fix this image's build number (M.N.P.B) and ship it in version.json, so the
 # User-Agent this service sends names the build it came from and does not change
 # when the container restarts. Supplied by CI as --build-arg BUILD_NUMBER=...
 ARG BUILD_NUMBER

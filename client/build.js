@@ -268,7 +268,7 @@ log.info('cleaning ' + path.relative(CLIENT_DIR, DIST));
 fs.rmSync(DIST, { recursive: true, force: true });
 fs.mkdirSync(path.join(DIST, 'js'), { recursive: true });
 
-// 1b. Fix this build's identity (M.N.O) and ship it as dist/version.json.
+// 1b. Fix this build's identity (M.N.P.B) and ship it as dist/version.json.
 const appversion = require('./version');
 const VERSION = appversion.stamp(DIST);
 const BUILD_INFO = appversion.buildInfo(VERSION);
@@ -586,7 +586,7 @@ if (!EMBEDDED) {
   assertNoLinksToExcluded(DIST);
 }
 
-// 4b. Stamp the current year and the M.N.O version into every page. The
+// 4b. Stamp the current year and the M.N.P.B version into every page. The
 //     {{YEAR}} / {{VERSION}} / {{BUILD_INFO}} placeholders ship in the footer
 //     partial (now inlined into every page above) and in the error pages. The
 //     version record was written to dist/version.json at the top of this build,

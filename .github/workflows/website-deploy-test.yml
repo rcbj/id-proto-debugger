@@ -146,12 +146,12 @@ jobs:
           V="$(node client/version.js --json)"
           VERSION="$(jq -r .version <<<"$V")"
           BUILD="$(jq -r .build <<<"$V")"
-          MN="$(jq -r '.major + "." + .minor' <<<"$V")"
+          RELEASE="$(jq -r .release <<<"$V")"
           SHA="$(git rev-parse HEAD)"
           {
             echo "version=${VERSION}"
             echo "build=${BUILD}"
-            echo "major_minor=${MN}"
+            echo "release=${RELEASE}"
             echo "sha=${SHA}"
           } >> "$GITHUB_OUTPUT"
           echo "Building version ${VERSION} (build ${BUILD}) from ${SHA}"
@@ -185,7 +185,7 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           # The build number computed above, so the deployed site and the tag
-          # report the same M.N.O.
+          # report the same M.N.P.B.
           BUILD_NUMBER: ${{ steps.version.outputs.build }}
           GIT_COMMIT: ${{ steps.version.outputs.sha }}
         run: |
@@ -213,19 +213,19 @@ jobs:
           git tag -a "${TAG}" -m "Deployed test.idptools.com from ${SHA} at ${TS} UTC"
           git push origin "${TAG}"
 
-      # Version tags for the same commit: the immutable M.N.O of this build and
-      # the floating M.N pointing at the newest build of the line.
+      # Version tags for the same commit: the immutable M.N.P.B of this build and
+      # the floating M.N.P pointing at the newest build of the line.
       - name: Tag this build
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          MAJOR_MINOR: ${{ steps.version.outputs.major_minor }}
+          RELEASE: ${{ steps.version.outputs.release }}
           BUILD: ${{ steps.version.outputs.build }}
         run: |
           set -euo pipefail
           SHA="$(git rev-parse HEAD)"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # M.N.O — one per build, so it is created once and never moved.
+          # M.N.P.B — one per build, so it is created once and never moved.
           if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
             echo "::warning::tag ${VERSION} already exists; leaving it as it is"
           else
@@ -233,9 +233,9 @@ jobs:
             git push origin "refs/tags/${VERSION}"
             echo "Tagged ${SHA} as ${VERSION}"
           fi
-          # M.N — a floating tag that always points at the newest build of this
+          # M.N.P — a floating tag that always points at the newest build of this
           # line, so it is force-moved on every build.
-          git tag -f -a "${MAJOR_MINOR}" -m "Latest ${MAJOR_MINOR} build: ${VERSION} (Deployed test.idptools.com)"
-          git push -f origin "refs/tags/${MAJOR_MINOR}"
-          echo "Moved ${MAJOR_MINOR} to ${SHA}"
-          echo "Tagged \`${VERSION}\` and moved \`${MAJOR_MINOR}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          git tag -f -a "${RELEASE}" -m "Latest ${RELEASE} build: ${VERSION} (Deployed test.idptools.com)"
+          git push -f origin "refs/tags/${RELEASE}"
+          echo "Moved ${RELEASE} to ${SHA}"
+          echo "Tagged \`${VERSION}\` and moved \`${RELEASE}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"

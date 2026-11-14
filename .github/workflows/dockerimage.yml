@@ -39,12 +39,12 @@ jobs:
            V="$(node client/version.js --json)"
            VERSION="$(jq -r .version <<<"$V")"
            BUILD="$(jq -r .build <<<"$V")"
-           MN="$(jq -r '.major + "." + .minor' <<<"$V")"
+           RELEASE="$(jq -r .release <<<"$V")"
            SHA="$(git rev-parse HEAD)"
            {
              echo "version=${VERSION}"
              echo "build=${BUILD}"
-             echo "major_minor=${MN}"
+             echo "release=${RELEASE}"
              echo "sha=${SHA}"
            } >> "$GITHUB_OUTPUT"
            echo "Building version ${VERSION} (build ${BUILD}) from ${SHA}"
@@ -83,7 +83,7 @@ jobs:
        # holding /debugger/{ui,api,common} and version.json, which that
        # service's Dockerfile takes with COPY --from. Built on every run like
        # the other two, published beside them from master only. The same
-       # build number, so its version.json names the same M.N.O as the tag.
+       # build number, so its version.json names the same M.N.P.B as the tag.
        # Its FROM ubuntu:latest resolves against the mirror, the way the
        # compose builds' additional_contexts do (login above).
        - name: build embedded
@@ -109,14 +109,14 @@ jobs:
        #   ghcr.io/rcbj/id-proto-debugger-embedded   docker.io/iyasec/id-proto-debugger-embedded
        #
        # The embedded image is what IYA STS's Dockerfile takes its debugger
-       # from (`DEBUGGER_IMAGE`), pinned to an M.N.O tag.
+       # from (`DEBUGGER_IMAGE`), pinned to an M.N.P.B tag.
        #
-       # Tagged M.N.O — the SAME string as the git tag the next step puts on
+       # Tagged M.N.P.B — the SAME string as the git tag the next step puts on
        # this commit, so an image names its commit and a commit names its
        # image — and `latest`, because a master build is what a release is.
        #
        # FROM MASTER ONLY (2026-10-02). develop used to publish too, under a
-       # floating `develop` tag and its own M.N.O, and that put every
+       # floating `develop` tag and its own M.N.P.B, and that put every
        # half-finished integration on two public registries. develop and pull
        # requests still BUILD the images, so a Dockerfile that breaks is still
        # caught there; only the push waits for master. A workflow_dispatch run
@@ -244,7 +244,7 @@ jobs:
          if: ${{ github.event_name != 'pull_request' }}
          env:
            VERSION: ${{ steps.version.outputs.version }}
-           MAJOR_MINOR: ${{ steps.version.outputs.major_minor }}
+           RELEASE: ${{ steps.version.outputs.release }}
            BUILD: ${{ steps.version.outputs.build }}
            IMAGES: ${{ steps.publish.outputs.images }}
          run: |
@@ -252,7 +252,7 @@ jobs:
            SHA="$(git rev-parse HEAD)"
            git config user.name  "github-actions[bot]"
            git config user.email "github-actions[bot]@users.noreply.github.com"
-           # M.N.O — one per build, so it is created once and never moved.
+           # M.N.P.B — one per build, so it is created once and never moved.
            if git ls-remote --exit-code --tags origin "refs/tags/${VERSION}" >/dev/null 2>&1; then
              echo "::warning::tag ${VERSION} already exists; leaving it as it is"
            else
@@ -263,10 +263,10 @@ jobs:
              git push origin "refs/tags/${VERSION}"
              echo "Tagged ${SHA} as ${VERSION}"
            fi
-           # M.N — a floating tag that always points at the newest build of this
+           # M.N.P — a floating tag that always points at the newest build of this
            # line, so it is force-moved on every build.
-           git tag -f -a "${MAJOR_MINOR}" -m "Latest ${MAJOR_MINOR} build: ${VERSION} (Docker Image CI)"
-           git push -f origin "refs/tags/${MAJOR_MINOR}"
-           echo "Moved ${MAJOR_MINOR} to ${SHA}"
-           echo "Tagged \`${VERSION}\` and moved \`${MAJOR_MINOR}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+           git tag -f -a "${RELEASE}" -m "Latest ${RELEASE} build: ${VERSION} (Docker Image CI)"
+           git push -f origin "refs/tags/${RELEASE}"
+           echo "Moved ${RELEASE} to ${SHA}"
+           echo "Tagged \`${VERSION}\` and moved \`${RELEASE}\` to \`${SHA}\`" >> "$GITHUB_STEP_SUMMARY"
 

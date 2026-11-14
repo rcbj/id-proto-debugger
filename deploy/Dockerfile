@@ -61,7 +61,7 @@ RUN cd client && npm ci && npm cache clean --force
 # --- Bundle sources needed for the build ---
 COPY client/ /usr/src/app/client/
 COPY common/ /usr/src/app/common/
-# The M.N source of truth read by client/version.js during the build.
+# The M.N.P source of truth read by client/version.js during the build.
 COPY VERSION /usr/src/app/VERSION
 # build.js stages api/jwt.xml -> dist/claimdescription so the static site serves
 # the IANA claim registry (the static site has no api backend to serve it).
