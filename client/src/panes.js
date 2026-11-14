@@ -5,7 +5,10 @@
 //
 // The collapsible-pane behaviour of the SAML pages (saml_common.css's
 // `saml-pane`, `saml-legend`, `saml-pane-body` and the `saml-toggle` switch),
-// for pages that are not SAML ones: the XACML editor and GNAP. A pane is
+// for pages that are not SAML ones: the XACML editor, GNAP, the smart-card
+// page, and the two WebAuthn pages, whose panes are `wa-pane` fieldsets with
+// the same `saml-pane-body` inside (their look is webauthn.css; the switch
+// and the legends' triangle are css/panes.css). A pane is
 // collapsed by setting its body's inline display to none, which is also what
 // saml_common.css reads to turn the legend's triangle.
 //
@@ -40,7 +43,8 @@ var log = bunyan.createLogger({
 function bodies() {
   log.debug("Entering bodies().");
   var list = Array.prototype.slice.call(
-      document.querySelectorAll(".saml-pane > .saml-pane-body"));
+      document.querySelectorAll(".saml-pane > .saml-pane-body, " +
+                                 ".wa-pane > .saml-pane-body"));
   log.debug("Leaving bodies(). " + list.length);
   return list;
 }

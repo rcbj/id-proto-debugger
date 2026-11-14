@@ -1,0 +1,70 @@
+/* SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC */
+/* SPDX-License-Identifier: MIT */
+
+/* panes.css — the collapsible-pane controls, shared by every page that uses
+ * client/src/panes.js: the collapse / expand all switch, the clickable
+ * legend with its triangle, and the folded explanatory text.
+ *
+ * They were in saml_common.css, which every SAML page and the XACML, GNAP
+ * and smart-card pages load, and which imports this file so nothing changed
+ * for them. The WebAuthn pages load THIS file alone: their panes are their
+ * own shape (webauthn.css), and saml_common.css would also resize their
+ * container. The collapsed-pane triangle is keyed on the legend and body
+ * classes rather than on .saml-pane, so it works in a .wa-pane too.
+ */
+
+/* Collapsible explanatory text: a <details> that stays closed until asked
+   for, so a page opens on its controls rather than on paragraphs. The XACML
+   and GNAP pages use it for every block of prose. */
+details.saml-explain { margin: 0 0 6px; font-size: 0.8em; color: #555; }
+details.saml-explain > summary {
+  cursor: pointer;
+  color: #1f4a6b;
+  font-size: 0.95em;
+}
+details.saml-explain > summary:hover { text-decoration: underline; }
+details.saml-explain p { margin: 4px 0; line-height: 1.4; }
+
+/* Top-of-page Expand-all / Collapse-all control row. */
+.saml-controls {
+  margin: 6px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.saml-controls-hint { font-size: 0.78em; color: #777; }
+/* Toggle switch that expands/collapses every pane (checked = all expanded). */
+.saml-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+.saml-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.saml-toggle-slider {
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 20px;
+  background: #bbb;
+  border-radius: 20px;
+  transition: background 0.15s ease;
+}
+.saml-toggle-slider::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+.saml-toggle input:checked + .saml-toggle-slider { background: #2680eb; }
+.saml-toggle input:checked + .saml-toggle-slider::before { transform: translateX(18px); }
+.saml-toggle input:focus-visible + .saml-toggle-slider { outline: 2px solid #2680eb; outline-offset: 2px; }
+.saml-toggle-text { font-size: 0.85em; color: #333; }
+
+/* Clickable pane title carrying a collapse/expand triangle. */
+.saml-legend { cursor: pointer; user-select: none; }
+.saml-legend::before { content: "\25be\00a0"; color: #666; font-size: 0.9em; } /* down triangle = expanded */
+/* Right triangle when this pane's body is collapsed (display:none). :has() keeps
+   the indicator correct regardless of which control last toggled it. */
+fieldset:has(> .saml-pane-body[style*="display: none"]) > .saml-legend::before { content: "\25b8\00a0"; }

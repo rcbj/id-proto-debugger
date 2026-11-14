@@ -31,6 +31,21 @@ Two consequences the pages state out loud:
 * **The signed message is `authenticatorData ‖ SHA-256(clientDataJSON)`** — the hash of the client data, and the *raw* authenticator data, not a re-encoding of the parsed fields.
 * **clientDataJSON must be parsed, never compared.** Chrome inserts `other_keys_can_be_added_here` into some ceremonies and not others, at random, specifically to break implementations that compare it against a template.
 
+## The two pages' panes
+
+Both pages' panes collapse, as the XACML, GNAP and smart-card pages' do:
+each `wa-pane` legend toggles its `saml-pane-body`, a switch above the
+first pane collapses or expands them all, and every block of prose is a
+`<details class="saml-explain">` that stays closed until asked for. The
+behaviour is `client/src/panes.js`, exported by both bundles as
+`togglePane` and `setAllPanes` (imported as `paneSwitch`, because both
+modules already have a `panes` — `webauthn_panes.js`, which draws the
+decoded artifacts). The switch, the legends' triangle and the folded text
+are styled by `css/panes.css`, which the pages load directly: the panes
+themselves keep webauthn.css's look, and `saml_common.css` (which imports
+`panes.css` for every other page) would also widen their container.
+`tests/webauthn_decode.js` checks the wiring.
+
 ## The observer, and what read-only means
 
 The extension wraps `navigator.credentials.create`/`.get` in the page's own world, lets the call through untouched, and copies what passed. It **will not** name an RP ID it does not own: an extension that could would be a working defeat of WebAuthn's phishing resistance, and declining that is deliberate.

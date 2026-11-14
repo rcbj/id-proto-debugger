@@ -35,6 +35,8 @@
 
 var bunyan = require("bunyan");
 var appconfig = require(process.env.CONFIG_FILE);
+// The collapsible panes and the collapse / expand all switch.
+var paneSwitch = require("./panes");
 var webauthn = require("./webauthn");
 var panes = require("./webauthn_panes");
 
@@ -601,5 +603,8 @@ window.onload = function () {
 };
 
 module.exports = {
+  // The collapsible panes and the collapse / expand all switch.
+  togglePane: paneSwitch.togglePane,
+  setAllPanes: paneSwitch.setAllPanes,
   credentialToJson: credentialToJson,
 };

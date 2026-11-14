@@ -144,6 +144,13 @@ async function checkStylesheetsLoaded(driver, where) {
     "        defined[sel.slice(1)] = true; });" +
     "    } else if (rule.cssRules) {" +
     "      Array.prototype.slice.call(rule.cssRules).forEach(collect);" +
+    // An @import's rules are under its .styleSheet, not .cssRules:
+    // saml_common.css imports panes.css, which defines the pane switch.
+    "    } else if (rule.styleSheet) {" +
+    "      var inner = null;" +
+    "      try { inner = rule.styleSheet.cssRules; } catch (e) { " +
+        "inner = null; }" +
+    "      Array.prototype.slice.call(inner || []).forEach(collect);" +
     "    }" +
     "  });" +
     "});" +
