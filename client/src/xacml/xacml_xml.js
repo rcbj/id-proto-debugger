@@ -733,7 +733,18 @@ function parseDocument(xml) {
       log.debug("Leaving onError().");
     }
   });
-  const document = parser.parseFromString(xml, 'text/xml');
+  // AND A FATAL ERROR THROWS AS WELL. In @xmldom/xmldom 0.9 a fatalError
+  // (an unclosed tag, say) calls the handler above and then throws a
+  // ParseError of its own, so the check below never ran and a truncated
+  // policy reached the caller as a bare ParseError carrying no XACML status
+  // — a syntax error reported as something else. It is caught here and
+  // becomes the same syntax error the handler path produces.
+  let document = null;
+  try {
+    document = parser.parseFromString(xml, 'text/xml');
+  } catch (error) {
+    errors.push(String(error && error.message || error));
+  }
   if (errors.length) {
     log.debug('Leaving parseDocument(). Malformed.');
     throw model.syntaxError('The document is not well-formed XML: ' +

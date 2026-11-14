@@ -1419,6 +1419,17 @@ function buildJobs() {
     env: {},
   });
 
+  // ALFA, the JSON Profile and XML: a nested PolicySet round-tripped
+  // through ALFA with every decision intact, a JSON request to a JSON
+  // Response, an XML Response read back, combiner parameters, and the
+  // syntax errors each reader names. In node.
+  jobs.push({
+    name: "XACML formats: ALFA round trip, JSON Profile, XML readers " +
+      "(in node)",
+    script: "xacml_formats.js",
+    env: {},
+  });
+
   // The XACML editor page in a browser: decisions, a Match edit, an
   // ill-typed edit refused, a rule added and removed, the ALFA view
   // imported back, the decision root, a reload, and Remove. Every action
