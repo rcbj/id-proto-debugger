@@ -1673,6 +1673,60 @@ function oathAccountInput() {
   log.debug("Leaving oathAccountInput().");
 }
 
+// PROGRAMMING AN OTP SLOT, byte for byte against yubikit (python3-ykman
+// 4.0.7's yubikit.yubiotp, get_config()), and the CCID framing yubikit's
+// write_update uses: INS 0x01, P1 1 or 3, the config and the current access
+// code; delete is 52 zero bytes; swap is P1 6 with no data.
+function otpSlotConfigs() {
+  log.debug("Entering otpSlotConfigs().");
+  var k = Buffer.from("0102030405060708090a0b0c0d0e0f1011121314", "hex");
+  var h = Buffer.from("3132333435363738393031323334353637383930", "hex");
+  var expected = {
+    hmac: [{ type: "hmac", key: k }, "00000000000000000000000000000000111213" +
+      "1400000102030405060708090a0b0c0d0e0f100000000000000024402600" +
+      "00064d"],
+    touch: [{ type: "hmac", key: k, touch: true }, "000000000000000000000" +
+      "000000000001112131400000102030405060708090a0b0c0d0e0f1000000000" +
+      "00000024402e0000c48b"],
+    acc: [{ type: "hmac", key: k, accCode: Buffer.from("aabbccddeeff",
+      "hex") }, "000000000000000000000000000000001112131400000102030405" +
+      "060708090a0b0c0d0e0f10aabbccddeeff0024402600006ddf"],
+    otp: [{ type: "yubico-otp", publicId: Buffer.from("010203040506",
+      "hex"), privateId: Buffer.from("a1a2a3a4a5a6", "hex"),
+      aesKey: Buffer.from("000102030405060708090a0b0c0d0e0f", "hex") },
+      "01020304050600000000000000000000a1a2a3a4a5a6000102030405060708" +
+      "090a0b0c0d0e0f000000000000063420000000c041"],
+    hotp: [{ type: "hotp", key: h }, "0000000000000000000000000000000037" +
+      "383930000031323334353637383930313233343536000000000000003460" +
+      "4000005fc0"],
+    hotp8: [{ type: "hotp", key: h, digits: 8, imf: 32 }, "0000000000000" +
+      "000000000000000000037383930000231323334353637383930313233343536" +
+      "0000000000000034604200 00948f".replace(/ /g, "")]
+  };
+  Object.keys(expected).forEach(function (name) {
+    assert.strictEqual(otp.slotConfig(expected[name][0]).toString("hex"),
+        expected[name][1], name + " does not match yubikit");
+  });
+  var apdu = otp.programSlotApdu(2, otp.slotConfig(expected.hmac[0]));
+  assert.strictEqual(apdu.slice(0, 10), "000103003a");
+  assert.strictEqual(apdu.length, (5 + 58) * 2);
+  assert.strictEqual(otp.programSlotApdu(1, null).slice(0, 10),
+      "000101003a");
+  assert.ok(/^0+$/.test(otp.programSlotApdu(1, null).slice(10)));
+  assert.strictEqual(otp.swapSlotsApdu(), "00010600");
+  assert.throws(function () {
+    otp.programSlotApdu(3, null);
+  }, /1 or 2/);
+  assert.throws(function () {
+    otp.slotConfig({ type: "hmac", key: Buffer.alloc(21, 1) });
+  }, /20 bytes/);
+  assert.throws(function () {
+    otp.slotConfig({ type: "hotp", key: h, imf: 17 });
+  }, /multiple of 16/);
+  log.info("OK — OTP slot configurations match yubikit byte for byte.");
+  log.debug("Leaving otpSlotConfigs().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
@@ -1694,6 +1748,7 @@ async function test() {
   challengeOverCcid();
   readPlansOnlyRead();
   oathAccountInput();
+  otpSlotConfigs();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

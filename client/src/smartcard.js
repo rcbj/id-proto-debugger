@@ -1540,6 +1540,201 @@ function deleteOathAccount() {
   log.debug("Leaving deleteOathAccount().");
 }
 
+// ---------------------------------------------------------------------------
+// OTP SLOTS: program, delete, swap.
+// ---------------------------------------------------------------------------
+var SLOT1_WARNING = "\n\nSlot 1 holds the key's factory Yubico OTP " +
+    "credential, which YubiCloud knows. Overwriting or deleting it cannot " +
+    "be undone: no tool can put the factory credential back.";
+
+function hexField(id, size, what) {
+  log.debug("Entering hexField().");
+  var text = valueOf(id).replace(/\s+/g, "");
+  if (!text && size === 0) {
+    log.debug("Leaving hexField(). Empty and optional.");
+    return null;
+  }
+  if (!/^[0-9a-fA-F]*$/.test(text) || text.length % 2 !== 0 ||
+      (size && text.length !== size * 2)) {
+    log.debug("Leaving hexField(). Bad hex.");
+    throw new Error(what + " is " + (size ? size * 2 + " " : "") +
+        "hex characters.");
+  }
+  log.debug("Leaving hexField().");
+  return Buffer.from(text, "hex");
+}
+
+function randomBytes(n) {
+  log.debug("Entering randomBytes().");
+  var out = new Uint8Array(n);
+  window.crypto.getRandomValues(out);
+  log.debug("Leaving randomBytes().");
+  return Buffer.from(out);
+}
+
+// Fill the slot form's secrets from the browser's random source. They stay
+// on screen, because the key never gives a secret back.
+function generateSlotSecrets() {
+  log.debug("Entering generateSlotSecrets().");
+  var type = valueOf("sc_slot_type");
+  var set = function (id, value) {
+    var el = document.getElementById(id);
+    if (el) {
+      el.value = value;
+    }
+  };
+  if (type === "hmac") {
+    set("sc_slot_hmac_key", randomBytes(20).toString("hex"));
+  } else if (type === "yubico-otp") {
+    // "vv" marks a self-generated public identity, as ykman does.
+    set("sc_slot_public_id", "vv" + otp.modhexEncode(randomBytes(5)));
+    set("sc_slot_private_id", randomBytes(6).toString("hex"));
+    set("sc_slot_aes_key", randomBytes(16).toString("hex"));
+  } else {
+    set("sc_slot_hotp_key", oathBase32(randomBytes(20)));
+  }
+  setStatus("Generated. Copy the secret now: the key will not give it back.");
+  log.debug("Leaving generateSlotSecrets().");
+}
+
+function oathBase32(bytes) {
+  log.debug("Entering oathBase32().");
+  var alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  var bits = 0;
+  var value = 0;
+  var out = "";
+  var i = 0;
+  for (i = 0; i < bytes.length; i++) {
+    value = (value << 8) | bytes[i];
+    bits += 8;
+    while (bits >= 5) {
+      out += alphabet[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) {
+    out += alphabet[(value << (5 - bits)) & 31];
+  }
+  log.debug("Leaving oathBase32().");
+  return out;
+}
+
+function onSlotTypeChange() {
+  log.debug("Entering onSlotTypeChange().");
+  var type = valueOf("sc_slot_type");
+  show("sc_slot_hmac", type === "hmac");
+  show("sc_slot_otp", type === "yubico-otp");
+  show("sc_slot_hotp", type === "hotp");
+  log.debug("Leaving onSlotTypeChange().");
+}
+
+function slotFormConfig() {
+  log.debug("Entering slotFormConfig().");
+  var type = valueOf("sc_slot_type");
+  var opts = { type: type };
+  if (type === "hmac") {
+    opts.key = hexField("sc_slot_hmac_key", null, "The HMAC key");
+    opts.touch = checked("sc_slot_touch");
+  } else if (type === "yubico-otp") {
+    opts.publicId = otp.modhexDecode(valueOf("sc_slot_public_id").trim());
+    opts.privateId = hexField("sc_slot_private_id", 6, "The private identity");
+    opts.aesKey = hexField("sc_slot_aes_key", 16, "The AES key");
+  } else {
+    var secret = valueOf("sc_slot_hotp_key");
+    opts.key = /^[0-9a-fA-F\s]+$/.test(secret) && secret.length % 2 === 0 &&
+        valueOf("sc_slot_hotp_format") === "hex" ?
+        Buffer.from(secret.replace(/\s+/g, ""), "hex") :
+        oath.base32Decode(secret);
+    opts.digits = Number(valueOf("sc_slot_hotp_digits") || 6);
+    opts.imf = Number(valueOf("sc_slot_hotp_counter") || 0);
+  }
+  var described = { hmac: "HMAC-SHA1 challenge-response" +
+      (opts.touch ? ", touch required" : ""),
+    "yubico-otp": "Yubico OTP, public identity " +
+      valueOf("sc_slot_public_id").trim(),
+    hotp: "HOTP, " + opts.digits + " digits" }[type];
+  var config = otp.slotConfig(opts);
+  log.debug("Leaving slotFormConfig().");
+  return { config: config, described: described };
+}
+
+function slotAfterWrite(result, done) {
+  log.debug("Entering slotAfterWrite().");
+  if (!result) {
+    log.debug("Leaving slotAfterWrite(). Not sent.");
+    return;
+  }
+  if (!result.ok) {
+    paneMessage("sc_otp_out", "The key refused it: " + result.status + " " +
+        result.name + (result.status === "6982" ? " (the slot's access " +
+        "code is wrong or missing)" : "") + ".");
+    log.debug("Leaving slotAfterWrite(). Refused.");
+    return;
+  }
+  setStatus(done);
+  readFromKey("otp");
+  log.debug("Leaving slotAfterWrite().");
+}
+
+function programSlot() {
+  log.debug("Entering programSlot().");
+  var slot = Number(valueOf("sc_slot_number") || 2);
+  var apdu = null;
+  var made = null;
+  try {
+    made = slotFormConfig();
+    apdu = otp.programSlotApdu(slot, made.config,
+        hexField("sc_slot_access_code", 0, "The access code"));
+  } catch (e) {
+    paneMessage("sc_otp_out", e.message);
+    log.debug("Leaving programSlot(). " + e.message);
+    return;
+  }
+  writeToKey("sc_otp_out", [otp.ccidSelectApdu(), apdu],
+      "Program OTP slot " + slot + " as " + made.described + "?\n\n" +
+      "Whatever the slot holds now is replaced." +
+      (slot === 1 ? SLOT1_WARNING : "")).then(function (result) {
+    slotAfterWrite(result, "Programmed slot " + slot + ".");
+  }).catch(function (e) {
+    paneMessage("sc_otp_out", e.message);
+  });
+  log.debug("Leaving programSlot().");
+}
+
+function deleteSlot() {
+  log.debug("Entering deleteSlot().");
+  var slot = Number(valueOf("sc_slot_number") || 2);
+  var apdu = null;
+  try {
+    apdu = otp.programSlotApdu(slot, null,
+        hexField("sc_slot_access_code", 0, "The access code"));
+  } catch (e) {
+    paneMessage("sc_otp_out", e.message);
+    log.debug("Leaving deleteSlot(). " + e.message);
+    return;
+  }
+  writeToKey("sc_otp_out", [otp.ccidSelectApdu(), apdu],
+      "Delete OTP slot " + slot + "? Its secret is gone for good." +
+      (slot === 1 ? SLOT1_WARNING : "")).then(function (result) {
+    slotAfterWrite(result, "Deleted slot " + slot + ".");
+  }).catch(function (e) {
+    paneMessage("sc_otp_out", e.message);
+  });
+  log.debug("Leaving deleteSlot().");
+}
+
+function swapSlots() {
+  log.debug("Entering swapSlots().");
+  writeToKey("sc_otp_out", [otp.ccidSelectApdu(), otp.swapSlotsApdu()],
+      "Swap OTP slots 1 and 2? A short touch will then give what a long " +
+      "touch gives now, and the other way round.").then(function (result) {
+    slotAfterWrite(result, "Swapped slots 1 and 2.");
+  }).catch(function (e) {
+    paneMessage("sc_otp_out", e.message);
+  });
+  log.debug("Leaving swapSlots().");
+}
+
 // After a read, offer the account names for Delete.
 function offerOathNames(rows) {
   log.debug("Entering offerOathNames().");
@@ -1621,6 +1816,11 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   onTransportChange: onTransportChange,
+  programSlot: programSlot,
+  deleteSlot: deleteSlot,
+  swapSlots: swapSlots,
+  generateSlotSecrets: generateSlotSecrets,
+  onSlotTypeChange: onSlotTypeChange,
   addOathAccount: addOathAccount,
   deleteOathAccount: deleteOathAccount,
   onOtpTyped: onOtpTyped,

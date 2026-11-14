@@ -128,6 +128,65 @@
         <button type="button" class="saml-btn saml-hidden" id="sc_verify_button" onclick="smartcard.verifyOtp();">Verify</button>
       </p>
     </div>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Program a slot</div>
+      <details class="saml-explain">
+        <summary>How programming works</summary>
+        <p>Writes a configuration to OTP slot 1 (a short touch) or 2 (a long touch) through the API, after you confirm it. Slot 1 normally holds the key's factory Yubico OTP credential, which YubiCloud knows: overwriting it cannot be undone. Generate fills the secrets from this browser's random source and leaves them on screen, because the key never gives a secret back. The access code is only needed for a slot that has one. Static passwords are not offered: their scan codes depend on the keyboard layout.</p>
+      </details>
+      <div class="saml-row">
+        <label>Slot
+          <select id="sc_slot_number"><option value="2" selected>2 (long touch)</option><option value="1">1 (short touch)</option></select>
+        </label>
+        <label>Program it as
+          <select id="sc_slot_type" onchange="smartcard.onSlotTypeChange();">
+            <option value="hmac">HMAC-SHA1 challenge-response</option>
+            <option value="yubico-otp">Yubico OTP</option>
+            <option value="hotp">HOTP</option>
+          </select>
+        </label>
+        <label>Current access code (hex, if the slot has one)
+          <input id="sc_slot_access_code" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+      </div>
+      <div class="saml-row" id="sc_slot_hmac">
+        <label class="saml-grow">HMAC key (hex, up to 20 bytes)
+          <input id="sc_slot_hmac_key" class="sc-field" spellcheck="false" />
+        </label>
+        <label><input type="checkbox" id="sc_slot_touch" /> Require a touch</label>
+      </div>
+      <div class="saml-row saml-hidden" id="sc_slot_otp">
+        <label>Public identity (modhex)
+          <input id="sc_slot_public_id" class="sc-field" spellcheck="false" />
+        </label>
+        <label>Private identity (12 hex)
+          <input id="sc_slot_private_id" class="sc-field" spellcheck="false" />
+        </label>
+        <label class="saml-grow">AES key (32 hex)
+          <input id="sc_slot_aes_key" class="sc-field" spellcheck="false" />
+        </label>
+      </div>
+      <div class="saml-row saml-hidden" id="sc_slot_hotp">
+        <label class="saml-grow">Secret
+          <input id="sc_slot_hotp_key" class="sc-field" spellcheck="false" />
+        </label>
+        <label>as
+          <select id="sc_slot_hotp_format"><option value="base32">base32</option><option value="hex">hex</option></select>
+        </label>
+        <label>Digits
+          <select id="sc_slot_hotp_digits"><option>6</option><option>8</option></select>
+        </label>
+        <label>Starting counter (multiple of 16)
+          <input id="sc_slot_hotp_counter" class="sc-field sc-narrow" value="0" />
+        </label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn" id="sc_slot_generate" onclick="smartcard.generateSlotSecrets();">Generate secrets</button>
+        <button type="button" class="saml-btn" id="sc_slot_program" onclick="smartcard.programSlot();">Program the slot</button>
+        <button type="button" class="saml-btn" id="sc_slot_delete" onclick="smartcard.deleteSlot();">Delete the slot</button>
+        <button type="button" class="saml-btn" id="sc_slot_swap" onclick="smartcard.swapSlots();">Swap slots 1 and 2</button>
+      </p>
+    </div>
     <p class="sc-read">
       <button type="button" class="saml-btn" id="sc_otp_read" onclick="smartcard.readFromKey('otp');" title="Which OTP slots are programmed, read through the API's reader relay. Nothing is written.">Read from the key</button>
       <span class="sc-read-note">through the API; which slots are programmed</span>

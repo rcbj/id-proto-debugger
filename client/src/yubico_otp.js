@@ -727,7 +727,171 @@ function parseStatus(data) {
   return status;
 }
 
+// ---------------------------------------------------------------------------
+// PROGRAMMING A SLOT (ykdef.h's YK_CONFIG, as yubikit builds it).
+//
+// 52 bytes: fixed (16, zero-filled), uid (6), key (16), access code (6),
+// the fixed length, the extended, ticket and configuration flag bytes, two
+// reserved zeros, and the complement of the CRC of the first 50, little
+// endian. Written over CCID as INS 0x01 with P1 = 1 (slot 1) or 3 (slot 2)
+// and the data being the configuration followed by the slot's CURRENT access
+// code (six zeros when it has none). Deleting a slot writes 52 zero bytes;
+// swapping is P1 = 6 and no data. tests/smartcard_engine.js holds the
+// output to yubikit's own bytes.
+// ---------------------------------------------------------------------------
+var EXT_SERIAL_API_VISIBLE = 0x04;
+var EXT_FAST_TRIG = 0x10;
+var EXT_ALLOW_UPDATE = 0x20;
+var TKT_APPEND_CR = 0x20;
+var TKT_OATH_HOTP = 0x40;
+var TKT_CHAL_RESP = 0x40;
+var CFG_OATH_HOTP8 = 0x02;
+var CFG_HMAC_LT64 = 0x04;
+var CFG_CHAL_BTN_TRIG = 0x08;
+var CFG_CHAL_HMAC = 0x22;
+var CFG_OATH_FIXED_MODHEX2 = 0x40;
+var CONFIG_SIZE = 52;
+var ACC_CODE_SIZE = 6;
+
+function buildSlotConfig(parts) {
+  log.debug("Entering buildSlotConfig().");
+  var fixed = Buffer.from(parts.fixed || []);
+  if (fixed.length > 16) {
+    log.debug("Leaving buildSlotConfig(). Fixed too long.");
+    reject("The public identity is at most 16 bytes.");
+  }
+  var acc = Buffer.from(parts.accCode || Buffer.alloc(ACC_CODE_SIZE));
+  if (acc.length !== ACC_CODE_SIZE) {
+    log.debug("Leaving buildSlotConfig(). Bad access code.");
+    reject("An access code is 6 bytes (12 hex characters).");
+  }
+  var buf = Buffer.alloc(50, 0);
+  fixed.copy(buf, 0);
+  Buffer.from(parts.uid || Buffer.alloc(6)).copy(buf, 16);
+  Buffer.from(parts.key || Buffer.alloc(16)).copy(buf, 22);
+  acc.copy(buf, 38);
+  buf[44] = fixed.length;
+  buf[45] = parts.ext;
+  buf[46] = parts.tkt;
+  buf[47] = parts.cfg;
+  var crc = 0xffff & ~crc16(buf);
+  var out = Buffer.concat([buf, Buffer.from([crc & 0xff, (crc >> 8) & 0xff])]);
+  log.debug("Leaving buildSlotConfig().");
+  return out;
+}
+
+// An HMAC key for a slot: hashed with SHA-1 when longer than 64 bytes, as
+// yubikit does; at most 20 bytes after that, zero-filled to 20.
+function slotHmacKey(key) {
+  log.debug("Entering slotHmacKey().");
+  var k = Buffer.from(key || []);
+  if (k.length < 1) {
+    log.debug("Leaving slotHmacKey(). Empty.");
+    reject("The key is empty.");
+  }
+  if (k.length > 64) {
+    k = Buffer.from(sha1(k));
+  }
+  if (k.length > 20) {
+    log.debug("Leaving slotHmacKey(). Too long.");
+    reject("An OTP slot takes an HMAC key of at most 20 bytes.");
+  }
+  var padded = Buffer.alloc(20, 0);
+  k.copy(padded, 0);
+  log.debug("Leaving slotHmacKey().");
+  return padded;
+}
+
+// opts.type: "hmac" (HMAC-SHA1 challenge-response: key, touch),
+// "yubico-otp" (publicId, privateId 6 bytes, aesKey 16 bytes) or "hotp"
+// (key, digits 6 or 8, imf a multiple of 16).
+function slotConfig(opts) {
+  log.debug("Entering slotConfig().");
+  var o = opts || {};
+  var ext = EXT_SERIAL_API_VISIBLE | EXT_ALLOW_UPDATE;
+  var config = null;
+  if (o.type === "hmac") {
+    var hk = slotHmacKey(o.key);
+    config = buildSlotConfig({ uid: hk.slice(16, 20).length === 4 ?
+        Buffer.concat([hk.slice(16, 20), Buffer.alloc(2)]) : null,
+        key: hk.slice(0, 16), ext: ext, tkt: TKT_CHAL_RESP,
+        cfg: CFG_CHAL_HMAC | CFG_HMAC_LT64 | (o.touch ? CFG_CHAL_BTN_TRIG : 0),
+        accCode: o.accCode });
+  } else if (o.type === "yubico-otp") {
+    var priv = Buffer.from(o.privateId || []);
+    var aes = Buffer.from(o.aesKey || []);
+    if (priv.length !== 6) {
+      log.debug("Leaving slotConfig(). Bad private id.");
+      reject("The private identity is 6 bytes (12 hex characters).");
+    }
+    if (aes.length !== 16) {
+      log.debug("Leaving slotConfig(). Bad AES key.");
+      reject("The AES key is 16 bytes (32 hex characters).");
+    }
+    config = buildSlotConfig({ fixed: o.publicId, uid: priv, key: aes,
+        ext: ext | EXT_FAST_TRIG, tkt: TKT_APPEND_CR, cfg: 0,
+        accCode: o.accCode });
+  } else if (o.type === "hotp") {
+    var key = slotHmacKey(o.key);
+    var digits = o.digits === undefined ? 6 : o.digits;
+    if (digits !== 6 && digits !== 8) {
+      log.debug("Leaving slotConfig(). Bad digits.");
+      reject("A HOTP slot gives 6 or 8 digits.");
+    }
+    var imf = o.imf || 0;
+    if (imf % 16 !== 0 || imf < 0 || imf > 0xffff0) {
+      log.debug("Leaving slotConfig(). Bad counter.");
+      reject("The HOTP starting counter is a multiple of 16 up to 1048560.");
+    }
+    var uid = Buffer.concat([key.slice(16, 20),
+        Buffer.from([(imf >> 12) & 0xff, (imf >> 4) & 0xff])]);
+    config = buildSlotConfig({ uid: uid, key: key.slice(0, 16),
+        ext: ext | EXT_FAST_TRIG, tkt: TKT_APPEND_CR | TKT_OATH_HOTP,
+        cfg: CFG_OATH_FIXED_MODHEX2 | (digits === 8 ? CFG_OATH_HOTP8 : 0),
+        accCode: o.accCode });
+  } else {
+    log.debug("Leaving slotConfig(). Unknown type.");
+    reject("The slot type is hmac, yubico-otp or hotp.");
+  }
+  log.debug("Leaving slotConfig().");
+  return config;
+}
+
+// Write a configuration to slot 1 or 2 — or, with config null, delete the
+// slot — giving the slot's current access code when it has one.
+function programSlotApdu(slot, config, currentAccCode) {
+  log.debug("Entering programSlotApdu().");
+  if (slot !== 1 && slot !== 2) {
+    log.debug("Leaving programSlotApdu(). Bad slot.");
+    reject("The slot is 1 or 2.");
+  }
+  var body = config ? Buffer.from(config) : Buffer.alloc(CONFIG_SIZE, 0);
+  if (body.length !== CONFIG_SIZE) {
+    log.debug("Leaving programSlotApdu(). Bad config.");
+    reject("A slot configuration is 52 bytes.");
+  }
+  var acc = Buffer.from(currentAccCode || Buffer.alloc(ACC_CODE_SIZE));
+  if (acc.length !== ACC_CODE_SIZE) {
+    log.debug("Leaving programSlotApdu(). Bad access code.");
+    reject("An access code is 6 bytes (12 hex characters).");
+  }
+  var data = Buffer.concat([body, acc]);
+  var hex = Buffer.concat([Buffer.from([0x00, 0x01, slot === 1 ? 0x01 : 0x03,
+      0x00, data.length]), data]).toString("hex");
+  log.debug("Leaving programSlotApdu().");
+  return hex;
+}
+
+function swapSlotsApdu() {
+  log.debug("Entering swapSlotsApdu().");
+  log.debug("Leaving swapSlotsApdu().");
+  return "00010600";
+}
+
 module.exports = {
+  slotConfig: slotConfig,
+  programSlotApdu: programSlotApdu,
+  swapSlotsApdu: swapSlotsApdu,
   parseStatus: parseStatus,
   OTP_AID: OTP_AID,
   ccidSelectApdu: ccidSelectApdu,
