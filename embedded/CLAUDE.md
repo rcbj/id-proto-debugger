@@ -46,7 +46,7 @@ path or variable in it is a change to the mock STS too.
 <OUT>/ui/            client/build.js, DEPLOYMENT=embedded, CONFIG_FILE=./env/embedded.js
 <OUT>/api/           a runnable api: `cd <OUT>/api && node server.js`
 <OUT>/common/        tls_listener.js and spiffe/ — what the api requires as ../common/...
-<OUT>/version.json   the build's M.N.O (the same record as api/version.json)
+<OUT>/version.json   the build's M.N.P.B (the same record as api/version.json)
 ```
 
 `<OUT>/api` is what `api/Dockerfile` stages at `/usr/src/app`: every file under
@@ -77,11 +77,11 @@ BuildKit on the machines this runs on, so no `# syntax`, `--mount` or
 
 **It is PUBLISHED (rcbj/iya-sts#1717).** Docker Image CI builds it on every run
 and, from master only, pushes it beside the api and client images with the
-same tags — M.N.O and `latest` — as
+same tags — M.N.P.B and `latest` — as
 `ghcr.io/rcbj/id-proto-debugger-embedded` and
 `docker.io/iyasec/id-proto-debugger-embedded`. The mock STS's Dockerfile takes
 `ARG DEBUGGER_IMAGE` and does `COPY --from=<that image> /debugger/ …`; a
-release of it pins an M.N.O tag, so the debugger it ships is a tagged build of
+release of it pins an M.N.P.B tag, so the debugger it ships is a tagged build of
 this repository rather than whatever a checkout held. A local build is still
 `docker build -f embedded/Dockerfile -t rcbj/id-proto-debugger-embedded:dev
 --build-context ubuntu=docker-image://ghcr.io/rcbj/id-proto-debugger/mirror/ubuntu:latest .`

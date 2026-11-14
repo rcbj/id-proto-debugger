@@ -702,8 +702,8 @@ function userAgentIsConfigured() {
   if (fs.existsSync(versionModule)) {
     var appversion = require(versionModule);
     var resolved = appversion.load(path.join(repoRoot, "api"));
-    assert.ok(/^\d+\.\d+\.\S+$/.test(resolved.version),
-      "the version must come out as M.N.O, got: " + resolved.version);
+    assert.ok(/^\d+\.\d+\.\d+\.\S+$/.test(resolved.version),
+      "the version must come out as M.N.P.B, got: " + resolved.version);
     assert.ok(!/^0\.0\./.test(resolved.version),
       "a version of 0.0.x means the VERSION file was not found — " +
           "which is what " +

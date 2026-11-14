@@ -208,8 +208,8 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
     if (msg && msg.type === "getCaptures") {
       const stored = await chrome.storage.local.get(BUFFER_KEY);
       // version_name, not version: the manifest's `version` must be up to four
-      // integers under 65536, so build.js mangles the M.N.O stamp to fit it.
-      // The debugger's pages compare against their own M.N.O build, and
+      // integers under 65536, so build.js mangles the M.N.P.B stamp to fit it.
+      // The debugger's pages compare against their own M.N.P.B build, and
       // reporting the mangled form here made that comparison always disagree —
       // a drift warning on every page in a matched build, which is worse than
       // no warning at all.

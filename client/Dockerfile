@@ -70,7 +70,7 @@ COPY client/server.js /usr/src/app
 # see the header there.
 COPY common/tls_listener.js /usr/src/common/tls_listener.js
 COPY client/package.json /usr/src/app
-# Application version: the repo-root VERSION file (M.N) plus the stamping module.
+# Application version: the repo-root VERSION file (M.N.P) plus the stamping module.
 COPY VERSION /usr/src/app/VERSION
 COPY client/version.js /usr/src/app/version.js
 RUN true
@@ -220,7 +220,7 @@ RUN if [ "$COVERAGE" = "true" ]; then \
       done ; \
     fi
 
-# Fix this image's build number (M.N.O) and ship it in public/version.json.
+# Fix this image's build number (M.N.P.B) and ship it in public/version.json.
 # BUILD_NUMBER (and GIT_COMMIT) can be supplied by CI: --build-arg BUILD_NUMBER=...
 ARG BUILD_NUMBER
 ARG GIT_COMMIT

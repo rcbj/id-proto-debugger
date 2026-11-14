@@ -231,7 +231,7 @@ const MAX_REDIRECTS = resolveNonNegativeInteger(
 const DEFAULT_USER_AGENT = 'Identity Protocol Debugger/{{VERSION}}';
 
 /**
- * The application version, M.N.O.
+ * The application version, M.N.P.B.
  *
  * api/Dockerfile stamps version.json into this directory at image build time and
  * copies the client's version.js beside it — one implementation of the scheme for

@@ -62,7 +62,7 @@ COPY api/ ./api/
 COPY common/ ./common/
 COPY embedded/build.sh ./embedded/build.sh
 
-# The build number is fixed HERE, once, so the tree reports the same M.N.O for
+# The build number is fixed HERE, once, so the tree reports the same M.N.P.B for
 # as long as the image exists. GIT_COMMIT has to be passed: the context has no
 # .git to ask.
 ARG BUILD_NUMBER

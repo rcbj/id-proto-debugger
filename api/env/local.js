@@ -86,7 +86,7 @@ var config = {
   // rather than to anything intended here.
   maxRedirects: 5,
   // The User-Agent sent on every outbound call. `{{VERSION}}` is replaced with
-  // the build version (M.N.O), the same placeholder the client's footer uses.
+  // the build version (M.N.P.B), the same placeholder the client's footer uses.
   //
   // Without this axios announces itself as "axios/<its version>", which tells
   // the operator of an identity provider nothing about who is calling — and

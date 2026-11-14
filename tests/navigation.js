@@ -58,17 +58,17 @@ async function waitVisible(driver, locator) {
   return driver.findElement(locator);
 }
 
-// M.N.O, shown in the footer of every page. The build number must be identical
+// M.N.P.B, shown in the footer of every page. The build number must be identical
 // everywhere — it identifies the build being served, not the moment of the
 // request — so the first one seen becomes the expectation for the rest.
-var VERSION_RE = /^v\d+\.\d+\.\d+$/;
+var VERSION_RE = /^v\d+\.\d+\.\d+\.\d+$/;
 var seenVersion = null;
 async function checkFooterVersion(driver, where) {
   log.debug("Entering checkFooterVersion().");
   var el = await waitVisible(driver, By.css('.footer-version'));
   var text = (await el.getText()).trim();
   assert.ok(VERSION_RE.test(text),
-    "[" + where + "] the footer should show a M.N.O version, found: '" + text +
+    "[" + where + "] the footer should show a M.N.P.B version, found: '" + text +
         "'");
   var title = await el.getAttribute('title');
   assert.ok(/Build \S+ — built /.test(title || ''),

@@ -4,11 +4,13 @@
 
 'use strict';
 
-// Application version: M.N.O
+// Application version: M.N.P.B
 //
-//   M.N  major.minor, declared in the repo-root VERSION file (currently 0.9).
-//        Bump it there — it is the single source of truth.
-//   O    the build number: a value that identifies THIS build and no other.
+//   M.N.P  major.minor.patch — the RELEASE — declared in the repo-root VERSION
+//          file (currently 0.9.0). Bump it there; it is the single source of
+//          truth. Until 2026-11-13 the file held M.N and the version was
+//          M.N.B, which left no room for a patch release.
+//   B    the build number: a value that identifies THIS build and no other.
 //        By default it is the UTC build instant as YYYYMMDDHHMMSS, which is
 //        unique per build, monotonically increasing, and self-describing (the
 //        version alone tells you when the artifact was produced). Set
@@ -25,7 +27,7 @@
 //   client/build.js     stamps dist/ at the start of the static build.
 //
 // Run directly to print or stamp:
-//   node version.js                 -> 0.9.20260726143205
+//   node version.js                 -> 0.9.0.20260726143205
 //   node version.js --json          -> the full record
 //   node version.js --stamp <dir>   -> writes <dir>/version.json, prints version
 //   node version.js --check-manifests  -> non-zero if a package.json is stale
@@ -69,8 +71,8 @@ const STAMP_FILE = 'version.json';
 
 // The repo-root VERSION file. In a checkout it is one level above client/; in
 // the container image it is copied next to this script.
-function readMajorMinor() {
-  log.debug("Entering readMajorMinor().");
+function readRelease() {
+  log.debug("Entering readRelease().");
   const candidates = [
     path.join(__dirname, '..', VERSION_FILE),
     path.join(__dirname, VERSION_FILE),
@@ -78,22 +80,22 @@ function readMajorMinor() {
   for (const p of candidates) {
     try {
       const raw = fs.readFileSync(p, 'utf8').trim();
-      const m = raw.match(/^(\d+)\.(\d+)$/);
+      const m = raw.match(/^(\d+)\.(\d+)\.(\d+)$/);
       if (m) {
-        log.debug("Leaving readMajorMinor().");
-        return { major: m[1], minor: m[2] };
+        log.debug("Leaving readRelease().");
+        return { major: m[1], minor: m[2], patch: m[3] };
       }
       if (raw) console.error('[version] ignoring malformed ' + p + ': "' + raw +
-          '" (want M.N)');
+          '" (want M.N.P)');
     } catch (e) {
       /* try the next candidate */
     }
   }
-  // Never fail a build over this — an unknown major.minor is still reportable.
+  // Never fail a build over this — an unknown release is still reportable.
   console.error('[version] no readable ' + VERSION_FILE +
-                '; falling back to 0.0');
-  log.debug("Leaving readMajorMinor().");
-  return { major: '0', minor: '0' };
+                '; falling back to 0.0.0');
+  log.debug("Leaving readRelease().");
+  return { major: '0', minor: '0', patch: '0' };
 }
 
 function utcStamp(d) {
@@ -130,7 +132,8 @@ function gitCommit() {
 // Compute a fresh version record for a build happening now.
 function resolve() {
   log.debug("Entering resolve().");
-  const { major, minor } = readMajorMinor();
+  const { major, minor, patch } = readRelease();
+  const release = major + '.' + minor + '.' + patch;
   const now = new Date();
   const build = (process.env.BUILD_NUMBER &&
       String(process.env.BUILD_NUMBER).trim())
@@ -138,9 +141,11 @@ function resolve() {
   const commit = gitCommit();
   log.debug("Leaving resolve().");
   return {
-    version: major + '.' + minor + '.' + build,
+    version: release + '.' + build,
+    release: release,
     major: major,
     minor: minor,
+    patch: patch,
     build: build,
     commit: commit,
     builtAt: now.toISOString().replace(/\.\d{3}Z$/, 'Z'),
@@ -190,9 +195,9 @@ function load(dir) {
 }
 
 // --- package.json manifests -------------------------------------------------
-// Every project in the repo carries the same M.N in its package.json version,
-// with the semver patch component pinned to 0 (the real build number lives in
-// VERSION / version.json, and package.json must hold a valid semver). These
+// Every project in the repo carries the release, M.N.P, as its package.json
+// version — a valid semver as it stands; the build number lives only in
+// version.json, because M.N.P.B is not one. These
 // helpers keep the three in step with VERSION — a bump that updates only
 // VERSION would otherwise leave them silently stale.
 //
@@ -205,9 +210,9 @@ const MANIFESTS = ['api', 'client', 'tests'];
 
 function manifestVersion() {
   log.debug("Entering manifestVersion().");
-  const { major, minor } = readMajorMinor();
+  const { major, minor, patch } = readRelease();
   log.debug("Leaving manifestVersion().");
-  return major + '.' + minor + '.0';
+  return major + '.' + minor + '.' + patch;
 }
 
 // [{ path, actual, expected, ok }] for each manifest present in the tree. In a

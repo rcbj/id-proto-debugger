@@ -16,7 +16,7 @@
 #                        CONFIG_FILE=./env/embedded.js
 #   <dir>/api/           a runnable api: `cd <dir>/api && node server.js`
 #   <dir>/common/        what the api requires as ../common/...
-#   <dir>/version.json   the build's M.N.O, the same record as api/version.json
+#   <dir>/version.json   the build's M.N.P.B, the same record as api/version.json
 #
 # embedded/Dockerfile runs this same script, so there is ONE description of
 # the tree rather than a script and a Dockerfile that can disagree.
@@ -37,7 +37,7 @@
 # which is what a `docker build` of this checkout would see.
 #
 # Environment:
-#   BUILD_NUMBER   the O of M.N.O; default the UTC instant. Set ONCE here so
+#   BUILD_NUMBER   the B of M.N.P.B; default the UTC instant. Set ONCE here so
 #                  the UI's and the api's version.json agree.
 #   GIT_COMMIT     default `git rev-parse --short=12 HEAD` when there is a .git.
 #   MINIFY         passed to client/build.js; default on.
@@ -185,7 +185,7 @@ log "installing the api's production dependencies"
 # ---------------------------------------------------------------------------
 # 4. What api/Dockerfile stages beside the api: data.js and xmldsig.js from
 #    common/, the repo-root VERSION and the client's version.js (one
-#    implementation of M.N.O), and the stamp.
+#    implementation of M.N.P.B), and the stamp.
 # ---------------------------------------------------------------------------
 log "staging common/data.js, common/xmldsig.js, VERSION and version.js"
 cp "${WORK}/tree/common/data.js" "${WORK}/tree/api/data.js"
