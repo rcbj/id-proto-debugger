@@ -366,6 +366,54 @@
       <button type="button" class="saml-btn" id="sc_hsm_command" onclick="smartcard.decodeHsmCommand();">Decode command</button>
       <button type="button" class="saml-btn" id="sc_hsm_response" onclick="smartcard.decodeHsmResponse();">Decode response</button>
     </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Add or delete a credential</div>
+      <details class="saml-explain">
+        <summary>How writing works</summary>
+        <p>Each write carries the applet's management key. A wrong one costs one of its retries, so the page never fills it in: the factory default (16 zero bytes) is a button you press. A credential is AES-128 — derived from a password the way <code>yubihsm-auth</code> and ykman derive it (PBKDF2-SHA256, salt "Yubico", 10000 rounds), or from the two keys themselves — or EC P-256 from a private key. Its credential password (up to 16 bytes) is what a session asks for. Nothing typed here is stored.</p>
+      </details>
+      <div class="saml-row">
+        <label class="saml-grow">Management key (32 hex)
+          <input id="sc_hsm_mgmt_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.useHsmDefaultKey();">Factory default</button>
+      </div>
+      <div class="saml-row">
+        <label>Label <input id="sc_hsm_add_label" class="sc-field" spellcheck="false" /></label>
+        <label>Type
+          <select id="sc_hsm_add_type" onchange="smartcard.onHsmTypeChange();">
+            <option value="derived">AES-128, derived from a password</option>
+            <option value="keys">AES-128, from two keys</option>
+            <option value="ec">EC P-256, from a private key</option>
+          </select>
+        </label>
+        <label>Credential password
+          <input id="sc_hsm_add_password" class="sc-field" type="password" autocomplete="off" />
+        </label>
+        <label><input type="checkbox" id="sc_hsm_add_touch" /> Require a touch</label>
+      </div>
+      <div class="saml-row" id="sc_hsm_add_derived">
+        <label class="saml-grow">Derivation password
+          <input id="sc_hsm_add_derivation" class="sc-field" type="password" autocomplete="off" />
+        </label>
+      </div>
+      <div class="saml-row saml-hidden" id="sc_hsm_add_keys">
+        <label class="saml-grow">Encryption key (32 hex) <input id="sc_hsm_add_enc" class="sc-field" type="password" autocomplete="off" spellcheck="false" /></label>
+        <label class="saml-grow">MAC key (32 hex) <input id="sc_hsm_add_mac" class="sc-field" type="password" autocomplete="off" spellcheck="false" /></label>
+      </div>
+      <div class="saml-row saml-hidden" id="sc_hsm_add_ec">
+        <label class="saml-grow">P-256 private key (64 hex) <input id="sc_hsm_add_ec_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" /></label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn" id="sc_hsm_add" onclick="smartcard.addHsmCredential();">Add to the key</button>
+      </p>
+      <div class="saml-row">
+        <label class="saml-grow">Delete the credential labelled
+          <input id="sc_hsm_del_label" class="sc-field" spellcheck="false" />
+        </label>
+        <button type="button" class="saml-btn" id="sc_hsm_delete" onclick="smartcard.deleteHsmCredential();">Delete from the key</button>
+      </div>
+    </div>
     <p class="sc-read">
       <button type="button" class="saml-btn" id="sc_hsm_read" onclick="smartcard.readFromKey('hsm');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
       <span class="sc-read-note">through the API; read-only</span>

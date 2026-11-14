@@ -1708,6 +1708,135 @@ function swapSlots() {
   log.debug("Leaving swapSlots().");
 }
 
+// ---------------------------------------------------------------------------
+// YUBIHSM AUTH: add and delete credentials. Every write carries the
+// applet's management key, and a wrong one costs one of its retries; the
+// page never fills one in — "factory default" is a button the person
+// presses, and a refusal is shown, never retried.
+// ---------------------------------------------------------------------------
+function hsmManagementKey() {
+  log.debug("Entering hsmManagementKey().");
+  var key = hexField("sc_hsm_mgmt_key", 16, "The management key");
+  log.debug("Leaving hsmManagementKey().");
+  return key;
+}
+
+function useHsmDefaultKey() {
+  log.debug("Entering useHsmDefaultKey().");
+  var field = document.getElementById("sc_hsm_mgmt_key");
+  if (field) {
+    field.value = "00000000000000000000000000000000";
+  }
+  setStatus("The factory management key: 16 zero bytes.");
+  log.debug("Leaving useHsmDefaultKey().");
+}
+
+function onHsmTypeChange() {
+  log.debug("Entering onHsmTypeChange().");
+  var type = valueOf("sc_hsm_add_type");
+  show("sc_hsm_add_derived", type === "derived");
+  show("sc_hsm_add_keys", type === "keys");
+  show("sc_hsm_add_ec", type === "ec");
+  log.debug("Leaving onHsmTypeChange().");
+}
+
+function hsmRefused(result) {
+  log.debug("Entering hsmRefused().");
+  var sw = parseInt(result.status, 16);
+  var why = "The key refused it: " + result.status + " " + result.name;
+  if ((sw & 0xfff0) === 0x63c0) {
+    why = "The management key is wrong; " + (sw & 0x0f) + " tries remain " +
+        "before the applet locks. Nothing was written, and the page will " +
+        "not try again on its own.";
+  } else if (sw === 0x6983) {
+    why = "The management key is blocked: no tries remain.";
+  } else if (sw === 0x6a84) {
+    why = "The applet is full: delete a credential first.";
+  }
+  paneMessage("sc_hsm_out", why);
+  log.debug("Leaving hsmRefused().");
+}
+
+function addHsmCredential() {
+  log.debug("Entering addHsmCredential().");
+  var type = valueOf("sc_hsm_add_type");
+  var label = valueOf("sc_hsm_add_label").trim();
+  var apdu = null;
+  try {
+    var opts = {
+      managementKey: hsmManagementKey(),
+      label: label,
+      algorithm: type === "ec" ? "EC_P256" : "AES128",
+      credentialPassword: valueOf("sc_hsm_add_password"),
+      touch: checked("sc_hsm_add_touch")
+    };
+    if (type === "derived") {
+      opts.derivationPassword = valueOf("sc_hsm_add_derivation");
+    } else if (type === "keys") {
+      opts.keyEnc = hexField("sc_hsm_add_enc", 16, "The encryption key");
+      opts.keyMac = hexField("sc_hsm_add_mac", 16, "The MAC key");
+    } else {
+      opts.privateKey = hexField("sc_hsm_add_ec_key", 32,
+          "The P-256 private key");
+    }
+    apdu = hsm.putApdu(opts).toString("hex");
+  } catch (e) {
+    paneMessage("sc_hsm_out", e.message);
+    log.debug("Leaving addHsmCredential(). " + e.message);
+    return;
+  }
+  writeToKey("sc_hsm_out", [hsm.selectApdu().toString("hex"), apdu],
+      "Write the YubiHSM Auth credential \"" + label + "\" (" +
+      { derived: "AES-128, derived from a password",
+        keys: "AES-128, from the keys given",
+        ec: "EC P-256" }[type] +
+      (checked("sc_hsm_add_touch") ? ", touch required" : "") +
+      ") to the key?\n\nIt uses the management key you entered; a wrong " +
+      "one costs one of its retries.").then(function (result) {
+    if (!result) {
+      return;
+    }
+    if (!result.ok) {
+      hsmRefused(result);
+      return;
+    }
+    setStatus("Added " + label + ".");
+    readFromKey("hsm");
+  }).catch(function (e) {
+    paneMessage("sc_hsm_out", e.message);
+  });
+  log.debug("Leaving addHsmCredential().");
+}
+
+function deleteHsmCredential() {
+  log.debug("Entering deleteHsmCredential().");
+  var label = valueOf("sc_hsm_del_label").trim();
+  var apdu = null;
+  try {
+    apdu = hsm.deleteApdu(hsmManagementKey(), label).toString("hex");
+  } catch (e) {
+    paneMessage("sc_hsm_out", e.message);
+    log.debug("Leaving deleteHsmCredential(). " + e.message);
+    return;
+  }
+  writeToKey("sc_hsm_out", [hsm.selectApdu().toString("hex"), apdu],
+      "Delete the YubiHSM Auth credential \"" + label + "\" from the " +
+      "key? Its keys are gone for good.").then(function (result) {
+    if (!result) {
+      return;
+    }
+    if (!result.ok) {
+      hsmRefused(result);
+      return;
+    }
+    setStatus("Deleted " + label + ".");
+    readFromKey("hsm");
+  }).catch(function (e) {
+    paneMessage("sc_hsm_out", e.message);
+  });
+  log.debug("Leaving deleteHsmCredential().");
+}
+
 // After a read, offer the account names for Delete.
 function offerOathNames(rows) {
   log.debug("Entering offerOathNames().");
@@ -1910,6 +2039,10 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   onTransportChange: onTransportChange,
+  addHsmCredential: addHsmCredential,
+  deleteHsmCredential: deleteHsmCredential,
+  useHsmDefaultKey: useHsmDefaultKey,
+  onHsmTypeChange: onHsmTypeChange,
   programSlot: programSlot,
   deleteSlot: deleteSlot,
   swapSlots: swapSlots,
