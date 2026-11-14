@@ -24,6 +24,39 @@ those jobs were not re-run for this pass.
 * TOC
 {:toc}
 
+## Overview
+
+**Digital Signature** (`/digital_signature.html`) signs and MACs in the
+browser with pure JavaScript, so it does not need Web Crypto. Keys are not
+stored. Opening **View certificate details** is the exception: that
+certificate is passed to the certificate page through `localStorage`.
+
+The page has twelve panes, in this order.
+
+| # | Pane | Default |
+|---|---|---|
+| 1 | SLH-DSA | SLH-DSA-SHA2-128s, pure |
+| 2 | Stateful hash-based signatures (LMS/HSS and XMSS) | HSS, one tree. See [Stateful hash-based signatures](hbs.md) |
+| 3 | RSA | PKCS#1 v1.5, SHA-256, 2048-bit |
+| 4 | ECC | ECDSA P-256, SHA-256 |
+| 5 | ML-DSA | ML-DSA-65, pure |
+| 6 | Composite ML-DSA (draft) | ML-DSA-44-ES256 |
+| 7 | BBS | BLS12-381-SHA-256, UTF-8 messages |
+| 8 | JWS | HS256, compact serialization |
+| 9 | XML Digital Signature | enveloped, RSA-SHA256, exclusive C14N, last child of the root |
+| 10 | Keyed-hash MACs | HMAC-SHA256 |
+| 11 | Block-cipher MACs | AES-CMAC |
+| 12 | Universal-hash MACs | Poly1305 |
+
+On load, the XML **SignatureMethod** menu gains the draft post-quantum
+group described in
+[Post-quantum XML Signature](xmldsig-pqc.md). The introduction on
+the page numbers these twelve panes in this order, and the note on the
+XML pane says those methods are a draft. The Tools blurb on both
+OAuth2 / OIDC pages names the same twelve panes.
+
+The field list is in [Digital Signature](digital-signature.md).
+
 ## The twelve panes
 
 Click a title to collapse that pane. **Expand all panes** / **Collapse all

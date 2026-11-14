@@ -20,6 +20,14 @@
     - { title: Overview, url: / }
     - { title: What a protocol debugger is,
         url: /docs/what-is-a-protocol-debugger.html }
+    - { title: Getting started, url: /docs/getting-started.html }
+    - { title: Running the debugger, url: /docs/running.html }
+    - { title: Supported specifications,
+        url: /docs/supported-specs.html }
+    - { title: Identity provider notes,
+        url: /docs/identity-providers.html }
+    - { title: Privacy and security,
+        url: /docs/privacy-and-security.html }
     - title: "User guide: OAuth2 / OIDC"
       url: /docs/oauth2-oidc/
       children:
@@ -31,6 +39,8 @@
             url: /docs/oauth2-oidc/dynamic-client-registration.html }
         - { title: Token detail and related tools,
             url: /docs/oauth2-oidc/related-tools.html }
+        - { title: Request options and JWT validation,
+            url: /docs/oauth2-oidc/options.html }
 
 - section: OAuth 2.0 and OpenID Connect
   items:
@@ -92,10 +102,12 @@
 - section: Development
   items:
     - { title: The mock STS, url: /docs/mock-sts.html }
+    - { title: Running the tests, url: /docs/running-tests.html }
     - { title: What each test covers, url: /docs/test-suite-map.html }
     - { title: Testing against the deployed sites,
         url: /docs/live-site-testing.html }
     - { title: Code coverage, url: /COVERAGE.html }
     - { title: "Releases, versions and images", url: /docs/releases.html }
+    - { title: Version history, url: /docs/version-history.html }
     - { title: Kerberos design plan, url: /docs/kerberos-plan.html }
     - { title: WebAuthn design plan, url: /docs/webauthn-plan.html }

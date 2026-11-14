@@ -79,3 +79,216 @@ The 32px came back from height that was never content, and the page now ends at 
 So a third tool costs about **33px** of the 44 remaining, and a fourth needs another decision — the obvious next one being that this pane starts collapsed on `.vc-fit`, since its legend already toggles it. The trims are all scoped to `.vc-fit` (step 0 and step 1); only the shortened description is shared, and it is shorter on every page for the same reason. Checked against `stepOneFitsInOneRow()` as well, because that page carries the same class: its four metadata panes each lose the same 21px of legend, stay on one row, and the populated row measures 772px against its 1100px ceiling.
 
 One thing it does **not** require is the footer above the fold: that is 200px of shared site furniture on every page in the project, so demanding it would be a constraint on the footer rather than on this page. Related and pre-existing: every VC workflow page overflows sideways by exactly 182px below about 1200px of width — the five-item steps row's floor, present on untouched pages too and absent from `oauth2_oidc_1.html` and the landing page.
+
+## The VC Issuance workflow, step by step
+
+Issue a **Selective Disclosure JWT Verifiable Credential** — [SD-JWT, RFC 9901](https://www.rfc-editor.org/rfc/rfc9901.html) — from a Credential Issuer using [OpenID for Verifiable Credential Issuance](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) (OID4VCI). The workflow plays the wallet's part across five pages — choose a use case, discover the issuer, authorize and approve, inspect the credential, and refresh it — and deliberately **reuses the OIDC Authorization Code flow already implemented on `oauth2_oidc_1.html` / `oauth2_oidc_2.html`** to authorize the issuance, exactly as OID4VCI intends. It is reached from its own card on the landing page.
+
+### Step 0 — Choose a use case (`vc-issuance-0.html`)
+A credential reaches a wallet in more than one way, and OID4VCI's [Appendix H](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#name-use-cases) names them. They are not different protocols — they differ in **who starts**, **how the wallet learns what is on offer**, and **which grant authorizes it** — so the choice is made once, here, and the rest of the workflow follows it. Each is a card describing what it is and what it does on the wire; the two that are not implemented yet are listed anyway, plainly marked, because knowing what is coming is more useful than a shorter list.
+
+| | Use case | Who starts | On the wire |
+|---|---|---|---|
+| **H.6** | Wallet-initiated | the wallet | issuer metadata by URL → Authorization Code + PKCE → Credential Request |
+| **H.1** | Credential Offer, same device | the issuer | Credential Offer (by value or by reference) → `issuer_state` on the authorization request → Credential Request |
+| **H.2** | Credential Offer, cross device | the issuer | offer by QR code → pre-authorized code + `tx_code` → Token Request → Credential Request (no authorization request at all) |
+| **H.3** | Credential Offer, cross device & deferred | the issuer | the same, and then a `202` Credential Response carrying a `transaction_id`, collected from the Deferred Credential Endpoint |
+
+Every page of the workflow opens with the same **row of links to all five steps** (with the current one marked and
+the finished ones ticked off), so you can move between them directly rather than retracing the flow, and carries a
+badge saying which use case is running, with a link back here. Changing it discards any Credential Offer in hand but keeps the issuer and client settings already configured.
+
+**H.2 and H.3 in this workflow**: the issuer displays a **QR code** on its own screen (the mock's is at
+`<credential issuer>/issuer/offer?mode=cross-device`, or `?mode=deferred`) together with a **Transaction Code**
+that is deliberately *not* in the offer — it reaches the End-User by another channel, which is what makes a QR
+code anyone can photograph safe to display. Because the wallet is on the other device, nothing navigates it
+here: step 1's **Receive a Credential Offer** pane takes whatever the QR code encodes (an
+`openid-credential-offer://` URI, an `https://` link carrying the same parameters, or the bare JSON).
+
+The offer carries a `pre-authorized_code` instead of an `issuer_state`, so **there is no authorization request
+and nobody is sent to a login page** — the End-User was identified by the issuer beforehand. Step 2 grows a
+**Token Request** pane: the assembled call, a field for the Transaction Code, and the token endpoint's answer.
+The wallet refuses to send without the code; the issuer refuses a wrong one; the code is single use.
+
+For **H.3** the Credential Response is `202` with a `transaction_id` and an `interval` rather than a credential.
+A **Deferred Issuance** pane then shows the assembled Deferred Credential Request, every attempt and what came
+back, and the wallet keeps asking at the interval the issuer named until the credential arrives — after which
+the `transaction_id` stops working, as OID4VCI section 9 requires.
+
+**H.1 in this workflow**: choosing it sends the End-User to the *issuer's* web page (the mock issuer's is at `<credential issuer>/issuer`) rather than into the wallet. Following the offer link there brings them back to step 1 with a **Credential Offer** — passed either by value in `credential_offer` or by reference in `credential_offer_uri`, both of which the page accepts — which names the issuer, the credential configuration on offer, and the `authorization_code` grant with its **`issuer_state`**. The offer is shown in its own pane, the wallet discovers the issuer *and* the authorization server it names without being asked, and the `issuer_state` is carried into the authorization request so the issuer can tie the two halves together. The offer can be discarded, which returns the workflow to wallet-initiated.
+
+### Step 1 — Discover the issuer (`vc-issuance-1.html`)
+Four panes, plus a fifth — **Credential Offer** — shown only when an offer brought the End-User here:
+
+1. **Credential Issuer Metadata (OID4VCI)** — retrieve `/.well-known/openid-credential-issuer`, tabulate it (with a note saying which document it is and where it came from), pick one entry of `credential_configurations_supported`, and **Validate Signature** on the document's `signed_metadata` JWT. The issuer's keys are resolved the SD-JWT VC way, from `/.well-known/jwt-vc-issuer` under the credential issuer identifier (or a `jwks_uri` in the document itself); the rest of the check is the same code the Metadata Retrieval pane on `oauth2_oidc_1.html` runs — signature, `iss`, and any signed claim that disagrees with the plain JSON.
+2. **Authorization Server Metadata (RFC 8414)** — the same pane as `oauth2_oidc_1.html`'s. Its URL starts on the deployment's configured RFC 8414 endpoint (`rfc8414MetadataUrlDefault`, the mock authorization server the STS service publishes; empty where there is no such service) and is replaced by the server named in the issuer's `authorization_servers` once the issuer metadata is retrieved. It writes to the **same `localStorage` names** `oauth2_oidc_1.html` uses (`discovery_info`, `authorization_endpoint`, `token_endpoint`, the OpenID Provider metadata members, …), so retrieving it here also configures the OAuth2 / OIDC workflow.
+3. **Configuration Parameters** — every parameter both documents can define, generated from the shared member lists (`client/src/op_metadata.js` for the OpenID Provider / RFC 8414 members, `client/src/vci_metadata.js` for the credential issuer ones) so the pane cannot drift from them. Each value is overridable; a member the retrieved document omits shows the same grayed-out `-->not defined<--` note as the debugger pane. The OAuth2 / OpenID Provider half shares its storage with the debugger pages; the OID4VCI half is prefixed `vci_`.
+4. **Authorize Issuance** — hands off to `oauth2_oidc_1.html?sdjwtvc=1`.
+
+### The OIDC leg (`oauth2_oidc_1.html` → IdP → `oauth2_oidc_2.html`)
+The `sdjwtvc=1` query parameter puts the debugger into this workflow: it shows a banner saying so, starts the Authorization Code request with the configuration from step 1, and — once the user has authenticated and `oauth2_oidc_2.html` has exchanged the code for tokens — sends the browser on to step 2. Without the parameter neither page behaves any differently.
+
+### Step 2 — Approve and request (`vc-issuance-2.html`)
+Shows the access / ID / refresh tokens the OIDC leg obtained (and the decoded ID token claims), generates an **ES256 holder key pair** in the browser (the private half never leaves it), and asks the user to approve the issuance.
+
+The whole request is assembled **before** the user approves — the page fetches a `c_nonce` from the issuer's Nonce Endpoint and signs a proof of possession (`typ: openid4vci-proof+jwt`, the holder public key in the header, the credential issuer as `aud`) on load — so the nonce, the proof (raw and decoded), the JSON body, and a box showing the **fully assembled call** (method, full URL, headers including the Bearer access token, and body) are all there to read first. Approving sends exactly that; because a `c_nonce` is single use and expires, a proof that has gone stale by then is rebuilt and the request retried once. **Deny** sends nothing and returns to step 1.
+
+### Naming the credential: `scope` or `authorization_details`
+OID4VCI has two ways for a wallet to say which credential it wants
+([§3.3.4](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) contrasts them), and step 1's
+hand-off pane offers both. A **scope** is the simple one. **`authorization_details`** ([RFC 9396](https://www.rfc-editor.org/rfc/rfc9396.html))
+of type `openid_credential` is the expressive one, and choosing it changes what happens afterwards: the token
+response grants `credential_identifiers`, and the Credential Request then **MUST** name one of those and **MUST
+NOT** send a `credential_configuration_id`. Step 2 says which of the two it is using and why — that is not a
+preference, it follows from what was granted — and the mock issuer refuses all three ways of getting it wrong
+(both parameters together, the configuration id after identifiers were granted, and an identifier that was never
+granted).
+
+### Batch issuance and an encrypted Credential Response
+Step 2's **Credential Request Options** pane offers the two things an issuer's metadata can advertise and a
+wallet has to opt into:
+
+- **Keys to bind** — one proof per key, one credential per proof ([§8.3](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html)),
+  capped at the issuer's `batch_credential_issuance.batch_size`. Step 3 then shows every credential that came
+  back, with a picker, and verifies whichever is selected — each is bound to *its own* key.
+- **Encrypt the response** — the wallet generates an RSA key, sends the public half as
+  `credential_response_encryption`, and the issuer returns a **JWE** (`application/jwt`) instead of JSON, which the
+  page decrypts in the browser. The private half is generated non-extractable, so it cannot leave the page.
+
+Both controls are disabled, with the reason stated, against an issuer whose metadata does not advertise the
+feature — which is the case for walt.id, and is what the interoperability suite checks.
+
+### Telling the issuer what happened
+The Credential Response carries a `notification_id`, and step 3's **Notify the Issuer** pane sends the
+[§11](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) Notification Request for it:
+the assembled call, one of the three events the spec defines (`credential_accepted`, `credential_failure`,
+`credential_deleted`), and the issuer's answer. It is optional for a wallet — an issuer cannot assume it will be
+told — so it is a button, not something that happens automatically. The mock issuer validates the id and the
+event rather than answering `204` to anything, and records what it was told, so a test can check that the
+notification actually landed.
+
+### Step 3 — The credential (`vc-issuance-3.html`)
+Takes the returned SD-JWT VC apart the way a verifier would: the Combined Serialization with its `~` separators, the issuer-signed JWT header and payload, and one row per **Disclosure** — salt, claim name, value, and the digest recomputed in the browser (`base64url(SHA-256(the ASCII of the base64url Disclosure))`) and looked up in the JWT's `_sd`. A checks table reports the media type (`dc+sd-jwt`), the algorithm, `vct`, the `cnf` binding to the holder key from step 2, `_sd_alg`, the validity window, whether a Key Binding JWT is present (it is not, at issuance), digest coverage, and the **issuer signature**, verified against the issuer's published JWKS. The last pane shows the claim set a verifier ends up with if every Disclosure is presented.
+
+### Step 4 — Refresh the credential (`vc-issuance-4.html`)
+A credential goes stale: its claim values age and its validity window runs out.
+[Section 14.5](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html), *Refreshing Issued
+Credentials*, gives two mechanisms — get an updated credential from the Credential Endpoint with a valid access
+token, **with no End-User interaction at all**, or start the issuance over from step 1, which needs the End-User
+and is the only route left once the refresh token has gone too. This step is the first, in the two calls it is
+made of:
+
+1. **Refresh the access token** — `grant_type=refresh_token` at the authorization server's Token Endpoint
+   ([RFC 6749 §6](https://www.rfc-editor.org/rfc/rfc6749.html#section-6)). Nothing about this call is
+   OID4VCI-specific, which is section 14.5's point; the pane shows it assembled, sends it, and says whether the
+   refresh token **rotated** — because if it did, the old one is spent. This half is skippable:
+   [§14.3](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html) allows asking the Credential
+   Endpoint again with the token already in hand, and the pre-authorized code grant (H.2/H.3) issues no refresh
+   token at all, so the page says so and offers the routes that remain rather than a button that cannot work.
+2. **Ask the Credential Endpoint again** — the same Credential Request step 2 makes, built by the same module
+   (`client/src/vci_wallet.js`), with a fresh `c_nonce` and a new proof of possession. The wallet chooses whether
+   to stay bound to the **holder key the credential already uses** (which is what makes the result a replacement)
+   or to bind a new one. An issuer that cannot answer at once may defer this too, so a `202` with a
+   `transaction_id` is collected from the Deferred Credential Endpoint — on a button, since nobody is waiting on a
+   refresh.
+
+Then the part that is actually interesting: **what changed**. Section 14.5 leaves it to the issuer *"whether to
+update both the signature and the claim values, or only the signature"*, and §14.3 permits the same credential
+over again, so none of it can be assumed — it is read off the two credentials side by side (`vct`, `iss`, `sub`,
+`iat`/`nbf`/`exp`, the bound key, the signature, the Disclosure and digest counts) with a separate comparison of
+disclosed claim **values**. Values, because the salts and therefore every Disclosure and digest are new each time
+an issuer mints a credential; reporting those as changes would bury the ones that matter. The verdict names which
+case it was.
+
+**Credential History.** A credential is not one object over its life, so step 4 carries the counterpart of the
+**Token History** pane on `oauth2_oidc_2.html` — and records more than it does: **every attempt**, not only the ones
+that worked. One row each, newest first, for every access-token refresh, every Credential Request, every poll of
+the Deferred Credential Endpoint and every decision you made about what came back, with the outcome
+(`success`, `FAILED` with the refusal, `deferred`, `returned — not kept yet`, `kept`, `discarded`) and what the
+issuer actually said. Because "I tried to refresh and it did not work" is the case a debugger is most needed for,
+and a pane that shows only successes cannot tell you whether the request was refused, deferred, or never made.
+Retrying a stale proof leaves both rows; discarding a credential leaves the attempt on record and takes the
+credential away. Every row is numbered in `#` by attempt order; the separate `Gen`
+column carries the generation number, which only the **`kept`** rows have, because only those are credentials the
+wallet holds and can go back to. The one in hand is marked; every other row says `log only`. The newest **100**
+attempts are kept, in a fixed-height scrolling list with a sticky header, so a long log does not push the rest of
+the page around. `◀ Older` / `Newer ▶` (and Oldest / Latest, or **Activate** on any generation row) move **backwards and
+forwards** through those generations, skipping the log rows, and moving is a real change rather than a highlight: the generation you land on becomes
+the credential the wallet holds, **together with the holder key pair it is bound to** — without that private key
+the credential could not be presented at all, so each entry keeps its own. That is what makes going *back*
+useful: a refresh that turned out worse than what it replaced is a real outcome, and this is how you return to
+the credential that was working. A refreshed credential you discarded is not in the list, because it was never
+held; the `Source` column distinguishes `issued`, `refreshed` (a fresh access token was obtained first) and
+`refreshed (§14.3)` (the token in hand was reused). *Clear History* forgets the generations and leaves the
+credential in hand alone.
+
+A credential the issuer has just returned appears in the pane **immediately**, marked *not kept yet* and carrying
+its own Keep / Discard buttons: the list reacts to the retrieval, not only to the keeping. Keeping it does not
+navigate anywhere — the new generation simply becomes the one in hand, in the pane you were looking at, and
+*Verify in step 3* is there when you want the full check.
+
+Nothing is replaced until you say so. Section 14.5 again: *"the Wallet might need to check if it already has a
+Credential of the same type and, if necessary, delete the old Credential. Otherwise, the Wallet might end up with
+more than one Credential of the same type, without knowing which one is the latest."* So **Replace** promotes the
+refreshed credential (keeping the old one, and its holder key, for comparison) and opens step 3 to verify it,
+while **Discard** leaves the wallet exactly as it was — including its holder key, which a declined refresh must
+never rotate: the credential still in hand needs the private half to be presented at all.
+
+### Interoperability: the same workflow against walt.id
+
+A mock issuer that agrees with us proves only that we agree with ourselves. The
+test suite therefore also runs **[walt.id's `issuer-api2`](https://github.com/walt-id/waltid-identity)**
+— an independently written OpenID4VCI 1.0 Credential Issuer — as a container
+(`waltid/issuer-api2`, configured by `waltid/config/*.conf`), and drives *the
+same pages, the same bundles and the same buttons* against it:
+`tests/sd_jwt_vc_waltid.js`, covering both implemented use cases (H.6 and H.1,
+the offer created through walt.id's own management API exactly as its portal
+would create it).
+
+Nothing in the workflow is walt.id-specific. Everything below is a difference in
+the **issuer**, and the wallet either copes with it or the test fails:
+
+| What walt.id does | What it means for a wallet |
+|---|---|
+| Its Credential Issuer Identifier has a **path** (`…/openid4vci`) | The metadata is at `/.well-known/openid-credential-issuer/openid4vci` — [RFC 8414 §3.1](https://www.rfc-editor.org/rfc/rfc8414.html#section-3.1) **inserts** the well-known segment before the path; it is not appended. Both forms are tried, insertion first (`wellKnownCandidates()` in `client/src/metadata_client.js`), and the provenance note says which one answered. |
+| It publishes no `authorization_servers` | Per OID4VCI §11.2.3 the Credential Issuer is then its own authorization server, and the wallet must fall back to it. |
+| It signs with a **`did:jwk`** | The credential's `iss` is not a URL, so there is no `/.well-known/jwt-vc-issuer` to fetch — but a `did:jwk` *is* the key, base64url-encoded in the identifier, so step 3 resolves it without a network call. Its `kid` is a DID URL whose **fragment** is the JWKS key id, which is why key selection falls back from an exact `kid` match to the fragment and then to trying every published key (a `kid` is a hint for finding the key, not part of the signature). |
+| It authenticates the End-User at an **external** OpenID Provider | Its authorization endpoint always redirects there. In this suite that provider is the same Keycloak realm everything else uses, so the run is a genuine three-party issuance — our wallet, walt.id as issuer and authorization server, Keycloak as IdP — and the credential ends up carrying the claims of whoever signed in. |
+
+Those four points are exactly the changes the interoperability work produced;
+the mock issuer never exercised any of them, because it agreed with us by
+construction.
+
+One thing walt.id does **not** do is CORS: its services install no CORS plugin at all (walt.id's own compose
+stack fronts every one of them for that reason), and a browser-based wallet cannot read a response without
+`Access-Control-Allow-Origin`. So the container runs behind a small proxy — `waltid/cors-proxy.js`, no
+dependencies, run by a stock `node` image — that adds those headers and answers preflights itself, and the
+issuer's `baseUrl` names the **proxy**: every URL walt.id publishes has to be one the browser can actually use,
+and the proof of possession's `aud` has to be that same identifier, so the proxy cannot merely forward — it has
+to *be* the issuer's address. The public demo at `issuer2.demo.walt.id` shows the same
+thing from the other side: its edge sends `Access-Control-Allow-Methods: OPTIONS` only, so a browser wallet can
+read its metadata and never POST to it.
+
+walt.id also publishes no `authorization_details_types_supported`, `notification_endpoint`,
+`batch_credential_issuance` or `credential_response_encryption`. All four are OPTIONAL, so that is not a defect —
+but it is the situation a wallet most easily gets wrong, by assuming a feature is there or offering the End-User
+something the issuer cannot do. The interoperability suite therefore checks **capability detection**: every
+omitted member is marked `-->not defined<--`, the batch and encryption controls are disabled with the reason
+given, step 3 offers no notification, choosing `authorization_details` warns that this server does not advertise
+it — and the issuance still completes by the route the issuer does support. The mock covers the mechanics of each
+feature; only a second implementation can cover behaving correctly when the feature is absent.
+
+Deferred issuance (H.3) is the one use case walt.id cannot exercise: `issuer-api2` publishes no
+`deferred_credential_endpoint` and issues everything immediately, which OID4VCI permits — section 9 makes the
+endpoint OPTIONAL. The walt.id suite therefore checks that the wallet *reads that capability off the metadata*
+rather than assuming it, and the mock issuer covers the deferred mechanics themselves. That division is what
+having both stacks is for: the mock exercises what real deployments leave out.
+
+The issuer's signing key is generated fresh per run (`generateWaltidIssuerKey`
+in `common/common.sh`) and passed in through the environment, so no private key
+is committed here — the same rule the SAML SP key pair follows. The container is
+part of `docker-compose-run-tests.yml` and `local-tests.yml`; the job is skipped
+when `WALTID_ISSUER_URL` is unset, so a run without that container still passes.
+
+### Mock Credential Issuer for testing
+The `sts/` service also hosts a **bare-minimum OID4VCI Credential Issuer**: `/.well-known/openid-credential-issuer` (with `signed_metadata` and one `dc+sd-jwt` credential configuration), `/.well-known/jwt-vc-issuer` for key resolution, `POST /oid4vci/nonce`, and `POST /oid4vci/credential`. It requires a Bearer token, and properly verifies the wallet's proof of possession (typ, algorithm, audience, single-use nonce, and the signature against the key in the proof's own header) before minting an SD-JWT VC per RFC 9901 — disclosures with 128-bit salts, `_sd` digests plus a decoy, `_sd_alg`, `cnf.jwk`, and the required trailing `~`. It cannot validate an access token issued by a separate authorization server, and does not pretend to. It also implements **`authorization_details`** of type `openid_credential` (advertised as `authorization_details_types_supported`, granting `credential_identifiers` in the token response and enforcing the mutual exclusion at the credential endpoint), **batch issuance** (several proofs, one credential per proof, `batch_size` enforced — and one `c_nonce` per *request*, not per proof), **response encryption** (RSA-OAEP-256 to the wallet's key, refusing any algorithm it does not perform), a **Notification Endpoint** that validates the `notification_id` and the event and remembers what it was told, the **pre-authorized code grant** (`tx_code` required, checked, and single use), and a **Deferred Credential Endpoint** — `202` with a `transaction_id` for a few seconds, then the credential, then `invalid_transaction_id` for anyone who asks again. For H.1 it also hosts the **issuer's side of a Credential Offer**: a web page at `/issuer` with the offer links, `GET /issuer/offer` which builds the offer and sends the End-User to the wallet (`OID4VCI_WALLET_URL`) with it — by value or, with `?by=reference`, as a `credential_offer_uri` pointing at `GET /oid4vci/credential-offer/:id` — and it remembers each `issuer_state` so the authorization endpoint can recognise a request as belonging to an offer it made. For the cross-device use cases it shows a real **QR code** and the Transaction Code on its own page (`/issuer/offer?mode=cross-device|deferred`). By default the metadata advertises the mock **itself** as its authorization server, which is what lets an issuer-initiated offer be walked end to end with no identity provider at all; `OID4VCI_AUTHORIZATION_SERVER` points it at a real one instead. The end-to-end test is `tests/sd_jwt_vc_issuance.js`.

@@ -26,6 +26,27 @@ those jobs were not re-run for this pass.
 * TOC
 {:toc}
 
+## Overview
+
+**SAML Assertion Tool** (`/saml_tools.html`) builds a SAML 1.0, 1.1, or 2.0
+assertion, signs it, and encrypts it, in the browser. It does not send
+anything. Open it from the **Tools** pane on the SAML pages. **Assertion
+Version** defaults to SAML 2.0. **Issuer** defaults to this debugger's
+origin plus `/issuer`.
+
+The signature menu starts at RSA-SHA256. On load it gains the same draft
+post-quantum group as the SAML request page. Where `<ds:Signature>` sits
+follows the version: after `<saml:Issuer>` in 2.0, and the last child of
+the assertion in 1.1 and 1.0.
+
+Every stored field on this page is written to `localStorage`, including
+the private keys. There is no checkbox to turn that off. Do not paste a
+production key. Timestamps are the exception: they are regenerated on each
+visit.
+
+The fields and the encryption defaults are in
+[SAML Assertion Tool](saml-assertion.md).
+
 ## 1. Compose Assertion
 
 | Field or button | Default | Stored | What it does |

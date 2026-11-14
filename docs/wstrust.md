@@ -126,3 +126,56 @@ requestor private key.
 Every call is listed, newest first: time, version, operation, username, and
 a result of *Failure*, *Sent*, or *Success*. **Clear History** drops the
 log. The log is kept in `localStorage`.
+
+## WS-Trust test tools and the mock STS
+
+The **WS-Trust Protocol** card opens `wstrust_tools.html`. The page builds
+a SOAP `RequestSecurityToken` and shows the response on
+`wstrust_response.html`.
+
+**WS-Trust Version** defaults to 1.4. **SOAP Version** defaults to 1.2.
+**Operation** defaults to Issue, **Token Type** to SAML 2.0, and **Key
+Type** to Bearer. **STS URL** is empty in the form; while it stays empty
+the page fills `https://localhost:8081/sts` (iya-sts). The tooltip on that
+field still shows an `http://` example.
+
+**Username** and **Password** default to `wstrust` / `wstrust`. The
+password is not stored. **Digitally sign the request** defaults to off.
+**Save this key pair in browser localStorage** defaults to on. **Encrypt
+the request body** defaults to off. **Add WS-Addressing headers**
+defaults to on.
+**Initiate STS Call From** defaults to **Backend (proxy)**. **Validate STS
+TLS certificate (backend)** defaults to on. On load the signature menu
+gains the draft post-quantum group.
+
+The field list is in [Using the WS-Trust workflow](wstrust.md).
+
+### Mock authorization server
+The same `sts/` service also answers **every endpoint its RFC 8414 metadata advertises**, so the OAuth2 / OIDC panes have a complete server to talk to without an identity provider:
+
+| Endpoint | What it does |
+|---|---|
+| `GET /oauth2/authorize` | A browser flow: an unauthenticated request is answered with a **login screen**; once the user signs in it redirects back to itself and issues the authorization code (or the implicit / hybrid tokens), echoing `state` and identifying itself with `iss` (RFC 9207). Errors go where OAuth 2.0 says — back to the client when `redirect_uri` is usable, to the user agent when it is not. |
+| `POST /oauth2/login` | The login screen's target. **No password is checked**: the username typed in is the identity every issued token then describes (`sub`, `username`, `preferred_username`, `given_name`, `email`). `login_hint` pre-fills the field, Cancel returns `access_denied`, an empty username re-prompts, and the password `invalid` is refused. A session cookie means later authorization requests do not prompt again; `prompt=login` forces a prompt, `prompt=none` fails with `login_required`, and `GET /oauth2/logout` ends the session. |
+| `POST /oauth2/token` | `authorization_code` (verifying PKCE, single-use codes), `refresh_token`, `client_credentials`, `password`, and RFC 8693 `token-exchange`. Anything else is an `unsupported_grant_type`, and the metadata advertises exactly this list. |
+| `POST /oauth2/introspect` | RFC 7662. Reports the real claims of a token it signed; anything forged, expired or revoked is `{"active": false}`. |
+| `POST /oauth2/revoke` | RFC 7009. Always 200; a revoked token stops introspecting as active and stops refreshing. |
+| `/oauth2/register` | RFC 7591 registration plus RFC 7592 read / update / delete, protected by the registration access token. |
+| `GET /oauth2/jwks` | The signing key, so every token above can be verified. |
+| `/docs`, `/policy`, `/tos` | The documents `service_documentation`, `op_policy_uri` and `op_tos_uri` link to. |
+
+Every access, ID and refresh token is a real **RS256 JWT signed with the STS key** and verifiable against `jwks_uri`, with the claims OIDC asks for (`aud`, `nonce`, `at_hash`, `c_hash`). What it does **not** do is verify anything: no password is checked and any client secret or `redirect_uri` is accepted. The one credential it refuses is the password `invalid`, so a negative test has something to fail on.
+
+Because it authenticates interactively, the debugger's own OAuth2 / OIDC workflow runs against it end to end with **no identity provider at all** — point the Metadata Retrieval pane at `/.well-known/oauth-authorization-server` (the default), Populate, and Authorize. The login screen deliberately uses the same field ids as the Keycloak login page (`username`, `password`, `kc-login`), so the Selenium helpers that drive one drive the other unchanged. The suite is `tests/oauth2_sts_endpoints.js` (no browser).
+
+### What the mock records
+The service logs with **bunyan**, at the level its `CONFIG_FILE` names (`sts/env/local.js` for the dev and live stacks, `sts/env/docker-tests.js` for the containerized suite — the same convention the api and client services use). At the default `debug` level the log is a complete account of what the mock did, which is what makes it useful when a test fails:
+
+* **every endpoint call** — the path, the request headers and body, the response headers and body, the status code, and how long it took;
+* **every security artifact both before and after it was protected** — a SAML assertion before signing and after, and again before and after encryption; a WS-Trust JWT, an OAuth access/ID/refresh token, an RFC 8414 or OID4VCI `signed_metadata` document, and an SD-JWT VC (its claims, its disclosures with salts and digests, the issuer-signed JWT, and the final Combined Serialization) — with the signed or encrypted object recorded in full;
+* **entering and leaving** every function and every endpoint, on every path.
+
+Set the level to `info` (`sts/env/test.js`) for a quiet run.
+
+### STS for testing
+The workflow is intended to run against [Apache CXF's WS-Trust STS](https://cxf.apache.org/docs/ws-trust.html). For the automated test suite it also runs against a small **WS-Trust STS mock** — [`rcbj/iya-sts`](https://github.com/rcbj/iya-sts), run from its release image (see *The mock STS runs from its release image* above) — that speaks the four operations (Issue mints a signed SAML 2.0 assertion or a JWT; Validate/Cancel return the corresponding status), accepts a `UsernameToken` of `wstrust`/`wstrust`, and sends permissive CORS headers. It runs as the `sts` service (port 8081) in the test/dev compose files, and the WS-Trust tests (`tests/wstrust.js`, one per operation plus a signed Issue) target it via `WSTRUST_STS_URL`. **That port is HTTPS in every stack here** (`STS_HTTPS=true`), because the RFC 9700 pass is a trust realm on the same instance rather than a second container and a realm binds no socket of its own — see `docs/rfc9700.md`; the compose files hand iya-sts the same leaf `./generate-tls-cert.sh` writes for the api and the client (`STS_TLS_CERT_FILE`), so one root covers all three. Without that file, iya-sts still issues its own certificate at every start. `trustStsCertificate()` in `common/common.sh` fetches `GET /tls/server-certificate` and installs that PEM as an anchor for node and as an exact key pin for Chrome. Against a **deployed static site** the same mock is started on the host and reached over loopback (`https://localhost:8081/sts`) so the browser can call it directly from the HTTPS page — a container/bridge hostname would not resolve in a browser off that network. There is no API proxy on that target, so those jobs are routed through the browser (frontend) and the backend-routing job is skipped; setting `WSTRUST_STS_URL` empty skips the WS-Trust jobs altogether rather than failing them.

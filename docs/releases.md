@@ -32,6 +32,47 @@ The three `package.json` files (`api`, `client`, `tests`) carry `M.N.P`.
 `node client/version.js --sync-manifests` rewrites them from `VERSION`,
 and `--check-manifests` fails when one has drifted.
 
+## Stamping, tagging and where the version shows
+
+Builds are numbered **M.N.P.B** — a three-part release and a build number:
+
+| Part | Meaning | Source |
+|---|---|---|
+| **M** | major | the repo-root [`VERSION`](../VERSION) file |
+| **N** | minor | the repo-root [`VERSION`](../VERSION) file |
+| **P** | patch | the repo-root [`VERSION`](../VERSION) file |
+| **B** | build number | generated per build — the UTC build instant as `YYYYMMDDHHMMSS` |
+
+So a build of the current `0.9.0` release looks like **`0.9.0.20260726143205`**. (Until 2026-11-13 `VERSION` held two parts and builds were `M.N.B`, such as `0.9.20260726143205`; those tags remain.) The build number is a timestamp rather than a counter so that it is unique for every build without any shared state, always increases, and says when the artifact was produced. Set `BUILD_NUMBER` to override it (for example with a CI run number); if you do, keeping it unique and increasing is up to you.
+
+Each project's `package.json` (`api`, `client`, `tests`) carries the release, `M.N.P`, exactly — a valid semver as it stands. The build number lives only in `version.json`, because `M.N.P.B` is not a semver.
+
+To cut a new release, edit `VERSION` (for example `0.9.0` to `0.9.1`), then run `node client/version.js --sync-manifests` to bring the three manifests along. `node client/version.js --check-manifests` reports drift (non-zero exit), and the static build warns about it.
+
+**Where it comes from.** The build number is fixed when an artifact is *built*, not when it runs, so every page of a deployment reports the same build and restarting a container does not invent a new one:
+
+* the container image runs `node client/version.js --stamp public` during `docker build`, and `server.js` reads that record once at startup (pass `--build-arg BUILD_NUMBER=… --build-arg GIT_COMMIT=…` to supply CI values);
+* the static build (`npm run build`) stamps `dist/version.json` at the start of the build.
+
+**Tagging.** The three build workflows — *Docker Image CI*, *Deploy Static Site (idptools.com)*, and *Deploy Static Site (test.idptools.com)* — log the version they are building (in the job log and the run summary), pass its build number into the build so the artifact and the tag agree, and then tag the built commit twice:
+
+| Tag | Example | Behaviour |
+|---|---|---|
+| `M.N.P.B` | `0.9.0.20260726143205` | created once, never moved — the permanent record of one build |
+| `M.N.P` | `0.9.0` | **force-moved** to the newest build of that release on every build |
+
+The floating `M.N.P` tag (it was `M.N` — `0.9` — before 2026-11-13, and that tag no longer moves) is the usual moving-tag pattern (as `actions/checkout@v4` does), so anyone who has fetched it needs `git fetch --tags --force` to follow it. Docker Image CI tags only on pushes and manual runs, never on pull requests.
+
+**Releases.** The first `master` build of each `M.N.P` also tags that commit `release-M.N.P`, which is never moved, and creates the GitHub release *Release M.N.P*, marked Latest. Its notes list every published image with its digest and the pull requests merged since the previous `release-*` tag. Later builds of the same line leave it alone. `release-0.9.3` was the first made this way; the series before it was made by hand. See [Releases, versions and images](releases.md).
+
+**Where it shows.** The footer of every page carries `v M.N.P.B`; hovering it reveals the build number, the build time, and the commit it was built from. The same record is served as machine-readable JSON at **`/version.json`** on both deployment styles:
+
+```json
+{ "version": "0.9.0.20260726143205", "release": "0.9.0", "major": "0",
+  "minor": "9", "patch": "0", "build": "20260726143205",
+  "commit": "228a63c63edd", "builtAt": "2026-07-26T14:32:05Z" }
+```
+
 ## What a build of `master` publishes
 
 Every push to `master` runs Docker Image CI, which builds the api, the
