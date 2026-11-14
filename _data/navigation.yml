@@ -69,6 +69,11 @@
     - { title: SCIM 2.0, url: /docs/scim.html }
     - { title: SPIFFE / SPIRE, url: /docs/spiffe.html }
 
+- section: Authorization
+  items:
+    - { title: "XACML 3.0: editor and decisions", url: /docs/xacml.html }
+    - { title: "GNAP (RFC 9635): a client", url: /docs/gnap.html }
+
 - section: Shared Signals
   items:
     - { title: "SSF: the pipe", url: /docs/ssf.html }
@@ -88,5 +93,9 @@
   items:
     - { title: The mock STS, url: /docs/mock-sts.html }
     - { title: What each test covers, url: /docs/test-suite-map.html }
+    - { title: Testing against the deployed sites,
+        url: /docs/live-site-testing.html }
+    - { title: Code coverage, url: /COVERAGE.html }
+    - { title: "Releases, versions and images", url: /docs/releases.html }
     - { title: Kerberos design plan, url: /docs/kerberos-plan.html }
     - { title: WebAuthn design plan, url: /docs/webauthn-plan.html }

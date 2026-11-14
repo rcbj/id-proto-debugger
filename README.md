@@ -47,6 +47,10 @@ This project currently supports the following specs & features:
 * [GSS-API Kerberos mechanism — RFC 4121](https://www.rfc-editor.org/rfc/rfc4121) -- the AP exchange as a service actually receives it, including the **0x8003 checksum** (which is not a checksum: it carries the channel bindings and the delegation and mutual-authentication flags, with its integers little-endian in a protocol that is otherwise big-endian), and per-message MIC and Wrap tokens.
 * [The Windows PAC — MS-PAC](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-pac/) -- what a Windows service actually authorizes on. A Kerberos ticket proves *who* you are and says nothing about your group memberships; the PAC inside it carries the account's SID, its groups and its `UserAccountControl` flags, signed four different ways with two different keys. "Authentication succeeded but access was denied" is nearly always a question about this structure, and the debugger decodes it and verifies each signature separately.
 * [Kerberos delegation — MS-SFU](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/) -- **S4U2Self** (a service obtains a ticket for a user who takes no part in it), **S4U2Proxy** authorized either by `msDS-AllowedToDelegateTo` on the front end or by `msDS-AllowedToActOnBehalfOfOtherIdentity` on the back end — the resource-based form, which is why "I can write to this computer account" becomes "I can reach this service as anybody" — plus unconstrained delegation with forwarded tickets in a `KRB-CRED`, and renewals. Every refusal in this area is `KDC_ERR_BADOPTION` whatever the cause, so the page's job is to narrow it: which attribute on which account, whether the evidence ticket is forwardable, and whether the required padata was sent.
+* [XACML 3.0](https://docs.oasis-open.org/xacml/3.0/xacml-3.0-core-spec-os-en.html) -- the **XACML editor and decision test**: a repository of Policies and PolicySets in the browser, an editor that offers only what is legal at each point, import and export as XACML XML or ALFA, and a local PDP asked with a form, a pasted XML Request or a [JSON Profile](https://docs.oasis-open.org/xacml/xacml-json-http/v1.1/xacml-json-http-v1.1.html) request, showing the decision, the applicable policies, obligations, advice and both PEP biases. Every function is held to Appendix A and every combining algorithm to Appendix C. See [XACML](docs/xacml.md).
+* [GNAP — RFC 9635](https://www.rfc-editor.org/rfc/rfc9635) -- the Grant Negotiation and Authorization Protocol as a client instance: a grant request with interaction by redirect and user code, the finish redirect's interaction hash checked on return, continuation, and revoking the grant. The request is bound to the client's key by [HTTP Message Signatures (RFC 9421)](https://www.rfc-editor.org/rfc/rfc9421) with a [Content-Digest (RFC 9530)](https://www.rfc-editor.org/rfc/rfc9530), by an attached or detached JWS, or by mutual TLS through the api. See [GNAP](docs/gnap.md).
+* [Shared Signals Framework 1.0](https://openid.net/specs/openid-sharedsignals-framework-1_0.html), [CAEP](https://openid.net/specs/openid-caep-1_0.html) and [RISC](https://openid.net/specs/openid-risc-1_0.html) -- the protocol that runs the other way round: a transmitter TELLS a receiver that a session or an account changed. Streams, RFC 9493 subject identifiers, RFC 8417 Security Event Tokens by RFC 8935 push or RFC 8936 poll, the eight CAEP session events and the fourteen RISC account events, and a simulated session and account to drive them from. See [SSF](docs/ssf.md), [CAEP](docs/caep.md) and [RISC](docs/risc.md).
+* **Smart cards — ISO 7816** -- APDUs and BER-TLV, and the applets a YubiKey carries: Yubico OTP (decode, verify against YubiCloud, program, swap, delete, challenge-response), OATH (HOTP/TOTP accounts), PIV (keys, certificates, PINs, the management key, attestation — including the ML-DSA-87 attestation of Yubico's 2026 PIV preview), the OpenPGP card (cardholder data, key generation, touch policy, PINs) and YubiHSM Auth. Decoding needs nothing; reading and writing a key go through the browser (WebHID) or through the api's PC/SC relay, which can run natively on Linux, macOS or Windows. Every applet can be reset to its factory state. See [Smart cards](docs/smartcard.md).
 * [XML Signature](https://www.w3.org/TR/xmldsig-core/)
 * [XML Encryption](https://www.w3.org/TR/xmlenc-core1/)
 * [Base64 Encoding](https://www.rfc-editor.org/info/rfc4648/)
@@ -276,8 +280,8 @@ To run this project you will need to install docker.
 
 ## Running the published images
 
-The api and the client are published on every build of `master` and
-`develop`, to the GitHub Container Registry and to Docker Hub, so they can be
+The api, the client and the embedded build are published on every build of
+`master`, to the GitHub Container Registry and to Docker Hub, so they can be
 run without building anything. Both registries get the same images with the
 same tags from the same build — use whichever you prefer:
 
@@ -285,17 +289,24 @@ same tags from the same build — use whichever you prefer:
 |---|---|
 | `ghcr.io/rcbj/id-proto-debugger-api` | `iyasec/id-proto-debugger-api` |
 | `ghcr.io/rcbj/id-proto-debugger-client` | `iyasec/id-proto-debugger-client` |
+| `ghcr.io/rcbj/id-proto-debugger-embedded` | `iyasec/id-proto-debugger-embedded` |
 
-Tags: `latest` (the newest `master` build), `develop` (the newest `develop`
-build), and one `M.N.P.B` per build.
+Tags: `latest` (the newest `master` build) and one `M.N.P.B` per build.
+`develop` and pull requests build the images and publish nothing; the old
+`develop` tag stopped moving on 2026-10-02. The embedded image is the
+debugger built for IYA STS to serve, and is not run by itself.
 
-`M.N.P.B` (for example `0.9.0.20260928070000`) is the build's version, and the
-git tag of the same name marks the commit that image was built from — so
-`git checkout 0.9.0.20260928070000` is the source of
-`ghcr.io/rcbj/id-proto-debugger-api:0.9.20260928070000`. The version is also in
-each running client's footer and in `/version.json`.
+`M.N.P.B` (for example `0.9.3.20261114082841`) is the build's version: `M.N.P`
+is the `VERSION` file and `B` the build instant. The git tag of the same name
+marks the commit that image was built from, so `git checkout
+0.9.3.20261114082841` is the source of
+`ghcr.io/rcbj/id-proto-debugger-api:0.9.3.20261114082841`. The first `master`
+build of each `M.N.P` also creates the GitHub release `release-M.N.P`, whose
+notes list every image with its digest. The version is also in each running
+client's footer and in `/version.json`. See
+[Releases, versions and images](docs/releases.md).
 
-No login is needed: both packages are public, so an anonymous `docker pull`
+No login is needed: the packages are public, so an anonymous `docker pull`
 works.
 
 ### Pulling the images
@@ -306,12 +317,8 @@ docker pull ghcr.io/rcbj/id-proto-debugger-api:latest
 docker pull ghcr.io/rcbj/id-proto-debugger-client:latest
 
 # Or one specific build, pinned to the commit tagged with the same version
-docker pull ghcr.io/rcbj/id-proto-debugger-api:0.9.20260928070000
-docker pull ghcr.io/rcbj/id-proto-debugger-client:0.9.20260928070000
-
-# Or the newest develop build
-docker pull ghcr.io/rcbj/id-proto-debugger-api:develop
-docker pull ghcr.io/rcbj/id-proto-debugger-client:develop
+docker pull ghcr.io/rcbj/id-proto-debugger-api:0.9.3.20261114082841
+docker pull ghcr.io/rcbj/id-proto-debugger-client:0.9.3.20261114082841
 
 # The same images from Docker Hub
 docker pull iyasec/id-proto-debugger-api:latest
@@ -350,8 +357,8 @@ script wrote:
 
 ```yaml
 # id-proto-debugger from its published images on ghcr.io.
-# DEBUGGER_TAG selects the build: latest (default), develop, or an M.N.P.B
-# version such as 0.9.0.20260928070000.
+# DEBUGGER_TAG selects the build: latest (default) or an M.N.P.B version
+# such as 0.9.3.20261114082841.
 services:
   api:
     image: ghcr.io/rcbj/id-proto-debugger-api:${DEBUGGER_TAG:-latest}
@@ -389,7 +396,7 @@ Then:
 ```bash
 docker compose pull                                  # fetch the images
 docker compose up -d                                 # start both services
-DEBUGGER_TAG=0.9.20260928070000 docker compose up -d # or pin one build
+DEBUGGER_TAG=0.9.3.20261114082841 docker compose up -d # or pin one build
 docker compose logs -f                               # follow the logs
 docker compose down                                  # stop and remove them
 ```
@@ -1104,6 +1111,8 @@ To cut a new release, edit `VERSION` (for example `0.9.0` to `0.9.1`), then run 
 
 The floating `M.N.P` tag (it was `M.N` — `0.9` — before 2026-11-13, and that tag no longer moves) is the usual moving-tag pattern (as `actions/checkout@v4` does), so anyone who has fetched it needs `git fetch --tags --force` to follow it. Docker Image CI tags only on pushes and manual runs, never on pull requests.
 
+**Releases.** The first `master` build of each `M.N.P` also tags that commit `release-M.N.P`, which is never moved, and creates the GitHub release *Release M.N.P*, marked Latest. Its notes list every published image with its digest and the pull requests merged since the previous `release-*` tag. Later builds of the same line leave it alone. `release-0.9.3` was the first made this way; the series before it was made by hand. See [Releases, versions and images](docs/releases.md).
+
 **Where it shows.** The footer of every page carries `v M.N.P.B`; hovering it reveals the build number, the build time, and the commit it was built from. The same record is served as machine-readable JSON at **`/version.json`** on both deployment styles:
 
 ```json
@@ -1122,6 +1131,7 @@ The floating `M.N.P` tag (it was `M.N` — `0.9` — before 2026-11-13, and that
 * v0.7 - PKCE Support added.
 * v0.8 - Added Selenium-based test suite. Token Endpoint calls can be initiated from frontend or backend. Numerous new features.
 * v0.9 - SAML 2.0 and WS-Trust support (SP-initiated SSO, SAML Assertion Tool, WS-Trust 1.0–1.4), JWT / Encoding / Digital Signature tool pages, static-site deployment, and the M.N.O versioning scheme described above.
+* v0.9.3 - Smart cards (ISO 7816: Yubico OTP, OATH, PIV, the OpenPGP card, YubiHSM Auth) with writes and factory resets, over WebHID or the api's PC/SC relay, which can run natively; XACML 3.0 combining algorithms held to Appendix C, fixing legacy permit-overrides granting when a policy failed to evaluate; live-site suites green against iya-sts v1.0.0; GitHub releases created by Docker Image CI.
 
 ## Authors
 

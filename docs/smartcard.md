@@ -114,9 +114,29 @@ GENERATE the page computes the v4 fingerprint (`openpgp_card.v4Fingerprint`)
 and writes both; `tests/smartcard_engine.js` holds it to GnuPG 2.2.27's
 for Ed25519, Curve25519 and RSA keys gpg generated.
 
-Not offered: OTP static passwords (keyboard-layout scan codes), importing
-OpenPGP keys (the extended header list), and resetting the PIV or OpenPGP
-applet, which wipes it.
+Not offered: OTP static passwords (keyboard-layout scan codes) and
+importing OpenPGP keys (the extended header list).
+
+**Reset** is an application of its own on the page, with a warning, and
+wipes one applet back to its factory state. It goes through the api, and
+nothing happens until the exact phrase is typed (`RESET PIV`,
+`RESET OPENPGP`, `RESET OATH`, `RESET YUBIHSM AUTH` or `RESET OTP`); a
+click alone never resets anything.
+
+| Applet | What it erases, and what it goes back to |
+|---|---|
+| PIV | every key and certificate; PIN 123456, PUK 12345678, the factory management key |
+| OpenPGP card | all three keys and the cardholder data; PIN 123456, Admin PIN 12345678 |
+| OATH | every account and the applet's password |
+| YubiHSM Auth | every credential; the management key back to 16 zero bytes |
+| OTP | both slots, **including slot 1's factory Yubico OTP credential, which nothing can put back** |
+
+PIV and the OpenPGP card refuse a reset until their PINs are blocked, so
+the page blocks them on purpose first, in a relay session, by presenting
+wrong values until the counters reach zero. PIV blocks its PIN and then
+its PUK, and resets (INS FB). The OpenPGP card blocks its PIN and then
+its Admin PIN, then terminates and reactivates. The others are one
+command each.
 
 ## Running the API natively
 
@@ -513,8 +533,47 @@ nobody gave, a wedged reader) is a 502. A bad request is a 400. The APDU is not 
 A container sees a host key through the host's pcscd socket, which
 `docker-compose-smartcard.yml` mounts; pcsc-lite 2.4 in the api image
 was checked against a host pcscd 1.9.5 with a YubiKey 5 on 2026-11-13.
-No test launcher starts a reader: the containerized test stack keeps
-the relay off, and `tests/api_otp_smartcard.js` asserts it.
+No test launcher attaches a reader. The containerized test stack turns
+the relay **on** with nothing behind it (`smartcardReaderEnabled: true`
+in `api/env/docker-tests.js`, no pcscd socket and no HID device), so the
+relay's own refusals are exercised over HTTP. See [Tests](#tests).
+
+## Tests
+
+Three jobs, none of which needs a key.
+
+* `tests/smartcard_engine.js` drives every module in node: the codec,
+  each applet's plans and their status words, OpenPGP fingerprints
+  against GnuPG, and the HID challenge against a scripted device.
+* `tests/api_otp_smartcard.js` talks to the api's relay with the relay
+  on and no reader. Listing readers, a valid transmit and opening a
+  session answer 502; a bad reader name (empty, a URL, a host and port,
+  a path, too long, a control character), a bad APDU and a bad session
+  id answer 400; closing an unknown session answers 200 with
+  `closed: false`; and an OTP challenge reports that HID is unavailable.
+  `/smartcard/limits` says the relay is enabled and HID is not.
+* `tests/smartcard_page.js` drives the page in Chrome in two halves.
+  **Offline forms** sets the transport to the api and checks the red
+  key-detected bar, every Generate button's format, each form's
+  validation, and the no-reader refusal from every write, read and
+  reset. **Recorded key** replays a real YubiKey: a fetch stub installed
+  before the page loads answers `/smartcard/*` from
+  `tests/smartcard_recorded.json` (recorded answers, serial scrubbed to
+  12345678), so every read shows the key's real content (the OATH
+  account, the PIV certificate, the ML-DSA-87 attestation, the OpenPGP
+  card) and every write, reset and challenge-response runs to the end.
+  It asserts more than 30 relay calls were made.
+
+**On the deployed static sites** the page has no api at all, and it
+refuses every operation over CCID before it reads the form: "CCID needs
+the api, and this deployment has none." The page job accepts that
+refusal wherever a check names another one, and records that the
+deployment has no api; the recorded-key half, which answers the api
+relay's endpoints, then logs that it is not exercised. That refusal
+cannot appear where an api is configured, so a page that claimed it
+wrongly would fail the replay on the containerized stack. The static
+build also minifies the page and rewrites its `onclick` quotes, which
+the job's in-page reads allow for.
 
 ## What to check with a key
 
