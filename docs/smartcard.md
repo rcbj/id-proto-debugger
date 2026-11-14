@@ -122,7 +122,7 @@ transmit (52 threads after forty calls) until 2026-11-13.
 |---|---|---|
 | Keyboard OTP: decode, verify with YubiCloud (api) | yes | yes |
 | HOTP / TOTP calculator, every decoder | yes | yes |
-| OTP-slot challenge-response | WebHID, or CCID through the relay | CCID through the relay |
+| OTP-slot challenge-response | WebHID, or through the API | through the API: HID (native api), or CCID for a key on NFC |
 | Read from the key (OATH, PIV, OpenPGP, YubiHSM Auth) | through the relay | through the relay |
 | Reader: list readers, transmit APDUs | through the relay | through the relay |
 
@@ -296,17 +296,36 @@ this exchange uses. Until 2026-11-13 the filter named usage page
 `0xF1D0`, the FIDO interface, which Chrome blocks from WebHID outright,
 so no key was ever offered and the button did nothing.
 
-**Over CCID** — when the page talks to the key through the API, which is
-the default in a browser with no `navigator.hid` — the same exchange is two APDUs
-through the reader relay on one connection: SELECT of the OTP
-application (`A0 00 00 05 27 20 01 01`), then CALCULATE (`00 01 <slot>
-00 40` and the same 64-byte payload the HID frame carries, padded the
-same way). That is how the slots answer over NFC. The answer is bare,
-with no CRC: 20 bytes for an HMAC-SHA1 slot, 16 for an OTP slot. A slot
-not configured for challenge-response answers with an error status,
-which the page shows. The node test drives the read side
-with reports built the way a key sends them; it never calls
-`navigator.hid`, so a real key is still the check.
+**Through the API** — the default in a browser with no `navigator.hid` —
+the api asks the key over **HID** itself (`api/otp_hid.js`,
+`POST /smartcard/otp/challenge`), because **a YubiKey on USB answers
+challenge-response only on HID**: over USB CCID the CALCULATE below is
+refused with 6985, by yubikit's own `calculate_hmac_sha1` as much as by
+this tree (checked against a YubiKey 5 on 2026-11-13, with slot 2 a
+valid HMAC-SHA1 slot that answered correctly over HID). The api uses the
+optional `node-hid` module (hidapi: hidraw on Linux, IOKit on macOS, HID
+on Windows), finds the key's OTP interface by usage page 1 / usage 6
+(interface 0 where hidapi reports no usages), and runs
+`yubico_otp.hidChallenge()` — the same exchange the page runs over
+WebHID, moved into that DOM-free module so the two cannot drift. It needs
+a **native** api (`node api/native.js --smartcard`): in a container the
+hidraw node is neither present nor permitted to the container's user,
+and `yubico_otp.js` needs the client's packages. Through the API on a key
+answered `2a26efef…` for slot 2 and challenge `0102030405`, which is
+HMAC-SHA1 of it.
+
+When HID is not there (a container, or a key on an NFC reader) the page
+falls back to **CCID**: SELECT of the OTP application (`A0 00 00 05 27 20
+01 01`), then CALCULATE (`00 01 <slot> 00 40` and the same 64-byte
+payload the HID frame carries, padded the same way). That is how the
+slots answer over **NFC**; over USB it is the 6985 above. The answer is
+bare, with no CRC: 20 bytes for an HMAC-SHA1 slot, 16 for an OTP slot.
+
+`tests/smartcard_engine.js` drives `hidChallenge()` against a scripted
+key — through the page's wrapper and through `otp_hid.js` behind a fake
+`node-hid` whose reads carry hidapi's report-ID byte — so the exchange
+itself is tested without hardware; a real key is still the check of the
+transport.
 
 ## OATH
 

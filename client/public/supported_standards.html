@@ -1769,7 +1769,7 @@
             <td><a href="https://developers.yubico.com/OTP/OTP_challenge-response.html"
                  target="_blank" rel="noopener noreferrer">OTP challenge-response</a>, over HID and CCID
               <span class="std-where">Yubico</span></td>
-            <td>HMAC-SHA1 (RFC 2104) and Yubico OTP challenge-response to slot 1 or 2: over WebHID in Chrome and Edge, or over CCID through the API in any browser. Read which slots are programmed.</td>
+            <td>HMAC-SHA1 (RFC 2104) and Yubico OTP challenge-response to slot 1 or 2: over WebHID in Chrome and Edge, or through the API in any browser — over HID when the api runs natively, since a key on USB answers only there, and over CCID for a key on an NFC reader. Program a slot as HMAC-SHA1 challenge-response, Yubico OTP or HOTP, delete one, swap them, and read which are programmed.</td>
           </tr>
           <tr>
             <td><a href="https://wicg.github.io/webhid/"

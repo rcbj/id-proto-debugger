@@ -801,11 +801,59 @@ function hidTransport() {
   return value;
 }
 
+// Challenge-response through the API: over HID (api/otp_hid.js), which is
+// how a key on USB answers, and over CCID through the reader relay when HID
+// is not there — which is how a key on an NFC reader answers.
+function challengeOverApi() {
+  log.debug("Entering challengeOverApi().");
+  var problem = relayProblem();
+  if (problem) {
+    setStatus(problem);
+    log.debug("Leaving challengeOverApi(). " + problem);
+    return;
+  }
+  var slot = valueOf("sc_hid_slot");
+  var challenge = valueOf("sc_hid_challenge").replace(/\s+/g, "");
+  setStatus("Sending the challenge over HID through the API. Touch the " +
+      "key if it blinks.");
+  fetch(apiBase() + "/smartcard/otp/challenge", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slot: slot, challenge: challenge,
+                           variable: valueOf("sc_hid_hmac_mode") !== "fixed" })
+  }).then(function (res) {
+    return res.json().then(function (body) {
+      if (res.ok) {
+        render("sc_reader_out", [
+          { label: "Response", value: body.response },
+          { label: "Transport", value: "HID through the API (" +
+              body.device + ")" },
+          { label: "Frame read", value: body.raw }
+        ]);
+        setStatus("HID response through the API, " +
+            body.response.length / 2 + " bytes, CRC good");
+        return;
+      }
+      if (res.status === 400 || /slot configured|refused|did not take/i
+          .test(body.error || "")) {
+        setStatus(body.error || "The challenge was refused.");
+        return;
+      }
+      setStatus("HID through the API: " + (body.error || res.status) +
+          " Trying CCID, which is how a key on an NFC reader answers.");
+      challengeOverCcid();
+    });
+  }).catch(function (e) {
+    setStatus(e.message);
+  });
+  log.debug("Leaving challengeOverApi(). Sent.");
+}
+
 function sendHid() {
   log.debug("Entering sendHid().");
   if (hidTransport() === "ccid") {
-    log.debug("Leaving sendHid(). Over CCID.");
-    challengeOverCcid();
+    log.debug("Leaving sendHid(). Through the API.");
+    challengeOverApi();
     return;
   }
   if (typeof navigator === "undefined" || !navigator.hid) {

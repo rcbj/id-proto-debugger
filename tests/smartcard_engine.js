@@ -63,6 +63,9 @@ const keys = paths.requireSharedModule(
     [path.join(SRC, "key_material.js")], "client/src/key_material.js");
 const bytes = paths.requireSharedModule(
     [path.join(SRC, "crypto_bytes.js")], "client/src/crypto_bytes.js");
+const otpHid = paths.requireSharedModule(
+  [path.join(REPO, "api", "otp_hid.js"), path.join(__dirname, "otp_hid.js")],
+  "api/otp_hid.js");
 const otpVerify = paths.requireSharedModule(
     [path.join(REPO, "api", "otp_verify.js"),
         path.join(__dirname, "otp_verify.js")],
@@ -1728,6 +1731,119 @@ function otpSlotConfigs() {
   log.debug("Leaving otpSlotConfigs().");
 }
 
+// A SCRIPTED KEY for the whole HID exchange: it takes the frame's reports
+// (refusing a write while it is still busy with the last), waits once for
+// a touch, sends hidAnswer()'s reports, and takes the reset report. The
+// same key behind a fake node-hid exercises api/otp_hid.js, whose
+// feature-report reads arrive with hidapi's report-ID byte first.
+function scriptedHidKey(response, frameReports) {
+  log.debug("Entering scriptedHidKey().");
+  var key = { written: [], resetSeen: false, frameDone: false };
+  var answer = hidAnswer(response);
+  var touchShown = false;
+  var reportsLeft = null;
+  key.sendNow = function (report) {
+    var r = Buffer.from(report);
+    if (r[0] === 0xff && r[7] === 0x8f) {
+      key.resetSeen = true;
+    } else {
+      key.written.push(r);
+    }
+  };
+  key.send = function (report) {
+    key.sendNow(report);
+    return Promise.resolve();
+  };
+  key.receive = function () {
+    return Promise.resolve(key.receiveNow());
+  };
+  key.receiveNow = function () {
+    var out = Buffer.alloc(8, 0);
+    if (key.written.length >= frameReports && !key.resetSeen) {
+      if (!touchShown) {
+        touchShown = true;
+        out[7] = 0x20;
+      } else {
+        reportsLeft = reportsLeft || answer.slice();
+        out = reportsLeft.length > 1 ? reportsLeft.shift() : reportsLeft[0];
+      }
+    }
+    return out;
+  };
+  log.debug("Leaving scriptedHidKey().");
+  return key;
+}
+
+async function hidExchangeEndToEnd() {
+  log.debug("Entering hidExchangeEndToEnd().");
+  var crypto = require("crypto");
+  var secret = Buffer.from("0102030405060708090a0b0c0d0e0f1011121314", "hex");
+  var challenge = Buffer.from("0102030405", "hex");
+  var expected = crypto.createHmac("sha1", secret).update(challenge).digest();
+  var frameReports = otp.hidReports(otp.hidFrame(0x38, challenge)).length;
+  var key = scriptedHidKey(expected, frameReports);
+  var touched = 0;
+  var got = await otp.hidChallenge(key, 0x38, challenge, {
+    sleep: function () {
+      return Promise.resolve();
+    },
+    onTouch: function () {
+      touched += 1;
+    }
+  });
+  assert.strictEqual(got.response.toString("hex"), expected.toString("hex"));
+  assert.strictEqual(touched, 1, "the touch wait was not reported once");
+  assert.ok(key.resetSeen, "the reset report was not written");
+  var frame = otp.hidFrame(0x38, challenge);
+  assert.deepStrictEqual(key.written.map(function (r) {
+    return r.toString("hex");
+  }), otp.hidReports(frame).map(function (r) {
+    return Buffer.from(r).toString("hex");
+  }), "the key did not receive the frame hidFrame() built");
+
+  // The api's path, with the same key behind a fake node-hid.
+  var hidKey = scriptedHidKey(expected, frameReports);
+  var fakeHid = {
+    devices: function () {
+      return [{ vendorId: 0x1050, usagePage: 0xf1d0, usage: 1,
+                interface: 1, path: "fido" },
+              { vendorId: 0x1050, usagePage: 1, usage: 6, interface: 0,
+                path: "otp", product: "YubiKey OTP+FIDO+CCID" }];
+    },
+    HID: function (devicePath) {
+      assert.strictEqual(devicePath, "otp", "opened the wrong interface");
+      this.sendFeatureReport = function (bytes) {
+        assert.strictEqual(bytes[0], 0, "no report ID first");
+        hidKey.sendNow(Buffer.from(bytes.slice(1)));
+        return bytes.length;
+      };
+      this.getFeatureReport = function (id, length) {
+        assert.strictEqual(length, 9);
+        return [0].concat(Array.from(hidKey.receiveNow()));
+      };
+      this.close = function () {};
+    }
+  };
+  var viaApi = await otpHid.challenge(0x38, challenge,
+      { hid: fakeHid, otp: otp });
+  assert.strictEqual(viaApi.response, expected.toString("hex"));
+  assert.strictEqual(viaApi.device, "YubiKey OTP+FIDO+CCID");
+  assert.deepStrictEqual(otpHid.describeChallenge({ slot: "38",
+      challenge: "0102" }).slot, 0x38);
+  assert.strictEqual(otpHid.describeChallenge({ slot: "40" }).ok, false);
+  assert.strictEqual(otpHid.describeChallenge({ slot: "30",
+      challenge: "zz" }).ok, false);
+  assert.strictEqual(otpHid.eightBytes([0, 1, 2, 3, 4, 5, 6, 7, 8])
+      .toString("hex"), "0102030405060708");
+  await assert.rejects(otpHid.challenge(0x38, challenge, { hid: {
+    devices: function () {
+      return [];
+    } }, otp: otp }), /No YubiKey OTP interface/);
+  log.info("OK — the HID exchange answers a scripted key in the page's " +
+      "and the api's wrappers alike, and the api opens the OTP interface.");
+  log.debug("Leaving hidExchangeEndToEnd().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
@@ -1750,6 +1866,7 @@ async function test() {
   readPlansOnlyRead();
   oathAccountInput();
   otpSlotConfigs();
+  await hidExchangeEndToEnd();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

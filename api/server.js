@@ -3003,6 +3003,7 @@ const otpVerify = require('./otp_verify.js');
 // PC/SC is optional. Requiring this file does not load the native
 // library and does not stop the process when it is absent.
 const smartcardReader = require('./smartcard_reader.js');
+const otpHid = require('./otp_hid.js');
 // The LDAP client reuses the guard's address DECISION for the same reason the
 // Kerberos relay does: the guard's INSTALLATION is hooks on the axios agents,
 // and this transport is a raw socket with no axios in the path. Two
@@ -3518,8 +3519,42 @@ app.get('/otp/limits', function (req, res) {
 // library, reader or card is a 502.
 app.get('/smartcard/limits', function (req, res) {
   log.debug('Entering GET /smartcard/limits.');
+  var limits = smartcardReader.limits(appconfig);
+  // HID, for OTP challenge-response: a YubiKey on USB does not answer it
+  // over CCID. Reported only when the relay is on, like the rest.
+  limits.hid = limits.enabled ? otpHid.availability() :
+      { available: false, reason: limits.reason };
   log.debug('Leaving GET /smartcard/limits.');
-  return res.status(STATUS_200).json(smartcardReader.limits(appconfig));
+  return res.status(STATUS_200).json(limits);
+});
+
+// OTP-slot challenge-response over HID, for a browser with no WebHID. The
+// same switch as the reader relay; needs a native api (see otp_hid.js). A
+// key's answer is a 200, a bad request a 400, no HID or no key a 502.
+app.post('/smartcard/otp/challenge', function (req, res) {
+  log.debug('Entering POST /smartcard/otp/challenge.');
+  if (!smartcardReader.enabled(appconfig)) {
+    log.debug('Leaving POST /smartcard/otp/challenge. Relay off.');
+    return res.status(STATUS_403).json({
+      error: smartcardReader.DISABLED_MESSAGE });
+  }
+  var described = otpHid.describeChallenge(req.body || {});
+  if (!described.ok) {
+    log.debug('Leaving POST /smartcard/otp/challenge. Refused.');
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  otpHid.challenge(described.slot, described.challenge,
+      { variable: described.variable })
+    .then(function (answer) {
+      return res.status(STATUS_200).json(answer);
+    })
+    .catch(function (error) {
+      var message = (error && error.message) ? error.message :
+          String(error);
+      log.warn('POST /smartcard/otp/challenge failed: ' + message);
+      return res.status(502).json({ error: message });
+    });
+  log.debug('Leaving POST /smartcard/otp/challenge. Sent.');
 });
 
 app.get('/smartcard/readers', function (req, res) {

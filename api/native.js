@@ -170,9 +170,14 @@ function main() {
     throw new Error("no config at " + config);
   }
   const tls = tlsPair();
+  // The client's packages too, when installed: the HID path for OTP
+  // challenge-response (api/otp_hid.js) runs client/src/yubico_otp.js.
+  const clientModules = path.join(ROOT, "client", "node_modules");
+  const nodePath = [path.join(API, "node_modules")].concat(
+    fs.existsSync(clientModules) ? [clientModules] : []).join(path.delimiter);
   const env = Object.assign({}, process.env, {
     CONFIG_FILE: config,
-    NODE_PATH: path.join(API, "node_modules"),
+    NODE_PATH: nodePath,
     TLS_CERT_FILE: process.env.TLS_CERT_FILE || tls.cert,
     TLS_KEY_FILE: process.env.TLS_KEY_FILE || tls.key
   });
@@ -184,6 +189,16 @@ function main() {
                 "starts anyway, and the page says PC/SC is missing.");
     } else {
       log.info("PC/SC: pcsclite loads on " + os.platform() + ".");
+    }
+    if (!fs.existsSync(path.join(API, "node_modules", "node-hid"))) {
+      log.info("HID: node-hid is not installed, so OTP challenge-response " +
+               "from a browser with no WebHID is unavailable. `npm install` " +
+               "in api/ installs it (prebuilt for Linux, macOS, Windows).");
+    }
+    if (!fs.existsSync(clientModules)) {
+      log.info("HID: client/node_modules is missing; OTP " +
+               "challenge-response over HID also needs `npm ci --prefix " +
+               "client`.");
     }
     env.SMARTCARD_READER_ENABLED = "true";
   }
