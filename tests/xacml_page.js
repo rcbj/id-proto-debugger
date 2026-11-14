@@ -188,6 +188,55 @@ const SUBMIT_EDIT = `
   chosen.requestSubmit();
   return "";`;
 
+// What the editor offers right now, as [path, action] pairs: "add" is
+// every option of every Add menu, "edit" every edit form as drawn, and
+// "remove" every Remove button.
+const OFFERS = `
+  var kind = arguments[0];
+  var ed = document.getElementById("xacml_editor");
+  var out = [];
+  Array.prototype.forEach.call(ed.querySelectorAll("form.xacml-edit"),
+    function (f) {
+      var p = f.querySelector('input[type="hidden"][name="path"]');
+      var a = f.querySelector('input[type="hidden"][name="action"]');
+      var m = f.querySelector('select[name="action"]');
+      if (kind === "add" && m) {
+        Array.prototype.forEach.call(m.options, function (o) {
+          out.push([p.value, o.value]);
+        });
+      } else if (kind === "edit" && a && a.value !== "remove") {
+        out.push([p.value, a.value]);
+      } else if (kind === "remove" && a && a.value === "remove") {
+        out.push([p.value, a.value]);
+      }
+    });
+  return out;`;
+
+// Submit the one form at that path offering that action, as drawn.
+// Returns null when there is none any more, else the status it left.
+const SUBMIT_OFFER = `
+  var path = arguments[0], action = arguments[1];
+  var ed = document.getElementById("xacml_editor");
+  var st = document.getElementById("xacml_status");
+  var forms = ed.querySelectorAll("form.xacml-edit");
+  for (var i = 0; i < forms.length; i++) {
+    var f = forms[i];
+    var p = f.querySelector('input[type="hidden"][name="path"]');
+    var a = f.querySelector('input[type="hidden"][name="action"]');
+    var m = f.querySelector('select[name="action"]');
+    if (!p || p.value !== path) { continue; }
+    var offers = a ? a.value === action : (m && Array.prototype.some.call(
+      m.options, function (o) { return o.value === action; }));
+    if (!offers) { continue; }
+    if (m) { m.value = action; }
+    st.textContent = "";
+    st.className = "";
+    f.requestSubmit();
+    return { warn: st.className.indexOf("xacml-warn") >= 0,
+             text: st.textContent };
+  }
+  return null;`;
+
 // ---------------------------------------------------------------------------
 // Node-side helpers.
 // ---------------------------------------------------------------------------
@@ -434,6 +483,56 @@ async function policyRemoved(driver) {
   log.debug("Leaving policyRemoved().");
 }
 
+// EVERY ELEMENT THE PAGE OFFERS TO ADD IS ONE IT CAN ADD, every edit form
+// it draws submits, and every Remove removes — through the page's own
+// forms, so the editor and the drawing are exercised together in a browser.
+// One submission per executeScript call: the page redraws the whole editor
+// on each, and a hundred of them in one call outlasts the script timeout.
+async function submitOffers(driver, kind, plan, tally) {
+  log.debug("Entering submitOffers().");
+  for (const step of plan) {
+    const got = await driver.executeScript(SUBMIT_OFFER, step[0], step[1]);
+    if (got === null) {
+      continue;
+    }
+    tally[kind] += 1;
+    if (got.warn) {
+      tally[kind + "Refused"] += 1;
+      if (tally.refusals.length < 20) {
+        tally.refusals.push(step[1] + " at '" + step[0] + "': " + got.text);
+      }
+    }
+  }
+  log.debug("Leaving submitOffers().");
+}
+
+async function everyOfferWorks(driver) {
+  log.debug("Entering everyOfferWorks().");
+  await setFields(driver, { xacml_open: "sample" });
+  const tally = { add: 0, addRefused: 0, edit: 0, editRefused: 0,
+                  remove: 0, removeRefused: 0, refusals: [] };
+  for (let pass = 0; pass < 2; pass++) {
+    const adds = await driver.executeScript(OFFERS, "add");
+    await submitOffers(driver, "add", adds, tally);
+  }
+  await submitOffers(driver, "edit",
+    await driver.executeScript(OFFERS, "edit"), tally);
+  // Deepest first, so a removal never shifts an index a later one names.
+  const removes = (await driver.executeScript(OFFERS, "remove")).reverse();
+  await submitOffers(driver, "remove", removes, tally);
+  log.info("every offer: " + JSON.stringify(tally));
+  assert.ok(tally.add > 30, "only " + tally.add + " additions were offered");
+  assert.ok(tally.addRefused < tally.add / 4,
+    "too many offered additions refused: " + tally.refusals.join("; "));
+  assert.ok(tally.edit > 10, "only " + tally.edit + " edit forms drawn");
+  assert.ok(tally.remove > 10, "only " + tally.remove + " removals drawn");
+  const answer = await decide(driver, "alice", "sample");
+  assert.ok(["Permit", "Deny", "NotApplicable", "Indeterminate"]
+    .indexOf(answer) >= 0, "decision after the walk: " + answer);
+  log.info("PASS  every Add, edit and Remove the page draws applies");
+  log.debug("Leaving everyOfferWorks().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
@@ -454,6 +553,7 @@ async function test() {
     await decisionRootAnswers(driver);
     await survivesAReload(driver);
     await policyRemoved(driver);
+    await everyOfferWorks(driver);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.stack || error.message);
