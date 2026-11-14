@@ -270,11 +270,60 @@ async function tamper(name, mutate, expectFailing) {
   return "failed on \"" + failed[0] + "\"";
 }
 
+// THE TWO PAGES' PANES COLLAPSE, AND THEIR PROSE IS FOLDED. Every wa-pane's
+// legend toggles a body with the id it names, each page has the collapse /
+// expand all switch, each loads css/panes.css (the switch and the legends'
+// triangle — webauthn.css shares nothing with the SAML pages and so does not
+// have them), no paragraph of prose is left outside a <details>, and each
+// bundle exports the two functions its handlers call: a handler naming a
+// function the bundle does not export is a click that throws and does
+// nothing.
+function panesCollapse() {
+  log.debug("Entering panesCollapse().");
+  const pages = [["webauthn.html", "webauthnlab", "webauthn_lab.js"],
+                 ["webauthn_analyzer.html", "webauthnanalyzer",
+                  "webauthn_analyzer.js"]];
+  let count = 0;
+  pages.forEach(function (row) {
+    const html = fs.readFileSync(path.join(ROOT, "client", "public", row[0]),
+                                 "utf8");
+    const fieldsets = html.match(/<fieldset class="wa-pane"[^>]*>/g) || [];
+    assert.ok(fieldsets.length >= 8, row[0] + " has " + fieldsets.length +
+              " panes");
+    fieldsets.forEach(function (tag) {
+      const id = (/id="([^"]+)"/.exec(tag) || [])[1];
+      assert.ok(id, row[0] + ": a pane has no id: " + tag);
+      assert.ok(html.indexOf(row[1] + ".togglePane('" + id + "_body')") >= 0,
+                row[0] + ": " + id + "'s legend does not toggle it");
+      assert.ok(html.indexOf('class="saml-pane-body" id="' + id + '_body"') >=
+                0, row[0] + ": " + id + " has no body for its legend");
+      count += 1;
+    });
+    assert.ok(html.indexOf('onchange="return ' + row[1] + ".setAllPanes(") >=
+              0, row[0] + " has no collapse / expand all switch");
+    assert.ok(html.indexOf('href="/css/panes.css"') >= 0,
+              row[0] + " does not load css/panes.css");
+    const unfolded = html.replace(/<details[\s\S]*?<\/details>/g, "")
+      .match(/<p class="wa-(intro|note)"/g);
+    assert.strictEqual(unfolded, null, row[0] + " has prose outside a " +
+                       "<details>: " + unfolded);
+    const source = fs.readFileSync(path.join(ROOT, "client", "src", row[2]),
+                                   "utf8");
+    assert.ok(/togglePane:\s*paneSwitch\.togglePane/.test(source) &&
+              /setAllPanes:\s*paneSwitch\.setAllPanes/.test(source),
+              row[2] + " does not export the pane functions its page calls");
+  });
+  log.debug("Leaving panesCollapse().");
+  return count + " panes on two pages collapse; the prose is folded";
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("=== CBOR ===");
   check("RFC 8949 appendix A vectors decode correctly", cborVectors);
   check("malformed and non-canonical CBOR is refused", cborRefusals);
+  check("the WebAuthn pages' panes collapse and their prose is folded",
+        panesCollapse);
 
   log.info("=== Registration, against the browser's own parse ===");
   check("ES256 registration decodes and matches getPublicKey()",
