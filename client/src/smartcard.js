@@ -2191,6 +2191,12 @@ function pgpAdminWrite(commands, question, after) {
         return null;
       }
       return after ? after(result) : result;
+    }).catch(function (e) {
+      // A failure before the card answered — no reader, the api out of
+      // reach — said in the pane; until 2026-11-14 it was swallowed and
+      // the status line read "Writing to the key…" for good.
+      paneMessage(out, e.message);
+      return null;
     });
   log.debug("Leaving pgpAdminWrite().");
   return written;
