@@ -26,6 +26,8 @@
 
 <p id="sc_backend_notice" class="saml-notice saml-hidden">This is the static deployment. Decoding and the OATH calculator work here. Verifying an OTP with YubiCloud, and talking to a reader, need the API. A container does not see a key on the host unless the operator passes the device through.</p>
 
+<p class="sc-detect sc-detect-no" id="sc_detect" role="status" aria-live="polite">&#9675; Looking for a key&hellip;</p>
+
 <p class="saml-status" id="sc_status"></p>
 
 <p class="saml-controls">
@@ -39,28 +41,35 @@
   collapse/expand it.</span>
 </p>
 
-<p class="sc-apps">
-  <label title="How this page reaches a key plugged into this machine. Decoding a pasted trace needs neither.">Talk to the key through
-    <select id="sc_transport" onchange="smartcard.onTransportChange();">
-      <option value="browser">this browser (WebHID: Chrome, Edge)</option>
-      <option value="api">the API (the OS's PC/SC: any browser, every application)</option>
-    </select>
-  </label>
-  <span class="sc-transport-note" id="sc_transport_note"></span>
-</p>
+<fieldset class="saml-pane" id="sc_pane_config">
+  <legend class="saml-legend"
+          onclick="return smartcard.togglePane('sc_pane_config_body');"
+          title="Click to collapse or expand this pane.">Configuration</legend>
+  <div class="saml-pane-body" id="sc_pane_config_body">
+    <p class="sc-apps">
+      <label title="How this page reaches a key plugged into this machine. Decoding a pasted trace needs neither.">Talk to the key through
+        <select id="sc_transport" onchange="smartcard.onTransportChange();">
+          <option value="browser">this browser (WebHID: Chrome, Edge)</option>
+          <option value="api">the API (the OS's PC/SC: any browser, every application)</option>
+        </select>
+      </label>
+      <span class="sc-transport-note" id="sc_transport_note"></span>
+    </p>
 
-<p class="sc-apps">
-  <label>Application
-    <select id="sc_app" onchange="smartcard.showApplication(this.value);">
-      <option value="otp">Yubico OTP</option>
-      <option value="oath">OATH</option>
-      <option value="piv">PIV</option>
-      <option value="pgp">OpenPGP card</option>
-      <option value="hsm">YubiHSM Auth</option>
-      <option value="reader">Reader</option>
-    </select>
-  </label>
-</p>
+    <p class="sc-apps">
+      <label>Application
+        <select id="sc_app" onchange="smartcard.showApplication(this.value);">
+          <option value="otp">Yubico OTP</option>
+          <option value="oath">OATH</option>
+          <option value="piv">PIV</option>
+          <option value="pgp">OpenPGP card</option>
+          <option value="hsm">YubiHSM Auth</option>
+          <option value="reader">Reader</option>
+        </select>
+      </label>
+    </p>
+  </div>
+</fieldset>
 
 <fieldset class="saml-pane" id="sc_pane_otp">
   <legend class="saml-legend"

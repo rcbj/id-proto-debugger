@@ -888,7 +888,116 @@ function swapSlotsApdu() {
   return "00010600";
 }
 
+// THE WHOLE HID EXCHANGE, for any device that can send and receive the
+// 8-byte feature reports of the key's OTP interface — WebHID in a browser,
+// node-hid in the api — so the two transports run the same code:
+//
+//   device.send(report)  -> Promise, writes one 8-byte feature report
+//   device.receive()     -> Promise of an 8-byte feature report
+//   opts.sleep(ms)       -> Promise
+//   opts.onTouch()       called once when the key starts waiting for a touch
+//
+// Before each write it polls until the key has taken the previous one
+// (hidCanWrite); after the frame it polls while the key is busy or waiting
+// for a touch, collects the RESP_PENDING reports in sequence (hidReadStep),
+// and writes the reset report. Resolves to the raw response bytes.
+var HID_POLL_MS = 20;
+var HID_TOUCH_POLL_MS = 100;
+var HID_WRITE_TRIES = 20;
+var HID_DEADLINE_MS = 15000;
+
+function hidExchange(device, reports, opts) {
+  log.debug("Entering hidExchange().");
+  var o = opts || {};
+  var sleep = o.sleep || function (ms) {
+    return new Promise(function (resolve) {
+      setTimeout(resolve, ms);
+    });
+  };
+  var deadline = o.deadlineMs || HID_DEADLINE_MS;
+  function read() {
+    return device.receive().then(function (raw) {
+      return hidReportBytes(raw);
+    });
+  }
+  function write(report) {
+    var tries = 0;
+    function attempt() {
+      return read().then(function (status) {
+        if (hidCanWrite(status)) {
+          return device.send(report);
+        }
+        tries += 1;
+        if (tries >= HID_WRITE_TRIES) {
+          throw new Error("The key did not take the report.");
+        }
+        return sleep(50).then(attempt);
+      });
+    }
+    return attempt();
+  }
+  function collect() {
+    var state = { seq: 0, data: [] };
+    var started = Date.now();
+    var told = false;
+    function poll() {
+      if (Date.now() - started > deadline) {
+        throw new Error("No response from the key within " +
+            (deadline / 1000) + " seconds.");
+      }
+      return read().then(function (report) {
+        var step = hidReadStep(state, report);
+        if (step.kind === "done") {
+          return device.send(hidResetReport()).then(function () {
+            return Buffer.from(state.data);
+          });
+        }
+        if (step.kind === "status") {
+          throw new Error("The key answered with no response. Is the " +
+              "slot configured for challenge-response?");
+        }
+        if (step.kind === "touch" && !told) {
+          told = true;
+          if (o.onTouch) {
+            o.onTouch();
+          }
+        }
+        if (step.kind === "data") {
+          return poll();
+        }
+        return sleep(step.kind === "touch" ? HID_TOUCH_POLL_MS :
+            HID_POLL_MS).then(poll);
+      });
+    }
+    return poll();
+  }
+  var chain = Promise.resolve();
+  reports.forEach(function (report) {
+    chain = chain.then(function () {
+      return write(report);
+    });
+  });
+  var done = chain.then(collect);
+  log.debug("Leaving hidExchange().");
+  return done;
+}
+
+// One challenge to one slot, from frame to checked response.
+function hidChallenge(device, slot, challenge, opts) {
+  log.debug("Entering hidChallenge().");
+  var o = opts || {};
+  var frame = hidFrame(slot, challenge, { variable: o.variable !== false });
+  var answered = hidExchange(device, hidReports(frame), o)
+    .then(function (raw) {
+      return { response: hidResponse(slot, raw), raw: raw };
+    });
+  log.debug("Leaving hidChallenge().");
+  return answered;
+}
+
 module.exports = {
+  hidExchange: hidExchange,
+  hidChallenge: hidChallenge,
   slotConfig: slotConfig,
   programSlotApdu: programSlotApdu,
   swapSlotsApdu: swapSlotsApdu,

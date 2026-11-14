@@ -730,86 +730,6 @@ function hidBytes(hex) {
   return Buffer.from(text, "hex");
 }
 
-var HID_POLL_MS = 20;
-var HID_TOUCH_POLL_MS = 100;
-var HID_WRITE_TRIES = 20;
-var HID_DEADLINE_MS = 15000;
-
-function delay(ms) {
-  log.debug("Entering delay().");
-  log.debug("Leaving delay().");
-  return new Promise(function (resolve) {
-    setTimeout(resolve, ms);
-  });
-}
-
-function hidRead(device) {
-  log.debug("Entering hidRead().");
-  log.debug("Leaving hidRead().");
-  return device.receiveFeatureReport(0).then(function (view) {
-    return otp.hidReportBytes(view);
-  });
-}
-
-// Wait for the key to take the previous report, then write this one.
-function hidWrite(device, report) {
-  log.debug("Entering hidWrite().");
-  var tries = 0;
-  function attempt() {
-    return hidRead(device).then(function (status) {
-      if (otp.hidCanWrite(status)) {
-        return device.sendFeatureReport(0, report);
-      }
-      tries += 1;
-      if (tries >= HID_WRITE_TRIES) {
-        throw new Error("The key did not take the report.");
-      }
-      return delay(50).then(attempt);
-    });
-  }
-  log.debug("Leaving hidWrite().");
-  return attempt();
-}
-
-// Poll until the response frame is complete, the key gives up, or the
-// deadline passes. A touch-wait is reported once on the status line.
-function hidCollect(device) {
-  log.debug("Entering hidCollect().");
-  var state = { seq: 0, data: [] };
-  var started = Date.now();
-  var told = false;
-  function poll() {
-    if (Date.now() - started > HID_DEADLINE_MS) {
-      throw new Error("No response from the key within " +
-          (HID_DEADLINE_MS / 1000) + " seconds.");
-    }
-    return hidRead(device).then(function (report) {
-      var step = otp.hidReadStep(state, report);
-      if (step.kind === "done") {
-        return device.sendFeatureReport(0, otp.hidResetReport())
-          .then(function () {
-            return Buffer.from(state.data);
-          });
-      }
-      if (step.kind === "status") {
-        throw new Error("The key answered with no response. Is the " +
-            "slot configured for challenge-response?");
-      }
-      if (step.kind === "touch" && !told) {
-        told = true;
-        setStatus("Touch the key.");
-      }
-      if (step.kind === "data") {
-        return poll();
-      }
-      return delay(step.kind === "touch" ? HID_TOUCH_POLL_MS :
-          HID_POLL_MS).then(poll);
-    });
-  }
-  log.debug("Leaving hidCollect().");
-  return poll();
-}
-
 // HOW THE PAGE REACHES A KEY, chosen once for the whole page:
 //
 //   browser  from this page itself — the keyboard OTP in any browser, and
@@ -869,6 +789,7 @@ function onTransportChange() {
   log.debug("Entering onTransportChange().");
   storageSet(TRANSPORT_KEY, transport());
   describeTransport();
+  detectKey();
   log.debug("Leaving onTransportChange().");
 }
 
@@ -894,16 +815,16 @@ function sendHid() {
     return;
   }
   var slot = parseInt(valueOf("sc_hid_slot"), 16);
-  var frame = null;
+  var challenge = null;
   try {
-    frame = otp.hidFrame(slot, hidBytes(valueOf("sc_hid_challenge")),
+    challenge = hidBytes(valueOf("sc_hid_challenge"));
+    otp.hidFrame(slot, challenge,
         { variable: valueOf("sc_hid_hmac_mode") !== "fixed" });
   } catch (e) {
     setStatus(e.message);
-    log.debug("Leaving sendHid(). Frame.");
+    log.debug("Leaving sendHid(). " + e.message);
     return;
   }
-  var reports = otp.hidReports(frame);
   // THE OTP INTERFACE, NOT FIDO. The slots answer on the key's HID
   // KEYBOARD interface (usage page 0x01, usage 0x06), through feature
   // reports, which WebHID allows on a keyboard collection. This filter was
@@ -920,26 +841,30 @@ function sendHid() {
     var device = devices[0];
     var opened = device.opened ? Promise.resolve() : device.open();
     return opened.then(function () {
-      var chain = Promise.resolve();
-      reports.forEach(function (report) {
-        chain = chain.then(function () {
-          return hidWrite(device, report);
-        });
-      });
-      return chain.then(function () {
-        return hidCollect(device);
+      return otp.hidChallenge({
+        send: function (report) {
+          return device.sendFeatureReport(0, report);
+        },
+        receive: function () {
+          return device.receiveFeatureReport(0);
+        }
+      }, slot, challenge, {
+        variable: valueOf("sc_hid_hmac_mode") !== "fixed",
+        onTouch: function () {
+          setStatus("Touch the key.");
+        }
       });
     });
-  }).then(function (raw) {
-    if (!raw) {
+  }).then(function (answer) {
+    if (!answer) {
       return;
     }
-    var response = otp.hidResponse(slot, raw);
     render("sc_reader_out", [
-      { label: "Response", value: iso.toHex(response) },
-      { label: "Frame read", value: iso.toHex(raw) }
+      { label: "Response", value: iso.toHex(answer.response) },
+      { label: "Transport", value: "WebHID, from this browser" },
+      { label: "Frame read", value: iso.toHex(answer.raw) }
     ]);
-    setStatus("HID response, " + response.length + " bytes, CRC good");
+    setStatus("HID response, " + answer.response.length + " bytes, CRC good");
   }).catch(function (e) {
     setStatus(e.message);
   });
@@ -1755,6 +1680,125 @@ function offerOathNames(rows) {
   log.debug("Leaving offerOathNames().");
 }
 
+// ---------------------------------------------------------------------------
+// IS A KEY THERE? The bar at the top of the page, green or red, for the
+// transport chosen: the api's readers, or the devices this page holds over
+// WebHID. Asked every few seconds while the tab is visible, and at once when
+// the transport changes or a HID device comes or goes. It never prompts:
+// getDevices() returns only what the person already granted.
+// ---------------------------------------------------------------------------
+var DETECT_EVERY_MS = 5000;
+var detectTimer = null;
+
+function showDetected(ok, text) {
+  log.debug("Entering showDetected().");
+  var bar = document.getElementById("sc_detect");
+  if (bar) {
+    bar.className = "sc-detect " + (ok ? "sc-detect-ok" : "sc-detect-no");
+    bar.textContent = (ok ? "\u25cf " : "\u25cb ") + text;
+  }
+  log.debug("Leaving showDetected(). " + ok);
+}
+
+function isYubiKeyName(name) {
+  log.debug("Entering isYubiKeyName().");
+  var yes = /yubikey|yubico/i.test(String(name || ""));
+  log.debug("Leaving isYubiKeyName(). " + yes);
+  return yes;
+}
+
+function detectOverApi() {
+  log.debug("Entering detectOverApi().");
+  var problem = relayProblem();
+  if (problem && (relay.known || !backendAvailable())) {
+    showDetected(false, "No key reachable through the API: " + problem);
+    log.debug("Leaving detectOverApi(). " + problem);
+    return Promise.resolve();
+  }
+  var checked = fetch(apiBase() + "/smartcard/readers").then(function (res) {
+    return res.json().then(function (body) {
+      if (!res.ok) {
+        showDetected(false, "No key reachable through the API: " +
+            (body.error || res.status));
+        return;
+      }
+      var names = body.readers || [];
+      var keys = names.filter(isYubiKeyName);
+      if (keys.length > 0) {
+        showDetected(true, "Key detected through the API: " + keys[0] +
+            (keys.length > 1 ? " (+" + (keys.length - 1) + " more)" : ""));
+      } else if (names.length > 0) {
+        showDetected(false, "The API sees " + names.length + " reader(s), " +
+            "none of them a YubiKey: " + names.join(", "));
+      } else {
+        showDetected(false, "No key detected through the API: it sees no " +
+            "reader. Is the key plugged in, and is pcscd running?");
+      }
+    });
+  }).catch(function (e) {
+    showDetected(false, "The API cannot be reached (" + e.message + "). " +
+        "Has this browser accepted its certificate?");
+  });
+  log.debug("Leaving detectOverApi().");
+  return checked;
+}
+
+function detectInBrowser() {
+  log.debug("Entering detectInBrowser().");
+  if (!hasWebHid()) {
+    showDetected(false, "This browser cannot see a key: it has no WebHID. " +
+        "A typed OTP still works; choose the API for everything else.");
+    log.debug("Leaving detectInBrowser(). No WebHID.");
+    return Promise.resolve();
+  }
+  var checked = navigator.hid.getDevices().then(function (devices) {
+    var keys = (devices || []).filter(function (d) {
+      return d.vendorId === 0x1050;
+    });
+    if (keys.length > 0) {
+      showDetected(true, "Key detected in this browser (WebHID): " +
+          (keys[0].productName || "YubiKey"));
+    } else {
+      showDetected(false, "No key granted to this page yet. Send challenge " +
+          "on the Reader pane asks for one; a typed OTP needs no permission.");
+    }
+  }).catch(function (e) {
+    showDetected(false, "WebHID refused to list devices: " + e.message);
+  });
+  log.debug("Leaving detectInBrowser().");
+  return checked;
+}
+
+function detectKey() {
+  log.debug("Entering detectKey().");
+  if (typeof document !== "undefined" && document.hidden) {
+    log.debug("Leaving detectKey(). Tab hidden.");
+    return;
+  }
+  if (transport() === "api") {
+    detectOverApi();
+  } else {
+    detectInBrowser();
+  }
+  log.debug("Leaving detectKey().");
+}
+
+function startDetecting() {
+  log.debug("Entering startDetecting().");
+  detectKey();
+  if (detectTimer === null && typeof setInterval === "function") {
+    detectTimer = setInterval(detectKey, DETECT_EVERY_MS);
+  }
+  if (hasWebHid()) {
+    navigator.hid.addEventListener("connect", detectKey);
+    navigator.hid.addEventListener("disconnect", detectKey);
+  }
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", detectKey);
+  }
+  log.debug("Leaving startDetecting().");
+}
+
 function readerLimits() {
   log.debug("Entering readerLimits().");
   fetch(apiBase() + "/smartcard/limits")
@@ -1771,6 +1815,7 @@ function readerLimits() {
       show("sc_readers_button", on);
       show("sc_transmit_button", on);
       describeTransport();
+      detectKey();
       var missing = document.getElementById("sc_reader_unavailable");
       if (missing) {
         missing.textContent = on && !relay.available ? relay.reason : "";
@@ -1805,6 +1850,7 @@ function onload() {
         (hasWebHid() ? "browser" : "api");
   }
   describeTransport();
+  startDetecting();
   log.debug("Leaving onload().");
 }
 

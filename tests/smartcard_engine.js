@@ -1493,7 +1493,8 @@ function panesCollapse() {
   log.debug("Entering panesCollapse().");
   var page = fs.readFileSync(path.join(REPO, "client", "public",
       "smartcard.html"), "utf8");
-  ["otp", "oath", "piv", "pgp", "hsm", "reader"].forEach(function (name) {
+  ["config", "otp", "oath", "piv", "pgp", "hsm", "reader"]
+    .forEach(function (name) {
     var id = "sc_pane_" + name;
     assert.ok(page.indexOf("smartcard.togglePane('" + id + "_body')") >= 0,
         id + "'s legend does not toggle it");
