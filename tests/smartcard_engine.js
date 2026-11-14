@@ -1997,6 +1997,29 @@ function pgpWriteCommands() {
   log.debug("Leaving pgpWriteCommands().");
 }
 
+// EVERY BUTTON REACHES A FUNCTION. A handler naming something the bundle
+// does not export is a click that throws in the page and does nothing —
+// which is what this page looked like from Firefox before its fixes.
+function handlersAreExported() {
+  log.debug("Entering handlersAreExported().");
+  var html = fs.readFileSync(path.join(REPO, "client", "public",
+      "smartcard.html"), "utf8");
+  var page = paths.requireSharedModule([path.join(SRC, "smartcard.js")],
+      "client/src/smartcard.js");
+  var named = {};
+  (html.match(/smartcard\.([A-Za-z]+)\(/g) || []).forEach(function (m) {
+    named[m.slice(10, -1)] = true;
+  });
+  var missing = Object.keys(named).filter(function (fn) {
+    return typeof page[fn] !== "function";
+  });
+  assert.deepStrictEqual(missing, [], "smartcard.html calls functions the " +
+      "bundle does not export: " + missing.join(", "));
+  log.info("OK — all " + Object.keys(named).length + " handlers on " +
+      "smartcard.html are exported.");
+  log.debug("Leaving handlersAreExported().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
@@ -2022,6 +2045,7 @@ async function test() {
   await hidExchangeEndToEnd();
   pivWriteCommands();
   pgpWriteCommands();
+  handlersAreExported();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

@@ -79,6 +79,45 @@ instructions. Against a YubiKey (the 2026 PIV ML preview) on
 bytes, signed with ML-DSA-87 by "Yubico 2026 PIV ML Preview CA", and the
 PKI code describes it.
 
+## Writing to the key
+
+Every application can be changed from its pane, through the API (any
+browser), after a confirmation that says exactly what changes. Nothing a
+person types — PIN, password, management key, secret — is stored, a
+factory default is a button and never pre-filled, and a refused PIN says
+how many tries remain and is never retried. A sequence that VERIFYs or
+authenticates ends with a card reset, so no later connection inherits it.
+
+| Application | Writes | Guarded by |
+|---|---|---|
+| OTP slots | program (HMAC-SHA1 challenge-response, Yubico OTP, HOTP), delete, swap — `yubico_otp.slotConfig`, byte-equal to yubikit | the slot's access code, if it has one |
+| OATH | add (an `otpauth://` link or fields), delete | nothing; an applet with a password stops |
+| YubiHSM Auth | add (AES-128 derived or from keys, EC P-256), delete | the management key (8 retries) |
+| PIV | generate a key (PIN/touch policy), import or delete a certificate, delete a key (5.7+), change PIN/PUK, unblock, change the management key | the card management key, in a relay **session** |
+| OpenPGP card | cardholder data, generate a key (then its fingerprint and time), touch policy, change PIN/Admin PIN | the Admin PIN, verified in the same sequence |
+
+**PIV needs a session** (`POST /smartcard/session`, `/session/transmit`,
+`/session/close`): mutual authentication with the management key is a
+challenge-response the page computes from the card's own answer, so the
+write cannot be in a sequence written in advance, and the card forgets
+the authentication when the connection closes. The api holds one
+exclusive connection per session (at most four, closed after 60 idle
+seconds, closed with a card reset) and never sees the key: the page does
+the 3DES/AES arithmetic. The algorithm comes from GET METADATA of 9B —
+AES-192 on a 5.7+ key, which ykman 4 still reports as 3DES. On a YubiKey
+5 on 2026-11-13 a session authenticated with the factory key and the
+card proved it held it.
+
+**OpenPGP generation writes the fingerprint.** GnuPG finds a card's keys
+by the fingerprints and creation times in C7–C9 and CE–D0, so after
+GENERATE the page computes the v4 fingerprint (`openpgp_card.v4Fingerprint`)
+and writes both; `tests/smartcard_engine.js` holds it to GnuPG 2.2.27's
+for Ed25519, Curve25519 and RSA keys gpg generated.
+
+Not offered: OTP static passwords (keyboard-layout scan codes), importing
+OpenPGP keys (the extended header list), and resetting the PIV or OpenPGP
+applet, which wipes it.
+
 ## Running the API natively
 
 A container on Linux reaches the host's pcscd through its socket

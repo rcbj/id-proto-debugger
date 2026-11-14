@@ -1365,8 +1365,8 @@ function writeToKey(out, apdus, question) {
     log.debug("Leaving writeToKey(). " + problem);
     return Promise.resolve(null);
   }
-  if (typeof window !== "undefined" && window.confirm &&
-      !window.confirm(question)) {
+  if (question !== null && typeof window !== "undefined" &&
+      window.confirm && !window.confirm(question)) {
     setStatus("Nothing was written.");
     log.debug("Leaving writeToKey(). Declined.");
     return Promise.resolve(null);
@@ -1841,6 +1841,467 @@ function deleteHsmCredential() {
   log.debug("Leaving deleteHsmCredential().");
 }
 
+// ---------------------------------------------------------------------------
+// What a refusal means, for the PIN and key writes.
+// ---------------------------------------------------------------------------
+function refusalText(status, what) {
+  log.debug("Entering refusalText().");
+  var sw = parseInt(status, 16);
+  var text = "The key refused it: " + status + " " + iso.statusName(sw) + ".";
+  if ((sw & 0xfff0) === 0x63c0) {
+    text = (what || "The PIN") + " is wrong: " + (sw & 0x0f) + " tries " +
+        "remain before it blocks. The page will not try again on its own.";
+  } else if (sw === 0x6983) {
+    text = (what || "The PIN") + " is blocked: no tries remain.";
+  } else if (sw === 0x6982) {
+    text = "Not authorised: the PIN or key was not accepted first.";
+  } else if (sw === 0x6d00 || sw === 0x6e00) {
+    text = "This key's firmware does not have that command (" + status +
+        ").";
+  }
+  log.debug("Leaving refusalText().");
+  return text;
+}
+
+// ---------------------------------------------------------------------------
+// PIV: writes under the card management key run in a relay session —
+// authenticate, then the command, then close, which resets the card.
+// ---------------------------------------------------------------------------
+function postJson(route, body) {
+  log.debug("Entering postJson(). " + route);
+  var sent = fetch(apiBase() + route, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }).then(function (res) {
+    return res.json().then(function (answer) {
+      if (!res.ok) {
+        throw new Error(answer.error || (route + " answered " + res.status));
+      }
+      return answer;
+    });
+  });
+  log.debug("Leaving postJson().");
+  return sent;
+}
+
+// Open a session, run `work(transmit)`, and close the session whatever
+// happens. transmit(apdusHex) resolves to the last result.
+function withPivSession(work) {
+  log.debug("Entering withPivSession().");
+  var id = null;
+  var transmit = function (apdus) {
+    return postJson("/smartcard/session/transmit", { id: id, apdus: apdus,
+                                                     getResponse: true })
+      .then(function (body) {
+        var results = body.results || [body];
+        var last = results[results.length - 1] || {};
+        last.complete = results.length === apdus.length;
+        return last;
+      });
+  };
+  var done = chosenReader().then(function (reader) {
+    return postJson("/smartcard/session", { reader: reader });
+  }).then(function (opened) {
+    id = opened.id;
+    return work(transmit);
+  });
+  var closed = done.then(function (value) {
+    return postJson("/smartcard/session/close", { id: id }).then(function () {
+      return value;
+    });
+  }, function (e) {
+    var close = id ? postJson("/smartcard/session/close", { id: id })
+      .catch(function () {
+        return null;
+      }) : Promise.resolve();
+    return close.then(function () {
+      throw e;
+    });
+  });
+  log.debug("Leaving withPivSession().");
+  return closed;
+}
+
+// SELECT PIV, learn the management key's algorithm (GET METADATA; the
+// form's choice where the firmware has none), and authenticate.
+function pivAuthenticate(transmit) {
+  log.debug("Entering pivAuthenticate().");
+  var key = hexField("sc_piv_mgm_key", null, "The management key");
+  if (!key || key.length === 0) {
+    throw new Error("Enter the management key (or press Factory default).");
+  }
+  var alg = null;
+  var authed = transmit([selectHex(piv.PIV_AID),
+                         piv.metadataApdu(0x9b).toString("hex")])
+    .then(function (meta) {
+      alg = meta.complete && /^9000$/i.test(meta.status) ?
+          piv.managementAlgorithmFromMetadata(Buffer.from(meta.data, "hex")) :
+          null;
+      alg = alg || valueOf("sc_piv_mgm_alg") || "3des";
+      return transmit([piv.authWitnessApdu(alg).toString("hex")]);
+    }).then(function (first) {
+      if (!/^9000$/i.test(first.status)) {
+        throw new Error("The key would not start authentication: " +
+            refusalText(first.status, "The management key"));
+      }
+      var step = piv.authResponseApdu(alg, key, Buffer.from(first.data, "hex"),
+          randomBytes(piv.MGM_ALGORITHMS[alg].block));
+      return transmit([step.apdu.toString("hex")]).then(function (second) {
+        if (!/^9000$/i.test(second.status) ||
+            !piv.authCardProven(Buffer.from(second.data, "hex"),
+                                step.expected)) {
+          throw new Error("The management key is wrong (" + second.status +
+              "). Nothing was changed.");
+        }
+        return alg;
+      });
+    });
+  log.debug("Leaving pivAuthenticate().");
+  return authed;
+}
+
+function pivSlot() {
+  log.debug("Entering pivSlot().");
+  var slot = parseInt(valueOf("sc_piv_slot") || "9a", 16);
+  log.debug("Leaving pivSlot().");
+  return slot;
+}
+
+// One management-key write: confirm, authenticate, send, report.
+function pivManaged(question, apduFn, after) {
+  log.debug("Entering pivManaged().");
+  var out = "sc_piv_out";
+  if (transport() !== "api" || relayProblem()) {
+    paneMessage(out, transport() !== "api" ? "Writing to the key needs " +
+        "the API. Set \"Talk to the key through\" to the API." :
+        relayProblem());
+    log.debug("Leaving pivManaged(). No relay.");
+    return;
+  }
+  var apdu = null;
+  try {
+    apdu = apduFn();
+  } catch (e) {
+    paneMessage(out, e.message);
+    log.debug("Leaving pivManaged(). " + e.message);
+    return;
+  }
+  if (window.confirm && !window.confirm(question)) {
+    setStatus("Nothing was written.");
+    log.debug("Leaving pivManaged(). Declined.");
+    return;
+  }
+  setStatus("Authenticating with the management key…");
+  withPivSession(function (transmit) {
+    return pivAuthenticate(transmit).then(function () {
+      return transmit([Buffer.isBuffer(apdu) ? apdu.toString("hex") : apdu]);
+    });
+  }).then(function (result) {
+    if (!/^90/.test(result.status)) {
+      paneMessage(out, refusalText(result.status));
+      return;
+    }
+    after(result);
+  }).catch(function (e) {
+    paneMessage(out, e.message);
+  });
+  log.debug("Leaving pivManaged(). Sent.");
+}
+
+function usePivDefaultKey() {
+  log.debug("Entering usePivDefaultKey().");
+  var field = document.getElementById("sc_piv_mgm_key");
+  if (field) {
+    field.value = piv.DEFAULT_MANAGEMENT_KEY;
+  }
+  setStatus("The factory management key: 010203…0708, three times.");
+  log.debug("Leaving usePivDefaultKey().");
+}
+
+function pivGenerate() {
+  log.debug("Entering pivGenerate().");
+  var slot = pivSlot();
+  var alg = valueOf("sc_piv_gen_alg");
+  pivManaged("Generate a new " + alg.toUpperCase() + " key in PIV slot " +
+      slot.toString(16).toUpperCase() + "?\n\nA key already in the slot " +
+      "is replaced and cannot be recovered.", function () {
+    return piv.generateApdu(slot, alg, Number(valueOf("sc_piv_gen_pin")),
+                            Number(valueOf("sc_piv_gen_touch")));
+  }, function (result) {
+    var spki = piv.generatedPublicKey(Buffer.from(result.data, "hex"), alg);
+    var pem = bytes.derToPem(spki, "PUBLIC KEY");
+    render("sc_piv_out", [{ label: "Generated", value: alg.toUpperCase() +
+        " in slot " + slot.toString(16).toUpperCase() },
+        { label: "Public key", value: pem }]);
+    setStatus("Generated a key in slot " + slot.toString(16).toUpperCase() +
+        ". Import a certificate for it to use it with most software.");
+  });
+  log.debug("Leaving pivGenerate().");
+}
+
+function pivImportCertificate() {
+  log.debug("Entering pivImportCertificate().");
+  var slot = pivSlot();
+  pivManaged("Store this certificate in PIV slot " +
+      slot.toString(16).toUpperCase() + "? A certificate already there is " +
+      "replaced.", function () {
+    var pem = valueOf("sc_piv_cert_pem");
+    if (!/BEGIN CERTIFICATE/.test(pem)) {
+      throw new Error("Paste a PEM certificate (-----BEGIN CERTIFICATE-----).");
+    }
+    return piv.putCertificateApdu(slot, Buffer.from(bytes.pemToDer(pem)));
+  }, function () {
+    setStatus("Stored the certificate.");
+    readFromKey("piv");
+  });
+  log.debug("Leaving pivImportCertificate().");
+}
+
+function pivDeleteCertificate() {
+  log.debug("Entering pivDeleteCertificate().");
+  var slot = pivSlot();
+  pivManaged("Delete the certificate in PIV slot " +
+      slot.toString(16).toUpperCase() + "? The key stays.", function () {
+    return piv.putCertificateApdu(slot, null);
+  }, function () {
+    setStatus("Deleted the certificate.");
+    readFromKey("piv");
+  });
+  log.debug("Leaving pivDeleteCertificate().");
+}
+
+function pivDeleteKey() {
+  log.debug("Entering pivDeleteKey().");
+  var slot = pivSlot();
+  pivManaged("Delete the KEY in PIV slot " + slot.toString(16).toUpperCase() +
+      "? It cannot be recovered. (Firmware 5.7 and later.)", function () {
+    return piv.deleteKeyApdu(slot);
+  }, function () {
+    setStatus("Deleted the key.");
+    readFromKey("piv");
+  });
+  log.debug("Leaving pivDeleteKey().");
+}
+
+function pivSetManagementKey() {
+  log.debug("Entering pivSetManagementKey().");
+  var alg = valueOf("sc_piv_new_mgm_alg");
+  pivManaged("Change the PIV management key to the new " +
+      alg.toUpperCase() + " key?\n\nKeep it: without it, no key or " +
+      "certificate on this applet can be changed, short of a reset.",
+      function () {
+    return piv.setManagementKeyApdu(alg, hexField("sc_piv_new_mgm_key",
+        piv.MGM_ALGORITHMS[alg].keyLen, "The new management key"),
+        checked("sc_piv_new_mgm_touch"));
+  }, function () {
+    setStatus("Changed the management key.");
+    render("sc_piv_out", [{ label: "Management key", value: "changed to " +
+        alg.toUpperCase() }]);
+  });
+  log.debug("Leaving pivSetManagementKey().");
+}
+
+// PIN and PUK changes need no management key: one sequence.
+function pivPinWrite(kind) {
+  log.debug("Entering pivPinWrite(). " + kind);
+  var out = "sc_piv_out";
+  var apdu = null;
+  var what = kind === "puk" ? "The PUK" : "The PIN";
+  var question = "";
+  try {
+    if (kind === "pin") {
+      apdu = piv.changeReferenceApdu(0x80, valueOf("sc_piv_pin_old"),
+          valueOf("sc_piv_pin_new"));
+      question = "Change the PIV PIN?";
+    } else if (kind === "puk") {
+      apdu = piv.changeReferenceApdu(0x81, valueOf("sc_piv_puk_old"),
+          valueOf("sc_piv_puk_new"));
+      question = "Change the PIV PUK?";
+    } else {
+      apdu = piv.unblockPinApdu(valueOf("sc_piv_puk_old"),
+          valueOf("sc_piv_pin_new"));
+      question = "Unblock the PIV PIN with the PUK, setting the new PIN?";
+      what = "The PUK";
+    }
+  } catch (e) {
+    paneMessage(out, e.message);
+    log.debug("Leaving pivPinWrite(). " + e.message);
+    return;
+  }
+  writeToKey(out, [selectHex(piv.PIV_AID), apdu.toString("hex")], question +
+      "\n\nA wrong current value costs one of its tries.")
+    .then(function (result) {
+      if (!result) {
+        return;
+      }
+      if (!result.ok) {
+        paneMessage(out, refusalText(result.status, what));
+        return;
+      }
+      render(out, [{ label: "Done", value: question.replace(/\?.*$/, "") }]);
+      setStatus("Done.");
+    }).catch(function (e) {
+      paneMessage(out, e.message);
+    });
+  log.debug("Leaving pivPinWrite().");
+}
+
+// ---------------------------------------------------------------------------
+// OPENPGP CARD: every write is SELECT, VERIFY the Admin PIN, then the change.
+// ---------------------------------------------------------------------------
+function useOpenPgpDefaultAdminPin() {
+  log.debug("Entering useOpenPgpDefaultAdminPin().");
+  var field = document.getElementById("sc_pgp_admin_pin");
+  if (field) {
+    field.value = "12345678";
+  }
+  setStatus("The factory Admin PIN: 12345678.");
+  log.debug("Leaving useOpenPgpDefaultAdminPin().");
+}
+
+function pgpAdminWrite(commands, question, after) {
+  log.debug("Entering pgpAdminWrite().");
+  var out = "sc_pgp_out";
+  var apdus = null;
+  try {
+    apdus = [selectHex(pgp.AID_PREFIX),
+             pgp.verifyApdu(pgp.PW3, valueOf("sc_pgp_admin_pin"))
+               .toString("hex")]
+      .concat(commands().map(function (c) {
+        return Buffer.isBuffer(c) ? c.toString("hex") : c;
+      }));
+  } catch (e) {
+    paneMessage(out, e.message);
+    log.debug("Leaving pgpAdminWrite(). " + e.message);
+    return Promise.resolve(null);
+  }
+  var written = writeToKey(out, apdus, question === null ? null : question +
+      "\n\nThe Admin PIN is checked first; three wrong tries block it.")
+    .then(function (result) {
+      if (!result) {
+        return null;
+      }
+      if (!result.ok) {
+        paneMessage(out, refusalText(result.status, "The Admin PIN"));
+        return null;
+      }
+      return after ? after(result) : result;
+    });
+  log.debug("Leaving pgpAdminWrite().");
+  return written;
+}
+
+function pgpSaveCardholder() {
+  log.debug("Entering pgpSaveCardholder().");
+  var fields = [["sc_pgp_name", 0x5b], ["sc_pgp_login", 0x5e],
+                ["sc_pgp_url", 0x5f50], ["sc_pgp_lang", 0x5f2d]];
+  var filled = fields.filter(function (f) {
+    return valueOf(f[0]).trim() !== "";
+  });
+  if (filled.length === 0) {
+    paneMessage("sc_pgp_out", "Fill in at least one of name, login, URL " +
+        "or language.");
+    log.debug("Leaving pgpSaveCardholder(). Nothing to write.");
+    return;
+  }
+  pgpAdminWrite(function () {
+    return filled.map(function (f) {
+      return pgp.putDataApdu(f[1], Buffer.from(valueOf(f[0]).trim(), "utf8"));
+    });
+  }, "Write the cardholder data to the OpenPGP card?", function () {
+    setStatus("Saved the cardholder data.");
+    readFromKey("pgp");
+  });
+  log.debug("Leaving pgpSaveCardholder().");
+}
+
+function pgpGenerate() {
+  log.debug("Entering pgpGenerate().");
+  var which = valueOf("sc_pgp_gen_key");
+  var alg = valueOf("sc_pgp_gen_alg");
+  var names = { sig: "signature", dec: "decryption", aut: "authentication" };
+  var created = Math.floor(Date.now() / 1000);
+  var fpr = null;
+  pgpAdminWrite(function () {
+    return [pgp.algorithmAttributesApdu(which, alg), pgp.generateApdu(which)];
+  }, "Generate a new " + alg + " " + names[which] + " key on the OpenPGP " +
+      "card?\n\nThe key now in that slot is destroyed, and anything " +
+      "encrypted to it can no longer be decrypted.", function (result) {
+    var answer = Buffer.from(result.data, "hex");
+    fpr = pgp.v4Fingerprint(alg, answer, created);
+    var described = pgp.describeResponse(result.data + result.status);
+    // The fingerprint and creation time, so GnuPG recognises the key.
+    return pgpAdminWrite(function () {
+      return [pgp.putDataApdu(pgp.KEY_REFS[which].fpr, fpr.fingerprint),
+              pgp.putDataApdu(pgp.KEY_REFS[which].time, fpr.created)];
+    }, null, function () {
+      render("sc_pgp_out", [
+        { label: "Generated", value: alg + " " + names[which] + " key" },
+        { label: "Fingerprint", value: fpr.fingerprint.toString("hex")
+            .toUpperCase().replace(/(.{4})/g, "$1 ").trim() },
+        { label: "Created", value: new Date(created * 1000).toISOString() },
+        { label: "Public key", value: described.pem || "(see the read)" },
+        { label: "Next", value: "In GnuPG: gpg --card-edit, then fetch or " +
+            "generate a public key from the card's keys." }]);
+      setStatus("Generated the " + names[which] + " key.");
+      return true;
+    });
+  });
+  log.debug("Leaving pgpGenerate().");
+}
+
+function pgpSetTouch() {
+  log.debug("Entering pgpSetTouch().");
+  var which = valueOf("sc_pgp_touch_key");
+  var policy = Number(valueOf("sc_pgp_touch_policy"));
+  pgpAdminWrite(function () {
+    return [pgp.touchPolicyApdu(which, policy)];
+  }, "Set the touch policy of the " + which + " key to " +
+      ["off", "on", "fixed", "cached", "cached-fixed"][policy] + "?" +
+      (policy === 2 || policy === 4 ? "\n\nFIXED cannot be turned off " +
+      "again without resetting the OpenPGP applet." : ""), function () {
+    setStatus("Set the touch policy.");
+    readFromKey("pgp");
+  });
+  log.debug("Leaving pgpSetTouch().");
+}
+
+function pgpChangePin(kind) {
+  log.debug("Entering pgpChangePin(). " + kind);
+  var out = "sc_pgp_out";
+  var admin = kind === "admin";
+  var apdu = null;
+  try {
+    apdu = pgp.changePinApdu(admin ? pgp.PW3 : pgp.PW1,
+        valueOf(admin ? "sc_pgp_admin_old" : "sc_pgp_pin_old"),
+        valueOf(admin ? "sc_pgp_admin_new" : "sc_pgp_pin_new"));
+  } catch (e) {
+    paneMessage(out, e.message);
+    log.debug("Leaving pgpChangePin(). " + e.message);
+    return;
+  }
+  writeToKey(out, [selectHex(pgp.AID_PREFIX), apdu.toString("hex")],
+      "Change the OpenPGP " + (admin ? "Admin PIN" : "PIN") + "?\n\nA " +
+      "wrong current value costs one of its three tries.")
+    .then(function (result) {
+      if (!result) {
+        return;
+      }
+      if (!result.ok) {
+        paneMessage(out, refusalText(result.status, admin ? "The Admin PIN" :
+            "The PIN"));
+        return;
+      }
+      render(out, [{ label: "Done", value: "Changed the " +
+          (admin ? "Admin PIN" : "PIN") }]);
+      setStatus("Changed.");
+    }).catch(function (e) {
+      paneMessage(out, e.message);
+    });
+  log.debug("Leaving pgpChangePin().");
+}
+
 // After a read, offer the account names for Delete.
 function offerOathNames(rows) {
   log.debug("Entering offerOathNames().");
@@ -2043,6 +2504,18 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   onTransportChange: onTransportChange,
+  usePivDefaultKey: usePivDefaultKey,
+  pivGenerate: pivGenerate,
+  pivImportCertificate: pivImportCertificate,
+  pivDeleteCertificate: pivDeleteCertificate,
+  pivDeleteKey: pivDeleteKey,
+  pivSetManagementKey: pivSetManagementKey,
+  pivPinWrite: pivPinWrite,
+  useOpenPgpDefaultAdminPin: useOpenPgpDefaultAdminPin,
+  pgpSaveCardholder: pgpSaveCardholder,
+  pgpGenerate: pgpGenerate,
+  pgpSetTouch: pgpSetTouch,
+  pgpChangePin: pgpChangePin,
   addHsmCredential: addHsmCredential,
   deleteHsmCredential: deleteHsmCredential,
   useHsmDefaultKey: useHsmDefaultKey,

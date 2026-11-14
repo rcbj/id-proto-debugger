@@ -320,6 +320,66 @@
       <button type="button" class="saml-btn" id="sc_piv_command" onclick="smartcard.decodePivCommand();">Decode command</button>
       <button type="button" class="saml-btn" id="sc_piv_response" onclick="smartcard.decodePivResponse();">Decode response</button>
     </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Change the key</div>
+      <details class="saml-explain">
+        <summary>How PIV writing works</summary>
+        <p>Keys, certificates and the management key itself are changed under the card management key: the page authenticates with it (mutual 3DES or AES, the algorithm read from the key's metadata), sends the change, and closes the connection, which resets the card. The key never leaves this browser. The PIN and PUK are changed with their current values, and a wrong one costs a try (three by default) — the page never retries. Generate shows the public key; most software also wants a certificate for it, which Import stores. Nothing typed here is stored.</p>
+      </details>
+      <div class="saml-row">
+        <label class="saml-grow">Management key (hex)
+          <input id="sc_piv_mgm_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <label>if the key cannot say, it is
+          <select id="sc_piv_mgm_alg"><option value="3des">3DES</option><option value="aes128">AES-128</option><option value="aes192">AES-192</option><option value="aes256">AES-256</option></select>
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.usePivDefaultKey();">Factory default</button>
+      </div>
+      <div class="saml-row">
+        <label>Slot <select id="sc_piv_slot"><option value="9a">9A authentication</option><option value="9c">9C digital signature</option><option value="9d">9D key management</option><option value="9e">9E card authentication</option><option value="82">82 retired</option><option value="83">83 retired</option><option value="84">84 retired</option><option value="85">85 retired</option><option value="86">86 retired</option><option value="87">87 retired</option><option value="88">88 retired</option><option value="89">89 retired</option><option value="8a">8A retired</option><option value="8b">8B retired</option><option value="8c">8C retired</option><option value="8d">8D retired</option><option value="8e">8E retired</option><option value="8f">8F retired</option><option value="90">90 retired</option><option value="91">91 retired</option><option value="92">92 retired</option><option value="93">93 retired</option><option value="94">94 retired</option><option value="95">95 retired</option></select></label>
+        <label>Key
+          <select id="sc_piv_gen_alg"><option value="eccp256">ECC P-256</option><option value="eccp384">ECC P-384</option><option value="ed25519">Ed25519</option><option value="x25519">X25519</option><option value="rsa2048">RSA 2048</option><option value="rsa3072">RSA 3072</option><option value="rsa4096">RSA 4096</option><option value="rsa1024">RSA 1024</option></select>
+        </label>
+        <label>PIN policy
+          <select id="sc_piv_gen_pin"><option value="0">slot default</option><option value="1">never</option><option value="2">once</option><option value="3">always</option></select>
+        </label>
+        <label>Touch policy
+          <select id="sc_piv_gen_touch"><option value="0">slot default</option><option value="1">never</option><option value="2">always</option><option value="3">cached</option></select>
+        </label>
+      </div>
+      <p>
+        <button type="button" class="saml-btn" onclick="smartcard.pivGenerate();">Generate a key</button>
+        <button type="button" class="saml-btn" onclick="smartcard.pivDeleteKey();">Delete the key</button>
+        <button type="button" class="saml-btn" onclick="smartcard.pivDeleteCertificate();">Delete the certificate</button>
+      </p>
+      <div class="saml-row">
+        <label class="saml-grow">Certificate (PEM)
+          <textarea id="sc_piv_cert_pem" class="sc-trace" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+        </label>
+      </div>
+      <p><button type="button" class="saml-btn" onclick="smartcard.pivImportCertificate();">Import the certificate into the slot</button></p>
+      <div class="saml-row">
+        <label>Current PIN <input id="sc_piv_pin_old" class="sc-field" type="password" autocomplete="off" /></label>
+        <label>New PIN <input id="sc_piv_pin_new" class="sc-field" type="password" autocomplete="off" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pivPinWrite('pin');">Change the PIN</button>
+      </div>
+      <div class="saml-row">
+        <label>Current PUK <input id="sc_piv_puk_old" class="sc-field" type="password" autocomplete="off" /></label>
+        <label>New PUK <input id="sc_piv_puk_new" class="sc-field" type="password" autocomplete="off" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pivPinWrite('puk');">Change the PUK</button>
+        <button type="button" class="saml-btn" onclick="smartcard.pivPinWrite('unblock');">Unblock the PIN (PUK and new PIN)</button>
+      </div>
+      <div class="saml-row">
+        <label class="saml-grow">New management key (hex)
+          <input id="sc_piv_new_mgm_key" class="sc-field" type="password" autocomplete="off" spellcheck="false" />
+        </label>
+        <label>as
+          <select id="sc_piv_new_mgm_alg"><option value="aes192">AES-192</option><option value="aes128">AES-128</option><option value="aes256">AES-256</option><option value="3des">3DES</option></select>
+        </label>
+        <label><input type="checkbox" id="sc_piv_new_mgm_touch" /> Require a touch</label>
+        <button type="button" class="saml-btn" onclick="smartcard.pivSetManagementKey();">Change the management key</button>
+      </div>
+    </div>
     <p class="sc-read">
       <button type="button" class="saml-btn" id="sc_piv_read" onclick="smartcard.readFromKey('piv');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
       <span class="sc-read-note">through the API; read-only</span>
@@ -343,6 +403,54 @@
       <button type="button" class="saml-btn" id="sc_pgp_command" onclick="smartcard.decodePgpCommand();">Decode command</button>
       <button type="button" class="saml-btn" id="sc_pgp_response" onclick="smartcard.decodePgpResponse();">Decode response</button>
     </p>
+    <div class="saml-sub">
+      <div class="saml-sub-title">Change the card</div>
+      <details class="saml-explain">
+        <summary>How OpenPGP writing works</summary>
+        <p>Every change is checked against the Admin PIN first, in the same sequence; three wrong tries block it, and the page never retries. Generate sets the key's algorithm, generates it on the card, and writes its OpenPGP fingerprint and creation time so GnuPG recognises it — the key that was in that slot is destroyed. A FIXED touch policy cannot be turned off without resetting the OpenPGP applet. Nothing typed here is stored.</p>
+      </details>
+      <div class="saml-row">
+        <label class="saml-grow">Admin PIN
+          <input id="sc_pgp_admin_pin" class="sc-field" type="password" autocomplete="off" />
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.useOpenPgpDefaultAdminPin();">Factory default</button>
+      </div>
+      <div class="saml-row">
+        <label>Name (Surname&lt;&lt;Given) <input id="sc_pgp_name" class="sc-field" spellcheck="false" /></label>
+        <label>Login <input id="sc_pgp_login" class="sc-field" spellcheck="false" /></label>
+        <label class="saml-grow">Public key URL <input id="sc_pgp_url" class="sc-field" spellcheck="false" /></label>
+        <label>Language <input id="sc_pgp_lang" class="sc-field sc-narrow" spellcheck="false" placeholder="en" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpSaveCardholder();">Save cardholder data</button>
+      </div>
+      <div class="saml-row">
+        <label>Key
+          <select id="sc_pgp_gen_key"><option value="sig">signature</option><option value="dec">decryption</option><option value="aut">authentication</option></select>
+        </label>
+        <label>Algorithm
+          <select id="sc_pgp_gen_alg"><option value="ed25519">Ed25519 (sig, aut)</option><option value="cv25519">Curve25519 (dec)</option><option value="nistp256-ecdsa">NIST P-256 ECDSA (sig, aut)</option><option value="nistp256-ecdh">NIST P-256 ECDH (dec)</option><option value="nistp384-ecdsa">NIST P-384 ECDSA (sig, aut)</option><option value="rsa2048">RSA 2048</option><option value="rsa3072">RSA 3072</option><option value="rsa4096">RSA 4096</option></select>
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpGenerate();">Generate the key</button>
+      </div>
+      <div class="saml-row">
+        <label>Touch policy for
+          <select id="sc_pgp_touch_key"><option value="sig">signature</option><option value="dec">decryption</option><option value="aut">authentication</option></select>
+        </label>
+        <label>is
+          <select id="sc_pgp_touch_policy"><option value="0">off</option><option value="1">on</option><option value="3">cached</option><option value="2">fixed (permanent)</option><option value="4">cached-fixed (permanent)</option></select>
+        </label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpSetTouch();">Set the touch policy</button>
+      </div>
+      <div class="saml-row">
+        <label>Current PIN <input id="sc_pgp_pin_old" class="sc-field" type="password" autocomplete="off" /></label>
+        <label>New PIN <input id="sc_pgp_pin_new" class="sc-field" type="password" autocomplete="off" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpChangePin('user');">Change the PIN</button>
+      </div>
+      <div class="saml-row">
+        <label>Current Admin PIN <input id="sc_pgp_admin_old" class="sc-field" type="password" autocomplete="off" /></label>
+        <label>New Admin PIN <input id="sc_pgp_admin_new" class="sc-field" type="password" autocomplete="off" /></label>
+        <button type="button" class="saml-btn" onclick="smartcard.pgpChangePin('admin');">Change the Admin PIN</button>
+      </div>
+    </div>
     <p class="sc-read">
       <button type="button" class="saml-btn" id="sc_pgp_read" onclick="smartcard.readFromKey('pgp');" title="Read-only commands through the API's reader relay. Nothing is written and no PIN is sent.">Read from the key</button>
       <span class="sc-read-note">through the API; read-only</span>
