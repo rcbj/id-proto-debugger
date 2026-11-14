@@ -123,12 +123,19 @@
    * 1366x768: ten and nine, the lowest card ending at 573px of a
    * 625px headless viewport, inside the 640px budget.
    *
-   * The TWENTIETH card (Digital signatures & Hashing) fills the second
-   * row, ten and ten, so the column count did not change. It adds no
-   * row; the lowest card moves only if its own text is the tallest in
-   * that row. landingFitsOnOneScreen() measures it.
+   * The TWENTIETH card (Digital signatures & Hashing) filled the second
+   * row, ten and ten, with the lowest card still ending at 573px.
+   *
+   * ELEVEN across as of the TWENTY-FIRST (Encryption tools). Ten
+   * columns hold twenty as 10+10; twenty-one are 10+10+1, and the third
+   * row is below the fold. Eleven fit when 11*min + 10*6 <= 1158, so
+   * min <= 99 (11*99 + 60 = 1149); 100px is 1160 and drops back to ten.
+   * Narrower cards wrap their text further: the grid ended at 633px of
+   * the 625px headless viewport, rows [11, 10]. The icon, its margin,
+   * the title margin and the card's vertical padding below took 24px
+   * off across the two rows. Measured, not estimated.
    */
-  grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(99px, 1fr));
   gap: 6px;
   align-items: stretch;
   max-width: 1158px;
@@ -140,11 +147,12 @@
   flex-direction: column;
   align-items: center;
   text-align: center;
-  /* 8px/4px/8px. The vertical pixels are load-bearing: padding costs
+  /* 6px/4px/6px (8px vertical until the twenty-first card; see the
+     icon note below). The vertical pixels are load-bearing: padding costs
      its height once per ROW. The horizontal 4px is the other half of
      the nineteenth-card fix in the grid note: it is what puts 102px
      of text back into a 110px card. */
-  padding: 8px 4px 8px;
+  padding: 6px 4px 6px;
   border: 1px solid #ccc;
   border-radius: 12px;
   background: #fafafa;
@@ -165,7 +173,7 @@
    There is one rule per card, so every protocol added here needs one — miss it and
    that card's icon silently falls back to the text colour, which is what happened
    to the two newest ones. */
-.landing-icon { margin-bottom: 8px; line-height: 0; }
+.landing-icon { margin-bottom: 6px; line-height: 0; }
 /* 40px, not 48px, and the eight pixels are load-bearing. At five columns the
    cards are narrower, so every description wraps onto more lines and the two
    rows grew to 633px against a 625px viewport. An icon costs its height once per
@@ -185,8 +193,13 @@
    before.
    26px for the nineteenth card. An icon costs its height once per row, so
    four pixels here are eight across the two rows, on top of the wrapping
-   the grid note puts back. */
-.landing-icon svg { width: 26px; height: 26px; }
+   the grid note puts back.
+   22px for the twenty-first, with the icon's margin 8px -> 6px, the
+   title's 6px -> 4px and the card's vertical padding 8px -> 6px: eleven
+   columns wrap the text further and ended the grid at 633px of 625px.
+   Those four take 24px off across the two rows. Measured, in the grid
+   note. */
+.landing-icon svg { width: 22px; height: 22px; }
 .landing-card:nth-child(1) .landing-icon { color: #2680eb; }
 .landing-card:nth-child(2) .landing-icon { color: #5a2a8f; }
 .landing-card:nth-child(3) .landing-icon { color: #0a7d63; }
@@ -260,10 +273,12 @@
 .landing-card:nth-child(19) .landing-icon { color: #0b6e4f; }
 /* The twentieth is Digital signatures & Hashing, the second row's tenth. */
 .landing-card:nth-child(20) .landing-icon { color: #9e2a5b; }
+/* The twenty-first is Encryption tools: eleven columns, in the grid note. */
+.landing-card:nth-child(21) .landing-icon { color: #2f6f8f; }
 .landing-card:hover .landing-icon,
 .landing-card:focus .landing-icon { color: inherit; }
 
-.landing-card-title { font-size: .98em; font-weight: 700; margin-bottom: 6px; }
+.landing-card-title { font-size: .98em; font-weight: 700; margin-bottom: 4px; }
 .landing-card-desc { font-size: .72em; color: #666; line-height: 1.3; }
 .landing-card:hover .landing-card-desc,
 .landing-card:focus .landing-card-desc { color: inherit; }
