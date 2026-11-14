@@ -660,7 +660,51 @@ function hidResponse(slot, frame) {
   return buf.slice(0, size);
 }
 
+// THE SAME CHALLENGE-RESPONSE OVER CCID, for a browser with no WebHID.
+// A YubiKey's OTP application also answers on the smart-card interface —
+// it is how challenge-response works over NFC — so Firefox reaches the
+// slots through the api's reader relay instead: SELECT the OTP
+// application, then one CALCULATE whose P1 is the slot and whose data is
+// the same 64-byte payload the HID frame carries (yubikit pads it the same
+// way for both transports). The answer comes back bare, with no CRC
+// framing: the first 20 bytes for an HMAC-SHA1 slot, 16 for an OTP slot.
+var OTP_AID = "a000000527200101";
+var INS_CALCULATE = 0x01;
+
+function ccidSelectApdu() {
+  log.debug("Entering ccidSelectApdu().");
+  log.debug("Leaving ccidSelectApdu().");
+  return "00a40400" + (OTP_AID.length / 2).toString(16).padStart(2, "0") +
+      OTP_AID;
+}
+
+function ccidCalculateApdu(slot, challenge, opts) {
+  log.debug("Entering ccidCalculateApdu().");
+  var payload = hidFrame(slot, challenge, opts).slice(0, SLOT_DATA_SIZE);
+  var header = Buffer.from([0x00, INS_CALCULATE, slot, 0x00,
+                            SLOT_DATA_SIZE]);
+  log.debug("Leaving ccidCalculateApdu().");
+  return Buffer.concat([header, payload]).toString("hex");
+}
+
+function ccidResponse(slot, data) {
+  log.debug("Entering ccidResponse().");
+  var size = slot === SLOT_HMAC_1 || slot === SLOT_HMAC_2 ? 20 : 16;
+  var buf = Buffer.from(data || []);
+  if (buf.length < size) {
+    log.debug("Leaving ccidResponse(). Short.");
+    reject("The key answered " + buf.length + " bytes; " + size +
+        " were expected. Is the slot configured for challenge-response?");
+  }
+  log.debug("Leaving ccidResponse().");
+  return buf.slice(0, size);
+}
+
 module.exports = {
+  OTP_AID: OTP_AID,
+  ccidSelectApdu: ccidSelectApdu,
+  ccidCalculateApdu: ccidCalculateApdu,
+  ccidResponse: ccidResponse,
   MODHEX: MODHEX,
   CRC_RESIDUAL: CRC_RESIDUAL,
   DEFAULT_HOSTS: DEFAULT_HOSTS,

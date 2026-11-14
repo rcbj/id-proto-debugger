@@ -341,8 +341,11 @@ var config = {
   // a reader on the machine this api runs on, with any APDU the caller
   // sends (a wrong-PIN VERIFY blocks a PIN; PIV and OpenPGP have
   // reset/terminate commands). Off unless this is true. See
-  // docs/smartcard.md.
-  smartcardReaderEnabled: false,
+  // docs/smartcard.md. On a local stack it follows SMARTCARD_READER_ENABLED,
+  // which only docker-compose-smartcard.yml sets (with the host's pcscd
+  // socket mounted beside it), so a plain `docker-compose up` keeps it off.
+  // The boolean, exactly: any other value is off.
+  smartcardReaderEnabled: process.env.SMARTCARD_READER_ENABLED === "true",
   // How many messages POST /spiffe/call will read from a STREAM before it stops
   // and says so. A NUMBER.
   //

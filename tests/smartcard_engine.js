@@ -1510,6 +1510,50 @@ function panesCollapse() {
   log.debug("Leaving panesCollapse().");
 }
 
+// CHALLENGE-RESPONSE OVER CCID, for a browser with no WebHID. The SELECT is
+// the OTP application's AID, and the CALCULATE carries in its data exactly
+// the 64-byte payload the HID frame carries — so a key answers the two
+// transports alike — with the slot in P1. And the WebHID path asks for the
+// key's OTP KEYBOARD interface: it asked for the FIDO usage page until
+// 2026-11-13, which Chrome blocks from WebHID, so it never found a key.
+function challengeOverCcid() {
+  log.debug("Entering challengeOverCcid().");
+  assert.strictEqual(otp.ccidSelectApdu(), "00a4040008a000000527200101");
+  var challenge = Buffer.from("0102030405", "hex");
+  var apdu = Buffer.from(otp.ccidCalculateApdu(0x38, challenge), "hex");
+  assert.deepStrictEqual(Array.from(apdu.slice(0, 5)),
+      [0x00, 0x01, 0x38, 0x00, 0x40]);
+  var frame = otp.hidFrame(0x38, challenge);
+  assert.ok(apdu.slice(5).equals(frame.slice(0, 64)),
+      "the CALCULATE data is not the HID frame's payload");
+  assert.strictEqual(apdu.length, 69);
+  // A challenge ending in 0x00 is padded with 0x01 in variable mode.
+  var zeroEnd = Buffer.from(otp.ccidCalculateApdu(0x30,
+      Buffer.from("aa00", "hex")), "hex");
+  assert.strictEqual(zeroEnd[5 + 2], 0x01);
+  assert.throws(function () {
+    otp.ccidCalculateApdu(0x20, Buffer.from("01", "hex"));
+  }, /6 bytes/);
+  var answer = Buffer.alloc(20, 7);
+  assert.ok(otp.ccidResponse(0x30, answer).equals(answer));
+  assert.strictEqual(otp.ccidResponse(0x20, Buffer.alloc(18, 1)).length, 16);
+  assert.throws(function () {
+    otp.ccidResponse(0x30, Buffer.alloc(4));
+  }, /configured for challenge-response/);
+  var page = fs.readFileSync(path.join(SRC, "smartcard.js"), "utf8");
+  assert.ok(/usagePage:\s*0x0001,\s*usage:\s*0x0006/.test(page),
+      "the WebHID filter does not ask for the OTP keyboard interface");
+  assert.ok(!/usagePage:\s*0xf1d0/i.test(page),
+      "the WebHID filter asks for the FIDO usage page, which Chrome blocks");
+  var html = fs.readFileSync(path.join(REPO, "client", "public",
+      "smartcard.html"), "utf8");
+  assert.ok(html.indexOf('id="sc_hid_transport"') >= 0,
+      "the page offers no CCID transport for challenge-response");
+  log.info("OK — challenge-response over CCID is SELECT then CALCULATE " +
+      "with the HID payload, and WebHID asks for the OTP interface.");
+  log.debug("Leaving challengeOverCcid().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run.");
@@ -1528,6 +1572,7 @@ async function test() {
   await readerExchanges();
   enginesStayOffTheDom();
   panesCollapse();
+  challengeOverCcid();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }

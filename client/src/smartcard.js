@@ -798,10 +798,29 @@ function hidCollect(device) {
   return poll();
 }
 
+// Which way a challenge goes: WebHID from this browser, or CCID through the
+// api's reader relay. The page's choice, defaulting to WebHID where the
+// browser has it (Chrome, Edge) and CCID where it does not (Firefox).
+function hidTransport() {
+  log.debug("Entering hidTransport().");
+  var chosen = valueOf("sc_hid_transport");
+  var hasHid = typeof navigator !== "undefined" && !!navigator.hid;
+  var transport = chosen === "ccid" || chosen === "webhid" ? chosen :
+      (hasHid ? "webhid" : "ccid");
+  log.debug("Leaving hidTransport(). " + transport);
+  return transport;
+}
+
 function sendHid() {
   log.debug("Entering sendHid().");
+  if (hidTransport() === "ccid") {
+    log.debug("Leaving sendHid(). Over CCID.");
+    challengeOverCcid();
+    return;
+  }
   if (typeof navigator === "undefined" || !navigator.hid) {
-    setStatus("This browser has no WebHID.");
+    setStatus("This browser has no WebHID. Choose CCID: it goes " +
+        "through the api's reader relay.");
     log.debug("Leaving sendHid(). No WebHID.");
     return;
   }
@@ -816,8 +835,14 @@ function sendHid() {
     return;
   }
   var reports = otp.hidReports(frame);
+  // THE OTP INTERFACE, NOT FIDO. The slots answer on the key's HID
+  // KEYBOARD interface (usage page 0x01, usage 0x06), through feature
+  // reports, which WebHID allows on a keyboard collection. This filter was
+  // usage page 0xF1D0 — the FIDO interface — until 2026-11-13: Chrome
+  // blocks that page from WebHID outright, so no key was ever offered and
+  // the button did nothing.
   navigator.hid.requestDevice({
-    filters: [{ vendorId: 0x1050, usagePage: 0xf1d0 }]
+    filters: [{ vendorId: 0x1050, usagePage: 0x0001, usage: 0x0006 }]
   }).then(function (devices) {
     if (!devices || devices.length === 0) {
       setStatus("No OTP HID device was chosen.");
@@ -852,6 +877,115 @@ function sendHid() {
   log.debug("Leaving sendHid().");
 }
 
+// What /smartcard/limits said, so a CCID challenge can say why it cannot
+// run rather than fail at the api.
+var relay = { known: false, enabled: false, available: false, reason: "" };
+
+function relayProblem() {
+  log.debug("Entering relayProblem().");
+  var why = null;
+  if (!backendAvailable()) {
+    why = "CCID needs the api, and this deployment has none.";
+  } else if (!relay.known) {
+    why = "The api has not said whether its reader relay is on.";
+  } else if (!relay.enabled) {
+    why = "The api's reader relay is off. Start the stack with " +
+        "docker-compose-smartcard.yml (or set smartcardReaderEnabled: " +
+        "true) to send a challenge over CCID.";
+  } else if (!relay.available) {
+    why = relay.reason || "The api has no PC/SC.";
+  }
+  log.debug("Leaving relayProblem(). " + (why ? "blocked" : "ok"));
+  return why;
+}
+
+// The reader to use: the one named on the page, or — when the field is
+// empty — the only reader the api can see, filled in for next time.
+function chosenReader() {
+  log.debug("Entering chosenReader().");
+  var named = valueOf("sc_reader_name").trim();
+  if (named) {
+    log.debug("Leaving chosenReader(). Named.");
+    return Promise.resolve(named);
+  }
+  var found = fetch(apiBase() + "/smartcard/readers").then(function (res) {
+    return res.json().then(function (body) {
+      if (!res.ok) {
+        throw new Error(body.error || "The readers could not be listed.");
+      }
+      var names = body.readers || [];
+      if (names.length !== 1) {
+        throw new Error(names.length === 0 ? "The api sees no reader. Is " +
+            "the key plugged in, and is the host's pcscd running?" :
+            names.length + " readers: name one in the Reader name field.");
+      }
+      var field = document.getElementById("sc_reader_name");
+      if (field) {
+        field.value = names[0];
+      }
+      return names[0];
+    });
+  });
+  log.debug("Leaving chosenReader(). Asking the api.");
+  return found;
+}
+
+// Challenge-response over CCID: SELECT the OTP application, then CALCULATE
+// with the slot in P1, on one connection through POST /smartcard/transmit.
+function challengeOverCcid() {
+  log.debug("Entering challengeOverCcid().");
+  var problem = relayProblem();
+  if (problem) {
+    setStatus(problem);
+    log.debug("Leaving challengeOverCcid(). " + problem);
+    return;
+  }
+  var slot = parseInt(valueOf("sc_hid_slot"), 16);
+  var apdus = null;
+  try {
+    apdus = [otp.ccidSelectApdu(),
+             otp.ccidCalculateApdu(slot, hidBytes(valueOf("sc_hid_challenge")),
+                 { variable: valueOf("sc_hid_hmac_mode") !== "fixed" })];
+  } catch (e) {
+    setStatus(e.message);
+    log.debug("Leaving challengeOverCcid(). " + e.message);
+    return;
+  }
+  setStatus("Sending the challenge over CCID. Touch the key if it blinks.");
+  chosenReader().then(function (reader) {
+    return fetch(apiBase() + "/smartcard/transmit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reader: reader, apdus: apdus,
+                             getResponse: true })
+    });
+  }).then(function (res) {
+    return res.json().then(function (body) {
+      if (!res.ok) {
+        throw new Error(body.error || "The relay refused the challenge.");
+      }
+      var results = body.results || [body];
+      var last = results[results.length - 1] || {};
+      if (results.length < 2 || !/^90/.test(String(last.status || ""))) {
+        render("sc_reader_out", transmitRows(body));
+        throw new Error("The key answered " + (last.status || "nothing") +
+            (results.length < 2 ? " to SELECT of the OTP application." :
+            ". Is the slot configured for challenge-response?"));
+      }
+      var response = otp.ccidResponse(slot, Buffer.from(last.data || "",
+                                                        "hex"));
+      render("sc_reader_out", [
+        { label: "Response", value: iso.toHex(response) },
+        { label: "Transport", value: "CCID through the api's reader relay" }
+      ].concat(transmitRows(body)));
+      setStatus("CCID response, " + response.length + " bytes");
+    });
+  }).catch(function (e) {
+    setStatus(e.message);
+  });
+  log.debug("Leaving challengeOverCcid(). Sent.");
+}
+
 function readerLimits() {
   log.debug("Entering readerLimits().");
   fetch(apiBase() + "/smartcard/limits")
@@ -860,9 +994,18 @@ function readerLimits() {
     })
     .then(function (body) {
       var on = !!(body && body.enabled);
+      relay.known = true;
+      relay.enabled = on;
+      relay.available = !!(body && body.available);
+      relay.reason = (body && body.reason) || "";
       show("sc_reader_disabled", !on);
       show("sc_readers_button", on);
       show("sc_transmit_button", on);
+      var missing = document.getElementById("sc_reader_unavailable");
+      if (missing) {
+        missing.textContent = on && !relay.available ? relay.reason : "";
+        show("sc_reader_unavailable", on && !relay.available);
+      }
     })
     .catch(function (e) {
       log.warn("GET /smartcard/limits failed: " + e.message);
@@ -885,10 +1028,16 @@ function onload() {
   restoreSecret(SAVE.otp[0], SAVE.otp[1]);
   restoreSecret(SAVE.oath[0], SAVE.oath[1]);
   restoreSecret(SAVE.api[0], SAVE.api[1]);
+  var hasHid = typeof navigator !== "undefined" && !!navigator.hid;
+  var transport = document.getElementById("sc_hid_transport");
+  if (transport) {
+    transport.value = hasHid ? "webhid" : "ccid";
+  }
   var note = document.getElementById("sc_hid_note");
-  if (note && (typeof navigator === "undefined" || !navigator.hid)) {
-    note.textContent = "This browser has no WebHID. The keyboard " +
-        "OTP field still works.";
+  if (note && !hasHid) {
+    note.textContent = "This browser has no WebHID, so a challenge goes " +
+        "over CCID through the api's reader relay. The keyboard OTP " +
+        "field still works.";
   }
   log.debug("Leaving onload().");
 }

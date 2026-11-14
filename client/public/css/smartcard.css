@@ -23,3 +23,6 @@
 .sc-out .saml-table td { overflow-wrap: anywhere; }
 
 .sc-field { width: 100%; max-width: 36em; box-sizing: border-box; }
+
+/* The api is relaying but cannot reach PC/SC: what is missing, in its words. */
+.sc-warn { color: #8a4a2f; }

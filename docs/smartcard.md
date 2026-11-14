@@ -37,11 +37,38 @@ project, and so is OpenPGP message format, PKCS#11 and GPG-agent.
 The page is `client/public/smartcard.html`. The hosted sites keep
 the decode half the way the PKI page keeps its offline half:
 verifying an OTP, and talking to a reader, need the api.
-`client/static_site.js` does not drop the page. No image installs
-`libpcsclite`. `POST /smartcard/transmit` loads the native module
-only when a request asks, and a missing module is a limit the page
-can show. The reader relay is **off** unless the api's env sets
-`smartcardReaderEnabled: true` (see [Reader](#reader)).
+`client/static_site.js` does not drop the page. The api image
+installs `libpcsclite1` and builds the `pcsclite` module (an optional
+dependency, so a host `npm install` without PC/SC headers skips it).
+`POST /smartcard/transmit` loads the module only when a request asks,
+and a missing module is a limit the page shows. The reader relay is
+**off** unless the api's env sets `smartcardReaderEnabled: true` (see
+[Reader](#reader)).
+
+## Which browser does what
+
+| Feature | Chrome / Edge | Firefox |
+|---|---|---|
+| Keyboard OTP: decode, verify with YubiCloud (api) | yes | yes |
+| HOTP / TOTP calculator, every decoder | yes | yes |
+| OTP-slot challenge-response | WebHID, or CCID through the relay | CCID through the relay |
+| Reader: list readers, transmit APDUs | through the relay | through the relay |
+
+Firefox has no WebHID and no browser opens CCID, so everything that
+touches a key and is not a keystroke goes through the api's relay, in
+every browser. On a local stack that is one extra compose file:
+
+```
+CONFIG_FILE=./env/local.js docker-compose -f docker-compose.yml \
+  -f docker-compose-smartcard.yml up
+```
+
+which mounts the host's `/run/pcscd` into the api (the container runs
+no pcscd and needs no USB device) and sets
+`SMARTCARD_READER_ENABLED=true`, which `api/env/local.js` turns into
+`smartcardReaderEnabled`. The host needs pcscd running, and GnuPG's
+`scdaemon`, if it holds the key, has to let go: `gpgconf --kill
+scdaemon`. A plain `docker-compose up` keeps the relay off.
 
 ## The codec
 
@@ -188,8 +215,24 @@ report whose sequence is back to 0, and writes the reset report
 (`ff…8f`). The answer is the response bytes plus a CRC whose
 residual is `0xf0b8`; a bad CRC is refused. A plain status report
 with no data means the slot is not configured for challenge-response.
-The page gives up after 15 seconds. Firefox has no `navigator.hid`.
-The keyboard field still works. The node test drives the read side
+The page gives up after 15 seconds.
+
+The device the page asks for is the key's OTP interface, which is a HID
+KEYBOARD (usage page `0x01`, usage `0x06`): WebHID blocks a keyboard's
+input and output reports and allows its feature reports, which are all
+this exchange uses. Until 2026-11-13 the filter named usage page
+`0xF1D0`, the FIDO interface, which Chrome blocks from WebHID outright,
+so no key was ever offered and the button did nothing.
+
+**Over CCID** — the transport choice beside the slot, and the default
+in a browser with no `navigator.hid` — the same exchange is two APDUs
+through the reader relay on one connection: SELECT of the OTP
+application (`A0 00 00 05 27 20 01 01`), then CALCULATE (`00 01 <slot>
+00 40` and the same 64-byte payload the HID frame carries, padded the
+same way). That is how the slots answer over NFC. The answer is bare,
+with no CRC: 20 bytes for an HMAC-SHA1 slot, 16 for an OTP slot. A slot
+not configured for challenge-response answers with an error status,
+which the page shows. The node test drives the read side
 with reports built the way a key sends them; it never calls
 `navigator.hid`, so a real key is still the check.
 
@@ -337,9 +380,11 @@ after the reader's name, because that text is the diagnosis.
 A card status word is a 200. A missing library, a missing reader,
 no card, or a sequence that has not finished in 60 seconds (a touch
 nobody gave, a wedged reader) is a 502. A bad request is a 400. The APDU is not logged.
-Docker does not see a host key unless the operator
-passes the device through, and the page says so. No launcher starts
-a reader.
+A container sees a host key through the host's pcscd socket, which
+`docker-compose-smartcard.yml` mounts; pcsc-lite 2.4 in the api image
+was checked against a host pcscd 1.9.5 with a YubiKey 5 on 2026-11-13.
+No test launcher starts a reader: the containerized test stack keeps
+the relay off, and `tests/api_otp_smartcard.js` asserts it.
 
 ## What to check with a key
 
