@@ -1412,6 +1412,23 @@ function buildJobs() {
     env: {},
   });
 
+  // Every XACML 3.0 standard function and datatype, as a table of 482
+  // policies with the decision Appendix A gives each
+  // (xacml_function_cases.js): in node against the workbench, with each
+  // case also written as ALFA and read back; then the same table in the
+  // browser through the page's Import and Ask controls. Needs the client
+  // only, for the second.
+  jobs.push({
+    name: "XACML functions and datatypes (every case, in node)",
+    script: "xacml_functions_engine.js",
+    env: {},
+  });
+  jobs.push({
+    name: "XACML functions and datatypes (every case, through xacml.html)",
+    script: "xacml_functions_page.js",
+    env: {},
+  });
+
   // GNAP client instance. The signature checks need no network. The
   // live half must obtain a grant from iya-sts with each of httpsig,
   // jwsd and jws for the page's default sample (subject information),

@@ -3,8 +3,10 @@
 Covers `client/public/xacml.html`, `client/src/xacml.js`,
 `client/src/xacml_workbench.js`, `client/src/xacml_draw.js`,
 `client/src/xacml_runtime.js`, the engine under `client/src/xacml/`,
-`client/public/css/xacml.css`, `tests/xacml_engine.js` and
-`tests/xacml_page.js`.
+`client/public/css/xacml.css`, `tests/xacml_engine.js`,
+`tests/xacml_page.js`, and the function table with its two jobs
+(`tests/xacml_function_cases.js`, `tests/xacml_functions_engine.js`,
+`tests/xacml_functions_page.js`).
 
 The page is the XACML editor and the "Try a decision" tool from the
 iya-sts admin console, as a debugger workflow. It was added for
@@ -102,3 +104,51 @@ reports what the page showed.
 
 The page is ordinary browser JavaScript. It ships on the hosted sites.
 Its landing card is not greyed out.
+
+## Every function, against Appendix A
+
+`tests/xacml_function_cases.js` is a table of 482 policies, one
+function or datatype rule each, with the decision XACML 3.0 Appendix A
+and the datatypes' lexical rules give it: Permit when the function
+returned what the specification says, NotApplicable when it did not,
+Indeterminate for a processing error, and Refused for a policy the
+loader must not accept. The answers are read from the specification,
+never from this engine's output. `xacml_functions_engine.js` runs the
+table in node and writes every importable case out as ALFA and back;
+`xacml_functions_page.js` runs it through the page's Import and Ask
+controls. A function added to the registry with no case fails the node
+job.
+
+The table found these, all fixed on 2026-11-13:
+
+* `integer-add`, `double-add`, `integer-multiply` and `double-multiply`
+  took exactly two arguments. A.3.2 says each MUST accept two or more.
+* `string-regexp-match` and the five typed variants anchored every
+  pattern, as an XML Schema pattern facet does, and read `^` and `$` as
+  characters. A.3.13 says they are `xf:matches`, which SEARCHES and has
+  those anchors. **A policy that relied on the implicit anchoring now
+  matches more widely and needs `^...$`.**
+* Eight comparison functions (`yearMonthDuration-less-than` and the
+  rest, for both durations) were registered under the OASIS namespace.
+  A.3.6 and A.3.7 define comparisons for integer, double, string, time,
+  dateTime and date only, so a policy naming them now fails to load.
+* `map` took exactly one bag after its function. A.3.12 says n+1
+  arguments with the one bag in any position, and a function that
+  returns a primitive.
+* `string-from-anyURI`, `-x500Name`, `-rfc822Name`, `-ipAddress` and
+  `-dnsName` gave a canonical text. A.3.9 says the form originally
+  written, and the typed regexp-match functions are defined through it.
+* `ipAddress` dropped IPv6 brackets and the port range when written, and
+  never read a bracketed IPv6 mask. `dnsName` accepted any text without
+  whitespace. Both follow B.4 now: RFC 2396 hosts, RFC 2732 IPv6
+  references, and the SocketPermission port-range syntax.
+* `date` and `dateTime` accepted days that do not exist (2021-02-29),
+  hours past 24:00:00 and time zones beyond plus or minus 14:00.
+* The ALFA writer wrote a double spelt `2` bare, which reads back as an
+  integer, wrote `+09` which does not parse, and wrote a malformed
+  boolean as `false`. A literal is bare now only when the reader rebuilds
+  the same type and text, and `type("...")` otherwise.
+
+`double-equal(NaN, NaN)` is true here, which A.3.1's "according to
+IEEE 754" seems to contradict. XML Schema's value space has one NaN, and
+the OASIS conformance cases IIC350 and IIC358 expect Permit.

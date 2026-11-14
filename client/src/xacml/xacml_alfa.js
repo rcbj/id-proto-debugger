@@ -512,20 +512,30 @@ class AlfaLanguage {
             log.debug("Leaving AlfaLanguage.literalOf().");
             return self.quote(lexical);
         }
-        if (type === TYPE.BOOLEAN) {
+        // WRITTEN BARE ONLY WHEN THE READER REBUILDS THE SAME VALUE. The
+        // reader below types a bare number by its spelling — a `.` or an
+        // exponent makes it a double, otherwise an integer — and has no
+        // leading `+`; so a double spelt `2`, an integer spelt `+09`, and an
+        // integer literal that is not one (`1.5`) each take the cast form
+        // `double("2")`, which keeps both the type and the text. Until
+        // 2026-11-13 they were written bare, and came back as a different
+        // type or did not parse; and a boolean that was neither `true` nor
+        // `false` was written `false`, turning a malformed literal into a
+        // value. `INF` and `NaN` take the cast form as they always did.
+        if (type === TYPE.BOOLEAN &&
+            (lexical === 'true' || lexical === 'false')) {
             log.debug("Leaving AlfaLanguage.literalOf().");
-            return lexical === 'true' || lexical === '1' ? 'true' : 'false';
+            return lexical;
         }
-        if (type === TYPE.INTEGER || type === TYPE.DOUBLE) {
-            // Written bare only when it LOOKS like a number. A double of `INF`
-            // or
-            // `NaN` is a legal lexical form that is not a numeric literal in
-            // any
-            // language, so it takes the cast form and round-trips.
-            if (/^[+-]?(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(lexical)) {
-                log.debug("Leaving AlfaLanguage.literalOf().");
-                return lexical;
-            }
+        if (type === TYPE.INTEGER && /^\d+$/.test(lexical)) {
+            log.debug("Leaving AlfaLanguage.literalOf().");
+            return lexical;
+        }
+        if (type === TYPE.DOUBLE &&
+            /^(\d+(\.\d*)?|\.\d+)([eE][+-]?\d+)?$/.test(lexical) &&
+            /[.eE]/.test(lexical)) {
+            log.debug("Leaving AlfaLanguage.literalOf().");
+            return lexical;
         }
         const row = datatypes.typeOf(type);
         log.debug("Leaving AlfaLanguage.literalOf().");
