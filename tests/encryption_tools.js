@@ -54,7 +54,7 @@ var keyWait = Math.max(waitTime * 15, 60000);
 var cryptoWait = Math.max(waitTime * 4, 15000);
 
 const browserFlags = require("./browser_flags.js");
-const { loadPage } = require("./page_load.js");
+const { loadPage, loadUrl } = require("./page_load.js");
 const waitForContent = require("./wait_for.js");
 
 // ---------------------------------------------------------------------------
@@ -1331,11 +1331,43 @@ async function navigation(driver) {
       .getAttribute("href");
   assert.ok(fallback.indexOf("evil.example") === -1,
     "an unknown ?from= reached the return link's href: " + fallback);
-  assert.ok(fallback.indexOf("oauth2_oidc_1.html") !== -1,
-    "an unknown ?from= did not fall back to the debugger: " + fallback);
+  assert.ok(new URL(fallback).pathname === "/",
+    "an unknown ?from= did not fall back to the landing page: " + fallback);
+
+  // FROM THE LANDING CARD there is no ?from=, and the link used to lead into
+  // the OAuth workflow, somewhere the visitor had never been. It reads
+  // "Return to Home" and goes back to the landing page now, for both of the
+  // tool pages that have a card.
+  for (const page of ["encryption_tools.html", "digital_signature.html"]) {
+    await loadUrl(driver, baseUrl + "/", { timeout: waitTime * 6 });
+    const card = await driver.wait(until.elementLocated(
+      By.css("a.landing-card[href='/" + page + "']")), waitTime * 3,
+      "the landing page has no card for " + page);
+    await driver.executeScript(
+      "arguments[0].scrollIntoView({block:'center'});", card);
+    await card.click();
+    await driver.wait(until.urlContains(page), waitTime * 3,
+      "the landing card did not reach " + page);
+    await waitForContent.waitForPageBundle(driver,
+      "the " + page + " bundle never finished loading");
+    const back = await driver.findElement(By.id("return_link"));
+    const href = await back.getAttribute("href");
+    const text = (await back.getText()).trim();
+    assert.ok(new URL(href).pathname === "/",
+      "arriving at " + page + " from its landing card, the return link " +
+      "points at " + href + " rather than the landing page");
+    assert.ok(/Return to Home/.test(text),
+      "arriving at " + page + " from its landing card, the return link " +
+      "reads \"" + text + "\"");
+    await back.click();
+    await driver.wait(until.elementLocated(By.css("a.landing-card")),
+      waitTime * 3, "the return link on " + page + " did not reach the " +
+      "landing page");
+  }
   log.info("[navigation] OK — both Tools panes link here, the return link " +
-           "follows ?from=, and an unknown one falls back rather than being " +
-           "reflected.");
+           "follows ?from=, an unknown one falls back rather than being " +
+           "reflected, and arriving from either landing card it returns " +
+           "to Home.");
   log.debug("Leaving navigation().");
 }
 

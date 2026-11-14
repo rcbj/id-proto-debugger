@@ -1344,7 +1344,9 @@ function seedPanes() {
 
 window.onload = function () {
   log.debug("Entering onload().");
-  panes.setReturnLink(RETURN_TARGETS, '/oauth2_oidc_1.html');
+  // No ?from= is the landing card (or a typed URL): back to the landing
+  // page, which is where that visitor came from.
+  panes.setReturnLink(RETURN_TARGETS, '/', null, 'Home');
   seedPanes();
   panes.wireCollapsibleLegends();
   // Every pane starts collapsed: nine of them expanded is a page you scroll

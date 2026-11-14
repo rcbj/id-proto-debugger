@@ -2376,15 +2376,16 @@ function copyField(elementId) {
 // The pages that may send you here. A whitelist rather than a redirect — see
 // the note on setReturnLink() in tool_panes.js.
 var RETURN_TARGETS = {
-  'oauth2_oidc_1.html': { href: '/oauth2_oidc_1.html' },
-  'oauth2_oidc_2.html': { href: '/oauth2_oidc_2.html' },
+  'oauth2_oidc_1.html': { href: '/oauth2_oidc_1.html', label: 'debugger' },
+  'oauth2_oidc_2.html': { href: '/oauth2_oidc_2.html', label: 'debugger' },
   'encryption_tools.html': { href: '/encryption_tools.html',
                              label: 'Encryption / Decryption' }
 };
 
 function setReturnLink() {
   log.debug("Entering setReturnLink().");
-  panes.setReturnLink(RETURN_TARGETS, '/oauth2_oidc_1.html');
+  // No ?from= is the landing card (or a typed URL): back to the landing page.
+  panes.setReturnLink(RETURN_TARGETS, '/', null, 'Home');
   log.debug("Leaving setReturnLink().");
 }
 
