@@ -1224,6 +1224,10 @@ function readRows(app, label, apdus, body) {
   if (app === "oath" && /^9000$/.test(last.status || "") && !last.data) {
     summary = "no OATH accounts on this key (" + summary + ")";
   }
+  if (app === "hsm" && /^9000$/.test(last.status || "") && !last.data &&
+      apdus[apdus.length - 1].slice(2, 4) === "05") {
+    summary = "no YubiHSM Auth credentials on this key (" + summary + ")";
+  }
   // An OpenPGP key slot with nothing in it answers 6581 (a YubiKey) or 6A88
   // to the read of its public key — not a fault, an empty slot.
   if (app === "pgp" && /^(6581|6A88)$/i.test(last.status || "") &&
