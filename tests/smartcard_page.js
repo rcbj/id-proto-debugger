@@ -253,6 +253,174 @@ async function offlineForms(driver) {
   log.debug("Leaving offlineForms().");
 }
 
+// A RECORDED KEY. tests/smartcard_recorded.json holds the answers a real
+// YubiKey gave to every read plan and write on 2026-11-13 (serial scrubbed).
+// FAKE_RELAY, installed before the page's own scripts, stands in for the
+// api's /smartcard/* routes: a command gets its exact recorded answer, else
+// the answer recorded for its header (CLA INS P1 P2 — CALCULATE ALL carries
+// the time, so its data never repeats), else 9000 for a write and 6A82 for
+// a read; a sequence stops at the first status that is not 90xx/61xx, as the
+// relay does. So the page's success paths and every decoder run on real
+// data with no key. The PIV management-key handshake cannot be replayed —
+// its witness and challenge are random — so there the page must say the
+// key is wrong, and does.
+// RUNS IN THE BROWSER (built as a string): no bunyan.
+function fakeRelaySource(recorded) {
+  log.debug("Entering fakeRelaySource().");
+  const source = "(function () {" +
+    "var REC = " + JSON.stringify(recorded) + ";" +
+    "var WRITES = ['01','02','04','05','06','20','24','2c','44','47','87'," +
+    "  'da','db','e6','f6','fb','ff'];" +
+    "function answer(hex) {" +
+    "  hex = hex.toLowerCase();" +
+    "  return REC.exact[hex] || REC.header[hex.slice(0, 8)] ||" +
+    "    { status: WRITES.indexOf(hex.slice(2, 4)) >= 0 ? '9000' : '6a82'," +
+    "      data: '' };" +
+    "}" +
+    "function run(apdus) {" +
+    "  var results = [];" +
+    "  for (var i = 0; i < apdus.length; i++) {" +
+    "    var a = answer(apdus[i]);" +
+    "    results.push({ status: a.status, data: a.data, steps: [{" +
+    "      apdu: apdus[i], status: a.status, data: a.data }] });" +
+    "    if (!/^(90|61)/i.test(a.status)) { break; }" +
+    "  }" +
+    "  var last = results[results.length - 1];" +
+    "  return { status: last.status, data: last.data, steps: last.steps," +
+    "           results: results };" +
+    "}" +
+    "function reply(code, body) {" +
+    "  return Promise.resolve(new Response(JSON.stringify(body), {" +
+    "    status: code, headers: { 'Content-Type': 'application/json' } }));" +
+    "}" +
+    "var real = window.fetch;" +
+    "window.__relayCalls = 0;" +
+    "window.fetch = function (url, init) {" +
+    "  var u = String(url);" +
+    "  var m = /\\/smartcard\\/(.*)$/.exec(u);" +
+    "  if (!m) { return real.apply(this, arguments); }" +
+    "  window.__relayCalls++;" +
+    "  var body = {};" +
+    "  try { body = JSON.parse((init && init.body) || '{}'); } catch (e) {}" +
+    "  var route = m[1];" +
+    "  if (route === 'limits') { return reply(200, { enabled: true," +
+    "    available: true, reason: null, maxSequence: 16, hid: {" +
+    "    available: false, reason: 'recorded key: no HID' } }); }" +
+    "  if (route === 'readers') {" +
+    "    return reply(200, { readers: [REC.reader] }); }" +
+    "  if (route === 'transmit' || route === 'session/transmit') {" +
+    "    return reply(200, run(body.apdus || [body.apdu])); }" +
+    "  if (route === 'session') {" +
+    "    return reply(200, { id: '0123456789abcdef0123456789abcdef'," +
+    "                        idleMs: 60000 }); }" +
+    "  if (route === 'session/close') {" +
+    "    return reply(200, { closed: true }); }" +
+    "  if (route === 'otp/challenge') {" +
+    "    return reply(502, { error: 'recorded key: no HID' }); }" +
+    "  return reply(404, { error: 'not a recorded route: ' + route });" +
+    "};" +
+    "})();";
+  log.debug("Leaving fakeRelaySource().");
+  return source;
+}
+
+async function recordedKey(driver) {
+  log.debug("Entering recordedKey().");
+  const recorded = JSON.parse(require("fs").readFileSync(
+      require("path").join(__dirname, "smartcard_recorded.json"), "utf8"));
+  await driver.sendDevToolsCommand("Page.addScriptToEvaluateOnNewDocument",
+      { source: fakeRelaySource(recorded) +
+        "window.confirm = function () { return true; };" +
+        "window.__reset = '';" +
+        "window.prompt = function () { return window.__reset; };" +
+        "try { localStorage.setItem('smartcard_transport', 'api'); }" +
+        "catch (e) {}" });
+  await loadUrl(driver, baseUrl + "/smartcard.html");
+  await driver.wait(async function () {
+    return /sc-detect-ok/.test(await driver.executeScript(
+        "return document.getElementById('sc_detect').className;"));
+  }, waitTime * 4, "the recorded key was never detected");
+  const set = function (id, v) {
+    return "document.getElementById('" + id + "').value = " +
+        JSON.stringify(v) + ";";
+  };
+  // Every read plan, decoded from what the key said.
+  await act(driver, "smartcard.readFromKey('otp');", "sc_otp_out",
+      /Slot 2[\s\S]*programmed/, "the recorded OTP slots");
+  await act(driver, "smartcard.readFromKey('oath');", "sc_oath_out",
+      /IdpDebugger:totp@example\.com[\s\S]*IdpDebugger:hotp/,
+      "the recorded OATH accounts");
+  await act(driver, "smartcard.readFromKey('piv');", "sc_piv_out",
+      /12345678[\s\S]*CN=IdpDebugger PIV test[\s\S]*ML-DSA-87/,
+      "the recorded PIV serial, certificate and attestation");
+  await act(driver, "smartcard.readFromKey('pgp');", "sc_pgp_out",
+      /Debugger<<Capture|Ed25519/i, "the recorded OpenPGP card");
+  await act(driver, "smartcard.readFromKey('hsm');", "sc_hsm_out",
+      /debugger-capture/, "the recorded YubiHSM Auth credential");
+  // Writes the recording answers, each then read back.
+  await act(driver, set("sc_oath_add_uri", "") + set("sc_oath_add_secret",
+      "JBSWY3DPEHPK3PXP") + "smartcard.addOathAccount();", "sc_oath_out",
+      /IdpDebugger:totp/, "adding an OATH account");
+  await act(driver, set("sc_oath_del_name", "IdpDebugger:hotp") +
+      "smartcard.deleteOathAccount();", "sc_oath_out", /IdpDebugger/,
+      "deleting an OATH account");
+  await act(driver, set("sc_slot_number", "2") + set("sc_slot_type", "hmac") +
+      "smartcard.onSlotTypeChange(); smartcard.generateSlotSecrets();" +
+      "smartcard.programSlot();", "sc_otp_out", /Slot 2/,
+      "programming slot 2");
+  await act(driver, "smartcard.deleteSlot();", "sc_otp_out", /Slot/,
+      "deleting slot 2");
+  await act(driver, "smartcard.swapSlots();", "sc_otp_out", /Slot/,
+      "swapping the slots");
+  await act(driver, "smartcard.useHsmDefaultKey();" +
+      set("sc_hsm_add_label", "x") + set("sc_hsm_add_type", "derived") +
+      set("sc_hsm_add_derivation", "d") + set("sc_hsm_add_password", "p") +
+      "smartcard.addHsmCredential();", "sc_hsm_out", /debugger-capture/,
+      "adding a YubiHSM Auth credential");
+  await act(driver, set("sc_hsm_del_label", "x") +
+      "smartcard.deleteHsmCredential();", "sc_hsm_out", /credential/i,
+      "deleting a YubiHSM Auth credential");
+  await act(driver, "smartcard.useOpenPgpDefaultAdminPin();" +
+      set("sc_pgp_name", "Doe<<J") + "smartcard.pgpSaveCardholder();",
+      "sc_pgp_out", /Debugger|Ed25519|Application/i, "OpenPGP cardholder");
+  await act(driver, set("sc_pgp_gen_key", "sig") +
+      set("sc_pgp_gen_alg", "ed25519") + "smartcard.pgpGenerate();",
+      "sc_pgp_out", /Fingerprint[\s\S]*BEGIN PUBLIC KEY/,
+      "OpenPGP generation, fingerprint and public key");
+  await act(driver, "smartcard.pgpSetTouch();", "sc_pgp_out",
+      /Application|Ed25519|Debugger/i, "an OpenPGP touch policy");
+  await act(driver, set("sc_pgp_pin_old", "123456") +
+      set("sc_pgp_pin_new", "482915") + "smartcard.pgpChangePin('user');",
+      "sc_pgp_out", /Changed the PIN/, "an OpenPGP PIN change");
+  await act(driver, set("sc_piv_pin_old", "123456") +
+      set("sc_piv_pin_new", "482915") + "smartcard.pivPinWrite('pin');",
+      "sc_piv_out", /Change the PIV PIN/, "a PIV PIN change");
+  await act(driver, "smartcard.usePivDefaultKey(); smartcard.pivGenerate();",
+      "sc_piv_out", /management key is wrong/,
+      "a PIV write, whose handshake a recording cannot replay");
+  // Resets, PIV and OpenPGP through their blocking loops.
+  for (const [app, phrase] of [["oath", "RESET OATH"],
+                               ["hsm", "RESET YUBIHSM AUTH"],
+                               ["piv", "RESET PIV"],
+                               ["pgp", "RESET OPENPGP"],
+                               ["otp", "RESET OTP"]]) {
+    await act(driver, "window.__reset = " + JSON.stringify(phrase) + ";" +
+        "smartcard.resetApplication('" + app + "');", "sc_reset_out",
+        /factory state/, "resetting " + app);
+  }
+  // Challenge-response: no HID in the recording, so CCID, whose CALCULATE
+  // answer was not recorded and is refused as too short.
+  await act(driver, "document.getElementById('sc_hid_challenge').value =" +
+      " '0102030405'; smartcard.sendHid();", "sc_status",
+      /bytes|configured|HID|CCID/i, "challenge-response on a recording");
+  const calls = await driver.executeScript("return window.__relayCalls;");
+  assert.ok(calls > 30, "the page made only " + calls + " relay calls");
+  log.info("PASS  every read and write on a recorded YubiKey: real answers " +
+           "decoded, writes read back, resets through their loops (" + calls +
+           " relay calls, no key)");
+  log.debug("Leaving recordedKey().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
@@ -322,6 +490,7 @@ async function test() {
     assert.strictEqual(fit.sideways, false,
         "the page scrolls sideways");
     await offlineForms(driver);
+    await recordedKey(driver);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.stack || error.message);
