@@ -786,11 +786,11 @@ COPY tests/gnap_live.js tests/gnap_protocol.js tests/api_gnap.js \
 # a flat copy of that module. A second copy would make the job load
 # whichever file resolution order found.
 COPY tests/smartcard_engine.js tests/smartcard_page.js ./
-# The two api modules the engine job loads. They decide and do not
+# The three api modules the engine job loads. They decide and do not
 # pull axios. Flat, beside the test, because this image has no api
 # tree. Do not also flat-copy the client codecs: the job reads those
 # from the client/src tree staged above.
-COPY api/otp_verify.js api/smartcard_reader.js ./
+COPY api/otp_verify.js api/smartcard_reader.js api/otp_hid.js ./
 # The stateful hash-based signature job and its vendored vectors. Like
 # hash_engine.js it needs no flat copy of its subject — it loads
 # client/src/hbs.js out of the tree the three COPY lines above stage — but the
