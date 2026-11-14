@@ -533,6 +533,98 @@ async function everyOfferWorks(driver) {
   log.debug("Leaving everyOfferWorks().");
 }
 
+// ---------------------------------------------------------------------------
+// EVERY POLICY-COMBINING ALGORITHM, DECIDED BY THE PAGE.
+//
+// One PolicySet per algorithm, imported as XML: a policy for alice that
+// permits, one for bob that denies, and one for carol whose only rule needs
+// an attribute nobody sends (MustBePresent), so it is Indeterminate. dave
+// matches none. The expected answers are XACML 3.0 Appendix C's — including
+// the two legacy rows, where an error is Deny under deny-overrides and
+// Indeterminate (never Permit) under permit-overrides.
+// ---------------------------------------------------------------------------
+const XNS = "urn:oasis:names:tc:xacml:3.0:core:schema:wd-17";
+const SUBJ = "urn:oasis:names:tc:xacml:1.0:subject-category:access-subject";
+const COMBINER_ROWS = [
+  // [ identifier, alice, bob, carol, dave ]
+  ["urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:deny-overrides",
+   "Permit", "Deny", "Indeterminate", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:" +
+   "ordered-permit-overrides",
+   "Permit", "Deny", "Indeterminate", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:" +
+   "deny-unless-permit", "Permit", "Deny", "Deny", "Deny"],
+  ["urn:oasis:names:tc:xacml:3.0:policy-combining-algorithm:" +
+   "permit-unless-deny", "Permit", "Deny", "Permit", "Permit"],
+  ["urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:" +
+   "first-applicable", "Permit", "Deny", "Indeterminate", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:" +
+   "only-one-applicable", "Permit", "Deny", "Indeterminate", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:deny-overrides",
+   "Permit", "Deny", "Deny", "NotApplicable"],
+  ["urn:oasis:names:tc:xacml:1.0:policy-combining-algorithm:permit-overrides",
+   "Permit", "Deny", "Indeterminate", "NotApplicable"]
+];
+
+function combinerSetXml(id, alg) {
+  log.debug("Entering combinerSetXml().");
+  const sv = function (text) {
+    return '<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#' +
+      'string">' + text + "</AttributeValue>";
+  };
+  const des = function (attr, must) {
+    return '<AttributeDesignator Category="' + SUBJ + '" AttributeId="' +
+      attr + '" DataType="http://www.w3.org/2001/XMLSchema#string" ' +
+      'MustBePresent="' + must + '"/>';
+  };
+  const forWho = function (who) {
+    return "<Target><AnyOf><AllOf><Match MatchId=\"" + STRING_EQUAL +
+      "\">" + sv(who) +
+      des("urn:oasis:names:tc:xacml:1.0:subject:subject-id", "false") +
+      "</Match></AllOf></AnyOf></Target>";
+  };
+  const pol = function (pid, who, effect, condition) {
+    return '<Policy PolicyId="' + id + "-" + pid + '" Version="1.0" ' +
+      'RuleCombiningAlgId="urn:oasis:names:tc:xacml:3.0:rule-combining-' +
+      'algorithm:deny-overrides">' + forWho(who) + '<Rule RuleId="r" ' +
+      'Effect="' + effect + '"><Target/>' +
+      (condition ? "<Condition>" + condition + "</Condition>" : "") +
+      "</Rule></Policy>";
+  };
+  const needsClearance = '<Apply FunctionId="urn:oasis:names:tc:xacml:1.0:' +
+    'function:string-is-in">' + sv("secret") +
+    des("urn:example:clearance", "true") + "</Apply>";
+  log.debug("Leaving combinerSetXml().");
+  return '<PolicySet xmlns="' + XNS + '" PolicySetId="' + id +
+    '" Version="1.0" PolicyCombiningAlgId="' + alg + '"><Target/>' +
+    pol("alice", "alice", "Permit") + pol("bob", "bob", "Deny") +
+    pol("carol", "carol", "Permit", needsClearance) + "</PolicySet>";
+}
+
+async function everyCombinerDecides(driver) {
+  log.debug("Entering everyCombinerDecides().");
+  let asked = 0;
+  for (let i = 0; i < COMBINER_ROWS.length; i++) {
+    const row = COMBINER_ROWS[i];
+    const name = "combine" + i;
+    await setFields(driver, {
+      xacml_import_name: name,
+      xacml_import: combinerSetXml(name, row[0])
+    });
+    const shot = await press(driver, "Import");
+    assert.ok(!shot.statusWarn, row[0] + ": " + shot.status);
+    const who = ["alice", "bob", "carol", "dave"];
+    for (let j = 0; j < who.length; j++) {
+      const got = await decide(driver, who[j], name);
+      assert.strictEqual(got, row[j + 1], row[0] + " for " + who[j]);
+      asked += 1;
+    }
+  }
+  log.info("PASS  " + COMBINER_ROWS.length + " policy-combining algorithms " +
+           "decide as Appendix C says (" + asked + " decisions)");
+  log.debug("Leaving everyCombinerDecides().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
@@ -554,6 +646,7 @@ async function test() {
     await survivesAReload(driver);
     await policyRemoved(driver);
     await everyOfferWorks(driver);
+    await everyCombinerDecides(driver);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.stack || error.message);
