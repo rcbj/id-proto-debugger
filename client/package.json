@@ -1,6 +1,6 @@
 {
   "name": "id-proto-debugger-client",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "id-proto-debugger client service",
   "author": "Robert C. Broeckelmann Jr. <robert@iyasec.io>",
   "main": "server.js",
