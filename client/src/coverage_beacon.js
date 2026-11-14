@@ -85,12 +85,35 @@
     log.debug("Leaving shipCoverage().");
   }
   // Primary mechanism: periodic snapshot while the page is alive.
+  // AS THE PAGE GOES AWAY, sendBeacon rather than an XHR. A navigation
+  // CANCELS an XHR still in flight, so the last second of a page that was
+  // left by a click was being lost; sendBeacon is the one request a browser
+  // promises to deliver after the page is gone. Same body, same endpoint.
+  function shipCoverageOnExit() {
+    log.debug("Entering shipCoverageOnExit().");
+    try {
+      if (!window.__coverage__) {
+        log.debug("Leaving shipCoverageOnExit(). Nothing to send.");
+        return;
+      }
+      if (navigator.sendBeacon &&
+          navigator.sendBeacon("/coverage", new Blob(
+            [JSON.stringify(window.__coverage__)],
+            { type: "application/json" }))) {
+        log.debug("Leaving shipCoverageOnExit(). Beaconed.");
+        return;
+      }
+      shipCoverage();
+    } catch (e) {
+      log.debug("shipCoverageOnExit(): " + e);
+    }
+    log.debug("Leaving shipCoverageOnExit().");
+  }
   setInterval(shipCoverage, 1000);
-  // Best-effort extra snapshot as the page is being hidden/navigated away.
   document.addEventListener("visibilitychange", function () {
     if (document.visibilityState === "hidden") {
-      shipCoverage();
+      shipCoverageOnExit();
     }
   });
-  window.addEventListener("pagehide", shipCoverage);
+  window.addEventListener("pagehide", shipCoverageOnExit);
 })();

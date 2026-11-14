@@ -5386,8 +5386,13 @@ function runJob(job, index, live, again) {
     // configure it through that API, each with an HTTP helper of its own. The
     // shim is a no-op when STS_ADMIN_API_TOKEN is unset, which is every run
     // against a service that is not gated. See tools/attach-admin-token.js.
+    // The second sends the page's browser coverage before driver.quit()
+    // kills the browser, on COVERAGE=true runs only; it is a no-op on every
+    // other. See tools/flush-coverage-on-quit.js.
     const child = spawn("node", ["--require",
         path.join(TESTS_DIR, "tools", "attach-admin-token.js"),
+        "--require",
+        path.join(TESTS_DIR, "tools", "flush-coverage-on-quit.js"),
         path.join(TESTS_DIR, job.script), "--url",
         BASE_URL], {
       env: childEnv,
