@@ -49,7 +49,7 @@ function load(name) {
 }
 
 // The workbench installs the ALFA language instance the module forwards to.
-load("xacml_workbench.js");
+const workbench = load("xacml_workbench.js");
 const xml = load("xacml/xacml_xml.js");
 const json = load("xacml/xacml_json.js");
 const alfa = load("xacml/xacml_alfa.js");
@@ -267,11 +267,71 @@ function xmlReadersAndErrors() {
   log.debug("Leaving xmlReadersAndErrors().");
 }
 
+// The JSON Profile reader's refusals, each by name: a request it cannot
+// read is refused rather than decided as something else.
+function jsonRefusals() {
+  log.debug("Entering jsonRefusals().");
+  const bad = function (attribute) {
+    return JSON.stringify({ Request: { AccessSubject: {
+      Attribute: [attribute] } } });
+  };
+  const cases = [
+    [bad("not an object"), /must be an object/],
+    [bad({ Value: "x" }), /AttributeId/],
+    [bad({ AttributeId: SUBJECT_ID, Value: "x", DataType: "wibble" }),
+     /DataType|wibble/],
+    [bad({ AttributeId: SUBJECT_ID, Value: { nested: true } }),
+     /object|Value/],
+    [JSON.stringify({ Request: { AccessSubject: ["not an object"] } }),
+     /category must be an object/]
+  ];
+  cases.forEach(function (c) {
+    assert.throws(function () {
+      json.parseRequest(c[0]);
+    }, c[1], "refused: " + c[0]);
+  });
+  // An array Value is a bag, and an absent Category is no category.
+  const bag = json.parseRequest(JSON.stringify({ Request: {
+    AccessSubject: { Attribute: [{ AttributeId: AGE,
+      Value: [1, 2, 3] }] } } }));
+  assert.strictEqual(bag.categories[0].attributes[0].values.length, 3,
+    "an array Value is three values: " + JSON.stringify(bag));
+  log.info("OK — the JSON Profile reader refuses " + cases.length +
+           " malformed requests by name, and reads an array Value as a bag.");
+  log.debug("Leaving jsonRefusals().");
+}
+
+// The workbench's refusals: what a page shows when asked something it
+// cannot do, rather than an exception.
+function workbenchRefusals() {
+  log.debug("Entering workbenchRefusals().");
+  const bench = workbench.createWorkbench(workbench.memoryRepository());
+  const refused = function (got, pattern, what) {
+    assert.strictEqual(got.ok, false, what + " was accepted");
+    assert.ok(pattern.test(got.why), what + ": " + got.why);
+  };
+  refused(bench.createBlank("", "policy"), /needs a name/, "a blank name");
+  assert.strictEqual(bench.createBlank("one", "policy").ok, true);
+  refused(bench.createBlank("one", "policy"), /already/, "a taken name");
+  refused(bench.importText("x", ""), /Paste a policy/, "an empty import");
+  refused(bench.importText("x", "<Policy"), /well-formed/,
+          "a truncated XML import");
+  refused(bench.edit({ policy: "nobody", path: "", action: "add-rule" }),
+          /no policy called/, "an edit to a missing policy");
+  refused(bench.setRoot("nobody"), /no policy called/,
+          "a missing decision root");
+  log.info("OK — the workbench refuses blank and taken names, empty and " +
+           "malformed imports, and edits to policies that are not there.");
+  log.debug("Leaving workbenchRefusals().");
+}
+
 function main() {
   log.debug("Entering main().");
   alfaRoundTrip();
   jsonProfile();
   xmlReadersAndErrors();
+  jsonRefusals();
+  workbenchRefusals();
   log.info("xacml_formats: all checks passed.");
   log.debug("Leaving main().");
 }

@@ -625,6 +625,89 @@ async function everyCombinerDecides(driver) {
   log.debug("Leaving everyCombinerDecides().");
 }
 
+// ---------------------------------------------------------------------------
+// A PASTED REQUEST DOCUMENT, IN BOTH OF ITS LANGUAGES.
+//
+// The request box takes a whole JSON Profile request or an XACML XML one in
+// place of the form, so a decision can be asked exactly as a PEP would send
+// it. One policy set with an obligation on Permit and advice on Deny, asked
+// in JSON and in XML, and once with a document that does not parse.
+// ---------------------------------------------------------------------------
+async function askWithDocument(driver, requestText, policy) {
+  log.debug("Entering askWithDocument().");
+  await setFields(driver, {
+    xacml_subject: "", xacml_action: "", xacml_resource: "",
+    xacml_request: requestText, xacml_decide_policy: policy
+  });
+  await driver.executeScript(
+      "document.getElementById('xacml_decision').innerHTML = '';");
+  const error = await driver.executeScript(PRESS, "Ask");
+  assert.strictEqual(error, "", error);
+  const shot = await waitFor(driver, function (s) {
+    return s.decision.length > 0 || s.decisionText.trim().length > 0;
+  }, "a pasted request drew nothing");
+  log.debug("Leaving askWithDocument(). " + shot.decision);
+  return shot;
+}
+
+async function pastedRequestsDecide(driver) {
+  log.debug("Entering pastedRequestsDecide().");
+  const subjectId = "urn:oasis:names:tc:xacml:1.0:subject:subject-id";
+  const assign = function (id, text) {
+    return '<AttributeAssignmentExpression AttributeId="' + id + '">' +
+      '<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">' +
+      text + "</AttributeValue></AttributeAssignmentExpression>";
+  };
+  const policyXml = '<Policy xmlns="' + XNS + '" PolicyId="pasted" ' +
+    'Version="1.0" RuleCombiningAlgId="urn:oasis:names:tc:xacml:1.0:' +
+    'rule-combining-algorithm:first-applicable"><Target/>' +
+    '<Rule RuleId="alice" Effect="Permit"><Target><AnyOf><AllOf>' +
+    '<Match MatchId="' + STRING_EQUAL + '"><AttributeValue DataType="' +
+    'http://www.w3.org/2001/XMLSchema#string">alice</AttributeValue>' +
+    '<AttributeDesignator Category="' + SUBJ + '" AttributeId="' +
+    subjectId + '" DataType="http://www.w3.org/2001/XMLSchema#string" ' +
+    'MustBePresent="false"/></Match></AllOf></AnyOf></Target></Rule>' +
+    '<Rule RuleId="others" Effect="Deny"><Target/></Rule>' +
+    "<ObligationExpressions><ObligationExpression ObligationId=\"" +
+    "urn:sts:xacml:obligation:log\" FulfillOn=\"Permit\">" +
+    assign("urn:example:reason", "named") +
+    "</ObligationExpression></ObligationExpressions>" +
+    "<AdviceExpressions><AdviceExpression AdviceId=\"urn:example:why\" " +
+    "AppliesTo=\"Deny\">" + assign("urn:example:text", "not alice") +
+    "</AdviceExpression></AdviceExpressions></Policy>";
+  await setFields(driver, { xacml_import_name: "pasted",
+                            xacml_import: policyXml });
+  let shot = await press(driver, "Import");
+  assert.ok(!shot.statusWarn, shot.status);
+
+  const asJson = JSON.stringify({ Request: { ReturnPolicyIdList: true,
+    AccessSubject: { Attribute: [
+      { AttributeId: subjectId, Value: "alice" }] } } });
+  shot = await askWithDocument(driver, asJson, "pasted");
+  assert.strictEqual(shot.decision, "Permit",
+    "a JSON Profile request: " + shot.decisionText.slice(0, 300));
+
+  const asXml = '<Request xmlns="' + XNS + '" ReturnPolicyIdList="false" ' +
+    'CombinedDecision="false"><Attributes Category="' + SUBJ + '">' +
+    '<Attribute AttributeId="' + subjectId + '" IncludeInResult="true">' +
+    '<AttributeValue DataType="http://www.w3.org/2001/XMLSchema#string">' +
+    "bob</AttributeValue></Attribute></Attributes></Request>";
+  shot = await askWithDocument(driver, asXml, "pasted");
+  assert.strictEqual(shot.decision, "Deny",
+    "an XML request: " + shot.decisionText.slice(0, 300));
+
+  shot = await askWithDocument(driver, "<Request", "pasted");
+  assert.ok(shot.decision === "" || shot.decision === "Indeterminate",
+    "a request that does not parse is not decided as if it did: " +
+    shot.decision);
+  assert.ok(/well-formed|parse|syntax/i.test(shot.decisionText + shot.status),
+    "and the page says why: " + shot.decisionText.slice(0, 300));
+  await setFields(driver, { xacml_request: "" });
+  log.info("PASS  a pasted JSON Profile request and an XML request decide, " +
+           "and a malformed one is refused");
+  log.debug("Leaving pastedRequestsDecide().");
+}
+
 async function test() {
   log.debug("Entering test().");
   const options = new chrome.Options();
@@ -647,6 +730,7 @@ async function test() {
     await policyRemoved(driver);
     await everyOfferWorks(driver);
     await everyCombinerDecides(driver);
+    await pastedRequestsDecide(driver);
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.stack || error.message);
