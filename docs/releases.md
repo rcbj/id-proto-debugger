@@ -95,9 +95,14 @@ client and the embedded debugger and then, from `master` only:
 * **A GitHub release**, on the first `master` build of a line only:
   the tag `release-M.N.P` is created on that commit and never moved, and
   the release is titled "Release M.N.P" and marked Latest. Its notes
-  list every published image with its digest, the commit, and GitHub's
-  generated list of what was merged since the previous `release-*`
-  tag. A later build of the same line finds the release and leaves it
+  list every published image with its digest, the commit, and every
+  individual change since the previous `release-*` tag, one line each:
+  GitHub's generated list of merged pull requests, then each commit that
+  no feature pull request carried, under "Committed without a pull
+  request" (`.github/scripts/release-changes.sh`). GitHub's list alone
+  sees only pull requests, so a release whose work was committed straight
+  onto `develop` — 0.9.4 — showed nothing but its own promotion PR and a
+  compare link. A later build of the same line finds the release and leaves it
   alone; a new release is a new `VERSION`. The series runs back through
   `release-0.9.2`, `release-0.9.1`, `release-0.9` and `release-0.8`,
   which were made by hand; `release-0.9.3` was the first made by the

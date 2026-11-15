@@ -287,8 +287,12 @@ jobs:
        # release is a new VERSION.
        #
        # The notes are the published images with their digests, the build
-       # it was cut from, and GitHub's generated list of merged pull
-       # requests since the previous release-* tag. The job's token creates
+       # it was cut from, and one line per change since the previous
+       # release-* tag: GitHub's generated list of merged pull requests,
+       # then every commit no feature pull request carried
+       # (.github/scripts/release-changes.sh). GitHub's list alone said only
+       # "Release 0.9.4" for a release whose work was committed straight
+       # onto develop. The job's token creates
        # it, so it starts no other workflow. A failure here leaves the
        # images and tags published and the run red; a re-run makes it.
        # ---------------------------------------------------------------------
@@ -332,12 +336,10 @@ jobs:
              echo "Commit \`${SHA}\`; git tags \`${VERSION}\` and \`${tag}\`."
              echo ""
            } > "${notes}"
+           .github/scripts/release-changes.sh "${previous}" "${tag}" \
+             "${repo}" >> "${notes}"
            args=(--repo "${repo}" --verify-tag --latest
-                 --title "Release ${RELEASE}" --notes-file "${notes}"
-                 --generate-notes)
-           if [ -n "${previous}" ]; then
-             args+=(--notes-start-tag "${previous}")
-           fi
+                 --title "Release ${RELEASE}" --notes-file "${notes}")
            gh release create "${tag}" "${args[@]}"
            echo "Created release ${tag}${previous:+ (since ${previous})}."
            echo "GitHub release: \`${tag}\`${previous:+, since \`${previous}\`}." \
