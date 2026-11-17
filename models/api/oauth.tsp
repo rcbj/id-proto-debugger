@@ -47,10 +47,11 @@ namespace IdProtoDebugger.Api.OAuth;
 // ---------------------------------------------------------------------------
 
 /**
- * Whether to verify the far end's TLS certificate. Only a JSON `false`
- * turns verification off (outboundHttpsAgent() in api/server.js); the
- * page's radio buttons send the strings "true" and "false", and those are
- * accepted and both mean verify.
+ * Whether to verify the far end's TLS certificate. `false` or the string
+ * "false" turns verification off, and anything else leaves it on
+ * (verifiesCertificates() in api/ssl_validate.js). The page's radio
+ * buttons send the strings "true" and "false"; until #434 the string
+ * "false" verified anyway.
  */
 alias SslValidate = boolean | string | null;
 

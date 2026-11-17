@@ -38,6 +38,9 @@ const tlsProbeModule = require('./tls_probe.js');
 // a checkout and in the image alike, which is what api/Dockerfile's staging of
 // common/spiffe/ already established.
 const tlsListener = require('../common/tls_listener.js');
+// Whether a call verifies the far end's certificate, from the `sslValidate`
+// a page sent, which is text as often as it is a boolean (#434).
+const { verifiesCertificates } = require('./ssl_validate.js');
 
 // Constants
 const PORT = appconfig.port || 4000;
@@ -1750,8 +1753,7 @@ app.post('/wstrust', model.route('wstrustProxy'), function (req, res) {
   var action = b.action || '';
   // Default to validating TLS; only skip it when the caller explicitly opts
   // out.
-  var sslValidate = (b.sslValidate === false || b.sslValidate === 'false') ?
-      false : true;
+  var sslValidate = verifiesCertificates(b.sslValidate);
   // url and soap are both non-empty strings by the time this runs:
   // models/api/wstrust.tsp refuses either missing, empty or of another type
   // with the sentence this handler always answered ("url and soap are
@@ -1884,7 +1886,7 @@ app.post('/token', model.route('oauthToken'), (req, res) => {
           clientSecret).toString('base64');
     }
     var tokenEndpoint = body.token_endpoint;
-    var sslValidate = body.sslValidate; 
+    var sslValidate = verifiesCertificates(body.sslValidate);
     // The HTTP trace this call is to be shown with, if the caller asked for
     // one. Opt-in per call: it repeats the request verbatim, Authorization
     // header and all, so it is built for the caller that wants to read it and
@@ -2126,7 +2128,7 @@ app.post('/revoke', model.route('oauthRevoke'), (req, res) => {
     }
     const parameterString = parameters.join('&');
     var revocationEndpoint = body.revocation_endpoint;
-    var sslValidate = body.sslValidate;
+    var sslValidate = verifiesCertificates(body.sslValidate);
     log.debug("Making call to Revocation Endpoint.");
     log.debug("POST " + revocationEndpoint);
     log.debug("Headers: " + JSON.stringify(headers));
@@ -2246,7 +2248,7 @@ app.post('/tokenexchange', model.route('oauthTokenExchange'), (req, res) => {
     }
     const parameterString = parameters.join('&');
     var tokenEndpoint = body.token_endpoint;
-    var sslValidate = body.sslValidate;
+    var sslValidate = verifiesCertificates(body.sslValidate);
     // The HTTP trace this call is to be shown with, if the caller asked for
     // one. Opt-in per call, exactly as POST /token's is and for the same
     // reason: the trace repeats the request verbatim, Authorization header
@@ -2378,7 +2380,7 @@ app.post('/deviceauthorization', model.route('oauthDeviceAuthorization'),
     }
     const parameterString = parameters.join('&');
     var deviceAuthorizationEndpoint = body.device_authorization_endpoint;
-    var sslValidate = body.sslValidate;
+    var sslValidate = verifiesCertificates(body.sslValidate);
     log.debug("Making call to Device Authorization Endpoint.");
     log.debug("POST " + deviceAuthorizationEndpoint);
     log.debug("Headers: " + JSON.stringify(headers));
@@ -2453,7 +2455,7 @@ app.post('/register', model.route('oauthRegister'), (req, res) => {
     var method = (body.method || 'POST').toLowerCase();
     var url = body.url;
     var bearerToken = body.bearer_token;
-    var sslValidate = body.sslValidate;
+    var sslValidate = verifiesCertificates(body.sslValidate);
     // Client metadata is only sent on create (POST) and update (PUT).
     var payload = (method === 'post' || method === 'put') ?
         body.metadata : undefined;
@@ -2931,8 +2933,7 @@ app.post('/krb5/spnego', model.route('krb5Spnego'),
   log.debug('Entering POST /krb5/spnego.');
   var b = req.body || {};
   var url = b.url;
-  var sslValidate = (b.sslValidate === false || b.sslValidate === 'false') ?
-      false : true;
+  var sslValidate = verifiesCertificates(b.sslValidate);
   // url's presence, as a non-empty string, was held to models/api/krb5.tsp
   // by model.route() with the sentence this handler used to answer. Its
   // scheme is a value, and stays here.
@@ -4138,7 +4139,7 @@ app.post('/spiffe/bundle', model.route('spiffeBundle'),
     validateStatus: function () {
       return true; },
     httpAgent: outboundHttpAgent(),
-    httpsAgent: outboundHttpsAgent(body.sslValidate),
+    httpsAgent: outboundHttpsAgent(verifiesCertificates(body.sslValidate)),
     headers: sentHeaders
   })
     .then(function (response) {
