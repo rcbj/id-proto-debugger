@@ -3895,8 +3895,9 @@ function buildJobs() {
 
   // Every Data Integrity cryptosuite and legacy Linked Data proof type an
   // ldp_vc arrives with (client/src/data_integrity.js, #475), in both
-  // directions against Digital Bazaar's, Gaia-X's and Blockcerts' released
-  // implementations, with two byte-for-byte vectors. Needs nothing.
+  // directions against Digital Bazaar's and Blockcerts' released
+  // implementations and jose, with two byte-for-byte vectors. Needs
+  // nothing.
   jobs.push({
     name: "Data Integrity proofs (eddsa/ecdsa rdfc and jcs, Ed25519 " +
         "2018/2020, JWS 2020, secp256k1 2019; cross-implementation, in node)",

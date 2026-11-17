@@ -12,9 +12,14 @@
 //   ecdsa-rdfc-2019, ecdsa-jcs-2019       @digitalbazaar/data-integrity and
 //     (P-256 and P-384)                   jsonld-signatures
 //   Ed25519Signature2020 / 2018           @digitalbazaar/ed25519-signature-*
-//   JsonWebSignature2020                  @gaia-x/json-web-signature-2020
-//     (EdDSA, ES256K, ES256, ES384,       (jose underneath)
-//      PS256)
+//   JsonWebSignature2020                  assembled from mainstream parts:
+//     (EdDSA, ES256, ES384, ES512,        `jose` for the RFC 7797 detached
+//      PS256, RS256; ES256K)              JWS, node's crypto (OpenSSL) for
+//                                         ES256K, which jose 6 lacks, and
+//                                         jsonld for RDFC-1.0. No released
+//                                         implementation of the whole suite
+//                                         is usable (Transmute's has no
+//                                         working release).
 //   EcdsaSecp256k1Signature2019           @blockcerts/ecdsa-secp256k1-
 //                                         signature-2019's own test vector
 //
@@ -358,41 +363,129 @@ async function secp256k1Vector() {
   log.debug("Leaving secp256k1Vector().");
 }
 
+// JsonWebSignature2020 (W3C CCG): RDFC-1.0 of the proof options (under the
+// document's @context, without `jws`) and of the document, SHA-256 of each,
+// concatenated, and signed as an RFC 7797 detached JWS with "b64": false.
+// The canonicalization is jsonld's, the hashes node's, and the JWS jose's —
+// or node's own ECDSA for ES256K, which jose 6 (Web Crypto) does not do.
+async function jws2020VerifyData(doc, proof) {
+  log.debug("Entering jws2020VerifyData().");
+  var jsonld = require("jsonld");
+  var options = Object.assign({ "@context": doc["@context"] }, proof);
+  delete options.jws;
+  var unsecured = Object.assign({}, doc);
+  delete unsecured.proof;
+  var canon = function (d) {
+    log.debug("Entering canon().");
+    log.debug("Leaving canon().");
+    return jsonld.canonize(d, { algorithm: "RDFC-1.0", format:
+      "application/n-quads", base: null, safe: true,
+      documentLoader: loader });
+  };
+  var texts = await Promise.all([canon(options), canon(unsecured)]);
+  var sha = function (t) {
+    log.debug("Entering sha().");
+    log.debug("Leaving sha().");
+    return nodeCrypto.createHash("sha256").update(t, "utf8").digest();
+  };
+  log.debug("Leaving jws2020VerifyData().");
+  return new Uint8Array(Buffer.concat([sha(texts[0]), sha(texts[1])]));
+}
+
+function JWS_HEADER(alg) {
+  log.debug("Entering JWS_HEADER().");
+  log.debug("Leaving JWS_HEADER().");
+  return { alg: alg, b64: false, crit: ["b64"] };
+}
+
+// Sign the verify data as a detached JWS: jose's FlattenedSign, or node's
+// crypto for ES256K.
+async function jws2020Sign(jose, alg, keys, data) {
+  log.debug("Entering jws2020Sign(). " + alg);
+  if (alg === "ES256K") {
+    var head = Buffer.from(JSON.stringify(JWS_HEADER(alg)))
+      .toString("base64url");
+    var sig = nodeCrypto.sign("sha256", Buffer.concat([
+      Buffer.from(head + "."), Buffer.from(data)]),
+      { key: keys.privateKey, dsaEncoding: "ieee-p1363" });
+    log.debug("Leaving jws2020Sign(). node.");
+    return head + ".." + sig.toString("base64url");
+  }
+  var flat = await new jose.FlattenedSign(data)
+    .setProtectedHeader(JWS_HEADER(alg)).sign(keys.privateKey);
+  log.debug("Leaving jws2020Sign(). jose.");
+  return flat.protected + ".." + flat.signature;
+}
+
+async function jws2020Verify(jose, alg, keys, data, jws) {
+  log.debug("Entering jws2020Verify(). " + alg);
+  var parts = String(jws).split(".");
+  if (alg === "ES256K") {
+    var ok = nodeCrypto.verify("sha256", Buffer.concat([
+      Buffer.from(parts[0] + "."), Buffer.from(data)]),
+      { key: keys.publicKey, dsaEncoding: "ieee-p1363" },
+      Buffer.from(parts[2], "base64url"));
+    log.debug("Leaving jws2020Verify(). node " + ok);
+    return ok;
+  }
+  try {
+    var r = await jose.flattenedVerify({ protected: parts[0], payload: data,
+      signature: parts[2] }, keys.publicKey);
+    log.debug("Leaving jws2020Verify(). jose.");
+    return r.protectedHeader.alg === alg && r.protectedHeader.b64 === false;
+  } catch (e) {
+    log.debug("Leaving jws2020Verify(). jose refused: " + e.message);
+    return false;
+  }
+}
+
 async function jsonWebSignature2020() {
   log.debug("Entering jsonWebSignature2020().");
-  var gx = require("@gaia-x/json-web-signature-2020");
-  var jose = require(require.resolve("jose", { paths: [path.dirname(
-    require.resolve("@gaia-x/json-web-signature-2020"))] }));
-  var didDocs = {};
-  var didResolver = { resolve: async function (did) {
-    return didDocs[did];
-  } };
-  var algs = [["EdDSA", "Ed25519"], ["ES256K", "ES256K"], ["ES256", "ES256"],
-              ["ES384", "ES384"], ["PS256", "PS256"]];
-  for (const [alg, gen] of algs) {
-    var pair = await jose.generateKeyPair(gen, { extractable: true });
-    var priv = await jose.exportJWK(pair.privateKey);
-    var pub = await jose.exportJWK(pair.publicKey);
-    var did = "did:web:jws-" + alg.toLowerCase() + ".example.com";
-    var vm = did + "#key-1";
-    didDocs[did] = { id: did, verificationMethod: [{ id: vm,
-      type: "JsonWebKey2020", controller: did, publicKeyJwk: pub }],
-      assertionMethod: [vm] };
+  var jose = await import("jose");
+  var algs = ["EdDSA", "ES256", "ES384", "ES512", "PS256", "RS256",
+              "ES256K"];
+  for (const alg of algs) {
+    var keys;
+    var priv;
+    var pub;
+    if (alg === "ES256K") {
+      var pair = nodeCrypto.generateKeyPairSync("ec",
+        { namedCurve: "secp256k1" });
+      keys = pair;
+      priv = pair.privateKey.export({ format: "jwk" });
+      pub = pair.publicKey.export({ format: "jwk" });
+    } else {
+      keys = await jose.generateKeyPair(alg === "EdDSA" ? "Ed25519" : alg,
+                                        { extractable: true });
+      priv = await jose.exportJWK(keys.privateKey);
+      pub = await jose.exportJWK(keys.publicKey);
+    }
+    var vm = CONTROLLER + "#jws-" + alg.toLowerCase();
     jwks[vm] = pub;
-    var doc = credential(false, did);
+    var doc = credential(false);
     doc["@context"].push("https://w3id.org/security/suites/jws-2020/v1");
     var label = "JsonWebSignature2020 " + alg;
-    var theirs = await new gx.JsonWebSignature2020Signer({
-      privateKey: pair.privateKey, privateKeyAlg: alg,
-      verificationMethod: vm, documentLoader: loader }).sign(doc);
+
+    var proof = { type: "JsonWebSignature2020",
+                  created: "2026-11-17T00:00:00Z", verificationMethod: vm,
+                  proofPurpose: "assertionMethod" };
+    proof.jws = await jws2020Sign(jose, alg, keys,
+                                  await jws2020VerifyData(doc, proof));
+    var theirs = Object.assign({}, doc, { proof: proof });
     var r = await di.verifyProof(theirs, { resolveKey: resolveKey });
     assert.ok(r.valid, label + ": theirs must verify here: " + r.reason);
     assert.ok(!(await di.verifyProof(tampered(theirs),
       { resolveKey: resolveKey })).valid, label + ": tampered theirs fails");
+
     var mine = await di.createProof(doc, { suite: "JsonWebSignature2020",
       privateJwk: priv, verificationMethod: vm, jwsAlg: alg });
-    await new gx.JsonWebSignature2020Verifier({ didResolver: didResolver,
-      documentLoader: loader }).verify(mine);
+    var data = await jws2020VerifyData(mine, mine.proof);
+    assert.ok(await jws2020Verify(jose, alg, keys, data, mine.proof.jws),
+              label + ": ours must verify there");
+    var otherData = await jws2020VerifyData(tampered(mine), mine.proof);
+    assert.ok(!(await jws2020Verify(jose, alg, keys, otherData,
+              mine.proof.jws)), label + ": ours over a tampered document " +
+              "must fail there");
     log.info("PASS " + label + ": both directions, tamper rejected.");
   }
   log.debug("Leaving jsonWebSignature2020().");

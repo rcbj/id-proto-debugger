@@ -76,5 +76,5 @@ Issuance step 3 and presentation step 3 verify both proofs with
 
 | Test | What it checks |
 |---|---|
-| `tests/data_integrity_engine.js` | Both directions against released Digital Bazaar, Gaia-X and Blockcerts implementations. Includes two byte-for-byte vectors: Digital Bazaar's `eddsa-rdfc-2022` README example and Blockcerts' `EcdsaSecp256k1Signature2019` test. |
+| `tests/data_integrity_engine.js` | Both directions against released Digital Bazaar and Blockcerts implementations, and JsonWebSignature2020 against `jose` (and node's crypto for ES256K) over `jsonld`'s RDFC-1.0. Includes two byte-for-byte vectors: Digital Bazaar's `eddsa-rdfc-2022` README example and Blockcerts' `EcdsaSecp256k1Signature2019` test. |
 | `tests/data_integrity_iyasts.js` | Both directions against iya-sts's own `vc_data_integrity.js`, loaded from its image, plus the wallet's holder VP through iya-sts's Verifier. |

@@ -400,7 +400,7 @@ COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
 COPY tests/vp_verifier_engine.js ./
 # The Data Integrity and Linked Data proof engine (client/src/
 # data_integrity.js, read from /usr/src/source-tree), held to Digital
-# Bazaar's, Gaia-X's and Blockcerts' released implementations (#475).
+# Bazaar's and Blockcerts' released implementations and to jose (#475).
 COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
