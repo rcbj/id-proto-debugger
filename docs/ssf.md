@@ -420,12 +420,13 @@ all followed by the mock since the 2026-09 bump:
 * **The verification endpoint's 204 means QUEUED** (section 8.1.4.2). Delivery
   is asynchronous, so on a push stream the event arrives after the answer, and
   a check made the instant the request returns is a check of the scheduler.
-* **The mock's own receiver (`POST /ssf/receive`, the roles reversed) checks
-  what a receiver must**: the explicit `typ`, the issuer (section 4.1.6) and
-  the audience (RFC 8417 section 2.2). Its audience defaults to that endpoint's
-  own URL and its issuers to the mock's own transmitter, so this page, acting
-  as a foreign transmitter, addresses `…/ssf/receive` and has its `iss` added
-  to `ssf.receiveIssuers` for the run.
+* **iya-sts as a RECEIVER checks what a receiver must**: the explicit `typ`,
+  the issuer (section 4.1.6), the audience (RFC 8417 section 2.2), a `jti`
+  seen once, and the signature against the sender's `jwks_uri`. Its old
+  `POST /ssf/receive` is gone (iya-sts #593); it receives a third party's
+  signals through a federation relationship, which treats the sender as a
+  full transmitter. This page is one through the api's hosted transmitter —
+  see *The other way round* below.
 
 ---
 
@@ -541,6 +542,66 @@ is. When no metadata or no stream audience is known, the page says the
 assuming one poll drains the queue. The page lifts it out and says so.
 
 ---
+
+## The other way round: a transmitter a receiver can discover (#363)
+
+"Push it" in the Transmit pane sends one SET to an endpoint somebody gave the
+page. A receiver that treats its partner as a **full SSF 1.0 transmitter**
+wants more, and every part of it is a request to a SERVER: it fetches the
+transmitter's configuration metadata (`/.well-known/ssf-configuration`
+followed by the issuer's path, section 7) and its `jwks_uri`, creates its
+stream AT the transmitter's `configuration_endpoint` with a bearer token
+(section 8.1.1), may change its status, add subjects or ask for a
+verification event, and for RFC 8936 POLLS. A page cannot answer any of that,
+for the same reason it cannot be pushed to.
+
+So the api hosts a transmitter on the page's behalf (`api/ssf_transmitter.js`,
+"Host a transmitter" in the Transmit pane). The page hands it the PUBLIC half
+of its signing key; the api publishes it, answers the stream management API
+and the poll endpoint, and **the page still signs every SET** — with the
+stream's own `aud` and the hosted issuer — and hands it to the api to push
+(with the `authorization_header` the receiver gave) or queue.
+
+| Route | Who calls it | Authorized by |
+|---|---|---|
+| `POST /ssf/transmitter`, `GET`/`DELETE /ssf/transmitter/{id}`, `POST …/deliver` | the page | the **owner key**, returned at creation, held in page memory only |
+| `GET /.well-known/ssf-configuration/ssf/transmitter/{id}`, `GET …/jwks` | the receiver | nothing: discovery comes before a stream |
+| `…/stream` (POST, GET, PATCH, PUT, DELETE), `…/status`, `…/subjects/add`, `…/subjects/remove`, `…/verify`, `POST …/poll/{stream}` | the receiver | the **receiver credential** (RFC 6750), generated unless the page gives one |
+
+Things worth knowing:
+
+* **The issuer is the api's address as the page reached it**, fixed at
+  creation, for the same reason the inbox's delivery endpoint is: the receiver
+  has to be able to reach it.
+* **Discovery puts the well-known path first**, so the metadata for issuer
+  `https://api:4000/ssf/transmitter/X` is at
+  `https://api:4000/.well-known/ssf-configuration/ssf/transmitter/X`. Behind
+  the embedding proxy that path is outside the api's prefix and is not
+  served; the embedded deployment can host a transmitter but a receiver
+  cannot discover it there.
+* **`aud` is Transmitter-Supplied**: each stream's is the issuer plus
+  `/streams/{stream_id}`, and every SET on it must carry it.
+* **What does not match the stream is a finding, not a refusal.** A SET with
+  the wrong `iss` or `aud`, or an event type outside `events_delivered`, is
+  delivered anyway and the page is told why a receiver may drop it — sending
+  what a receiver should refuse is how a receiver is tested.
+* **Paused holds, disabled drops** (section 8.1.2). Enabling a paused push
+  stream releases what it held, in order.
+* **A verification request is the page's to answer**: the api answers 204
+  (queued) and lists it as pending; "Answer verification" signs a
+  verification event with the receiver's `state` and sends it.
+* **The receiver's push secret is never handed back**, to the receiver or the
+  page; the page sees only that one is set.
+* Bounds as for the inbox: `ssfTransmitterEnabled`, two lifetimes, per-process
+  and per-caller counts, streams per transmitter, queued SETs per poll stream,
+  and a size cap per SET. In memory, gone with the process.
+
+`tests/api_ssf.js` drives the whole lifecycle over HTTP with the api's own
+inbox as the receiver; `tests/ssf_protocol.js` section 7 has **iya-sts** as
+the receiver — two signals-only federation relationships (push and poll) that
+discover the hosted transmitter, create their streams there, and record every
+SET this side signed as verified, plus a verification request answered by the
+page; `tests/ssf_page.js` drives the page's buttons.
 
 ## Push delivery crosses TLS now, and the mock had to be told
 
@@ -824,8 +885,8 @@ has to say why.
 | File | Needs | What only it can see |
 |---|---|---|
 | `tests/ssf_engine.js` | nothing | Every rule, against the specifications' own text. All eight subject formats and every refusal, the SET envelope signed with every algorithm family including the post-quantum ones, stream configurations, both deliveries, the vocabulary table, the two histories, and every bound on the api's two modules. Never skips. |
-| `tests/ssf_protocol.js` | a transmitter | One grammar against another over the wire. The whole stream lifecycle, every subject format the mock's own reader accepts, what a pause keeps that a disable drops, poll and push end to end — it hosts an RFC 8935 listener of its own — and both deliberate defects. |
-| `tests/api_ssf.js` | the api | The wiring: the body parser for `application/secevent+jwt` (without which every push reads as an empty body), the three outcomes as HTTP statuses, the address policy still covering this endpoint, and the push receiver. |
+| `tests/ssf_protocol.js` | a transmitter | One grammar against another over the wire. The whole stream lifecycle, every subject format the mock's own reader accepts, what a pause keeps that a disable drops, poll and push end to end — it hosts an RFC 8935 listener of its own — the api's hosted transmitter with iya-sts as its receiver (section 7, where there is an api), and both deliberate defects. |
+| `tests/api_ssf.js` | the api | The wiring: the body parser for `application/secevent+jwt` (without which every push reads as an empty body), the three outcomes as HTTP statuses, the address policy still covering this endpoint, the push receiver, and the hosted transmitter's whole lifecycle driven by a receiver over HTTP. |
 | `tests/ssf_page.js` | a browser | That the bundle ran at all, the `callPath` row, both histories, the extended hand-off, the `ssf-` classes, a clean console — and, since 2026-09-01, the pane collapse, where `baseUrl` came from, and that the hand-off asks for `ssf.read` and `ssf.manage` in both pages' scope fields without losing the reader's own. |
 
 **The page's chrome is asserted rather than eyeballed**, and the two sections
@@ -870,6 +931,9 @@ would report a bad signature as its own failure.
 | `ssfReceiverEnabled` | Whether this api hosts a push inbox. Only an explicit `false` turns it off. |
 | `ssfReceiverTtlMs` | How long an inbox lives. |
 | `ssfReceiverMaxInboxes`, `ssfReceiverMaxEvents`, `ssfReceiverMaxEventBytes` | The three caps. |
+| `ssfTransmitterEnabled` | Whether this api hosts transmitters (#363). Only an explicit `false` turns it off. |
+| `ssfTransmitterTtlMs`, `ssfTransmitterIdleTtlMs` | How long one lives, and lives unused. Each is the default and the ceiling for one transmitter. |
+| `ssfTransmitterMaxInstances`, `ssfTransmitterMaxInstancesPerCaller`, `ssfTransmitterMaxStreams`, `ssfTransmitterMaxQueued`, `ssfTransmitterMaxEventBytes` | The caps: transmitters in all and per caller, streams per transmitter, SETs queued per poll stream, and the size of one SET. |
 
 There is deliberately **no `ssfAllowedPorts`**, for the reason there is no
 `scimAllowedPorts`: SSF is HTTP, and a port allowlist for HTTP would have to

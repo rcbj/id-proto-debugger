@@ -44,8 +44,9 @@
 //      stream-updated event that goes with the change
 //   6. delivery — poll end to end, the verification event, ack and setErrs,
 //      and push against an endpoint this test hosts itself
-//   7. the roles reversed — this test as the TRANSMITTER, pushing a signed
-//      SET at the mock, including one signed POST-QUANTUM
+//   7. the roles reversed — the api's hosted transmitter (#363), discovered
+//      and streamed by iya-sts as a federation partner, push and poll, with
+//      this test signing as the page does
 //   8. the deliberate defects — a broken signature and a legacy `sub`
 // ---------------------------------------------------------------------------
 
@@ -116,6 +117,13 @@ const BASIC = 'Basic ' + Buffer.from('ssf-protocol-runner:pw')
 // CAEP transmitter here", and it SKIPPED and reported PASS — thirty-odd
 // checks not run, green, on every run since the bump.
 const adminApiToken = require("./tools/attach-admin-token.js");
+// The federation relationship that makes iya-sts the hosted transmitter's
+// receiver (section 7) is created through its management API.
+const fedAdmin = require("./federation_admin.js");
+// The api, for section 7. Empty on a target with none (a static site).
+const hostedApiUrl = process.env.SSF_HOSTED_API_URL || '';
+const hostedMade = [];
+const hostedRelationships = [];
 
 let checks = 0;
 let skips = [];
@@ -1112,19 +1120,219 @@ function stopReceiver() {
 }
 
 // ---------------------------------------------------------------------------
-// 7. THE ROLES REVERSED — GONE UNTIL #363.
+// 7. THE ROLES REVERSED — THE api'S HOSTED TRANSMITTER, AND iya-sts AS ITS
+//    RECEIVER (#363).
 //
-// This section signed SETs here and pushed them AT iya-sts's `/ssf/receive`,
-// with its issuer accepted for the run through `ssf.receiveIssuers`, and
-// asserted what a receiver must refuse. iya-sts #593 deleted that endpoint
-// and the setting: its receiver for a third party's signals is now a
-// federation relationship, which treats the sender as a full SSF transmitter
-// (discovery, a stream created AT the sender, a push secret, verification
-// against the sender's JWKS). Nothing here is one yet — that is
-// rcbj/id-proto-debugger#363, and this section moves onto it when it lands.
-// The api's own push inbox, the interim target the page jobs use, is
-// `api_ssf.js`'s subject already, so repeating it here would add nothing.
+// iya-sts receives a third party's signals through a federation
+// relationship, and treats the sender as a full SSF 1.0 transmitter: it
+// DISCOVERS it (`/.well-known/ssf-configuration` + the issuer's path, and
+// the `jwks_uri`), CREATES ITS STREAM at the sender's configuration
+// endpoint with a bearer token, hands it a push endpoint and secret, and
+// verifies every SET — `typ`, `iss`, `aud`, `jti`, and the signature against
+// the sender's keys. A page cannot be that sender; the api hosts one for
+// it (api/ssf_transmitter.js) and this test plays the page: it signs.
+//
+// What is asserted is iya-sts's own account, read from its management API:
+// each SET this side signed arrived, VERIFIED, and was not refused — by
+// push, by poll, and as the answer to a verification request iya-sts made.
+//
+// It runs in a realm of its own, because iya-sts has to be told to trust the
+// api's certificate for its outbound calls (`trustPartnerTls()`), and that
+// is a realm setting. Only on a target with an api: a static site has none,
+// and SSF_HOSTED_API_URL is then empty.
 // ---------------------------------------------------------------------------
+const HOSTED_REALM = 'ssf-hosted-transmitter';
+
+async function theHostedTransmitterIsReceivedByIyaSts() {
+  log.info("[hosted] The api's hosted transmitter, discovered and streamed " +
+      "by iya-sts as a federation partner; this test signs.");
+  if (!hostedApiUrl) {
+    skip('the hosted transmitter', 'this target has no api ' +
+        '(SSF_HOSTED_API_URL is empty), and a page cannot be the server a ' +
+        'receiver discovers.');
+    log.info("[hosted] SKIPPED.");
+    return;
+  }
+  const realmBase = stsUrl + '/realm/' + HOSTED_REALM;
+  const realms = await fedAdmin.adminGet(stsUrl, '/realms');
+  if ((realms.realms || []).map(function (r) {
+    return r.id;
+  }).indexOf(HOSTED_REALM) < 0) {
+    await fedAdmin.must(stsUrl, '/realms/create', { id: HOSTED_REALM,
+      name: HOSTED_REALM }, 'creating the ' + HOSTED_REALM + ' realm');
+  }
+  await fedAdmin.trustPartnerTls(realmBase, HOSTED_REALM,
+      'it discovers the api\'s hosted transmitter and creates its stream ' +
+      'there');
+
+  const alg = 'ES256';
+  const pair = jws.generateKey(alg);
+  const priv = jws.privateJwk(alg, pair.privateKey, pair.publicKey);
+  const pub = Object.assign(jws.publicJwk(alg, pair.publicKey),
+                            { kid: 'hosted-1', use: 'sig', alg: alg });
+  const caep = events.CAEP_PREFIX + 'session-revoked';
+  const risc = events.RISC_PREFIX + 'account-disabled';
+  const made = await call('POST', hostedApiUrl + '/ssf/transmitter', {
+    label: 'ssf_protocol.js', jwks: { keys: [pub] },
+    eventsSupported: [caep, risc] }, { anonymous: true });
+  assert.strictEqual(made.status, 200, 'the api would not host a ' +
+      'transmitter: ' + made.status + ' ' + made.text);
+  const t = made.body.transmitter;
+  hostedMade.push({ id: t.id, ownerKey: made.body.ownerKey });
+  const owner = { anonymous: true,
+    headers: { Authorization: 'Bearer ' + made.body.ownerKey } };
+
+  // Two signals-only relationships naming the api's transmitter: one push,
+  // one poll. The bearer is the receiver credential the api generated.
+  const relationships = [
+    { id: 'ssf-hosted-push', delivery: 'push' },
+    { id: 'ssf-hosted-poll', delivery: 'poll' }
+  ];
+  for (const rel of relationships) {
+    await fedAdmin.tidy(realmBase, '/federation/delete', { id: rel.id },
+        'removing ' + rel.id + ' from an earlier run');
+    hostedRelationships.push({ base: realmBase, id: rel.id });
+    await fedAdmin.must(realmBase, '/federation/create', { id: rel.id,
+      role: 'service-provider', protocol: 'ssf', name: rel.id,
+      peer: t.issuer }, 'registering ' + rel.id);
+    for (const [field, value] of [
+      ['fedSignalsBearer', made.body.receiverCredential],
+      ['fedSignalsDelivery', rel.delivery]]) {
+      await fedAdmin.must(realmBase, '/federation/set',
+        { id: rel.id, field: field, value: value },
+        'setting ' + field + ' on ' + rel.id);
+    }
+    await fedAdmin.must(realmBase, '/federation/enable', { id: rel.id },
+        'enabling ' + rel.id);
+    const discovered = await fedAdmin.adminPost(realmBase,
+      '/federation/signals-discover', { id: rel.id });
+    check('iya-sts DISCOVERS the hosted transmitter for ' + rel.id +
+      ' (section 7: the well-known path, the issuer and the jwks_uri)',
+      function () {
+        assert.ok(discovered.ok, JSON.stringify(discovered));
+      });
+    const streamed = await fedAdmin.adminPost(realmBase,
+      '/federation/signals-create-stream', { id: rel.id });
+    check('iya-sts CREATES ITS ' + rel.delivery.toUpperCase() + ' STREAM at ' +
+      'the hosted transmitter with its bearer token', function () {
+        assert.ok(streamed.ok, JSON.stringify(streamed));
+      });
+  }
+  const view = await call('GET', hostedApiUrl + '/ssf/transmitter/' + t.id,
+                          null, owner);
+  const streams = view.body.transmitter.streams;
+  const pushStream = streams.filter(function (s) {
+    return s.delivery.method === 'urn:ietf:rfc:8935';
+  })[0];
+  const pollStream = streams.filter(function (s) {
+    return s.delivery.method === 'urn:ietf:rfc:8936';
+  })[0];
+  check('the page sees both streams, the push one carrying iya-sts\'s own ' +
+    'push secret (never shown) and its /federation/signals endpoint',
+    function () {
+      assert.ok(pushStream && pollStream, JSON.stringify(streams));
+      assert.ok(pushStream.pushAuthorized);
+      assert.ok(pushStream.delivery.endpoint_url.indexOf(
+        '/federation/signals/ssf-hosted-push') > 0,
+        pushStream.delivery.endpoint_url);
+    });
+
+  const sign = function (stream, uri, payload) {
+    log.debug("Entering sign().");
+    log.debug("Leaving sign().");
+    return ssf.signSet(ssf.buildSetClaims({ issuer: t.issuer,
+      audience: stream.aud, uri: uri, payload: payload,
+      subject: { format: 'iss_sub', iss: t.issuer, sub: 'hosted-alice' } }),
+      priv, alg, { kid: 'hosted-1' });
+  };
+  const deliver = function (stream, token) {
+    log.debug("Entering deliver().");
+    log.debug("Leaving deliver().");
+    return call('POST', hostedApiUrl + '/ssf/transmitter/' + t.id +
+      '/deliver', { stream_id: stream.stream_id, token: token }, owner);
+  };
+  const jtiOf = function (token) {
+    log.debug("Entering jtiOf().");
+    log.debug("Leaving jtiOf().");
+    return String(ssf.parseSet(token).claims.jti);
+  };
+  const now = Math.floor(Date.now() / 1000);
+
+  const pushed = [];
+  for (const [uri, payload] of [[caep, { event_timestamp: now }],
+                                [risc, {}]]) {
+    const token = await sign(pushStream, uri, payload);
+    const sent = await deliver(pushStream, token);
+    check('a ' + uri.split('/').pop() + ' SET this side signed is PUSHED to ' +
+      'iya-sts and accepted 202', function () {
+        assert.strictEqual(sent.status, 200, sent.text);
+        assert.strictEqual(sent.body.action, 'push');
+        assert.strictEqual(sent.body.push.status, 202,
+          JSON.stringify(sent.body.push));
+      });
+    pushed.push(jtiOf(token));
+  }
+
+  const polledToken = await sign(pollStream, risc, {});
+  const queued = await deliver(pollStream, polledToken);
+  const polled = await fedAdmin.adminPost(realmBase,
+    '/federation/signals-poll-now', { id: 'ssf-hosted-poll' });
+  check('a SET for the poll stream is QUEUED, and iya-sts collects it by ' +
+    'RFC 8936 poll', function () {
+      assert.strictEqual(queued.body.action, 'queued', queued.text);
+      assert.ok(polled.ok, JSON.stringify(polled));
+    });
+
+  const asked = await fedAdmin.adminPost(realmBase,
+    '/federation/signals-verify', { id: 'ssf-hosted-push' });
+  const pending = await call('GET', hostedApiUrl + '/ssf/transmitter/' +
+                             t.id, null, owner);
+  const request = (pending.body.transmitter.pendingVerifications || [])[0];
+  check('iya-sts asks for a VERIFICATION event, which the api queues for ' +
+    'the page to sign', function () {
+      assert.ok(asked.ok, JSON.stringify(asked));
+      assert.ok(request && request.stream_id === pushStream.stream_id,
+        JSON.stringify(pending.body.transmitter.pendingVerifications));
+    });
+  const verification = await sign(pushStream,
+    events.SSF_PREFIX + 'verification',
+    request.state ? { state: request.state } : {});
+  const answered = await deliver(pushStream, verification);
+  check('the page\'s verification SET is pushed and accepted', function () {
+    assert.strictEqual(answered.body.push.status, 202,
+      JSON.stringify(answered.body.push));
+  });
+
+  const wanted = pushed.concat([jtiOf(polledToken)]);
+  let rows = [];
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    const report = await fedAdmin.adminGet(realmBase,
+      '/ssf/transmitters?per=100');
+    rows = (report.received || []).filter(function (r) {
+      return wanted.indexOf(String(r.jti)) >= 0;
+    });
+    if (rows.length >= wanted.length) {
+      break;
+    }
+    await new Promise(function (resolve) {
+      setTimeout(resolve, 300);
+    });
+  }
+  check('iya-sts recorded every one of them VERIFIED against the hosted ' +
+    'JWKS and refused none — by push and by poll', function () {
+      assert.strictEqual(rows.length, wanted.length,
+        JSON.stringify(rows.map(function (r) {
+          return { jti: r.jti, verified: r.verified, refusal: r.refusal,
+                   why: r.why };
+        })));
+      rows.forEach(function (r) {
+        assert.strictEqual(r.verified, true, JSON.stringify(r));
+        assert.strictEqual(r.refusal || '', '', JSON.stringify(r));
+      });
+    });
+  log.info("[hosted] OK.");
+}
 
 // ---------------------------------------------------------------------------
 // 8. THE DELIBERATE DEFECTS.
@@ -1274,6 +1482,22 @@ async function cleanUp() {
   }
   await restoreSettings();
   stopReceiver();
+  let rel;
+  for (rel of hostedRelationships) {
+    await fedAdmin.tidy(rel.base, '/federation/delete', { id: rel.id },
+        'removing ' + rel.id).catch(function () {
+      return null;
+    });
+  }
+  let made;
+  for (made of hostedMade) {
+    await call('DELETE', hostedApiUrl + '/ssf/transmitter/' + made.id, null,
+      { anonymous: true,
+        headers: { Authorization: 'Bearer ' + made.ownerKey } })
+      .catch(function () {
+        return null;
+      });
+  }
   log.debug("Leaving cleanUp(). " + created.streams.length + " stream(s).");
 }
 
@@ -1324,6 +1548,7 @@ async function test() {
     await theThreeStatusesBehaveDifferently();
     await theVerificationEventIsWellFormed();
     await pollingHasItsOwnRefusals();
+    await theHostedTransmitterIsReceivedByIyaSts();
     await theDefectsAreReachable();
   } finally {
     // The mock's configuration and this run's streams are put back whether

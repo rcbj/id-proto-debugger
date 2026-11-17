@@ -154,6 +154,27 @@ model ReceiverLimits {
   doesNotVerify: string;
 }
 
+/** The hosted transmitter's bounds (#363), as GET /ssf/limits reports
+ *  them. See models/api/ssf_transmitter.tsp. */
+model TransmitterLimits {
+  enabled: boolean;
+  ttlMs: float64;
+  idleTtlMs: float64;
+  maxInstances: float64;
+  maxInstancesPerCaller: float64;
+  maxStreams: float64;
+  maxQueued: float64;
+  maxEventBytes: float64;
+
+  /** How many transmitters this process hosts now. */
+  held: int32;
+
+  /** This service signs nothing: the page does. */
+  signs: false;
+
+  note: string;
+}
+
 /** What the SSF proxy will and will not do, and the receiver's bounds. */
 model Limits {
   methods: string[];
@@ -169,6 +190,7 @@ model Limits {
   maxRedirects: int64 | null;
   sslValidateDefault: true;
   receiver: ReceiverLimits | null;
+  transmitter?: TransmitterLimits;
   addressPolicy: string;
 
   /** Whether the address layers of the policy are on here. */

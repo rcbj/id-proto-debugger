@@ -2908,6 +2908,356 @@ function pushEventAsync() {
 }
 
 // ---------------------------------------------------------------------------
+// THE HOSTED TRANSMITTER (#363) — this page as a transmitter a receiver can
+// DISCOVER.
+//
+// "Push it" above sends one SET to an endpoint somebody gave this page. A
+// receiver that treats its partner as a full SSF 1.0 transmitter wants more:
+// it fetches the transmitter's configuration metadata and JWKS, creates its
+// stream AT the transmitter, may pause it or ask for a verification event,
+// and may poll. Every one of those is a request to a server, and a page is
+// not one — so the api hosts a transmitter on this page's behalf
+// (api/ssf_transmitter.js) and this page reads what the receiver did.
+//
+// THE PAGE STILL SIGNS. The api is given the PUBLIC half of the key in the
+// pane above and publishes it at jwks_uri; every SET is built and signed
+// here exactly as "Build and sign" does, with the stream's own `aud` and the
+// transmitter's issuer, and handed to the api to push or queue.
+//
+// The owner key the api hands back is held in THIS PAGE'S MEMORY ONLY: it is
+// a bearer credential for the transmitter, and a reload drops it. The
+// transmitter then expires on its own (ssfTransmitterIdleTtlMs). The
+// receiver credential is shown once, to be given to the receiver's operator,
+// and is not kept at all.
+// ---------------------------------------------------------------------------
+var hosted = null;
+
+function hostedPublicJwk() {
+  log.debug("Entering hostedPublicJwk().");
+  var text = val('ssf_tx_public_key').trim();
+  if (!text) {
+    log.debug("Leaving hostedPublicJwk(). No key.");
+    return { error: 'There is no public key above. Press "Generate a ' +
+      'signing key" first: the api publishes its public half at jwks_uri ' +
+      'and this page keeps the private half and signs.' };
+  }
+  var alg = val('ssf_tx_alg');
+  var jwk;
+  try {
+    jwk = text.charAt(0) === '{' ? JSON.parse(text) : jws.publicJwk(alg, text);
+  } catch (e) {
+    log.debug("Leaving hostedPublicJwk(). Unreadable.");
+    return { error: 'The public key above could not be read as a JWK or a ' +
+      'PEM: ' + e.message };
+  }
+  var out = Object.assign({}, jwk, { use: 'sig' });
+  try {
+    out.alg = jws.algSpec(alg).alg;
+  } catch (e) {
+    log.debug("hostedPublicJwk(): " + alg + " has no wire alg here.");
+  }
+  log.debug("Leaving hostedPublicJwk().");
+  return { jwk: out };
+}
+
+function hostedRequest(method, path, body) {
+  log.debug("Entering hostedRequest(). " + method + " " + path);
+  var init = { method: method, headers: {} };
+  if (hosted) {
+    init.headers.Authorization = 'Bearer ' + hosted.ownerKey;
+  }
+  if (body !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(body);
+  }
+  log.debug("Leaving hostedRequest().");
+  return fetch(API_URL + path, init).then(function (response) {
+    return response.json().catch(function () {
+      return {};
+    }).then(function (json) {
+      return { status: response.status, body: json };
+    });
+  });
+}
+
+function hostTransmitter() {
+  log.debug("Entering hostTransmitter().");
+  if (!BACKEND_AVAILABLE) {
+    setStatus('ssf_host_status', 'This build has no api, so nothing can ' +
+      'host a transmitter for a receiver to discover. "Push it" above ' +
+      'still sends a SET to an endpoint you were given.', 'bad');
+    log.debug("Leaving hostTransmitter(). No api.");
+    return false;
+  }
+  var key = hostedPublicJwk();
+  if (key.error) {
+    setStatus('ssf_host_status', key.error, 'bad');
+    log.debug("Leaving hostTransmitter(). No key.");
+    return false;
+  }
+  setStatus('ssf_host_status', 'Asking the api to host a transmitter…',
+    'pending');
+  hostedRequest('POST', '/ssf/transmitter', {
+    label: 'the Shared Signals debugger',
+    jwks: { keys: [key.jwk] },
+    eventsSupported: Object.keys(ssfEvents.EVENT_BY_URI)
+  }).then(function (answer) {
+    if (answer.status !== 200 || !answer.body.ok) {
+      setStatus('ssf_host_status', 'Refused: ' +
+        String(answer.body.error || answer.status), 'bad');
+      log.debug("Leaving hostTransmitter(). Refused.");
+      return;
+    }
+    var t = answer.body.transmitter;
+    hosted = { id: t.id, ownerKey: answer.body.ownerKey, transmitter: t };
+    setVal('ssf_host_issuer', t.issuer);
+    setVal('ssf_host_discovery', t.discoveryUrl);
+    setVal('ssf_host_credential', answer.body.receiverCredential);
+    setVal('ssf_tx_iss', t.issuer);
+    renderHosted(t);
+    setStatus('ssf_host_status', 'Hosted. Point the receiver at the issuer ' +
+      'and give it the receiver credential as its bearer token; it ' +
+      'discovers the rest. The credential is shown only now. Press ' +
+      'Refresh once the receiver has created its stream. A reload of this ' +
+      'page loses control of the transmitter, which then expires at ' +
+      t.expiresAt + ' unless used.', 'ok');
+    log.debug("Leaving hostTransmitter(). " + t.id);
+  }).catch(function (e) {
+    setStatus('ssf_host_status', 'The api could not be reached: ' +
+      e.message, 'bad');
+    log.debug("Leaving hostTransmitter(). Unreachable.");
+  });
+  return false;
+}
+
+// `quiet` keeps the status line: a delivery refreshes the streams after it
+// has written its verdict there, and must not replace it.
+function refreshHosted(quiet) {
+  log.debug("Entering refreshHosted().");
+  if (!hosted) {
+    setStatus('ssf_host_status', 'No transmitter is hosted for this page.',
+      'bad');
+    log.debug("Leaving refreshHosted(). None.");
+    return Promise.resolve(null);
+  }
+  log.debug("Leaving refreshHosted(). Asking.");
+  return hostedRequest('GET', '/ssf/transmitter/' +
+      encodeURIComponent(hosted.id)).then(function (answer) {
+    if (answer.status !== 200) {
+      setStatus('ssf_host_status', String(answer.body.error ||
+        answer.status), 'bad');
+      if (answer.status === 404) {
+        hosted = null;
+      }
+      return null;
+    }
+    hosted.transmitter = answer.body.transmitter;
+    renderHosted(hosted.transmitter);
+    if (quiet) {
+      return hosted.transmitter;
+    }
+    setStatus('ssf_host_status', hosted.transmitter.streams.length +
+      ' stream(s); ' + hosted.transmitter.pendingVerifications.length +
+      ' verification event(s) asked for and not yet sent.', 'ok');
+    return hosted.transmitter;
+  }).catch(function (e) {
+    setStatus('ssf_host_status', 'The api could not be reached: ' +
+      e.message, 'bad');
+    return null;
+  });
+}
+
+function refreshHostedClick() {
+  log.debug("Entering refreshHostedClick().");
+  refreshHosted();
+  log.debug("Leaving refreshHostedClick().");
+  return false;
+}
+
+function renderHosted(t) {
+  log.debug("Entering renderHosted().");
+  var select = el('ssf_host_stream');
+  var chosen = select ? select.value : '';
+  if (select) {
+    while (select.firstChild) {
+      select.removeChild(select.firstChild);
+    }
+    t.streams.forEach(function (s) {
+      var option = document.createElement('option');
+      option.value = s.stream_id;
+      option.textContent = s.stream_id + ' — ' +
+        (s.delivery.method === 'urn:ietf:rfc:8935' ? 'push' : 'poll') +
+        ', ' + s.status + (s.queued ? ', ' + s.queued + ' queued' : '') +
+        (s.held ? ', ' + s.held + ' held' : '');
+      select.appendChild(option);
+    });
+    if (chosen) {
+      select.value = chosen;
+    }
+  }
+  var host = clear('ssf_host_streams');
+  if (host) {
+    if (!t.streams.length) {
+      host.appendChild(node('p', 'ssf-note', 'No receiver has created a ' +
+        'stream here yet.'));
+    }
+    t.streams.forEach(function (s) {
+      host.appendChild(node('p', 'ssf-note', s.stream_id + ': aud ' + s.aud +
+        '; events_delivered ' + (s.events_delivered.length
+          ? s.events_delivered.length + ' type(s)' : 'none') +
+        '; ' + s.subjects.length + ' subject(s)' +
+        (s.delivery.method === 'urn:ietf:rfc:8935' ? '; pushes to ' +
+          s.delivery.endpoint_url + (s.pushAuthorized
+            ? ' with the receiver\'s authorization_header' : '') : '')));
+    });
+    t.pendingVerifications.forEach(function (p) {
+      host.appendChild(node('p', 'ssf-finding ssf-finding-warn',
+        '! Stream ' + p.stream_id + ' asked for a verification event' +
+        (p.state ? ' with state "' + p.state + '"' : '') + ' at ' + p.at +
+        '. "Answer verification" signs and sends it.'));
+    });
+    t.log.slice(-10).reverse().forEach(function (row) {
+      host.appendChild(node('div', 'ssf-uri', row.at.substring(11, 19) +
+        'Z ' + row.kind + (row.stream_id ? ' ' + row.stream_id : '') +
+        (row.detail ? ' — ' + row.detail : '')));
+    });
+  }
+  log.debug("Leaving renderHosted().");
+}
+
+function hostedStream() {
+  log.debug("Entering hostedStream().");
+  var id = val('ssf_host_stream');
+  var found = null;
+  ((hosted && hosted.transmitter && hosted.transmitter.streams) || [])
+    .forEach(function (s) {
+      if (s.stream_id === id) {
+        found = s;
+      }
+    });
+  log.debug("Leaving hostedStream(). " + !!found);
+  return found;
+}
+
+// Sign the event in the pane above for the chosen stream — its own aud and
+// this transmitter's issuer — and hand it to the api.
+function deliverHosted() {
+  log.debug("Entering deliverHosted().");
+  deliverHostedAsync();
+  log.debug("Leaving deliverHosted().");
+  return false;
+}
+
+function deliverHostedAsync() {
+  log.debug("Entering deliverHostedAsync().");
+  var stream = hostedStream();
+  if (!hosted || !stream) {
+    setStatus('ssf_host_status', hosted ? 'Choose a stream first (press ' +
+      'Refresh once the receiver has created one).' : 'Host a transmitter ' +
+      'first.', 'bad');
+    log.debug("Leaving deliverHostedAsync(). No stream.");
+    return Promise.resolve(null);
+  }
+  setVal('ssf_tx_iss', hosted.transmitter.issuer);
+  setVal('ssf_tx_aud', stream.aud);
+  setVal('ssf_tx_token', '');
+  log.debug("Leaving deliverHostedAsync(). Building.");
+  return Promise.resolve(buildEvent()).then(function (token) {
+    if (!token) {
+      return null;
+    }
+    return hostedRequest('POST', '/ssf/transmitter/' +
+        encodeURIComponent(hosted.id) + '/deliver', {
+      stream_id: stream.stream_id, token: token,
+      sslValidate: isOn('ssf_ssl_validate')
+    }).then(function (answer) {
+      var b = answer.body || {};
+      var parsed = ssfClient.parseSet(token);
+      var push = b.push || null;
+      var outcome = answer.status !== 200 ? 'refused by the api'
+        : (b.action === 'push' ? (push && push.accepted ? 'accepted'
+          : 'not delivered') : b.action);
+      ssfHistory.recordMessage({
+        direction: 'sent', via: 'hosted ' + (b.action || ''),
+        streamId: stream.stream_id,
+        jti: parsed.ok ? String(parsed.claims.jti || '') : '',
+        types: parsed.ok ? Object.keys(parsed.claims.events || {}) : [],
+        issuer: hosted.transmitter.issuer, audience: stream.aud,
+        token: token, header: parsed.header, claims: parsed.claims,
+        signature: 'signed here with ' + val('ssf_tx_alg'),
+        outcome: outcome,
+        detail: push ? push.detail : (b.note || b.error || ''),
+        verdicts: (b.findings || []).map(function (f) {
+          return { level: 'warn', text: f };
+        })
+      });
+      renderMessages();
+      setStatus('ssf_host_status', answer.status !== 200
+        ? String(b.error || answer.status)
+        : (b.action === 'push' ? 'Pushed to the receiver: ' +
+            (push ? push.detail + (push.err ? ' — ' + push.err + ': ' +
+              push.description : '') : '') : b.note) +
+          (b.findings && b.findings.length ? ' Findings: ' +
+            b.findings.join(' ') : ''),
+        answer.status === 200 && (b.action !== 'push' ||
+          (push && push.accepted)) ? 'ok' : 'bad');
+      return refreshHosted(true).then(function () {
+        return b;
+      });
+    });
+  }).catch(function (e) {
+    setStatus('ssf_host_status', 'It could not be delivered: ' + e.message,
+      'bad');
+    return null;
+  });
+}
+
+// The receiver asked for a verification event (SSF 1.0 section 8.1.4.2):
+// build one with the state it gave, for the stream that asked, and send it.
+function answerHostedVerification() {
+  log.debug("Entering answerHostedVerification().");
+  var pending = hosted && hosted.transmitter &&
+    hosted.transmitter.pendingVerifications[0];
+  if (!pending) {
+    setStatus('ssf_host_status', 'No receiver has asked for a verification ' +
+      'event. Press Refresh to look again.', 'bad');
+    log.debug("Leaving answerHostedVerification(). None pending.");
+    return false;
+  }
+  setVal('ssf_host_stream', pending.stream_id);
+  setVal('ssf_tx_type', ssfEvents.SSF_PREFIX + 'verification');
+  setVal('ssf_tx_payload', pretty(pending.state ? { state: pending.state }
+    : {}));
+  setVal('ssf_tx_subject', '');
+  deliverHostedAsync();
+  log.debug("Leaving answerHostedVerification().");
+  return false;
+}
+
+function deleteHosted() {
+  log.debug("Entering deleteHosted().");
+  if (!hosted) {
+    setStatus('ssf_host_status', 'No transmitter is hosted for this page.',
+      'bad');
+    log.debug("Leaving deleteHosted(). None.");
+    return false;
+  }
+  hostedRequest('DELETE', '/ssf/transmitter/' +
+      encodeURIComponent(hosted.id)).then(function (answer) {
+    hosted = null;
+    setVal('ssf_host_issuer', '');
+    setVal('ssf_host_discovery', '');
+    setVal('ssf_host_credential', '');
+    renderHosted({ streams: [], pendingVerifications: [], log: [] });
+    setStatus('ssf_host_status', answer.status === 200 ? 'Deleted. A ' +
+      'receiver still pointed at it now gets 404s.' : 'It was already ' +
+      'gone.', 'ok');
+  });
+  log.debug("Leaving deleteHosted().");
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // THE MESSAGE HISTORY PANE.
 // ---------------------------------------------------------------------------
 function renderMessages() {
@@ -4668,6 +5018,12 @@ module.exports = {
   generateTxKey: generateTxKey,
   buildEvent: buildEvent,
   pushEvent: pushEvent,
+  // The hosted transmitter (#363).
+  hostTransmitter: hostTransmitter,
+  refreshHosted: refreshHostedClick,
+  deliverHosted: deliverHosted,
+  answerHostedVerification: answerHostedVerification,
+  deleteHosted: deleteHosted,
   // The profile and the CAEP pane's own handlers.
   profileChanged: profileChanged,
   caepFillFromToken: caepFillFromToken,
