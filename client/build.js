@@ -394,98 +394,130 @@ BUNDLES.filter(function (entry) {
   log.info('not bundling ' + entry[0] + ' — its page is not on this ' +
       'deployment');
 });
-const stagedData = path.join(SRC, 'data.js');
-fs.copyFileSync(COMMON_DATA, stagedData);
-const KRB5_DIR = path.join(CLIENT_DIR, '..', 'common', 'krb5');
-// Which bundles need common/krb5 staged into src/ before browserify can
-// resolve their requires. NOT `indexOf('kerberos') === 0` any more: spnego.js
-// requires the same codec and its bundle is not called kerberos-anything, so
-// the prefix test left it unbuildable with "Cannot find module
-// './krb5_spnego.js'" — a message naming a file that exists, two directories
-// away. The list is explicit for that reason.
-const KRB5_BUNDLES = ['kerberos', 'kerberos_tgs', 'kerberos_ap',
-  'kerberos_delegation', 'kerberos_decoder', 'spnego'];
-const needsKrb5 = BUILT_BUNDLES.some(function (entry) {
-  return KRB5_BUNDLES.indexOf(entry[0]) !== -1;
-});
-const stagedKrb5 = (needsKrb5 && fs.existsSync(KRB5_DIR))
-  ? fs.readdirSync(KRB5_DIR).filter((f) => f.endsWith('.js')).map((f) => {
-      const dest = path.join(SRC, f);
-      log.info('staging common/krb5/' + f + ' -> src/' + f);
-      fs.copyFileSync(path.join(KRB5_DIR, f), dest);
-      return dest;
-    })
-  : [];
-// The same staging for common/spiffe, and for the same reason: the SPIFFE ID
-// grammar and the trust-bundle reader live in common/ because api/, tests/ and
-// this bundle all need them and a grammar implemented three times is a grammar
-// that disagrees with itself. Only spiffe.js requires them, so unlike the
-// Kerberos list this is one bundle and the test can stay a comparison rather
-// than a list — but it is written the same way so the next module added here
-// does not have to work out which shape to follow.
-// And the same again for common/xmldsig.js, which is ONE file rather than a
-// directory and is required by ten bundles. It lives in common/ because
-// api/server.js signs a SAML AuthnRequest with it for the redirect binding —
-// that used to be the `xml-crypto` package, a third implementation of XML
-// Signature in an application that already had two of its own. A
-// canonicalizer is a reading of a specification, and three readings of C14N
-// is three chances to disagree with the verifier at the far end.
-const XMLDSIG_FILE = path.join(CLIENT_DIR, '..', 'common', 'xmldsig.js');
-const XMLDSIG_BUNDLES = ['digital_signature', 'saml_request', 'saml_response',
-  'saml_tools', 'saml_authnrequest', 'saml_response_decoder', 'wsfed_request',
-  'wsfed_response', 'wstrust_response', 'wstrust_tools'];
-const needsXmldsig = BUILT_BUNDLES.some(function (entry) {
-  return XMLDSIG_BUNDLES.indexOf(entry[0]) !== -1;
-});
-const stagedXmldsig = (needsXmldsig && fs.existsSync(XMLDSIG_FILE))
-  ? (function () {
-      const dest = path.join(SRC, 'xmldsig.js');
-      log.info('staging common/xmldsig.js -> src/xmldsig.js');
-      fs.copyFileSync(XMLDSIG_FILE, dest);
-      return [dest];
-    })()
-  : [];
-const SPIFFE_DIR = path.join(CLIENT_DIR, '..', 'common', 'spiffe');
-const SPIFFE_BUNDLES = ['spiffe'];
-const needsSpiffe = BUILT_BUNDLES.some(function (entry) {
-  return SPIFFE_BUNDLES.indexOf(entry[0]) !== -1;
-});
-const stagedSpiffe = (needsSpiffe && fs.existsSync(SPIFFE_DIR))
-  ? fs.readdirSync(SPIFFE_DIR).filter((f) => f.endsWith('.js')).map((f) => {
-      const dest = path.join(SRC, f);
-      log.info('staging common/spiffe/' + f + ' -> src/' + f);
-      fs.copyFileSync(path.join(SPIFFE_DIR, f), dest);
-      return dest;
-    })
-  : [];
-// And common/crypto/ — the central crypto module of #463: the pure-JS
-// engines (crypto_bytes, hash_tools, symmetric_crypto, pk_encryption, pqc,
-// hbs, and the facade beside them) that lived in client/src until they moved
-// out so that the browser, the api and tests/ can all reach ONE copy. The
-// bundles still `require("./pqc")` and friends, so the directory is staged
-// flat into src/ exactly as common/krb5 and common/spiffe are — every .js
-// file in it, so a module added there is carried without an edit here.
+// EVERY staged copy goes through stage(), and the `finally` below removes
+// exactly the files stage() CREATED — never a file that was already there.
+// Until 2026-11-17 each block copied over whatever src/ held and the cleanup
+// deleted the destination unconditionally, so a file git tracks under the
+// same name was overwritten and then deleted by every build that staged it:
+// thirteen stale client/src/krb5_*.js copies of common/krb5 (three of them
+// drifted) vanished from the working tree on every embedded build. Now:
 //
-// UNCONDITIONALLY, unlike the three lists above, and deliberately: jws.js,
-// jose_jwe.js and key_material.js require these engines, and between them
-// they are reached from nearly every bundle this build makes. A per-bundle
-// list would be a transcription of a require closure that changes whenever
-// a page gains an algorithm, and the cost of getting it wrong is a build
-// that fails on "Cannot find module './pqc'" naming a file that exists.
-// Staging a few files for a build that happens not to need them costs
-// nothing; the `finally` below removes them either way. client/.gitignore
-// names them too, so a build killed before its `finally` cannot leave a copy
-// that `git add` would pick up.
-const CRYPTO_DIR = path.join(CLIENT_DIR, '..', 'common', 'crypto');
-const stagedCrypto = fs.existsSync(CRYPTO_DIR)
-  ? fs.readdirSync(CRYPTO_DIR).filter((f) => f.endsWith('.js')).map((f) => {
-      const dest = path.join(SRC, f);
-      log.info('staging common/crypto/' + f + ' -> src/' + f);
-      fs.copyFileSync(path.join(CRYPTO_DIR, f), dest);
+//   * a destination that does not exist is copied and removed afterwards;
+//   * one already byte-identical to its source is used as it is and left in
+//     place (a build killed before its `finally` leaves exactly that, and
+//     client/.gitignore keeps it out of a commit);
+//   * one that DIFFERS stops the build, naming the file: bundling it would
+//     ship the wrong code, and replacing it would destroy somebody's edit.
+const STAGED = [];
+function stage(from, label) {
+  log.debug("Entering stage(). " + label);
+  const base = path.basename(from);
+  const dest = path.join(SRC, base);
+  if (fs.existsSync(dest)) {
+    if (fs.readFileSync(dest).equals(fs.readFileSync(from))) {
+      log.info('src/' + base + ' already matches ' + label + '; using it ' +
+          'as it is and leaving it in place');
+      log.debug("Leaving stage(). Identical.");
       return dest;
-    })
-  : [];
+    }
+    log.debug("Leaving stage(). A different file is in the way.");
+    throw new Error('client/src/' + base + ' exists and is not ' + label +
+        ', so staging would overwrite it and the cleanup would then delete ' +
+        'it. If git tracks it, it is a stale copy: `git rm client/src/' +
+        base + '`, since ' + label + ' is the source. If it is untracked, ' +
+        'an interrupted build left it behind: delete it.');
+  }
+  log.info('staging ' + label + ' -> src/' + base);
+  fs.copyFileSync(from, dest);
+  STAGED.push(dest);
+  log.debug("Leaving stage(). Staged.");
+  return dest;
+}
+
+function removeStaged() {
+  log.debug("Entering removeStaged(). " + STAGED.length + " file(s).");
+  STAGED.splice(0).forEach((f) => fs.rmSync(f, { force: true }));
+  log.debug("Leaving removeStaged().");
+}
+
 try {
+  stage(COMMON_DATA, 'common/data.js');
+  const KRB5_DIR = path.join(CLIENT_DIR, '..', 'common', 'krb5');
+  // Which bundles need common/krb5 staged into src/ before browserify can
+  // resolve their requires. NOT `indexOf('kerberos') === 0` any more: spnego.js
+  // requires the same codec and its bundle is not called kerberos-anything, so
+  // the prefix test left it unbuildable with "Cannot find module
+  // './krb5_spnego.js'" — a message naming a file that exists, two directories
+  // away. The list is explicit for that reason.
+  const KRB5_BUNDLES = ['kerberos', 'kerberos_tgs', 'kerberos_ap',
+    'kerberos_delegation', 'kerberos_decoder', 'spnego'];
+  const needsKrb5 = BUILT_BUNDLES.some(function (entry) {
+    return KRB5_BUNDLES.indexOf(entry[0]) !== -1;
+  });
+  if (needsKrb5 && fs.existsSync(KRB5_DIR)) {
+    fs.readdirSync(KRB5_DIR).filter((f) => f.endsWith('.js')).forEach((f) => {
+      stage(path.join(KRB5_DIR, f), 'common/krb5/' + f);
+    });
+  }
+  // The same staging for common/spiffe, and for the same reason: the SPIFFE
+  // ID grammar and the trust-bundle reader live in common/ because api/,
+  // tests/ and this bundle all need them and a grammar implemented three
+  // times is a grammar that disagrees with itself. Only spiffe.js requires
+  // them, so unlike the Kerberos list this is one bundle and the test can
+  // stay a comparison rather than a list — but it is written the same way so
+  // the next module added here does not have to work out which shape to
+  // follow.
+  // And the same again for common/xmldsig.js, which is ONE file rather than a
+  // directory and is required by ten bundles. It lives in common/ because
+  // api/server.js signs a SAML AuthnRequest with it for the redirect binding —
+  // that used to be the `xml-crypto` package, a third implementation of XML
+  // Signature in an application that already had two of its own. A
+  // canonicalizer is a reading of a specification, and three readings of C14N
+  // is three chances to disagree with the verifier at the far end.
+  const XMLDSIG_FILE = path.join(CLIENT_DIR, '..', 'common', 'xmldsig.js');
+  const XMLDSIG_BUNDLES = ['digital_signature', 'saml_request', 'saml_response',
+    'saml_tools', 'saml_authnrequest', 'saml_response_decoder', 'wsfed_request',
+    'wsfed_response', 'wstrust_response', 'wstrust_tools'];
+  const needsXmldsig = BUILT_BUNDLES.some(function (entry) {
+    return XMLDSIG_BUNDLES.indexOf(entry[0]) !== -1;
+  });
+  if (needsXmldsig && fs.existsSync(XMLDSIG_FILE)) {
+    stage(XMLDSIG_FILE, 'common/xmldsig.js');
+  }
+  const SPIFFE_DIR = path.join(CLIENT_DIR, '..', 'common', 'spiffe');
+  const SPIFFE_BUNDLES = ['spiffe'];
+  const needsSpiffe = BUILT_BUNDLES.some(function (entry) {
+    return SPIFFE_BUNDLES.indexOf(entry[0]) !== -1;
+  });
+  if (needsSpiffe && fs.existsSync(SPIFFE_DIR)) {
+    fs.readdirSync(SPIFFE_DIR).filter((f) => f.endsWith('.js')).forEach((f) => {
+      stage(path.join(SPIFFE_DIR, f), 'common/spiffe/' + f);
+    });
+  }
+  // And common/crypto/ — the central crypto module of #463: the pure-JS
+  // engines (crypto_bytes, hash_tools, symmetric_crypto, pk_encryption, pqc,
+  // hbs, and the facade beside them) that lived in client/src until they moved
+  // out so that the browser, the api and tests/ can all reach ONE copy. The
+  // bundles still `require("./pqc")` and friends, so the directory is staged
+  // flat into src/ exactly as common/krb5 and common/spiffe are — every .js
+  // file in it, so a module added there is carried without an edit here.
+  //
+  // UNCONDITIONALLY, unlike the three lists above, and deliberately: jws.js,
+  // jose_jwe.js and key_material.js require these engines, and between them
+  // they are reached from nearly every bundle this build makes. A per-bundle
+  // list would be a transcription of a require closure that changes whenever
+  // a page gains an algorithm, and the cost of getting it wrong is a build
+  // that fails on "Cannot find module './pqc'" naming a file that exists.
+  // Staging a few files for a build that happens not to need them costs
+  // nothing; the `finally` below removes them either way. client/.gitignore
+  // names them too, so a build killed before its `finally` cannot leave a copy
+  // that `git add` would pick up.
+  const CRYPTO_DIR = path.join(CLIENT_DIR, '..', 'common', 'crypto');
+  if (fs.existsSync(CRYPTO_DIR)) {
+    fs.readdirSync(CRYPTO_DIR).filter((f) => f.endsWith('.js')).forEach((f) => {
+      stage(path.join(CRYPTO_DIR, f), 'common/crypto/' + f);
+    });
+  }
   for (const [name, standalone] of BUILT_BUNDLES) {
     const out = path.join(DIST, 'js', name + '.js');
     log.info('browserify src/' + name + '.js -> dist/js/' + name +
@@ -507,11 +539,9 @@ try {
     }
   }
 } finally {
-  fs.rmSync(stagedData, { force: true });
-  stagedKrb5.forEach((f) => fs.rmSync(f, { force: true }));
-  stagedSpiffe.forEach((f) => fs.rmSync(f, { force: true }));
-  stagedXmldsig.forEach((f) => fs.rmSync(f, { force: true }));
-  stagedCrypto.forEach((f) => fs.rmSync(f, { force: true }));
+  // What stage() created, and only that — including when staging itself
+  // threw partway through.
+  removeStaged();
 }
 
 // 3a. EMBEDDED ONLY: the mock STS's placeholder survived minification.
