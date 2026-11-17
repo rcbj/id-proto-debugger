@@ -49,7 +49,7 @@
 //
 // It needs no server, no browser and no network, so it never skips.
 //
-// TEN SECTIONS:
+// ELEVEN SECTIONS:
 //
 //   1. classification — which binding, from the blob alone, in five shapes
 //   2. the artifact — 2.0 type 0x0004 and both 1.1 types
@@ -62,6 +62,8 @@
 //      document
 //   9. assertionsOf() — plaintext, advice and encrypted, in document order
 //  10. summarizeResponse() — both versions, the envelope, and a bare assertion
+//  11. requiredResponseSignature() — which signature SAML 1.1 Browser/POST
+//      requires, and a real Response signature in Shibboleth's shape
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -95,6 +97,13 @@ const sm = paths.requireSharedModule(
   [path.join(__dirname, "saml_message.js"),
    path.join(__dirname, "..", "client", "src", "saml_message.js")],
   "client/src/saml_message.js");
+
+// The XML Signature implementation, for section 11's one real signature. In
+// the tests image it is copied flat as xmldsig.js (tests/Dockerfile).
+const xd = paths.requireSharedModule(
+  [path.join(__dirname, "xmldsig.js"),
+   path.join(__dirname, "..", "common", "xmldsig.js")],
+  "common/xmldsig.js");
 
 let checks = 0;
 
@@ -1550,9 +1559,106 @@ function shibbolethAttributeNamesAreWhole() {
   log.debug("Leaving shibbolethAttributeNamesAreWhole().");
 }
 
+// ---------------------------------------------------------------------------
+// 11. WHICH SIGNATURE THE SAML 1.1 PROFILE REQUIRES (#425).
+//
+// sstc-saml-bindings-1.1 section 4.1.2.4: on Browser/POST the <samlp:Response>
+// MUST be signed and the assertion MAY be. That is Shibboleth's default, and a
+// relying party that checks only the assertion verifies nothing there. The
+// profile is read off the assertion's confirmation method, because nothing on
+// the response names its binding. Then a real signature in that shape:
+// Response only, referenced through ResponseID, which must verify and must
+// stop verifying when the Status is changed.
+// ---------------------------------------------------------------------------
+function response11For(id, method, signedStatus) {
+  log.debug("Entering response11For().");
+  const xml =
+    '<samlp:Response ' + NS1 + ' ResponseID="' + id + '" MajorVersion="1" ' +
+        'MinorVersion="1" IssueInstant="2026-11-16T12:00:00Z" ' +
+        'Recipient="https://sp.example.test/acs">' +
+      '<samlp:Status><samlp:StatusCode Value="' +
+        (signedStatus || 'samlp:Success') + '"/></samlp:Status>' +
+      (method ?
+      '<saml:Assertion AssertionID="' + id + '_a" MajorVersion="1" ' +
+          'MinorVersion="1" Issuer="https://idp.example.test/idp" ' +
+          'IssueInstant="2026-11-16T12:00:00Z">' +
+        '<saml:AuthenticationStatement ' +
+            'AuthenticationMethod="urn:oasis:names:tc:SAML:1.0:am:password" ' +
+            'AuthenticationInstant="2026-11-16T12:00:00Z">' +
+          '<saml:Subject><saml:NameIdentifier>jdoe</saml:NameIdentifier>' +
+            '<saml:SubjectConfirmation><saml:ConfirmationMethod>' + method +
+            '</saml:ConfirmationMethod></saml:SubjectConfirmation>' +
+          '</saml:Subject>' +
+        '</saml:AuthenticationStatement>' +
+      '</saml:Assertion>' : '') +
+    '</samlp:Response>';
+  log.debug("Leaving response11For().");
+  return xml;
+}
+
+function theSaml11ProfileDecidesTheResponseSignature() {
+  log.debug("Entering theSaml11ProfileDecidesTheResponseSignature().");
+  const bearer = 'urn:oasis:names:tc:SAML:1.0:cm:bearer';
+  const artifact = 'urn:oasis:names:tc:SAML:1.0:cm:artifact';
+  check('SAML 1.1 Browser/POST requires the Response to be signed',
+      function () {
+    const need = sm.requiredResponseSignature(response11For('_p', bearer));
+    assert.strictEqual(need.rule, 'response');
+    assert.strictEqual(need.profile, 'Browser/POST');
+    assert.ok(need.why.indexOf('4.1.2.4') >= 0, need.why);
+  });
+  check('SAML 1.1 Browser/Artifact requires no signature on the Response',
+      function () {
+    const need = sm.requiredResponseSignature(response11For('_a', artifact));
+    assert.strictEqual(need.rule, 'none');
+    assert.strictEqual(need.profile, 'Browser/Artifact');
+  });
+  check('no verdict without an assertion, for SAML 2.0, or off a Response',
+      function () {
+    assert.strictEqual(sm.requiredResponseSignature(
+        response11For('_n', '', 'samlp:Requester')).rule, '');
+    assert.strictEqual(sm.requiredResponseSignature(
+        '<samlp:Response ' + NS2 + ' ID="_r2" Version="2.0" ' +
+        'IssueInstant="2026-11-16T12:00:00Z"/>').rule, '');
+    assert.strictEqual(
+        sm.requiredResponseSignature(SIGNED_AUTHN_REQUEST).rule, '');
+  });
+  check('a Shibboleth-shaped 1.1 Response signature verifies through ' +
+      'ResponseID, and a changed Status breaks it', function () {
+    const keyPair = xd.generateKeyPair(2048, "saml-message-engine");
+    const signed = xd.signEnveloped(response11For('_shib', bearer), {
+      privateKeyPem: keyPair.privateKeyPem,
+      certPem: keyPair.certPem,
+      sigAlg: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
+      placement: 'first',
+      refUri: '#_shib'
+    });
+    const root = sm.parseXml(signed).documentElement;
+    const sig = sm.messageSignature(root);
+    assert.ok(sig, 'the Response carries no signature of its own');
+    assert.strictEqual(sig.reference, '#_shib');
+    assert.strictEqual(sm.directChild(root, 'Signature'),
+        root.firstChild && root.firstChild.localName === 'Signature' ?
+        root.firstChild : null,
+        'a SAML 1.1 Response puts ds:Signature first');
+    const assertion = sm.tags(root, 'Assertion')[0];
+    assert.strictEqual(sm.messageSignature(assertion), null,
+        'the assertion should be unsigned in this shape');
+    const res = xd.verifyXmlSignature(signed);
+    assert.ok(res.valid, JSON.stringify(res));
+    assert.strictEqual(res.references[0].uri, '#_shib');
+    const tampered = signed.replace('samlp:Success', 'samlp:Requester');
+    assert.notStrictEqual(tampered, signed);
+    assert.strictEqual(xd.verifyXmlSignature(tampered).valid, false,
+        'the Response signature covers the Status');
+  });
+  log.debug("Leaving theSaml11ProfileDecidesTheResponseSignature().");
+}
+
 function test() {
   log.debug("Entering test().");
   shibbolethAttributeNamesAreWhole();
+  theSaml11ProfileDecidesTheResponseSignature();
   everyPastedShapeIsClassified();
   theSaml11RequestIsTheShibbolethProfile();
   theArtifactIsBytesAndNotAMessage();

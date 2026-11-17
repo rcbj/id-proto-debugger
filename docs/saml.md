@@ -147,7 +147,7 @@ register at the identity provider.
 | Pane | What you do there |
 |---|---|
 | **SAMLResponse** | **XML** is the full response. **Details** is the parsed status and the bindings. |
-| **Assertion (extracted)** | **XML** and **Attributes**. **Validate Signature** checks the enveloped signature with the certificate in `KeyInfo`. **Decrypt** uses **Decryption Key**, prefilled from the SP private key when that key was saved. |
+| **Assertion (extracted)** | **XML** and **Attributes**. **Validate Signatures** checks every enveloped signature separately: the one on the `<Response>` and the one on the assertion, each with the certificate in its own `KeyInfo`. On SAML 1.1 Browser/POST it also says when the `<Response>` is unsigned, which that profile forbids (see [SAML 1.1](saml11.md)). **Decrypt** uses **Decryption Key**, prefilled from the SP private key when that key was saved. |
 | **Tools** | Request decoder, response decoder, assertion tool, certificate details, and the PKI page. See [SAML decoders](saml-decoders.md) and [SAML Assertion Tool](saml-assertion.md). |
 | **Operations History** | The same log as the request page. **Clear History** drops it. A response turns the matching *Sent* row into *Success* or *Failure* from the status code. |
 
