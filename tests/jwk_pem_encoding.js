@@ -1272,8 +1272,8 @@ function flatCopiedModulesCarryTheirRequires(dockerfile) {
     if (parts.length < 2) {
       return _;
     }
-    const dest = parts[parts.length - 1].replace(/\/$/, "")
-      .replace(/^\.\//, "");
+    const rawDest = parts[parts.length - 1];
+    const dest = rawDest.replace(/\/$/, "").replace(/^\.\//, "");
     if (dest.indexOf("/") === 0) {
       return _;
     }
@@ -1302,7 +1302,13 @@ function flatCopiedModulesCarryTheirRequires(dockerfile) {
         return;
       }
       const base = src.split("/").pop();
-      carried[dest === "" || dest === "." ? base : dest + "/" + base] = here;
+      // Docker's rule: ONE file source and a destination without a trailing
+      // slash is the file's new NAME (COPY api/server.js ./api_server.js.txt),
+      // not a directory to put it in.
+      const renamed = parts.length === 2 && !/\/$/.test(rawDest) &&
+          dest !== "" && dest !== ".";
+      carried[renamed ? dest : (dest === "" || dest === "." ? base :
+              dest + "/" + base)] = here;
     });
     return _;
   });
