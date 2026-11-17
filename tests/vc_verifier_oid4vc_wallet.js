@@ -17,8 +17,8 @@
 // THE CREDENTIAL IS REAL TOO. A person signs in to iya-sts's own account
 // page (/portal/wallet), makes a pre-authorized offer for an
 // IdentityCredential (dc+sd-jwt), and the wallet redeems it with the
-// Transaction Code: `accept` takes the offer BY VALUE, the page's "open in a
-// wallet on this device" link.
+// Transaction Code: `accept` takes the offer BY VALUE, built from the
+// document behind the portal's credential_offer_uri.
 //
 // THEN, PER ROUND, the Verifier page builds a request for that credential's
 // vct and one of its disclosable claims, the wallet answers it
@@ -163,21 +163,44 @@ function describeSdJwt(document) {
 async function walletHoldsACredential(driver, where) {
   log.debug("Entering walletHoldsACredential().");
   log.info("=== The wallet redeems iya-sts's pre-authorized offer ===");
-  await common.offerFromThePortalWallet(driver, {
+  const screen = await common.offerFromThePortalWallet(driver, {
     By: By, until: until, stsBase: issuerBase,
     username: usernameFor("vcverifier"), mode: "cross-device",
     configuration: "IdentityCredential", wait: WAIT,
     consentScreen: consentScreen });
-  const shown = await driver.executeScript(
-      "var a = document.getElementById('open_in_wallet');" +
-      "var t = document.getElementById('tx_code');" +
-      "return { href: a ? String(a.getAttribute('href') || '') : ''," +
-      "  txCode: t ? t.textContent.trim() : '' };");
-  check("the portal offers the credential BY VALUE for a wallet on this " +
-      "device, with a Transaction Code", function () {
+  // THE OFFER BY VALUE, built here from the one by reference the helper
+  // read off the portal. The portal draws its "open in a wallet on this
+  // device" link (the by-value offer) in the same card as the Transaction
+  // Code, but the card belongs to the POST's answer and a later redraw of
+  // the page drops it, so a second read of the DOM races it. The offer
+  // document behind credential_offer_uri is the same offer and is not
+  // spent by being fetched; the wallet's `accept` takes an offer by value.
+  const params = new URL(screen.offerUri.replace(
+      /^[a-z0-9+.-]+:\/\//i, "https://x/")).searchParams;
+  const offerUri = params.get("credential_offer_uri") || "";
+  let byValue = params.get("credential_offer") ?
+      screen.offerUri : "";
+  if (!byValue) {
+    const fetched = await fetch(offerUri);
+    const offerText = await fetched.text();
+    check("the offer by reference resolves to a Credential Offer",
+        function () {
+          assert.strictEqual(fetched.status, 200, offerUri + " answered " +
+              fetched.status + ": " + offerText.slice(0, 200));
+          const offer = JSON.parse(offerText);
+          assert.ok(offer.credential_issuer && offer.grants,
+              offerText.slice(0, 200));
+        });
+    byValue = "openid-credential-offer://?credential_offer=" +
+        encodeURIComponent(JSON.stringify(JSON.parse(offerText)));
+  }
+  const shown = { href: byValue, txCode: screen.txCode };
+  check("the portal made a pre-authorized offer with a Transaction Code",
+      function () {
         assert.ok(/^openid-credential-offer:\/\/\?credential_offer=/.test(
-            shown.href), "open_in_wallet is " + shown.href.slice(0, 120));
-        assert.ok(shown.txCode.length > 0, "no Transaction Code");
+            shown.href), "by value: " + shown.href.slice(0, 120));
+        assert.ok(String(shown.txCode || "").length > 0,
+            "no Transaction Code");
       });
   const accepted = wallet(where, ["accept", shown.href, "--tx-code",
                                   shown.txCode]);
