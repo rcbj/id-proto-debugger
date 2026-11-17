@@ -347,6 +347,13 @@ function protocolRules() {
     function (id) {
       assert.ok(haipBlocked.indexOf(id) !== -1, "HAIP did not refuse " + id);
     });
+  // A redirect_uri request whose answer goes to the URL it names is one
+  // plain OpenID4VP answers: no rule refuses it. (keypair_storage_optout.js
+  // leans on this — its step 1 fixture is such a request — and failed when
+  // that fixture named one URL and posted to another.)
+  assert.deepStrictEqual(blockedIds(vp.requestRules(vp.PROTOCOL_OID4VP,
+    { request: byValue })), [], "a conformant redirect_uri request was " +
+    "refused under OpenID4VP");
   // redirect_uri whose answer goes elsewhere.
   const elsewhere = JSON.parse(JSON.stringify(byValue));
   elsewhere.params.response_uri = "https://attacker/r";
