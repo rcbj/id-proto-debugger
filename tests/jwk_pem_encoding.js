@@ -878,6 +878,9 @@ function testsImageHasNoCollidingFilenames() {
   if (!fs.existsSync(dockerfile)) {
     log.info("[collisions] skipped: tests/Dockerfile is not present, so this is the tests image " +
       "rather than a checkout.");
+    // In the image the flat directory itself can be read, which is better
+    // evidence than the Dockerfile: check what is actually there.
+    flatModulesResolveTheirRequiresHere();
     log.debug("Leaving testsImageHasNoCollidingFilenames().");
     return;
   }
@@ -1366,6 +1369,63 @@ function flatCopiedModulesCarryTheirRequires(dockerfile) {
     "copied flat from outside tests/ walked, and every load-time relative " +
     "require among them is carried into the tests image.");
   log.debug("Leaving flatCopiedModulesCarryTheirRequires().");
+}
+
+// ---------------------------------------------------------------------------
+// THE SAME QUESTION, ASKED OF THE IMAGE ITSELF (#429, follow-up).
+//
+// flatCopiedModulesCarryTheirRequires() reads tests/Dockerfile, which only a
+// checkout has, so inside the tests image (where the suite and CI run every
+// job) it never ran. Here the flat directory IS the image's /usr/src/app, so
+// this reads it directly: every .js in it, and every `./` require each makes,
+// must resolve to a file that is actually beside it. Ground truth rather than
+// a reading of COPY lines: it also catches a COPY that names the right file
+// into the wrong place. A require inside a function (lazy) only warns, since
+// it fails when called rather than at load.
+// ---------------------------------------------------------------------------
+function flatModulesResolveTheirRequiresHere() {
+  log.debug("Entering flatModulesResolveTheirRequiresHere().");
+  const dir = __dirname;
+  const resolves = function (spec) {
+    const base = path.join(dir, spec);
+    return [base, base + ".js", base + ".json",
+            path.join(base, "index.js")].some(function (one) {
+      return fs.existsSync(one) && fs.statSync(one).isFile();
+    });
+  };
+  const missing = [];
+  let walked = 0;
+  fs.readdirSync(dir).filter(function (name) {
+    return /\.js$/.test(name) && fs.statSync(path.join(dir, name)).isFile();
+  }).forEach(function (name) {
+    walked++;
+    stsRequiresIn(name, fs.readFileSync(path.join(dir, name), "utf8"))
+      .forEach(function (one) {
+        if (one.spec.indexOf("./") !== 0 || resolves(one.spec)) {
+          return;
+        }
+        const where = one.spec + " (required by " + name + ")";
+        if (one.lazy) {
+          log.warn("[flat-closure] a require inside a function finds " +
+                   "nothing beside it in this image: " + where + ". It " +
+                   "fails when called, not at load.");
+          return;
+        }
+        missing.push(where);
+      });
+  });
+  const unique = missing.filter(function (v, i) {
+    return missing.indexOf(v) === i;
+  });
+  assert.deepStrictEqual(unique, [],
+    "these modules are in the tests image but the modules they require at " +
+    "load are not beside them, so each dies with MODULE_NOT_FOUND when a " +
+    "job loads it: " + unique.join(", ") + ". Add a COPY of each to " +
+    "tests/Dockerfile beside the module that requires it.");
+  log.info("[flat-closure] OK — " + walked + " module(s) in this image's " +
+           "flat directory read, and every load-time ./ require among them " +
+           "resolves beside it.");
+  log.debug("Leaving flatModulesResolveTheirRequiresHere().");
 }
 
 function flatCopiedModulesHaveTheirPackages(dockerfile) {

@@ -475,6 +475,9 @@ COPY tests/krb5_field_naming.js ./
 # krb5 block above already copies flat beside the codec it requires.
 COPY tests/krb5_ticket_history.js ./
 COPY client/src/kerberos_panes.js ./
+# kerberos_panes.js requires ./kerberos_hex inside a function, so a flat copy
+# that reached that path without it would fail when called (#429).
+COPY client/src/kerberos_hex.js ./
 # The Operations History pane. It loads client/src/kerberos_history.js, which
 # requires client/src/op_history.js — the store the SAML, WS-Trust and
 # WS-Federation logs share — so both come in flat.
