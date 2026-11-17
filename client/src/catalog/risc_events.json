@@ -1,0 +1,192 @@
+[
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/account-credential-change-required",
+    "family": "risc",
+    "name": "Account Credential Change Required",
+    "subject": "required",
+    "what": "The account named by the subject was REQUIRED to change a credential — a forced password reset, most often. It is not a report that a credential changed: nothing here says one did, and the person may never comply. What a receiver learns is that this provider no longer trusts what it currently holds.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when it decides a credential has to be replaced — a breach, an expiry policy, an administrator.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/account-purged",
+    "family": "risc",
+    "name": "Account Purged",
+    "subject": "required",
+    "what": "The account was PERMANENTLY DELETED. It is the one terminal event in the vocabulary and the model treats it as one: nothing can be said about a purged account afterwards except by contradiction. The distinction from account-disabled is the whole of its meaning — a disabled account may come back and this one may not.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when the account is deleted at its end.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/account-disabled",
+    "family": "risc",
+    "name": "Account Disabled",
+    "subject": "required",
+    "what": "The account was disabled and MAY BE ENABLED AGAIN. It is the ordinary account-takeover signal, and the pair it forms with account-enabled is what makes it different from a purge.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when it locks the account — a risk engine, an abuse team, an administrator.",
+    "members": [
+      {
+        "name": "reason",
+        "required": false,
+        "type": "openenum",
+        "values": [
+          "hijacking",
+          "bulk-account"
+        ],
+        "what": "Why, as one of two words RISC names — and what those two are FOR is worth knowing. \"hijacking\" says this ONE account was taken over, which is a signal about a person. \"bulk-account\" says it was one of a population created by a script, which is a signal about the PROVIDER and asks a receiver to look at everything else that arrived at the same time. The specification says \"possible values\" rather than closing the list, so a third word is carried with a warning."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/account-enabled",
+    "family": "risc",
+    "name": "Account Enabled",
+    "subject": "required",
+    "what": "The account was enabled. It is RISC's only GOOD NEWS and it is the one everybody forgets to implement: a receiver that acts on account-disabled and ignores this one has locked somebody out permanently on the strength of an incident that was resolved.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when the lock comes off.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/identifier-changed",
+    "family": "risc",
+    "name": "Identifier Changed",
+    "subject": "required",
+    "subjectFormats": [
+      "email",
+      "phone_number"
+    ],
+    "what": "The identifier IN THE SUBJECT changed, and the subject carries the OLD value — which is the reverse of every other event in all three vocabularies and the thing that catches everybody. RISC says only the provider AUTHORITATIVE over the identifier should send this: an email provider may say john.doe@ became john.roe@, and a site where that address is merely a username may not — it sends recovery-information-changed instead.",
+    "howItIsAsked": "Nobody asks. The provider that owns the address or the number sends it when the person changes one.",
+    "members": [
+      {
+        "name": "new-value",
+        "required": false,
+        "type": "string",
+        "what": "What the identifier became. **THE ONLY HYPHENATED MEMBER NAME IN ANY OF THE THREE VOCABULARIES** — everything else in SSF, CAEP and RISC is snake_case — so `new_value` typed from habit produces an event that delivers and says nothing. It is OPTIONAL, and a transmitter that leaves it out tells a receiver that an address it holds is stale without telling it what to hold instead: legal, and nearly useless."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/identifier-recycled",
+    "family": "risc",
+    "name": "Identifier Recycled",
+    "subject": "required",
+    "subjectFormats": [
+      "email",
+      "phone_number"
+    ],
+    "what": "The identifier in the subject was RECYCLED and now belongs to SOMEBODY ELSE. It is the event whose absence causes the quietest account takeover there is: a mail provider reissues a lapsed address, a relying party keyed on the address by itself lets the new owner into the old owner's account, and nothing anywhere was compromised. It is the whole argument for keying on an iss_sub pair rather than on an email address.",
+    "howItIsAsked": "Nobody asks. The provider that owns the address sends it when it hands one to a new person.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/credential-compromise",
+    "family": "risc",
+    "name": "Credential Compromise",
+    "subject": "required",
+    "what": "A credential belonging to this account was FOUND compromised — seen in a breach corpus, or reported. THE ONLY ONE OF THE FOURTEEN WITH A REQUIRED MEMBER, and the only one carrying any of the claims CAEP gives to all eight of its own. A receiver acts on it differently by type: a compromised password is a reset, and a compromised hardware key is a revocation.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when its own monitoring finds the credential somewhere it should not be.",
+    "members": [
+      {
+        "name": "credential_type",
+        "required": true,
+        "type": "openenum",
+        "values": [
+          "password",
+          "pin",
+          "x509",
+          "fido2-platform",
+          "fido2-roaming",
+          "fido-u2f",
+          "verifiable-credential",
+          "phone-voice",
+          "phone-sms",
+          "app"
+        ],
+        "what": "Which kind of credential was found compromised. **RISC SECTION 2.7 DEFINES THIS BY REFERENCE TO CAEP's credential-change**, so the two lists are the same list rather than two alike ones — which is why there is one CREDENTIAL_TYPES in this file and not a copy per vocabulary. It is OPEN in both places, so a vendor's own type is carried with a warning."
+      },
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the transmitter DISCOVERED the compromise, in seconds since the epoch. RISC section 2.7 words it as discovery rather than as occurrence, and that is not pedantry: a credential found in a breach corpus was compromised long before anybody noticed, so a receiver reading this as \"when it happened\" dates the incident from the wrong end."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for an administrator. This build sends and expects the LANGUAGE-MAP shape CAEP defines — {\"en\": \"...\"} — and RISC 1.0 does not actually repeat that requirement, which makes a bare string arguably conforming to RISC and certainly unreadable to a receiver built against CAEP. The map is the reading that is right under both."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/opt-in",
+    "family": "risc",
+    "name": "Opt In",
+    "subject": "required",
+    "what": "The account is participating in RISC exchange again. It is one of the four events that ARE a state transition rather than a report of one — RISC section 2.8 defines each of them as \"the account is in the X state\" — and it is the only event that may be sent about an account which has opted OUT, because without it a receiver would never learn that one came back.",
+    "howItIsAsked": "Nobody asks. The person opted back in at the transmitter, and the transmitter says so.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/opt-out-initiated",
+    "family": "risc",
+    "name": "Opt Out Initiated",
+    "subject": "required",
+    "what": "The person asked to stop RISC exchange, AND IT CARRIES ON FOR A WHILE ANYWAY. That delay is the point of the state existing at all: RISC section 2.8 says it is there to stop a hijacker from opting out the moment they take an account over and silencing the very events that would report them.",
+    "howItIsAsked": "Nobody asks. The person asked at the transmitter.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/opt-out-cancelled",
+    "family": "risc",
+    "name": "Opt Out Cancelled",
+    "subject": "required",
+    "what": "The opt-out was called off and the account is back in the opt-in state. **THE SPELLING IS BRITISH AND IT IS THE SPECIFICATION'S** — \"cancelled\" with two Ls — so a transmitter writing \"opt-out-canceled\" produces a URI a conforming receiver silently ignores, because there is no unknown-event-type error in this protocol.",
+    "howItIsAsked": "Nobody asks. The person changed their mind before the opt-out took effect.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/opt-out-effective",
+    "family": "risc",
+    "name": "Opt Out Effective",
+    "subject": "required",
+    "what": "The opt-out has taken effect and no further RISC events will be sent about this account. IT IS THE LAST ONE — an event announcing that there will be no more events — which is what makes it the one an opt-out gate must never suppress. Suppressing it would leave a receiver waiting for signals that stopped without notice, which at the far end is indistinguishable from a transmitter that has gone down.",
+    "howItIsAsked": "Nobody asks. The transmitter's waiting period ended.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/recovery-activated",
+    "family": "risc",
+    "name": "Recovery Activated",
+    "subject": "required",
+    "what": "The account went through a recovery flow. It is a signal about RISK rather than about a change: a recovery is how a legitimate owner gets back in and it is also how an attacker who controls the recovery channel takes over, and the transmitter cannot tell which. A receiver is expected to weigh it, not act on it.",
+    "howItIsAsked": "Nobody asks. Somebody used the \"forgot my password\" door.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/recovery-information-changed",
+    "family": "risc",
+    "name": "Recovery Information Changed",
+    "subject": "required",
+    "what": "A recovery address or number was added, changed or removed. It is what a provider sends about an identifier IT IS NOT AUTHORITATIVE OVER — RISC says so where identifier-changed says the opposite — so the pair of them is the same act reported by two different kinds of provider. It carries no member saying WHICH information moved, deliberately: that would be publishing somebody's recovery address to every receiver on the stream.",
+    "howItIsAsked": "Nobody asks. The person edited their recovery settings.",
+    "members": []
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/risc/event-type/sessions-revoked",
+    "family": "risc",
+    "name": "Sessions Revoked",
+    "subject": "required",
+    "deprecated": "https://schemas.openid.net/secevent/caep/event-type/session-revoked",
+    "what": "EVERY session the account has, everywhere, is gone — which is a far larger instruction than CAEP's session-revoked, whose subject names ONE of them. **DEPRECATED by RISC 1.0 section 2.11**, which says new implementations MUST use CAEP's singular event instead. The two names differ by one letter and mean different things, so this is the pair to check when a receiver ends more sessions than anybody intended. It is here, and sendable, because a debugger that could not produce a deprecated event could not be used to find out what a receiver does with one.",
+    "howItIsAsked": "Nobody asks — and nobody should be sending it. Receivers in the field still do.",
+    "members": []
+  }
+]

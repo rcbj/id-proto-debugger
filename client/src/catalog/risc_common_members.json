@@ -1,0 +1,20 @@
+[
+  {
+    "name": "event_timestamp",
+    "required": false,
+    "type": "number",
+    "what": "When the transmitter DISCOVERED the compromise, in seconds since the epoch. RISC section 2.7 words it as discovery rather than as occurrence, and that is not pedantry: a credential found in a breach corpus was compromised long before anybody noticed, so a receiver reading this as \"when it happened\" dates the incident from the wrong end."
+  },
+  {
+    "name": "reason_admin",
+    "required": false,
+    "type": "langmap",
+    "what": "Why, for an administrator. This build sends and expects the LANGUAGE-MAP shape CAEP defines — {\"en\": \"...\"} — and RISC 1.0 does not actually repeat that requirement, which makes a bare string arguably conforming to RISC and certainly unreadable to a receiver built against CAEP. The map is the reading that is right under both."
+  },
+  {
+    "name": "reason_user",
+    "required": false,
+    "type": "langmap",
+    "what": "The same, in words meant for the person it happened to."
+  }
+]

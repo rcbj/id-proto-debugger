@@ -1,0 +1,32 @@
+[
+  {
+    "name": "event_timestamp",
+    "required": false,
+    "type": "number",
+    "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+  },
+  {
+    "name": "initiating_entity",
+    "required": false,
+    "type": "enum",
+    "values": [
+      "admin",
+      "user",
+      "policy",
+      "system"
+    ],
+    "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+  },
+  {
+    "name": "reason_admin",
+    "required": false,
+    "type": "langmap",
+    "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+  },
+  {
+    "name": "reason_user",
+    "required": false,
+    "type": "langmap",
+    "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+  }
+]

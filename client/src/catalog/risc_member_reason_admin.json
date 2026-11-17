@@ -1,0 +1,6 @@
+{
+  "name": "reason_admin",
+  "required": false,
+  "type": "langmap",
+  "what": "Why, for an administrator. This build sends and expects the LANGUAGE-MAP shape CAEP defines — {\"en\": \"...\"} — and RISC 1.0 does not actually repeat that requirement, which makes a bare string arguably conforming to RISC and certainly unreadable to a receiver built against CAEP. The map is the reading that is right under both."
+}

@@ -31,6 +31,12 @@
 //  6. THE EMBEDDED CONTRACT. Every variable models/contract/ declares is
 //     read in the file it names, and every process.env.DEBUGGER_* the tree
 //     reads is declared.
+//  7. THE SHARED SIGNALS CATALOGUE. Every table client/src/ssf_events.js
+//     exports (the 24 SSF, CAEP and RISC event rows, the common members, the
+//     credential types, the families, the profiles and the three prefixes)
+//     equals the JSON models/catalog/ssf_events.tsp generates, so a hand edit
+//     to either is caught; every row has its generate() function; and the
+//     module holds no literal row of its own.
 //
 // Node only — no browser, no services — so it never skips. In the tests image
 // the source is /usr/src/source-tree (tests/Dockerfile), with models/'s own
@@ -453,6 +459,62 @@ function embeddedContract() {
   log.debug("Leaving embeddedContract().");
 }
 
+// The tables ssf_events.js exports, and the catalogue file each must equal.
+const SSF_CATALOGUE = [
+  ["SSF_PREFIX", "ssf_prefix.json"],
+  ["CAEP_PREFIX", "caep_prefix.json"],
+  ["RISC_PREFIX", "risc_prefix.json"],
+  ["CREDENTIAL_TYPES", "caep_credential_types.json"],
+  ["CAEP_COMMON_MEMBERS", "caep_common_members.json"],
+  ["RISC_COMMON_MEMBERS", "risc_common_members.json"],
+  ["SSF_EVENTS", "ssf_events.json"],
+  ["CAEP_EVENTS", "caep_events.json"],
+  ["RISC_EVENTS", "risc_events.json"],
+  ["FAMILIES", "ssf_event_families.json"],
+  ["PROFILES", "ssf_profiles.json"]
+];
+
+function ssfCatalogue() {
+  log.debug("Entering ssfCatalogue().");
+  log.info("=== 7. ssf_events.js reads the generated SSF catalogue ===");
+  const src = path.join(ROOT, "client", "src");
+  const events = paths.requireSharedModule([path.join(src, "ssf_events.js")],
+    "client/src/ssf_events.js");
+  const problems = [];
+  SSF_CATALOGUE.forEach(function (pair) {
+    // Read with fs rather than require(): the module's require() of the same
+    // file shares one cached object, and comparing it with itself would
+    // pass whatever either held. JSON.stringify drops each row's generate().
+    const file = path.join(src, "catalog", pair[1]);
+    const generated = JSON.parse(fs.readFileSync(file, "utf8"));
+    const exported = JSON.parse(JSON.stringify(events[pair[0]]));
+    try {
+      assert.deepStrictEqual(exported, generated);
+    } catch (e) {
+      problems.push(pair[0] + " is not client/src/catalog/" + pair[1]);
+    }
+  });
+  if (events.EVENTS.length !== 24) {
+    problems.push("EVENTS has " + events.EVENTS.length + " rows, not 24");
+  }
+  events.EVENTS.forEach(function (row) {
+    if (typeof row.generate !== "function") {
+      problems.push(row.uri + " has no generate()");
+    }
+  });
+  const source = fs.readFileSync(path.join(src, "ssf_events.js"), "utf8");
+  if (/^\s*uri:\s*[A-Z_]*PREFIX/m.test(source)) {
+    problems.push("ssf_events.js holds a literal event row again; rows " +
+                  "belong in models/catalog/ssf_events.tsp");
+  }
+  assert.deepStrictEqual(problems, [], "the SSF catalogue and " +
+    "ssf_events.js disagree:\n  " + problems.join("\n  "));
+  log.info("[ssf] OK — " + SSF_CATALOGUE.length + " tables equal their " +
+           "generated files, and all " + events.EVENTS.length +
+           " event rows have a generator.");
+  log.debug("Leaving ssfCatalogue().");
+}
+
 function main() {
   log.debug("Entering main().");
   current();
@@ -461,6 +523,7 @@ function main() {
   configurations();
   storageModel();
   embeddedContract();
+  ssfCatalogue();
   log.info("The abstract data model is current, live, strict and obeyed.");
   log.debug("Leaving main().");
 }

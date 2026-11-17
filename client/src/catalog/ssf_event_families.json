@@ -1,0 +1,23 @@
+[
+  {
+    "id": "ssf",
+    "label": "SSF — the framework itself",
+    "prefix": "https://schemas.openid.net/secevent/ssf/event-type/",
+    "implemented": true,
+    "what": "Two event types, both about the PIPE rather than about a person: is this stream alive, and has its status changed."
+  },
+  {
+    "id": "caep",
+    "label": "CAEP — Continuous Access Evaluation Profile",
+    "prefix": "https://schemas.openid.net/secevent/caep/event-type/",
+    "implemented": true,
+    "what": "The enterprise SESSION vocabulary, in eight event types: session revoked, established and presented, token claims change, credential change, assurance level change, device compliance change and risk level change. It says \"this session is no longer trustworthy\", and every one of them names a SESSION rather than a person — which is what SSF's complex subject is for."
+  },
+  {
+    "id": "risc",
+    "label": "RISC — Risk Incident Sharing and Coordination",
+    "prefix": "https://schemas.openid.net/secevent/risc/event-type/",
+    "implemented": true,
+    "what": "The account-lifecycle vocabulary, aimed ACROSS providers rather than within one enterprise, in fourteen event types: account disabled, enabled and purged, credential change required, credential compromise, identifier changed and recycled, four opt-out events, recovery activated and recovery information changed, and one the specification deprecates in favour of a CAEP event. It says \"this account is no longer trustworthy\", which is a different sentence from CAEP's and the whole reason there are two profiles. ELEVEN OF THE FOURTEEN CARRY NO PAYLOAD MEMBERS AT ALL, so the SUBJECT is the entire message — which is the opposite of CAEP, where the subject narrows and the payload says what happened."
+  }
+]

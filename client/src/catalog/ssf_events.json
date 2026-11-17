@@ -1,0 +1,45 @@
+[
+  {
+    "uri": "https://schemas.openid.net/secevent/ssf/event-type/verification",
+    "family": "ssf",
+    "name": "Verification",
+    "subject": "none",
+    "what": "THE ONLY END-TO-END TEST A STREAM HAS. Creating the stream, reading it back and adding a subject all exercise the management API and prove nothing about whether an event can actually be delivered. This travels the ordinary delivery path, so a 202 from the push endpoint — or a poll that returns it — is the first evidence the pipe works.",
+    "howItIsAsked": "A receiver POSTs {stream_id, state} to the verification_endpoint. The transmitter answers 204 and sends the event SEPARATELY, over the stream. Those are two different exchanges and a receiver that expected the event in the response to its own request waits forever.",
+    "members": [
+      {
+        "name": "state",
+        "required": false,
+        "type": "string",
+        "what": "Whatever the receiver put in its verification request, echoed back UNCHANGED. It is the only thing tying this event to the request that asked for it — without it, a receiver watching two streams cannot tell which one just answered."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/ssf/event-type/stream-updated",
+    "family": "ssf",
+    "name": "Stream Updated",
+    "subject": "none",
+    "what": "The stream's status changed and the receiver is being told IN BAND. It is the one event a receiver gets without asking for it, and the one whose absence is hardest to notice: a stream quietly paused at the transmitter looks exactly like a service where nothing has happened lately.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when the status changes — including when the change was made by the receiver itself at the status endpoint, which is not redundant: the acknowledgement of a request and an event on the stream are two different assurances, and only the second one says the delivery path is working.",
+    "members": [
+      {
+        "name": "status",
+        "required": true,
+        "type": "enum",
+        "values": [
+          "enabled",
+          "paused",
+          "disabled"
+        ],
+        "what": "The stream's new status. PAUSED keeps queueing and delivers nothing; DISABLED drops what is waiting. That is the difference between \"I was not listening\" and \"it did not happen\"."
+      },
+      {
+        "name": "reason",
+        "required": false,
+        "type": "string",
+        "what": "Why, in words, for a person reading a log. Nothing parses it."
+      }
+    ]
+  }
+]
