@@ -3767,6 +3767,16 @@ function buildJobs() {
     env: {},
   });
 
+  // POST /oid4vp/call, the wallet's route to a Verifier that sends no CORS
+  // headers: every refusal api/oid4vp_proxy.js makes, its defaults and its
+  // status rule, with no Verifier and no api running.
+  jobs.push({
+    name: "OpenID4VP relay (POST /oid4vp/call: refusals by rule, form " +
+        "bodies, text answers, in node)",
+    script: "api_oid4vp_proxy.js",
+    env: {},
+  });
+
   // ISO mdoc in the wallet (client/src/mdoc.js), in node, against an issuer
   // written apart from it (tests/mdoc_test_issuer.js): reading, the digest
   // and issuer-signature checks, and a DeviceResponse whose device signature

@@ -90,6 +90,16 @@ defines. It presents whatever credential the
             <td><textarea class="stored" id="vp_x509_trust_anchor" name="vp_x509_trust_anchor" rows="4" cols="60"
                        placeholder="-----BEGIN CERTIFICATE-----"></textarea></td>
           </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label for="vp_via_api">Reach the Verifier through the debugger's api</label>
+                <span class="tooltiptext">A wallet in a browser page can only use a Verifier that sends CORS headers, and most do not: a wallet is normally a native app, which has no CORS. Ticked, every call to the Verifier (the Request Object, its POST under request_uri_method=post, the Verifier's JWKS, and the answer posted to response_uri) is made by this debugger's api instead (POST /oid4vp/call), which no browser policy applies to. Unticked, the page calls the Verifier itself. Answers through the browser (fragment, query, form_post) always go through the browser.</span>
+              </div>
+            </td>
+            <td><label><input type="checkbox" id="vp_via_api" /> through the api</label>
+                <label><input type="checkbox" id="vp_api_ssl_validate" checked="checked" /> check the Verifier's TLS certificate on that route</label>
+                <span class="vc-note" id="vp_via_api_note">&nbsp;</span></td>
+          </tr>
         </tbody>
       </table>
     </form>

@@ -382,6 +382,10 @@ COPY tests/vc_presentation_polaris.js ./
 # ISO mdoc: the engine test and the test issuer it and
 # vc_presentation_protocols.js require (a shared module, scheduled by nothing).
 COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
+# A credential collected through the wallet's own issuance pages from an
+# offer made on iya-sts's portal: shared by vc_presentation_protocols.js and
+# vc_presentation_polaris.js, and scheduled by nothing.
+COPY tests/wallet_issuance.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires
@@ -917,6 +921,9 @@ COPY client/src/risc_account.js ./
 # a flat copy resolves beside itself (#429).
 COPY client/src/session_handoff.js ./
 COPY api/ssf_proxy.js api/ssf_receiver.js ./
+# The OpenID4VP relay (POST /oid4vp/call) and its engine test. The module
+# requires ssf_proxy.js, copied flat on the line above.
+COPY api/oid4vp_proxy.js tests/api_oid4vp_proxy.js ./
 COPY tests/ssf_engine.js tests/ssf_protocol.js ./
 COPY tests/api_ssf.js tests/ssf_page.js ./
 # CAEP is a VOCABULARY over SSF rather than a family of its own, so it adds one

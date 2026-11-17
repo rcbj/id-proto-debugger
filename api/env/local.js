@@ -222,6 +222,9 @@ var config = {
   // scimAllowedPorts: SSF is HTTP, and a port allowlist for HTTP would have to
   // carry 80, 443 and every alternate somebody runs a service on.
   ssfMaxRequestBytes: 262144,
+  // The cap on a body POST /oid4vp/call forwards (an OpenID4VP answer
+  // or a request_uri POST); see api/oid4vp_proxy.js.
+  oid4vpMaxRequestBytes: 262144,
   // ---------------------------------------------------------------------------
   // GNAP (client/public/gnap.html, docs/gnap.md).
   //

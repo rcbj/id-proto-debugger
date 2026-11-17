@@ -171,8 +171,50 @@ function configStatus(text, cls) {
   log.debug("Leaving configStatus().");
 }
 
+// The two route options are checkboxes, not text: whether to reach the
+// Verifier through the debugger's api, and whether that route checks the
+// Verifier's TLS certificate (on unless explicitly "0").
+function loadRouteOptions() {
+  log.debug("Entering loadRouteOptions().");
+  var via = el("vp_via_api");
+  var ssl = el("vp_api_ssl_validate");
+  if (via) via.checked = sdJwtVc.get(sdJwtVp.KEYS.VIA_API) === "1";
+  if (ssl) ssl.checked = sdJwtVc.get(sdJwtVp.KEYS.API_SSL_VALIDATE) !== "0";
+  // Offered only where an api answers: a static deployment has none, and a
+  // box that could be ticked there would send every call nowhere.
+  sdJwtVp.apiRouteAvailable().then(function (available) {
+    if (via) via.disabled = !available;
+    if (ssl) ssl.disabled = !available;
+    var note = el("vp_via_api_note");
+    if (note) {
+      note.textContent = available ? "" : "This deployment has no api " +
+        "answering at " + (sdJwtVp.apiBase() || "(none configured)") +
+        ", so the wallet reaches the Verifier from the browser, which " +
+        "needs the Verifier to send CORS headers.";
+    }
+    if (!available && via && via.checked) {
+      via.checked = false;
+    }
+  });
+  log.debug("Leaving loadRouteOptions().");
+}
+
+function saveRouteOptions() {
+  log.debug("Entering saveRouteOptions().");
+  var via = el("vp_via_api");
+  var ssl = el("vp_api_ssl_validate");
+  if (via && !via.disabled) {
+    sdJwtVc.set(sdJwtVp.KEYS.VIA_API, via.checked ? "1" : "0");
+  }
+  if (ssl && !ssl.disabled) {
+    sdJwtVc.set(sdJwtVp.KEYS.API_SSL_VALIDATE, ssl.checked ? "1" : "0");
+  }
+  log.debug("Leaving saveRouteOptions().");
+}
+
 function loadConfiguration() {
   log.debug("Entering loadConfiguration().");
+  loadRouteOptions();
   CONFIG_FIELDS.forEach(function (f) {
     var e = el(f.id);
     if (e) e.value = sdJwtVc.get(sdJwtVp.KEYS[f.key]) || "";
@@ -182,6 +224,7 @@ function loadConfiguration() {
 
 function saveConfiguration() {
   log.debug("Entering saveConfiguration().");
+  saveRouteOptions();
   CONFIG_FIELDS.forEach(function (f) {
     var e = el(f.id);
     var v = e ? String(e.value || "").trim() : "";
@@ -198,6 +241,9 @@ function saveConfiguration() {
 
 function clearConfiguration() {
   log.debug("Entering clearConfiguration().");
+  sdJwtVc.remove(sdJwtVp.KEYS.VIA_API);
+  sdJwtVc.remove(sdJwtVp.KEYS.API_SSL_VALIDATE);
+  loadRouteOptions();
   CONFIG_FIELDS.forEach(function (f) {
     sdJwtVc.remove(sdJwtVp.KEYS[f.key]);
     var e = el(f.id);

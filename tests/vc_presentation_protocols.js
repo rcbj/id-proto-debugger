@@ -34,6 +34,7 @@ const path = require("path");
 const browserFlags = require("./browser_flags.js");
 const common = require("./jwt_vc_json_common.js");
 const mdocIssuer = require("./mdoc_test_issuer.js");
+const walletIssuance = require("./wallet_issuance.js");
 const nodeCrypto = require("crypto");
 const paths = require("./module_paths.js");
 const { Command, Option } = require("commander");
@@ -146,33 +147,82 @@ async function addTheIssuersContexts(driver, credential) {
   log.debug("Leaving addTheIssuersContexts().");
 }
 
-// The wallet's state for one case: the credential and its holder key, the
-// protocol, the Verifier's trust anchor. Everything else is cleared, except
-// the JSON-LD contexts the page was given.
-async function plant(driver, held, protocol, anchorPem) {
-  log.debug("Entering plant(). protocol=" + protocol);
+// WHAT THE WALLET HOLDS, COLLECTED THE WAY A WALLET COLLECTS IT.
+//
+// The three formats iya-sts issues are collected through the debugger's own
+// issuance pages from an offer made on iya-sts's portal (wallet_issuance.js):
+// the credential, and the holder key it is bound to, are the ones the wallet
+// itself made and stored. The wallet holds one credential at a time, so each
+// is collected before the first case that needs it, and the cases are
+// grouped by format to collect each once.
+//
+// An mdoc is the one exception: no issuer in this stack mints mso_mdoc, so
+// it comes from tests/mdoc_test_issuer.js and is written into the wallet's
+// storage, as the only credential this job places there itself.
+var walletHolds = "";
+var configurations = {};
+var mdocHeld = null;
+
+async function holdFor(driver, format) {
+  log.debug("Entering holdFor(). " + format);
+  if (!format || format === walletHolds) {
+    log.debug("Leaving holdFor(). Already held.");
+    return;
+  }
+  if (format === "mso_mdoc") {
+    await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
+    await pageBundleReady(driver);
+    await driver.executeScript(
+      "var keep = localStorage.getItem('vc_jsonld_contexts');" +
+      "localStorage.clear();" +
+      "if (keep) localStorage.setItem('vc_jsonld_contexts', keep);" +
+      "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
+      "localStorage.setItem('sdjwtvc_credentials'," +
+      "  JSON.stringify([arguments[0]]));" +
+      "localStorage.setItem('sdjwtvc_holder_jwk', arguments[1]);" +
+      "localStorage.setItem('sdjwtvc_holder_private_jwk', arguments[2]);",
+      mdocHeld.credential, JSON.stringify(mdocHeld.publicJwk),
+      JSON.stringify(mdocHeld.privateJwk));
+  } else {
+    const held = await walletIssuance.collect(driver, {
+      By: By, until: until, baseUrl: baseUrl, issuerBase: issuerBase,
+      configuration: configurations[format], label: "protocols",
+      wait: stepWait });
+    assert.strictEqual(held.format, format, "the wallet collected a " +
+      held.format + " for configuration " + configurations[format]);
+    walletIssuance.assertBoundToTheWalletsKey(held);
+    walletHolds = format;
+    // Collecting clears the wallet's storage, the JSON-LD contexts with it.
+    contextsAdded = false;
+    heldDocument = held.document || null;
+  }
+  walletHolds = format;
+  log.debug("Leaving holdFor().");
+}
+var heldDocument = null;
+
+// Step 0 as a person sets it up: the protocol chosen, and the Verifier's
+// base URL, JWKS URL and x509 trust anchor typed into the configuration and
+// saved.
+async function setUpStep0(driver, protocol, anchorPem) {
+  log.debug("Entering setUpStep0(). protocol=" + protocol);
   await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
   await pageBundleReady(driver);
+  await driver.wait(until.elementLocated(By.id("vp_protocol_" + protocol)),
+                    stepWait);
   await driver.executeScript(
-    "var keep = localStorage.getItem('vc_jsonld_contexts');" +
-    "localStorage.clear();" +
-    "if (keep) localStorage.setItem('vc_jsonld_contexts', keep);" +
-    "if (arguments[0]) {" +
-    "  localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
-    "  localStorage.setItem('sdjwtvc_credentials'," +
-    "    JSON.stringify([arguments[0]]));" +
-    "  localStorage.setItem('sdjwtvc_holder_jwk', arguments[1]);" +
-    "  localStorage.setItem('sdjwtvc_holder_private_jwk', arguments[2]);" +
-    "}" +
-    "localStorage.setItem('sdjwtvp_verifier_base_url', arguments[3]);" +
-    "localStorage.setItem('sdjwtvp_protocol', arguments[4]);" +
-    "localStorage.setItem('sdjwtvp_x509_trust_anchor', arguments[5]);",
-    held ? (typeof held.credential === "string" ? held.credential :
-            JSON.stringify(held.credential)) : "",
-    held ? JSON.stringify(held.publicJwk) : "",
-    held ? JSON.stringify(held.privateJwk) : "",
-    verifierBase, protocol, anchorPem || "");
-  log.debug("Leaving plant().");
+    "document.getElementById('vp_protocol_' + arguments[0]).click();" +
+    "document.getElementById('vp_verifier_base_url').value = arguments[1];" +
+    "document.getElementById('vp_verifier_jwks_url').value =" +
+    "  arguments[1] + '/oauth2/jwks';" +
+    "document.getElementById('vp_x509_trust_anchor').value = arguments[2];" +
+    "document.getElementById('config_save_button').click();",
+    protocol, verifierBase, anchorPem || "");
+  const saved = await driver.executeScript(
+    "return localStorage.getItem('sdjwtvp_protocol');");
+  assert.strictEqual(saved, protocol, "step 0 should keep the protocol " +
+                     "chosen on it");
+  log.debug("Leaving setUpStep0().");
 }
 
 async function startAt(asked) {
@@ -200,10 +250,20 @@ async function startAt(asked) {
 async function present(driver, c) {
   log.debug("Entering present(). " + c.label);
   log.info("=== " + c.label + " ===");
-  await plant(driver, c.held, c.protocol, c.anchor);
+  await holdFor(driver, c.format);
+  await setUpStep0(driver, c.protocol, c.anchor);
   const started = await startAt(c.asked);
-  await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" + started.query);
+  // The request reaches the wallet the way a wallet on another device reads
+  // it from a QR code: the Verifier's request URI (openid4vp://, haip-vp://
+  // or siopv2://) pasted into step 1.
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html");
   await pageBundleReady(driver);
+  await driver.wait(until.elementLocated(By.id("vp_paste_request")),
+                    stepWait);
+  await driver.executeScript(
+    "document.getElementById('vp_paste_request').value = arguments[0];" +
+    "document.getElementById('vp_use_pasted_button').click();",
+    String(started.body.requestUri || ""));
   if (c.expectRefusal) {
     const said = await waitForStatus(driver, "vp_request_status",
       function (s) {
@@ -225,11 +285,23 @@ async function present(driver, c) {
   await waitForStatus(driver, "vp_request_status", function (s) {
     return /Request read/.test(s);
   }, c.label + ": step 1 should read the request", stepWait);
+  // Every claim asked for is one the held credential carries, so none may be
+  // marked missing. For an mdoc this is the [namespace, element] path, whose
+  // namespace has dots of its own: read as "first segment off", every
+  // requested element was reported as not in the credential.
+  if (c.format) {
+    const requested = await driver.executeScript(
+      "var t = document.getElementById('vp_requested_table');" +
+      "return t ? t.textContent : '';");
+    assert.ok(requested.indexOf("not in the credential you hold") === -1,
+      c.label + ": step 1 marks a requested claim missing that the " +
+      "credential carries:\n" + requested);
+  }
   await clickId(driver, "vp_continue_button");
   await driver.wait(until.urlContains("vc-presentation-2.html"), stepWait,
     c.label + ": Continue should open step 2");
   await pageBundleReady(driver);
-  if (c.ldp) await addTheIssuersContexts(driver, c.held.credential);
+  if (c.ldp) await addTheIssuersContexts(driver, heldDocument);
   if (c.pairwise) {
     await driver.wait(until.elementLocated(By.id("vp_siop_pairwise")),
                       stepWait);
@@ -246,6 +318,23 @@ async function present(driver, c) {
   const call = await waitForValue(driver, "vp_assembled_call", function (v) {
     return c.form ? /BROWSER submits/.test(v) : /^POST /.test(v);
   }, c.label + ": step 2 should assemble the answer", stepWait);
+  // A holder-bound ldp_vc must disclose the statement naming its holder
+  // (the credential's credentialSubject): without it the holder's proof is
+  // by a key the credential never mentions, and iya-sts refuses on
+  // "Holder binding". The selection used to leave it out.
+  if (c.ldp && c.idToken) {
+    const subjectChecked = await driver.executeScript(
+      "var rows = document.querySelectorAll(" +
+      "  '#vp_disclosures_table tbody tr');" +
+      "return Array.prototype.some.call(rows, function (r) {" +
+      "  var b = r.querySelector('input[type=checkbox]');" +
+      "  return b && b.checked &&" +
+      "    /[#\\/]credentialSubject>/.test(r.textContent);" +
+      "});");
+    assert.strictEqual(subjectChecked, true, c.label + ": step 2 must " +
+      "select the credentialSubject statement by default for a " +
+      "holder-bound ldp_vc");
+  }
   if (c.encrypted) {
     assert.ok(/(^|\n)response=/.test(call) && !/vp_token=/.test(call),
       c.label + ": direct_post.jwt must post ONE field, response:\n" + call);
@@ -314,26 +403,16 @@ async function present(driver, c) {
   return doc.verdict;
 }
 
+// The configurations the wallet collects each format from: iya-sts's own,
+// offered on its portal.
 async function credentials() {
   log.debug("Entering credentials().");
   const found = await common.jwtVcJsonConfigurationId(issuerBase);
   assert.ok(found.meta, "no credential issuer metadata at " + issuerBase);
   assert.ok(found.id, "this issuer offers no jwt_vc_json configuration");
-  await common.provisionWallet(issuerBase,
-    { why: "the wallet whose credentials this job presents under HAIP and " +
-           "SIOPv2" });
-  const out = {
-    "dc+sd-jwt": await common.mintJwtVcJson(issuerBase, SD_JWT_CONFIG_ID),
-    jwt_vc_json: await common.mintJwtVcJson(issuerBase, found.id),
-    ldp_vc: await common.mintJwtVcJson(issuerBase, LDP_CONFIG_ID)
-  };
-  assert.ok(typeof out["dc+sd-jwt"].credential === "string" &&
-            out["dc+sd-jwt"].credential.indexOf("~") > 0,
-            "the SD-JWT VC configuration minted no SD-JWT");
-  assert.strictEqual(typeof out.ldp_vc.credential, "object",
-                     "an ldp_vc credential is a JSON object");
   log.debug("Leaving credentials().");
-  return out;
+  return { "dc+sd-jwt": SD_JWT_CONFIG_ID, jwt_vc_json: found.id,
+           ldp_vc: LDP_CONFIG_ID };
 }
 
 // One iya-sts setting, read and (when `value` is given) set through its
@@ -390,8 +469,9 @@ const MDOC_SETTINGS = ["oid4vp.mdocTrustAnchors",
 async function test() {
   log.debug("Entering test().");
   log.info("Running the presentation protocols against " + verifierBase);
-  const held = await credentials();
-  held.mso_mdoc = await mdocCredential();
+  configurations = await credentials();
+  mdocHeld = await mdocCredential();
+  const held = { mso_mdoc: mdocHeld };
   const restore = {};
   restore[MDOC_SETTINGS[0]] = await setting(MDOC_SETTINGS[0],
                                             held.mso_mdoc.iacaPem);
@@ -415,56 +495,63 @@ async function withFormats(held) {
   assert.ok(anchor, "the Verifier publishes no trust anchor for its " +
     "x509_hash Client Identifier: " + String(cert.raw).slice(0, 300));
 
+  // Grouped by format, so the wallet collects each credential once.
   const cases = [];
-  cases.push({ label: "OpenID4VP / mso_mdoc", protocol: "oid4vp",
-    held: held.mso_mdoc, anchor: anchor,
-    asked: { format: "mso_mdoc", by: "reference",
-             response_mode: "direct_post", mode: "same-device" } });
-  ["dc+sd-jwt", "jwt_vc_json", "ldp_vc", "mso_mdoc"].forEach(
-    function (format) {
+  const byFormat = function (format) {
+    if (format === "mso_mdoc") {
+      cases.push({ label: "OpenID4VP / mso_mdoc", protocol: "oid4vp",
+        format: format, anchor: anchor,
+        asked: { format: "mso_mdoc", by: "reference",
+                 response_mode: "direct_post", mode: "same-device" } });
+    }
     cases.push({ label: "HAIP / " + format, protocol: "haip",
-      held: held[format], anchor: anchor, ldp: format === "ldp_vc",
+      format: format, anchor: anchor, ldp: format === "ldp_vc",
       encrypted: true,
       asked: { format: format, by: "reference", client_id_prefix: "x509_hash",
                response_mode: "direct_post.jwt", mode: "same-device" } });
     cases.push({ label: "SIOPv2 vp_token id_token / " + format,
-      protocol: "siopv2", held: held[format], anchor: anchor,
+      protocol: "siopv2", format: format, anchor: anchor,
       ldp: format === "ldp_vc", idToken: true,
       mustPass: ["id_token subject is the holder"],
       // iya-sts 1.0.0 verifies an mdoc's device signature with the MSO's
       // device key but does not return that key as the presentation's
       // holder key (oid4vc/vc_mdoc.ts sets no holderJwk), so its SIOPv2
-      // "same holder" check cannot pass for ANY mdoc. The wallet's own
-      // step 3 re-check of the same thing ("Same holder") has passed by
-      // this point; everything else iya-sts checks must pass too.
+      // "same holder" check cannot pass for ANY mdoc (rcbj/iya-sts#1864).
+      // The wallet's own step 3 re-check of the same thing ("Same holder")
+      // has passed by this point; everything else iya-sts checks must pass.
       verifierGap: format === "mso_mdoc" ?
           "id_token subject is the holder" : "",
       asked: { format: format, by: "reference", client_id_prefix: "x509_hash",
                response_type: "vp_token id_token",
                response_mode: "direct_post", mode: "same-device" } });
-  });
-  cases.push({ label: "SIOPv2 id_token / did:jwk / direct_post",
-    protocol: "siopv2", held: held["dc+sd-jwt"], anchor: anchor,
-    idToken: true, syntax: "did:jwk",
-    asked: { by: "reference", client_id_prefix: "x509_hash",
-             response_type: "id_token", response_mode: "direct_post" } });
-  cases.push({ label: "SIOPv2 id_token / pairwise / direct_post.jwt",
-    protocol: "siopv2", held: null, anchor: anchor, idToken: true,
-    pairwise: true, encrypted: true,
-    syntax: "urn:ietf:params:oauth:jwk-thumbprint",
-    asked: { by: "reference", client_id_prefix: "x509_hash",
-             response_type: "id_token",
-             response_mode: "direct_post.jwt" } });
-  cases.push({ label: "SIOPv2 id_token / form_post", protocol: "siopv2",
-    held: held["dc+sd-jwt"], anchor: anchor, form: true,
-    asked: { by: "value", response_type: "id_token",
-             response_mode: "form_post" } });
-  cases.push({ label: "HAIP refuses a request by value in the clear",
-    protocol: "haip", held: held["dc+sd-jwt"], anchor: anchor,
-    expectRefusal: ["HAIP: signed", "HAIP: x509_hash",
-                    "HAIP: direct_post.jwt"],
-    asked: { format: "dc+sd-jwt", by: "value",
-             response_mode: "direct_post" } });
+    if (format !== "dc+sd-jwt") {
+      return;
+    }
+    cases.push({ label: "SIOPv2 id_token / did:jwk / direct_post",
+      protocol: "siopv2", format: format, anchor: anchor,
+      idToken: true, syntax: "did:jwk",
+      asked: { by: "reference", client_id_prefix: "x509_hash",
+               response_type: "id_token", response_mode: "direct_post" } });
+    cases.push({ label: "SIOPv2 id_token / pairwise / direct_post.jwt",
+      protocol: "siopv2", format: format, anchor: anchor, idToken: true,
+      pairwise: true, encrypted: true,
+      syntax: "urn:ietf:params:oauth:jwk-thumbprint",
+      asked: { by: "reference", client_id_prefix: "x509_hash",
+               response_type: "id_token",
+               response_mode: "direct_post.jwt" } });
+    cases.push({ label: "SIOPv2 id_token / form_post", protocol: "siopv2",
+      format: format, anchor: anchor, form: true,
+      asked: { by: "value", response_type: "id_token",
+               response_mode: "form_post" } });
+    cases.push({ label: "HAIP refuses a request by value in the clear",
+      protocol: "haip", format: format, anchor: anchor,
+      expectRefusal: ["HAIP: signed", "HAIP: x509_hash",
+                      "HAIP: direct_post.jwt"],
+      asked: { format: "dc+sd-jwt", by: "value",
+               response_mode: "direct_post" } });
+  };
+  ["dc+sd-jwt", "jwt_vc_json", "ldp_vc", "mso_mdoc"].forEach(byFormat);
+  void held;
 
   var options = new chrome.Options();
   if (headless) options.addArguments("--headless=new");

@@ -68,6 +68,28 @@ A `bbs-2023` derived proof proves the issuer signed the disclosed statements. It
 
 An `ldp_vc` element of `vp_token` is now a JSON **object**, as OpenID4VP specifies, rather than a JSON string of one.
 
+## Reaching the Verifier: from the page, or through the debugger's api
+
+A wallet in a browser page can use only a Verifier that sends CORS headers, and
+most do not: a wallet is normally a native app, which has no CORS. So step 0 has
+**"Reach the Verifier through the debugger's api"**. When it is ticked, every
+call the wallet makes to the Verifier goes through `POST /oid4vp/call`
+(`api/oid4vp_proxy.js`), which no browser policy applies to:
+
+* the Request Object (its GET, or its POST under `request_uri_method=post`);
+* the Verifier's JWKS;
+* every answer and refusal posted.
+
+`sd_jwt_vp.js`'s `verifierFetch()` makes that one choice for all of them.
+
+* A second box, "check the Verifier's TLS certificate on that route", can be
+  cleared for a self-signed test server, as the OAuth pages allow.
+* Answers that travel through the **browser** (`fragment`, `query`,
+  `form_post`) always do, whichever route is chosen.
+* Step 3 says which route an answer took.
+* The option is enabled only where the api answers `GET /oid4vp/limits`, so a
+  static deployment, which has no api, keeps the browser route and says why.
+
 ## ISO mdoc (`mso_mdoc`)
 
 `client/src/mdoc.js` is the wallet's ISO/IEC 18013-5 mdoc, with no DOM. It reads an issued `IssuerSigned` (base64url CBOR, as OpenID4VCI 1.0 Appendix A.2 delivers it) into the same shape as the other formats. Each element is a row keyed `namespace/element`. The Mobile Security Object's device key is the credential's `cnf.jwk`, which is where the rest of the wallet looks for the key a credential is bound to. `sd_jwt_vc.js` recognises the format; `sd_jwt_vp.js` builds and reads the presentation.
@@ -77,6 +99,8 @@ An `ldp_vc` element of `vp_token` is now a JSON **object**, as OpenID4VP specifi
 * **A DCQL mdoc path is `[namespace, element]`, and the namespace has dots of its own** (`org.iso.18013.5.1`). The dotted form cannot be split on its first dot; the element is the last segment. The engine test found this, and before the fix every requested mdoc element read as missing.
 * The CBOR **decoder** is `cbor.js`, from the WebAuthn work. `mdoc.js` carries its own deterministic **encoder** (RFC 8949 section 4.2.1), because `cbor.js` only decodes.
 * Step 3 re-checks the bytes that went: every element's digest, `issuerAuth` against its document signer certificate, and the device signature over the transcript rebuilt from what was recorded.
+
+**The presentation jobs collect their credentials the way a wallet does.** `tests/wallet_issuance.js` makes an offer on iya-sts's portal and redeems it through the debugger's own issuance pages: the Receive pane, the Transaction Code, and the Credential Request with a proof by the holder key the wallet generated. `vc_presentation_protocols.js` and `vc_presentation_polaris.js` present what the wallet stored. Each case sets up step 0 through its UI, and pastes the Verifier's request URI into step 1, as a wallet on another device reads it from a QR code. The one credential written into storage directly is the mdoc, for the reason below.
 
 **No issuer in this stack mints `mso_mdoc`.** iya-sts 1.0.0 verifies mdocs from issuers it trusts (`oid4vp.mdocTrustAnchors`) and mints none. The issuance pages parse an mdoc Credential Response like any other format, but nothing drives that path end to end yet. The presentation tests therefore get their mdoc from `tests/mdoc_test_issuer.js`, an issuer written apart from the wallet: its own CBOR encoder, node's ECDSA, and an IACA and document signer of its own (EKU `1.0.18013.5.1.2`). For the length of the run, iya-sts is told to trust that IACA and to require a status reference only of its own credentials (`own-only`, since a test issuer publishes no status list). Both settings are then put back. `tests/mdoc_engine.js` holds the wallet to that issuer's encoder; `vc_presentation_protocols.js` presents the result to iya-sts.
 
