@@ -316,6 +316,33 @@ exactly why the tests assert it per binding rather than once. `DoNotCacheConditi
 is the same shape of check: the Browser/POST profile's single-use policy, present
 on a POSTed assertion and absent from an artifact one.
 
+### The Response signature is the one Browser/POST requires
+
+`sstc-saml-bindings-1.1` section 4.1.2.4: on Browser/POST the
+`<samlp:Response>` **MUST** be signed, and the assertions in it MAY be.
+Shibboleth signs the Response and not the assertion. Until #425 the response
+page's button checked only the assertion's signature, so on a Shibboleth
+response it verified nothing at all.
+
+**Validate Signatures** (`validateSignatures()` in `saml_response.js`) now
+checks both, each on its own line, because they protect different things: the
+message signature covers the Status, `Recipient` and `InResponseTo` and is lost
+once the assertion is lifted out; the assertion signature travels with the
+assertion and says nothing about the Status. It also refuses a message
+signature whose `Reference` names anything other than the message's own
+`ResponseID` / `ID`.
+
+Which signature is required is read off the response by
+`saml_message.requiredResponseSignature()`. Nothing on a 1.1 response names
+its binding, but the confirmation method does: `cm:bearer` is Browser/POST,
+where an unsigned Response is reported as **NOT COMPLIANT**, and `cm:artifact`
+is Browser/Artifact, whose Response came back over the authenticated SOAP back
+channel and needs no signature. SAML 2.0 gets no verdict: either level may
+carry its signature there, depending on the binding.
+
+Both checks still use the certificate in each signature's `KeyInfo`, not the
+identity provider's certificate from metadata; #425 tracks that.
+
 ### Signature verification resolves through `AssertionID`
 
 `common/xmldsig.js`'s `findById()` was taught `AssertionID`, `ResponseID` and

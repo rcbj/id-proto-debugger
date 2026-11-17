@@ -1778,7 +1778,74 @@ function saml11AuthnRequestParams(fields) {
   return out;
 }
 
+// WHICH SIGNATURE A SAML 1.1 BROWSER PROFILE REQUIRES ON A LOGIN RESPONSE,
+// read off the response itself (#425).
+//
+// sstc-saml-bindings-1.1 section 4.1.2.4: on Browser/POST the <samlp:Response>
+// MUST be signed, and the assertions in it MAY be. The browser carries the
+// Response, so it is the Response that has to be protected. Browser/Artifact
+// (section 4.1.1) returns its Response over the SOAP back channel, which the
+// binding authenticates, and requires no signature on it.
+//
+// Nothing on the response says which binding delivered it, but the assertion
+// does: the confirmation method IS the profile (cm:bearer for Browser/POST,
+// cm:artifact for Browser/Artifact). A response with no readable assertion
+// gets no verdict, because there is nothing to tell the profile by.
+//
+// SAML 2.0 gets no verdict either. Its rule (saml-profiles-2.0-os section
+// 4.1.3.5) depends on the binding, and a 2.0 assertion is cm:bearer on both.
+//
+// Returns { rule, profile, why }: `rule` is 'response' (the Response must be
+// signed), 'none' (no signature is required) or '' (no verdict).
+var CM_SAML1_BEARER = 'urn:oasis:names:tc:SAML:1.0:cm:bearer';
+var CM_SAML1_ARTIFACT = 'urn:oasis:names:tc:SAML:1.0:cm:artifact';
+
+function requiredResponseSignature(xml) {
+  log.debug("Entering requiredResponseSignature().");
+  var doc = parseXml(xml);
+  var msg = doc && doc.documentElement;
+  if (!msg || msg.localName !== 'Response') {
+    log.debug("Leaving requiredResponseSignature(). Not a Response.");
+    return { rule: '', profile: '', why: 'not a login <Response>.' };
+  }
+  if (String(samlVersionOf(msg) || '').charAt(0) !== '1') {
+    log.debug("Leaving requiredResponseSignature(). SAML 2.0.");
+    return { rule: '', profile: '',
+             why: 'SAML 2.0: either the Response or each assertion may ' +
+                  'carry the signature (saml-profiles-2.0-os section ' +
+                  '4.1.3.5).' };
+  }
+  var methods = [];
+  assertionsOf(msg).forEach(function (entry) {
+    if (entry.advice || !entry.summary) {
+      return;
+    }
+    (entry.summary.confirmations || []).forEach(function (c) {
+      if (c.method) methods.push(c.method);
+    });
+  });
+  if (methods.indexOf(CM_SAML1_BEARER) >= 0) {
+    log.debug("Leaving requiredResponseSignature(). Browser/POST.");
+    return { rule: 'response', profile: 'Browser/POST',
+             why: 'SAML 1.1 Browser/POST (sstc-saml-bindings-1.1 section ' +
+                  '4.1.2.4): the <samlp:Response> MUST be signed; signing ' +
+                  'the assertion is optional.' };
+  }
+  if (methods.indexOf(CM_SAML1_ARTIFACT) >= 0) {
+    log.debug("Leaving requiredResponseSignature(). Browser/Artifact.");
+    return { rule: 'none', profile: 'Browser/Artifact',
+             why: 'SAML 1.1 Browser/Artifact (sstc-saml-bindings-1.1 ' +
+                  'section 4.1.1): the Response came back over the ' +
+                  'authenticated SOAP back channel and need not be signed.' };
+  }
+  log.debug("Leaving requiredResponseSignature(). No confirmation method.");
+  return { rule: '', profile: '',
+           why: 'no assertion names a cm:bearer or cm:artifact ' +
+                'confirmation, so the browser profile cannot be told.' };
+}
+
 module.exports = {
+  requiredResponseSignature: requiredResponseSignature,
   SAML11_REQUEST_PARAMS: SAML11_REQUEST_PARAMS,
   saml11AuthnRequestParams: saml11AuthnRequestParams,
   NS_SAML1P: NS_SAML1P,

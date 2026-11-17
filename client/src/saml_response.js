@@ -100,6 +100,10 @@ var SAML_RESP_KEY = 'saml_last_response';
 // by the signature-validation option.
 var lastAssertionXml = '';
 
+// The whole protocol message as it arrived, for the same reason: the
+// Response-level signature is verified against these bytes.
+var lastResponseXml = '';
+
 // The first <xenc:EncryptedData> in the response (an EncryptedAssertion, or a
 // message/wrapper-level EncryptedData), serialized — used by the decrypt
 // option.
@@ -274,6 +278,7 @@ function render(responseXml, isFresh) {
   var msgType = doc.documentElement ? doc.documentElement.localName : '';
   var isLogout = msgType === 'LogoutResponse';
   var version = samlVersionOf(doc.documentElement);
+  lastResponseXml = responseXml;
 
   buildResponseDetailsTable(doc);
 
@@ -799,30 +804,160 @@ function formatSigResult(res) {
   return html;
 }
 
-// Validate the enveloped XML digital signature on the extracted assertion,
-// using the certificate embedded in the signature's KeyInfo. Reuses xmldsig.js.
-function validateAssertionSignature() {
-  log.debug("Entering validateAssertionSignature().");
-  var details = el('saml_sig_details');
-  if (!lastAssertionXml || lastAssertionXml.indexOf('<') < 0) {
-    setVal('saml_sig_status', 'No assertion available to validate.');
-    if (details) details.innerHTML = '';
-    log.debug("Leaving validateAssertionSignature().");
-    return false;
-  }
-  var res;
+// Verify one enveloped signature, never throwing: an exception becomes a
+// result with an `error`, which formatSigResult() already renders.
+function verifyEnveloped(xml) {
+  log.debug("Entering verifyEnveloped().");
   try {
-    res = xd.verifyXmlSignature(lastAssertionXml);
+    var res = xd.verifyXmlSignature(xml);
+    log.debug("Leaving verifyEnveloped().");
+    return res;
   } catch (e) {
-    setVal('saml_sig_status', 'Validation error: ' + e.message);
-    log.debug("Leaving validateAssertionSignature().");
+    log.debug("Leaving verifyEnveloped(). " + e.message);
+    return { valid: false, error: e.message };
+  }
+}
+
+// The message's own signature. verifyXmlSignature() checks the FIRST
+// <ds:Signature> in document order. On a well-formed Response that is the
+// message's (SAML 1.1 puts it first, SAML 2.0 right after <saml:Issuer>), but
+// a document where an assertion's comes first would have the assertion's
+// signature reported as the message's. So the reference it checked must be
+// the one the message's own signature names, and that reference must name
+// the message.
+function verifyMessageSignature(msg, msgSig) {
+  log.debug("Entering verifyMessageSignature().");
+  var rootId = msg.getAttribute('ID') || msg.getAttribute('ResponseID') || '';
+  var ref = msgSig.reference || '';
+  if (ref !== '' && ref !== '#' + rootId) {
+    log.debug("Leaving verifyMessageSignature(). Foreign reference.");
+    return { valid: false,
+             error: 'its Reference names ' + ref + ', not this ' +
+                    msg.localName + '\'s own id (#' + rootId + '), so it ' +
+                    'does not sign the message.' };
+  }
+  var res = verifyEnveloped(lastResponseXml);
+  var checked = (res.references && res.references[0]) ?
+      res.references[0].uri : ref;
+  if (!res.error && checked !== ref) {
+    log.debug("Leaving verifyMessageSignature(). Checked another signature.");
+    return { valid: false,
+             error: 'the first <ds:Signature> in the document is not the ' +
+                    'message\'s own, so the message signature could not be ' +
+                    'checked on its own.' };
+  }
+  log.debug("Leaving verifyMessageSignature().");
+  return res;
+}
+
+function sigSection(title, covers, res) {
+  log.debug("Entering sigSection().");
+  log.debug("Leaving sigSection().");
+  return '<h4 style="margin:8px 0 2px;">' + esc(title) + '</h4>' +
+      '<div class="saml-note">' + esc(covers) + '</div>' +
+      formatSigResult(res);
+}
+
+function verdictWord(res) {
+  log.debug("Entering verdictWord().");
+  if (res.error) {
+    log.debug("Leaving verdictWord(). Cannot validate.");
+    return 'cannot be validated';
+  }
+  log.debug("Leaving verdictWord().");
+  return res.valid ? 'VALID' : 'INVALID';
+}
+
+// Validate EVERY enveloped signature the response carries, each on its own:
+// the one on the <samlp:Response> and the one on the assertion. They protect
+// different things. The message signature covers the Status, Recipient /
+// Destination and InResponseTo, and is lost once the assertion is lifted out;
+// the assertion signature travels with the assertion and says nothing about
+// the Status. SAML 1.1 Browser/POST requires the first (#425), which is what
+// Shibboleth sends, and checking only the second verified nothing there.
+// Uses the certificate in each signature's KeyInfo.
+function validateSignatures() {
+  log.debug("Entering validateSignatures().");
+  var details = el('saml_sig_details');
+  if (details) details.innerHTML = '';
+  if (!lastResponseXml || lastResponseXml.indexOf('<') < 0) {
+    setVal('saml_sig_status', 'No response available to validate.');
+    log.debug("Leaving validateSignatures(). Nothing rendered.");
     return false;
   }
-  setVal('saml_sig_status', res.error ? ('Cannot validate: ' +
-         res.error) : (res.valid ?
-         'Assertion signature VALID.' : 'Assertion signature INVALID.'));
-  if (details) details.innerHTML = formatSigResult(res);
-  log.debug("Leaving validateAssertionSignature().");
+  var doc = new DOMParser().parseFromString(lastResponseXml,
+      'application/xml');
+  var msg = doc.documentElement;
+  if (!msg || doc.getElementsByTagName('parsererror').length) {
+    setVal('saml_sig_status', 'Cannot validate: the response is not ' +
+           'well-formed XML.');
+    log.debug("Leaving validateSignatures(). Malformed.");
+    return false;
+  }
+  var html = '';
+  var parts = [];
+  var checked = 0;
+
+  var msgSig = sm.messageSignature(msg);
+  var msgName = msg.localName || 'message';
+  if (msgSig) {
+    var mres = verifyMessageSignature(msg, msgSig);
+    checked++;
+    parts.push(msgName + ' signature ' + verdictWord(mres));
+    html += sigSection('<' + msgName + '> signature',
+        'Covers the whole message, Status, Recipient / Destination and ' +
+        'InResponseTo included. It is lost once the assertion is taken out ' +
+        'of the message.', mres);
+  } else {
+    parts.push(msgName + ' not signed');
+    html += '<h4 style="margin:8px 0 2px;">&lt;' + esc(msgName) +
+        '&gt; signature</h4><div class="saml-note">The message carries no ' +
+        '&lt;ds:Signature&gt; of its own.</div>';
+  }
+
+  var assertionEl = lastAssertionXml && lastAssertionXml.indexOf('<') >= 0 ?
+      new DOMParser().parseFromString(lastAssertionXml, 'application/xml')
+        .documentElement : null;
+  if (assertionEl && sm.messageSignature(assertionEl)) {
+    var ares = verifyEnveloped(lastAssertionXml);
+    checked++;
+    parts.push('assertion signature ' + verdictWord(ares));
+    html += sigSection('Assertion signature',
+        'Covers this assertion only. It travels with the assertion and ' +
+        'says nothing about the message\'s Status.', ares);
+  } else if (assertionEl) {
+    parts.push('assertion not signed');
+    html += '<h4 style="margin:8px 0 2px;">Assertion signature</h4>' +
+        '<div class="saml-note">The assertion carries no ' +
+        '&lt;ds:Signature&gt; of its own.' + (msgSig ? ' The message ' +
+        'signature above covers it while it stays inside this message.' :
+        '') + '</div>';
+  }
+
+  // What the profile requires, said as a finding rather than an error: an
+  // unsigned Browser/POST Response is exactly what this page exists to show.
+  var need = sm.requiredResponseSignature(lastResponseXml);
+  var finding = '';
+  if (need.rule === 'response' && !msgSig) {
+    finding = ' NOT COMPLIANT: ' + need.profile + ' requires a signed ' +
+        '<samlp:Response>.';
+  }
+  if (need.why) {
+    html += '<p class="saml-note"><strong>Profile:</strong> ' +
+        esc(need.why) + (finding ? ' <strong style="color:#b00;">This ' +
+        'Response is not signed.</strong>' : '') + '</p>';
+  }
+
+  if (!checked) {
+    setVal('saml_sig_status', 'No signature was found on this response or ' +
+           'its assertion.' + finding);
+  } else {
+    var line = parts.join('; ');
+    setVal('saml_sig_status', line.charAt(0).toUpperCase() + line.slice(1) +
+           '.' + finding);
+  }
+  if (details) details.innerHTML = html;
+  log.debug("Leaving validateSignatures(). " + checked + " checked.");
   return false;
 }
 
@@ -1016,7 +1151,7 @@ module.exports = {
   showTab,
   viewSignerCert,
   copyField,
-  validateAssertionSignature,
+  validateSignatures,
   decryptAssertion,
   clearOperationHistory
 };

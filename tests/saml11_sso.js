@@ -86,7 +86,7 @@ var waitTime = appconfig.waitTime;
 //    spells its ids `AssertionID` / `ResponseID`, which is on none of the lists
 //    a generic verifier searches — told nothing, one INVENTS an `Id` and points
 //    the reference at that. `common/xmldsig.js`'s findById() was taught all
-//    three; clicking Validate Signature here is what proves it, because a
+//    three; clicking Validate Signatures here is what proves it, because a
 //    verifier that cannot resolve the reference reports "referenced element not
 //    found", which reads like a stripped element.
 //
@@ -615,32 +615,47 @@ async function assertResponsePage(driver, binding, spEntityId, loginWait) {
   log.debug("Leaving assertResponsePage().");
 }
 
-// 1.1: the enveloped signature on the assertion, verified in the browser. The
-// reference is `#<AssertionID>`, a name a generic verifier does not search —
-// told nothing it invents an `Id`, and the reference then resolves to nothing
-// here, reported as "referenced element not found".
-async function assertSignatureValidates(driver, loginWait) {
+// 1.1: every enveloped signature on the response, verified in the browser and
+// reported separately (#425). The assertion's reference is `#<AssertionID>`
+// and the Response's is `#<ResponseID>`, names a generic verifier does not
+// search — told nothing it invents an `Id`, and the reference then resolves
+// to nothing, reported as "referenced element not found".
+//
+// iya-sts signs both (saml11.signResponse and saml11.signAssertion are on by
+// default). On Browser/POST the Response signature is the one the profile
+// requires (sstc-saml-bindings-1.1 section 4.1.2.4), so it must be reported
+// VALID by name: until #425 the page checked only the assertion's, which on a
+// Shibboleth response is no signature at all.
+async function assertSignatureValidates(driver, binding, loginWait) {
   log.debug("Entering assertSignatureValidates().");
-  await clickByValueInPage(driver, "Validate Signature");
-  // EVERY status validateAssertionSignature() can write, not just the two that
-  // mean it got as far as verifying. It also reports "No assertion available
-  // to validate." and "Validation error: …", and a predicate blind to those
-  // turns each of them into a fifteen-second timeout naming neither the status
-  // nor the field — which is a slower and much quieter way to say what the
-  // assert below would have said outright.
+  await clickByValueInPage(driver, "Validate Signatures");
+  // EVERY status validateSignatures() can write, not just the ones that mean
+  // it got as far as verifying. A predicate blind to the others turns each of
+  // them into a fifteen-second timeout naming neither the status nor the
+  // field.
   var status = await waitForValue(driver, By.id("saml_sig_status"),
     function (v) { return v.indexOf("VALID") >= 0 ||
-                          v.indexOf("INVALID") >= 0 ||
+                          v.indexOf("cannot be validated") >= 0 ||
                           v.indexOf("Cannot validate") >= 0 ||
-                          v.indexOf("No assertion available") >= 0 ||
-                          v.indexOf("Validation error") >= 0; },
-    "Validate Signature never reported anything.", loginWait);
+                          v.indexOf("No signature was found") >= 0 ||
+                          v.indexOf("No response available") >= 0; },
+    "Validate Signatures never reported anything.", loginWait);
   var detail = await textOf(driver, "saml_sig_details");
-  assert(status.indexOf("VALID") >= 0 && status.indexOf("INVALID") < 0,
-    "the SAML 1.1 assertion's signature should verify. Its reference is " +
-    "#<AssertionID>, which is not one of the id attribute names a generic " +
-    "verifier searches. status=" + status + "\n" + detail);
-  log.info("Assertion signature: " + status);
+  assert(status.indexOf("INVALID") < 0 &&
+         status.indexOf("cannot be validated") < 0 &&
+         status.indexOf("NOT COMPLIANT") < 0,
+    "every signature on the SAML 1.1 response should verify. status=" +
+    status + "\n" + detail);
+  assert(status.indexOf("assertion signature VALID") >= 0,
+    "the SAML 1.1 assertion's signature should verify through " +
+    "#<AssertionID>. status=" + status + "\n" + detail);
+  if (binding !== "artifact") {
+    assert(status.indexOf("Response signature VALID") >= 0,
+      "on Browser/POST the <samlp:Response> must be signed and its " +
+      "signature should verify through #<ResponseID>. status=" + status +
+      "\n" + detail);
+  }
+  log.info("Signatures: " + status);
   log.debug("Leaving assertSignatureValidates().");
 }
 
@@ -833,7 +848,7 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
   await driver.wait(until.urlContains("saml_response.html"), loginWait);
 
   await assertResponsePage(driver, binding, spEntityId, loginWait);
-  await assertSignatureValidates(driver, loginWait);
+  await assertSignatureValidates(driver, binding, loginWait);
   await assertHistoryClosedAsSuccess(driver, binding, loginWait);
 
   log.info("SAML 1.1 SSO round-trip succeeded (" + binding + ").");

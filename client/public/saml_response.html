@@ -102,7 +102,7 @@ function samlSetAllPanes(expand) {
     <div id="saml_attrs_table">&nbsp;</div>
   </div>
   <div class="saml-row" style="margin-top:8px;">
-    <input type="button" class="saml-btn" value="Validate Signature" onclick="return saml_response.validateAssertionSignature();" title="Verify the enveloped XML digital signature on the assertion (reference digests + SignatureValue) using the certificate in the signature's KeyInfo." />
+    <input type="button" class="saml-btn" value="Validate Signatures" onclick="return saml_response.validateSignatures();" title="Verify every enveloped XML digital signature the response carries, each on its own: the one on the &lt;Response&gt; and the one on the assertion (reference digests + SignatureValue), using the certificate in each signature's KeyInfo. SAML 1.1 Browser/POST requires the Response to be signed." />
     <input class="saml-status saml-grow" type="text" id="saml_sig_status" readonly />
   </div>
   <div id="saml_sig_details"></div>
