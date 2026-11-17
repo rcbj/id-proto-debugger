@@ -230,6 +230,15 @@ model VerifierEvent {
   /** Why something that arrived was not kept. */
   problem?: string;
 
+  /** response: the redirect_uri the Wallet was answered with, carrying
+   *  this answer's response_code. */
+  redirectUri?: string;
+
+  /** response: the fresh, cryptographically random value (128 bits,
+   *  base64url) added to redirect_uri as `response_code` for this one
+   *  answer (section 8.2; the name is section 13.3's). */
+  responseCode?: string;
+
   /** Live signing: on a request-fetched event, the Wallet is held and the
    *  page signs for it at /request/{signingId}; on request-signed, which
    *  wait it closes (absent when the cap meant no wait at all). */
@@ -422,7 +431,9 @@ op verifierCa(@path id: string): {
   @body body: bytes;
 } | NoSession<WalletError>;
 
-/** A Wallet's answer (section 8.2), kept field by field as it arrived. */
+/** A Wallet's answer (section 8.2), kept field by field as it arrived.
+ *  `redirect_uri`, when the page set one, carries a fresh `response_code`
+ *  for this answer. */
 @tag("OpenID4VP")
 @route("/oid4vp/verifier/{id}/response")
 @post

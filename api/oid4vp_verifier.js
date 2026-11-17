@@ -925,12 +925,43 @@ function fetchCa(appconfig, id, remoteAddress) {
     body: one.caDer };
 }
 
+// The redirect_uri answered to ONE Wallet's POST, carrying a fresh,
+// cryptographically random value (#468, M3). OpenID4VP 1.0 section 8.2:
+// "The Verifier MUST include a fresh, cryptographically random value in
+// the URL. This value is used to ensure only the receiver of the redirect
+// can fetch and process the Authorization Response. ... It is RECOMMENDED
+// to use a cryptographic random value of 128 bits or more." It is added as
+// `response_code`, section 13.3's name for it, 128 bits in base64url, and
+// a new one for every answer: the page's configured redirect_uri is the
+// same for every Wallet, so on its own it is no such value.
+function redirectWithCode(redirectUri) {
+  log.debug('Entering redirectWithCode().');
+  var code = crypto.randomBytes(16).toString('base64url');
+  var uri;
+  try {
+    var url = new URL(redirectUri);
+    url.searchParams.append('response_code', code);
+    uri = url.toString();
+  } catch (e) {
+    // Not an absolute URL (the page may hold anything): the parameter goes
+    // before any fragment, by hand.
+    var hash = redirectUri.indexOf('#');
+    var head = hash === -1 ? redirectUri : redirectUri.slice(0, hash);
+    var tail = hash === -1 ? '' : redirectUri.slice(hash);
+    uri = head + (head.indexOf('?') === -1 ? '?' :
+        (/[?&]$/.test(head) ? '' : '&')) + 'response_code=' + code + tail;
+  }
+  log.debug('Leaving redirectWithCode().');
+  return { uri: uri, code: code };
+}
+
 // ---------------------------------------------------------------------------
 // POST /oid4vp/verifier/:id/response — a Wallet's answer under direct_post
 // (vp_token, state, ...) or direct_post.jwt (response, the JWE). Every field
 // is kept VERBATIM and nothing is checked: the page decrypts and judges.
 // The answer is section 8.2's: 200 with a JSON object, carrying
-// `redirect_uri` when the page set one.
+// `redirect_uri` when the page set one — with a fresh `response_code` in it
+// (redirectWithCode()), which the `response` event records.
 // ---------------------------------------------------------------------------
 function respond(appconfig, id, request) {
   log.debug('Entering respond(). ' + id);
@@ -971,8 +1002,14 @@ function respond(appconfig, id, request) {
   if (asked.remoteAddress) {
     event.remoteAddress = String(asked.remoteAddress);
   }
+  var body = {};
+  if (one.redirectUri) {
+    var redirect = redirectWithCode(one.redirectUri);
+    body.redirect_uri = redirect.uri;
+    event.redirectUri = redirect.uri;
+    event.responseCode = redirect.code;
+  }
   record(appconfig, one, event, size);
-  var body = one.redirectUri ? { redirect_uri: one.redirectUri } : {};
   log.debug('Leaving respond(). Recorded.');
   return { ok: true, status: 200, body: body };
 }

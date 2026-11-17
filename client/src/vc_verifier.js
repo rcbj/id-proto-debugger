@@ -220,7 +220,13 @@ function regenerateDcql() {
     setVal("vpv_dcql", JSON.stringify(dcql, null, 2));
     setText("vpv_dcql_status", "Generated from the fields above.", "vc-ok");
   } catch (e) {
-    setText("vpv_dcql_status", e.message, "vc-bad");
+    // Not generated (#468, M4): the query the fields describe is one a
+    // Wallet must reject — most often a type field left empty, which
+    // Appendix B makes REQUIRED for every format. The last query that WAS
+    // generated is cleared, so "Create the request" cannot quietly send a
+    // query the fields no longer describe.
+    setVal("vpv_dcql", "");
+    setText("vpv_dcql_status", "Not generated: " + e.message, "vc-bad");
   }
   saveState();
   log.debug("Leaving regenerateDcql().");
@@ -556,7 +562,10 @@ async function createRequest() {
         : verifier.authorizationRequestUri({
           scheme: val("vpv_scheme"), clientId: clientId,
           requestUri: hosted.requestUri,
-          requestUriMethod: live ? "post" : undefined });
+          requestUriMethod: live ? "post" : undefined,
+          // Section 5.1: under post the Verifier SHOULD send its
+          // capabilities beside request_uri (#468, M8).
+          clientMetadata: live ? claims.client_metadata : undefined });
     }
     current = {
       hosted: hosted,
@@ -676,6 +685,29 @@ async function askThroughDcApi() {
   return false;
 }
 
+// THE SAME-DEVICE FLOW without a redirect_uri (#468, M3). "Open it on this
+// device" is the same-device flow, and HAIP 1.0 section 5.1 says of it:
+// "Verifiers MUST include redirect_uri in the HTTP response to the Wallet's
+// HTTP POST to the response_uri". This page has no HAIP mode, so it says so
+// whenever a request is made with none configured: the wallet's browser
+// then has nowhere to return to, and the session binding that redirect
+// carries (OpenID4VP section 8.2's fresh value) is absent. A QR code
+// scanned by another device needs none.
+function sameDeviceNote() {
+  log.debug("Entering sameDeviceNote().");
+  if (val("vpv_redirect_uri").trim()) {
+    setText("vpv_same_device_note", "");
+    log.debug("Leaving sameDeviceNote(). Configured.");
+    return;
+  }
+  setText("vpv_same_device_note", "No redirect_uri is configured (pane " +
+    "2), so a wallet on THIS device has nowhere to send its browser back " +
+    "to. For a same-device flow HAIP 1.0 section 5.1 says Verifiers MUST " +
+    "include one; a QR code scanned on another device needs none.",
+    "vc-pending");
+  log.debug("Leaving sameDeviceNote(). Missing.");
+}
+
 function showRequest(invocation, clientId, requestObject, claims) {
   log.debug("Entering showRequest().");
   setVal("vpv_invocation", invocation);
@@ -685,6 +717,7 @@ function showRequest(invocation, clientId, requestObject, claims) {
     link.style.display = "inline";
   }
   showQr(invocation);
+  sameDeviceNote();
   setVal("vpv_client_id", clientId);
   setVal("vpv_request_uri", requestObject ? current.hosted.requestUri : "");
   setVal("vpv_response_uri", current.hosted.responseUri);
@@ -755,7 +788,10 @@ function eventLine(event) {
   } else if (event.kind === "response") {
     text = at + "The wallet posted its answer (" +
       (event.contentType || "?") + "): " +
-      Object.keys(event.fields || {}).join(", ") + ".";
+      Object.keys(event.fields || {}).join(", ") + "." +
+      (event.redirectUri ? " It was sent on to " + event.redirectUri +
+        " (response_code " + event.responseCode + ", fresh for this " +
+        "answer: section 8.2)." : "");
   } else if (event.kind === "response-refused") {
     text = at + "The api refused a POST to response_uri: " +
       (event.problem || "no reason given") + ".";
@@ -999,6 +1035,7 @@ async function reset() {
     link.style.display = "none";
   }
   showQr("");
+  setText("vpv_same_device_note", "");
   var list = el("vpv_events");
   if (list) {
     list.innerHTML = "";

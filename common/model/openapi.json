@@ -2493,7 +2493,7 @@
     "/oid4vp/verifier/{id}/response": {
       "post": {
         "operationId": "oid4vpVerifierResponse",
-        "description": "A Wallet's answer (section 8.2), kept field by field as it arrived.",
+        "description": "A Wallet's answer (section 8.2), kept field by field as it arrived.\n`redirect_uri`, when the page set one, carries a fresh `response_code`\nfor this answer.",
         "parameters": [
           {
             "name": "id",
@@ -10941,6 +10941,14 @@
           "problem": {
             "type": "string",
             "description": "Why something that arrived was not kept."
+          },
+          "redirectUri": {
+            "type": "string",
+            "description": "response: the redirect_uri the Wallet was answered with, carrying\nthis answer's response_code."
+          },
+          "responseCode": {
+            "type": "string",
+            "description": "response: the fresh, cryptographically random value (128 bits,\nbase64url) added to redirect_uri as `response_code` for this one\nanswer (section 8.2; the name is section 13.3's)."
           },
           "signingId": {
             "type": "string",

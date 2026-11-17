@@ -32,7 +32,7 @@ no credential.
 | `GET /oid4vp/verifier/:id/request` | `oid4vpVerifierRequestGet` | Wallet | 200: the JWS, `application/oauth-authz-req+jwt` |
 | `POST /oid4vp/verifier/:id/request` | `oid4vpVerifierRequestPost` | Wallet | 200: the same JWS, or under live signing the one the page signed for it |
 | `GET /oid4vp/verifier/:id/ca` | `oid4vpVerifierCa` | Wallet | 200: DER, `application/pkix-cert` |
-| `POST /oid4vp/verifier/:id/response` | `oid4vpVerifierResponse` | Wallet | 200 `{}` or `{ "redirect_uri": ... }` |
+| `POST /oid4vp/verifier/:id/response` | `oid4vpVerifierResponse` | Wallet | 200 `{}` or `{ "redirect_uri": ...?response_code=... }` |
 
 **Create** takes `{ redirectUri?, ttlMs?, idleTtlMs?, liveSigning? }`. `id` and `secret`
 are each 32 hex characters of `crypto.randomBytes`. The three URLs are built
@@ -55,10 +55,18 @@ and a repeated field collapses), so `server.js` keeps the raw text for these
 paths (`keepOid4vpVerifierBody()`) and the module reads it with
 `URLSearchParams`. A field sent twice is stored as an array of both values. A
 JSON object body is accepted too, and each event records the `Content-Type`
-the Wallet sent. Any other media type gets a 400 and is recorded as
-`response-refused`. An answer to an unknown or expired session gets a **404**
-and never a 200, so a Wallet is never told that an answer was received when
-nobody will read it.
+the Wallet sent. Any other media type gets a 400 and is recorded
+as `response-refused`. An answer to an unknown or expired session gets a
+**404** and never a 200, so a Wallet is never told that an answer was
+received when nobody will read it.
+
+**The `redirect_uri` a Wallet is answered with** is the one the page set,
+plus a `response_code` query parameter: 128 random bits in base64url, new for
+every answer. Section 8.2 says "The Verifier MUST include a fresh,
+cryptographically random value in the URL", and a URL the page configured
+once is the same for every Wallet. The `response` event records it as
+`redirectUri` and `responseCode`. HAIP 1.0 section 5.1 makes a `redirect_uri`
+mandatory for a same-device flow, so the page warns when none is set.
 
 ## Live signing (`request_uri_method=post`)
 

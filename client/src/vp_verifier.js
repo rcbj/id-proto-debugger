@@ -310,6 +310,71 @@ function dcqlPath(path, where) {
   return p.slice();
 }
 
+// A non-empty string, which is all a type identifier can be here.
+function isNonEmptyString(v) {
+  log.debug("Entering isNonEmptyString().");
+  log.debug("Leaving isNonEmptyString().");
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+// The `meta` of one credential query, with the member its format makes
+// REQUIRED (#468, M4). Section 6.1 makes `meta` itself REQUIRED, and each
+// format's Appendix B names what goes in it:
+//
+//   B.3.5  vct_values     "REQUIRED. A non-empty array of strings"
+//   B.2.3  doctype_value  "REQUIRED. String that specifies an allowed value
+//                         for the doctype"
+//   B.1.1  type_values    "REQUIRED. A non-empty array of string arrays",
+//                         each inner array "a non-empty array specifying
+//                         the fully expanded types"
+//
+// A query missing one, or carrying an empty array or an empty string, is
+// REFUSED rather than emitted: a `meta` of {} or "vct_values": [] is a query
+// a conforming Wallet must reject, and a debugger that builds one teaches
+// that it is fine.
+function queryMeta(q, where) {
+  log.debug("Entering queryMeta(). " + q.format);
+  var meta = {};
+  if (q.format === FORMAT_SD_JWT) {
+    var vct = q.vct === undefined || q.vct === null ? [] : [].concat(q.vct);
+    if (!vct.length || !vct.every(isNonEmptyString)) {
+      log.debug("Leaving queryMeta(). No vct.");
+      throw new Error(where + ": a dc+sd-jwt query needs at least one " +
+                      "vct. OpenID4VP 1.0 Appendix B.3.5: vct_values is " +
+                      "\"REQUIRED. A non-empty array of strings\".");
+    }
+    meta.vct_values = vct.map(String);
+  } else if (q.format === FORMAT_MSO_MDOC) {
+    if (!isNonEmptyString(q.doctype)) {
+      log.debug("Leaving queryMeta(). No doctype.");
+      throw new Error(where + ": an mso_mdoc query needs a doctype. " +
+                      "OpenID4VP 1.0 Appendix B.2.3: doctype_value is " +
+                      "REQUIRED.");
+    }
+    meta.doctype_value = String(q.doctype);
+  } else {
+    var types = isArray(q.types) ? q.types : [];
+    var sets = !types.length ? [] : isArray(types[0]) ?
+        types.map(function (t) {
+          return isArray(t) ? t.slice() : null;
+        }) : [types.slice()];
+    var good = sets.length > 0 && sets.every(function (set) {
+      return isArray(set) && set.length > 0 && set.every(isNonEmptyString);
+    });
+    if (!good) {
+      log.debug("Leaving queryMeta(). No types.");
+      throw new Error(where + ": a " + q.format + " query needs at least " +
+                      "one type in every alternative. OpenID4VP 1.0 " +
+                      "Appendix B.1.1: type_values is \"REQUIRED. A " +
+                      "non-empty array of string arrays\", each inner " +
+                      "array non-empty.");
+    }
+    meta.type_values = sets;
+  }
+  log.debug("Leaving queryMeta().");
+  return meta;
+}
+
 function buildCredentialQuery(q, index, seen) {
   log.debug("Entering buildCredentialQuery(). index=" + index);
   if (!q || !q.id) {
@@ -331,20 +396,9 @@ function buildCredentialQuery(q, index, seen) {
     throw new Error('credential query "' + q.id + '": unknown format "' +
                     q.format + '" (one of ' + FORMATS.join(", ") + ").");
   }
-  var out = { id: String(q.id), format: q.format, meta: {} };
-  if (q.format === FORMAT_SD_JWT && q.vct) {
-    out.meta.vct_values = [].concat(q.vct);
-  }
-  if (q.format === FORMAT_MSO_MDOC && q.doctype) {
-    out.meta.doctype_value = String(q.doctype);
-  }
-  if ((q.format === FORMAT_JWT_VC_JSON || q.format === FORMAT_LDP_VC) &&
-      q.types && q.types.length) {
-    out.meta.type_values = isArray(q.types[0]) ? q.types.map(function (t) {
-      return t.slice();
-    }) : [q.types.slice()];
-  }
   var where = 'credential query "' + q.id + '"';
+  var out = { id: String(q.id), format: q.format,
+              meta: queryMeta(q, where) };
   var claims = (q.claims || []).map(function (c) {
     var path = dcqlPath(c, where);
     if (q.format === FORMAT_MSO_MDOC && (path.length !== 2 ||
@@ -436,9 +490,17 @@ async function makeVerifierIdentity(opts) {
     subjectPublicKey: rootKey.publicPem,
     issuerPrivateKey: rootKey.privatePem,
     signatureAlg: "sha256-ecdsa", notBefore: notBefore,
-    extensions: x509.defaultExtensions("root-ca")
+    extensions: x509.defaultExtensions("root-ca", desc)
   });
-  var ext = x509.defaultExtensions("tls-server");
+  // The leaf's KeyUsage is read through its P-256 key (#468, M5). The
+  // tls-server profile's list is RSA-shaped (digitalSignature,
+  // keyEncipherment), and RFC 5480 section 3 permits an id-ecPublicKey
+  // end-entity certificate only "digitalSignature; nonRepudiation; and/or
+  // keyAgreement" — keyEncipherment makes it non-conformant, and a Wallet
+  // that checks refuses the chain. This leaf only signs Request Objects, so
+  // digitalSignature is all it asserts.
+  var ext = x509.defaultExtensions("tls-server", desc);
+  ext.keyUsage.usages = ["digitalSignature"];
   ext.subjectAltName = { present: true, critical: false,
     names: [{ kind: "dns", value: String(o.dnsName) }] };
   if (o.caIssuersUrl) {
@@ -707,13 +769,23 @@ async function responseEncryptionKey() {
 
 // What this Verifier can read, per format (OpenID4VP 1.0 section 11.1 and
 // Appendix B).
+//
+// SD-JWT VC's two lists are FULLY-SPECIFIED identifiers (#468, M7). Appendix
+// B.3.4: sd-jwt_alg_values and kb-jwt_alg_values are each "a non-empty array
+// containing fully-specified identifiers of cryptographic algorithms (as
+// defined in [I-D.ietf-jose-fully-specified-algorithms])". "EdDSA" is the
+// polymorphic one that draft deprecates (the curve is in the key); its
+// fully-specified Ed25519 form is "Ed25519". ES256 and ES384 already name one
+// curve each. jwt_vc_json's alg_values is only "identifiers of
+// cryptographic algorithms" the JOSE alg header "MUST match" (B.1.3.1.3),
+// so it lists both spellings of Ed25519: an issuer may write either.
 function vpFormatsSupported() {
   log.debug("Entering vpFormatsSupported().");
   log.debug("Leaving vpFormatsSupported().");
   return {
-    "dc+sd-jwt": { "sd-jwt_alg_values": ["ES256", "ES384", "EdDSA"],
-                   "kb-jwt_alg_values": ["ES256", "ES384", "EdDSA"] },
-    "jwt_vc_json": { alg_values: ["ES256", "ES384", "EdDSA"] },
+    "dc+sd-jwt": { "sd-jwt_alg_values": ["ES256", "ES384", "Ed25519"],
+                   "kb-jwt_alg_values": ["ES256", "ES384", "Ed25519"] },
+    "jwt_vc_json": { alg_values: ["ES256", "ES384", "EdDSA", "Ed25519"] },
     "mso_mdoc": { issuerauth_alg_values: [-7],
                   deviceauth_alg_values: [-7] },
     "ldp_vc": { proof_type_values: ["DataIntegrityProof"],
@@ -957,6 +1029,17 @@ function encodeParam(name, value) {
     typeof value === "string" ? value : JSON.stringify(value));
 }
 
+// The Authorization Request a Wallet is handed. opts: scheme, clientId,
+// requestUri (+ requestUriMethod) or requestObject, params (the unsigned
+// request's parameters), and clientMetadata.
+//
+// clientMetadata goes BESIDE request_uri when requestUriMethod is post
+// (#468, M8). Section 5.1: "If the Verifier set the request_uri_method
+// parameter value to post and there is no other means to convey its
+// capabilities to the Wallet, it SHOULD add the client_metadata parameter
+// to the Authorization Request", so that the Wallet can choose what to put
+// in wallet_metadata. Under get there is nothing for it to choose, and the
+// Request Object carries the same metadata, so it is not added.
 function authorizationRequestUri(opts) {
   log.debug("Entering authorizationRequestUri().");
   var o = opts || {};
@@ -967,6 +1050,9 @@ function authorizationRequestUri(opts) {
     pairs.push(encodeParam("request_uri", o.requestUri));
     if (o.requestUriMethod) {
       pairs.push(encodeParam("request_uri_method", o.requestUriMethod));
+    }
+    if (o.requestUriMethod === "post" && isPlainObject(o.clientMetadata)) {
+      pairs.push(encodeParam("client_metadata", o.clientMetadata));
     }
   } else if (o.requestObject) {
     pairs.push(encodeParam("request", o.requestObject));
@@ -3947,6 +4033,131 @@ async function verifyLdpVc(s, query, presentation, ctx) {
 // ---------------------------------------------------------------------------
 // The whole response.
 // ---------------------------------------------------------------------------
+
+// The JWE protected header of a direct_post.jwt / dc_api.jwt answer, held to
+// OpenID4VP 1.0 section 8.3 and RFC 7516 (#468, M6). Each rule is its own
+// row, so a Wallet that gets one wrong is told which:
+//
+//   response.jwe.kid   "If the selected public key contains a kid
+//                      parameter, the JWE MUST include the same value in
+//                      the kid JWE Header Parameter"
+//   response.jwe.alg   "The JWE alg algorithm used MUST be equal to the alg
+//                      value of the chosen jwk."
+//   response.jwe.enc   "The JWE enc content encryption algorithm used is
+//                      obtained from the encrypted_response_enc_values_
+//                      supported parameter of client metadata", which this
+//                      Verifier sends as session.encValuesSupported (by
+//                      default DEFAULT_ENC_VALUES, what requestObjectClaims
+//                      writes)
+//   response.jwe.crit  RFC 7516 section 4.1.13 gives crit RFC 7515 section
+//                      4.1.11's rules: "If any of the listed extension
+//                      Header Parameters are not understood and supported
+//                      by the recipient, then the JWS is invalid", and
+//                      "Producers MUST NOT use the empty list". This
+//                      Verifier implements no JWE extension, so any crit
+//                      names one it does not understand.
+//
+// The checks are made BEFORE decryption and do not stop it, so a Wallet
+// that names the wrong kid still has its answer opened and shown — the
+// FAIL is what decides the verdict.
+function checkJweHeader(report, header, session) {
+  log.debug("Entering checkJweHeader().");
+  var g = "response";
+  var key = session.decryptionJwk || {};
+  var h = header || {};
+  if (key.kid === undefined || key.kid === null || key.kid === "") {
+    addCheck(report, "response.jwe.kid", g, "The JWE names the key it " +
+             "was encrypted to (kid)", SKIP, "this Verifier's key carries " +
+             "no kid, so section 8.3 asks for none.");
+  } else {
+    addCheck(report, "response.jwe.kid", g, "The JWE names the key it " +
+             "was encrypted to (kid)", h.kid === key.kid ? PASS : FAIL,
+             h.kid === key.kid ? "kid " + h.kid + "." : "the key in " +
+             "client_metadata has kid " + JSON.stringify(key.kid) + " and " +
+             "the JWE header " + (h.kid === undefined ? "has no kid" :
+             "says " + JSON.stringify(h.kid)) + ". OpenID4VP 1.0 section " +
+             "8.3: the JWE MUST include the same value.");
+  }
+  if (!key.alg) {
+    addCheck(report, "response.jwe.alg", g, "The JWE alg is the key's " +
+             "alg", SKIP, "this Verifier's key carries no alg to hold the " +
+             "JWE to.");
+  } else {
+    addCheck(report, "response.jwe.alg", g, "The JWE alg is the key's " +
+             "alg", h.alg === key.alg ? PASS : FAIL, h.alg === key.alg ?
+             "alg " + h.alg + "." : "the key in client_metadata has alg " +
+             JSON.stringify(key.alg) + " and the JWE says " +
+             JSON.stringify(h.alg) + ". OpenID4VP 1.0 section 8.3: it " +
+             "MUST be equal to the alg value of the chosen jwk.");
+  }
+  var encs = isArray(session.encValuesSupported) &&
+      session.encValuesSupported.length ? session.encValuesSupported :
+      DEFAULT_ENC_VALUES;
+  var encOk = typeof h.enc === "string" && encs.indexOf(h.enc) !== -1;
+  addCheck(report, "response.jwe.enc", g, "The JWE enc is one the request " +
+           "offered", encOk ? PASS : FAIL, encOk ? "enc " + h.enc +
+           ", one of " + encs.join(", ") + "." : "the JWE says enc " +
+           JSON.stringify(h.enc) + " and the request's " +
+           "encrypted_response_enc_values_supported was " +
+           encs.join(", ") + " (OpenID4VP 1.0 section 8.3).");
+  if (h.crit === undefined) {
+    addCheck(report, "response.jwe.crit", g, "The JWE marks no extension " +
+             "critical that this Verifier does not understand", PASS,
+             "no crit.");
+  } else {
+    var why = !isArray(h.crit) || !h.crit.length ? "crit must be a " +
+        "non-empty array of Header Parameter names; this one is " +
+        JSON.stringify(h.crit) + " (RFC 7515 section 4.1.11, \"Producers " +
+        "MUST NOT use the empty list\")." : "crit lists " +
+        h.crit.map(function (n) {
+          return JSON.stringify(n);
+        }).join(", ") + ", and this Verifier implements no JWE extension. " +
+        "RFC 7516 section 4.1.13 and RFC 7515 section 4.1.11: if any " +
+        "listed extension is not understood and supported by the " +
+        "recipient, the JWE is invalid.";
+    addCheck(report, "response.jwe.crit", g, "The JWE marks no extension " +
+             "critical that this Verifier does not understand", FAIL, why);
+  }
+  log.debug("Leaving checkJweHeader().");
+}
+
+// The decrypted answer as text. A "zip": "DEF" JWE (RFC 7516 section 4.1.3,
+// "Compression with the DEFLATE [RFC1951] algorithm") is inflated first:
+// section 8.3 does not forbid compression, so it is read and REPORTED
+// (response.jwe.zip). Any other zip value is one this Verifier cannot
+// undo, and is a FAIL that says so. null when nothing can be read.
+async function jwePlaintext(report, opened) {
+  log.debug("Entering jwePlaintext().");
+  var zip = (opened.header || {}).zip;
+  var label = "The JWE's compression is one this Verifier undoes";
+  if (zip === undefined) {
+    log.debug("Leaving jwePlaintext(). Not compressed.");
+    return opened.plaintext;
+  }
+  if (zip !== "DEF" || !opened.plaintextBytes) {
+    addCheck(report, "response.jwe.zip", "response", label, FAIL,
+             zip !== "DEF" ? "zip is " + JSON.stringify(zip) + "; the one " +
+             "value RFC 7516 section 4.1.3 defines is DEF, and no other is " +
+             "implemented here." : "the decrypted bytes were not handed " +
+             "back, so they cannot be inflated.");
+    log.debug("Leaving jwePlaintext(). Unknown zip.");
+    return null;
+  }
+  try {
+    var raw = await inflate(opened.plaintextBytes, "deflate-raw");
+    addCheck(report, "response.jwe.zip", "response", label, PASS,
+             "zip DEF: " + opened.plaintextBytes.length + " byte(s) " +
+             "inflated (RFC 1951) to " + raw.length + ".");
+    log.debug("Leaving jwePlaintext(). Inflated.");
+    return new TextDecoder().decode(raw);
+  } catch (e) {
+    addCheck(report, "response.jwe.zip", "response", label, FAIL,
+             "zip DEF, and the plaintext does not inflate: " + e.message);
+    log.debug("Leaving jwePlaintext(). Bad DEFLATE.");
+    return null;
+  }
+}
+
 async function openResponse(report, parsed, session) {
   log.debug("Entering openResponse().");
   var g = "response";
@@ -3978,15 +4189,30 @@ async function openResponse(report, parsed, session) {
     log.debug("Leaving openResponse(). Plain.");
     return parsed;
   }
+  var header = null;
+  try {
+    header = joseJwe.parseCompact(parsed.response).header;
+  } catch (e) {
+    addCheck(report, "response.decrypt", g, "The encrypted answer opens " +
+             "with this Verifier's key", FAIL, e.message);
+    log.debug("Leaving openResponse(). Not a JWE.");
+    return null;
+  }
+  checkJweHeader(report, header, session);
   try {
     var opened = await joseJwe.decryptCompact({ jwe: parsed.response,
       key: session.decryptionJwk });
-    var inner = JSON.parse(opened.plaintext);
     var kid = (opened.header || {}).kid;
     addCheck(report, "response.decrypt", g, "The encrypted answer opens " +
              "with this Verifier's key", PASS, "alg " + opened.header.alg +
              ", enc " + opened.header.enc + (kid ? ", kid " + kid : "") +
              ".");
+    var text = await jwePlaintext(report, opened);
+    if (text === null) {
+      log.debug("Leaving openResponse(). Unreadable plaintext.");
+      return null;
+    }
+    var inner = JSON.parse(text);
     log.debug("Leaving openResponse(). Decrypted.");
     return parseResponse(inner);
   } catch (e) {
@@ -4131,7 +4357,9 @@ function finish(report, presentations) {
 //                decryptionJwk, origin, trustAnchors } — origin is the
 //              page's origin, and is what a DC API answer's audience is
 //              (Appendix A.4); trustAnchors (PEM or base64 DER) are what
-//              an issuer's x5c chain may be anchored at
+//              an issuer's x5c chain may be anchored at; encValuesSupported
+//              is the encrypted_response_enc_values_supported the request
+//              sent, when it was not DEFAULT_ENC_VALUES
 //   fetchJson  optional: issuer metadata, DID documents, key documents
 //   fetchText  optional: (url, { accept }) => the body, for status lists:
 //              a string, bytes (ArrayBuffer or Uint8Array, so a binary CWT
