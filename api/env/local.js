@@ -307,6 +307,15 @@ var config = {
   // Wallets wait on one session at once.
   oid4vpVerifierLiveSignWaitMs: 15000,
   oid4vpVerifierMaxPendingSignings: 4,
+  // The base the three URLs a session hands a Wallet are built from
+  // (request_uri, response_uri, the root's caIssuers URL), e.g.
+  // "https://verifier.example.net:4000". Empty: the base the PAGE reached
+  // this api at, which is what a wallet on the same machine needs and
+  // what a phone scanning the QR code usually cannot reach (`localhost`,
+  // `api`). An absolute https URL with no query or fragment; anything
+  // else is logged and ignored. A page may still choose its own on
+  // create (publicBaseUrl), since the base only shapes those strings.
+  oid4vpVerifierPublicBaseUrl: "",
   // The hosted SSF transmitter (#363, api/ssf_transmitter.js): a receiver
   // discovers it, creates its stream there and polls it; the page signs.
   // Each lifetime is the default AND the ceiling for one transmitter.

@@ -164,6 +164,19 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               (SD-JWT VC section 2.5).</span></td>
         </tr>
         <tr>
+          <td><label for="vpv_public_base_url">Public base URL of the api (optional)</label></td>
+          <td><input type="text" id="vpv_public_base_url" size="60"
+                     placeholder="https://verifier.example.net:4000"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Where a wallet reaches this debugger's api. The request_uri, the
+              response_uri and the root's caIssuers URL are built from it. Empty: the api's
+              <code>oid4vpVerifierPublicBaseUrl</code>, or else the address this page reached the api at, which a
+              phone scanning the QR code usually cannot reach (<code>localhost</code>, <code>api</code>). An
+              https URL. It only shapes the URLs handed to the wallet; the api still serves on its own host, so
+              the address must lead back to it. When the host is an IP address the leaf names it in an iPAddress
+              subjectAltName, and x509_san_dns cannot be used: an address is not a DNS name.</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_fetch_via_api">Issuer-side fetches</label></td>
           <td><label><input type="checkbox" id="vpv_fetch_via_api"
                             onchange="return vcverifier.settingsChanged();" />

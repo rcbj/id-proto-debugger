@@ -166,6 +166,12 @@ model VerifierCreateRequest {
   /** Hold a Wallet's request_uri POST (section 5.10) for the page to sign
    *  a Request Object carrying its wallet_nonce. */
   liveSigning?: boolean | null;
+
+  /** The base the three URLs are built from, overriding
+   *  oid4vpVerifierPublicBaseUrl and the caller's own base: an address a
+   *  Wallet can reach. It only shapes the strings handed back. */
+  @checkedInCode("api/oid4vp_verifier.js: an absolute https URL, at most 2048 characters, with no credentials, query or fragment")
+  publicBaseUrl?: string | null;
 }
 
 /** The Request Object the page signed for ONE held Wallet. */
@@ -310,6 +316,10 @@ model VerifierLimits {
   maxSessionBytes: float64;
   liveSignWaitMs: float64;
   maxPendingSignings: float64;
+
+  /** oid4vpVerifierPublicBaseUrl, or "" when unset: the URLs then use the
+   *  base the page reached this service at. */
+  publicBaseUrl: string;
 
   /** How many sessions this process holds now. */
   held: int32;

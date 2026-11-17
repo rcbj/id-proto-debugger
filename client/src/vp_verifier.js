@@ -571,6 +571,31 @@ async function makeVerifierRoot(opts) {
            privateJwk: key.privateJwk, privatePem: rootKey.privatePem };
 }
 
+// THE HOST AS A NAME OR AN ADDRESS (#470, B5). The leaf names the host of
+// response_uri, which is an IP address whenever the api is reached by one
+// (a phone on the LAN, `https://192.168.1.20:4000`). RFC 5280 section
+// 4.2.1.6 puts an address in an iPAddress general name, as its 4 or 16
+// octets, and a dNSName is a DNS name and never an address — so the leaf
+// carries an iPAddress SAN then, and x509_san_dns, which OpenID4VP 1.0
+// section 5.9.3 makes "a DNS name" matching "a dNSName ... entry", cannot be
+// used at all. The host's IPv6 brackets (URL.hostname keeps them) go.
+function ipHost(host) {
+  log.debug("Entering ipHost().");
+  var text = String(host || "").replace(/^\[(.*)\]$/, "$1");
+  if (!/^[0-9.]+$/.test(text) && text.indexOf(":") < 0) {
+    log.debug("Leaving ipHost(). A name.");
+    return null;
+  }
+  try {
+    x509.ipBytes(text);
+  } catch (e) {
+    log.debug("Leaving ipHost(). Not an address.");
+    return null;
+  }
+  log.debug("Leaving ipHost(). " + text);
+  return text;
+}
+
 // A root as makeVerifierRoot() or readVerifierIdentityFile() gives it, with
 // its signing PEM (made from the JWK when it is not there yet).
 async function rootForSigning(root) {
@@ -616,14 +641,17 @@ async function makeVerifierIdentity(opts) {
   // digitalSignature is all it asserts.
   var ext = x509.defaultExtensions("tls-server", desc);
   ext.keyUsage.usages = ["digitalSignature"];
+  var ip = ipHost(o.dnsName);
   ext.subjectAltName = { present: true, critical: false,
-    names: [{ kind: "dns", value: String(o.dnsName) }] };
+    names: [ip ? { kind: "ip", value: ip }
+               : { kind: "dns", value: String(o.dnsName) }] };
   if (o.caIssuersUrl) {
     ext.authorityInfoAccess = { present: true, critical: false,
       entries: [{ method: "caIssuers", url: String(o.caIssuersUrl) }] };
   }
   var leaf = await x509.issueCertificate({
-    profile: "tls-server", subject: "CN=" + o.dnsName + ",O=idptools",
+    profile: "tls-server",
+    subject: "CN=" + (ip || o.dnsName) + ",O=idptools",
     subjectPublicKey: leafKey.publicPem,
     issuer: { certificatePem: root.certificatePem,
               privateKeyPem: root.privatePem, keyAlg: "ec-p256" },
@@ -642,7 +670,11 @@ async function makeVerifierIdentity(opts) {
     privateJwk: privateJwk, publicJwk: publicJwk,
     x5c: [bytes.bytesToB64(leafDer)],
     x509Hash: x509HashOf(leafDer),
-    dnsName: String(o.dnsName), caIssuersUrl: o.caIssuersUrl || ""
+    // dnsName is the host as given (an x509_san_dns Client Identifier is
+    // built from it, and refused when it is an address); ipAddress is set
+    // when the SAN is an iPAddress.
+    dnsName: String(o.dnsName), ipAddress: ip || "",
+    caIssuersUrl: o.caIssuersUrl || ""
   };
 }
 
@@ -841,6 +873,16 @@ function clientIdFor(prefix, identity, opts) {
     if (!dns) {
       log.debug("Leaving clientIdFor(). No DNS name.");
       throw new Error("x509_san_dns needs a dnsName.");
+    }
+    if (ipHost(dns)) {
+      log.debug("Leaving clientIdFor(). An IP address.");
+      throw new Error("x509_san_dns cannot name " + dns + ": it is an IP " +
+        "address, and OpenID4VP 1.0 section 5.9.3 makes the Client " +
+        "Identifier \"a DNS name\" matching a dNSName SAN, which an " +
+        "address never is (RFC 5280 section 4.2.1.6 puts it in an " +
+        "iPAddress name). Use x509_hash, whose leaf carries the address " +
+        "as an iPAddress SAN, or reach the api by a host name " +
+        "(oid4vpVerifierPublicBaseUrl, or the page's public base URL).");
     }
     log.debug("Leaving clientIdFor().");
     return "x509_san_dns:" + dns;

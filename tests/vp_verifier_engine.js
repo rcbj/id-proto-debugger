@@ -555,6 +555,48 @@ async function persistentIdentity() {
   log.debug("Leaving persistentIdentity().");
 }
 
+// AN IP ADDRESS IS NOT A dNSName (#470, B5; RFC 5280 section 4.2.1.6).
+// When the api is reached by an address, x509_san_dns is refused by name
+// and x509_hash's leaf carries the address as an iPAddress SAN — read here
+// by node's own X509Certificate, which prints the decoded octets.
+async function ipHosts() {
+  log.debug("Entering ipHosts().");
+  const root = await verifier.makeVerifierRoot();
+  for (const one of [["192.0.2.10", "192.0.2.10"],
+                     ["[2001:db8::1]", "2001:DB8:0:0:0:0:0:1"]]) {
+    const id = await verifier.makeVerifierIdentity({ dnsName: one[0],
+      root: root });
+    const leaf = new nodeCrypto.X509Certificate(id.leafPem);
+    const san = leaf.subjectAltName || "";
+    ok(new RegExp("^IP Address:" + one[1].replace(/\./g, "\\.") + "$", "i")
+       .test(san), one[0] + ": the SAN must be one iPAddress and no " +
+       "dNSName; node read " + JSON.stringify(san));
+    eq(id.ipAddress, one[0].replace(/^\[|\]$/g, ""),
+       one[0] + ": the identity says its SAN is an address");
+    ok(leaf.checkIP(one[0].replace(/^\[|\]$/g, "")) !== undefined,
+       one[0] + ": node's checkIP() matches the leaf");
+    eq(verifier.clientIdFor("x509_hash", id), "x509_hash:" + id.x509Hash,
+       one[0] + ": x509_hash is still available");
+    throws(function () {
+      verifier.clientIdFor("x509_san_dns", id, { dnsName: one[0] });
+    }, /it is an IP address[\s\S]*Use x509_hash/,
+    one[0] + ": x509_san_dns is refused, naming x509_hash");
+  }
+  throws(function () {
+    verifier.clientIdFor("x509_san_dns", null, { dnsName: "10.1.2.3" });
+  }, /dNSName SAN/, "the refusal needs no certificate");
+  const named = await verifier.makeVerifierIdentity({
+    dnsName: "verifier.example", root: root });
+  eq(new nodeCrypto.X509Certificate(named.leafPem).subjectAltName,
+     "DNS:verifier.example", "a host name is still a dNSName");
+  eq(named.ipAddress, "", "and the identity says so");
+  eq(verifier.clientIdFor("x509_san_dns", named, {}),
+     "x509_san_dns:verifier.example", "and x509_san_dns works for it");
+  log.info("PASS an IP host: an iPAddress SAN for x509_hash, x509_san_dns " +
+           "refused by name.");
+  log.debug("Leaving ipHosts().");
+}
+
 function requestUris() {
   log.debug("Entering requestUris().");
   const byRef = verifier.authorizationRequestUri({
@@ -4065,6 +4107,7 @@ async function main() {
   dcqlBuilder();
   const env = await identityAndRequest();
   await persistentIdentity();
+  await ipHosts();
   requestUris();
   oneDeclarationPerName();
   await sdJwtRoundTrip(env);

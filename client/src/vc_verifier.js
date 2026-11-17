@@ -51,7 +51,8 @@ var VERIFIER_KEYS = [
   "vpv_query_id", "vpv_format", "vpv_type", "vpv_claims", "vpv_binding",
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
-  "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity"
+  "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity",
+  "vpv_public_base_url"
 ];
 
 // Whether issuer metadata, DID documents and status lists are fetched
@@ -634,7 +635,10 @@ async function probeApi() {
       return false;
     }
     setText("vpv_api_status", "The api at " + API_URL + " will host this " +
-      "request's request_uri and response_uri.", "vc-ok");
+      "request's request_uri and response_uri" + (limits &&
+      limits.publicBaseUrl ? ", handing wallets URLs under " +
+      limits.publicBaseUrl + " (oid4vpVerifierPublicBaseUrl)" : "") + ".",
+      "vc-ok");
     log.debug("Leaving probeApi(). Available.");
     return true;
   } catch (e) {
@@ -827,9 +831,21 @@ async function createRequest() {
     if (redirectUri) {
       create.redirectUri = redirectUri;
     }
+    // The base a wallet reaches the api at, when the page's own is not one
+    // (#470, B5): the api checks it is an https URL and builds the three
+    // URLs from it. It serves on its own host whatever this says.
+    var publicBase = val("vpv_public_base_url").trim();
+    if (publicBase) {
+      create.publicBaseUrl = publicBase;
+    }
     var hosted = await apiJson("POST", "/oid4vp/verifier", create);
-    var signer = await makeSigner(prefix,
-      new URL(hosted.responseUri).hostname, hosted.caIssuersUrl);
+    var host = new URL(hosted.responseUri).hostname;
+    if (prefix === "x509_san_dns") {
+      // Refused before a certificate is made: an IP address is never a
+      // dNSName (clientIdFor() says why and what to use instead).
+      verifier.clientIdFor(prefix, null, { dnsName: host });
+    }
+    var signer = await makeSigner(prefix, host, hosted.caIssuersUrl);
     var encryption = mode === "direct_post.jwt"
       ? await verifier.responseEncryptionKey() : null;
     var clientId = clientIdOf(signer, hosted.responseUri);
@@ -1018,6 +1034,23 @@ function sameDeviceNote() {
   log.debug("Leaving sameDeviceNote(). Missing.");
 }
 
+// A host a wallet on ANOTHER device usually cannot reach (#470, B5):
+// loopback, or a single-label name such as the compose service `api`.
+function unreachableHost(url) {
+  log.debug("Entering unreachableHost().");
+  var host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch (e) {
+    log.debug("Leaving unreachableHost(). Not a URL.");
+    return "";
+  }
+  var local = host === "localhost" || /^127\./.test(host) ||
+      host === "[::1]" || (host.indexOf(".") < 0 && host.indexOf(":") < 0);
+  log.debug("Leaving unreachableHost(). " + local);
+  return local ? host : "";
+}
+
 function showRequest(invocation, clientId, requestObject, claims) {
   log.debug("Entering showRequest().");
   setVal("vpv_invocation", invocation);
@@ -1027,6 +1060,13 @@ function showRequest(invocation, clientId, requestObject, claims) {
     link.style.display = "inline";
   }
   showQr(invocation);
+  var far = unreachableHost(current.hosted.responseUri);
+  if (far) {
+    setText("vpv_qr_note", "The request_uri and response_uri are on " +
+      far + ", which a wallet on another device usually cannot reach. " +
+      "Set the public base URL in pane 2, or oid4vpVerifierPublicBaseUrl " +
+      "on the api, to an address it can.", "vc-pending");
+  }
   sameDeviceNote();
   setVal("vpv_client_id", clientId);
   setVal("vpv_request_uri", requestObject ? current.hosted.requestUri : "");

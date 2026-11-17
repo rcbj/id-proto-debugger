@@ -67,6 +67,11 @@ model VcVerifierKeys {
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_fetch_via_api: unknown;
 
+  // The base a wallet reaches the api at, sent as publicBaseUrl on
+  // POST /oid4vp/verifier (#470, B5). Empty is the api's own choice.
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_public_base_url: unknown;
+
   // "1" or "0": keep the Verifier's identity across runs. Absent or "1"
   // keeps it; only "0" stops it, and removes vpv_identity on the spot.
   @storageKey(#{ area: "local", class: "ordinary" })

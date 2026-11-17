@@ -392,6 +392,63 @@ function moduleReportedProblems() {
   log.debug("Leaving moduleReportedProblems().");
 }
 
+// THE BASE A WALLET IS HANDED (#470, B5): the page's publicBaseUrl, else
+// oid4vpVerifierPublicBaseUrl, else the base the caller reached the api at.
+function modulePublicBase() {
+  log.debug("Entering modulePublicBase().");
+  log.info("[module] the public base URL");
+  verifier.reset();
+  const caller = "https://localhost:4000";
+  const cfg = { oid4vpVerifierPublicBaseUrl:
+    "https://verifier.example.net:4000/debugger/" };
+  check("unset, the URLs use the caller's base, as before", function () {
+    assert.strictEqual(verifier.publicBase({}, "", caller), caller);
+    assert.strictEqual(verifier.limits({}).publicBaseUrl, "");
+  });
+  check("the setting wins over the caller's base, its slash trimmed, " +
+    "and the limits report it", function () {
+      assert.strictEqual(verifier.publicBase(cfg, "", caller),
+                         "https://verifier.example.net:4000/debugger");
+      assert.strictEqual(verifier.limits(cfg).publicBaseUrl,
+                         "https://verifier.example.net:4000/debugger");
+      const urls = verifier.urlsFor(verifier.publicBase(cfg, "", caller),
+                                    "abc");
+      assert.strictEqual(urls.responseUri, "https://verifier.example.net:" +
+        "4000/debugger/oid4vp/verifier/abc/response");
+    });
+  check("the page's publicBaseUrl wins over both", function () {
+    const made = verifier.create(cfg, { publicBaseUrl:
+      "https://192.168.1.20:4000" }, "10.0.0.9");
+    assert.strictEqual(made.ok, true, made.error);
+    assert.strictEqual(made.publicBaseUrl, "https://192.168.1.20:4000");
+    assert.strictEqual(verifier.publicBase(cfg, made.publicBaseUrl, caller),
+                       "https://192.168.1.20:4000");
+  });
+  check("a page's base that is not an https base URL is refused by name",
+    function () {
+      [["http://v.example", /must be an https:\/\/ URL/],
+       ["not a url", /is not a URL/],
+       ["https://u:p@v.example", /no credentials, query or fragment/],
+       ["https://v.example/?a=1", /no credentials, query or fragment/],
+       ["https://v.example/#f", /no credentials, query or fragment/],
+       ["https://v.example/" + "x".repeat(2100), /at most 2048/]
+      ].forEach(function (one) {
+        const r = verifier.create({}, { publicBaseUrl: one[0] }, "10.0.0.8");
+        assert.strictEqual(r.status, 400, one[0]);
+        assert.match(r.error, one[1]);
+        assert.match(r.error, /^publicBaseUrl/);
+      });
+    });
+  check("a malformed setting is ignored, and the caller's base used",
+    function () {
+      const bad = { oid4vpVerifierPublicBaseUrl: "http://v.example" };
+      assert.strictEqual(verifier.publicBase(bad, "", caller), caller);
+      assert.strictEqual(verifier.limits(bad).publicBaseUrl, "");
+    });
+  verifier.reset();
+  log.debug("Leaving modulePublicBase().");
+}
+
 function moduleBounds() {
   log.debug("Entering moduleBounds().");
   log.info("[module] the bounds");
@@ -916,6 +973,31 @@ async function routes() {
     assert.strictEqual(made.body.caIssuersUrl, root + "/ca");
     assert.match(made.body.secret, /^[0-9a-f]{32}$/);
   });
+  check("the limits report the public base URL setting", function () {
+    assert.strictEqual(typeof limits.body.publicBaseUrl, "string");
+  });
+  const elsewhere = await call("POST", "/oid4vp/verifier",
+    { json: { publicBaseUrl: "https://verifier.example.net:4000/x/" } });
+  check("a create with publicBaseUrl hands out URLs under it", function () {
+    assert.strictEqual(elsewhere.status, 201, elsewhere.text);
+    const root = "https://verifier.example.net:4000/x/oid4vp/verifier/" +
+      elsewhere.body.id;
+    assert.strictEqual(elsewhere.body.requestUri, root + "/request");
+    assert.strictEqual(elsewhere.body.responseUri, root + "/response");
+    assert.strictEqual(elsewhere.body.caIssuersUrl, root + "/ca");
+  });
+  const gone = await call("DELETE", "/oid4vp/verifier/" + elsewhere.body.id,
+    { headers: { Authorization: "Bearer " + elsewhere.body.secret } });
+  check("and the api still serves that session on its own host",
+    function () {
+      assert.strictEqual(gone.status, 200, gone.text);
+    });
+  const plain = await call("POST", "/oid4vp/verifier",
+    { json: { publicBaseUrl: "http://verifier.example.net" } });
+  check("a publicBaseUrl that is not https is the module's 400", function () {
+    assert.strictEqual(plain.status, 400);
+    assert.match(plain.body.error, /^publicBaseUrl must be an https/);
+  });
   const base = "/oid4vp/verifier/" + made.body.id;
   const auth = { Authorization: "Bearer " + made.body.secret };
   try {
@@ -1203,6 +1285,7 @@ async function main() {
   log.debug("Entering main().");
   moduleLifecycle();
   moduleReportedProblems();
+  modulePublicBase();
   moduleBounds();
   moduleExpiry();
   await moduleLiveSigning();
@@ -1223,7 +1306,7 @@ async function main() {
     log.info("[routes] not run: no API_URL. run-report.js passes one on " +
       "every target with an api; a static site has none.");
   }
-  const floor = API_URL ? 90 : 63;
+  const floor = API_URL ? 94 : 68;
   assert.ok(checks >= floor, "Only " + checks + " checks ran and this file " +
     "defines at least " + floor + ". A section has stopped being called.");
   log.info(checks + " checks passed.");

@@ -4198,10 +4198,13 @@ app.post('/oid4vp/verifier', model.route('oid4vpVerifierCreate'),
     log.debug('Leaving POST /oid4vp/verifier. Refused: ' + made.error);
     return res.status(made.status).json({ error: made.error });
   }
-  // This api's address AS THE CALLER REACHED IT, for the SSF receiver's
-  // reason: the Wallet has to reach these URLs, and behind the embedding
-  // proxy they carry the prefix it stripped. See publicBaseUrl().
-  var urls = oid4vpVerifier.urlsFor(publicBaseUrl(req), made.id);
+  // The page's publicBaseUrl, else oid4vpVerifierPublicBaseUrl, else this
+  // api's address AS THE CALLER REACHED IT, for the SSF receiver's reason:
+  // the Wallet has to reach these URLs, and behind the embedding proxy they
+  // carry the prefix it stripped. See publicBaseUrl() and, for why the
+  // first two exist, publicBase() in oid4vp_verifier.js (#470, B5).
+  var urls = oid4vpVerifier.urlsFor(oid4vpVerifier.publicBase(appconfig,
+      made.publicBaseUrl, publicBaseUrl(req)), made.id);
   log.debug('Leaving POST /oid4vp/verifier. ' + made.id);
   return res.status(201).json({
     id: made.id,

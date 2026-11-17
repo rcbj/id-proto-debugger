@@ -92,6 +92,19 @@ names, and its Authority Information Access `caIssuers` URL is the api's
 `rcbj/oid4vc-wallet` does, finds the root there; any other wallet is given
 the root once, as a trust anchor, and it stays valid for every later request.
 
+**The host a wallet is handed** is the api's address as the page reached it,
+unless pane 2's **Public base URL of the api** or the api's
+`oid4vpVerifierPublicBaseUrl` names another (`docs/vc-verifier-api.md`).
+`localhost` or `api` is unreachable from a phone scanning the QR code, and
+pane 3 says so when the request uses one.
+
+**An IP address is never a dNSName** (RFC 5280 section 4.2.1.6). When the
+host is an address, the leaf carries it as an iPAddress subjectAltName, so
+`x509_hash` works. `x509_san_dns` is refused before anything is made: OpenID4VP
+1.0 section 5.9.3 makes that Client Identifier "a DNS name" matching a
+dNSName SAN, and an address can be neither. The error says to use
+`x509_hash` or reach the api by a host name.
+
 ## The Verifier's identity across runs
 
 Until #470 every request made a new root, attester and request key, so only
