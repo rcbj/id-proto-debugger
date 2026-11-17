@@ -3424,7 +3424,7 @@ app.get('/tls/limits', function (req, res) {
  * @returns {object} 400 - this service refused to send it (see the reason)
  * @returns {object} 502 - the SCIM server could not be reached
  */
-app.post('/scim', function (req, res) {
+app.post('/scim', model.route('scimCall'), function (req, res) {
   log.debug('Entering POST /scim.');
   var described = scimProxy.describeRequest(req.body || {}, appconfig);
   if (!described.ok) {
@@ -3490,7 +3490,8 @@ app.post('/scim', function (req, res) {
  * @route GET /scim/limits
  * @returns {object} 200 - the methods, refused headers, caps and status rule
  */
-app.get('/scim/limits', function (req, res) {
+app.get('/scim/limits', model.route('scimLimits'),
+        function (req, res) {
   log.debug('Entering GET /scim/limits.');
   log.debug('Leaving GET /scim/limits.');
   return res.status(STATUS_200).json(scimProxy.limits(appconfig));
@@ -3753,7 +3754,7 @@ app.post('/smartcard/transmit', function (req, res) {
  * @returns {object} 400 - this service refused to send it
  * @returns {object} 502 - the transmitter could not be reached
  */
-app.post('/ssf/call', function (req, res) {
+app.post('/ssf/call', model.route('ssfCall'), function (req, res) {
   log.debug('Entering POST /ssf/call.');
   var described = ssfProxy.describeRequest(req.body || {}, appconfig);
   if (!described.ok) {
@@ -3822,7 +3823,7 @@ app.post('/ssf/call', function (req, res) {
  * @returns {object} 200 - the methods, refused headers, caps, status rule and
  *                         the receiver's own limits
  */
-app.get('/ssf/limits', function (req, res) {
+app.get('/ssf/limits', model.route('ssfLimits'), function (req, res) {
   log.debug('Entering GET /ssf/limits.');
   log.debug('Leaving GET /ssf/limits.');
   return res.status(STATUS_200).json(
@@ -3863,7 +3864,7 @@ function gnapClientCertificateAgent(described) {
   return agent;
 }
 
-app.post('/gnap/call', function (req, res) {
+app.post('/gnap/call', model.route('gnapCall'), function (req, res) {
   log.debug('Entering POST /gnap/call.');
   var described = gnapProxy.describeRequest(req.body || {}, appconfig);
   if (!described.ok) {
@@ -3943,7 +3944,8 @@ app.post('/gnap/call', function (req, res) {
  * @route GET /gnap/limits
  * @returns {object} 200 - methods, refused headers and caps
  */
-app.get('/gnap/limits', function (req, res) {
+app.get('/gnap/limits', model.route('gnapLimits'),
+        function (req, res) {
   log.debug('Entering GET /gnap/limits.');
   log.debug('Leaving GET /gnap/limits.');
   return res.status(STATUS_200).json(gnapProxy.limits(appconfig));
@@ -3968,7 +3970,8 @@ app.get('/gnap/limits', function (req, res) {
  * @returns {object} 200 - the inbox and the URL to put in a stream
  * @returns {object} 400 - refused: disabled, or at the inbox limit
  */
-app.post('/ssf/receiver', function (req, res) {
+app.post('/ssf/receiver', model.route('ssfReceiverCreate'),
+        function (req, res) {
   log.debug('Entering POST /ssf/receiver.');
   var made = ssfReceiver.create(appconfig, req.body || {}, req.ip);
   if (!made.ok) {
@@ -4008,7 +4011,8 @@ app.post('/ssf/receiver', function (req, res) {
  * @returns {object} 400 - refused, with the SET Error Code and why
  * @returns {object} 404 - no such receiver
  */
-app.post('/ssf/receiver/:id', function (req, res) {
+app.post('/ssf/receiver/:id', model.route('ssfReceiverPush'),
+        function (req, res) {
   log.debug('Entering POST /ssf/receiver/:id.');
   var answer = ssfReceiver.deliver(appconfig, req.params.id, {
     body: req.body,
@@ -4041,7 +4045,8 @@ app.post('/ssf/receiver/:id', function (req, res) {
  * @returns {object} 200 - the inbox and everything since `after`
  * @returns {object} 404 - no such receiver
  */
-app.get('/ssf/receiver/:id/events', function (req, res) {
+app.get('/ssf/receiver/:id/events', model.route('ssfReceiverEvents'),
+        function (req, res) {
   log.debug('Entering GET /ssf/receiver/:id/events.');
   var out = ssfReceiver.drain(appconfig, req.params.id, req.query.after);
   if (!out.ok) {
@@ -4059,7 +4064,8 @@ app.get('/ssf/receiver/:id/events', function (req, res) {
  * @returns {object} 200 - what happened
  * @returns {object} 404 - no such receiver
  */
-app.delete('/ssf/receiver/:id', function (req, res) {
+app.delete('/ssf/receiver/:id', model.route('ssfReceiverDelete'),
+        function (req, res) {
   log.debug('Entering DELETE /ssf/receiver/:id.');
   var clearOnly = String(req.query.clear || '') === 'true';
   if (clearOnly) {
