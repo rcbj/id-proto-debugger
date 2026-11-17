@@ -1,0 +1,98 @@
+[
+  {
+    "id": "none",
+    "label": "None (anonymous)",
+    "type": "",
+    "spec": "RFC 7644 section 2",
+    "sendsCredential": false,
+    "needsProof": false,
+    "scoped": false,
+    "browser": true,
+    "backend": true,
+    "what": "Send nothing. Against a server with authentication turned on this is the 401 that shows you what the WWW-Authenticate challenge says you may use — which is the SHALL in section 2 and the fastest way to find out what a server will accept."
+  },
+  {
+    "id": "bearer",
+    "label": "OAuth 2.0 Bearer token",
+    "type": "oauthbearertoken",
+    "spec": "RFC 6750",
+    "sendsCredential": true,
+    "needsProof": false,
+    "scoped": true,
+    "browser": true,
+    "backend": true,
+    "what": "Authorization: Bearer <token>. The scope is what decides what you may do: the read scope to read and the write scope to write. Get one from the OAuth2 / OIDC workflow with any grant, or paste one."
+  },
+  {
+    "id": "dpop",
+    "label": "OAuth 2.0 DPoP (proof of possession)",
+    "type": "oauth2",
+    "spec": "RFC 9449",
+    "sendsCredential": true,
+    "needsProof": true,
+    "scoped": true,
+    "browser": true,
+    "backend": true,
+    "what": "Authorization: DPoP <token> plus a DPoP proof JWT signed over THIS method and URL and carrying the access token's hash. The proof is minted per request, so a captured one is not replayable against another endpoint."
+  },
+  {
+    "id": "basic",
+    "label": "HTTP Basic",
+    "type": "httpbasic",
+    "spec": "RFC 7617",
+    "sendsCredential": true,
+    "needsProof": false,
+    "scoped": false,
+    "browser": true,
+    "backend": true,
+    "what": "Authorization: Basic base64(user:password). Section 2 names it and discourages it in the same sentence. It carries no scope, so a server that accepts it usually lets the caller do everything."
+  },
+  {
+    "id": "digest",
+    "label": "HTTP Digest",
+    "type": "httpdigest",
+    "spec": "RFC 7616",
+    "sendsCredential": true,
+    "needsProof": true,
+    "scoped": false,
+    "browser": true,
+    "backend": true,
+    "what": "Two requests, not one: the first is answered 401 with a nonce, and the second carries a digest computed over it. This page makes both and shows you both, because the handshake is the interesting part and a library normally hides it."
+  },
+  {
+    "id": "hoba",
+    "label": "HOBA (HTTP Origin-Bound Authentication)",
+    "type": "hoba",
+    "spec": "RFC 7486",
+    "sendsCredential": true,
+    "needsProof": true,
+    "scoped": false,
+    "browser": true,
+    "backend": false,
+    "what": "A signature by a key you registered, over a string bound to this origin and this realm. No password crosses the wire at all. The signing key lives in this browser, which is why the api cannot make this call for you."
+  },
+  {
+    "id": "cookie",
+    "label": "Session cookie",
+    "type": "httpcookie",
+    "spec": "RFC 7644 section 2 (\"Cookies\")",
+    "sendsCredential": false,
+    "needsProof": false,
+    "scoped": false,
+    "browser": true,
+    "backend": false,
+    "what": "Nothing is added to the request: the browser attaches the cookie if it has one for that origin and the request is made with credentials. Sign in to the server first. The api has no session and no cookie jar, so this is a browser-only scheme."
+  },
+  {
+    "id": "clientcert",
+    "label": "TLS client certificate",
+    "type": "tlsclientauth",
+    "spec": "RFC 8446 / RFC 5280",
+    "sendsCredential": false,
+    "needsProof": false,
+    "scoped": false,
+    "browser": true,
+    "backend": false,
+    "what": "Chosen during the TLS handshake and never in a header, so no code here can put it there — the browser offers what its keychain holds when the server asks. Nothing is added to the request; this row exists so the page can say that rather than appear to have left the scheme out."
+  }
+]

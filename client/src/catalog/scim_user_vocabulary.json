@@ -1,0 +1,190 @@
+{
+  "givenNames": [
+    "Ada",
+    "Bram",
+    "Cleo",
+    "Dara",
+    "Emil",
+    "Fen",
+    "Gale",
+    "Hana",
+    "Ivo",
+    "Juno",
+    "Kit",
+    "Lior",
+    "Mira",
+    "Nils",
+    "Oona",
+    "Piet",
+    "Quin",
+    "Rune",
+    "Sena",
+    "Taro",
+    "Ulla",
+    "Vera",
+    "Wim",
+    "Xan",
+    "Yuki",
+    "Zev"
+  ],
+  "familyNames": [
+    "Aalto",
+    "Bergman",
+    "Coelho",
+    "Dahl",
+    "Esposito",
+    "Fournier",
+    "Garza",
+    "Haas",
+    "Ibarra",
+    "Jansen",
+    "Kovac",
+    "Lindqvist",
+    "Moreau",
+    "Novak",
+    "Oyelaran",
+    "Pereira",
+    "Quesada",
+    "Rasmussen",
+    "Silva",
+    "Tanaka",
+    "Ustinov",
+    "Vogel",
+    "Weber",
+    "Xiong",
+    "Yilmaz",
+    "Zima"
+  ],
+  "honorificPrefixes": [
+    "Dr.",
+    "Prof.",
+    "Ms.",
+    "Mr.",
+    "Mx."
+  ],
+  "honorificSuffixes": [
+    "PhD",
+    "Jr.",
+    "III",
+    "MSc"
+  ],
+  "titles": [
+    "Systems Engineer",
+    "Directory Architect",
+    "Support Analyst",
+    "Security Lead",
+    "Product Manager",
+    "Data Steward",
+    "Field Technician",
+    "Compliance Officer"
+  ],
+  "userTypes": [
+    "Employee",
+    "Contractor",
+    "Intern",
+    "Vendor",
+    "Partner"
+  ],
+  "departments": [
+    "Engineering",
+    "Operations",
+    "Finance",
+    "Legal",
+    "Research",
+    "Support"
+  ],
+  "divisions": [
+    "Platform",
+    "Directory",
+    "Identity",
+    "Infrastructure"
+  ],
+  "organizations": [
+    "Example Corp",
+    "Example Holdings",
+    "Example Labs"
+  ],
+  "costCenters": [
+    "CC-1000",
+    "CC-2000",
+    "CC-3000",
+    "CC-4000"
+  ],
+  "locales": [
+    "en-US",
+    "en-GB",
+    "de-DE",
+    "fr-FR",
+    "ja-JP",
+    "pt-BR"
+  ],
+  "languages": [
+    "en",
+    "en-US",
+    "de",
+    "fr",
+    "ja",
+    "pt-BR"
+  ],
+  "timezones": [
+    "America/Los_Angeles",
+    "America/New_York",
+    "Europe/London",
+    "Europe/Berlin",
+    "Asia/Tokyo",
+    "Australia/Sydney"
+  ],
+  "streets": [
+    "1 Directory Way",
+    "42 Schema Street",
+    "7 Bind Lane",
+    "100 Filter Road",
+    "15 Attribute Close"
+  ],
+  "localities": [
+    "Springfield",
+    "Riverton",
+    "Fairview",
+    "Ashford",
+    "Kingsmere"
+  ],
+  "regions": [
+    "CA",
+    "NY",
+    "TX",
+    "WA",
+    "IL"
+  ],
+  "countries": [
+    "US",
+    "GB",
+    "DE",
+    "FR",
+    "JP",
+    "BR"
+  ],
+  "imTypes": [
+    "aim",
+    "gtalk",
+    "icq",
+    "xmpp",
+    "msn",
+    "skype",
+    "qq",
+    "yahoo"
+  ],
+  "photoTypes": [
+    "photo",
+    "thumbnail"
+  ],
+  "groupNouns": [
+    "Engineering",
+    "Operations",
+    "Directory Admins",
+    "Auditors",
+    "Support",
+    "Contractors",
+    "Reviewers",
+    "Release Managers"
+  ]
+}

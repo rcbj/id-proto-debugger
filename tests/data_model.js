@@ -31,6 +31,10 @@
 //  6. THE EMBEDDED CONTRACT. Every variable models/contract/ declares is
 //     read in the file it names, and every process.env.DEBUGGER_* the tree
 //     reads is declared.
+//  7. THE SCIM CATALOGUE. Every table scim_client.js and scim_scenarios.js
+//     export is the JSON models/catalog/scim.tsp generates into
+//     client/src/catalog/ — the scenario rows less the `build()` the module
+//     attaches by id — and each scenario and random phase can run.
 //
 // Node only — no browser, no services — so it never skips. In the tests image
 // the source is /usr/src/source-tree (tests/Dockerfile), with models/'s own
@@ -453,6 +457,54 @@ function embeddedContract() {
   log.debug("Leaving embeddedContract().");
 }
 
+function catalogJson(name) {
+  log.debug("Entering catalogJson(). " + name);
+  const file = path.join(ROOT, "client", "src", "catalog", name + ".json");
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+  log.debug("Leaving catalogJson().");
+  return parsed;
+}
+
+function scimCatalogue() {
+  log.debug("Entering scimCatalogue().");
+  log.info("=== 7. the SCIM modules read the SCIM catalogue ===");
+  const client = paths.requireSharedModule([
+    path.join(ROOT, "client", "src", "scim_client.js")
+  ], "client/src/scim_client.js");
+  const scenarios = paths.requireSharedModule([
+    path.join(ROOT, "client", "src", "scim_scenarios.js")
+  ], "client/src/scim_scenarios.js");
+  const tables = [
+    ["SCIM_TYPES", client.SCIM_TYPES, "scim_error_types"],
+    ["AUTH_SCHEMES", client.AUTH_SCHEMES, "scim_auth_schemes"],
+    ["OPERATIONS", client.OPERATIONS, "scim_operations"],
+    ["VOCABULARY", client.VOCABULARY, "scim_user_vocabulary"],
+    ["FILTER_TOUR", scenarios.FILTER_TOUR, "scim_filter_tour"],
+    ["RANDOM_PHASES", scenarios.RANDOM_PHASES, "scim_random_phases"]
+  ];
+  tables.forEach(function (t) {
+    assert.deepStrictEqual(t[1], catalogJson(t[2]), t[0] + " is not " +
+      "client/src/catalog/" + t[2] + ".json; regenerate, or move the row " +
+      "into models/catalog/scim.tsp.");
+  });
+  const rows = scenarios.SCENARIOS.map(function (row) {
+    assert.strictEqual(typeof row.build, "function",
+      "scenario " + row.id + " has no build().");
+    const copy = Object.assign({}, row);
+    delete copy.build;
+    return copy;
+  });
+  assert.deepStrictEqual(rows, catalogJson("scim_scenarios"),
+    "SCENARIOS, less build(), is not client/src/catalog/scim_scenarios.json.");
+  scenarios.RANDOM_PHASES.forEach(function (phase) {
+    assert.ok(scenarios.scenario(phase.id),
+      "random phase " + phase.id + " names no scenario.");
+  });
+  log.info("[scim] OK — " + (tables.length + 1) + " tables equal their " +
+           "generated JSON, and every scenario and phase has a builder.");
+  log.debug("Leaving scimCatalogue().");
+}
+
 function main() {
   log.debug("Entering main().");
   current();
@@ -461,6 +513,7 @@ function main() {
   configurations();
   storageModel();
   embeddedContract();
+  scimCatalogue();
   log.info("The abstract data model is current, live, strict and obeyed.");
   log.debug("Leaving main().");
 }
