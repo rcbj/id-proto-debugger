@@ -421,6 +421,7 @@
           <label class="pki-flag" title="Only meaningful alongside keyAgreement."><input class="stored" type="checkbox" id="pki_ku_encipherOnly" name="pki_ku_encipherOnly" /> encipherOnly</label>
           <label class="pki-flag" title="Only meaningful alongside keyAgreement."><input class="stored" type="checkbox" id="pki_ku_decipherOnly" name="pki_ku_decipherOnly" /> decipherOnly</label>
         </div>
+        <p class="saml-note" id="pki_ku_note" title="Which bits a key may carry depends on the key: RSA (RFC 3279), EC (RFC 5480), EdDSA (RFC 8410), ML-DSA (RFC 9881), SLH-DSA (RFC 9909), Composite ML-DSA and ML-KEM (RFC 9935) each name their own. The defaults follow the key algorithm; a box ticked by hand that the key may not carry is reported here, and still issued."></p>
       </div>
 
       <div class="pki-ext">

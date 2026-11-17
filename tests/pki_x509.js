@@ -106,11 +106,11 @@ function opensslText(pem) {
 // `openssl verify`, returning {ok, output}. A FAILURE is a result here as often
 // as a success is — the name-constraint and pathLen cases below are asserting
 // that OpenSSL refuses something.
-function opensslVerify(leafPem, rootPem, untrustedPems) {
+function opensslVerify(leafPem, rootPem, untrustedPems, flags) {
   log.debug("Entering opensslVerify().");
   const leaf = writePem("verify-leaf.pem", leafPem);
   const root = writePem("verify-root.pem", rootPem);
-  const args = ["verify", "-CAfile", root];
+  const args = ["verify"].concat(flags || []).concat(["-CAfile", root]);
   if (untrustedPems && untrustedPems.length) {
     const chain = writePem("verify-chain.pem", untrustedPems.join(""));
     args.push("-untrusted", chain);
@@ -1006,7 +1006,10 @@ async function everyProfileIssuesWhatItPromises() {
     "the profile list has shrunk to " + profiles.length);
   for (const profileId of profiles) {
     const profile = x509.profile(profileId);
-    const ext = x509.defaultExtensions(profileId);
+    // The subject key is P-256 for a leaf and RSA for the self-signed root,
+    // so the defaults are asked for with the key each one actually has.
+    const ext = x509.defaultExtensions(profileId,
+        profile.selfSigned ? "rsa-2048" : "ec-p256");
     const selfSigned = !!profile.selfSigned;
     const issued = await x509.issueCertificate({
       profile: profileId,
@@ -1023,12 +1026,14 @@ async function everyProfileIssuesWhatItPromises() {
     assert.ok(new RegExp("CA:" + (profile.ca ? "TRUE" : "FALSE")).test(text),
       profileId + ": basicConstraints cA should be " + !!profile.ca + "\n" +
       text);
-    (profile.keyUsage || []).forEach(function (usage) {
-      const described = ext.keyUsage.usages;
-      assert.ok(described.indexOf(usage) >= 0,
-        profileId + ": the default extensions dropped the " + usage +
-        " key usage the profile names");
-    });
+    // What the profile names, read through the key's family: the
+    // per-algorithm half of this is keyUsageFollowsTheKeyAlgorithm()'s.
+    const expectedUsages = expectedDefaultKeyUsage(profileId,
+        profile.selfSigned ? "rsa" : "ec");
+    assert.deepStrictEqual(ext.keyUsage.usages, expectedUsages,
+      profileId + ": the default keyUsage is " +
+      JSON.stringify(ext.keyUsage.usages) + ", expected " +
+      JSON.stringify(expectedUsages));
     if (!selfSigned) {
       const verdict = opensslVerify(issued.pem, root.pem);
       assert.ok(verdict.ok,
@@ -1039,6 +1044,204 @@ async function everyProfileIssuesWhatItPromises() {
   }
   log.info("Issued and checked " + profiles.length + " profiles.");
   log.debug("Leaving everyProfileIssuesWhatItPromises().");
+}
+
+// ---------------------------------------------------------------------------
+// 11a. The keyUsage a profile gives a key is one that key may carry (#310).
+//
+// The bits each key family may carry, written out here from the
+// specifications rather than read from x509.js, so that agreeing with the
+// module means two readings agree:
+//
+//   RSA      RFC 3279 section 2.3.1  digitalSignature, nonRepudiation,
+//                                    keyEncipherment, dataEncipherment,
+//                                    keyCertSign, cRLSign
+//   EC       RFC 5480 section 3      digitalSignature, nonRepudiation,
+//                                    keyAgreement, keyCertSign, cRLSign,
+//                                    encipherOnly, decipherOnly;
+//                                    keyEncipherment and dataEncipherment
+//                                    MUST NOT be set
+//   Ed25519  RFC 8410 section 5      digitalSignature, nonRepudiation,
+//                                    keyCertSign, cRLSign
+//
+// The profiles are written for RSA. For EC the key-transport usages become
+// keyAgreement, which is how an EC key does the same job; for Ed25519 they
+// are dropped, because a signature key has no equivalent. Each certificate is
+// then handed to `openssl verify -x509_strict`. That flag checks the RFC 5280
+// structure (critical basicConstraints on a CA, the key identifiers, a
+// non-empty subject) and NOT keyUsage against the key type, which no OpenSSL
+// release checks. That is how the defect in #310 got past `openssl verify`, so
+// the per-family table above is the half that catches it, and OpenSSL is the
+// half that says the rest of the certificate is still strict-clean.
+// ---------------------------------------------------------------------------
+const PERMITTED_KEY_USAGES = {
+  rsa: ["digitalSignature", "nonRepudiation", "keyEncipherment",
+        "dataEncipherment", "keyCertSign", "cRLSign"],
+  ec: ["digitalSignature", "nonRepudiation", "keyAgreement", "keyCertSign",
+       "cRLSign", "encipherOnly", "decipherOnly"],
+  ed25519: ["digitalSignature", "nonRepudiation", "keyCertSign", "cRLSign"]
+};
+
+const KEY_USAGE_ORDER = ["digitalSignature", "nonRepudiation",
+  "keyEncipherment", "dataEncipherment", "keyAgreement", "keyCertSign",
+  "cRLSign", "encipherOnly", "decipherOnly"];
+
+// OpenSSL's `-text` names for the nine bits.
+const OPENSSL_KEY_USAGE_NAMES = {
+  digitalSignature: "Digital Signature",
+  nonRepudiation: "Non Repudiation",
+  keyEncipherment: "Key Encipherment",
+  dataEncipherment: "Data Encipherment",
+  keyAgreement: "Key Agreement",
+  keyCertSign: "Certificate Sign",
+  cRLSign: "CRL Sign",
+  encipherOnly: "Encipher Only",
+  decipherOnly: "Decipher Only"
+};
+
+// The keyUsage this test expects a profile to default to for a key family.
+function expectedDefaultKeyUsage(profileId, family) {
+  log.debug("Entering expectedDefaultKeyUsage(). " + profileId + "/" +
+      family);
+  const wanted = x509.profile(profileId).keyUsage || [];
+  const permitted = PERMITTED_KEY_USAGES[family];
+  const out = [];
+  wanted.forEach(function (usage) {
+    let target = usage;
+    if (family === "ec" && (usage === "keyEncipherment" ||
+        usage === "dataEncipherment")) {
+      target = "keyAgreement";
+    }
+    if (permitted.indexOf(target) >= 0 && out.indexOf(target) < 0) {
+      out.push(target);
+    }
+  });
+  const sorted = KEY_USAGE_ORDER.filter(function (u) {
+    return out.indexOf(u) >= 0;
+  });
+  log.debug("Leaving expectedDefaultKeyUsage(). " + sorted.join(","));
+  return sorted;
+}
+
+// The keyUsage bits `openssl x509 -text` reads, by this file's names, or
+// null when the certificate carries no KeyUsage extension.
+function opensslKeyUsage(text) {
+  log.debug("Entering opensslKeyUsage().");
+  const match = /X509v3 Key Usage:[^\n]*\n\s*([^\n]*)/.exec(text);
+  if (!match) {
+    log.debug("Leaving opensslKeyUsage(). No extension.");
+    return null;
+  }
+  const names = match[1].split(",").map(function (n) { return n.trim(); });
+  const out = KEY_USAGE_ORDER.filter(function (u) {
+    return names.indexOf(OPENSSL_KEY_USAGE_NAMES[u]) >= 0;
+  });
+  log.debug("Leaving opensslKeyUsage(). " + out.join(","));
+  return out;
+}
+
+async function keyUsageFollowsTheKeyAlgorithm() {
+  log.debug("Entering keyUsageFollowsTheKeyAlgorithm().");
+  const rootKey = await keyFor("rsa-2048");
+  const root = await x509.issueCertificate({
+    profile: "root-ca", subject: "CN=KeyUsage Root,O=idptools",
+    subjectPublicKey: rootKey.publicPem,
+    issuerPrivateKey: rootKey.privatePem, signatureAlg: "sha256-rsa",
+    extensions: x509.defaultExtensions("root-ca", "rsa-2048")
+  });
+  const families = { "rsa-2048": "rsa", "ec-p256": "ec",
+                     "ed25519": "ed25519" };
+  let checked = 0;
+  for (const keyAlg of Object.keys(families)) {
+    const family = families[keyAlg];
+    const subjectKey = await keyFor(keyAlg);
+    for (const profileId of x509.profileIds()) {
+      const profile = x509.profile(profileId);
+      const expected = expectedDefaultKeyUsage(profileId, family);
+      const ext = x509.defaultExtensions(profileId, keyAlg);
+      assert.deepStrictEqual(ext.keyUsage.usages, expected,
+        profileId + " with " + keyAlg + ": the default keyUsage is " +
+        JSON.stringify(ext.keyUsage.usages) + ", expected " +
+        JSON.stringify(expected));
+      assert.deepStrictEqual(
+        x509.keyUsageFindings(ext.keyUsage.usages, keyAlg), [],
+        profileId + " with " + keyAlg + ": the defaults are reported as " +
+        "not conformant by the module's own check");
+      if (family === "rsa") {
+        // RSA is what the profiles are written for: nothing may change.
+        assert.deepStrictEqual(ext.keyUsage.usages,
+          KEY_USAGE_ORDER.filter(function (u) {
+            return (profile.keyUsage || []).indexOf(u) >= 0;
+          }),
+          profileId + ": an RSA key changed the profile's keyUsage");
+      }
+      if (!expected.length) {
+        assert.ok(x509.defaultKeyUsage(profileId, keyAlg).note,
+          profileId + " with " + keyAlg + ": an empty keyUsage must come " +
+          "with a note saying why");
+      }
+      // Every one is issued by the RSA root, the CA profiles included: what
+      // is under test is the subject key's keyUsage, not who signed it.
+      const issued = await x509.issueCertificate({
+        profile: profileId,
+        subject: "CN=" + profileId + "." + keyAlg + ".example,O=idptools",
+        subjectPublicKey: subjectKey.publicPem,
+        issuer: { certificatePem: root.pem,
+                  privateKeyPem: rootKey.privatePem, keyAlg: "rsa-2048" },
+        signatureAlg: "sha256-rsa",
+        extensions: ext
+      });
+      const text = opensslText(issued.pem);
+      const read = opensslKeyUsage(text);
+      assert.deepStrictEqual(read, expected.length ? expected : null,
+        profileId + " with " + keyAlg + ": OpenSSL reads the keyUsage as " +
+        JSON.stringify(read) + ", expected " + JSON.stringify(expected) +
+        "\n" + text);
+      const verdict = opensslVerify(issued.pem, root.pem, null,
+          ["-x509_strict"]);
+      assert.ok(verdict.ok,
+        profileId + " with " + keyAlg + ": openssl verify -x509_strict " +
+        "refused it: " + verdict.output);
+      const described = await x509.describeCertificate(issued.pem);
+      assert.deepStrictEqual(described.findings, [],
+        profileId + " with " + keyAlg + ": the describer reports findings " +
+        "on a conformant certificate: " + JSON.stringify(described.findings));
+      checked += 1;
+    }
+  }
+
+  // The other direction: the page lets a box be ticked by hand, so a
+  // non-conformant keyUsage must be REPORTED. The profile's RSA-shaped list
+  // on an EC key is exactly the certificate #310 was about.
+  const ecKey = await keyFor("ec-p256");
+  const raw = x509.defaultExtensions("tls-server");
+  assert.ok(raw.keyUsage.usages.indexOf("keyEncipherment") >= 0,
+    "without a key, defaultExtensions() must keep the profile's own list");
+  const bad = await x509.issueCertificate({
+    profile: "tls-server", subject: "CN=bad-ku.example,O=idptools",
+    subjectPublicKey: ecKey.publicPem,
+    issuer: { certificatePem: root.pem, privateKeyPem: rootKey.privatePem,
+              keyAlg: "rsa-2048" },
+    signatureAlg: "sha256-rsa",
+    extensions: raw
+  });
+  const badDescribed = await x509.describeCertificate(bad.pem);
+  assert.ok(badDescribed.findings.some(function (f) {
+    return f.indexOf("keyEncipherment") >= 0 && f.indexOf("RFC 5480") >= 0;
+  }), "an EC certificate asserting keyEncipherment was not reported: " +
+    JSON.stringify(badDescribed.findings));
+  assert.ok(opensslVerify(bad.pem, root.pem, null, ["-x509_strict"]).ok,
+    "OpenSSL now refuses keyEncipherment on an EC key; the comment above " +
+    "saying it does not is out of date");
+  assert.deepStrictEqual(
+    x509.keyUsageFindings(["encipherOnly"], "ec-p256").map(function (f) {
+      return f.usage;
+    }), ["encipherOnly"],
+    "encipherOnly without keyAgreement must be reported (RFC 5280 " +
+    "section 4.2.1.3)");
+  log.info("Checked the default keyUsage of " + checked + " profile and key " +
+      "combinations against OpenSSL -x509_strict.");
+  log.debug("Leaving keyUsageFollowsTheKeyAlgorithm().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1313,6 +1516,7 @@ async function test() {
   await everyExtensionIsWrittenAndReadBack();
   await theWholeExtensionSetAtOnce();
   await everyProfileIssuesWhatItPromises();
+  await keyUsageFollowsTheKeyAlgorithm();
   await aRootIntermediateIssuingChainVerifies();
   await nameConstraintsAreEnforcedByOpenssl();
   await basicConstraintsAreEnforcedByOpenssl();

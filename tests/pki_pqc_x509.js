@@ -160,7 +160,11 @@ async function issue(algId, subject, options) {
     subject: subject,
     subjectPublicKey: key.publicPem,
     signatureAlg: opts.signatureAlg || algId,
-    extensions: x509.defaultExtensions(opts.profile || "root-ca")
+    // The subject key's algorithm decides the keyUsage (#310). A caller that
+    // brings its own subject key names its algorithm, or gets the profile's
+    // list as written.
+    extensions: x509.defaultExtensions(opts.profile || "root-ca",
+        opts.subjectAlg || (opts.subjectKey ? undefined : algId))
   };
   if (opts.issuerCertPem) {
     spec.issuer = { certificatePem: opts.issuerCertPem,
@@ -820,10 +824,12 @@ function requestParts(der) {
 // ML-KEM is in this loop as a subject key. That is the encryption certificate
 // — the one a KEM key is FOR — and it cannot be self-signed at any point, so
 // it is issued by an ML-DSA CA here exactly as it would be anywhere else.
-// What this test does NOT assert is that the keyUsage bits are the ones RFC
-// 9935 section 4 requires of an ML-KEM certificate (keyEncipherment alone):
-// this is a debugger, every bit is editable on purpose, and issuing the
-// certificate that is wrong in exactly one way is the point of the page.
+// Since issue #310 it also asserts the keyUsage: the profile's DEFAULT bits
+// for each subject key are the ones its specification permits, which for
+// ML-KEM is keyEncipherment alone. Every bit is still editable on the page,
+// because issuing the certificate that is wrong in exactly one way is the
+// point of the page, and keyUsageDefaultsFollowThePostQuantumKey() checks
+// that such a certificate is reported.
 // ---------------------------------------------------------------------------
 async function everyProfileTakesAPostQuantumKey() {
   log.debug("Entering everyProfileTakesAPostQuantumKey().");
@@ -847,11 +853,25 @@ async function everyProfileTakesAPostQuantumKey() {
     const cert = await issue("ml-dsa-65", "CN=" + profileId + ".example," +
         "O=idptools", {
       profile: profileId, subjectKey: subjectKey, signerKey: caKey,
-      signerAlg: "ml-dsa-65", issuerCertPem: ca.pem, signatureAlg: "ml-dsa-65"
+      signerAlg: "ml-dsa-65", issuerCertPem: ca.pem, signatureAlg: "ml-dsa-65",
+      subjectAlg: subjectAlg
     });
     const described = await x509.describeCertificate(cert.pem);
     assert.strictEqual(described.signatureAlgorithm, "ML-DSA-65",
       profileId + ": the describer does not name the signature algorithm");
+    const ku = described.extensions.filter(function (e) {
+      return e.name === "keyUsage";
+    })[0];
+    const expectedKu = expectedPostQuantumKeyUsage(profileId,
+        familyOf(subjectAlg));
+    assert.deepStrictEqual(ku ? ku.value : [], expectedKu,
+      profileId + ": a " + subjectAlg + " certificate carries keyUsage " +
+      JSON.stringify(ku ? ku.value : null) + ", expected " +
+      JSON.stringify(expectedKu));
+    assert.deepStrictEqual(described.findings, [],
+      profileId + ": the describer reports findings on a " + subjectAlg +
+      " certificate issued from the defaults: " +
+      JSON.stringify(described.findings));
     const chain = await x509.verifyChain([cert.pem, ca.pem]);
     assert.strictEqual(chain[0].signatureValid, true,
       profileId + ": a " + subjectAlg + " certificate under this profile " +
@@ -867,6 +887,98 @@ async function everyProfileTakesAPostQuantumKey() {
   log.info("Issued " + issued + " post-quantum certificates, one per " +
       "profile.");
   log.debug("Leaving everyProfileTakesAPostQuantumKey().");
+}
+
+// ---------------------------------------------------------------------------
+// 10c. THE DEFAULT keyUsage FOLLOWS THE POST-QUANTUM KEY (issue #310).
+//
+// Written out here from the specifications, not read from x509.js:
+//
+//   ML-DSA            RFC 9881 section 5   digitalSignature, nonRepudiation,
+//   SLH-DSA           RFC 9909             keyCertSign, cRLSign
+//   Composite ML-DSA  draft-ietf-lamps-pq-composite-sigs-19 (the same four)
+//   ML-KEM            RFC 9935             keyEncipherment, and nothing else
+//
+// The profiles are written for RSA, so a signature key keeps the profile's
+// signature bits and loses the rest, and an ML-KEM key gets keyEncipherment
+// when the profile is about encryption at all and nothing otherwise. Every
+// post-quantum algorithm is crossed with every profile; no key is generated,
+// so the whole grid is cheap.
+//
+// OpenSSL is not asked here. `openssl verify -x509_strict` does not check
+// keyUsage against the key type in any release, and the openssl binary on a
+// host is not pinned to a version that has these algorithms at all (see the
+// file header). The certificates themselves go to OpenSSL 3.5, through node,
+// in everyProfileTakesAPostQuantumKey() above.
+// ---------------------------------------------------------------------------
+const SIGNATURE_KEY_USAGES = ["digitalSignature", "nonRepudiation",
+  "keyCertSign", "cRLSign"];
+const KU_ORDER = ["digitalSignature", "nonRepudiation", "keyEncipherment",
+  "dataEncipherment", "keyAgreement", "keyCertSign", "cRLSign",
+  "encipherOnly", "decipherOnly"];
+
+function expectedPostQuantumKeyUsage(profileId, family) {
+  log.debug("Entering expectedPostQuantumKeyUsage(). " + profileId + "/" +
+      family);
+  const wanted = x509.profile(profileId).keyUsage || [];
+  let out;
+  if (family === "ML-KEM") {
+    const encrypts = wanted.some(function (u) {
+      return u === "keyEncipherment" || u === "dataEncipherment" ||
+          u === "keyAgreement";
+    });
+    out = encrypts ? ["keyEncipherment"] : [];
+  } else {
+    out = KU_ORDER.filter(function (u) {
+      return wanted.indexOf(u) >= 0 && SIGNATURE_KEY_USAGES.indexOf(u) >= 0;
+    });
+  }
+  log.debug("Leaving expectedPostQuantumKeyUsage(). " + out.join(","));
+  return out;
+}
+
+async function keyUsageDefaultsFollowThePostQuantumKey() {
+  log.debug("Entering keyUsageDefaultsFollowThePostQuantumKey().");
+  let cells = 0;
+  postQuantumAlgIds().forEach(function (algId) {
+    const family = familyOf(algId);
+    x509.profileIds().forEach(function (profileId) {
+      const expected = expectedPostQuantumKeyUsage(profileId, family);
+      const got = x509.defaultExtensions(profileId, algId).keyUsage.usages;
+      assert.deepStrictEqual(got, expected,
+        profileId + " with " + algId + ": the default keyUsage is " +
+        JSON.stringify(got) + ", expected " + JSON.stringify(expected));
+      assert.deepStrictEqual(x509.keyUsageFindings(got, algId), [],
+        profileId + " with " + algId + ": the module reports its own " +
+        "defaults as not conformant");
+      if (!expected.length) {
+        assert.ok(x509.defaultKeyUsage(profileId, algId).note,
+          profileId + " with " + algId + ": an empty keyUsage must come " +
+          "with a note saying why");
+      }
+      cells += 1;
+    });
+  });
+
+  // And the certificate #310 was found with: an ML-DSA TLS client carrying
+  // the profile's RSA-shaped digitalSignature + keyEncipherment, which is
+  // what the page issued before. It must still issue (the page is a
+  // debugger), and the describer must say what is wrong with it.
+  const caKey = await keyFor("ml-dsa-65");
+  const ca = await issue("ml-dsa-65", "CN=Finding CA,O=idptools");
+  const leafKey = await keyFor("ml-dsa-44");
+  const bad = await issue("ml-dsa-65", "CN=bad-ku,O=idptools", {
+    profile: "tls-client", subjectKey: leafKey, signerKey: caKey,
+    signerAlg: "ml-dsa-65", issuerCertPem: ca.pem, signatureAlg: "ml-dsa-65"
+  });
+  const described = await x509.describeCertificate(bad.pem);
+  assert.ok(described.findings.some(function (f) {
+    return f.indexOf("keyEncipherment") >= 0 && f.indexOf("RFC 9881") >= 0;
+  }), "an ML-DSA certificate asserting keyEncipherment was not reported: " +
+    JSON.stringify(described.findings));
+  log.info("Checked the default keyUsage of " + cells + " post-quantum key " +
+      "and profile combinations.");
+  log.debug("Leaving keyUsageDefaultsFollowThePostQuantumKey().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1014,6 +1126,7 @@ async function test() {
   await badInputIsRefusedByName();
   await certificationRequestsProvePossession();
   await everyProfileTakesAPostQuantumKey();
+  await keyUsageDefaultsFollowThePostQuantumKey();
   await hybridCertificatesCarryTwoSignatures();
   await theSlowParameterSetsVerifyWhatOpensslSigns();
   await compositeCertificatesNeedBothHalves();

@@ -495,6 +495,54 @@ wants key recovery (lose the key, lose the data, which is what the
 `key-encipherment` profile is), and a signing certificate must not have it, or
 the non-repudiation `digital-signature` exists to provide is gone.
 
+## The profile's keyUsage depends on the key (issue #310)
+
+The profiles in `x509.js`'s `PROFILES` name their `keyUsage` the way an RSA
+certificate spells it: a TLS server is `digitalSignature, keyEncipherment`, an
+encryption certificate is `keyEncipherment, dataEncipherment`. Until #310 the
+page used that list for every key, so an ML-DSA TLS client went out with
+`keyEncipherment`, a usage RFC 9881 forbids for an ML-DSA key. `openssl
+verify` accepted it because no OpenSSL release checks keyUsage against the key
+type, even under `-x509_strict`. iya-sts refused it as STS-PKI-0198, and that
+is how it was found.
+
+Each specification names the bits its keys may carry, and
+`KEY_USAGE_FAMILIES` in `x509.js` holds them:
+
+| Key | Permitted bits | Source |
+|---|---|---|
+| RSA | digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment, keyCertSign, cRLSign | RFC 3279 §2.3.1 |
+| EC | digitalSignature, nonRepudiation, keyAgreement, keyCertSign, cRLSign, encipherOnly, decipherOnly | RFC 5480 §3 |
+| Ed25519 / Ed448 | digitalSignature, nonRepudiation, keyCertSign, cRLSign | RFC 8410 §5 |
+| ML-DSA, SLH-DSA, Composite ML-DSA | the same four | RFC 9881 §5, RFC 9909, the composite draft |
+| ML-KEM | keyEncipherment, and nothing else | RFC 9935 |
+
+`defaultKeyUsage(profile, key)` reads the profile's list through that table.
+A permitted bit is kept. A bit the family has an equivalent for is mapped: on
+an EC key, `keyEncipherment` and `dataEncipherment` become `keyAgreement`, and
+on ML-KEM `dataEncipherment` and `keyAgreement` become `keyEncipherment`. Any
+other bit is dropped. An RSA key gets the profile's list unchanged. When
+nothing is left (an Ed25519 or ML-DSA key under *Key Encipherment*, an ML-KEM
+key under a CA or signing profile), the certificate carries no KeyUsage
+extension and the note says to pick a different key algorithm or profile.
+`defaultExtensions(profile, key)` takes the same optional key; without one,
+callers get the profile's list as before.
+
+On the page, the boxes are filled from it when the **profile** changes and
+again when the **key algorithm** changes. A note under the boxes says what was
+mapped or dropped. A box may still be ticked by hand, because issuing a
+certificate that is wrong in exactly one way is what this page is for. A
+ticked bit the key may not carry is reported three times: in the note
+(`Not conformant: …`), on the status line after **Issue**, and as a
+**Finding** row in the details table. That row comes from
+`describeCertificate()`'s new `findings` array, so a certificate somebody else
+issued is checked as well. `keyUsageFindings()` also reports `encipherOnly` or
+`decipherOnly` without `keyAgreement` (RFC 5280 §4.2.1.3).
+
+`common/generate_tls_cert.js` now passes its key algorithm too. The stack's own
+TLS leaf is P-256, so it had been issued with `keyEncipherment` as well, and
+it now carries `digitalSignature, keyAgreement`.
+
 ## The profile fills in the subject CN
 
 Every profile carries a `cn` beside its extension defaults in `x509.js`'s
@@ -1400,9 +1448,9 @@ above in place of the section it cannot run there.
 
 | Test | Covers | Skips? |
 |---|---|---|
-| `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles; a four-deep chain, whose every link also reports its own **KeyUsage** — the extension `verifyChain()` reads and a caller judges, since a leaf that may sign a document may not sign a certificate, and an absent extension permits everything while one asserting nothing permits nothing; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers; and the minimal DER encoding of an ECDSA signature's `r` and `s`, fed in as vectors because the matrix only meets that case about one run in eight | never |
+| `tests/pki_x509.js` | ~240 certificates over every (issuer key, signature algorithm) pair × every subject key algorithm; every extension read back by OpenSSL; the whole set at once; all 14 profiles, and each one's default keyUsage for an RSA, an EC and an Ed25519 key against a table written out from the RFCs, with every certificate passed to `openssl verify -x509_strict` and read back by `openssl x509 -text`; a four-deep chain, whose every link also reports its own **KeyUsage** — the extension `verifyChain()` reads and a caller judges, since a leaf that may sign a document may not sign a certificate, and an absent extension permits everything while one asserting nothing permits nothing; name constraints, pathLen and an unknown critical extension actually **refusing** something; serials; the 2050 boundary; key identifiers; and the minimal DER encoding of an ECDSA signature's `r` and `s`, fed in as vectors because the matrix only meets that case about one run in eight | never |
 | `tests/pki_key_formats.js` | every one of the 41 key algorithms generated and read back (classical by the `openssl` binary, post-quantum by node's OpenSSL 3.5); 11 of them × 4 formats × password on/off; a PKCS#12 carrying a whole chain; the refusals by name, including a composite key as a JWK; PEM↔JWK round trips, AKP for the post-quantum families | never |
-| `tests/pki_pqc_x509.js` | the post-quantum half: 34 algorithm identifiers checked against a second transcription of the standards; every key's SPKI and PKCS#8 read by OpenSSL 3.5, all three arms of the private-key CHOICE; pure certificates verified by OpenSSL; the 16 composites with **both halves** tampered in turn; 126 links of chains that mix classical and post-quantum issuers; the hybrid extensions, verified here and accepted by the OpenSSL 3.0 binary that knows none of it; the preTBSCertificate's two removals; post-quantum CSRs; **all fourteen profiles** issued with a post-quantum key, including the key-encipherment one over ML-KEM — which is what an encryption certificate IS, and which can never be self-signed; and the refusals (a self-signed ML-KEM certificate, an algorithm mismatch, signing from a seedless key) | never — except the OpenSSL cross-checks, which need node ≥ 24 and say so |
+| `tests/pki_pqc_x509.js` | the post-quantum half: 34 algorithm identifiers checked against a second transcription of the standards; the default keyUsage of every post-quantum key under every profile (476 combinations) against the RFC 9881, 9909 and 9935 rules, and an ML-DSA certificate carrying `keyEncipherment` reported by the describer; every key's SPKI and PKCS#8 read by OpenSSL 3.5, all three arms of the private-key CHOICE; pure certificates verified by OpenSSL; the 16 composites with **both halves** tampered in turn; 126 links of chains that mix classical and post-quantum issuers; the hybrid extensions, verified here and accepted by the OpenSSL 3.0 binary that knows none of it; the preTBSCertificate's two removals; post-quantum CSRs; **all fourteen profiles** issued with a post-quantum key, including the key-encipherment one over ML-KEM — which is what an encryption certificate IS, and which can never be self-signed; and the refusals (a self-signed ML-KEM certificate, an algorithm mismatch, signing from a seedless key) | never — except the OpenSSL cross-checks, which need node ≥ 24 and say so |
 | `tests/api_tls_probe.js` | the address policy on a raw socket, the port allowlist, truststore selection, the mutual-auth measurement (all five verdicts), the three deadlines, that **every path settles**, the ask-the-server request — the path refusals, the chunked de-framing in bytes, and a hang-up not reading as success — and the post-quantum section: the hybrid group, the ML-DSA chain, the SLH-DSA refusal | node-only, so it never skips for want of a service — but `PKI_TLS_AVAILABLE=false` (a deployed static target) skips it, because it would pass there and mean nothing, and the three post-quantum activities skip individually on a node whose OpenSSL predates 3.5 |
 | `tests/pki_page.js` | the hierarchy built through the form, the *View certificate details* hand-off read back on `saml_cert.html` for every key algorithm, the store surviving a reload, the private-key opt-out in both states, the serial number (shown, persisted, signed, rotated, and typed over), the subject-DN defaults and the profile subjectAltName, a tooltip on every one of the 131 controls, the validity pickers and the ISO-8601 values an older build stored, the list-field syntax, the TLS test end to end, no browser-side TLS option, the pane **switched off** when the build has no api — and the **layout**: five panes and not six, the three headings the merge left behind, the extension list's column count measured from where the cards landed, no horizontal scroll, no control drawn outside its column, and every folded note still holding its prose and no control | needs the client; without an api the TLS section is replaced by the switched-off assertion rather than skipped |
 | `tests/pki_mutual_tls.js` | the same page against a server that **answers back**: a client certificate issued through the form, presented with its chain to the mock STS's two listeners, and the **server's own account** of the connection — the chain it built, the anchor it verified against, and `required` told apart from `required-and-rejected` by trusting the CA between two otherwise identical runs. Then the same round trip with an **ML-DSA-65** CA and client certificate, where the last assertion is that the server's account names ML-DSA — without it, a silent fallback to something classical would satisfy every other check | needs the client, the api and `STS_TLS_URL`; also gated on `PKI_TLS_AVAILABLE` |

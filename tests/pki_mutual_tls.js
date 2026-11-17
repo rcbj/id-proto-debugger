@@ -466,13 +466,19 @@ async function issueThrough(driver, spec) {
     await setCheckbox(driver, "pki_ext_san", true);
     await setField(driver, "pki_san", spec.san);
   }
-  if (spec.keyUsage) {
-    // The profile's keyUsage replaced, bit by bit, AFTER the profile is
-    // chosen — choosing one rewrites every box from its defaults.
-    for (const bit of KEY_USAGE_BIT_NAMES) {
-      await setCheckbox(driver, "pki_ku_" + bit,
-                        spec.keyUsage.indexOf(bit) >= 0);
-    }
+  if (spec.expectKeyUsage) {
+    // The keyUsage the page's own defaults chose for this profile AND this
+    // key algorithm (issue #310), read off the boxes before anything is
+    // issued. Nothing here ticks a box: the point is that the page does.
+    const ticked = await driver.executeScript(
+      "return arguments[0].filter(function (bit) {" +
+      "  var e = document.getElementById('pki_ku_' + bit);" +
+      "  return !!(e && e.checked);" +
+      "});", KEY_USAGE_BIT_NAMES);
+    assert.deepStrictEqual(ticked, spec.expectKeyUsage,
+      "the page's keyUsage defaults for " + spec.profile + " with a " +
+      spec.keyAlg + " key are " + JSON.stringify(ticked) + ", expected " +
+      JSON.stringify(spec.expectKeyUsage));
   }
   await click(driver, "pki_issue");
   // The button generates the key pair and then issues, so the status line
@@ -795,19 +801,18 @@ async function aPostQuantumClientCertificateIsAccepted(driver, ports,
   await selectOption(driver, "pki_pq_mode", "pure");
   await issueThrough(driver, { profile: "root-ca", keyAlg: "ml-dsa-65",
     sigAlg: "ml-dsa-65", cn: "Post-Quantum Root CA" });
-  // digitalSignature ALONE, not the TLS Client profile's default of
-  // digitalSignature + keyEncipherment. RFC 9881 section 5 permits an ML-DSA
-  // key only digitalSignature, nonRepudiation, keyCertSign and cRLSign — an
-  // ML-DSA key encrypts nothing — and the mock enforces it: since the
-  // 2026-09 bump a chain OpenSSL verified but that breaks RFC 5280 or its
-  // algorithm profile is treated as UNVERIFIED (STS-PKI-0198), which is
-  // exactly how this case failed. The page's profile defaults take no
-  // account of the key algorithm; that is the debugger's to fix, and this
-  // is the certificate a person following the RFC would issue.
+  // digitalSignature ALONE, and chosen by the page rather than by this test.
+  // RFC 9881 section 5 permits an ML-DSA key only digitalSignature,
+  // nonRepudiation, keyCertSign and cRLSign (an ML-DSA key encrypts
+  // nothing), and iya-sts enforces it: a chain OpenSSL verified that breaks
+  // RFC 5280 or its algorithm profile is treated as UNVERIFIED
+  // (STS-PKI-0198). Until issue #310 the TLS Client profile's default was
+  // digitalSignature + keyEncipherment whatever the key, and this test
+  // ticked the boxes itself; now it asserts the default instead.
   await issueThrough(driver, { profile: "tls-client", keyAlg: "ml-dsa-65",
     sigAlg: "ml-dsa-65", cn: "Post-Quantum Client",
     issuerSubject: "Post-Quantum Root CA",
-    keyUsage: ["digitalSignature"] });
+    expectKeyUsage: ["digitalSignature"] });
 
   const entries = await storeEntries(driver);
   const root = entries.filter(function (e) {
