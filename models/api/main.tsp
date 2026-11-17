@@ -22,6 +22,9 @@ import "../lib/debugger_lib.tsp";
 import "./common.tsp";
 import "./service.tsp";
 import "./ldap.tsp";
+import "./scim.tsp";
+import "./ssf.tsp";
+import "./gnap.tsp";
 
 using Http;
 using OpenAPI;
