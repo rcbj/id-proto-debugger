@@ -979,7 +979,9 @@ function deliver(delivery) {
     return new Promise(function () {});
   }
   log.debug("Leaving deliver(). POST.");
-  return fetch(delivery.target, {
+  // Straight from the browser, or through the debugger's api when step 0
+  // says so (sd_jwt_vp.js verifierFetch()).
+  return sdJwtVp.verifierFetch(delivery.target, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: delivery.body
@@ -1008,6 +1010,11 @@ function recordSent(response) {
     responseType: params.response_type || "",
     responseMode: vpProtocols.responseMode(params),
     delivery: r.delivery ? r.delivery.kind : "",
+    // How the wallet reached the Verifier: from this page, or through the
+    // debugger's api (POST /oid4vp/call). A browser-carried answer (fragment,
+    // query, form_post) is always the browser's.
+    route: r.delivery && r.delivery.kind === "post" && sdJwtVp.viaApi() ?
+        "api" : "browser",
     presentation: built.presentation || "",
     format: built.format || state.format || "",
     kbJwt: built.kb ? built.kb.jwt : "",

@@ -68,6 +68,28 @@ A `bbs-2023` derived proof proves the issuer signed the disclosed statements. It
 
 An `ldp_vc` element of `vp_token` is now a JSON **object**, as OpenID4VP specifies, rather than a JSON string of one.
 
+## Reaching the Verifier: from the page, or through the debugger's api
+
+A wallet in a browser page can use only a Verifier that sends CORS headers, and
+most do not: a wallet is normally a native app, which has no CORS. So step 0 has
+**"Reach the Verifier through the debugger's api"**. When it is ticked, every
+call the wallet makes to the Verifier goes through `POST /oid4vp/call`
+(`api/oid4vp_proxy.js`), which no browser policy applies to:
+
+* the Request Object (its GET, or its POST under `request_uri_method=post`);
+* the Verifier's JWKS;
+* every answer and refusal posted.
+
+`sd_jwt_vp.js`'s `verifierFetch()` makes that one choice for all of them.
+
+* A second box, "check the Verifier's TLS certificate on that route", can be
+  cleared for a self-signed test server, as the OAuth pages allow.
+* Answers that travel through the **browser** (`fragment`, `query`,
+  `form_post`) always do, whichever route is chosen.
+* Step 3 says which route an answer took.
+* The option is enabled only where the api answers `GET /oid4vp/limits`, so a
+  static deployment, which has no api, keeps the browser route and says why.
+
 ## ISO mdoc (`mso_mdoc`)
 
 `client/src/mdoc.js` is the wallet's ISO/IEC 18013-5 mdoc, with no DOM. It reads an issued `IssuerSigned` (base64url CBOR, as OpenID4VCI 1.0 Appendix A.2 delivers it) into the same shape as the other formats. Each element is a row keyed `namespace/element`. The Mobile Security Object's device key is the credential's `cnf.jwk`, which is where the rest of the wallet looks for the key a credential is bound to. `sd_jwt_vc.js` recognises the format; `sd_jwt_vp.js` builds and reads the presentation.

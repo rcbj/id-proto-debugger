@@ -88,6 +88,12 @@ var KEYS = {
   // so it is kept only while SIOP_SAVE_PAIRWISE is not "0", and removed the
   // moment it is (the rule every key-pair pane in this tree follows).
   SIOP_PAIRWISE_KEYS: "sdjwtvp_siop_pairwise_keys",
+  // "1" to reach the Verifier through the debugger's api (POST
+  // /oid4vp/call) rather than straight from the browser, for a Verifier that
+  // sends no CORS headers; and "0" to skip TLS certificate checks on that
+  // route, as the OAuth pages offer for a self-signed test server.
+  VIA_API: "sdjwtvp_via_api",
+  API_SSL_VALIDATE: "sdjwtvp_api_ssl_validate",
   SIOP_SAVE_PAIRWISE: "sdjwtvp_siop_save_pairwise"
 };
 
@@ -270,6 +276,109 @@ function renderUseCaseBadge() {
   host.parentNode.insertBefore(badge, host.nextSibling);
   log.debug("Leaving renderUseCaseBadge().");
   return uc;
+}
+
+// ---------------------------------------------------------------------------
+// REACHING THE VERIFIER. Every call the wallet makes to a Verifier — the
+// Request Object (GET, or POST under request_uri_method=post), its JWKS, and
+// every answer posted — goes through here, so the one choice between the two
+// routes is made once:
+//
+//   * straight from the browser (the default, and the only route on a
+//     deployment with no api), which needs the Verifier to send CORS headers;
+//   * through the debugger's api (POST /oid4vp/call), which no browser policy
+//     applies to, so any compliant Verifier can be used, CORS or not.
+//
+// Either way the answer comes back as { ok, status, text(), json() }, the
+// Response methods the pages already use, so a caller cannot tell the routes
+// apart and does not branch on them.
+// ---------------------------------------------------------------------------
+function apiBase() {
+  log.debug("Entering apiBase().");
+  var url = "";
+  try {
+    url = String(require(process.env.CONFIG_FILE).apiUrl || "");
+  } catch (e) {
+    url = "";
+  }
+  log.debug("Leaving apiBase(). " + url);
+  return url.replace(/\/+$/, "");
+}
+
+function viaApi() {
+  log.debug("Entering viaApi().");
+  var on = sdJwtVc.get(KEYS.VIA_API) === "1" && !!apiBase();
+  log.debug("Leaving viaApi(). " + on);
+  return on;
+}
+
+function verifierFetch(url, init) {
+  log.debug("Entering verifierFetch(). " + url + (viaApi() ? " (api)" : ""));
+  var options = init || {};
+  if (!viaApi()) {
+    log.debug("Leaving verifierFetch(). Direct.");
+    return fetch(url, options);
+  }
+  var headers = {};
+  Object.keys(options.headers || {}).forEach(function (k) {
+    headers[k] = options.headers[k];
+  });
+  log.debug("Leaving verifierFetch(). Through the api.");
+  return fetch(apiBase() + "/oid4vp/call", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: url,
+      method: options.method || "GET",
+      headers: headers,
+      body: options.body || "",
+      sslValidate: sdJwtVc.get(KEYS.API_SSL_VALIDATE) !== "0"
+    })
+  }).then(function (r) {
+    return r.json().catch(function () {
+      return { error: "the api answered HTTP " + r.status + " with no JSON" };
+    }).then(function (answer) {
+      if (!r.ok) {
+        // 400: the api refused to send it; 502: the Verifier did not answer.
+        // Neither is something the Verifier said, so it is thrown, the way a
+        // direct fetch throws when nothing comes back.
+        throw new Error("the debugger's api " + (r.status === 400 ?
+          "refused the call: " : "could not reach the Verifier: ") +
+          (answer.error || ("HTTP " + r.status)));
+      }
+      var text = String(answer.body || "");
+      return {
+        ok: !!answer.ok,
+        status: answer.status,
+        headers: answer.headers || {},
+        viaApi: true,
+        text: function () {
+          return Promise.resolve(text);
+        },
+        json: function () {
+          return Promise.resolve().then(function () {
+            return JSON.parse(text);
+          });
+        }
+      };
+    });
+  });
+}
+
+// Whether this deployment has an api that offers the route at all: a static
+// deployment answers nothing at /oid4vp/limits.
+function apiRouteAvailable() {
+  log.debug("Entering apiRouteAvailable().");
+  if (!apiBase()) {
+    log.debug("Leaving apiRouteAvailable(). No api configured.");
+    return Promise.resolve(false);
+  }
+  log.debug("Leaving apiRouteAvailable().");
+  return fetch(apiBase() + "/oid4vp/limits").then(function (r) {
+    return r.ok;
+  }).catch(function () {
+    return false;
+  });
 }
 
 // --- the request in hand ----------------------------------------------------
@@ -722,6 +831,10 @@ module.exports = {
   setProtocol: setProtocol,
   useCaseAllowed: useCaseAllowed,
   renderUseCaseBadge: renderUseCaseBadge,
+  apiBase: apiBase,
+  viaApi: viaApi,
+  verifierFetch: verifierFetch,
+  apiRouteAvailable: apiRouteAvailable,
   storeRequest: storeRequest,
   storedRequest: storedRequest,
   forgetRequest: forgetRequest,

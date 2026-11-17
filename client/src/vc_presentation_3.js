@@ -560,7 +560,8 @@ function renderAnswer() {
   setText("vp_answer_protocol", protocol.label);
   setText("vp_answer_mode", (sent.responseType || "vp_token") + " / " +
           (sent.responseMode || "direct_post") + (sent.delivery ? " (" +
-          sent.delivery + ")" : ""));
+          sent.delivery + ")" : "") + (sent.route === "api" ?
+          ", through the debugger's api" : ""));
   setText("vp_answer_binding", sent.holderBinding || (sent.kbJwt ?
           "Key Binding JWT" : sent.format === sdJwtVc.FORMAT_JWT_VC_JSON ?
           "Verifiable Presentation JWT" : "—"));

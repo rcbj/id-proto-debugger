@@ -270,8 +270,8 @@ async function outcome() {
 
 // Step 0 as a person sets it up: HAIP chosen, and the Verifier's trust
 // anchor (Polaris's keygen anchor) pasted into the configuration and saved.
-async function chooseHaip(driver, anchor) {
-  log.debug("Entering chooseHaip().");
+async function chooseHaip(driver, anchor, viaApi) {
+  log.debug("Entering chooseHaip(). viaApi=" + !!viaApi);
   await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
   await pageBundleReady(driver);
   await clickId(driver, "vp_protocol_haip");
@@ -280,6 +280,17 @@ async function chooseHaip(driver, anchor) {
   await driver.executeScript(
     "document.getElementById('vp_x509_trust_anchor').value = arguments[0];",
     anchor);
+  // The route to the Verifier: from the page, or through the debugger's api,
+  // which a Verifier sending no CORS headers needs. The box is enabled only
+  // where an api answers.
+  await driver.wait(async function () {
+    return await driver.executeScript(
+      "var b = document.getElementById('vp_via_api');" +
+      "return !!b && (!arguments[0] || !b.disabled);", !!viaApi);
+  }, stepWait, "step 0 should offer the api route where an api answers");
+  await driver.executeScript(
+    "document.getElementById('vp_via_api').checked = arguments[0];",
+    !!viaApi);
   await clickId(driver, "config_save_button");
   const chosen = await driver.executeScript(
     "return [localStorage.getItem('sdjwtvp_protocol')," +
@@ -407,6 +418,31 @@ async function test() {
       "step 3 should say Polaris refused it: " + answer);
     log.info("[refused] Polaris refused on " + result.check + ": " +
              result.reason);
+
+    // THE SAME EXCHANGE THROUGH THE DEBUGGER'S API (POST /oid4vp/call): the
+    // Request Object fetched by POST with the wallet_nonce, and the encrypted
+    // answer, all made by the api rather than the page. This is the route
+    // for a Verifier that sends no CORS headers; Polaris behind its proxy
+    // happens to send them, so this proves the relay carries a real HAIP
+    // exchange end to end, not that CORS is absent.
+    if (process.env.POLARIS_SKIP_API_ROUTE !== "1") {
+      log.info("=== Polaris accepts it through the debugger's api ===");
+      await chooseHaip(driver, anchor, true);
+      params = await freshRequest(args, issuers);
+      answer = await presentTo(driver, params.launch, "");
+      result = await outcome();
+      assert.strictEqual(result.outcome, "accepted", "through the api, " +
+        "Polaris should accept the presentation: " + JSON.stringify(result));
+      const route = await driver.executeScript(
+        "return (JSON.parse(localStorage.getItem('sdjwtvp_presentation') " +
+        "|| '{}')).route;");
+      assert.strictEqual(route, "api", "the answer should have gone " +
+                         "through the debugger's api");
+      assert.ok(/accepted the response/.test(answer),
+        "step 3 should say Polaris accepted it: " + answer);
+      log.info("[api route] Polaris accepted a presentation the debugger's " +
+               "api carried.");
+    }
     log.info("Test completed successfully.");
   } finally {
     await driver.quit();

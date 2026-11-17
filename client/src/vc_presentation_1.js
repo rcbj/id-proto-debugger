@@ -206,7 +206,9 @@ function fetchRequestObject(uri, clientId, method) {
     };
   }
   log.debug("Leaving fetchRequestObject().");
-  return fetch(uri, init)
+  // Straight from the browser, or through the debugger's api when step 0
+  // says so (sd_jwt_vp.js verifierFetch()).
+  return sdJwtVp.verifierFetch(uri, init)
     .then(function (r) {
       if (!r.ok) throw new Error("the request_uri returned HTTP " + r.status +
           ".");
@@ -300,7 +302,14 @@ function verifyRequestSignature(compact, clientId) {
     return Promise.resolve(request);
   }
   log.debug("Leaving verifyRequestSignature().");
-  return metadataClient.fetchJson(jwksUrl)
+  return sdJwtVp.verifierFetch(jwksUrl,
+      { headers: { "Accept": "application/json" } })
+    .then(function (r) {
+      if (!r.ok) {
+        throw new Error("the JWKS URL answered HTTP " + r.status + ".");
+      }
+      return r.json();
+    })
     .then(function (jwks) {
       return metadataClient.verifyJwsWithJwks(compact, jwks,
           "the Request Object");

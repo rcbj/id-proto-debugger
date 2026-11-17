@@ -911,6 +911,9 @@ COPY client/src/ssf_client.js client/src/ssf_events.js ./
 COPY client/src/ssf_history.js client/src/caep_session.js ./
 COPY client/src/risc_account.js ./
 COPY api/ssf_proxy.js api/ssf_receiver.js ./
+# The OpenID4VP relay (POST /oid4vp/call) and its engine test. The module
+# requires ssf_proxy.js, copied flat on the line above.
+COPY api/oid4vp_proxy.js tests/api_oid4vp_proxy.js ./
 COPY tests/ssf_engine.js tests/ssf_protocol.js ./
 COPY tests/api_ssf.js tests/ssf_page.js ./
 # CAEP is a VOCABULARY over SSF rather than a family of its own, so it adds one
