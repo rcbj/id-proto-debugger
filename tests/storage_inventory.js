@@ -229,6 +229,7 @@ function inventory(clientDir) {
   const prefixes = new Map();
   const dynamic = [];
   function note(map, name, module, area, how) {
+    log.debug("Entering note(). " + name);
     const entry = map.get(name) || { modules: new Set(), areas: new Set(),
                                      how: new Set() };
     entry.modules.add(module);
@@ -237,6 +238,7 @@ function inventory(clientDir) {
     }
     entry.how.add(how);
     map.set(name, entry);
+    log.debug("Leaving note().");
   }
   const files = fs.readdirSync(src).filter(function (f) {
     return f.endsWith(".js");
