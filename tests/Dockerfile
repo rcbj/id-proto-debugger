@@ -56,6 +56,43 @@
 # ---------------------------------------------------------------------------
 # Staging stage 1 of 3. Not shipped: the final stage copies /usr/src out of it.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# THE NATIVE OID4VC WALLET (#364): rcbj/oid4vc-wallet, a Linux wallet whose
+# command line (`accept`, `present --approve|--refuse`, `credential`) redeems
+# an offer and answers an OpenID4VP request with no window, no session bus and
+# no desktop key ring. tests/vc_verifier_oid4vc_wallet.js runs it as a child
+# against the Verifier page. Built the way iya-sts's own tests image builds
+# it (its #694): the source archive at a pinned commit of `main`, checked by
+# sha256, so a bump is the commit and the archive's sha256 and nothing else.
+#   * libudev-dev and libpcsclite-dev are for the security-key code, linked
+#     whether or not a key is ever used; the final stage needs only libudev1
+#     and libpcsclite1.
+#   * rust-toolchain.toml says `stable`, which rustup would download over the
+#     1.97 this image carries, so it is removed before the build.
+#   * GIT_COMMIT and BUILD_NUMBER are what build.rs stamps into `--version`
+#     (an archive has no .git to read them from).
+# ---------------------------------------------------------------------------
+FROM rust:1.97-bookworm AS oid4vc-wallet
+ENV OID4VC_WALLET_COMMIT=7cf061a63e2c1f9814b404b0415e65765f1b979a
+ENV OID4VC_WALLET_SHA256=377c1c266d65492f084d04e37e98181c6840a6ca95d0ac971225ead9756b2c57
+RUN apt-get update \
+ && DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
+      libudev-dev libpcsclite-dev pkg-config \
+ && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL --retry 5 --retry-all-errors -o /tmp/oid4vc-wallet.tgz \
+        https://github.com/rcbj/oid4vc-wallet/archive/${OID4VC_WALLET_COMMIT}.tar.gz \
+ && echo "${OID4VC_WALLET_SHA256}  /tmp/oid4vc-wallet.tgz" | sha256sum -c - \
+ && mkdir -p /usr/src && tar xzf /tmp/oid4vc-wallet.tgz -C /usr/src \
+ && cd /usr/src/oid4vc-wallet-${OID4VC_WALLET_COMMIT} \
+ && rm -f rust-toolchain.toml \
+ && GIT_COMMIT=${OID4VC_WALLET_COMMIT} BUILD_NUMBER=${OID4VC_WALLET_COMMIT} \
+      cargo build --release --locked --bin oid4vc-wallet \
+ && mkdir -p /out/licenses \
+ && cp target/release/oid4vc-wallet /out/ \
+ && cp LICENSE /out/licenses/oid4vc-wallet.LICENSE \
+ && echo "${OID4VC_WALLET_COMMIT}" > /out/COMMIT \
+ && /out/oid4vc-wallet --version
+
 FROM ubuntu:latest AS files1
 # Create app directory
 WORKDIR /usr/src/app
@@ -392,6 +429,9 @@ COPY tests/vp_verifier_engine.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./
+# And the same Verifier page against rcbj/oid4vc-wallet, whose binary is
+# copied in at the end of this file.
+COPY tests/vc_verifier_oid4vc_wallet.js ./
 COPY tests/vc_presentation_polaris.js ./
 # ISO mdoc: the engine test and the test issuer it and
 # vc_presentation_protocols.js require (a shared module, scheduled by nothing).
@@ -1215,7 +1255,16 @@ RUN apt-get update \
         unzip \
         util-linux \
         bsdextrautils \
-        krb5-user
+        krb5-user \
+        libudev1 \
+        libpcsclite1
+
+# rcbj/oid4vc-wallet's command line (#364), built in the oid4vc-wallet stage
+# above. libudev1 and libpcsclite1 are the two libraries it needs at run
+# time; the window's X11 and GL are opened only by `--ui`, which no job
+# passes.
+COPY --from=oid4vc-wallet /out/ /opt/oid4vc-wallet/
+ENV OID4VC_WALLET_BIN=/opt/oid4vc-wallet/oid4vc-wallet
  
 # Create app directory
 WORKDIR /usr/src/app
