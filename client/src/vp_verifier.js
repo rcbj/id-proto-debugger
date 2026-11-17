@@ -21,9 +21,9 @@
 //
 // Where the cryptography runs. The checks this file makes itself (the
 // SD-JWT digests and sd_hash, every JWS, every Data Integrity proof, the
-// mdoc device signature, the status lists) are pure JavaScript —
-// @noble/hashes and jws.js's 'js' backend — so they work on an origin with
-// no secure context. Three things it borrows are Web Crypto underneath and
+// mdoc device signature, the x5c chain checks, the status lists) are pure
+// JavaScript — @noble/hashes, @noble/curves, node-forge and jws.js's 'js'
+// backend — so they work on an origin with no secure context. Three things it borrows are Web Crypto underneath and
 // inherit that module's limits: certificate ISSUANCE (x509.js), the ECDH-ES
 // unwrap of a direct_post.jwt answer (jose_jwe.js) and the mdoc issuerAuth
 // check (mdoc.js). Status lists are decompressed with the platform's
@@ -56,6 +56,10 @@ var log = bunyan.createLogger({
 var nobleSha256 = require("@noble/hashes/sha256").sha256;
 var nobleSha512 = require("@noble/hashes/sha512");
 var p256 = require("@noble/curves/p256").p256;
+var p384 = require("@noble/curves/p384").p384;
+var p521 = require("@noble/curves/p521").p521;
+var ed25519 = require("@noble/curves/ed25519").ed25519;
+var forge = require("node-forge");
 var bytes = require("./crypto_bytes");
 var jws = require("./jws");
 var x509 = require("./x509");
@@ -999,10 +1003,14 @@ function parseResponse(input) {
 // ---------------------------------------------------------------------------
 // The report.
 // ---------------------------------------------------------------------------
-function addCheck(report, id, group, label, status, detail) {
+// `essential` marks a check that establishes AUTHENTICITY — an issuer
+// signature or proof, the trust in an x5c chain, a holder or device
+// signature the query depends on. A SKIP of one is a check not performed,
+// and finish() will not call such a result a pass (#467, S4).
+function addCheck(report, id, group, label, status, detail, essential) {
   log.debug("Entering addCheck(). " + id + " " + status);
   report.checks.push({ id: id, group: group, label: label, status: status,
-                       detail: detail || "" });
+                       detail: detail || "", essential: !!essential });
   log.debug("Leaving addCheck().");
 }
 
@@ -1011,9 +1019,10 @@ function scope(report, group, prefix) {
   log.debug("Leaving scope().");
   return {
     report: report, group: group, prefix: prefix,
-    add: function add(key, label, status, detail) {
+    add: function add(key, label, status, detail, essential) {
       log.debug("Entering add(). " + prefix + key);
-      addCheck(report, prefix + key, group, label, status, detail);
+      addCheck(report, prefix + key, group, label, status, detail,
+               essential);
       log.debug("Leaving add().");
     }
   };
@@ -1086,22 +1095,38 @@ async function didJwks(did, fetchJson) {
   return { jwks: converted.jwks, from: res.from };
 }
 
-// Where an issuer's key is: the x5c leaf, else the DID the issuer names,
-// else /.well-known/jwt-vc-issuer under an https issuer.
+// Where an issuer's key is: the x5c leaf, else the DID the issuer IS, else
+// /.well-known/jwt-vc-issuer under an https issuer (SD-JWT VC section 2.5,
+// the two key discovery mechanisms; jwt_vc_json takes the same route).
+//
+// The header's kid NEVER chooses the issuer (#467, S1). Until then a DID in
+// kid was resolved whenever iss was not a DID, so an SD-JWT VC claiming
+// iss https://gov.example and signed by ANY did:jwk the attacker named in
+// kid verified "with the key from the did:jwk itself". A DID in kid is used
+// only when iss IS that DID; an https iss gets its keys from its own
+// metadata, and an x5c chain's trust is reported by x5cTrust().
 async function issuerKey(header, payload, fetchJson) {
   log.debug("Entering issuerKey().");
   if (isArray(header.x5c) && header.x5c.length) {
+    // TODO(#467 S3): statusListSignature() takes this x5c key for a Status
+    // List Token without reporting the chain's trust; reporting it there
+    // means changing the status-list functions, which is separate work.
     log.debug("Leaving issuerKey(). x5c.");
     return { key: bytes.derToPem(bytes.b64ToBytes(header.x5c[0]),
                                  "CERTIFICATE"),
-             from: "the x5c leaf certificate in its header (the chain is " +
-                   "not anchored to a trust list by this debugger)" };
+             x5c: header.x5c,
+             from: "the x5c leaf certificate in its header" };
   }
-  var iss = String(payload.iss || "");
+  var iss = String(payload.iss || issuerIdOf(payload.vc) || "");
   var kid = String(header.kid || "");
-  var did = didLib.isDid(iss) ? iss : didLib.isDid(kid) ? kid : "";
-  if (did) {
-    var found = await didJwks(did, fetchJson);
+  var kidDid = didLib.isDid(kid) ? kid.split("#")[0] : "";
+  if (didLib.isDid(iss)) {
+    if (kidDid && kidDid !== iss.split("#")[0]) {
+      log.debug("Leaving issuerKey(). kid names another DID.");
+      throw new Error("kid " + kid + " names a DID that is not the " +
+                      "issuer " + iss + "; a kid never chooses the issuer.");
+    }
+    var found = await didJwks(iss, fetchJson);
     log.debug("Leaving issuerKey(). DID.");
     return { key: found.jwks, from: found.from };
   }
@@ -1125,7 +1150,16 @@ async function issuerKey(header, payload, fetchJson) {
                       "answers with keys.");
     }
     log.debug("Leaving issuerKey(). Metadata.");
-    return { key: jwks, from: meta.jwks ? url : meta.jwks_uri };
+    return { key: jwks, from: (meta.jwks ? url : meta.jwks_uri) +
+             (kidDid ? " (the DID in kid, " + kidDid + ", is not the " +
+              "issuer and was not used)" : "") };
+  }
+  if (kidDid) {
+    log.debug("Leaving issuerKey(). DID kid without a DID iss.");
+    throw new Error("kid names " + kidDid + " but iss is " +
+                    (iss || "absent") + ": a DID in kid is used only when " +
+                    "iss IS that DID, so it cannot say who the issuer is " +
+                    "(SD-JWT VC section 2.5).");
   }
   log.debug("Leaving issuerKey(). Nowhere.");
   throw new Error("the credential carries no x5c and its iss (" +
@@ -1161,14 +1195,365 @@ function verifyCompact(compact, key) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// The trust in an x5c (or an mdoc x5chain) chain (#467, S3).
+//
+// A certificate in x5c "is not a trust anchor merely because it is included
+// there" (SD-JWT VC section 2.5): the signature row says only that the JWT
+// verifies with the leaf's key, and this row says what, if anything, makes
+// that leaf the issuer's. It reports, every time: whether the leaf is
+// self-signed and whether a trust anchor travels in the chain (HAIP 1.0
+// section 6.1.1 forbids both), whether each certificate is signed by the
+// next, every certificate's validity at `now`, and whether iss is bound to
+// the end-entity certificate by a Subject Alternative Name. With no trust
+// anchor given (session.trustAnchors, PEM or base64 DER) nothing anchors
+// the chain and the row is a SKIP the verdict counts as a check not
+// performed — never a pass.
+//
+// Pure JavaScript: node-forge's ASN.1 reader, @noble/curves for ECDSA and
+// Ed25519 and forge for RSA, so it runs where crypto.subtle does not.
+// ---------------------------------------------------------------------------
+var OID_EC_KEY = "1.2.840.10045.2.1";
+var OID_ED25519 = "1.3.101.112";
+var OID_SAN = "2.5.29.17";
+var OID_BASIC_CONSTRAINTS = "2.5.29.19";
+var EC_CURVES = {
+  "1.2.840.10045.3.1.7": p256,
+  "1.3.132.0.34": p384,
+  "1.3.132.0.35": p521
+};
+var CERT_SIG_ALGS = {
+  "1.2.840.10045.4.3.2": { kind: "ec", hash: "sha256" },
+  "1.2.840.10045.4.3.3": { kind: "ec", hash: "sha384" },
+  "1.2.840.10045.4.3.4": { kind: "ec", hash: "sha512" },
+  "1.2.840.113549.1.1.11": { kind: "rsa", hash: "sha256" },
+  "1.2.840.113549.1.1.12": { kind: "rsa", hash: "sha384" },
+  "1.2.840.113549.1.1.13": { kind: "rsa", hash: "sha512" },
+  "1.3.101.112": { kind: "ed25519" }
+};
+var CERT_DIGESTS = {
+  sha256: nobleSha256,
+  sha384: nobleSha512.sha384,
+  sha512: nobleSha512.sha512
+};
+
+function asn1Of(der) {
+  log.debug("Entering asn1Of().");
+  log.debug("Leaving asn1Of().");
+  return forge.asn1.fromDer(forge.util.binary.raw.encode(bytes.asBytes(der)),
+                            { decodeBitStrings: false });
+}
+
+function derOf(node) {
+  log.debug("Entering derOf().");
+  log.debug("Leaving derOf().");
+  return forge.util.binary.raw.decode(forge.asn1.toDer(node).getBytes());
+}
+
+function asn1Time(node) {
+  log.debug("Entering asn1Time().");
+  var t = node.type === forge.asn1.Type.UTCTIME ?
+      forge.asn1.utcTimeToDate(node.value) :
+      forge.asn1.generalizedTimeToDate(node.value);
+  log.debug("Leaving asn1Time().");
+  return Math.floor(t.getTime() / 1000);
+}
+
+function commonName(nameNode) {
+  log.debug("Entering commonName().");
+  var attrs = [];
+  try {
+    attrs = forge.pki.RDNAttributesAsArray(nameNode);
+  } catch (e) {
+    log.debug("commonName(): " + e.message);
+  }
+  var cn = attrs.filter(function (a) {
+    return a.shortName === "CN";
+  })[0];
+  log.debug("Leaving commonName().");
+  return cn ? String(cn.value) : attrs.map(function (a) {
+    return (a.shortName || a.type) + "=" + a.value;
+  }).join(",") || "(no subject)";
+}
+
+// The parts of one certificate this check needs.
+function readCertificate(der) {
+  log.debug("Entering readCertificate().");
+  var root = asn1Of(der);
+  var tbs = root.value[0];
+  var v = tbs.value[0].tagClass === forge.asn1.Class.CONTEXT_SPECIFIC ?
+      1 : 0;
+  var validity = tbs.value[v + 3].value;
+  var spki = tbs.value[v + 5];
+  var spkiAlg = spki.value[0].value;
+  var out = {
+    der: bytes.asBytes(der),
+    tbs: derOf(tbs),
+    sigAlg: forge.asn1.derToOid(root.value[1].value[0].value),
+    signature: forge.util.binary.raw.decode(root.value[2].value).slice(1),
+    issuer: bytes.bytesToHex(derOf(tbs.value[v + 2])),
+    subject: bytes.bytesToHex(derOf(tbs.value[v + 4])),
+    name: commonName(tbs.value[v + 4]),
+    notBefore: asn1Time(validity[0]),
+    notAfter: asn1Time(validity[1]),
+    spkiDer: derOf(spki),
+    keyAlg: forge.asn1.derToOid(spkiAlg[0].value),
+    curve: spkiAlg[1] && spkiAlg[1].type === forge.asn1.Type.OID ?
+      forge.asn1.derToOid(spkiAlg[1].value) : "",
+    publicBits: forge.util.binary.raw.decode(spki.value[1].value).slice(1),
+    dns: [],
+    uri: [],
+    ca: false
+  };
+  var extsNode = tbs.value.filter(function (n) {
+    return n.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC && n.type === 3;
+  })[0];
+  var exts = extsNode ? extsNode.value[0].value : [];
+  exts.forEach(function (ext) {
+    var oid = forge.asn1.derToOid(ext.value[0].value);
+    var body = ext.value[ext.value.length - 1].value;
+    if (oid === OID_SAN) {
+      forge.asn1.fromDer(body).value.forEach(function (gn) {
+        if (gn.type === 2) out.dns.push(String(gn.value).toLowerCase());
+        if (gn.type === 6) out.uri.push(String(gn.value));
+      });
+    } else if (oid === OID_BASIC_CONSTRAINTS) {
+      var bc = forge.asn1.fromDer(body).value;
+      out.ca = !!(bc[0] && bc[0].type === forge.asn1.Type.BOOLEAN &&
+                  bc[0].value === "\xff");
+    }
+  });
+  log.debug("Leaving readCertificate(). " + out.name);
+  return out;
+}
+
+// Is `child` signed by `issuer`'s key? true, false, or null when this
+// debugger cannot check that signature algorithm (RSASSA-PSS, ML-DSA).
+function certSignedBy(child, issuer) {
+  log.debug("Entering certSignedBy().");
+  var alg = CERT_SIG_ALGS[child.sigAlg];
+  if (!alg) {
+    log.debug("Leaving certSignedBy(). Unsupported " + child.sigAlg);
+    return null;
+  }
+  try {
+    if (alg.kind === "ec") {
+      var curve = EC_CURVES[issuer.curve];
+      if (issuer.keyAlg !== OID_EC_KEY || !curve) {
+        log.debug("Leaving certSignedBy(). Issuer key is not EC.");
+        return false;
+      }
+      var ecOk = curve.verify(child.signature,
+                              CERT_DIGESTS[alg.hash](child.tbs),
+                              issuer.publicBits,
+                              { lowS: false, prehash: false });
+      log.debug("Leaving certSignedBy(). ECDSA " + ecOk);
+      return !!ecOk;
+    }
+    if (alg.kind === "ed25519") {
+      if (issuer.keyAlg !== OID_ED25519) {
+        log.debug("Leaving certSignedBy(). Issuer key is not Ed25519.");
+        return false;
+      }
+      var edOk = ed25519.verify(child.signature, child.tbs,
+                                issuer.publicBits);
+      log.debug("Leaving certSignedBy(). Ed25519 " + edOk);
+      return !!edOk;
+    }
+    var pub = forge.pki.publicKeyFromPem(bytes.derToPem(issuer.spkiDer,
+                                                        "PUBLIC KEY"));
+    var md = forge.md[alg.hash].create();
+    md.update(forge.util.binary.raw.encode(child.tbs));
+    var rsaOk = pub.verify(md.digest().getBytes(),
+                           forge.util.binary.raw.encode(child.signature));
+    log.debug("Leaving certSignedBy(). RSA " + rsaOk);
+    return !!rsaOk;
+  } catch (e) {
+    log.debug("Leaving certSignedBy(). Threw: " + e.message);
+    return false;
+  }
+}
+
+function selfSigned(cert) {
+  log.debug("Entering selfSigned().");
+  log.debug("Leaving selfSigned().");
+  return cert.subject === cert.issuer && certSignedBy(cert, cert) === true;
+}
+
+// A PEM or base64 DER trust anchor, read; null when it is neither.
+function readAnchor(text) {
+  log.debug("Entering readAnchor().");
+  try {
+    var t = String(text || "").trim();
+    var der = /-----BEGIN/.test(t) ? bytes.pemToDer(t) :
+        bytes.b64ToBytes(t.replace(/\s+/g, ""));
+    log.debug("Leaving readAnchor().");
+    return readCertificate(der);
+  } catch (e) {
+    log.debug("Leaving readAnchor(). Unreadable: " + e.message);
+    return null;
+  }
+}
+
+// Is iss bound to the end-entity certificate? An https iss by a dNSName of
+// its host or a URI equal to it; any other iss (a DID) by an equal URI.
+function issBinding(leaf, iss) {
+  log.debug("Entering issBinding().");
+  var trimmed = String(iss).replace(/\/$/, "");
+  var uriHit = leaf.uri.some(function (u) {
+    return u.replace(/\/$/, "") === trimmed;
+  });
+  if (uriHit) {
+    log.debug("Leaving issBinding(). URI.");
+    return { bound: true, how: "a URI subjectAltName equal to it" };
+  }
+  var host = "";
+  try {
+    host = /^https:\/\//.test(iss) ? new URL(iss).hostname.toLowerCase() :
+        "";
+  } catch (e) {
+    host = "";
+  }
+  if (host && leaf.dns.indexOf(host) !== -1) {
+    log.debug("Leaving issBinding(). dNSName.");
+    return { bound: true, how: "the dNSName subjectAltName " + host };
+  }
+  log.debug("Leaving issBinding(). Unbound.");
+  return { bound: false, how: "the end-entity certificate's " +
+           "subjectAltNames are " + JSON.stringify(leaf.dns.concat(
+             leaf.uri)) };
+}
+
+// The verdict on a chain: { status, detail }. `chain` is the DER (or
+// base64) certificates, leaf first; opts { iss, now, anchors }.
+function x5cTrust(chain, opts) {
+  log.debug("Entering x5cTrust().");
+  var o = opts || {};
+  var now = nowSeconds(o.now);
+  var certs;
+  try {
+    certs = chain.map(function (c) {
+      return readCertificate(typeof c === "string" ? bytes.b64ToBytes(c) :
+                             c);
+    });
+  } catch (e) {
+    log.debug("Leaving x5cTrust(). Unreadable.");
+    return { status: FAIL, detail: "a certificate in the chain is not " +
+             "readable X.509: " + e.message };
+  }
+  var fails = [];
+  var notes = [];
+  var unknown = false;
+  var leaf = certs[0];
+  notes.push(certs.length + " certificate(s), end-entity \"" + leaf.name +
+             "\"");
+  if (selfSigned(leaf)) {
+    notes.push("the end-entity certificate is SELF-SIGNED (HAIP 1.0 " +
+               "section 6.1.1: it MUST NOT be)");
+  }
+  for (var i = 0; i + 1 < certs.length; i++) {
+    var signed = certs[i].issuer === certs[i + 1].subject ?
+        certSignedBy(certs[i], certs[i + 1]) : false;
+    if (signed === null) {
+      unknown = true;
+      notes.push("certificate " + i + " uses signature algorithm " +
+                 certs[i].sigAlg + ", which this debugger cannot check");
+    } else if (!signed) {
+      fails.push("the chain is BROKEN: certificate " + i + " (\"" +
+                 certs[i].name + "\") is not signed by certificate " +
+                 (i + 1) + " (\"" + certs[i + 1].name + "\")");
+    }
+  }
+  if (certs.length > 1 && !fails.length && !unknown) {
+    notes.push("each certificate is signed by the next");
+  }
+  var last = certs[certs.length - 1];
+  var included = certs.length > 1 && selfSigned(last);
+  if (included) {
+    notes.push("the last certificate (\"" + last.name + "\") is " +
+               "self-signed, so a trust anchor is INCLUDED in the chain " +
+               "(HAIP 1.0 section 6.1.1: it MUST NOT be), and being " +
+               "there does not make it trusted (SD-JWT VC section 2.5)");
+  }
+  certs.forEach(function (c, k) {
+    if (now > c.notAfter) {
+      fails.push("certificate " + k + " (\"" + c.name + "\") EXPIRED at " +
+                 isoOf(c.notAfter));
+    } else if (now < c.notBefore) {
+      fails.push("certificate " + k + " (\"" + c.name + "\") is not " +
+                 "valid until " + isoOf(c.notBefore));
+    }
+  });
+  if (!fails.length) notes.push("every certificate is within its validity");
+  if (o.iss) {
+    var b = issBinding(leaf, o.iss);
+    if (b.bound) {
+      notes.push("iss " + o.iss + " is bound to the end-entity " +
+                 "certificate by " + b.how);
+    } else {
+      fails.push("iss " + o.iss + " is NOT bound to the end-entity " +
+                 "certificate (SD-JWT VC section 2.5): " + b.how);
+    }
+  } else {
+    notes.push("there is no iss: the issuer is the end-entity " +
+               "certificate's subject");
+  }
+  var anchors = (isArray(o.anchors) ? o.anchors : []).map(readAnchor)
+    .filter(Boolean);
+  var anchoredBy = null;
+  if (anchors.length && !unknown) {
+    for (var j = 0; j < certs.length && !anchoredBy; j++) {
+      var same = anchors.filter(function (a) {
+        return bytes.bytesEqual(a.der, certs[j].der);
+      })[0];
+      if (same) {
+        anchoredBy = same;
+      } else if (j === certs.length - 1) {
+        anchoredBy = anchors.filter(function (a) {
+          return a.subject === certs[j].issuer &&
+            certSignedBy(certs[j], a) === true;
+        })[0] || null;
+      }
+    }
+    if (anchoredBy && (now > anchoredBy.notAfter ||
+                       now < anchoredBy.notBefore)) {
+      fails.push("the trust anchor \"" + anchoredBy.name + "\" is " +
+                 "outside its own validity");
+    }
+  }
+  var status;
+  var verdict;
+  if (fails.length) {
+    status = FAIL;
+    verdict = fails.join("; ") + ".";
+  } else if (anchoredBy) {
+    status = PASS;
+    verdict = "anchored at the supplied trust anchor \"" +
+      anchoredBy.name + "\".";
+  } else if (anchors.length && !unknown) {
+    status = FAIL;
+    verdict = "NOT anchored: none of the " + anchors.length +
+      " supplied trust anchor(s) issued this chain.";
+  } else {
+    status = SKIP;
+    verdict = "NOT anchored: " + (unknown ? "a signature in the chain " +
+      "could not be checked" : "no trust anchor was supplied " +
+      "(session.trustAnchors)") + ", so nothing says this certificate " +
+      "is the issuer's. A certificate is not trusted because it is in " +
+      "the chain (SD-JWT VC section 2.5).";
+  }
+  log.debug("Leaving x5cTrust(). " + status);
+  return { status: status, detail: verdict + " " + notes.join("; ") + "." };
+}
+
 async function checkIssuerSignature(s, key, compact, header, payload,
-                                    fetchJson, label) {
+                                    ctx, label) {
   log.debug("Entering checkIssuerSignature().");
   var found;
   try {
-    found = await issuerKey(header, payload, fetchJson);
+    found = await issuerKey(header, payload, ctx.fetchJson);
   } catch (e) {
-    s.add(key, label, FAIL, "no issuer key: " + e.message);
+    s.add(key, label, FAIL, "no issuer key: " + e.message, true);
     log.debug("Leaving checkIssuerSignature(). No key.");
     return false;
   }
@@ -1176,7 +1561,13 @@ async function checkIssuerSignature(s, key, compact, header, payload,
   s.add(key, label, v.valid ? PASS : FAIL, v.valid ?
         "verifies (" + header.alg + ") with the key from " + found.from +
         "." : "does NOT verify with the key from " + found.from +
-        (v.reason ? ": " + v.reason : "."));
+        (v.reason ? ": " + v.reason : "."), true);
+  if (found.x5c) {
+    var trust = x5cTrust(found.x5c, { iss: payload.iss, now: ctx.now,
+                                      anchors: ctx.session.trustAnchors });
+    s.add(key.replace(/signature$/, "trust"), "The issuer's x5c " +
+          "certificate is trusted", trust.status, trust.detail, true);
+  }
   log.debug("Leaving checkIssuerSignature(). " + v.valid);
   return v.valid;
 }
@@ -1729,12 +2120,9 @@ async function readStatusListCredential(text, ctx) {
       problems.push("its proof does NOT verify: " + r.reason);
     } else {
       secured = r.reason.replace(/\.$/, "");
-      var vmDid = r.verificationMethod.split("#")[0];
-      var issuerId = issuerIdOf(credential);
-      if (didLib.isDid(issuerId) && vmDid !== issuerId) {
-        problems.push("it is signed by " + vmDid + ", not by its issuer " +
-                      issuerId);
-      }
+      var foreign = vmNotAuthorised(r.verificationMethod,
+                                    issuerIdOf(credential));
+      if (foreign) problems.push(foreign.replace(/\.$/, ""));
     }
   }
   var w = ldpWindow(credential);
@@ -2255,7 +2643,7 @@ async function verifySdJwt(s, query, presentation, ctx) {
           "name." : 'typ is "' + typ + '", not "dc+sd-jwt".');
 
   await checkIssuerSignature(s, "issuer.signature", parsed.issuerJwt,
-                             header, payload, ctx.fetchJson,
+                             header, payload, ctx,
                              "The issuer's signature verifies");
 
   var built = null;
@@ -2265,10 +2653,10 @@ async function verifySdJwt(s, query, presentation, ctx) {
           built.problems.length ? FAIL : PASS, built.problems.length ?
           built.problems.join(" ") : "all " + parsed.disclosures.length +
           " Disclosure(s) hash (" + (payload._sd_alg || "sha-256") +
-          ") to a digest the issuer signed.");
+          ") to a digest the issuer signed.", true);
   } catch (e) {
     s.add("disclosures", "Every Disclosure's digest is in an _sd array",
-          FAIL, e.message);
+          FAIL, e.message, true);
   }
 
   var vctValues = ((query.meta || {}).vct_values) || [];
@@ -2325,7 +2713,8 @@ async function verifyKbJwt(s, query, parsed, ctx) {
           "binding (DCQL's default) and the presentation ends in ~ with " +
           "no KB-JWT." : "the query does not require holder binding.");
     kbKeys.forEach(function (k) {
-      s.add(k, labels[k], SKIP, "there is no KB-JWT.");
+      s.add(k, labels[k], SKIP, "there is no KB-JWT.",
+            required && k === "kb.signature");
     });
     log.debug("Leaving verifyKbJwt(). None.");
     return;
@@ -2356,13 +2745,13 @@ async function verifyKbJwt(s, query, parsed, ctx) {
   var cnfJwk = cnf && cnf.jwk;
   if (!cnfJwk) {
     s.add("kb.signature", labels["kb.signature"], FAIL, "the credential " +
-          "has no cnf.jwk, so there is no key the holder can prove.");
+          "has no cnf.jwk, so there is no key the holder can prove.", true);
   } else {
     var v = verifyCompact(parsed.kbJwt, { jwk: cnfJwk });
     s.add("kb.signature", labels["kb.signature"], v.valid ? PASS : FAIL,
           v.valid ? "the KB-JWT verifies with cnf.jwk (thumbprint " +
           jwkThumbprint(cnfJwk) + ")." : "the KB-JWT does NOT verify with " +
-          "cnf.jwk" + (v.reason ? ": " + v.reason : "."));
+          "cnf.jwk" + (v.reason ? ": " + v.reason : "."), true);
   }
   s.add("kb.nonce", labels["kb.nonce"],
         p.nonce === ctx.session.nonce ? PASS : FAIL,
@@ -2498,17 +2887,18 @@ async function verifyJwtVcJson(s, query, presentation, ctx) {
   }
   if (holderError) {
     s.add("vp.signature", "The VP JWT verifies with the holder's key",
-          FAIL, "the holder key could not be resolved: " + holderError);
+          FAIL, "the holder key could not be resolved: " + holderError,
+          true);
   } else if (hk) {
     var v = verifyCompact(presentation, { jwk: hk.jwk });
     s.add("vp.signature", "The VP JWT verifies with the holder's key",
           v.valid ? PASS : FAIL, (v.valid ? "verifies" :
           "does NOT verify") + " with the key from " + hk.from +
-          (v.reason && !v.valid ? ": " + v.reason : "."));
+          (v.reason && !v.valid ? ": " + v.reason : "."), true);
   } else {
     s.add("vp.signature", "The VP JWT verifies with the holder's key",
           FAIL, "it names no key (no jwk, no DID kid or iss) and the " +
-          "credential is bound to none.");
+          "credential is bound to none.", true);
   }
   if (!requiresBinding(query) && !bound) {
     s.add("vp.binding", "The VP is signed by the key the credential is " +
@@ -2519,7 +2909,7 @@ async function verifyJwtVcJson(s, query, presentation, ctx) {
           "bound to", bindOk ? PASS : FAIL, bindOk ? "the VP key is the " +
           "credential's " + bound.member + "." : bound ?
           "the VP key is not the credential's " + bound.member + "." :
-          "the credential names no holder key.");
+          "the credential names no holder key.", requiresBinding(query));
   }
   var p = vp.payload;
   s.add("vp.nonce", "The VP JWT's nonce is this request's",
@@ -2542,11 +2932,12 @@ async function verifyJwtVcJson(s, query, presentation, ctx) {
       vc = decodeJwt(vcs[i]);
     } catch (e) {
       s.add(tag + "signature", "The credential's issuer signature verifies",
-            FAIL, "the embedded credential is unreadable: " + e.message);
+            FAIL, "the embedded credential is unreadable: " + e.message,
+            true);
       continue;
     }
     await checkIssuerSignature(s, tag + "signature", vcs[i], vc.header,
-                               vc.payload, ctx.fetchJson,
+                               vc.payload, ctx,
                                "The credential's issuer signature verifies");
     var verdict = validityVerdict(sdJwtVc.validityWindowOf(
       { payload: vc.payload }), vc.payload.iat, ctx.now);
@@ -2610,10 +3001,19 @@ async function verifyMdoc(s, query, presentation, ctx) {
   try {
     var issuerChecks = await mdoc.checkIssuerSigned(read.parsed);
     issuerChecks.forEach(function (c) {
-      s.add("mdoc." + slug(c.name), c.name, c.ok ? PASS : FAIL, c.detail);
+      s.add("mdoc." + slug(c.name), c.name, c.ok ? PASS : FAIL, c.detail,
+            true);
     });
   } catch (e) {
-    s.add("mdoc.issuer-signed", "issuerSigned verifies", FAIL, e.message);
+    s.add("mdoc.issuer-signed", "issuerSigned verifies", FAIL, e.message,
+          true);
+  }
+  var chain = read.parsed.x5chain || [];
+  if (chain.length) {
+    var trust = x5cTrust(chain, { now: ctx.now,
+                                  anchors: ctx.session.trustAnchors });
+    s.add("mdoc.issuer-trust", "The document signer certificate is " +
+          "trusted", trust.status, trust.detail, true);
   }
   var handover = mdocSessionTranscript(ctx.session);
   var dcMissingOrigin = isDcApiMode(ctx.session.responseMode) &&
@@ -2626,7 +3026,8 @@ async function verifyMdoc(s, query, presentation, ctx) {
         "OpenID4VPDCAPIHandover transcript cannot be rebuilt." :
         "deviceSignature does NOT verify over this request's " +
         handover.describe + ": another Verifier, origin, nonce, " +
-        "response_uri or encryption key, or no device signature at all.");
+        "response_uri or encryption key, or no device signature at all.",
+        true);
   var want = (query.meta || {}).doctype_value;
   s.add("mdoc.doctype", "docType is the one the query asks for",
         want ? (want === read.parsed.docType ? PASS : FAIL) : SKIP,
@@ -2700,9 +3101,10 @@ async function verifyBbsEnvelope(s, env, ctx, key) {
           "signature covers the " + (env.disclosedStatements || []).length +
           " disclosed statement(s), with this request's nonce as the " +
           "presentation header." : "the derived proof does NOT verify " +
-          "(another nonce, altered statements, or another issuer key).");
+          "(another nonce, altered statements, or another issuer key).",
+          true);
   } catch (e) {
-    s.add(id, label, FAIL, e.message);
+    s.add(id, label, FAIL, e.message, true);
   }
   log.debug("Leaving verifyBbsEnvelope().");
 }
@@ -2755,6 +3157,59 @@ function statementsHaveClaim(statements, claim, iris) {
   });
 }
 
+// Is a Data Integrity proof's verificationMethod one its issuer controls
+// (#467, S2)? VC Data Integrity has the verifier check that the
+// verification method is authorised by the controller the document names,
+// and until #467 that was checked only for a DID issuer: an issuer
+// "https://university.example" with a proof by did:key:<anyone> passed. So:
+//   a DID issuer          the method is under that DID;
+//   an https issuer       the method is an https URL at or under it, or a
+//                         did:web whose document lives at or under it;
+//   anything else         nothing can be shown to be the issuer's.
+// Answers "" when authorised, else why not.
+function vmNotAuthorised(vm, issuerId) {
+  log.debug("Entering vmNotAuthorised().");
+  var method = String(vm || "");
+  var issuer = String(issuerId || "");
+  if (didLib.isDid(issuer)) {
+    var vmDid = method.split("#")[0];
+    log.debug("Leaving vmNotAuthorised(). DID issuer.");
+    return vmDid === issuer ? "" : "the proof is by a key of " + vmDid +
+      ", which is not the issuer " + issuer + ".";
+  }
+  var base = null;
+  try {
+    base = /^https:\/\//.test(issuer) ? new URL(issuer) : null;
+  } catch (e) {
+    base = null;
+  }
+  if (!base) {
+    log.debug("Leaving vmNotAuthorised(). No usable issuer.");
+    return "the issuer " + JSON.stringify(issuer) + " is neither a DID " +
+      "nor an https URL, so no verification method can be shown to be " +
+      "its own.";
+  }
+  var where = "";
+  if (/^did:web:/.test(method)) {
+    where = didLib.didWebToUrl(method.split("#")[0]);
+  } else if (/^https:\/\//.test(method)) {
+    where = method.split("#")[0];
+  }
+  var at = null;
+  try {
+    at = where ? new URL(where) : null;
+  } catch (e) {
+    at = null;
+  }
+  var prefix = base.pathname.replace(/\/$/, "") + "/";
+  var under = !!at && at.origin === base.origin &&
+      (at.pathname + "/").indexOf(prefix) === 0;
+  log.debug("Leaving vmNotAuthorised(). " + under);
+  return under ? "" : "verification method not authorised by the issuer: " +
+    method + " is not controlled by " + issuer + " (it neither resolves " +
+    "at or under that URL, nor is a did:web whose document does).";
+}
+
 // One credential with its own Data Integrity proof: the proof (by a key its
 // issuer controls, when the issuer is a DID), validity, and status.
 async function verifyDiCredential(s, tag, cred, ctx) {
@@ -2764,15 +3219,13 @@ async function verifyDiCredential(s, tag, cred, ctx) {
   var r = await verifyDataIntegrity(cred, { fetchJson: ctx.fetchJson,
     purpose: "assertionMethod", now: ctx.now });
   if (r.unsupported) {
-    s.add(tag + "proof", label, SKIP, r.reason);
+    s.add(tag + "proof", label, SKIP, r.reason, true);
   } else if (!r.valid) {
-    s.add(tag + "proof", label, FAIL, r.reason);
+    s.add(tag + "proof", label, FAIL, r.reason, true);
   } else {
-    var vmDid = r.verificationMethod.split("#")[0];
-    var foreign = didLib.isDid(issuerId) && vmDid !== issuerId;
+    var foreign = vmNotAuthorised(r.verificationMethod, issuerId);
     s.add(tag + "proof", label, foreign ? FAIL : PASS, foreign ?
-          "the proof verifies, but with a key of " + vmDid + ", which is " +
-          "not the issuer " + issuerId + "." : r.reason);
+          "the proof verifies, but " + foreign : r.reason, true);
   }
   var verdict = validityVerdict(ldpWindow(cred), null, ctx.now);
   s.add(tag + "validity", "The credential is within its validity window",
@@ -2824,12 +3277,13 @@ async function verifyLdpVc(s, query, presentation, ctx) {
     var r = await verifyDataIntegrity(doc, { fetchJson: ctx.fetchJson,
       purpose: "authentication", now: ctx.now });
     if (r.unsupported) {
-      s.add("vp.proof", "The VP's holder proof verifies", SKIP, r.reason);
+      s.add("vp.proof", "The VP's holder proof verifies", SKIP, r.reason,
+            requiresBinding(query));
     } else {
       holderJwk = r.valid ? r.jwk : null;
       holderVm = r.verificationMethod || "";
       s.add("vp.proof", "The VP's holder proof verifies",
-            r.valid ? PASS : FAIL, r.reason);
+            r.valid ? PASS : FAIL, r.reason, true);
     }
     s.add("vp.challenge", "The VP proof's challenge is this request's " +
           "nonce", proof.challenge === ctx.session.nonce ? PASS : FAIL,
@@ -2881,7 +3335,7 @@ async function verifyLdpVc(s, query, presentation, ctx) {
     }
     if (!isPlainObject(env)) {
       s.add(tag + "proof", "The credential's issuer proof verifies", FAIL,
-            "the embedded credential is not a JSON object.");
+            "the embedded credential is not a JSON object.", true);
       continue;
     }
     await verifyDiCredential(s, tag, env, ctx);
@@ -3072,15 +3526,29 @@ async function verifyPresentations(report, vpToken, ctx) {
   return out;
 }
 
+// The verdict (#467, S4): "fail" when any check failed; "incomplete" when
+// none failed but an ESSENTIAL check was not performed (an issuer proof in
+// a cryptosuite this debugger does not verify, an x5c chain nothing
+// anchors, a holder signature the query needs and nobody checked); "pass"
+// only when neither. OpenID4VP 1.0 section 8.6: a presentation whose checks
+// fail MUST be discarded, and one whose authenticity was never established
+// has not passed them. `ok` is kept, and is true only for "pass".
 function finish(report, presentations) {
   log.debug("Entering finish().");
   var failed = report.checks.filter(function (c) {
     return c.status === FAIL;
   }).length;
+  var notPerformed = report.checks.filter(function (c) {
+    return c.essential && c.status === SKIP;
+  }).length;
+  var verdict = failed || !report.checks.length ? "fail" :
+      notPerformed ? "incomplete" : "pass";
   log.debug("Leaving finish(). " + report.checks.length + " check(s), " +
-            failed + " failed.");
-  return { ok: failed === 0 && report.checks.length > 0,
-           checks: report.checks, presentations: presentations || [] };
+            failed + " failed, " + notPerformed + " essential not " +
+            "performed: " + verdict + ".");
+  return { ok: verdict === "pass", verdict: verdict, failed: failed,
+           incomplete: notPerformed, checks: report.checks,
+           presentations: presentations || [] };
 }
 
 // Check a Wallet's answer. opts:
@@ -3088,8 +3556,10 @@ function finish(report, presentations) {
 //              or an object), or the DC API's data object ({ vp_token } or
 //              { response }), as an object or its JSON
 //   session    { clientId, nonce, state, responseMode, responseUri, dcql,
-//                decryptionJwk, origin } — origin is the page's origin, and
-//              is what a DC API answer's audience is (Appendix A.4)
+//                decryptionJwk, origin, trustAnchors } — origin is the
+//              page's origin, and is what a DC API answer's audience is
+//              (Appendix A.4); trustAnchors (PEM or base64 DER) are what
+//              an issuer's x5c chain may be anchored at
 //   fetchJson  optional: issuer metadata, DID documents, key documents
 //   fetchText  optional: (url, { accept }) => text, for status lists; with
 //              none, every status check is a skip that says so

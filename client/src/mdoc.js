@@ -365,7 +365,10 @@ function checkIssuerSigned(parsed) {
       .then(function (ok) {
         checks.push({ name: "Issuer signature", ok: ok, detail: ok ?
           "issuerAuth verifies with the document signer certificate in " +
-          "its x5chain." : "issuerAuth does NOT verify with its own " +
+          "its x5chain. That certificate is UNANCHORED: this check does " +
+          "not chain it to an IACA or any trust list, so it says only " +
+          "that the MSO is the certificate's, not whose the certificate " +
+          "is." : "issuerAuth does NOT verify with its own " +
           "document signer certificate." });
         return checks;
       });

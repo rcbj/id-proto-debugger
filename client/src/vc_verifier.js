@@ -878,7 +878,9 @@ function renderChecks(result) {
     }
     var row = table.insertRow(-1);
     row.id = "vpv_check_" + check.id;
-    row.className = "vc-check-" + check.status;
+    row.className = "vc-check-" + check.status +
+      (check.essential && check.status === "skip" ? " vc-check-unperformed" :
+       "");
     [check.status.toUpperCase(), check.group || "", check.label || check.id,
      check.detail || ""].forEach(function (text) {
       row.insertCell(-1).textContent = text;
@@ -887,10 +889,24 @@ function renderChecks(result) {
   var failed = (result.checks || []).filter(function (check) {
     return check.status === "fail";
   }).length;
-  setText("vpv_verdict", result.ok
-    ? "Every check passed (" + (result.checks || []).length + ")."
-    : failed + " of " + (result.checks || []).length + " checks failed.",
-    result.ok ? "vc-ok" : "vc-bad");
+  var total = (result.checks || []).length;
+  // Three verdicts (#467, S4). "incomplete" is nothing failed AND an
+  // essential check — an issuer proof, an x5c chain's anchor, a holder
+  // signature — was not performed. It is not a pass and is not drawn as
+  // one: the presentation's authenticity was never established.
+  var verdict = result.verdict || (result.ok ? "pass" : "fail");
+  if (verdict === "pass") {
+    setText("vpv_verdict", "Every check passed (" + total + ").", "vc-ok");
+  } else if (verdict === "incomplete") {
+    setText("vpv_verdict", "Nothing failed, but " + result.incomplete +
+      " essential check" + (result.incomplete === 1 ? "" : "s") +
+      " could not be performed, so this presentation is NOT verified " +
+      "(the rows marked SKIP that establish authenticity say why).",
+      "vc-warn");
+  } else {
+    setText("vpv_verdict", failed + " of " + total + " checks failed.",
+            "vc-bad");
+  }
   var out = el("vpv_claims_out");
   if (out) {
     out.textContent = JSON.stringify(result.presentations || [], null, 2);

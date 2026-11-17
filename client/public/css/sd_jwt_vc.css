@@ -581,4 +581,8 @@ tr.vc-check-pass td:first-child { color: #1b7a3a; }
 tr.vc-check-fail td:first-child { color: #b3261e; }
 tr.vc-check-skip td:first-child { color: #6b6b78; }
 tr.vc-check-fail { background: #fdf1f0; }
+/* An essential check not performed (#467): not a failure, not a pass. */
+tr.vc-check-unperformed td:first-child { color: #8a5a00; }
+tr.vc-check-unperformed { background: #fff8e6; }
+.vc-status.vc-warn { color: #8a5a00; }
 .vc-qr svg { width: 240px; height: 240px; background: #fff; }

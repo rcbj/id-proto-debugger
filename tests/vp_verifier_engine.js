@@ -176,7 +176,11 @@ function allPass(result, what) {
      JSON.stringify(result.checks.filter(function (c) {
        return c.status === "fail";
      }), null, 2));
-  ok(result.ok, what + ": ok must be true when nothing failed");
+  ok(result.ok, what + ": ok must be true when nothing failed: " +
+     JSON.stringify(result.checks.filter(function (c) {
+       return c.essential && c.status === "skip";
+     }), null, 2));
+  eq(result.verdict, "pass", what + ": the verdict of a full pass");
   log.debug("Leaving allPass().");
 }
 
@@ -188,6 +192,7 @@ function failsOnly(result, ids, what) {
          return c.status === "fail";
        }), null, 2));
   ok(!result.ok, what + ": ok must be false when a check failed");
+  eq(result.verdict, "fail", what + ": the verdict when a check failed");
   log.debug("Leaving failsOnly().");
 }
 
@@ -680,10 +685,13 @@ async function mdocRoundTrip(env) {
   const dcql = verifier.buildDcql({ queries: [{ id: "mdl",
     format: "mso_mdoc", doctype: mdocIssuer.DOCTYPE,
     claims: [[NS, "given_name"], [NS, "family_name"]] }] });
-  const session = { clientId: clientId, nonce: verifier.randomToken(),
+  const unanchored = { clientId: clientId, nonce: verifier.randomToken(),
     state: "st", responseMode: "direct_post.jwt",
     responseUri: "https://verifier.example/response", dcql: dcql,
     decryptionJwk: env.enc.privateJwk };
+  // The IACA is the trust anchor; with it the x5chain is anchored.
+  const session = Object.assign({}, unanchored,
+                                { trustAnchors: [auth.iacaPem] });
   const built = await sdJwtVp.buildMdocPresentation({ credential: credential,
     selected: [NS + "/given_name", NS + "/family_name"],
     holderPrivateJwk: device.privateJwk, aud: clientId,
@@ -697,9 +705,24 @@ async function mdocRoundTrip(env) {
     log.debug("Leaving send().");
     return run({ fields: { response: sealed.jwe }, session: s });
   }
-  let r = await send(session, built.presentation);
+  // #467 S3/S4: with no trust anchor the document signer certificate is
+  // UNANCHORED — nothing fails, and the verdict is not a pass.
+  let r = await send(unanchored, built.presentation);
+  eq(failedIds(r), [], "mdoc, unanchored: nothing fails");
+  eq([r.verdict, r.ok, r.incomplete], ["incomplete", false, 1],
+     "mdoc, unanchored: the verdict is incomplete, one essential check");
+  eq(checkById(r, "mdl[0].mdoc.issuer-trust").status, "skip",
+     "mdoc, unanchored: the issuer trust row is a skip");
+  ok(/NOT anchored/.test(checkById(r, "mdl[0].mdoc.issuer-trust").detail),
+     "mdoc, unanchored: the row says so");
+  ok(/UNANCHORED/.test(checkById(r, "mdl[0].mdoc.issuer-signature")
+     .detail), "mdoc.js's issuer signature text says it is unanchored");
+  r = await send(session, built.presentation);
   allPass(r, "mso_mdoc over direct_post.jwt");
+  ok(/anchored at the supplied trust anchor/.test(checkById(r,
+     "mdl[0].mdoc.issuer-trust").detail), "mdoc, anchored at the IACA");
   ["mdl[0].mdoc.element-digests", "mdl[0].mdoc.issuer-signature",
+   "mdl[0].mdoc.issuer-trust",
    "mdl[0].mdoc.device-signature", "mdl[0].mdoc.doctype",
    "mdl[0].validity", "mdl[0].claims"].forEach(function (id) {
     ok(checkById(r, id) && checkById(r, id).status === "pass",
@@ -1354,7 +1377,7 @@ async function dcApi(env) {
     format: "mso_mdoc", doctype: mdocIssuer.DOCTYPE,
     claims: [[NS, "given_name"]] }] });
   const mSession = { nonce: nonce, responseMode: "dc_api", dcql: mdql,
-                     origin: ORIGIN };
+                     origin: ORIGIN, trustAnchors: [auth.iacaPem] };
   const plainDr = deviceResponseHere(mcred, device,
                                      dcTranscript(ORIGIN, nonce, null));
   r = await run({ fields: { vp_token: { mdl: [plainDr] } },
@@ -1585,6 +1608,7 @@ async function tokenStatusLists(env) {
   const nonce = verifier.randomToken();
   const NS = mdocIssuer.NS;
   const mSession = { nonce: nonce, responseMode: "dc_api", origin: ORIGIN,
+    trustAnchors: [auth.iacaPem],
     dcql: verifier.buildDcql({ queries: [{ id: "mdl", format: "mso_mdoc",
       claims: [[NS, "given_name"]] }] }) };
   async function mdocAt(status) {
@@ -1915,6 +1939,405 @@ async function cryptosuites(env) {
   log.debug("Leaving cryptosuites().");
 }
 
+// ---------------------------------------------------------------------------
+// #467: the security findings S1-S4. Every key and signature here is node's
+// own crypto; the certificates are x509.js's encoder over node keys, and
+// each chain is cross-checked with node's X509Certificate before the
+// Verifier is asked about it.
+// ---------------------------------------------------------------------------
+function nodePemPair(kind) {
+  log.debug("Entering nodePemPair(). " + kind);
+  const pair = kind === "rsa" ?
+    nodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 }) :
+    nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  log.debug("Leaving nodePemPair().");
+  return {
+    kind: kind, privateKey: pair.privateKey,
+    publicPem: pair.publicKey.export({ type: "spki", format: "pem" }),
+    privatePem: pair.privateKey.export({ type: "pkcs8", format: "pem" }),
+    keyAlg: kind === "rsa" ? "rsa-2048" : "ec-p256",
+    sigAlg: kind === "rsa" ? "sha256-rsa" : "sha256-ecdsa"
+  };
+}
+
+// One certificate. `issuer` is { cert, key } or absent (self-signed).
+async function testCert(o) {
+  log.debug("Entering testCert(). " + o.cn);
+  const nowMs = Date.now();
+  const ext = x509.defaultExtensions(o.profile);
+  if (o.sans) {
+    ext.subjectAltName = { present: true, critical: false, names: o.sans };
+  }
+  const signer = o.issuer ? o.issuer.key : o.key;
+  const spec = {
+    profile: o.profile, subject: "CN=" + o.cn + ",O=idptools test",
+    subjectPublicKey: o.key.publicPem,
+    signatureAlg: signer.sigAlg,
+    notBefore: o.notBefore || new Date(nowMs - 3600000),
+    notAfter: o.notAfter || new Date(nowMs + 30 * 86400000),
+    extensions: ext
+  };
+  if (o.issuer) {
+    spec.issuer = { certificatePem: o.issuer.cert.pem,
+                    privateKeyPem: signer.privatePem,
+                    keyAlg: signer.keyAlg };
+  } else {
+    spec.issuerPrivateKey = o.key.privatePem;
+  }
+  const issued = await x509.issueCertificate(spec);
+  const node = new nodeCrypto.X509Certificate(issued.pem);
+  log.debug("Leaving testCert().");
+  return { pem: issued.pem, node: node, b64: node.raw.toString("base64") };
+}
+
+async function securityFindings(env) {
+  log.debug("Entering securityFindings().");
+  const now = Math.floor(Date.now() / 1000);
+  const GOV = "https://gov.example";
+  const noNet = function noNet(url) {
+    log.debug("Entering noNet(). " + url);
+    log.debug("Leaving noNet().");
+    return Promise.reject(new Error("no network: " + url));
+  };
+  const sdDcql = verifier.buildDcql({ queries: [{ id: "p",
+    format: "dc+sd-jwt", vct: VCT, requireBinding: false }] });
+  const sdSession = { clientId: verifier.clientIdFor("x509_hash",
+    env.identity), nonce: verifier.randomToken(), state: "s",
+    responseMode: "direct_post", dcql: sdDcql };
+  const sendSd = function sendSd(jwt, extra) {
+    log.debug("Entering sendSd().");
+    const x = extra || {};
+    log.debug("Leaving sendSd().");
+    return run({ fields: vp.formEncode({ vp_token: { p: [jwt + "~"] },
+                 state: "s" }),
+                 session: Object.assign({}, sdSession, x.session || {}),
+                 fetchJson: x.fetchJson || noNet });
+  };
+  const sdPayload = function sdPayload(iss) {
+    log.debug("Entering sdPayload().");
+    log.debug("Leaving sdPayload().");
+    return { iss: iss, vct: VCT, iat: now - 60, given_name: "X" };
+  };
+
+  // --- S1: a DID in kid never chooses the issuer. ----------------------
+  // The forgery reproduced in the review (probe/forge.js): iss is an https
+  // URL, the attacker signs with a key of its own and names it as a did:jwk
+  // in kid, and the query does not require holder binding.
+  const attacker = ecPair();
+  const attackerDid = didJwk(attacker.publicJwk);
+  const forged = nodeJws({ alg: "ES256", typ: "dc+sd-jwt",
+                           kid: attackerDid + "#0" }, sdPayload(GOV),
+                         attacker);
+  let r = await sendSd(forged);
+  failsOnly(r, ["p[0].issuer.signature"], "S1: https iss, an attacker's " +
+            "did:jwk in kid, no network");
+  // With the real issuer's metadata on hand the forgery still fails, and
+  // the row says the DID in kid was not used.
+  const gov = ecPair();
+  const govDocs = {};
+  govDocs[GOV + "/.well-known/jwt-vc-issuer"] = { issuer: GOV,
+    jwks: { keys: [Object.assign({ kid: "g1" }, gov.publicJwk)] } };
+  const govFetch = function govFetch(url) {
+    log.debug("Entering govFetch(). " + url);
+    log.debug("Leaving govFetch().");
+    return govDocs[url] ? Promise.resolve(govDocs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+  r = await sendSd(forged, { fetchJson: govFetch });
+  failsOnly(r, ["p[0].issuer.signature"], "S1: the forgery against the " +
+            "issuer's real metadata");
+  ok(/was not used/.test(checkById(r, "p[0].issuer.signature").detail),
+     "S1: the row says the DID in kid was not used: " +
+     checkById(r, "p[0].issuer.signature").detail);
+  // The genuine credential from that issuer passes.
+  r = await sendSd(nodeJws({ alg: "ES256", typ: "dc+sd-jwt", kid: "g1" },
+                           sdPayload(GOV), gov), { fetchJson: govFetch });
+  allPass(r, "S1: the issuer's own credential, from its metadata");
+  // An iss that is neither a DID nor https, with a DID kid.
+  r = await sendSd(nodeJws({ alg: "ES256", typ: "dc+sd-jwt",
+                             kid: attackerDid + "#0" },
+                           sdPayload("urn:example:gov"), attacker));
+  failsOnly(r, ["p[0].issuer.signature"], "S1: a urn iss with a DID kid");
+  ok(/only when iss IS that DID/.test(checkById(r,
+     "p[0].issuer.signature").detail), "S1: the urn case says why");
+  // A DID iss whose kid names ANOTHER DID.
+  const real = ecPair();
+  r = await sendSd(nodeJws({ alg: "ES256", typ: "dc+sd-jwt",
+                             kid: attackerDid + "#0" },
+                           sdPayload(didJwk(real.publicJwk)), attacker));
+  failsOnly(r, ["p[0].issuer.signature"], "S1: a DID iss, another DID kid");
+  // The legitimate DID case: iss IS the DID kid names.
+  r = await sendSd(nodeJws({ alg: "ES256", typ: "dc+sd-jwt",
+                             kid: attackerDid + "#0" },
+                           sdPayload(attackerDid), attacker));
+  allPass(r, "S1: iss is the DID kid names");
+
+  // jwt_vc_json takes the same route. The VP JWT is built here with node.
+  const vcDcql = verifier.buildDcql({ queries: [{ id: "w",
+    format: "jwt_vc_json", requireBinding: false }] });
+  const sendVc = async function sendVc(vcJwt, fetchJson) {
+    log.debug("Entering sendVc().");
+    const vpJwt = nodeJws({ alg: "ES256", typ: "JWT",
+                            kid: attackerDid + "#0" },
+      { iss: attackerDid, aud: sdSession.clientId, nonce: sdSession.nonce,
+        iat: now, vp: { "@context": ["https://www.w3.org/2018/" +
+          "credentials/v1"], type: ["VerifiablePresentation"],
+          holder: attackerDid, verifiableCredential: [vcJwt] } }, attacker);
+    log.debug("Leaving sendVc().");
+    return run({ fields: vp.formEncode({ vp_token: { w: [vpJwt] },
+                 state: "s" }),
+                 session: Object.assign({}, sdSession, { dcql: vcDcql }),
+                 fetchJson: fetchJson || noNet });
+  };
+  const vcBody = { "@context": ["https://www.w3.org/2018/credentials/v1"],
+    type: ["VerifiableCredential"], credentialSubject: { name: "X" } };
+  r = await sendVc(nodeJws({ alg: "ES256", typ: "JWT",
+                             kid: attackerDid + "#0" },
+                           { iss: GOV, iat: now - 60, vc: vcBody },
+                           attacker), govFetch);
+  failsOnly(r, ["w[0].vc.signature"], "S1: jwt_vc_json, https iss and an " +
+            "attacker's DID kid");
+  r = await sendVc(nodeJws({ alg: "ES256", typ: "JWT", kid: "g1" },
+                           { iss: GOV, iat: now - 60, vc: vcBody }, gov),
+                   govFetch);
+  allPass(r, "S1: jwt_vc_json from the issuer's metadata");
+
+  // --- S2: a URL issuer's proof must be by a method it controls. --------
+  // The W3C vc-di-eddsa Appendix B.3 example: issuer
+  // https://vc.example/issuers/5678, proof by a did:key — the signature is
+  // the spec's own and verifies, and nothing ties that did:key to the URL.
+  const vecCtx = ["https://www.w3.org/ns/credentials/v2",
+                  "https://www.w3.org/ns/credentials/examples/v2"];
+  const vecPk = "z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2";
+  const w3cVector = { "@context": vecCtx,
+    id: "urn:uuid:58172aac-d8ba-11ed-83dd-0b3aef56cc33",
+    type: ["VerifiableCredential", "AlumniCredential"],
+    name: "Alumni Credential",
+    description: "A minimum viable example of an Alumni Credential.",
+    issuer: "https://vc.example/issuers/5678",
+    validFrom: "2023-01-01T00:00:00Z",
+    credentialSubject: { id: "did:example:abcdefgh",
+                         alumniOf: "The School of Examples" },
+    proof: { type: "DataIntegrityProof", cryptosuite: "eddsa-jcs-2022",
+      created: "2023-02-24T23:36:38Z",
+      verificationMethod: "did:key:" + vecPk + "#" + vecPk,
+      proofPurpose: "assertionMethod", "@context": vecCtx,
+      proofValue: "z2HnFSSPPBzR36zdDgK8PbEHeXbR56YF24jwMpt3R1eHXQzJDMWS93F" +
+        "CzpvJpwTWd3GAVFuUfjoJdcnTMuVor51aX" } };
+  const ldDcql = verifier.buildDcql({ queries: [{ id: "u",
+    format: "ldp_vc", requireBinding: false }] });
+  const UNI = "https://university.example";
+  const uniKey = suiteKey("P-384");
+  const uniDid = "did:web:university.example";
+  const uniDocs = {};
+  uniDocs[UNI + "/.well-known/did.json"] = {
+    "@context": ["https://www.w3.org/ns/did/v1"], id: uniDid,
+    verificationMethod: [{ id: uniDid + "#k1", type: "JsonWebKey2020",
+      controller: uniDid, publicKeyJwk: uniKey.publicJwk }],
+    assertionMethod: [uniDid + "#k1"] };
+  const uniFetch = function uniFetch(url) {
+    log.debug("Entering uniFetch(). " + url);
+    log.debug("Leaving uniFetch().");
+    return uniDocs[url] ? Promise.resolve(uniDocs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+  const uniSigner = Object.assign({}, uniKey, { vm: uniDid + "#k1" });
+  const listDocs = {};
+  const sendLd = function sendLd(cred) {
+    log.debug("Entering sendLd().");
+    log.debug("Leaving sendLd().");
+    return run({ fields: { vp_token: { u: [cred] }, state: "s" },
+                 session: Object.assign({}, sdSession, { dcql: ldDcql }),
+                 fetchJson: uniFetch, fetchText: textFetcher(listDocs) });
+  };
+  r = await sendLd(w3cVector);
+  failsOnly(r, ["u[0].vc.proof"], "S2: the W3C example, a URL issuer and " +
+            "a did:key proof");
+  ok(/not authorised by the issuer/.test(checkById(r, "u[0].vc.proof")
+     .detail), "S2: the row names the reason");
+  const uniCred = function uniCred(issuer, extra) {
+    log.debug("Entering uniCred().");
+    log.debug("Leaving uniCred().");
+    return Object.assign({ "@context": ["https://www.w3.org/ns/" +
+      "credentials/v2"], type: ["VerifiableCredential"], issuer: issuer,
+      validFrom: "2026-01-01T00:00:00Z",
+      credentialSubject: { name: "Erika" } }, extra || {});
+  };
+  r = await sendLd(await diSign(uniCred(UNI), "ecdsa-jcs-2019", uniSigner,
+                                "assertionMethod"));
+  allPass(r, "S2: a URL issuer, proof by its own did:web");
+  r = await sendLd(await diSign(uniCred(UNI), "ecdsa-jcs-2019", uniKey,
+                                "assertionMethod"));
+  failsOnly(r, ["u[0].vc.proof"], "S2: a URL issuer, proof by a did:key");
+  r = await sendLd(await diSign(uniCred(UNI + "/registrar"),
+                                "ecdsa-jcs-2019", uniSigner,
+                                "assertionMethod"));
+  failsOnly(r, ["u[0].vc.proof"], "S2: an issuer path the did:web's " +
+            "document is not under");
+  r = await sendLd(await diSign(uniCred("https://evil.example"),
+                                "ecdsa-jcs-2019", uniSigner,
+                                "assertionMethod"));
+  failsOnly(r, ["u[0].vc.proof"], "S2: another origin's did:web");
+  // A status list credential obeys the same rule.
+  const LISTS = UNI + "/lists/";
+  const listCred = async function listCred(name, signer) {
+    log.debug("Entering listCred().");
+    const out = await diSign({ "@context": ["https://www.w3.org/ns/" +
+      "credentials/v2"], id: LISTS + name,
+      type: ["VerifiableCredential", "BitstringStatusListCredential"],
+      issuer: UNI, validFrom: "2026-01-01T00:00:00Z",
+      credentialSubject: { id: LISTS + name + "#list",
+        type: "BitstringStatusList", statusPurpose: "revocation",
+        encodedList: bitstringEncodedList([]) } },
+      "ecdsa-jcs-2019", signer, "assertionMethod");
+    log.debug("Leaving listCred().");
+    return JSON.stringify(out);
+  };
+  listDocs[LISTS + "own"] = await listCred("own", uniSigner);
+  listDocs[LISTS + "foreign"] = await listCred("foreign", uniKey);
+  const withStatus = async function withStatus(name) {
+    log.debug("Entering withStatus().");
+    log.debug("Leaving withStatus().");
+    return diSign(uniCred(UNI, { credentialStatus: { id: LISTS + name +
+      "#3", type: "BitstringStatusListEntry", statusPurpose: "revocation",
+      statusListIndex: "3", statusListCredential: LISTS + name } }),
+      "ecdsa-jcs-2019", uniSigner, "assertionMethod");
+  };
+  r = await sendLd(await withStatus("own"));
+  allPass(r, "S2: a status list credential signed by its URL issuer's " +
+          "did:web");
+  r = await sendLd(await withStatus("foreign"));
+  failsOnly(r, ["u[0].vc.status.revocation.list", "status"], "S2: a status " +
+            "list credential with a URL issuer and a did:key proof");
+  ok(/not authorised by the issuer/.test(checkById(r,
+     "u[0].vc.status.revocation.list").detail), "S2: the list row says why");
+
+  // --- S4: an unsupported cryptosuite is not a pass. --------------------
+  const sdSuite = await diSign(uniCred(UNI), "ecdsa-jcs-2019", uniSigner,
+                               "assertionMethod");
+  sdSuite.proof.cryptosuite = "ecdsa-sd-2023";
+  r = await sendLd(sdSuite);
+  eq(failedIds(r), [], "S4: an unsupported cryptosuite fails nothing");
+  eq([r.verdict, r.ok, r.incomplete], ["incomplete", false, 1],
+     "S4: an unsupported cryptosuite leaves the verdict incomplete");
+  ok(checkById(r, "u[0].vc.proof").essential &&
+     checkById(r, "u[0].vc.proof").status === "skip",
+     "S4: the issuer proof is an essential skip");
+
+  // --- S3 (and S4): an x5c chain is reported, never trusted on sight. ----
+  const rootKey = nodePemPair("rsa");
+  const interKey = nodePemPair("ec");
+  const leafKey = nodePemPair("ec");
+  const root = await testCert({ profile: "root-ca", cn: "Test Root",
+                                key: rootKey });
+  const inter = await testCert({ profile: "issuing-ca", cn: "Test Issuing",
+    key: interKey, issuer: { cert: root, key: rootKey } });
+  const govSans = [{ kind: "dns", value: "gov.example" }];
+  const leaf = await testCert({ profile: "tls-server", cn: "gov.example",
+    key: leafKey, issuer: { cert: inter, key: interKey }, sans: govSans });
+  ok(leaf.node.verify(inter.node.publicKey) &&
+     inter.node.verify(root.node.publicKey) &&
+     root.node.verify(root.node.publicKey), "node: the chain is sound");
+  const x5cJwt = function x5cJwt(chain, iss, signer) {
+    log.debug("Entering x5cJwt().");
+    log.debug("Leaving x5cJwt().");
+    return nodeJws({ alg: "ES256", typ: "dc+sd-jwt",
+                     x5c: chain.map(function (c) {
+                       return c.b64;
+                     }) }, sdPayload(iss), { privateKey:
+                     (signer || leafKey).privateKey });
+  };
+  const anchors = { session: { trustAnchors: [root.pem] } };
+  const trustOf = function trustOf(res) {
+    log.debug("Entering trustOf().");
+    log.debug("Leaving trustOf().");
+    return checkById(res, "p[0].issuer.trust");
+  };
+  // Unanchored: nothing fails, the trust row is an essential skip, and the
+  // verdict is incomplete.
+  r = await sendSd(x5cJwt([leaf, inter], GOV));
+  eq(failedIds(r), [], "S3: a sound chain, unanchored, fails nothing");
+  eq(checkById(r, "p[0].issuer.signature").status, "pass",
+     "S3: the signature row still says the JWT verifies with the leaf");
+  eq([trustOf(r).status, trustOf(r).essential], ["skip", true],
+     "S3: with no anchor the trust row is an essential skip");
+  eq([r.verdict, r.ok, r.incomplete], ["incomplete", false, 1],
+     "S4: an unanchored x5c is an incomplete verdict, not a pass");
+  ok(/NOT anchored/.test(trustOf(r).detail) &&
+     /each certificate is signed by the next/.test(trustOf(r).detail) &&
+     /bound to the end-entity certificate by the dNSName/.test(
+       trustOf(r).detail), "S3: the unanchored row reports the chain: " +
+     trustOf(r).detail);
+  // The same chain, anchored at the supplied root (an RSA root over an EC
+  // chain, so both signature families are checked).
+  r = await sendSd(x5cJwt([leaf, inter], GOV), anchors);
+  allPass(r, "S3: a sound chain anchored at a supplied root");
+  ok(/anchored at the supplied trust anchor "Test Root"/.test(
+     trustOf(r).detail), trustOf(r).detail);
+  // The anchor included in x5c: reported (HAIP 1.0 section 6.1.1).
+  r = await sendSd(x5cJwt([leaf, inter, root], GOV));
+  eq(trustOf(r).status, "skip", "S3: an included anchor is not trusted " +
+     "because it is there");
+  ok(/INCLUDED/.test(trustOf(r).detail), "S3: the included anchor is " +
+     "reported: " + trustOf(r).detail);
+  r = await sendSd(x5cJwt([leaf, inter, root], GOV), anchors);
+  allPass(r, "S3: an included anchor that IS a supplied anchor");
+  ok(/INCLUDED/.test(trustOf(r).detail), "S3: and it is still reported");
+  // A self-signed leaf.
+  const selfKey = nodePemPair("ec");
+  const selfLeaf = await testCert({ profile: "tls-server",
+    cn: "gov.example", key: selfKey, sans: govSans });
+  ok(selfLeaf.node.verify(selfLeaf.node.publicKey), "node: self-signed");
+  r = await sendSd(x5cJwt([selfLeaf], GOV, selfKey));
+  eq(trustOf(r).status, "skip", "S3: a self-signed leaf, no anchors");
+  ok(/SELF-SIGNED/.test(trustOf(r).detail), trustOf(r).detail);
+  r = await sendSd(x5cJwt([selfLeaf], GOV, selfKey), anchors);
+  failsOnly(r, ["p[0].issuer.trust"], "S3: a self-signed leaf against a " +
+            "supplied anchor");
+  ok(/none of the 1 supplied trust anchor/.test(trustOf(r).detail),
+     trustOf(r).detail);
+  // An expired leaf.
+  const oldLeaf = await testCert({ profile: "tls-server", cn: "gov.example",
+    key: leafKey, issuer: { cert: inter, key: interKey }, sans: govSans,
+    notBefore: new Date(Date.now() - 3 * 86400000),
+    notAfter: new Date(Date.now() - 86400000) });
+  r = await sendSd(x5cJwt([oldLeaf, inter], GOV), anchors);
+  failsOnly(r, ["p[0].issuer.trust"], "S3: an expired leaf");
+  ok(/EXPIRED/.test(trustOf(r).detail), trustOf(r).detail);
+  // A broken link: an intermediate with the right NAME and another key.
+  const imposterKey = nodePemPair("ec");
+  const imposter = await testCert({ profile: "issuing-ca",
+    cn: "Test Issuing", key: imposterKey,
+    issuer: { cert: root, key: rootKey } });
+  ok(!leaf.node.verify(imposter.node.publicKey) &&
+     leaf.node.issuer === imposter.node.subject, "node: the names match " +
+     "and the signature does not");
+  r = await sendSd(x5cJwt([leaf, imposter], GOV), anchors);
+  failsOnly(r, ["p[0].issuer.trust"], "S3: a broken link");
+  ok(/BROKEN/.test(trustOf(r).detail), trustOf(r).detail);
+  r = await sendSd(x5cJwt([leaf, imposter], GOV));
+  failsOnly(r, ["p[0].issuer.trust"], "S3: a broken link fails even " +
+            "with no anchors");
+  // iss not in the end-entity certificate's SAN.
+  r = await sendSd(x5cJwt([leaf, inter], "https://other.example"),
+                   anchors);
+  failsOnly(r, ["p[0].issuer.trust"], "S3: iss not bound to the leaf");
+  ok(/NOT bound to the end-entity certificate/.test(trustOf(r).detail),
+     trustOf(r).detail);
+  // A chain anchored at some OTHER root.
+  const otherRootKey = nodePemPair("ec");
+  const otherRoot = await testCert({ profile: "root-ca", cn: "Other Root",
+                                     key: otherRootKey });
+  r = await sendSd(x5cJwt([leaf, inter], GOV),
+                   { session: { trustAnchors: [otherRoot.pem] } });
+  failsOnly(r, ["p[0].issuer.trust"], "S3: anchors that did not issue it");
+  log.info("PASS #467: a kid never chooses the issuer (S1), a URL " +
+           "issuer's proof is by a method it controls (S2), an x5c chain " +
+           "is reported and anchored or not (S3), and a check not " +
+           "performed is not a pass (S4).");
+  log.debug("Leaving securityFindings().");
+}
+
 async function main() {
   log.debug("Entering main().");
   randomTokens();
@@ -1930,14 +2353,15 @@ async function main() {
   await tokenStatusLists(env);
   await bitstringStatusLists(env);
   await cryptosuites(env);
+  await securityFindings(env);
   log.info("vp_verifier_engine: " + assertions + " assertions, " +
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 450, "only " + assertions + " assertions ran; " +
-            "expected at least 450");
-  assert.ok(checksSeen >= 1600, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 1600");
+  assert.ok(assertions >= 700, "only " + assertions + " assertions ran; " +
+            "expected at least 700");
+  assert.ok(checksSeen >= 2250, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 2250");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }

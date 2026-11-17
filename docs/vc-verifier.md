@@ -92,6 +92,48 @@ answered. Per format:
   `ecdsa-sd-2023` is reported as SKIP; its derived proofs are not
   implemented.
 
+**Whose key it is (#467).** A signature that verifies says nothing until
+something ties the key to the issuer:
+
+* **A `kid` never chooses the issuer.** A DID in the issuer JWT's `kid` is
+  resolved only when `iss` IS that DID. An `https` `iss` takes its keys from
+  its own JWT VC Issuer Metadata (SD-JWT VC section 2.5), and a DID in `kid`
+  beside it is not used. `jwt_vc_json` follows the same rule.
+* **An `ldp_vc` proof must be by a method the issuer controls.** For a DID
+  issuer, the method is under that DID. For an `https` issuer, it is an
+  `https` URL at or under the issuer, or a `did:web` whose document is
+  there. Anything else is a FAIL: "verification method not authorised by the
+  issuer". Status list credentials follow the same rule.
+* **An `x5c` chain is never trusted on sight.** Beside the signature row,
+  `issuer.trust` (and `mdoc.issuer-trust` for an mdoc `x5chain`) reports:
+  * whether the leaf is self-signed;
+  * whether each certificate is signed by the next;
+  * whether a trust anchor travels in the chain (HAIP 1.0 section 6.1.1
+    forbids that and a self-signed leaf);
+  * whether every certificate is within its validity;
+  * whether `iss` is bound to the leaf by a dNSName or URI subjectAltName.
+
+  A broken link, an expired certificate or an unbound `iss` is a FAIL. With
+  `session.trustAnchors` (PEM or base64 DER) the row is a PASS or a FAIL.
+  Without them nothing anchors the chain, and the row is a SKIP. The
+  certificate verification is pure JavaScript (node-forge ASN.1,
+  @noble/curves, forge RSA). A Status List Token's own `x5c` is not reported
+  this way yet.
+
+**The verdict.** Each check carries `essential: true` when it establishes
+authenticity: an issuer signature or proof, the issuer trust, a disclosure
+digest, the device signature, or a holder signature the query depends on.
+The result's `verdict` is one of three values:
+
+* `"fail"`: a check failed.
+* `"incomplete"`: nothing failed, but `incomplete` essential checks were
+  SKIPs, such as an unsupported cryptosuite or an unanchored `x5c`.
+* `"pass"`: neither of the above.
+
+`ok` is true only for `"pass"`. The page shows "Every check passed" only for a
+pass, and shows an incomplete verdict in amber, naming how many essential
+checks could not be performed.
+
 **Status lists** are checked per credential, and the `status` row summarises
 them:
 
