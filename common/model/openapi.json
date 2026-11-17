@@ -26,6 +26,15 @@
     },
     {
       "name": "Smart card"
+    },
+    {
+      "name": "SAML"
+    },
+    {
+      "name": "WS-Federation"
+    },
+    {
+      "name": "WS-Trust"
     }
   ],
   "paths": {
@@ -678,6 +687,692 @@
             }
           }
         }
+      }
+    },
+    "/samlacs": {
+      "post": {
+        "operationId": "samlAcsPost",
+        "description": "The assertion consumer, POST: a SAMLResponse is decoded, stashed and the\nbrowser sent on to the results page; a SAMLart is resolved first. The\nquery string is read too, after the form.",
+        "parameters": [
+          {
+            "name": "SAMLResponse",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "RelayState",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "TARGET",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "SAMLart",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "302 to the debugger's results page. The Location carries the id the page\nreads the stashed message back with, from GET /samlresponse.",
+            "headers": {
+              "location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Saml.Landing"
+                  },
+                  {
+                    "type": "array",
+                    "items": {}
+                  }
+                ]
+              }
+            },
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Saml.Landing"
+                  },
+                  {
+                    "type": "array",
+                    "items": {}
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "samlAcsGet",
+        "description": "The assertion consumer, GET: the redirect binding's query string.",
+        "parameters": [
+          {
+            "name": "SAMLResponse",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "RelayState",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "TARGET",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "SAMLart",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "302 to the debugger's results page. The Location carries the id the page\nreads the stashed message back with, from GET /samlresponse.",
+            "headers": {
+              "location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ]
+      }
+    },
+    "/samlacs/artifact": {
+      "get": {
+        "operationId": "samlAcsArtifact",
+        "description": "SAML 1.1's Browser/Artifact consumer, at a location of its own because a\n1.1 service provider picks the profile by the consumer it names. A SAMLart\nand TARGET arrive on a GET.",
+        "parameters": [
+          {
+            "name": "SAMLResponse",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "RelayState",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "TARGET",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "SAMLart",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "302 to the debugger's results page. The Location carries the id the page\nreads the stashed message back with, from GET /samlresponse.",
+            "headers": {
+              "location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ]
+      }
+    },
+    "/samlartifactctx": {
+      "post": {
+        "operationId": "samlArtifactContext",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Saml.ArtifactContext"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Saml.ArtifactContextRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/samlmetadata": {
+      "get": {
+        "operationId": "samlMetadata",
+        "description": "Fetch an identity provider's SAML metadata server-side, because the\ndescriptor endpoint sends no CORS headers. The URL is the caller's, under\nthe address policy, timeouts and caps.",
+        "parameters": [
+          {
+            "name": "url",
+            "in": "query",
+            "required": false,
+            "description": "The metadata URL, BASE64-encoded so it survives query escaping. Its\nscheme is checked after decoding.",
+            "schema": {
+              "type": "string"
+            },
+            "x-checked-in-code": "api/server.js: decoded from base64, then must be an absolute http(s) URL (400, url must be an absolute http(s) URL.)",
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The metadata document, as the server sent it.",
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "The metadata server answered with an error status: that status, and its\nbody as text.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "5XX": {
+            "description": "The metadata server answered with an error status: that status, and its\nbody as text.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ]
+      }
+    },
+    "/samlresponse": {
+      "get": {
+        "operationId": "samlResponse",
+        "description": "Read back what a SAML landing stashed.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "description": "The id from the landing's Location. Unknown or expired is a 404.",
+            "schema": {
+              "type": "string"
+            },
+            "x-checked-in-code": "api/server.js: looked up in the ten-minute exchange stash; absent, unknown or expired answers 404",
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Saml.Exchange"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelRefusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ]
+      }
+    },
+    "/samlsign": {
+      "post": {
+        "operationId": "samlSign",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Saml.SignedRedirect"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Saml.SignedPost"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Saml.SignRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/samlslo": {
+      "post": {
+        "operationId": "samlSloPost",
+        "description": "Single Logout, POST: a LogoutResponse (or LogoutRequest) to show.",
+        "parameters": [
+          {
+            "name": "SAMLResponse",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "RelayState",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "TARGET",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "SAMLart",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "302 to the debugger's results page. The Location carries the id the page\nreads the stashed message back with, from GET /samlresponse.",
+            "headers": {
+              "location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Saml.Landing"
+                  },
+                  {
+                    "type": "array",
+                    "items": {}
+                  }
+                ]
+              }
+            },
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/Saml.Landing"
+                  },
+                  {
+                    "type": "array",
+                    "items": {}
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "samlSloGet",
+        "description": "Single Logout, GET: the redirect binding's query string.",
+        "parameters": [
+          {
+            "name": "SAMLResponse",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "RelayState",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "TARGET",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "SAMLart",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "302 to the debugger's results page. The Location carries the id the page\nreads the stashed message back with, from GET /samlresponse.",
+            "headers": {
+              "location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SAML"
+        ]
       }
     },
     "/scim": {
@@ -1474,6 +2169,269 @@
         "tags": [
           "Shared Signals"
         ]
+      }
+    },
+    "/wsfed": {
+      "post": {
+        "operationId": "wsfedLandingPost",
+        "description": "The passive sign-in landing, POST: the identity provider's auto-submitted\nform. The query string is read too, after the form.",
+        "parameters": [
+          {
+            "name": "wa",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "wresult",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "wctx",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "302 to the results page: `?id=` for a sign-in, `?signout=` for not.",
+            "headers": {
+              "location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "WS-Federation"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/WsFed.Landing"
+                  },
+                  {
+                    "type": "array",
+                    "items": {}
+                  }
+                ]
+              }
+            },
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/WsFed.Landing"
+                  },
+                  {
+                    "type": "array",
+                    "items": {}
+                  }
+                ]
+              }
+            }
+          },
+          "description": "A JSON array is read as no member at all: a sign-out, as always."
+        }
+      },
+      "get": {
+        "operationId": "wsfedLandingGet",
+        "description": "The landing, GET: wsignoutcleanup1.0 is delivered as one.",
+        "parameters": [
+          {
+            "name": "wa",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "wresult",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "wctx",
+            "in": "query",
+            "required": false,
+            "schema": {},
+            "x-passthrough": true,
+            "explode": false
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "302 to the results page: `?id=` for a sign-in, `?signout=` for not.",
+            "headers": {
+              "location": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "A sentence for the person at the browser, as text/plain.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "WS-Federation"
+        ]
+      }
+    },
+    "/wsfedresponse": {
+      "get": {
+        "operationId": "wsfedResponse",
+        "description": "Read back what the landing stashed. The same stash as GET /samlresponse,\nso either reads either's id.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "description": "The id from the landing's Location. Unknown or expired is a 404.",
+            "schema": {
+              "type": "string"
+            },
+            "x-checked-in-code": "api/server.js: looked up in the ten-minute exchange stash; absent, unknown or expired answers 404",
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Saml.Exchange"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelRefusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "WS-Federation"
+        ]
+      }
+    },
+    "/wstrust": {
+      "post": {
+        "operationId": "wstrustProxy",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WsTrust.StsAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "WS-Trust"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WsTrust.ProxyRequest"
+              }
+            },
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "$ref": "#/components/schemas/WsTrust.ProxyRequest"
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -3015,6 +3973,426 @@
           }
         },
         "description": "A request this service refused, or a call it could not complete. `error`\nis a sentence for a person; `code`, where the endpoint has one, is the\nstable name a caller branches on."
+      },
+      "Saml.ArtifactContext": {
+        "type": "object",
+        "required": [
+          "relayState"
+        ],
+        "properties": {
+          "relayState": {
+            "type": "string",
+            "description": "art:<id>. Expires with the exchange stash."
+          }
+        },
+        "description": "The handle to carry in RelayState (or SAML 1.1's TARGET)."
+      },
+      "Saml.ArtifactContextRequest": {
+        "type": "object",
+        "required": [
+          "arsUrl"
+        ],
+        "properties": {
+          "arsUrl": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The Artifact Resolution Service (2.0) or SAML responder (1.1). Fetched\nlater, by the landing, under the address policy.",
+            "x-refusal": {
+              "message": "arsUrl is required."
+            }
+          },
+          "privateKeyPem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Signs the resolution request when present; unsigned when not."
+          },
+          "certPem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "spEntityId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "sigAlg": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-checked-in-code": "common/xmldsig.js: checked when the resolution request is signed; a failure is the landing's 500"
+          },
+          "samlVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"1.1\" for a SAML 1.1 responder; anything else is SAML 2.0.",
+            "x-checked-in-code": "api/server.js: exactly \"1.1\" selects SAML 1.1; every other value is 2.0"
+          },
+          "wsa": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Saml.WsAddressing"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "What resolving an artifact will need, registered before the request goes\nout. The key is optional (neither version requires the resolution request\nto be signed); the address is not."
+      },
+      "Saml.Exchange": {
+        "type": "object",
+        "required": [
+          "responseXml",
+          "relayState"
+        ],
+        "properties": {
+          "responseXml": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {}
+              },
+              {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            ],
+            "description": "The decoded protocol message (or a WS-Federation wresult verbatim)."
+          },
+          "relayState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {}
+              },
+              {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            ],
+            "description": "The RelayState, TARGET or wctx that came back with it. Empty if none."
+          }
+        },
+        "description": "A stashed exchange. The SAML and WS-Federation landings share one."
+      },
+      "Saml.Landing": {
+        "type": "object",
+        "properties": {
+          "SAMLResponse": {
+            "description": "POST binding: base64 XML. Redirect binding: DEFLATE then base64.",
+            "x-passthrough": true
+          },
+          "RelayState": {
+            "description": "SAML 2.0's relay state, returned byte for byte.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/server.js: must be a string, else 400 text/plain ACS: invalid RelayState. (also TARGET's)"
+          },
+          "TARGET": {
+            "description": "SAML 1.1's relay state, read when RelayState is absent.",
+            "x-passthrough": true
+          },
+          "SAMLart": {
+            "description": "An artifact, resolved over the SOAP back-channel.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/server.js: resolved with the context RelayState names (art:<id>); no context, no Response or a failed call is a 500"
+          }
+        },
+        "description": "What an identity provider sends, in a form or a query string. Nothing\nhere is refused by the schema: see the head of this file."
+      },
+      "Saml.SignRequest": {
+        "type": "object",
+        "required": [
+          "xml",
+          "privateKeyPem"
+        ],
+        "properties": {
+          "xml": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The unsigned AuthnRequest or LogoutRequest.",
+            "x-passthrough": true,
+            "x-refusal": {
+              "message": "xml and privateKeyPem are required."
+            }
+          },
+          "privateKeyPem": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The service provider's RSA private key, PEM. Never stored.",
+            "x-refusal": {
+              "message": "xml and privateKeyPem are required."
+            }
+          },
+          "binding": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "post, artifact, or anything else for the HTTP-Redirect binding.",
+            "x-checked-in-code": "api/server.js: post and artifact are named; every other value, and none, is the redirect binding"
+          },
+          "sigAlg": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The SignatureMethod URI. Absent is rsa-sha256.",
+            "x-checked-in-code": "common/xmldsig.js: rsaSigAlgRefusal() — an RSA method this signer implements (400 samlsign: SignatureMethod … is not an RSA method …)"
+          },
+          "destination": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The identity provider's endpoint. Absent: only the query string.",
+            "x-passthrough": true
+          },
+          "certPem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A certificate for KeyInfo, PEM. Absent: no KeyInfo."
+          },
+          "relayState": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sent as written. The artifact binding replaces it with its handle.",
+            "x-passthrough": true
+          },
+          "rootElement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "AuthnRequest or LogoutRequest. Read, and changes nothing.",
+            "x-passthrough": true
+          },
+          "arsUrl": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The artifact binding only: the Artifact Resolution Service's URL."
+          },
+          "spEntityId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The artifact binding only: the <Issuer> of the ArtifactResolve.",
+            "x-passthrough": true
+          }
+        },
+        "description": "Sign a request for the binding it is sent on."
+      },
+      "Saml.SignedPost": {
+        "type": "object",
+        "required": [
+          "mode",
+          "location",
+          "params",
+          "signedXml"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "post"
+            ]
+          },
+          "location": {
+            "type": "string"
+          },
+          "params": {
+            "type": "object",
+            "properties": {
+              "SAMLRequest": {
+                "type": "string"
+              },
+              "RelayState": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "SAMLRequest"
+            ]
+          },
+          "signedXml": {
+            "type": "string",
+            "description": "The enveloped-signed document, for display."
+          }
+        },
+        "description": "The HTTP-POST binding: the form the browser auto-submits."
+      },
+      "Saml.SignedRedirect": {
+        "type": "object",
+        "required": [
+          "mode",
+          "location",
+          "queryString"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "redirect"
+            ]
+          },
+          "location": {
+            "type": "string",
+            "description": "destination + the query string, or the query string alone."
+          },
+          "queryString": {
+            "type": "string",
+            "description": "SAMLRequest[&RelayState]&SigAlg&Signature."
+          }
+        },
+        "description": "The HTTP-Redirect binding: a signed query string."
+      },
+      "Saml.WsAddressing": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only a truthy value adds the headers."
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "wsa:To. Empty is the ARS URL.",
+            "x-passthrough": true
+          },
+          "messageId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "wsa:MessageID. Empty is a fresh urn:uuid.",
+            "x-passthrough": true
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "replyTo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          }
+        },
+        "description": "WS-Addressing headers for the artifact back-channel's SOAP envelope."
       },
       "Scim.Answer": {
         "type": "object",
@@ -4597,6 +5975,111 @@
           }
         },
         "description": "The transmitter could not be reached. `code` is the network error's."
+      },
+      "WsFed.Landing": {
+        "type": "object",
+        "properties": {
+          "wa": {
+            "description": "wsignin1.0, wsignout1.0, wsignoutcleanup1.0. Echoed on a sign-out.",
+            "x-passthrough": true
+          },
+          "wresult": {
+            "description": "The RequestSecurityTokenResponse, raw XML. Absent is a sign-out.",
+            "x-passthrough": true
+          },
+          "wctx": {
+            "description": "The context the relying party sent, returned as written.",
+            "x-passthrough": true
+          }
+        },
+        "description": "What the identity provider sends, in a form or a query string."
+      },
+      "WsTrust.ProxyRequest": {
+        "type": "object",
+        "required": [
+          "url",
+          "soap"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The STS endpoint.",
+            "x-checked-in-code": "api/server.js: an absolute http(s) URL (400, url must be an absolute http(s) URL.); the address is the outbound agent's",
+            "x-refusal": {
+              "message": "url and soap are required."
+            }
+          },
+          "soap": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The SOAP envelope, sent as written.",
+            "x-passthrough": true,
+            "x-refusal": {
+              "message": "url and soap are required."
+            }
+          },
+          "soapVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"1.1\" (text/xml and a SOAPAction header) or anything else for SOAP 1.2\n(the action inside application/soap+xml). Compared after String(), so\nthe number 1.1 is SOAP 1.1 too. Absent is 1.2.",
+            "x-checked-in-code": "api/server.js: String(soapVersion) === \"1.1\" is SOAP 1.1; everything else is 1.2"
+          },
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The WS-Addressing action, into SOAPAction or the content type.",
+            "x-passthrough": true
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false, or the text \"false\" (a form sends text), turns certificate\nverification off."
+          }
+        }
+      },
+      "WsTrust.StsAnswer": {
+        "type": "object",
+        "required": [
+          "status",
+          "body"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The STS's HTTP status."
+          },
+          "body": {
+            "type": "string",
+            "description": "Its body as text: an RSTR, an RSTRC or a SOAP Fault."
+          }
+        },
+        "description": "What the STS answered, whatever its status."
       }
     }
   },

@@ -26,6 +26,9 @@ import "./scim.tsp";
 import "./ssf.tsp";
 import "./gnap.tsp";
 import "./smartcard.tsp";
+import "./saml.tsp";
+import "./wsfed.tsp";
+import "./wstrust.tsp";
 
 using Http;
 using OpenAPI;
