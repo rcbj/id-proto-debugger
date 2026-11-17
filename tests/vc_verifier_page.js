@@ -329,8 +329,10 @@ async function liveSigningRound(driver) {
       function () {
         assert.ok(/request_uri_method=post/.test(request.invocation),
                   request.invocation);
-        assert.ok(/^did:jwk:/.test(request.session.clientId),
-                  request.session.clientId);
+        // The Client Identifier Prefix is part of client_id itself
+        // (OpenID4VP 1.0 section 5.9).
+        assert.ok(/^decentralized_identifier:did:jwk:/.test(
+            request.session.clientId), request.session.clientId);
       });
   const walletNonce = nodeCrypto.randomBytes(12).toString("base64url");
   const got = await fetch(request.hosted.requestUri, { method: "POST",
@@ -351,8 +353,11 @@ async function liveSigningRound(driver) {
       });
   check("a decentralized_identifier request names the DID's key in kid " +
       "and carries no x5c", function () {
-        assert.ok(String(header.kid || "").indexOf(claims.client_id + "#")
-                  === 0, JSON.stringify(header));
+        // kid is a DID URL: the DID, without the client_id's prefix, then a
+        // fragment naming the key.
+        const did = claims.client_id.replace(/^decentralized_identifier:/, "");
+        assert.ok(String(header.kid || "").indexOf(did + "#") === 0,
+            JSON.stringify(header));
         assert.ok(!header.x5c, JSON.stringify(header));
       });
   const holder = ecPair();
