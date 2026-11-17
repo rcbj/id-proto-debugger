@@ -79,7 +79,17 @@ const REPORT_DIR = path.join(TESTS_DIR, "report");
 const RUN_ID = new Date().toISOString().replace(/:/g, "-").replace(/\..+$/, "");
 const RUN_DIR = path.join(REPORT_DIR, RUN_ID);
 const LOGS_DIR = path.join(RUN_DIR, "logs");
+// The storage keys every browser held on the debugger's origin when it
+// closed (tools/record-storage-on-quit.js), for storage_keys_recorded.js.
+const STORAGE_RECORD_FILE = path.join(RUN_DIR, "storage-keys.jsonl");
 const BASE_URL = process.env.DEBUGGER_BASE_URL || "https://localhost:3000";
+const STORAGE_RECORD_ORIGIN = (function () {
+  try {
+    return new URL(BASE_URL).origin;
+  } catch (e) {
+    return "";
+  }
+})();
 const env = process.env;
 
 // ---------------------------------------------------------------------------
@@ -500,6 +510,16 @@ function buildJobs() {
     env: {
       API_URL: env.API_URL || "https://localhost:4000",
     },
+  });
+
+  // EVERY STORAGE KEY THE RUN'S PAGES WROTE IS DECLARED. LAST, so every
+  // browser job has closed its browser through record-storage-on-quit.js.
+  jobs.push({
+    name: "Every browser storage key this run wrote is declared " +
+        "(models/storage, after every other job)",
+    script: "storage_keys_recorded.js",
+    last: true,
+    env: {},
   });
 
   // WHERE THE STACK'S IMAGES COME FROM. docker-compose-run-tests.yml takes
@@ -5417,6 +5437,11 @@ function runJob(job, index, live, again) {
     // shared module in-process covers real branches in it. Off unless
     // COVERAGE=true, so an ordinary run is byte-for-byte what it was.
     const childEnv = { ...process.env, ...job.env };
+    // Where tools/record-storage-on-quit.js writes the storage keys each
+    // browser held on the debugger's origin, and storage_keys_recorded.js
+    // (last) reads them. One file for the run.
+    childEnv.STORAGE_RECORD_FILE = STORAGE_RECORD_FILE;
+    childEnv.STORAGE_RECORD_ORIGIN = STORAGE_RECORD_ORIGIN;
     if (nodeCoverageOn) {
       childEnv.NODE_V8_COVERAGE = NODE_COVERAGE_TMP;
     }
@@ -5432,6 +5457,8 @@ function runJob(job, index, live, again) {
         path.join(TESTS_DIR, "tools", "attach-admin-token.js"),
         "--require",
         path.join(TESTS_DIR, "tools", "flush-coverage-on-quit.js"),
+        "--require",
+        path.join(TESTS_DIR, "tools", "record-storage-on-quit.js"),
         path.join(TESTS_DIR, job.script), "--url",
         BASE_URL], {
       env: childEnv,

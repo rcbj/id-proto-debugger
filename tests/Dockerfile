@@ -983,6 +983,7 @@ COPY tests/env ./env
 # model's sources, with api/env, go into /usr/src/source-tree (below), and
 # models/'s own TypeSpec install is made there in the final stage.
 COPY tests/data_model.js tests/api_model_wire.js tests/api_model_gaps.js \
+     tests/storage_keys_recorded.js \
      tests/storage_inventory.js ./
 COPY api/model_validate.js ./
 COPY tests/fixtures/api_model ./fixtures/api_model
