@@ -146,6 +146,10 @@ COPY tests/sts_applications.js ./
 # require it. A shared module, with the same MODULE_NOT_FOUND failure as the
 # rest when this line is missing.
 COPY tests/authn_signin.js ./
+# desktop_user_agent.js is the User-Agent browser_flags.js gives Chrome and
+# sts_applications.js's authorizationCode() sends (#356). A shared module:
+# the same MODULE_NOT_FOUND failure as the rest when this line is missing.
+COPY tests/desktop_user_agent.js ./
 # kerberos_principals.js rebuilds what the Kerberos jobs read off iya-sts's
 # deleted /krb5/principals, from /admin-api (#595). A shared module: the
 # same MODULE_NOT_FOUND failure as the rest when this line is missing.
@@ -283,6 +287,9 @@ COPY common/generate_tls_cert.js ./
 # (wstrust_msg.js) and validates them against the derived XSD in ./schemas.
 COPY common/xmldsig.js ./
 COPY client/src/wstrust_msg.js client/src/jose_jwe.js client/src/edge_landing.js ./
+# jose_jwe.js requires ./jwe_kem and ./hpke (#312), so a flat jose_jwe.js
+# needs them flat beside it.
+COPY client/src/jwe_kem.js client/src/hpke.js ./
 # The SAML wire-format reader, loaded directly by
 # tests/saml_authnrequest_page.js and tests/saml_response_decoder_page.js to
 # BUILD the fixtures they then paste into the page — a real deflated, signed
@@ -393,6 +400,13 @@ COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
 # offer made on iya-sts's portal: shared by vc_presentation_protocols.js and
 # vc_presentation_polaris.js, and scheduled by nothing.
 COPY tests/wallet_issuance.js ./
+# The test-stack CORS proxy and its node job (#431). The proxy lands FLAT as
+# cors-proxy.js (hyphen) beside cors_proxy_engine.js (underscore), so the two
+# never collide; the job finds it here or in tests/cors-proxy/ on a host run.
+COPY tests/cors_proxy_engine.js tests/cors-proxy/cors-proxy.js ./
+# The deferred and QR-image pre-authorized offers through the wallet pages
+# (#365); it collects with wallet_issuance.js above.
+COPY tests/vci_offer_modes.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires
@@ -834,7 +848,7 @@ COPY tests/gnap_live.js tests/gnap_protocol.js tests/api_gnap.js \
 # a flat copy of that module. A second copy would make the job load
 # whichever file resolution order found.
 COPY tests/smartcard_engine.js tests/smartcard_page.js \
-     tests/smartcard_recorded.json ./
+     tests/smartcard_recorded.json tests/smartcard_card_vectors.json ./
 # The three api modules the engine job loads. They decide and do not
 # pull axios. Flat, beside the test, because this image has no api
 # tree. Do not also flat-copy the client codecs: the job reads those
@@ -848,6 +862,11 @@ COPY api/otp_verify.js api/smartcard_reader.js api/otp_hid.js ./
 # JSON file, in a tenth of a second, on every containerized run while passing
 # on every host one.
 COPY tests/hbs_signatures.js tests/hbs_vectors.json ./
+# Post-quantum and HPKE JWE (#312). Like the job above it loads its
+# subjects (hpke.js, jwe_kem.js, jose_jwe.js, pqc.js) from the client tree
+# `COPY client/src` stages; the three vector files are data beside the test.
+COPY tests/hpke_jwe_engine.js tests/hpke_pq_vectors.json \
+     tests/hybrid_kem_vectors.json tests/jose_hpke_vectors.json ./
 # POST-QUANTUM XML SIGNATURE. Like the two above it needs no flat copy of its
 # subjects: `common/xmldsig.js` is already flat as `xmldsig.js`,
 # `client/src/pqc.js` is already flat as `pqc.js`, and `client/src/hbs.js` and

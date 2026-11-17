@@ -1172,8 +1172,8 @@ var READ_DECODERS = {
   piv: { out: "sc_piv_out", decode: function (hex) {
     return piv.describeResponse(hex);
   } },
-  pgp: { out: "sc_pgp_out", decode: function (hex) {
-    return pgp.describeResponse(hex);
+  pgp: { out: "sc_pgp_out", decode: function (hex, curve) {
+    return pgp.describeResponse(hex, curve);
   } },
   hsm: { out: "sc_hsm_out", decode: function (hex) {
     return hsm.describeResponse(hex);
@@ -1200,7 +1200,46 @@ function transmitSequence(reader, apdus) {
 
 // Rows for one step's answer, and — for a certificate or a public key —
 // a promise of the rows that describe it.
-function readRows(app, label, apdus, body) {
+// The curve a READ PUBLIC KEY answer is on, which the answer itself does
+// not say for a 32-byte point. `context.curves` is filled from the
+// application related data, the first step of the OpenPGP read.
+function pgpCurveFor(apdus, last, context) {
+  log.debug("Entering pgpCurveFor().");
+  var command = apdus[apdus.length - 1] || "";
+  if (/^00ca006e/i.test(command) && /^9000$/.test(last.status || "") &&
+      last.data) {
+    try {
+      context.curves = pgp.keyCurves(last.data);
+    } catch (e) {
+      context.curves = {};
+    }
+  }
+  var curve = null;
+  if (/^00478100/i.test(command) && context.curves) {
+    curve = context.curves[command.slice(10, 12).toLowerCase()] || null;
+  }
+  log.debug("Leaving pgpCurveFor(). " + (curve || "none"));
+  return curve;
+}
+
+// What the Key row says. describePublicPem() tries Web Crypto imports and
+// has no X25519 among them, so a key whose curve the algorithm attributes
+// already named is described by that name rather than as unrecognised.
+function pgpKeyText(desc, curve) {
+  log.debug("Entering pgpKeyText().");
+  var text = "unrecognised";
+  if (desc) {
+    text = desc.kind + (desc.bits ? " " + desc.bits + "-bit" : "") +
+        (desc.curve || desc.name ? " " + (desc.curve || desc.name) : "");
+  } else if (curve) {
+    text = (curve === "X25519" || curve === "Ed25519" ? "okp " : "ec ") +
+        curve + " (from the algorithm attributes)";
+  }
+  log.debug("Leaving pgpKeyText().");
+  return text;
+}
+
+function readRows(app, label, apdus, body, context) {
   log.debug("Entering readRows().");
   var results = body.results || [body];
   var last = results[results.length - 1] || {};
@@ -1210,10 +1249,12 @@ function readRows(app, label, apdus, body) {
         (last.status || "nothing") + "; the application is not there or " +
         "is disabled" }], extra: null };
   }
+  var curve = app === "pgp" ? pgpCurveFor(apdus, last, context || {}) :
+      null;
   var described = null;
   try {
     described = READ_DECODERS[app].decode((last.data || "") +
-                                          (last.status || ""));
+                                          (last.status || ""), curve);
   } catch (e) {
     log.debug("Leaving readRows(). Undecodable.");
     return { rows: [{ label: label, value: e.message }], extra: null };
@@ -1254,9 +1295,7 @@ function readRows(app, label, apdus, body) {
     });
   } else if (app === "pgp" && described.pem) {
     extra = keys.describePublicPem(described.pem).then(function (desc) {
-      return [{ label: "    Key", value: desc ? desc.kind +
-          (desc.bits ? " " + desc.bits + "-bit" : "") +
-          (desc.curve ? " " + desc.curve : "") : "unrecognised" }];
+      return [{ label: "    Key", value: pgpKeyText(desc, curve) }];
     });
   }
   log.debug("Leaving readRows().");
@@ -1296,6 +1335,7 @@ function readFromKey(app) {
   var out = READ_DECODERS[app].out;
   var rows = [];
   var extras = [];
+  var context = {};
   setStatus("Reading from the key…");
   chosenReader().then(function (reader) {
     rows.push({ label: "Reader", value: reader });
@@ -1303,7 +1343,7 @@ function readFromKey(app) {
     plan.forEach(function (step) {
       chain = chain.then(function () {
         return transmitSequence(reader, step[1]).then(function (body) {
-          var got = readRows(app, step[0], step[1], body);
+          var got = readRows(app, step[0], step[1], body, context);
           var at = rows.length + got.rows.length;
           rows = rows.concat(got.rows);
           if (got.extra) {
@@ -2722,6 +2762,9 @@ module.exports = {
   // Exported for tests/smartcard_engine.js, which holds every plan to
   // read-only instructions.
   readPlan: readPlan,
+  // And the step decoder, which tests/smartcard_engine.js drives with a
+  // real key's answers (tests/smartcard_card_vectors.json).
+  readRows: readRows,
   // The collapsible panes and the collapse / expand all switch, shared with
   // the XACML and GNAP pages.
   togglePane: panes.togglePane,

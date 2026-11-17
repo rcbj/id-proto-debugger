@@ -25,7 +25,7 @@
 #
 # Environment: POLARIS_PORT (the plain-HTTP listener, default 9080) and
 # POLARIS_PUBLIC_BASE_URL (the https origin a wallet reaches it by, which is
-# the TLS CORS proxy in front of it, waltid/cors-proxy.js).
+# the TLS CORS proxy in front of it, tests/cors-proxy/cors-proxy.js).
 # ---------------------------------------------------------------------------
 set -u
 D=/data

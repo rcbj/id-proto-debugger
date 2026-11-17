@@ -184,6 +184,17 @@ var config = {
   oid4vpVerifierMaxResponseBytes: 262144,
   oid4vpVerifierMaxSessionBytes: 1048576,
   oid4vpVerifierMaxRequestObjectBytes: 65536,
+  // The hosted SSF transmitter (#363, api/ssf_transmitter.js): a receiver
+  // discovers it, creates its stream there and polls it; the page signs.
+  // Each lifetime is the default AND the ceiling for one transmitter.
+  ssfTransmitterEnabled: true,
+  ssfTransmitterTtlMs: 3600000,
+  ssfTransmitterIdleTtlMs: 1800000,
+  ssfTransmitterMaxInstances: 10,
+  ssfTransmitterMaxInstancesPerCaller: 3,
+  ssfTransmitterMaxStreams: 5,
+  ssfTransmitterMaxQueued: 200,
+  ssfTransmitterMaxEventBytes: 65536,
   tlsAllowedPorts: "any",
   spiffeAllowedPorts: [8081, 8092, 8181],
   spiffeAllowedSocketPaths: ["/tmp/spire-agent/", "/tmp/spire-server/"],

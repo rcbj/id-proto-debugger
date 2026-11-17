@@ -126,6 +126,7 @@
 // arrangement tests/wait_for.js has, and for the same reason.
 // The sign-in screen over `/authn-api` (#571).
 var authnSignin = require("./authn_signin");
+var DESKTOP_USER_AGENT = require("./desktop_user_agent").DESKTOP_USER_AGENT;
 var bunyan = require("bunyan");
 var assert = require("assert");
 var log = bunyan.createLogger({
@@ -1422,13 +1423,28 @@ async function isProduct(base) {
 // screen passed, and the code read off the redirect. For a job that needs a
 // person's token and used the password grant for it — which RFC 9700 section
 // 2.4 removes and a product-mode service refuses. `opts`: { clientId,
-// redirectUri, username, password, scope, extra, cookie }. Answers { code,
-// verifier, cookie }. Given the `cookie` a previous call answered, the
-// session is used again and nobody signs in — what a browser does on a second
-// visit, and much cheaper for a job that needs a token per client.
+// redirectUri, username, password, scope, extra, cookie, userAgent }.
+// Answers { code, verifier, cookie }. Given the `cookie` a previous call
+// answered, the session is used again and nobody signs in — what a browser
+// does on a second visit, and much cheaper for a job that needs a token per
+// client.
+//
+// EVERY REQUEST OF THE WALK SENDS A DESKTOP BROWSER'S USER-AGENT (#356),
+// ALWAYS. This function stands in for a browser, and a product-mode iya-sts
+// scores a sign-in from node's own User-Agent as an automated client and
+// refuses it as "Authentication failed" with the right password. Always
+// rather than in product mode only: development records the score and
+// refuses nothing, so it changes no outcome there, and asking the mode first
+// would be a settings read through the management API on every sign-in.
+// `opts.userAgent` sends another — a job asserting the automated-client
+// decision passes node's, or `false` for no override at all.
 async function authorizationCode(base, opts) {
   log.debug("Entering authorizationCode(). " + opts.clientId);
   var consentScreen = require("./consent_screen.js");
+  var browser = {};
+  if (opts.userAgent !== false) {
+    browser["user-agent"] = opts.userAgent || DESKTOP_USER_AGENT;
+  }
   var pair = pkce();
   var url = base + "/oauth2/authorize?" + new URLSearchParams(Object.assign({
     response_type: "code", client_id: opts.clientId,
@@ -1440,11 +1456,12 @@ async function authorizationCode(base, opts) {
     return new URL(location, base).toString();
   };
   if (opts.cookie) {
-    var again = await fetch(url, { headers: { Cookie: opts.cookie },
-                                   redirect: "manual" });
+    var again = await fetch(url, {
+      headers: Object.assign({ Cookie: opts.cookie }, browser),
+      redirect: "manual" });
     var settledAgain = await consentScreen.settleAuthorization({
       base: base, location: again.headers.get("location") || "",
-      cookie: opts.cookie });
+      cookie: opts.cookie, headers: browser });
     var landed = settledAgain.location || again.headers.get("location") || "";
     var reused = (landed.match(/[?&]code=([^&]+)/) || [])[1];
     assert.ok(reused, "no code for " + opts.clientId + " on the session " +
@@ -1453,7 +1470,7 @@ async function authorizationCode(base, opts) {
     return { code: decodeURIComponent(reused), verifier: pair.verifier,
              cookie: opts.cookie };
   }
-  var first = await fetch(url, { redirect: "manual" });
+  var first = await fetch(url, { redirect: "manual", headers: browser });
   var screenAt = first.headers.get("location") || "";
   assert.ok(/\/authn\/login\?authn=/.test(screenAt),
     "the authorization request for " + opts.clientId + " should reach the " +
@@ -1466,7 +1483,8 @@ async function authorizationCode(base, opts) {
   var screenUrl = new URL(absolute(screenAt));
   var signedIn = await authnSignin.submit(screenUrl.origin +
     screenUrl.pathname.replace(/\/authn\/login$/, ""), screenUrl.toString(),
-    { action: "login", username: opts.username, password: opts.password });
+    { action: "login", username: opts.username, password: opts.password },
+    { headers: browser });
   // EVERY cookie the walk set, as one Cookie header: the shell's arrival
   // cookie, upgraded in place by the sign-in, and whatever else it set.
   var cookie = signedIn.next === "redirect" ? signedIn.cookie : "";
@@ -1477,11 +1495,12 @@ async function authorizationCode(base, opts) {
       "session; the screen answered " + signedIn.status + " " +
       signedIn.next + ": " + JSON.stringify(signedIn.errors));
   }
-  var back = await fetch(signedIn.location || absolute(url),
-                         { headers: { Cookie: cookie }, redirect: "manual" });
+  var back = await fetch(signedIn.location || absolute(url), {
+    headers: Object.assign({ Cookie: cookie }, browser),
+    redirect: "manual" });
   var location = back.headers.get("location") || "";
   var settled = await consentScreen.settleAuthorization({
-    base: base, location: location, cookie: cookie });
+    base: base, location: location, cookie: cookie, headers: browser });
   location = settled.location || location;
   var code = (location.match(/[?&]code=([^&]+)/) || [])[1];
   assert.ok(code, "no code for " + opts.clientId + "; the flow ended at " +

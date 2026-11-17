@@ -839,7 +839,7 @@ function finishResponse() {
       var encrypting = mode === "direct_post.jwt" ?
         vpProtocols.encryptResponse({ fields: fields,
           clientMetadata: state.request.clientMetadata,
-          kid: (responseEncryptionKey() || {}).kid,
+          key: responseEncryptionKey(),
           enc: (el("vp_response_enc") || {}).value }) :
         Promise.resolve(null);
       return encrypting.then(function (encryption) {
@@ -869,7 +869,8 @@ function renderEncryption(encryption) {
     setJson("vp_jwe_header", encryption.header);
     setValue("vp_jwe", encryption.jwe);
     setText("vp_jwe_note", "Encrypted " + encryption.header.alg + " / " +
-      encryption.enc + " to the Verifier's key " + (encryption.key.kid ||
+      (encryption.enc || "no enc (HPKE Integrated Encryption)") +
+      " to the Verifier's key " + (encryption.key.kid ||
       "(no kid)") + " from client_metadata.jwks. Only that Verifier can " +
       "read what is above; anybody on the way sees this.");
   }
@@ -886,9 +887,20 @@ function responseEncryptionKey() {
     log.debug("Leaving responseEncryptionKey(). Not encrypted.");
     return null;
   }
-  var keys = vpProtocols.encryptionKeys(state.request.clientMetadata);
+  var keys = vpProtocols.encryptionKeys(state.request.clientMetadata,
+                                        keySelection());
   log.debug("Leaving responseEncryptionKey(). " + keys.length + " key(s).");
   return keys[0] || null;
+}
+
+// How a Verifier key is chosen (#312): the first one this wallet can use, in
+// the Verifier's order — under HAIP only ECDH-ES P-256, and for an mdoc only
+// a key with an RFC 7638 thumbprint, since the session transcript names it.
+function keySelection() {
+  log.debug("Entering keySelection().");
+  log.debug("Leaving keySelection().");
+  return { protocol: sdJwtVp.currentProtocol().id,
+           needsThumbprint: state.format === "mso_mdoc" };
 }
 
 // Kept for the name: every caller that used to draw the call now finishes the
@@ -1128,9 +1140,11 @@ function refuse() {
   var fields = vpProtocols.refusalFields(params, reason);
   var mode = vpProtocols.responseMode(params);
   var encrypting = mode === "direct_post.jwt" &&
-      vpProtocols.encryptionKeys(state.request.clientMetadata).length ?
+      vpProtocols.encryptionKeys(state.request.clientMetadata,
+                                 keySelection()).length ?
     vpProtocols.encryptResponse({ fields: fields,
-      clientMetadata: state.request.clientMetadata }) :
+      clientMetadata: state.request.clientMetadata,
+      key: responseEncryptionKey() }) :
     Promise.resolve(null);
   encrypting
     .then(function (encryption) {

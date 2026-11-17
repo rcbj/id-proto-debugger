@@ -238,7 +238,7 @@ wallet answers anyway.
 | `wallet_nonce` | REFUSED | The Request Object does not echo the `wallet_nonce` the wallet posted. |
 | `response_mode` | REFUSED | A mode the wallet cannot deliver. |
 | `response_uri` / `redirect_uri` | REFUSED | No address for the chosen mode. |
-| `encryption key` | REFUSED | `direct_post.jwt` with no ECDH-ES P-256 key in `client_metadata.jwks`. |
+| `encryption key` | REFUSED | `direct_post.jwt` with no key in `client_metadata.jwks` the wallet can encrypt to: ECDH-ES on P-256, or an ML-KEM or HPKE key (X-Wing among them) named by its `alg`. Under HAIP, ECDH-ES P-256 only. |
 | `enc` | REFUSED | None of the Verifier's `encrypted_response_enc_values_supported` is one the wallet does (A128GCM, A256GCM, A128CBC-HS256, A256CBC-HS512). |
 | `HAIP: request_uri`, `HAIP: signed`, `HAIP: x509_hash`, `HAIP: direct_post.jwt`, `HAIP: vp_token` | REFUSED | HAIP only. |
 | `HAIP: ES256` | WARNING | HAIP only: the request is signed with another algorithm. |
@@ -355,7 +355,15 @@ claims that follow from those bytes.
 
 Shown only for `direct_post.jwt`. **Content encryption** offers the
 Verifier's `encrypted_response_enc_values_supported` that the wallet does,
-A128GCM when the Verifier says nothing. Key agreement is ECDH-ES on P-256.
+A128GCM when the Verifier says nothing. The key is the first one in the
+Verifier's `client_metadata.jwks` the wallet can use, in the Verifier's order,
+and its `alg` decides the key management: ECDH-ES for a P-256 key (with no
+`alg`, or `ECDH-ES`), or ML-KEM or HPKE for an AKP, EC or OKP key that names
+one. A Verifier that lists an X-Wing (`HPKE-10-KE`) key before its P-256 one
+therefore gets a post-quantum answer. Under HAIP only ECDH-ES P-256 is used.
+For an mdoc the key also goes into the session transcript as an RFC 7638
+thumbprint, and an AKP key has none, so it is passed over. An Integrated
+`HPKE-n` key produces a JWE with no `enc`.
 The pane shows the JWE header (with the Verifier key's `kid`) and the compact
 JWE that is posted as the single form field `response`.
 

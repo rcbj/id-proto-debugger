@@ -318,9 +318,12 @@ different OTP is refused. An error status that omits `otp` is shown
 as "not echoed"; an `OK` without the request's `otp` is refused.
 The five default hosts are `api.yubico.com` through `api5.yubico.com`,
 path `/wsapi/2.0/verify`; server 1, `api.yubico.com`, is the default.
-All five answered an unsigned verify with HTTP 200 on 2026-11-13, and
-each still resolves to its own `apiN.yubicloud-r53.yubico.com` name. A caller-supplied verifier is https, with
-no userinfo, no query string and no `..` in the URL. The address
+All five are still served (#410). On 2026-11-17 each resolved to its
+own `apiN.yubicloud-r53.yubico.com` name and answered an unsigned
+verify of an all-`c` OTP with HTTP 200, `status=BAD_OTP`, and the
+request's `otp` and `nonce` echoed back, which is what the page checks.
+A caller-supplied verifier is https, with no userinfo, no query string
+and no `..` in the URL. The address
 policy is the one already installed on axios.
 
 The AES key and the API key are saved only when that field's box is
@@ -473,7 +476,23 @@ tag and no length byte (section 4.4.3.9), and an optional trailing
 the security support template `7A`.
 RSA, NIST curves, Ed25519 and X25519 public keys
 become a SubjectPublicKeyInfo, and the page asks
-`key_material.describePublicPem` what it imported. There is no
+`key_material.describePublicPem` what it imported.
+
+**A 32-byte point does not say which curve it is on.** READ PUBLIC KEY
+answers `7F49` holding `86`, the point, and nothing else; Ed25519 and
+X25519 points are both 32 bytes. The curve is in the algorithm
+attributes, so the read takes it from the application related data
+(its first step, `openpgp_card.keyCurves()`) and hands it to each key's
+decoding. A key pasted on its own has no attributes beside it, and the
+page says why it built no public key rather than guessing.
+`describePublicPem` cannot import X25519, so that key's row names the
+curve from the attributes.
+
+**`C5`, `C6` and `CD` have a slot per key, and a YubiKey has four.**
+With an attestation key (YubiKey 5.2 and later) the fingerprints and
+CA fingerprints are 80 bytes and the generation times 16, the fourth
+being the attestation key's, which is how yubikit reads them. Each is
+shown with its slot's name. There is no
 OpenPGP message, no PKCS#11 and no GPG-agent. PSO:CDS, PSO:DECIPHER
 and INTERNAL AUTHENTICATE are decoded and not performed.
 
@@ -490,15 +509,15 @@ two AES keys with PBKDF2-HMAC-SHA256, salt `Yubico`, 10000 rounds.
 The management key and the credential password are not saved and are
 not logged.
 
-Most of the PIV, OATH, OpenPGP and YubiHSM traces in
+Many of the PIV, OATH, OpenPGP and YubiHSM traces in
 `tests/smartcard_engine.js` are containers this code built. The
 exceptions are the attestation certificates (go-piv's real pair),
-the OpenPGP algorithm attributes (the bytes gpg writes), and the
+the OpenPGP algorithm attributes (the bytes gpg writes), the
 OATH CALCULATE answers (RFC 4226 and RFC 6238 values in the YKOATH
-grammar). The OTP
+grammar), and **a real key's answers**: see
+[Real-key vectors](#real-key-vectors). The OTP
 vectors are Yubico's published ones. The OATH codes are the RFC
-appendices. A capture from a key is the manual list below, which CI
-does not run.
+appendices.
 
 ## Reader
 
@@ -559,7 +578,9 @@ Three jobs, none of which needs a key.
 
 * `tests/smartcard_engine.js` drives every module in node: the codec,
   each applet's plans and their status words, OpenPGP fingerprints
-  against GnuPG, and the HID challenge against a scripted device.
+  against GnuPG, the HID challenge against a scripted device, and a
+  real YubiKey's PIV, OpenPGP and YubiHSM Auth answers against
+  yubikit's reading of the same key ([below](#real-key-vectors)).
 * `tests/api_otp_smartcard.js` talks to the api's relay with the relay
   on and no reader. Listing readers, a valid transmit and opening a
   session answer 502; a bad reader name (empty, a URL, a host and port,
@@ -589,6 +610,40 @@ cannot appear where an api is configured, so a page that claimed it
 wrongly would fail the replay on the containerized stack. The static
 build also minifies the page and rewrites its `onclick` quotes, which
 the job's in-page reads allow for.
+
+### Real-key vectors
+
+`tests/smartcard_card_vectors.json` is what a YubiKey answered to the
+page's own read plans for PIV, the OpenPGP card and YubiHSM Auth, with
+what yubikit (yubikey-manager 5.8.0) read from the same key in the same
+session beside it. So in `realCardVectors()` the bytes are the card's
+and the expected values are Yubico's, and this tree supplies only the
+decoding under test: the 9A certificate (byte for byte, then subject,
+serial and validity), the OpenPGP algorithm attributes, curves,
+generation times, per-slot fingerprints and each public key's
+SubjectPublicKeyInfo (through the page's own `readRows()` as well), and
+the YubiHSM Auth credential list. Every captured command is checked to
+be one the page's read plan sends. It found three defects the built
+containers could not: the fourth slot of `C5`/`C6`/`CD`, and no public
+key built for an Ed25519 or X25519 slot (see [OpenPGP card](#openpgp-card)).
+
+`tests/tools/smartcard_capture.py` wrote it, by hand, with a key
+attached; the suite never runs it. It is **destructive**: it resets the
+three applets, generates a P-256 key and a self-signed certificate in
+PIV 9A, P-256, X25519 and Ed25519 OpenPGP keys with a fixed creation
+time, and a derived and an EC P-256 YubiHSM Auth credential, records,
+and resets the three applets again. It refuses a key whose serial is
+not `--serial`. It needs yubikey-manager 5.8 or later (4.x has no
+YubiHSM Auth); on a preview key reporting firmware 0.0.x it lifts
+yubikit's version checks. The key's serial is replaced by 12345678 and
+the factory attestation key's fingerprint (`C5`'s fourth entry, as
+unique to the device as the serial) by `0102...14`, in this file and in
+`tests/smartcard_recorded.json` alike; the placeholder is not zeros, so
+that slot still decodes as a fingerprint of its own. PIV attestation is
+left out because the serial is signed inside it. OpenPGP fingerprints are not
+written on the card, so they read as unset; GnuPG's own fingerprints
+are held separately (above). The capture of 2026-11-17 was a 2026 PIV
+ML preview key (firmware 0.0.1).
 
 ## What to check with a key
 

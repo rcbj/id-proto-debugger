@@ -158,6 +158,15 @@ model ApiConfig {
 
   /** The largest Request Object or CA certificate a page may publish. */
   oid4vpVerifierMaxRequestObjectBytes?: int32;
+  /** The hosted SSF transmitter (#363): api/ssf_transmitter.js. */
+  ssfTransmitterEnabled?: boolean;
+  ssfTransmitterTtlMs?: int32;
+  ssfTransmitterIdleTtlMs?: int32;
+  ssfTransmitterMaxInstances?: int32;
+  ssfTransmitterMaxInstancesPerCaller?: int32;
+  ssfTransmitterMaxStreams?: int32;
+  ssfTransmitterMaxQueued?: int32;
+  ssfTransmitterMaxEventBytes?: int32;
 
   // --- Hardware -----------------------------------------------------------
 

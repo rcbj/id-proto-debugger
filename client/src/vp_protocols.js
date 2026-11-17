@@ -56,6 +56,7 @@ var log = bunyan.createLogger({
 var bytes = require("./crypto_bytes");
 var jws = require("./jws");
 var joseJwe = require("./jose_jwe");
+var jweKem = require("./jwe_kem");
 var dpop = require("./dpop");
 var metadataClient = require("./metadata_client");
 var didLib = require("./did");
@@ -117,10 +118,17 @@ var DEFAULT_PROTOCOL = PROTOCOL_OID4VP;
 var HAIP_FORMATS = ["dc+sd-jwt", "mso_mdoc"];
 
 // The JWE algorithms this wallet encrypts a direct_post.jwt answer with.
-// HAIP 1.0 section 5 names ECDH-ES on P-256 with A128GCM and A256GCM; the
-// CBC-HMAC encs are accepted because OpenID4VP itself allows any registered
-// enc and jose_jwe.js does them.
-var RESPONSE_JWE_ALGS = ["ECDH-ES"];
+// HAIP 1.0 section 5 names ECDH-ES on P-256 with A128GCM and A256GCM, and
+// under HAIP that is all it uses (HAIP_RESPONSE_JWE_ALGS). OpenID4VP 1.0
+// itself names no algorithm: the Verifier's key says which, so outside HAIP
+// this wallet also encrypts to an ML-KEM or HPKE key — X-Wing (HPKE-10-KE)
+// among them — through jose_jwe.js (#312). The CBC-HMAC encs are accepted
+// because OpenID4VP allows any registered enc and jose_jwe.js does them.
+var HAIP_RESPONSE_JWE_ALGS = ["ECDH-ES"];
+var RESPONSE_JWE_ALGS = ["ECDH-ES"].concat(joseJwe.supportedAlgs()
+  .filter(function (a) {
+    return joseJwe.isKemAlg(a);
+  }));
 var RESPONSE_JWE_ENCS = ["A128GCM", "A256GCM", "A128CBC-HS256",
                          "A256CBC-HS512"];
 // OpenID4VP 1.0 section 8.3: when the Verifier says nothing, A128GCM.
@@ -483,13 +491,66 @@ function x509Ok(x509, name) {
   return found ? found.ok : false;
 }
 
-function encryptionKeys(clientMetadata) {
+// The JWE alg a Verifier key is used with: the key's own `alg`, or ECDH-ES
+// for an EC P-256 key that names none (OpenID4VP 1.0 section 8.3 leaves the
+// choice to the key, and HAIP's ECDH-ES P-256 key is the one commonly
+// published without one). "" when this wallet cannot use the key.
+function responseAlgFor(key) {
+  log.debug("Entering responseAlgFor().");
+  if (!key || (key.use && key.use !== "enc")) {
+    log.debug("Leaving responseAlgFor(). Not an encryption key.");
+    return "";
+  }
+  var isP256 = key.kty === "EC" && key.crv === "P-256";
+  if (!key.alg || key.alg === "ECDH-ES") {
+    log.debug("Leaving responseAlgFor(). ECDH-ES.");
+    return isP256 ? "ECDH-ES" : "";
+  }
+  if (RESPONSE_JWE_ALGS.indexOf(key.alg) === -1) {
+    log.debug("Leaving responseAlgFor(). Not an alg this wallet does.");
+    return "";
+  }
+  try {
+    kemKeyCheck(key);
+  } catch (e) {
+    log.debug("Leaving responseAlgFor(). Unusable " + key.alg + " key: " +
+              e.message);
+    return "";
+  }
+  log.debug("Leaving responseAlgFor(). " + key.alg);
+  return key.alg;
+}
+
+// A KEM key is usable when jose_jwe.js could encrypt to it: the right kty
+// and curve for its alg, and a public key of the right length.
+function kemKeyCheck(key) {
+  log.debug("Entering kemKeyCheck().");
+  joseJwe.describeKemAlg(key.alg);
+  jweKem.readKey(key.alg, key, false);
+  log.debug("Leaving kemKeyCheck().");
+}
+
+// The Verifier keys this wallet can encrypt to, IN THE VERIFIER'S ORDER: the
+// first is the one used, so a Verifier that lists an X-Wing key before its
+// ECDH-ES one gets the post-quantum answer from a wallet that can make it.
+//   opts.protocol         HAIP restricts the answer to ECDH-ES on P-256.
+//   opts.needsThumbprint  an mso_mdoc presentation's session transcript
+//                         carries the RFC 7638 thumbprint of the key, and
+//                         an AKP key has no registered thumbprint members,
+//                         so such a key is passed over.
+function encryptionKeys(clientMetadata, opts) {
   log.debug("Entering encryptionKeys().");
+  var o = opts || {};
   var keys = ((clientMetadata && clientMetadata.jwks) || {}).keys || [];
   var usable = keys.filter(function (k) {
-    return k && k.kty === "EC" && k.crv === "P-256" &&
-           (!k.use || k.use === "enc") &&
-           (!k.alg || RESPONSE_JWE_ALGS.indexOf(k.alg) !== -1);
+    var alg = responseAlgFor(k);
+    if (!alg) return false;
+    if (o.protocol === PROTOCOL_HAIP &&
+        HAIP_RESPONSE_JWE_ALGS.indexOf(alg) === -1) {
+      return false;
+    }
+    if (o.needsThumbprint && k.kty === "AKP") return false;
+    return true;
   });
   log.debug("Leaving encryptionKeys(). " + usable.length + " of " +
             keys.length + ".");
@@ -583,12 +644,18 @@ function oid4vpRules(params, ctx, out) {
       "." : mode + " needs a redirect_uri to return to."));
   }
   if (mode === "direct_post.jwt") {
-    var keys = encryptionKeys(request.clientMetadata);
+    var keys = encryptionKeys(request.clientMetadata, {
+      protocol: ctx.protocol,
+      needsThumbprint: (ctx.requestedFormat || ctx.heldFormat) === "mso_mdoc"
+    });
     out.push(rule("encryption key", keys.length > 0, "block",
-      keys.length ? keys.length + " ECDH-ES P-256 key(s) in " +
-      "client_metadata.jwks to encrypt to." :
-      "direct_post.jwt, but client_metadata.jwks has no ECDH-ES P-256 key " +
-      "this wallet can encrypt to."));
+      keys.length ? keys.length + " key(s) in client_metadata.jwks this " +
+      "wallet can encrypt to; the answer goes to the first, " +
+      (keys[0].kid || "(no kid)") + ", with " + responseAlgFor(keys[0]) +
+      "." : "direct_post.jwt, but client_metadata.jwks has no key this " +
+      "wallet can encrypt to (" + (ctx.protocol === PROTOCOL_HAIP ?
+      "HAIP: an ECDH-ES P-256 key" : "an ECDH-ES P-256, ML-KEM or HPKE " +
+      "key") + ")."));
     var encs = encValues(request.clientMetadata);
     out.push(rule("enc", encs.length > 0, "block", encs.length ?
       "content encryption " + encs.join(", ") + " offered." :
@@ -662,7 +729,7 @@ function requestRules(protocolId, ctx) {
       (asksForIdToken(params) ? " — choose SIOPv2 on step 0 to answer an " +
       "ID Token." : ".")));
   }
-  oid4vpRules(params, ctx, out);
+  oid4vpRules(params, Object.assign({}, ctx, { protocol: protocolId }), out);
   if (protocolId === PROTOCOL_HAIP) haipRules(params, ctx, out);
   if (protocolId === PROTOCOL_SIOPV2) siopRules(params, ctx, out);
   log.debug("Leaving requestRules(). " + out.length + " rule(s).");
@@ -802,20 +869,32 @@ function generateSubjectKey() {
 // that key's kid — it is how the Verifier knows which of its keys to use — and
 // the form carries one field, `response`.
 // ---------------------------------------------------------------------------
+//   opts.key        the Verifier key already chosen (encryptionKeys()[0]),
+//                   so the page and an mdoc's transcript name the same one
+//   opts.kid        or a kid to find it by
+//   opts.protocol / opts.needsThumbprint  as encryptionKeys() takes them
 function encryptResponse(opts) {
   log.debug("Entering encryptResponse().");
-  var keys = encryptionKeys(opts.clientMetadata);
-  var key = opts.kid ? keys.filter(function (k) {
-    return k.kid === opts.kid;
-  })[0] : keys[0];
+  var keys = encryptionKeys(opts.clientMetadata, opts);
+  var key = opts.key && responseAlgFor(opts.key) ? opts.key :
+    (opts.kid ? keys.filter(function (k) {
+      return k.kid === opts.kid;
+    })[0] : keys[0]);
   if (!key) {
     log.debug("Leaving encryptResponse(). No key.");
-    return Promise.reject(new Error("client_metadata.jwks has no ECDH-ES " +
-        "P-256 key to encrypt the response to."));
+    return Promise.reject(new Error("client_metadata.jwks has no key this " +
+        "wallet can encrypt the response to (no ECDH-ES P-256, ML-KEM or " +
+        "HPKE key" + (opts.protocol === PROTOCOL_HAIP ? "; HAIP takes " +
+        "ECDH-ES P-256 only" : "") + ")."));
   }
+  var alg = responseAlgFor(key);
+  var integrated = joseJwe.isIntegrated(alg);
   var encs = encValues(opts.clientMetadata);
   var enc = opts.enc && encs.indexOf(opts.enc) !== -1 ? opts.enc : encs[0];
-  if (!enc) {
+  if (integrated) {
+    // HPKE Integrated Encryption has no enc: HPKE encrypts the answer.
+    enc = null;
+  } else if (!enc) {
     log.debug("Leaving encryptResponse(). No enc.");
     return Promise.reject(new Error("the Verifier offers no content " +
         "encryption this wallet does."));
@@ -825,7 +904,7 @@ function encryptResponse(opts) {
   var plaintext = JSON.stringify(opts.fields);
   log.debug("Leaving encryptResponse().");
   return joseJwe.encryptCompact({
-    alg: "ECDH-ES", enc: enc, plaintext: plaintext, key: key, header: header
+    alg: alg, enc: enc, plaintext: plaintext, key: key, header: header
   }).then(function (sealed) {
     log.debug("Leaving encryptResponse(). " + sealed.jwe.length + " chars.");
     return { jwe: sealed.jwe, header: sealed.header, plaintext: plaintext,
@@ -949,7 +1028,8 @@ function walletMetadata() {
                                    "x509_san_dns", "pre-registered"],
     request_object_signing_alg_values_supported: ["ES256", "ES384",
                                                   "ES512", "PS256", "RS256"],
-    authorization_encryption_alg_values_supported: RESPONSE_JWE_ALGS,
+    authorization_encryption_alg_values_supported: RESPONSE_JWE_ALGS
+      .slice(),
     authorization_encryption_enc_values_supported: RESPONSE_JWE_ENCS,
     response_types_supported: ["vp_token", "id_token",
                                "vp_token id_token"],
@@ -1083,6 +1163,8 @@ module.exports = {
   DEFAULT_PROTOCOL: DEFAULT_PROTOCOL,
   HAIP_FORMATS: HAIP_FORMATS,
   RESPONSE_JWE_ALGS: RESPONSE_JWE_ALGS,
+  HAIP_RESPONSE_JWE_ALGS: HAIP_RESPONSE_JWE_ALGS,
+  responseAlgFor: responseAlgFor,
   RESPONSE_JWE_ENCS: RESPONSE_JWE_ENCS,
   DEFAULT_RESPONSE_ENC: DEFAULT_RESPONSE_ENC,
   SUBJECT_JWK_THUMBPRINT: SUBJECT_JWK_THUMBPRINT,

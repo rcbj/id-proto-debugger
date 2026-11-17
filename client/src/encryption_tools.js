@@ -854,10 +854,18 @@ async function jweEncrypt() {
       plaintext: field('jwe', 'plaintext')
     });
     setField('jwe', 'ciphertext', encrypted.jwe);
-    status('jwe', 'Encrypted as a compact JWE with alg=' +
-           encrypted.header.alg + ', enc=' + encrypted.header.enc +
-           ' — five dot-separated segments: header, encrypted key, IV, ' +
-           'ciphertext, tag.');
+    if (jose.isIntegrated(encrypted.header.alg)) {
+      status('jwe', 'Encrypted with ' + encrypted.header.alg + ' — HPKE ' +
+             'Integrated Encryption: no enc (the enc menu is not used), the ' +
+             'encapsulated secret is the encrypted-key segment, and the IV ' +
+             'and tag segments are empty.');
+    } else {
+      status('jwe', 'Encrypted as a compact JWE with alg=' +
+             encrypted.header.alg + ', enc=' + encrypted.header.enc +
+             (encrypted.header.ek ? ' and an "ek" header carrying the KEM ' +
+              'output' : '') + ' — five dot-separated segments: header, ' +
+             'encrypted key, IV, ciphertext, tag.');
+    }
   } catch (e) {
     log.debug("Leaving jweEncrypt(). Failed.");
     return fail('jwe', 'jweEncrypt', e);
@@ -874,7 +882,8 @@ async function jweDecrypt() {
                                                         'private_key') });
     setField('jwe', 'plaintext', opened.plaintext);
     status('jwe', 'Decrypted. The JWE’s own header said alg=' +
-           opened.header.alg + ', enc=' + opened.header.enc +
+           opened.header.alg + ', enc=' + (opened.header.enc ||
+           '(none — HPKE Integrated Encryption)') +
            ' — read from the token, not from the dropdowns.');
   } catch (e) {
     log.debug("Leaving jweDecrypt(). Failed.");
@@ -891,6 +900,24 @@ async function jweDecrypt() {
 function jweGenerateKeys() {
   log.debug("Entering jweGenerateKeys().");
   var alg = val('enc_jwe_alg');
+  if (jose.isKemAlg(alg)) {
+    // ML-KEM and HPKE (#312): a JWK pair, AKP for the post-quantum and hybrid
+    // ones and EC/OKP for HPKE-0..7. Synchronous — no Web Crypto involved.
+    try {
+      var pair = jose.generateKemKeyPair(alg);
+      setField('jwe', 'private_key', JSON.stringify(pair.privateJwk, null,
+                                                    2));
+      setField('jwe', 'public_key', JSON.stringify(pair.publicJwk, null, 2));
+      var about = jose.describeKemAlg(alg);
+      status('jwe', 'Generated a ' + about.kty + ' key pair for ' + alg +
+             ' (' + about.summary + '). DRAFT: ' + about.spec + '.');
+    } catch (e) {
+      log.debug("Leaving jweGenerateKeys(). Failed.");
+      return fail('jwe', 'jweGenerateKeys', e);
+    }
+    log.debug("Leaving jweGenerateKeys(). KEM.");
+    return false;
+  }
   var spec = alg.indexOf('ECDH-ES') === 0
     ? { name: 'ECDH', namedCurve: 'P-256' }
     : { name: 'RSA-OAEP', modulusLength: 2048,
@@ -928,7 +955,17 @@ async function jweAlgChanged() {
       log.debug("Leaving jweAlgChanged(). Unsupported enc.");
       return false;
     }
-    status('jwe', 'alg=' + val('enc_jwe_alg') + ', enc=' +
+    var alg = val('enc_jwe_alg');
+    var about = jose.describeKemAlg(alg);
+    if (about) {
+      status('jwe', alg + ': ' + about.summary + '. DRAFT: ' + about.spec +
+             '. Keys are JWKs (' + about.kty + ').' +
+             (jose.isIntegrated(alg) ? ' No enc — the enc menu is not used.'
+              : ''));
+      log.debug("Leaving jweAlgChanged(). KEM.");
+      return false;
+    }
+    status('jwe', 'alg=' + alg + ', enc=' +
            val('enc_jwe_enc') + '. Generate a key pair, or paste the ' +
            'recipient’s public key (PEM or JWK) to encrypt to it.');
   } catch (e) {

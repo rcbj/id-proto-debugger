@@ -34,6 +34,8 @@ var sdJwtVc = require("./sd_jwt_vc");
 var vciClaims = require("./vci_claims");
 var didLib = require("./did");
 var urlSafety = require("./url_safety");
+// Reads a QR code out of an image, for an offer that arrives as a picture.
+var jsQR = require("jsqr");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_1',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -1804,6 +1806,137 @@ function readScannedOffer(input) {
                   "code contains." };
 }
 
+// ---------------------------------------------------------------------------
+// AN OFFER THAT EXISTS ONLY AS A PICTURE (#365).
+//
+// A cross-device offer is usually shown as a QR code and nothing else — on
+// the issuer's screen, in a printed letter, in a screenshot somebody sent.
+// The text box above takes what the code ENCODES; this takes the code
+// itself, as an image file or an image pasted into that box, decodes it in
+// the page (jsQR, no network) and puts the result in the box, where it is
+// read exactly as if it had been typed. Nothing about it is issuer-specific:
+// it is OID4VCI's own hand-over, an openid-credential-offer:// URI or a link,
+// whoever drew the code.
+//
+// The image is drawn white-backed and enlarged onto a canvas first, because
+// a QR code drawn as SVG (iya-sts's is) has no background and may be tiny,
+// and a decoder reads neither transparency nor a 50-pixel code reliably.
+// ---------------------------------------------------------------------------
+var QR_SCALE_TARGET = 800;
+
+// The pixels of an image as RGBA, scaled up so its longer side is about
+// QR_SCALE_TARGET, on white.
+function imagePixels(image) {
+  log.debug("Entering imagePixels().");
+  var w = image.naturalWidth || image.width || 0;
+  var h = image.naturalHeight || image.height || 0;
+  if (!w || !h) {
+    // An SVG with only a viewBox reports no size; draw it square.
+    w = QR_SCALE_TARGET;
+    h = QR_SCALE_TARGET;
+  }
+  var scale = Math.max(1, Math.floor(QR_SCALE_TARGET / Math.max(w, h)));
+  var canvas = document.createElement("canvas");
+  canvas.width = w * scale;
+  canvas.height = h * scale;
+  var ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+  var data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  log.debug("Leaving imagePixels(). " + canvas.width + "x" + canvas.height);
+  return data;
+}
+
+// A File or Blob holding an image -> a promise of the text its QR code
+// encodes. Rejects with a sentence when there is no readable code.
+function decodeQrImage(blob) {
+  log.debug("Entering decodeQrImage(). type=" + (blob && blob.type));
+  log.debug("Leaving decodeQrImage(). Loading.");
+  return new Promise(function (resolve, reject) {
+    var url = URL.createObjectURL(blob);
+    var image = new Image();
+    image.onload = function () {
+      try {
+        var pixels = imagePixels(image);
+        var found = jsQR(pixels.data, pixels.width, pixels.height,
+                         { inversionAttempts: "attemptBoth" });
+        if (found && found.data) {
+          resolve(found.data);
+        } else {
+          reject(new Error("No QR code could be read in that image. Crop " +
+            "it to the code, or use a sharper picture."));
+        }
+      } catch (e) {
+        reject(e);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    image.onerror = function () {
+      URL.revokeObjectURL(url);
+      reject(new Error("That file is not an image this browser can draw."));
+    };
+    image.src = url;
+  });
+}
+
+function takeQrText(text, from) {
+  log.debug("Entering takeQrText(). from=" + from);
+  setVal("scan_offer_input", text);
+  var read = readScannedOffer(text);
+  status("scan_status", read.error
+    ? "The QR code in the " + from + " reads as \"" + text.slice(0, 120) +
+      "\", which is not a Credential Offer: " + read.error
+    : "Read the QR code in the " + from + " (" + (read.source === "reference"
+      ? "an offer by reference, credential_offer_uri"
+      : "an offer by value, credential_offer") + "). Press \"Take this " +
+      "offer\" to use it.", read.error ? "vc-bad" : "vc-ok");
+  log.debug("Leaving takeQrText().");
+}
+
+// The file chooser.
+function readOfferImage(input) {
+  log.debug("Entering readOfferImage().");
+  var file = input && input.files && input.files[0];
+  if (!file) {
+    log.debug("Leaving readOfferImage(). No file.");
+    return false;
+  }
+  status("scan_status", "Reading the QR code in " + file.name + " …",
+         "vc-pending");
+  decodeQrImage(file).then(function (text) {
+    takeQrText(text, "image " + file.name);
+  }).catch(function (e) {
+    status("scan_status", e.message, "vc-bad");
+  });
+  log.debug("Leaving readOfferImage().");
+  return false;
+}
+
+// An image pasted into the offer box, as a screenshot usually is.
+function pasteOfferImage(event) {
+  log.debug("Entering pasteOfferImage().");
+  var items = (event.clipboardData && event.clipboardData.items) || [];
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].kind === "file" &&
+        String(items[i].type).indexOf("image/") === 0) {
+      event.preventDefault();
+      status("scan_status", "Reading the QR code in the pasted image …",
+             "vc-pending");
+      decodeQrImage(items[i].getAsFile()).then(function (text) {
+        takeQrText(text, "pasted image");
+      }).catch(function (e) {
+        status("scan_status", e.message, "vc-bad");
+      });
+      log.debug("Leaving pasteOfferImage(). An image.");
+      return;
+    }
+  }
+  log.debug("Leaving pasteOfferImage(). Not an image; pasted as text.");
+}
+
 function takeScannedOffer() {
   log.debug("Entering takeScannedOffer().");
   var read = readScannedOffer(val("scan_offer_input"));
@@ -1948,6 +2081,9 @@ function clickLink() {
 
 function onload() {
   log.debug("Entering onload().");
+  if (el("scan_offer_input")) {
+    el("scan_offer_input").addEventListener("paste", pasteOfferImage);
+  }
   buildConfigRows();
   loadConfiguration();
   // The way of asking for the credential survives a reload like everything else
@@ -2869,6 +3005,7 @@ module.exports = {
   discardOffer: discardOffer,
   acceptOfferFromQuery: acceptOfferFromQuery,
   takeScannedOffer: takeScannedOffer,
+  readOfferImage: readOfferImage,
   readScannedOffer: readScannedOffer,
   clearVciMetadata: clearVciMetadata,
   populateFromVci: populateFromVci,

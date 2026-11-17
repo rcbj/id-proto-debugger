@@ -283,6 +283,7 @@ const JOB_LOCKS = {
   "vc_did.js": "sts-vc",
   "oid4vci_request_encryption.js": "sts-vc",
   "dpop_workflow.js": "sts-vc",
+  "vci_offer_modes.js": "sts-vc",
   "metadata_schema_validation.js": "sts-vc",
   // walt.id's issuer-api2 and verifier-api2.
   "sd_jwt_vc_waltid.js": "waltid",
@@ -1694,6 +1695,18 @@ function buildJobs() {
     env: {},
   });
 
+  // The test-stack CORS proxy (tests/cors-proxy/cors-proxy.js, #431), in
+  // node in front of throwaway upstreams, plain and TLS. It fronts walt.id's
+  // issuer and verifier and Polaris, and until this job it was exercised
+  // only through them — so a broken preflight read as four walt.id failures
+  // naming walt.id. Needs no stack.
+  jobs.push({
+    name: "CORS proxy (preflight, exposed headers, origin allow-list, " +
+        "upstream TLS, health — in node)",
+    script: "cors_proxy_engine.js",
+    env: {},
+  });
+
   // The post-quantum engines, in node, and the third job of this shape. Its
   // reason for existing is sharper than the two above: almost nothing else in
   // the world can read these bytes yet, so a pane that signs and verifies its
@@ -1750,6 +1763,18 @@ function buildJobs() {
   jobs.push({
     name: "JOSE JWE module (RFC 7516/7518: RSA-OAEP, ECDH-ES, Concat KDF)",
     script: "jose_jwe_encryption.js",
+    env: {},
+  });
+
+  // ML-KEM (draft-ietf-jose-pqc-kem-05) and HPKE (draft-ietf-jose-hpke-
+  // encrypt-22, draft-reddy-cose-jose-pqc-hybrid-hpke-11, X-Wing among
+  // them) in JWE, #312: client/src/hpke.js and jwe_kem.js against the
+  // drafts' own published vectors (committed beside the test), the
+  // pqc-kem-05 KMAC256 KDF against `openssl mac KMAC256`, X-Wing against
+  // pqc.js, and every alg x enc through jose_jwe.js. No services.
+  jobs.push({
+    name: "Post-quantum and HPKE JWE (ML-KEM, HPKE-0..16, X-Wing; in node)",
+    script: "hpke_jwe_engine.js",
     env: {},
   });
 
@@ -3295,6 +3320,10 @@ function buildJobs() {
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
           "https://localhost:8081",
       SSF_RECEIVER_HOST: env.SSF_RECEIVER_HOST || "localhost",
+      // Section 7 drives the api's hosted transmitter (#363). A static site
+      // has no api, so the section is told there is none.
+      SSF_HOSTED_API_URL: ldapOff ? "" : (env.API_URL ||
+          "https://localhost:4000"),
     },
   });
 
@@ -3440,8 +3469,9 @@ function buildJobs() {
     script: "caep_page.js",
     env: {
       // API_URL only where this target HAS an api: the page's pushes land in
-      // its inbox until #363 (see the note at the top of caep_page.js). A
-      // static site gets none, and the job sends its events nowhere.
+      // its inbox (see the note at the top of caep_page.js; iya-sts as the
+      // receiver is ssf_protocol.js section 7). A static site gets none, and
+      // the job sends its events nowhere.
       API_URL: env.LDAP_AVAILABLE === "false" ? "" :
           (env.API_URL || "https://localhost:4000"),
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
@@ -4149,6 +4179,20 @@ function buildJobs() {
       name: "DPoP through the VC Issuance pages (the pane, the real binding, " +
           "Holder of Key)",
       script: "dpop_workflow.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // The chooser's cross-device and deferred cards (#365): a DEFERRED
+    // pre-authorized offer from iya-sts's portal, collected by the wallet
+    // polling the Deferred Credential Endpoint on its own, and a
+    // cross-device offer handed over as its QR CODE image and decoded on
+    // step 1. Nothing else drives either.
+    jobs.push({
+      name: "VC Issuance — deferred (H.3) and QR-image (H.2) pre-authorized " +
+          "offers through the wallet pages",
+      script: "vci_offer_modes.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",

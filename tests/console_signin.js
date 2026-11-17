@@ -66,6 +66,7 @@
 const assert = require("assert");
 // The sign-in screen over `/authn-api` (#571).
 const authnSignin = require("./authn_signin");
+const { DESKTOP_USER_AGENT } = require("./desktop_user_agent");
 
 // This file's own logger, for the Entering/Leaving lines and the handled
 // exceptions the code style asks for. Its level is LOG_LEVEL, which is also
@@ -328,6 +329,12 @@ function consoleBundle() {
 // roles itself. "write" grants both. The role goes to an account whose
 // password only this process holds.
 //
+// `options.userAgent` — the walk sends a desktop browser's User-Agent by
+// default, for the reason sts_applications.js's authorizationCode() does
+// (#356): this stands in for the console's page in a browser, and a
+// product-mode iya-sts refuses a sign-in from node's own as an automated
+// client. A string sends that one instead; `false` sends node's default.
+//
 // Answers the client described at the top of this file.
 async function signInToTheConsole(base, user, log2, options) {
   log.debug("Entering signInToTheConsole().");
@@ -336,6 +343,10 @@ async function signInToTheConsole(base, user, log2, options) {
   const cookies = jar();
   const crypto = require("crypto");
   const key = dpopKey();
+  const browser = {};
+  if (opts.userAgent !== false) {
+    browser["user-agent"] = opts.userAgent || DESKTOP_USER_AGENT;
+  }
 
   function fromLocation(location) {
     return new URL(String(location || ""), base).toString();
@@ -343,7 +354,7 @@ async function signInToTheConsole(base, user, log2, options) {
 
   async function fetchKeeping(url, init) {
     const sent = Object.assign({ redirect: "manual" }, init || {});
-    sent.headers = Object.assign({ cookie: cookies.header() },
+    sent.headers = Object.assign({ cookie: cookies.header() }, browser,
                                  sent.headers || {});
     const r = await fetch(url, sent);
     cookies.keep(r);
@@ -408,7 +419,7 @@ async function signInToTheConsole(base, user, log2, options) {
   // asked ("update tests to just click ignore for the time being").
   const signedIn = await authnSignin.signIn(base, fromLocation(where),
     { action: "login", username: user, password: password },
-    { cookie: cookies.header() });
+    { cookie: cookies.header(), headers: browser });
   cookies.keep(signedIn);
   if (signedIn.ignored) {
     say("[console] " + user + " was offered a second factor and ignored it.");

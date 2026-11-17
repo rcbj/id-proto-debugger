@@ -259,7 +259,7 @@ It exists for one thing a browser cannot do: **use a Verifier that sends no CORS
 headers.** Most send none, because a wallet is normally a native app and has no
 CORS. Without this, a browser-based wallet can talk to such a Verifier only
 through a reverse proxy put in front of it, which is what the test stack does
-for walt.id and Polaris (`waltid/cors-proxy.js`, #431).
+for walt.id and Polaris (`tests/cors-proxy/cors-proxy.js`, #431).
 
 It is **the SSF proxy's shape, narrowed to what OpenID4VP sends**:
 
@@ -373,6 +373,27 @@ turns the whole thing off, which is what the deployed configurations do.
 service holds no key of the transmitter's, and a receiver that refused what it
 could not verify would be unable to show anybody WHY — which is the question the
 workflow exists to answer. The page verifies.
+
+### The hosted transmitter is the receiver's mirror image (#363)
+
+A receiver that treats its partner as a full SSF 1.0 transmitter — iya-sts's
+federation relationships do — discovers it, creates its stream there, and may
+poll it. `api/ssf_transmitter.js` answers those requests for a page, and
+`server.js` registers seventeen routes for it: four for the PAGE (create,
+read, delete, deliver — authorized by an owner key returned once), the
+section 7 discovery document and the JWKS (public), and the stream
+management API, status, subjects, verification and RFC 8936 poll
+(authorized by a receiver credential, RFC 6750). It holds the page's PUBLIC
+key only and signs nothing: the page builds and signs every SET and hands it
+to `POST /ssf/transmitter/:id/deliver`.
+
+**It makes one outbound call, the RFC 8935 push** of a page-signed SET to the
+endpoint the receiver gave, with the `authorization_header` the receiver gave.
+That is `pushSet()` in `server.js`, an ordinary axios call with the shared
+agents, `callTimeout`, `maxContentLength`, `maxRedirects` and the User-Agent,
+so the address policy covers it like every other. The receiver's secret is
+never handed back to anybody. Bounds and expiry mirror the inbox's, under
+`ssfTransmitter*` in `api/env/*.js`; see `docs/ssf.md`, *The other way round*.
 
 **THE BODY PARSER IS PART OF THIS AND IS EASY TO MISS.** A Security Event Token
 arrives as `application/secevent+jwt` (RFC 8417 section 2.3), which neither
