@@ -392,6 +392,9 @@ COPY tests/vp_verifier_engine.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./
+# And the same Verifier page against rcbj/oid4vc-wallet, whose binary is
+# copied in at the end of this file.
+COPY tests/vc_verifier_oid4vc_wallet.js ./
 COPY tests/vc_presentation_polaris.js ./
 # ISO mdoc: the engine test and the test issuer it and
 # vc_presentation_protocols.js require (a shared module, scheduled by nothing).
@@ -1204,7 +1207,24 @@ RUN apt-get update \
         unzip \
         util-linux \
         bsdextrautils \
-        krb5-user
+        krb5-user \
+        libudev1 \
+        libpcsclite1 \
+        libgl1 \
+        libx11-6 \
+        libxcursor1 \
+        libxrandr2 \
+        libxi6 \
+        libxkbcommon0 \
+        libfontconfig1
+
+# rcbj/oid4vc-wallet's command line (#364): the independent wallet
+# tests/vc_verifier_oid4vc_wallet.js drives against the Verifier page. One
+# binary out of the image the mirror builds from the wallet's release tag
+# (the `oid4vcwallet` build context in docker-compose-run-tests.yml). The
+# libraries above from libudev1 on are the ones it links: the window's are
+# linked even though the command line never opens one.
+COPY --from=oid4vcwallet /usr/local/bin/oid4vc-wallet /usr/local/bin/oid4vc-wallet
  
 # Create app directory
 WORKDIR /usr/src/app

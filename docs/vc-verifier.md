@@ -91,5 +91,18 @@ and says that it was not echoed.
 | `tests/vp_verifier_engine.js` | node | the DCQL builder, the certificate, the Request Object read back by the Wallet's own `verifyX509Request()`, and a round trip per format, with a negative case for each check |
 | `tests/api_oid4vp_verifier.js` | node | the api's routes, limits and expiry |
 | `tests/vc_verifier_page.js` | browser | the page creates a request through the api; node plays the wallet and posts an answer; every check on the page passes, and a tampered answer fails the check it targets |
+| `tests/vc_verifier_oid4vc_wallet.js` | browser | the same page against **rcbj/oid4vc-wallet**, a native Rust wallet that shares no code with the debugger. A person makes a pre-authorized offer on iya-sts's `/portal/wallet`; the wallet redeems it by value with the Transaction Code (`accept`), then answers the page twice (`present --approve`): `x509_hash` + GET + `direct_post`, and `x509_san_dns` + `request_uri_method=post` + `direct_post.jwt`. Every check must pass. Then it refuses (`present --refuse`), and the page must report `access_denied` as a failure |
 
-The independent wallet in the suite, `rcbj/oid4vc-wallet`, is PR 2 of #364.
+### The independent wallet
+
+`rcbj/oid4vc-wallet` reaches the tests image as one binary,
+`/usr/local/bin/oid4vc-wallet`. Its repository's `Dockerfile` builds it, and
+the image mirror builds that from the wallet's release tag
+(`.github/image-mirror-builds.txt`, `oid4vc-wallet:v0.1.0`). The tests image
+copies the binary from the `oid4vcwallet` build context in
+`docker-compose-run-tests.yml` and installs the libraries it links. The job
+gives the wallet a home of its own for each run, with `OID4VC_WALLET_KEY_FILE`
+in place of a desktop key ring and `SSL_CERT_FILE` pointed at the stack's CA
+bundle. A missing binary fails the job by name; it is never skipped. To run
+the job on a host, set `OID4VC_WALLET_BIN`. To move to a newer wallet, tag it
+there, then change the tag in both places here.

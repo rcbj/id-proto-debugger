@@ -3503,6 +3503,25 @@ function buildJobs() {
     },
   });
 
+  // AND THE SAME PAGE AGAINST A WALLET THAT IS NOT OURS (#364, PR 2):
+  // rcbj/oid4vc-wallet redeems an iya-sts pre-authorized offer, then answers
+  // the Verifier page through its headless command line. It needs iya-sts
+  // (the issuer) and the api (request_uri, response_uri), so it is gated on
+  // both, as the VC jobs and vc_verifier_page.js are.
+  if (env.WSTRUST_STS_URL && env.LDAP_AVAILABLE !== "false") {
+    jobs.push({
+      name: "VC Verifier page against rcbj/oid4vc-wallet (an independent " +
+          "wallet redeems an iya-sts offer and presents over direct_post " +
+          "and direct_post.jwt, then refuses)",
+      script: "vc_verifier_oid4vc_wallet.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        API_URL: env.API_URL || "https://localhost:4000",
+      },
+    });
+  }
+
   // ------------------------------------------------------------------------
   // RISC, THE SECOND VOCABULARY OVER THE SAME PIPE.
   //
