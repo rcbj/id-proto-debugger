@@ -3500,7 +3500,7 @@ app.get('/scim/limits', function (req, res) {
 // as Validation Protocol 2.0 says, an HTTP GET with the signed
 // parameters as the query string. A verifier answer, including
 // BAD_OTP, is a 200. See otp_verify.js.
-app.post('/otp/verify', function (req, res) {
+app.post('/otp/verify', model.route('otpVerify'), function (req, res) {
   log.debug('Entering POST /otp/verify.');
   var described = otpVerify.describeRequest(req.body || {});
   if (!described.ok) {
@@ -3551,7 +3551,7 @@ app.post('/otp/verify', function (req, res) {
     });
 });
 
-app.get('/otp/limits', function (req, res) {
+app.get('/otp/limits', model.route('otpLimits'), function (req, res) {
   log.debug('Entering GET /otp/limits.');
   log.debug('Leaving GET /otp/limits.');
   return res.status(STATUS_200).json(otpVerify.limits());
@@ -3561,7 +3561,8 @@ app.get('/otp/limits', function (req, res) {
 // is this machine, and the relay is off unless smartcardReaderEnabled
 // is true (403 otherwise). A card status word is a 200. A missing
 // library, reader or card is a 502.
-app.get('/smartcard/limits', function (req, res) {
+app.get('/smartcard/limits', model.route('smartcardLimits'),
+        function (req, res) {
   log.debug('Entering GET /smartcard/limits.');
   var limits = smartcardReader.limits(appconfig);
   // HID, for OTP challenge-response: a YubiKey on USB does not answer it
@@ -3576,7 +3577,8 @@ app.get('/smartcard/limits', function (req, res) {
 // management-key authentication, which the page computes from the card's
 // answer. Same switch as the relay; closed with a card reset. See
 // smartcard_reader.js.
-app.post('/smartcard/session', function (req, res) {
+app.post('/smartcard/session', model.route('smartcardSessionOpen'),
+         function (req, res) {
   log.debug('Entering POST /smartcard/session.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving POST /smartcard/session. Relay off.');
@@ -3599,19 +3601,18 @@ app.post('/smartcard/session', function (req, res) {
   log.debug('Leaving POST /smartcard/session. Opening.');
 });
 
-app.post('/smartcard/session/transmit', function (req, res) {
+app.post('/smartcard/session/transmit',
+         model.route('smartcardSessionTransmit'), function (req, res) {
   log.debug('Entering POST /smartcard/session/transmit.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving POST /smartcard/session/transmit. Relay off.');
     return res.status(STATUS_403).json({
       error: smartcardReader.DISABLED_MESSAGE });
   }
+  // The session id (32 lower-case hex characters) is the model's check:
+  // models/api/smartcard.tsp, SessionId, answers with this route's old
+  // sentence. It runs before the relay switch above.
   var body = req.body || {};
-  if (!smartcardReader.checkSessionId(body.id)) {
-    log.debug('Leaving POST /smartcard/session/transmit. Bad id.');
-    return res.status(STATUS_400).json({ error: 'The session id is 32 ' +
-        'hex characters.' });
-  }
   // The same APDU checks as /smartcard/transmit, with a placeholder reader.
   var described = smartcardReader.describeTransmit(
       Object.assign({}, body, { reader: 'session' }));
@@ -3632,14 +3633,12 @@ app.post('/smartcard/session/transmit', function (req, res) {
   log.debug('Leaving POST /smartcard/session/transmit. Sent.');
 });
 
-app.post('/smartcard/session/close', function (req, res) {
+app.post('/smartcard/session/close',
+         model.route('smartcardSessionClose'), function (req, res) {
   log.debug('Entering POST /smartcard/session/close.');
+  // The session id is the model's check (models/api/smartcard.tsp,
+  // SessionId), with this route's old sentence.
   var id = (req.body || {}).id;
-  if (!smartcardReader.checkSessionId(id)) {
-    log.debug('Leaving POST /smartcard/session/close. Bad id.');
-    return res.status(STATUS_400).json({ error: 'The session id is 32 ' +
-        'hex characters.' });
-  }
   smartcardReader.closeSession(id).then(function (closed) {
     return res.status(STATUS_200).json({ closed: closed });
   });
@@ -3649,7 +3648,8 @@ app.post('/smartcard/session/close', function (req, res) {
 // OTP-slot challenge-response over HID, for a browser with no WebHID. The
 // same switch as the reader relay; needs a native api (see otp_hid.js). A
 // key's answer is a 200, a bad request a 400, no HID or no key a 502.
-app.post('/smartcard/otp/challenge', function (req, res) {
+app.post('/smartcard/otp/challenge',
+         model.route('smartcardOtpChallenge'), function (req, res) {
   log.debug('Entering POST /smartcard/otp/challenge.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving POST /smartcard/otp/challenge. Relay off.');
@@ -3675,7 +3675,8 @@ app.post('/smartcard/otp/challenge', function (req, res) {
   log.debug('Leaving POST /smartcard/otp/challenge. Sent.');
 });
 
-app.get('/smartcard/readers', function (req, res) {
+app.get('/smartcard/readers', model.route('smartcardReaders'),
+        function (req, res) {
   log.debug('Entering GET /smartcard/readers.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving GET /smartcard/readers. Disabled.');
@@ -3696,7 +3697,8 @@ app.get('/smartcard/readers', function (req, res) {
     });
 });
 
-app.post('/smartcard/transmit', function (req, res) {
+app.post('/smartcard/transmit', model.route('smartcardTransmit'),
+         function (req, res) {
   log.debug('Entering POST /smartcard/transmit.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving POST /smartcard/transmit. Disabled.');

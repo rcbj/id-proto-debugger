@@ -11,6 +11,12 @@
     },
     {
       "name": "LDAP"
+    },
+    {
+      "name": "OTP"
+    },
+    {
+      "name": "Smart card"
     }
   ],
   "paths": {
@@ -501,6 +507,476 @@
         "tags": [
           "Service"
         ]
+      }
+    },
+    "/otp/limits": {
+      "get": {
+        "operationId": "otpLimits",
+        "description": "The size cap, the method and the five YubiCloud servers.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Otp.Limits"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OTP"
+        ]
+      }
+    },
+    "/otp/verify": {
+      "post": {
+        "operationId": "otpVerify",
+        "description": "Send a signed Yubico OTP validation request, as Validation Protocol 2.0's\nHTTP GET. A verifier's answer, whatever it says, is a 200.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Otp.VerifyAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Otp.Unreachable"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OTP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Otp.VerifyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/smartcard/limits": {
+      "get": {
+        "operationId": "smartcardLimits",
+        "description": "Whether the relay is on, and whether PC/SC and HID are there.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Smartcard.Limits"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Smart card"
+        ]
+      }
+    },
+    "/smartcard/otp/challenge": {
+      "post": {
+        "operationId": "smartcardOtpChallenge",
+        "description": "OTP-slot challenge-response over HID, for a browser with no WebHID.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Smartcard.ChallengeAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "403: the reader relay is off on this api.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Smart card"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Smartcard.ChallengeRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/smartcard/readers": {
+      "get": {
+        "operationId": "smartcardReaders",
+        "description": "The readers on the machine this api runs on.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Smartcard.Readers"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "403: the reader relay is off on this api.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Smart card"
+        ]
+      }
+    },
+    "/smartcard/session": {
+      "post": {
+        "operationId": "smartcardSessionOpen",
+        "description": "Open one exclusive connection for several requests.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Smartcard.Session"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "403: the reader relay is off on this api.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Smart card"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Smartcard.ReaderName"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/smartcard/session/close": {
+      "post": {
+        "operationId": "smartcardSessionClose",
+        "description": "Close a session with a card reset. Not behind the relay switch: closing\none is always allowed, and an id that names none is `closed: false`.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Smartcard.Closed"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Smart card"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Smartcard.SessionId"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/smartcard/session/transmit": {
+      "post": {
+        "operationId": "smartcardSessionTransmit",
+        "description": "A sequence of APDUs in an open session.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Smartcard.TransmitAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "403: the reader relay is off on this api.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Smart card"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Smartcard.SessionTransmitRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/smartcard/transmit": {
+      "post": {
+        "operationId": "smartcardTransmit",
+        "description": "A sequence of APDUs on one connection, exclusive when there is more than\none. A card's status word, whatever it is, is a 200.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Smartcard.TransmitAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "403: the reader relay is off on this api.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Smart card"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Smartcard.TransmitRequest"
+              }
+            }
+          }
+        }
       }
     }
   },
@@ -1491,6 +1967,264 @@
         },
         "description": "The validator's own refusal: the body was not the JSON shape this\noperation takes. `code` is always EMODELREQUEST, and `error` names the\nmember and what was wrong with it."
       },
+      "Otp.HttpExchange": {
+        "type": "object",
+        "required": [
+          "request",
+          "response",
+          "timing",
+          "error"
+        ],
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "body": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "method",
+              "url",
+              "headers",
+              "body"
+            ]
+          },
+          "response": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  "statusText": {
+                    "type": "string"
+                  },
+                  "headers": {
+                    "type": "object",
+                    "additionalProperties": {}
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "bodyTruncated": {
+                    "type": "boolean"
+                  },
+                  "bodyLength": {
+                    "type": "integer",
+                    "format": "int64"
+                  }
+                },
+                "required": [
+                  "status",
+                  "statusText",
+                  "headers",
+                  "body",
+                  "bodyTruncated",
+                  "bodyLength"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timing": {
+            "type": "object",
+            "properties": {
+              "totalMs": {
+                "type": "integer",
+                "format": "int64"
+              }
+            },
+            "required": [
+              "totalMs"
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "The outbound request and its answer, when http_trace asked for it."
+      },
+      "Otp.Limits": {
+        "type": "object",
+        "required": [
+          "maxBodyBytes",
+          "method",
+          "defaultVerifier",
+          "servers",
+          "note"
+        ],
+        "properties": {
+          "maxBodyBytes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET"
+            ]
+          },
+          "defaultVerifier": {
+            "type": "string"
+          },
+          "servers": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "server": {
+                  "type": "integer",
+                  "format": "int32"
+                },
+                "host": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "server",
+                "host"
+              ]
+            }
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "description": "What /otp/verify will send, and to which servers."
+      },
+      "Otp.Unreachable": {
+        "type": "object",
+        "required": [
+          "error",
+          "code"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "http_exchange": {
+            "$ref": "#/components/schemas/Otp.HttpExchange"
+          }
+        },
+        "description": "The verifier could not be reached. `code` is the network's, or empty."
+      },
+      "Otp.VerifyAnswer": {
+        "type": "object",
+        "required": [
+          "ok",
+          "status",
+          "body"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "body": {
+            "type": "string"
+          },
+          "http_exchange": {
+            "$ref": "#/components/schemas/Otp.HttpExchange"
+          }
+        },
+        "description": "What the verifier said. `ok` is the HTTP status being 2xx and nothing\nmore: the protocol's own status=OK or BAD_OTP is inside `body`, which the\npage reads and checks against its nonce and the API key."
+      },
+      "Otp.VerifyRequest": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "description": "The signed fields, form-encoded: id, otp, nonce and h, and optionally\nsl, timeout and timestamp. Sent as the GET's query string, unchanged.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/otp_verify.js: present, no line break, at most 2048 bytes, a form of only the seven Validation Protocol 2.0 fields, with a digit client id, a 32-48 character modhex OTP, a 16-40 character nonce and a base64 h"
+          },
+          "verifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A verifier URL of the caller's own. Wins over `server`.",
+            "x-checked-in-code": "api/otp_verify.js: an https URL with no userinfo, query string or '..'; the address policy installed on axios decides where it may go"
+          },
+          "server": {
+            "anyOf": [
+              {
+                "type": "number",
+                "format": "double"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Which YubiCloud server, 1 to 5, when no verifier is named.",
+            "x-checked-in-code": "api/otp_verify.js: an integer 1 to 5, as a number or as text; absent or empty is 1"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false (or \"false\") turns off certificate verification."
+          },
+          "http_trace": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "true (or \"true\") attaches the outbound exchange as http_exchange."
+          }
+        },
+        "description": "A validation request the page already signed, and where to send it."
+      },
       "Refusal": {
         "type": "object",
         "required": [
@@ -1583,6 +2317,498 @@
           }
         },
         "description": "Every recorded gap since the process started."
+      },
+      "Smartcard.Apdus": {
+        "type": "object",
+        "properties": {
+          "apdu": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One APDU in hex, when `apdus` is not an array.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/smartcard_reader.js: an even number of hex characters, 4 to 8192 bytes"
+          },
+          "apdus": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "1 to 16 APDUs in hex, sent in order on one connection.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/smartcard_reader.js: 1 to 16, each an even number of hex characters, 4 to 8192 bytes"
+          },
+          "getResponse": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false (or \"false\") turns off GET RESPONSE after 61xx and the\nresend after 6Cxx, to show the raw exchange."
+          },
+          "remainingIns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "c0 (GET RESPONSE) or a5 (YKOATH SEND REMAINING). Absent is c0.",
+            "x-checked-in-code": "api/smartcard_reader.js: c0 or a5, any case"
+          }
+        },
+        "description": "A sequence of APDUs, as /smartcard/transmit and a session take it."
+      },
+      "Smartcard.ChallengeAnswer": {
+        "type": "object",
+        "required": [
+          "response",
+          "raw",
+          "device"
+        ],
+        "properties": {
+          "response": {
+            "type": "string"
+          },
+          "raw": {
+            "type": "string"
+          },
+          "device": {
+            "type": "string"
+          }
+        },
+        "description": "An OTP slot's HMAC-SHA1 response, and the key that gave it."
+      },
+      "Smartcard.ChallengeRequest": {
+        "type": "object",
+        "properties": {
+          "slot": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The OTP slot's HID slot byte, in hex: 20, 28, 30 or 38.",
+            "x-checked-in-code": "api/otp_hid.js: 20, 28, 30 or 38, read as hex"
+          },
+          "challenge": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Up to 64 bytes of hex.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/otp_hid.js: an even number of hex characters, at most 64 bytes"
+          },
+          "variable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false (or \"false\") selects the fixed 64-byte HMAC mode."
+          }
+        },
+        "description": "POST /smartcard/otp/challenge."
+      },
+      "Smartcard.Closed": {
+        "type": "object",
+        "required": [
+          "closed"
+        ],
+        "properties": {
+          "closed": {
+            "type": "boolean"
+          }
+        },
+        "description": "Whether the close found a session to close (with a card reset)."
+      },
+      "Smartcard.Exchange": {
+        "type": "object",
+        "required": [
+          "data",
+          "status",
+          "steps"
+        ],
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Smartcard.Step"
+            }
+          }
+        },
+        "description": "One APDU of the sequence, completed: its data across every GET RESPONSE,\nthe final status word, and each exchange that took."
+      },
+      "Smartcard.Limits": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "available",
+          "reason",
+          "maxApduBytes",
+          "maxSequence",
+          "reader",
+          "hid"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "The relay is on and a PC/SC library loads."
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "maxApduBytes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "maxSequence": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "reader": {
+            "type": "string"
+          },
+          "hid": {
+            "type": "object",
+            "properties": {
+              "available": {
+                "type": "boolean"
+              },
+              "reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "available",
+              "reason"
+            ],
+            "description": "OTP challenge-response over HID. Reported unavailable when off."
+          }
+        },
+        "description": "What the relay will and will not do, and why not where it cannot."
+      },
+      "Smartcard.ReaderName": {
+        "type": "object",
+        "properties": {
+          "reader": {
+            "type": "string",
+            "x-checked-in-code": "api/smartcard_reader.js: not empty, at most 256 characters, no control character, and not a URL, a URI, a host and port or a filesystem path"
+          }
+        },
+        "description": "A PC/SC reader, by the name GET /smartcard/readers lists."
+      },
+      "Smartcard.Readers": {
+        "type": "object",
+        "required": [
+          "readers"
+        ],
+        "properties": {
+          "readers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "The readers PC/SC lists."
+      },
+      "Smartcard.Session": {
+        "type": "object",
+        "required": [
+          "id",
+          "idleMs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "idleMs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "description": "An open session, and how long it may sit idle before it is closed."
+      },
+      "Smartcard.SessionId": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "x-refusal": {
+              "message": "The session id is 32 hex characters."
+            }
+          }
+        },
+        "description": "The session id POST /smartcard/session answered with."
+      },
+      "Smartcard.SessionTransmitRequest": {
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{32}$",
+            "x-refusal": {
+              "message": "The session id is 32 hex characters."
+            }
+          },
+          "apdu": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One APDU in hex, when `apdus` is not an array.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/smartcard_reader.js: an even number of hex characters, 4 to 8192 bytes"
+          },
+          "apdus": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "1 to 16 APDUs in hex, sent in order on one connection.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/smartcard_reader.js: 1 to 16, each an even number of hex characters, 4 to 8192 bytes"
+          },
+          "getResponse": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false (or \"false\") turns off GET RESPONSE after 61xx and the\nresend after 6Cxx, to show the raw exchange."
+          },
+          "remainingIns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "c0 (GET RESPONSE) or a5 (YKOATH SEND REMAINING). Absent is c0.",
+            "x-checked-in-code": "api/smartcard_reader.js: c0 or a5, any case"
+          }
+        },
+        "description": "POST /smartcard/session/transmit: the reader is the session's."
+      },
+      "Smartcard.Step": {
+        "type": "object",
+        "required": [
+          "apdu",
+          "data",
+          "status"
+        ],
+        "properties": {
+          "apdu": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "description": "One APDU on the wire and the card's answer to it."
+      },
+      "Smartcard.TransmitAnswer": {
+        "type": "object",
+        "required": [
+          "data",
+          "status",
+          "steps",
+          "results"
+        ],
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Smartcard.Step"
+            }
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Smartcard.Exchange"
+            }
+          }
+        },
+        "description": "The card's answer. The top-level members are the LAST APDU's; `results`\nhas every one that ran, and the sequence stops at the first whose status\nis not 90xx or 61xx."
+      },
+      "Smartcard.TransmitRequest": {
+        "type": "object",
+        "properties": {
+          "reader": {
+            "type": "string",
+            "x-checked-in-code": "api/smartcard_reader.js: not empty, at most 256 characters, no control character, and not a URL, a URI, a host and port or a filesystem path"
+          },
+          "apdu": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One APDU in hex, when `apdus` is not an array.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/smartcard_reader.js: an even number of hex characters, 4 to 8192 bytes"
+          },
+          "apdus": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "1 to 16 APDUs in hex, sent in order on one connection.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/smartcard_reader.js: 1 to 16, each an even number of hex characters, 4 to 8192 bytes"
+          },
+          "getResponse": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false (or \"false\") turns off GET RESPONSE after 61xx and the\nresend after 6Cxx, to show the raw exchange."
+          },
+          "remainingIns": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "c0 (GET RESPONSE) or a5 (YKOATH SEND REMAINING). Absent is c0.",
+            "x-checked-in-code": "api/smartcard_reader.js: c0 or a5, any case"
+          }
+        },
+        "description": "POST /smartcard/transmit."
       }
     }
   },
