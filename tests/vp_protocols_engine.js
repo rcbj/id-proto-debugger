@@ -223,6 +223,46 @@ async function encryptedResponse() {
     clientMetadata: { jwks: { keys: [] } } }), /no ECDH-ES/,
     "with no key to encrypt to, encryption must refuse");
   log.info("PASS direct_post.jwt encryption, both enc values.");
+
+  // #312: a Verifier that lists a usable X-Wing key FIRST gets the
+  // post-quantum answer — the key's alg decides, not keys[0] of a P-256 list.
+  // HAIP keeps to ECDH-ES P-256, and an mdoc presentation passes over an AKP
+  // key, which has no RFC 7638 thumbprint for the session transcript.
+  const xwing = joseJwe.generateKemKeyPair("HPKE-10-KE", "pq-1");
+  const pq = { jwks: { keys: [xwing.publicJwk, pub] },
+    encrypted_response_enc_values_supported: ["A256GCM"] };
+  assert.deepStrictEqual(vp.encryptionKeys(pq).map(function (k) {
+    return k.kid;
+  }), ["pq-1", "resp-1"], "both keys usable, in the Verifier's order");
+  const pqSealed = await vp.encryptResponse({ fields: fields,
+    clientMetadata: pq });
+  assert.strictEqual(pqSealed.header.alg, "HPKE-10-KE");
+  assert.strictEqual(pqSealed.header.kid, "pq-1");
+  assert.ok(pqSealed.header.ek, "HPKE Key Encryption carries ek");
+  const pqOpened = await joseJwe.decryptCompact({ jwe: pqSealed.jwe,
+    key: xwing.privateJwk });
+  assert.deepStrictEqual(JSON.parse(pqOpened.plaintext), fields);
+  const haip = await vp.encryptResponse({ fields: fields, clientMetadata: pq,
+    protocol: vp.PROTOCOL_HAIP });
+  assert.strictEqual(haip.header.alg, "ECDH-ES", "HAIP: ECDH-ES only");
+  assert.deepStrictEqual(vp.encryptionKeys(pq, { needsThumbprint: true })
+    .map(function (k) {
+      return k.kid;
+    }), ["resp-1"], "an mdoc answer passes over the AKP key");
+  const integrated = joseJwe.generateKemKeyPair("HPKE-10", "pq-2");
+  const sealedI = await vp.encryptResponse({ fields: fields,
+    clientMetadata: { jwks: { keys: [integrated.publicJwk] } } });
+  assert.strictEqual(sealedI.header.enc, undefined,
+    "HPKE Integrated Encryption writes no enc");
+  assert.strictEqual(sealedI.enc, null);
+  const openedI = await joseJwe.decryptCompact({ jwe: sealedI.jwe,
+    key: integrated.privateJwk });
+  assert.deepStrictEqual(JSON.parse(openedI.plaintext), fields);
+  const wrongKty = Object.assign({}, pub, { alg: "HPKE-10-KE" });
+  assert.deepStrictEqual(vp.encryptionKeys({ jwks: { keys: [wrongKty] } }),
+    [], "an EC key labelled HPKE-10-KE is not usable");
+  log.info("PASS the Verifier's key is chosen by alg: X-Wing first, HAIP " +
+           "ECDH-ES, mdoc skips AKP, Integrated HPKE has no enc.");
   log.debug("Leaving encryptedResponse().");
 }
 

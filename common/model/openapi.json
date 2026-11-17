@@ -53,6 +53,47 @@
     }
   ],
   "paths": {
+    "/.well-known/ssf-configuration/ssf/transmitter/{id}": {
+      "get": {
+        "operationId": "ssfTransmitterMetadata",
+        "description": "SSF 1.0 section 7: the configuration metadata. Public.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Metadata"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ]
+      }
+    },
     "/api-docs": {
       "get": {
         "operationId": "apiDocumentIndex",
@@ -4150,6 +4191,1276 @@
         "tags": [
           "Shared Signals"
         ]
+      }
+    },
+    "/ssf/transmitter": {
+      "post": {
+        "operationId": "ssfTransmitterCreate",
+        "description": "Host a transmitter. Refused when off, at a limit, or given a private key.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Created"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.CreateRequest"
+              }
+            }
+          }
+        },
+        "x-checked-in-code": "api/ssf_transmitter.js: ssfTransmitterEnabled, ssfTransmitterMaxInstances and ssfTransmitterMaxInstancesPerCaller, counted by the caller's address"
+      }
+    },
+    "/ssf/transmitter/{id}": {
+      "get": {
+        "operationId": "ssfTransmitterRead",
+        "description": "The transmitter, its streams, what is pending and what happened.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Read"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ]
+      },
+      "delete": {
+        "operationId": "ssfTransmitterDelete",
+        "description": "Delete it. Its streams and queues go with it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Deleted"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ]
+      }
+    },
+    "/ssf/transmitter/{id}/deliver": {
+      "post": {
+        "operationId": "ssfTransmitterDeliver",
+        "description": "Deliver a SET the page signed: pushed now, or queued for a poll.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Delivered"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Refusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.DeliverRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ssf/transmitter/{id}/jwks": {
+      "get": {
+        "operationId": "ssfTransmitterJwks",
+        "description": "The public keys every SET verifies against. Public.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/jwk-set+json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {}
+                    }
+                  },
+                  "required": [
+                    "keys"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ]
+      }
+    },
+    "/ssf/transmitter/{id}/poll/{streamId}": {
+      "post": {
+        "operationId": "ssfTransmitterPoll",
+        "description": "RFC 8936: poll a stream. What is returned stays queued until acked.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "streamId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Polled"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.PollRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ssf/transmitter/{id}/status": {
+      "get": {
+        "operationId": "ssfTransmitterStatusRead",
+        "description": "SSF 1.0 section 8.1.2.1: a stream's status.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stream_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.StatusAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ]
+      },
+      "post": {
+        "operationId": "ssfTransmitterStatusUpdate",
+        "description": "SSF 1.0 section 8.1.2.2: change it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.StatusAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.ReceiverRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ssf/transmitter/{id}/stream": {
+      "post": {
+        "operationId": "ssfTransmitterStreamCreate",
+        "description": "SSF 1.0 section 8.1.1.1: create a stream.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "The request has succeeded and a new resource has been created as a result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Stream"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state of the server.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.ReceiverRequest"
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "ssfTransmitterStreamRead",
+        "description": "SSF 1.0 section 8.1.1.2: one stream, or all of them.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stream_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SsfTransmitter.Stream"
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/SsfTransmitter.Stream"
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ]
+      },
+      "patch": {
+        "operationId": "ssfTransmitterStreamUpdate",
+        "description": "SSF 1.0 section 8.1.1.3: update the Receiver-Supplied members given.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Stream"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.ReceiverRequest"
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "operationId": "ssfTransmitterStreamReplace",
+        "description": "SSF 1.0 section 8.1.1.4: replace them.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SsfTransmitter.Stream"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.ReceiverRequest"
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "ssfTransmitterStreamDelete",
+        "description": "SSF 1.0 section 8.1.1.5: delete a stream.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "stream_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "explode": false
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "There is no content to send for this request, but the headers may be useful. "
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ]
+      }
+    },
+    "/ssf/transmitter/{id}/subjects/add": {
+      "post": {
+        "operationId": "ssfTransmitterSubjectAdd",
+        "description": "SSF 1.0 section 8.1.3.2: add a subject. An empty 200.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded."
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.ReceiverRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ssf/transmitter/{id}/subjects/remove": {
+      "post": {
+        "operationId": "ssfTransmitterSubjectRemove",
+        "description": "SSF 1.0 section 8.1.3.3: remove one. A 204.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "There is no content to send for this request, but the headers may be useful. "
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.ReceiverRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ssf/transmitter/{id}/verify": {
+      "post": {
+        "operationId": "ssfTransmitterVerify",
+        "description": "SSF 1.0 section 8.1.4.2: ask for a verification event. 204: queued,\nfor the page to sign and send.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "There is no content to send for this request, but the headers may be useful. "
+          },
+          "400": {
+            "description": "The server could not understand the request due to invalid syntax.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Access is unauthorized.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ssf.SetError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Shared Signals"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SsfTransmitter.ReceiverRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/tls/connect": {
@@ -11448,6 +12759,9 @@
               }
             ]
           },
+          "transmitter": {
+            "$ref": "#/components/schemas/Ssf.TransmitterLimits"
+          },
           "addressPolicy": {
             "type": "string"
           },
@@ -11641,6 +12955,71 @@
         },
         "description": "RFC 8935 section 2.4: the SET Error Code (`invalid_request`,\n`authentication_failed`, ...) and the sentence that explains it."
       },
+      "Ssf.TransmitterLimits": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "ttlMs",
+          "idleTtlMs",
+          "maxInstances",
+          "maxInstancesPerCaller",
+          "maxStreams",
+          "maxQueued",
+          "maxEventBytes",
+          "held",
+          "signs",
+          "note"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ttlMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "idleTtlMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxInstances": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxInstancesPerCaller": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxStreams": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxQueued": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxEventBytes": {
+            "type": "number",
+            "format": "double"
+          },
+          "held": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many transmitters this process hosts now."
+          },
+          "signs": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "This service signs nothing: the page does."
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "description": "The hosted transmitter's bounds (#363), as GET /ssf/limits reports\nthem. See models/api/ssf_transmitter.tsp."
+      },
       "Ssf.Unreachable": {
         "type": "object",
         "required": [
@@ -11659,6 +13038,689 @@
           }
         },
         "description": "The transmitter could not be reached. `code` is the network error's."
+      },
+      "SsfTransmitter.CreateRequest": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A name for it, cut at 200 characters."
+          },
+          "jwks": {
+            "description": "The PUBLIC half of the key the page signs with, as a JWK Set.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ssf_transmitter.js: one to ten JWKs, each with a kty and no private member"
+          },
+          "eventsSupported": {
+            "description": "The event type URIs this transmitter offers (events_supported).",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ssf_transmitter.js: an array of at most 100 strings"
+          },
+          "receiverCredential": {
+            "description": "The bearer token receivers present; absent is generated.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ssf_transmitter.js: 16 to 512 characters, no whitespace"
+          },
+          "idleTtlMs": {
+            "anyOf": [
+              {
+                "type": "number",
+                "format": "double"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How long it may go unused, in ms.",
+            "x-checked-in-code": "api/ssf_transmitter.js: a positive whole number, at most ssfTransmitterIdleTtlMs"
+          },
+          "ttlMs": {
+            "anyOf": [
+              {
+                "type": "number",
+                "format": "double"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How long it lives, in ms.",
+            "x-checked-in-code": "api/ssf_transmitter.js: a positive whole number, at most ssfTransmitterTtlMs"
+          }
+        },
+        "description": "A transmitter, as the page asks for one."
+      },
+      "SsfTransmitter.Created": {
+        "type": "object",
+        "required": [
+          "ok",
+          "transmitter",
+          "ownerKey",
+          "receiverCredential",
+          "note"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "transmitter": {
+            "$ref": "#/components/schemas/SsfTransmitter.Transmitter"
+          },
+          "ownerKey": {
+            "type": "string",
+            "description": "The page's credential for its own four routes. Shown once."
+          },
+          "receiverCredential": {
+            "type": "string",
+            "description": "The bearer token receivers present. Shown once."
+          },
+          "note": {
+            "type": "string"
+          }
+        }
+      },
+      "SsfTransmitter.Deleted": {
+        "type": "object",
+        "required": [
+          "ok",
+          "deleted"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "deleted": {
+            "type": "string"
+          }
+        }
+      },
+      "SsfTransmitter.DeliverRequest": {
+        "type": "object",
+        "properties": {
+          "stream_id": {
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ssf_transmitter.js: a stream a receiver created here (404)"
+          },
+          "token": {
+            "description": "The compact JWS.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ssf_transmitter.js: required, a compact JWS, at most ssfTransmitterMaxEventBytes"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false or \"false\" turns off certificate verification of the\nreceiver's push endpoint.",
+            "x-checked-in-code": "api/ssl_validate.js: only false or \"false\" turns verification off"
+          }
+        },
+        "description": "A SET the page signed, for one of the transmitter's streams."
+      },
+      "SsfTransmitter.Delivered": {
+        "type": "object",
+        "required": [
+          "ok",
+          "action",
+          "jti",
+          "stream_id",
+          "findings",
+          "note"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "action": {
+            "type": "string",
+            "description": "push, queued (poll), held (paused) or dropped (disabled)."
+          },
+          "jti": {
+            "type": "string"
+          },
+          "stream_id": {
+            "type": "string"
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What about the SET does not match the stream. Delivered anyway."
+          },
+          "note": {
+            "type": "string"
+          },
+          "push": {
+            "$ref": "#/components/schemas/SsfTransmitter.PushOutcome"
+          }
+        }
+      },
+      "SsfTransmitter.LogRow": {
+        "type": "object",
+        "required": [
+          "at",
+          "kind"
+        ],
+        "properties": {
+          "at": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "stream_id": {
+            "type": "string"
+          },
+          "jti": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "accepted": {
+            "type": "boolean"
+          },
+          "err": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "description": "One line of what happened at the transmitter."
+      },
+      "SsfTransmitter.Metadata": {
+        "type": "object",
+        "required": [
+          "spec_version",
+          "issuer",
+          "jwks_uri",
+          "delivery_methods_supported",
+          "configuration_endpoint",
+          "status_endpoint",
+          "add_subject_endpoint",
+          "remove_subject_endpoint",
+          "verification_endpoint",
+          "authorization_schemes",
+          "default_subjects"
+        ],
+        "properties": {
+          "spec_version": {
+            "type": "string"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "jwks_uri": {
+            "type": "string"
+          },
+          "delivery_methods_supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "configuration_endpoint": {
+            "type": "string"
+          },
+          "status_endpoint": {
+            "type": "string"
+          },
+          "add_subject_endpoint": {
+            "type": "string"
+          },
+          "remove_subject_endpoint": {
+            "type": "string"
+          },
+          "verification_endpoint": {
+            "type": "string"
+          },
+          "authorization_schemes": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "spec_urn": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "spec_urn"
+              ]
+            }
+          },
+          "default_subjects": {
+            "type": "string"
+          }
+        },
+        "description": "SSF 1.0 section 7.1, the Transmitter Configuration Metadata."
+      },
+      "SsfTransmitter.OwnerStream": {
+        "type": "object",
+        "required": [
+          "stream_id",
+          "iss",
+          "aud",
+          "events_supported",
+          "events_requested",
+          "events_delivered",
+          "delivery",
+          "min_verification_interval",
+          "status",
+          "reason",
+          "subjects",
+          "pushAuthorized",
+          "queued",
+          "held",
+          "createdAt"
+        ],
+        "properties": {
+          "stream_id": {
+            "type": "string"
+          },
+          "iss": {
+            "type": "string"
+          },
+          "aud": {
+            "type": "string"
+          },
+          "events_supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "events_requested": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "events_delivered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "delivery": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string"
+              },
+              "endpoint_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "method",
+              "endpoint_url"
+            ]
+          },
+          "min_verification_interval": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "description": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "subjects": {
+            "type": "array",
+            "items": {}
+          },
+          "pushAuthorized": {
+            "type": "boolean"
+          },
+          "queued": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "held": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        },
+        "description": "A stream as the page sees it: the receiver's view and this service's\nstate. Never the receiver's authorization_header."
+      },
+      "SsfTransmitter.Pending": {
+        "type": "object",
+        "required": [
+          "stream_id",
+          "state",
+          "at"
+        ],
+        "properties": {
+          "stream_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string"
+          }
+        },
+        "description": "A verification event the receiver asked for and the page owes."
+      },
+      "SsfTransmitter.PollRequest": {
+        "type": "object",
+        "properties": {
+          "maxEvents": {
+            "x-passthrough": true
+          },
+          "returnImmediately": {
+            "x-passthrough": true
+          },
+          "ack": {
+            "x-passthrough": true
+          },
+          "setErrs": {
+            "x-passthrough": true
+          }
+        },
+        "description": "An RFC 8936 poll request."
+      },
+      "SsfTransmitter.Polled": {
+        "type": "object",
+        "required": [
+          "sets",
+          "moreAvailable"
+        ],
+        "properties": {
+          "sets": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "moreAvailable": {
+            "type": "boolean"
+          }
+        },
+        "description": "RFC 8936 section 2.3."
+      },
+      "SsfTransmitter.PushOutcome": {
+        "type": "object",
+        "required": [
+          "status",
+          "accepted",
+          "err",
+          "description",
+          "detail"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "accepted": {
+            "type": "boolean"
+          },
+          "err": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          }
+        },
+        "description": "What a push answered (RFC 8935 section 2.3 and 2.4)."
+      },
+      "SsfTransmitter.Read": {
+        "type": "object",
+        "required": [
+          "ok",
+          "transmitter"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "transmitter": {
+            "$ref": "#/components/schemas/SsfTransmitter.Transmitter"
+          }
+        }
+      },
+      "SsfTransmitter.ReceiverRequest": {
+        "type": "object",
+        "properties": {
+          "stream_id": {
+            "x-passthrough": true
+          },
+          "events_requested": {
+            "x-passthrough": true
+          },
+          "delivery": {
+            "x-passthrough": true
+          },
+          "description": {
+            "x-passthrough": true
+          },
+          "status": {
+            "x-passthrough": true
+          },
+          "reason": {
+            "x-passthrough": true
+          },
+          "subject": {
+            "x-passthrough": true
+          },
+          "verified": {
+            "x-passthrough": true
+          },
+          "state": {
+            "x-passthrough": true
+          }
+        },
+        "description": "Any request a receiver sends to the stream management API."
+      },
+      "SsfTransmitter.StatusAnswer": {
+        "type": "object",
+        "required": [
+          "stream_id",
+          "status"
+        ],
+        "properties": {
+          "stream_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        }
+      },
+      "SsfTransmitter.Stream": {
+        "type": "object",
+        "required": [
+          "stream_id",
+          "iss",
+          "aud",
+          "events_supported",
+          "events_requested",
+          "events_delivered",
+          "delivery",
+          "min_verification_interval"
+        ],
+        "properties": {
+          "stream_id": {
+            "type": "string"
+          },
+          "iss": {
+            "type": "string"
+          },
+          "aud": {
+            "type": "string"
+          },
+          "events_supported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "events_requested": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "events_delivered": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "delivery": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string"
+              },
+              "endpoint_url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "method",
+              "endpoint_url"
+            ]
+          },
+          "min_verification_interval": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "description": {
+            "type": "string"
+          }
+        },
+        "description": "SSF 1.0 section 8.1.1, as a receiver sees it."
+      },
+      "SsfTransmitter.Transmitter": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "issuer",
+          "discoveryUrl",
+          "metadata",
+          "jwks",
+          "eventsSupported",
+          "createdAt",
+          "expiresAt",
+          "streams",
+          "pendingVerifications",
+          "log"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "issuer": {
+            "type": "string"
+          },
+          "discoveryUrl": {
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/SsfTransmitter.Metadata"
+          },
+          "jwks": {
+            "type": "object",
+            "properties": {
+              "keys": {
+                "type": "array",
+                "items": {}
+              }
+            },
+            "required": [
+              "keys"
+            ]
+          },
+          "eventsSupported": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "streams": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SsfTransmitter.OwnerStream"
+            }
+          },
+          "pendingVerifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SsfTransmitter.Pending"
+            }
+          },
+          "log": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SsfTransmitter.LogRow"
+            }
+          }
+        },
+        "description": "The whole transmitter, as the page sees it."
       },
       "Tls.ConnectAnswer": {
         "type": "object",

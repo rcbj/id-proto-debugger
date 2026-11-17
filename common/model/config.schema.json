@@ -244,6 +244,45 @@
           "minimum": -2147483648,
           "maximum": 2147483647
         },
+        "ssfTransmitterEnabled": {
+          "type": "boolean",
+          "description": "The hosted SSF transmitter (#363): api/ssf_transmitter.js."
+        },
+        "ssfTransmitterTtlMs": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfTransmitterIdleTtlMs": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfTransmitterMaxInstances": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfTransmitterMaxInstancesPerCaller": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfTransmitterMaxStreams": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfTransmitterMaxQueued": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfTransmitterMaxEventBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
         "smartcardReaderEnabled": {
           "type": "boolean",
           "description": "Open the PC/SC reader (docker-compose-smartcard.yml)."

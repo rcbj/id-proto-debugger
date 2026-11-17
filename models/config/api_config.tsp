@@ -130,6 +130,16 @@ model ApiConfig {
   ssfReceiverMaxEventBytes?: int32;
   ssfReceiverMaxInboxBytes?: int32;
 
+  /** The hosted SSF transmitter (#363): api/ssf_transmitter.js. */
+  ssfTransmitterEnabled?: boolean;
+  ssfTransmitterTtlMs?: int32;
+  ssfTransmitterIdleTtlMs?: int32;
+  ssfTransmitterMaxInstances?: int32;
+  ssfTransmitterMaxInstancesPerCaller?: int32;
+  ssfTransmitterMaxStreams?: int32;
+  ssfTransmitterMaxQueued?: int32;
+  ssfTransmitterMaxEventBytes?: int32;
+
   // --- Hardware -----------------------------------------------------------
 
   /** Open the PC/SC reader (docker-compose-smartcard.yml). */

@@ -133,6 +133,13 @@ async function everyAlgorithmRoundTrips() {
     "ECDH-ES+A192KW": ec,
     "ECDH-ES+A256KW": ec
   };
+  // ML-KEM and HPKE (#312) take JWKs, one key per alg; tests/hpke_jwe_engine.js
+  // holds them to the drafts' vectors, and this checks they serialize like
+  // every other alg here.
+  jose.supportedAlgs().filter(jose.isKemAlg).forEach(function (a) {
+    var kp = jose.generateKemKeyPair(a);
+    keyPairs[a] = { publicKey: kp.publicJwk, privateKey: kp.privateJwk };
+  });
   var pairs = 0;
   var algs = jose.supportedAlgs();
   var encs = jose.supportedEncs();
@@ -140,6 +147,10 @@ async function everyAlgorithmRoundTrips() {
     for (var e = 0; e < encs.length; e++) {
       var alg = algs[a];
       var enc = encs[e];
+      // HPKE Integrated Encryption has no enc, so one pass covers it.
+      if (jose.isIntegrated(alg) && e > 0) {
+        continue;
+      }
       var pair = keyPairs[alg];
       assert.ok(pair, "no key pair for " + alg +
                 " — the module offers an algorithm this test does not cover.");
@@ -155,7 +166,9 @@ async function everyAlgorithmRoundTrips() {
             parts.length);
       assert.strictEqual(produced.header.alg, alg,
                          "the protected header must name the alg used.");
-      assert.strictEqual(produced.header.enc, enc, "and the enc.");
+      assert.strictEqual(produced.header.enc,
+                         jose.isIntegrated(alg) ? undefined : enc,
+                         "and the enc — none for HPKE Integrated Encryption.");
       assert.strictEqual(produced.header.kid, "test-key-1",
         "caller-supplied header parameters must survive.");
       assert.strictEqual(produced.header.cty, "JWT", "including cty.");
@@ -168,7 +181,7 @@ async function everyAlgorithmRoundTrips() {
           "and the epk must be the PUBLIC half only. Got members: " +
           Object.keys(produced.header.epk).join(", "));
       }
-      if (alg === "ECDH-ES") {
+      if (alg === "ECDH-ES" || /^ML-KEM-[0-9]+$/.test(alg)) {
         assert.strictEqual(parts[1], "",
           "ECDH-ES is direct key agreement: encrypted_key must be empty. Got " +
               parts[1].length +

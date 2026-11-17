@@ -601,7 +601,9 @@ async function startAtTheVerifierWebsite(driver, opts) {
 // the portal page; the caller hands the offer to the wallet.
 //
 // `opts`: { By, until, stsBase, username, password, mode, configuration,
-// wait, consentScreen }. Answers { txCode, offerUri, qr, page, username }.
+// wait, consentScreen }. Answers { txCode, offerUri, qr, qrMarkup, page,
+// username }: `qrMarkup` is the QR code as the page drew it (an <svg>), for
+// a wallet that reads the offer from the picture (#365).
 async function offerFromThePortalWallet(driver, opts) {
   log.debug("Entering offerFromThePortalWallet(). mode=" + opts.mode);
   const By = opts.By;
@@ -671,11 +673,13 @@ async function offerFromThePortalWallet(driver, opts) {
     "return { txCode: document.getElementById('tx_code').textContent.trim()," +
     "  offerUri: document.getElementById('offer_uri').textContent.trim()," +
     "  qr: qr ? qr.tagName.toLowerCase() : ''," +
+    "  qrMarkup: qr ? qr.outerHTML : ''," +
     "  page: document.body.textContent };");
   log.debug("Leaving offerFromThePortalWallet(). " +
             shown.offerUri.slice(0, 60));
   return { txCode: shown.txCode, offerUri: shown.offerUri, qr: shown.qr,
-           page: shown.page, username: opts.username };
+           qrMarkup: shown.qrMarkup, page: shown.page,
+           username: opts.username };
 }
 
 // A REQUEST, GOT THE WAY A PERSON GETS ONE: the Verifier's website, its

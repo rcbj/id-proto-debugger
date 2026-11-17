@@ -140,6 +140,11 @@ async function everyEncryptionPaneCombinationWorks(driver) {
     for (var e = 0; e < encs.length; e++) {
       var alg = algs[a].value;
       var enc = encs[e].value;
+      // An Integrated HPKE alg (HPKE-n, #312) has no enc and ignores the
+      // menu, so one pass covers it; the other five would repeat it.
+      if (/^HPKE-[0-9]+$/.test(alg) && e > 0) {
+        continue;
+      }
       var result = await driver.executeAsyncScript(
         "var done = arguments[arguments.length - 1];" +
         "document.getElementById('enc_jwe_alg').value = arguments[0];" +

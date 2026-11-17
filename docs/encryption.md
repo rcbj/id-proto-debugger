@@ -62,15 +62,16 @@ the library's own invention rather than anybody's wire format. The ML-KEM +
 P-256 pairing is available here under Composite ML-KEM, where a draft does name
 the label.
 
-**There is no post-quantum `alg` in the JWE pane, and that is a fact about the
-standards.** `draft-ietf-jose-pqc-kem-06` is named for the JOSE working group
-but specifies only the *COSE* binding — its running header reads "PQ KEM for
-COSE", its IANA section registers COSE codepoints only, and its KDF section
-begins "The key derivation for COSE is performed using KMAC". So there is no
-registered `alg`, no defined header parameter for the encapsulated key, and no
-JOSE-side KDF context to implement. Signatures are the other way round: ML-DSA
-in JOSE is published as **RFC 9964** and the Digital Signature page's JWS pane
-offers eleven post-quantum `alg` values today.
+**The JWE pane has post-quantum and HPKE `alg` values, all from
+Internet-Drafts** (#312). `draft-ietf-jose-pqc-kem-06` is COSE-only, so the
+ML-KEM algorithms (`ML-KEM-512/768/1024` and the `+A128KW`/`+A192KW`/`+A256KW`
+forms) follow **-05**, the last revision with JOSE text. `HPKE-0` … `HPKE-7`
+are `draft-ietf-jose-hpke-encrypt-22`; `HPKE-8` … `HPKE-16` are
+`draft-reddy-cose-jose-pqc-hybrid-hpke-11`, and **HPKE-10/11 are X-Wing**. A
+bare `HPKE-n` is Integrated Encryption and has **no `enc`**. See
+[`jwe-pq-kem.md`](jwe-pq-kem.md) for the wire details and the one place this
+departs from -05. Signatures were here first: ML-DSA in JOSE is published as
+**RFC 9964** and the Digital Signature page's JWS pane offers it.
 
 ## DSA cannot encrypt, and the pane says so
 
@@ -142,6 +143,8 @@ crypto_bytes.js       bytes, base64, base64url, hex, PEM framing, compare
 symmetric_crypto.js   the block/stream ciphers, and the MAC constructions
 pk_encryption.js      RSA, ECIES, ML-KEM, ElGamal/DHIES
 jose_jwe.js           JWE, and PBES2
+jwe_kem.js            ML-KEM and HPKE key establishment for JWE (drafts)
+hpke.js               HPKE: DHKEM, ML-KEM and the PQ/T hybrids, HKDF and SHAKE
 key_material.js       the keystore matrix
 tool_panes.js         ← the DOM, and only this
 encryption_tools.js   ← the page, and only the page

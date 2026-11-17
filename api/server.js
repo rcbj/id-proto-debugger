@@ -3100,6 +3100,9 @@ const ssfProxy = require('./ssf_proxy.js');
 // no CORS headers. See oid4vp_proxy.js.
 const oid4vpProxy = require('./oid4vp_proxy.js');
 const ssfReceiver = require('./ssf_receiver.js');
+// The other half: an SSF transmitter a receiver can discover, create its
+// stream at and poll, answering for a page that signs. See #363.
+const ssfTransmitter = require('./ssf_transmitter.js');
 // GNAP signs in the browser. This module only decides what may be
 // forwarded. The private key never arrives here. See api/gnap_proxy.js.
 const gnapProxy = require('./gnap_proxy.js');
@@ -3775,7 +3778,9 @@ app.get('/ssf/limits', model.route('ssfLimits'), function (req, res) {
   log.debug('Entering GET /ssf/limits.');
   log.debug('Leaving GET /ssf/limits.');
   return res.status(STATUS_200).json(
-      ssfProxy.limits(appconfig, ssfReceiver.limits(appconfig)));
+      Object.assign(ssfProxy.limits(appconfig,
+          ssfReceiver.limits(appconfig)),
+        { transmitter: ssfTransmitter.limits(appconfig) }));
 });
 
 /**
@@ -4107,6 +4112,406 @@ app.delete('/ssf/receiver/:id', model.route('ssfReceiverDelete'),
   }
   log.debug('Leaving DELETE /ssf/receiver/:id. Deleted.');
   return res.status(STATUS_200).json({ ok: true, deleted: req.params.id });
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE HOSTED TRANSMITTER (#363). The mirror of the push receiver above: a
+ * receiver that treats its partner as a full SSF 1.0 transmitter discovers
+ * it, creates its stream there, changes its status and subjects, asks for
+ * verification and — for RFC 8936 — polls. Each of those is a request to a
+ * server, which a page is not, so this service answers them on the page's
+ * behalf.
+ *
+ * `api/ssf_transmitter.js` holds every decision and every bound; these
+ * handlers are wiring, plus the one outbound call: the RFC 8935 push of a
+ * SET the PAGE signed, to the endpoint the RECEIVER gave, carrying the
+ * authorization_header the receiver gave. That push is an ordinary outbound
+ * call and goes through the same agents, limits and User-Agent as every
+ * other one.
+ *
+ * Two kinds of caller and two credentials. The page's four routes take the
+ * owner key it was given at creation; the receiver's routes take the
+ * receiver credential (RFC 6750). Discovery and the JWKS take neither,
+ * because a receiver reads both before it has a stream at all.
+ * ---------------------------------------------------------------------------
+ */
+
+// An RFC 8935 push of one SET. Never rejects: the outcome, which is recorded
+// on the transmitter for the page, is the answer.
+function pushSet(one, streamId, jti, delivery, token, sslValidate) {
+  log.debug('Entering pushSet(). ' + delivery.url);
+  var headers = withUserAgent({
+    'Content-Type': ssfTransmitter.SET_MEDIA_TYPE,
+    Accept: 'application/json'
+  });
+  if (delivery.authorization) {
+    headers.Authorization = delivery.authorization;
+  }
+  var sink = {};
+  log.debug('Leaving pushSet(). Sending.');
+  return axios({
+    method: 'post',
+    url: delivery.url,
+    data: token,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    validateStatus: function () {
+      return true;
+    },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(sslValidate),
+    headers: headers
+  }).then(function (response) {
+    var body = {};
+    try {
+      body = JSON.parse(sink.raw || '{}') || {};
+    } catch (e) {
+      body = {};
+    }
+    // RFC 8935 section 2.3: 202 is accepted. Section 2.4: a 400 carries
+    // { err, description } from the SET Error Codes registry.
+    var outcome = {
+      status: response.status,
+      accepted: response.status === 202,
+      err: String(body.err || ''),
+      description: String(body.description || '').slice(0, 500),
+      detail: response.status === 202 ? 'accepted (202)'
+        : 'answered ' + response.status +
+          (body.err ? ' ' + body.err : '')
+    };
+    ssfTransmitter.recordPush(one, streamId, jti, outcome);
+    log.debug('pushSet(): ' + outcome.detail);
+    return outcome;
+  }).catch(function (error) {
+    var message = (error && error.message) ? error.message : String(error);
+    log.warn('pushSet() to ' + delivery.url + ' failed: ' + message);
+    var outcome = { status: 0, accepted: false, err: '',
+      description: '', detail: 'not delivered: ' + message };
+    ssfTransmitter.recordPush(one, streamId, jti, outcome);
+    return outcome;
+  });
+}
+
+// An SSF answer to a receiver: a JSON body, an empty one, or an error.
+function sendTransmitterAnswer(res, answer) {
+  log.debug('Entering sendTransmitterAnswer(). ' + answer.status);
+  if (!answer.ok) {
+    if (answer.status === 401) {
+      res.set('WWW-Authenticate', 'Bearer realm="ssf-transmitter"');
+    }
+    log.debug('Leaving sendTransmitterAnswer(). Refused.');
+    return res.status(answer.status).json({ err: answer.err,
+      description: answer.description });
+  }
+  if (answer.body === null || answer.body === undefined) {
+    log.debug('Leaving sendTransmitterAnswer(). Empty.');
+    return res.status(answer.status).end();
+  }
+  log.debug('Leaving sendTransmitterAnswer().');
+  return res.status(answer.status).json(answer.body);
+}
+
+// The receiver's routes all start the same way.
+function receiverOf(req, res) {
+  log.debug('Entering receiverOf().');
+  var who = ssfTransmitter.forReceiver(appconfig, req.params.id,
+                                       req.get('authorization') || '');
+  if (!who.ok) {
+    sendTransmitterAnswer(res, who);
+    log.debug('Leaving receiverOf(). Refused.');
+    return null;
+  }
+  log.debug('Leaving receiverOf().');
+  return who.instance;
+}
+
+function ownerOf(req, res) {
+  log.debug('Entering ownerOf().');
+  var who = ssfTransmitter.forOwner(appconfig, req.params.id,
+                                    req.get('authorization') || '');
+  if (!who.ok) {
+    if (who.status === 401) {
+      res.set('WWW-Authenticate', 'Bearer realm="ssf-transmitter-owner"');
+    }
+    res.status(who.status).json({ error: who.error });
+    log.debug('Leaving ownerOf(). Refused.');
+    return null;
+  }
+  log.debug('Leaving ownerOf().');
+  return who.instance;
+}
+
+app.post('/ssf/transmitter', model.route('ssfTransmitterCreate'),
+        function (req, res) {
+  log.debug('Entering POST /ssf/transmitter.');
+  var made = ssfTransmitter.create(appconfig, req.body || {}, req.ip,
+                                   publicBaseUrl(req));
+  if (!made.ok) {
+    log.debug('Leaving POST /ssf/transmitter. Refused: ' + made.error);
+    return res.status(STATUS_400).json({ error: made.error });
+  }
+  log.debug('Leaving POST /ssf/transmitter. ' + made.id);
+  return res.status(STATUS_200).json({
+    ok: true,
+    transmitter: made.transmitter,
+    ownerKey: made.ownerKey,
+    receiverCredential: made.receiverCredential,
+    note: 'Point the receiver at the issuer; it discovers the rest at ' +
+        'discoveryUrl. Give it receiverCredential as its bearer token for ' +
+        'the stream management API. Keep ownerKey: it is how this page ' +
+        'reads, delivers through and deletes this transmitter, and neither ' +
+        'is shown again.'
+  });
+});
+
+app.get('/ssf/transmitter/:id', model.route('ssfTransmitterRead'),
+        function (req, res) {
+  log.debug('Entering GET /ssf/transmitter/:id.');
+  var one = ownerOf(req, res);
+  if (!one) {
+    log.debug('Leaving GET /ssf/transmitter/:id. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving GET /ssf/transmitter/:id.');
+  return res.status(STATUS_200).json({ ok: true,
+    transmitter: ssfTransmitter.describe(one) });
+});
+
+app.delete('/ssf/transmitter/:id', model.route('ssfTransmitterDelete'),
+          function (req, res) {
+  log.debug('Entering DELETE /ssf/transmitter/:id.');
+  var one = ownerOf(req, res);
+  if (!one) {
+    log.debug('Leaving DELETE /ssf/transmitter/:id. Refused.');
+    return undefined;
+  }
+  ssfTransmitter.remove(appconfig, one.id);
+  log.debug('Leaving DELETE /ssf/transmitter/:id. Deleted.');
+  return res.status(STATUS_200).json({ ok: true, deleted: one.id });
+});
+
+// The page hands over a SET it signed, for one stream. A push is made now
+// and its outcome returned; a poll stream queues it.
+app.post('/ssf/transmitter/:id/deliver',
+        model.route('ssfTransmitterDeliver'), function (req, res) {
+  log.debug('Entering POST /ssf/transmitter/:id/deliver.');
+  var one = ownerOf(req, res);
+  if (!one) {
+    log.debug('Leaving POST /ssf/transmitter/:id/deliver. Refused.');
+    return undefined;
+  }
+  var body = req.body || {};
+  var plan = ssfTransmitter.deliver(appconfig, one, body);
+  if (!plan.ok) {
+    log.debug('Leaving POST /ssf/transmitter/:id/deliver. ' + plan.error);
+    return res.status(plan.status).json({ error: plan.error });
+  }
+  var answer = { ok: true, action: plan.action, jti: plan.jti,
+    stream_id: plan.stream.stream_id, findings: plan.findings,
+    note: plan.note };
+  if (plan.action !== 'push') {
+    log.debug('Leaving POST /ssf/transmitter/:id/deliver. ' + plan.action);
+    return res.status(STATUS_200).json(answer);
+  }
+  return pushSet(one, plan.stream.stream_id, plan.jti,
+    { url: plan.url, authorization: plan.authorization },
+    String(body.token || '').trim(),
+    verifiesCertificates(body.sslValidate)).then(function (outcome) {
+    answer.push = outcome;
+    log.debug('Leaving POST /ssf/transmitter/:id/deliver. Pushed: ' +
+        outcome.detail);
+    return res.status(STATUS_200).json(answer);
+  });
+});
+
+// SSF 1.0 section 7: discovery is the well-known path followed by the
+// issuer's own path, and it is public.
+app.get('/.well-known/ssf-configuration/ssf/transmitter/:id',
+       model.route('ssfTransmitterMetadata'), function (req, res) {
+  log.debug('Entering GET /.well-known/ssf-configuration/…');
+  var shown = ssfTransmitter.published(appconfig, req.params.id);
+  if (!shown) {
+    log.debug('Leaving GET /.well-known/ssf-configuration/…. Not found.');
+    return res.status(404).json({ err: 'not_found',
+      description: 'There is no transmitter with that id here.' });
+  }
+  log.debug('Leaving GET /.well-known/ssf-configuration/….');
+  return res.status(STATUS_200).json(shown.metadata);
+});
+
+app.get('/ssf/transmitter/:id/jwks', model.route('ssfTransmitterJwks'),
+       function (req, res) {
+  log.debug('Entering GET /ssf/transmitter/:id/jwks.');
+  var shown = ssfTransmitter.published(appconfig, req.params.id);
+  if (!shown) {
+    log.debug('Leaving GET /ssf/transmitter/:id/jwks. Not found.');
+    return res.status(404).json({ err: 'not_found',
+      description: 'There is no transmitter with that id here.' });
+  }
+  log.debug('Leaving GET /ssf/transmitter/:id/jwks.');
+  return res.status(STATUS_200).set('Content-Type',
+    'application/jwk-set+json').send(JSON.stringify(shown.jwks));
+});
+
+app.post('/ssf/transmitter/:id/stream',
+        model.route('ssfTransmitterStreamCreate'), function (req, res) {
+  log.debug('Entering POST /ssf/transmitter/:id/stream.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving POST /ssf/transmitter/:id/stream. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving POST /ssf/transmitter/:id/stream.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.createStream(appconfig, one, req.body));
+});
+
+app.get('/ssf/transmitter/:id/stream',
+       model.route('ssfTransmitterStreamRead'), function (req, res) {
+  log.debug('Entering GET /ssf/transmitter/:id/stream.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving GET /ssf/transmitter/:id/stream. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving GET /ssf/transmitter/:id/stream.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.readStream(one, req.query.stream_id));
+});
+
+app.patch('/ssf/transmitter/:id/stream',
+         model.route('ssfTransmitterStreamUpdate'), function (req, res) {
+  log.debug('Entering PATCH /ssf/transmitter/:id/stream.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving PATCH /ssf/transmitter/:id/stream. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving PATCH /ssf/transmitter/:id/stream.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.updateStream(one, req.body, false));
+});
+
+app.put('/ssf/transmitter/:id/stream',
+       model.route('ssfTransmitterStreamReplace'), function (req, res) {
+  log.debug('Entering PUT /ssf/transmitter/:id/stream.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving PUT /ssf/transmitter/:id/stream. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving PUT /ssf/transmitter/:id/stream.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.updateStream(one, req.body, true));
+});
+
+app.delete('/ssf/transmitter/:id/stream',
+          model.route('ssfTransmitterStreamDelete'), function (req, res) {
+  log.debug('Entering DELETE /ssf/transmitter/:id/stream.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving DELETE /ssf/transmitter/:id/stream. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving DELETE /ssf/transmitter/:id/stream.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.deleteStream(one, req.query.stream_id));
+});
+
+app.get('/ssf/transmitter/:id/status',
+       model.route('ssfTransmitterStatusRead'), function (req, res) {
+  log.debug('Entering GET /ssf/transmitter/:id/status.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving GET /ssf/transmitter/:id/status. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving GET /ssf/transmitter/:id/status.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.readStatus(one, req.query.stream_id));
+});
+
+// Enabling a paused push stream releases what it held; those pushes go out
+// after the answer, in order, and their outcomes land on the page's log.
+app.post('/ssf/transmitter/:id/status',
+        model.route('ssfTransmitterStatusUpdate'), function (req, res) {
+  log.debug('Entering POST /ssf/transmitter/:id/status.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving POST /ssf/transmitter/:id/status. Refused.');
+    return undefined;
+  }
+  var answer = ssfTransmitter.updateStatus(one, req.body);
+  sendTransmitterAnswer(res, answer);
+  if (answer.ok && answer.release && answer.release.length) {
+    var stream = answer.stream;
+    answer.release.reduce(function (chain, row) {
+      return chain.then(function () {
+        return pushSet(one, stream.stream_id, row.jti,
+          { url: stream.delivery.endpoint_url,
+            authorization: stream.delivery.authorization_header },
+          row.token, true);
+      });
+    }, Promise.resolve());
+  }
+  log.debug('Leaving POST /ssf/transmitter/:id/status.');
+  return undefined;
+});
+
+app.post('/ssf/transmitter/:id/subjects/add',
+        model.route('ssfTransmitterSubjectAdd'), function (req, res) {
+  log.debug('Entering POST /ssf/transmitter/:id/subjects/add.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving POST /ssf/transmitter/:id/subjects/add. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving POST /ssf/transmitter/:id/subjects/add.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.changeSubject(one, req.body, true));
+});
+
+app.post('/ssf/transmitter/:id/subjects/remove',
+        model.route('ssfTransmitterSubjectRemove'), function (req, res) {
+  log.debug('Entering POST /ssf/transmitter/:id/subjects/remove.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving POST /ssf/transmitter/:id/subjects/remove. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving POST /ssf/transmitter/:id/subjects/remove.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.changeSubject(one, req.body, false));
+});
+
+app.post('/ssf/transmitter/:id/verify',
+        model.route('ssfTransmitterVerify'), function (req, res) {
+  log.debug('Entering POST /ssf/transmitter/:id/verify.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving POST /ssf/transmitter/:id/verify. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving POST /ssf/transmitter/:id/verify.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.requestVerification(one, req.body));
+});
+
+app.post('/ssf/transmitter/:id/poll/:streamId',
+        model.route('ssfTransmitterPoll'), function (req, res) {
+  log.debug('Entering POST /ssf/transmitter/:id/poll/:streamId.');
+  var one = receiverOf(req, res);
+  if (!one) {
+    log.debug('Leaving POST /ssf/transmitter/:id/poll/:streamId. Refused.');
+    return undefined;
+  }
+  log.debug('Leaving POST /ssf/transmitter/:id/poll/:streamId.');
+  return sendTransmitterAnswer(res,
+    ssfTransmitter.poll(one, req.params.streamId, req.body));
 });
 
 // ---------------------------------------------------------------------------
