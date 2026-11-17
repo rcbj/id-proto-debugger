@@ -197,11 +197,15 @@ async function main() {
   assert.ok(limits.refusedHeaders.indexOf("host") !== -1);
   log.info("PASS the Verifier's answer and the published limits.");
 
-  // The route is registered, and its no-response branch answers. Only in a
-  // checkout: the tests image carries api modules flat, not api/server.js,
-  // and this half is skipped there, as api_connect_timeout.js's is.
-  const serverPath = path.join(__dirname, "..", "api", "server.js");
-  if (!fs.existsSync(serverPath)) {
+  // The route is registered, and its no-response branch answers. In a
+  // checkout that is api/server.js; the tests image carries it as text,
+  // beside the flat modules, as api_server.js.txt (tests/Dockerfile).
+  const serverPath = [path.join(__dirname, "..", "api", "server.js"),
+                      path.join(__dirname, "api_server.js.txt")]
+    .filter(function (one) {
+      return fs.existsSync(one);
+    })[0];
+  if (!serverPath) {
     log.info("api_oid4vp_proxy: all checks passed (api/server.js is not " +
              "in this image, so the route checks were not run).");
     log.debug("Leaving main(). No server.js.");

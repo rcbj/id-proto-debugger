@@ -927,6 +927,12 @@ COPY api/ssf_proxy.js api/ssf_receiver.js ./
 # The OpenID4VP relay (POST /oid4vp/call) and its engine test. The module
 # requires ssf_proxy.js, copied flat on the line above.
 COPY api/oid4vp_proxy.js tests/api_oid4vp_proxy.js ./
+# api/server.js, as TEXT for api_oid4vp_proxy.js's route checks (that the
+# handler sets every outbound cap and uses both guarded agents), so they run
+# in the image and in CI and not only in a checkout. Renamed off .js so
+# nothing loads it and jwk_pem_encoding.js's in-image require check does
+# not try to resolve the api's own modules beside it.
+COPY api/server.js ./api_server.js.txt
 COPY tests/ssf_engine.js tests/ssf_protocol.js ./
 COPY tests/api_ssf.js tests/ssf_page.js ./
 # CAEP is a VOCABULARY over SSF rather than a family of its own, so it adds one
