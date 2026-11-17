@@ -77,15 +77,21 @@ var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 const ROOT = path.join(__dirname, "..");
 const paths = require("./module_paths.js");
-const stsSuite = paths.requireSharedModule(
-  // The tests image's flattened copy first, then wherever iya-sts's tree
-  // keeps it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
-  // ("Reorganizing source code.") moved every module into a subdirectory, and
-  // this one is in common/crypto_impl/. mockStsModule() is the single place
-  // that answers that question — see tests/module_paths.js.
-  [path.join(__dirname, "sts_bbs2023.js"),
-   paths.mockStsModule("bbs2023.js") || ""],
-  "the STS's bbs-2023 cryptosuite");
+// iya-sts's W3C bbs-2023 (Data Integrity BBS Cryptosuites v1.0, iya-sts
+// 1.1.0): oid4vc/vc_bbs.js verifies a base proof, and
+// common/crypto_impl/bbs2023.js decodes the issuer's Multikey. Both come from
+// iya-sts's tree, and mockStsModule() is the single place that knows where it
+// keeps them (tests/module_paths.js). Its legacy* functions are the pre-W3C
+// format, which this debugger no longer speaks, and are not used.
+const stsBbs = paths.requireSharedModule(
+  [paths.mockStsModule("vc_bbs.js") || ""],
+  "iya-sts's W3C bbs-2023 cryptosuite (oid4vc/vc_bbs.js)");
+const stsBbsKeys = paths.requireSharedModule(
+  [paths.mockStsModule("bbs2023.js") || ""],
+  "iya-sts's BBS key encoding (common/crypto_impl/bbs2023.js)");
+// A W3C bbs-2023 BASE proof is multibase base64url of CBOR tag 0xd95d02,
+// which base64url-encodes to "u2V0C" (a derived one, 0xd95d03, is "u2V0D").
+const BASE_PROOF_PREFIX = /^u2V0C/;
 // The wallet's own module — the one both issuance step 2 and step 4 use.
 // Driving it is the point: it is the code under test, not a stand-in for it.
 const wallet = paths.requireSharedModule(
@@ -389,6 +395,9 @@ async function test() {
   const refreshedCredential = JSON.parse(got.stored);
   assert.strictEqual((refreshedCredential.proof || {}).cryptosuite, "bbs-2023",
     "the refreshed credential is secured the same way.");
+  assert.ok(BASE_PROOF_PREFIX.test(refreshedCredential.proof.proofValue),
+    "with a W3C bbs-2023 base proof (CBOR tag 0xd95d02). Got " +
+    String(refreshedCredential.proof.proofValue).slice(0, 12) + "...");
   // What a refresh actually owes the holder: a later validity window. That is
   // the benefit — the credential in hand expires and this one does not, or not
   // as soon. Asserted before the proof, because a differing proof is a
@@ -439,18 +448,18 @@ async function test() {
   const km =
       (await common.httpJson(refreshedCredential.proof.verificationMethod))
       .body;
-  const pk = stsSuite.multibaseToBytes(km.publicKeyMultibase);
-  const verdict = await stsSuite.verifyBase(refreshedCredential, pk);
+  const pk = stsBbsKeys.publicKeyFromMultibase(km.publicKeyMultibase);
+  const verdict = await stsBbs.verifyBaseProof(refreshedCredential, pk);
   assert.strictEqual(verdict.ok, true,
     "the refreshed credential's base proof must verify against the issuer's " +
         "published BBS key.");
   const tampered = JSON.parse(got.stored);
   tampered.credentialSubject.given_name = "Mallory";
-  assert.strictEqual((await stsSuite.verifyBase(tampered, pk)).ok, false,
+  assert.strictEqual((await stsBbs.verifyBaseProof(tampered, pk)).ok, false,
     "and an edited claim must break it — the control that shows the check " +
         "above is not always-true.");
   log.info("[14.5/2] OK — the refreshed proof verifies over " +
-           verdict.statements.length +
+           (verdict.mandatory + verdict.nonMandatory) +
     " statements; an edit breaks it.");
 
   // --- what differs between two refreshes inside one second -----------------
