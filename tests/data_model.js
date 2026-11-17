@@ -28,6 +28,9 @@
 //     named, every area the source shows agrees with the declaration, and
 //     the generated class lists are the ones secret_storage.js held as
 //     literals before them.
+//  6. THE EMBEDDED CONTRACT. Every variable models/contract/ declares is
+//     read in the file it names, and every process.env.DEBUGGER_* the tree
+//     reads is declared.
 //
 // Node only — no browser, no services — so it never skips. In the tests image
 // the source is /usr/src/source-tree (tests/Dockerfile), with models/'s own
@@ -129,6 +132,10 @@ function live() {
                    path.join(scratch, "models", "node_modules"), "dir");
     copyTree(path.join(ROOT, "common", "model"),
              path.join(scratch, "common", "model"), []);
+    // The documents the generator writes a region of.
+    fs.mkdirSync(path.join(scratch, "embedded"));
+    fs.copyFileSync(path.join(ROOT, "embedded", "CLAUDE.md"),
+                    path.join(scratch, "embedded", "CLAUDE.md"));
     const file = path.join(scratch, "models", "api", "ldap.tsp");
     const marker = "MUTATION " + process.pid;
     const before = fs.readFileSync(file, "utf8");
@@ -384,6 +391,68 @@ function storageModel() {
   log.debug("Leaving storageModel().");
 }
 
+function readSources(dirs) {
+  log.debug("Entering readSources().");
+  const out = {};
+  dirs.forEach(function (dir) {
+    const full = path.join(ROOT, dir);
+    if (!fs.existsSync(full)) {
+      return;
+    }
+    fs.readdirSync(full).filter(function (f) {
+      return f.endsWith(".js");
+    }).forEach(function (f) {
+      out[dir + "/" + f] = fs.readFileSync(path.join(full, f), "utf8");
+    });
+  });
+  log.debug("Leaving readSources().");
+  return out;
+}
+
+function embeddedContract() {
+  log.debug("Entering embeddedContract().");
+  log.info("=== 6. the embedded contract is what the tree reads ===");
+  const contract = JSON.parse(fs.readFileSync(path.join(ROOT, "common",
+    "model", "embedded_contract.json"), "utf8"));
+  const sources = readSources(["api", "api/env", "common", "client/src",
+                               "client/src/env"]);
+  const declared = contract.variables.map(function (v) {
+    return v.name;
+  });
+  const problems = [];
+  // Each declared variable is read where the model says. api/server.js is
+  // not in every layout (the tests image has api/env only), so a file that
+  // is absent is not counted against the model.
+  contract.variables.forEach(function (v) {
+    v.readBy.forEach(function (file) {
+      if (file === "node" || !(file in sources)) {
+        return;
+      }
+      if (sources[file].indexOf("process.env." + v.name) === -1) {
+        problems.push(v.name + " is declared as read by " + file +
+                      ", which does not read it");
+      }
+    });
+  });
+  // Every DEBUGGER_* the tree reads is declared.
+  Object.keys(sources).forEach(function (file) {
+    const reads = sources[file].match(/process\.env\.DEBUGGER_[A-Z_]+/g) ||
+      [];
+    reads.forEach(function (read) {
+      const name = read.slice("process.env.".length);
+      if (declared.indexOf(name) === -1) {
+        problems.push(file + " reads " + name + ", which " +
+                      "models/contract/main.tsp does not declare");
+      }
+    });
+  });
+  assert.deepStrictEqual(problems, [], "the embedded contract and the " +
+    "tree disagree:\n  " + problems.join("\n  "));
+  log.info("[contract] OK — " + declared.length + " variables, each read " +
+           "where the model says, and no DEBUGGER_ variable undeclared.");
+  log.debug("Leaving embeddedContract().");
+}
+
 function main() {
   log.debug("Entering main().");
   current();
@@ -391,6 +460,7 @@ function main() {
   strict();
   configurations();
   storageModel();
+  embeddedContract();
   log.info("The abstract data model is current, live, strict and obeyed.");
   log.debug("Leaving main().");
 }

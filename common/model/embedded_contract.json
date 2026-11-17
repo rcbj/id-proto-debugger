@@ -1,4 +1,102 @@
 {
-  "variables": [],
-  "paths": []
+  "variables": [
+    {
+      "name": "CONFIG_FILE",
+      "required": true,
+      "readBy": [
+        "api/server.js"
+      ],
+      "consumer": "iya-sts",
+      "doc": "Absolute path of `<OUT>/api/env/embedded.js`."
+    },
+    {
+      "name": "DEBUGGER_LISTEN_SOCKET",
+      "required": true,
+      "readBy": [
+        "common/tls_listener.js",
+        "api/env/embedded.js"
+      ],
+      "consumer": "iya-sts",
+      "doc": "Bind plain HTTP on this unix socket, whatever the configuration says about https. The socket is chmod 0600 and is the access control."
+    },
+    {
+      "name": "DEBUGGER_UI_URL",
+      "required": true,
+      "readBy": [
+        "api/env/embedded.js"
+      ],
+      "consumer": "iya-sts",
+      "doc": "The debugger origin, no trailing slash. uiUrl is it; apiUrl is it + /api; spEntityId is it + /saml/sp; acsUrl, sloUrl and wsfedAcsUrl are apiUrl + /samlacs, /samlslo and /wsfed."
+    },
+    {
+      "name": "DEBUGGER_ALLOWED_ADDRESS_RANGES",
+      "required": false,
+      "readBy": [
+        "api/env/embedded.js"
+      ],
+      "consumer": "iya-sts",
+      "doc": "A JSON array of address ranges. Non-empty is allow-list mode, which replaces the block-list; a list with no usable entry fails closed."
+    },
+    {
+      "name": "DEBUGGER_BLOCK_PRIVATE_NETWORK_CALLS",
+      "required": false,
+      "readBy": [
+        "api/env/embedded.js"
+      ],
+      "consumer": "iya-sts",
+      "defaultValue": "true",
+      "doc": "\"true\" or \"false\", only without an allow-list."
+    },
+    {
+      "name": "DEBUGGER_LOG_LEVEL",
+      "required": false,
+      "readBy": [
+        "api/env/embedded.js"
+      ],
+      "consumer": "iya-sts",
+      "defaultValue": "info",
+      "doc": "A bunyan level."
+    },
+    {
+      "name": "NODE_EXTRA_CA_CERTS",
+      "required": false,
+      "readBy": [
+        "node"
+      ],
+      "consumer": "iya-sts",
+      "doc": "The anchor for iya-sts's own certificate. Read by node itself."
+    }
+  ],
+  "paths": [
+    {
+      "name": "ui",
+      "path": "ui/",
+      "kind": "directory",
+      "doc": "client/build.js, DEPLOYMENT=embedded, CONFIG_FILE=./env/embedded.js."
+    },
+    {
+      "name": "api",
+      "path": "api/",
+      "kind": "directory",
+      "doc": "A runnable api: `cd <OUT>/api && node server.js`."
+    },
+    {
+      "name": "common",
+      "path": "common/",
+      "kind": "directory",
+      "doc": "What the api requires as ../common/... and nothing more."
+    },
+    {
+      "name": "generatedModel",
+      "path": "common/model/",
+      "kind": "directory",
+      "doc": "The generated API document, configuration schema and this contract."
+    },
+    {
+      "name": "version",
+      "path": "version.json",
+      "kind": "file",
+      "doc": "The build's M.N.P.B, the same record as api/version.json."
+    }
+  ]
 }

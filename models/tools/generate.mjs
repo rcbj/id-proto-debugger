@@ -32,7 +32,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { compile, NodeHost } from "@typespec/compiler";
+import { compile, NodeHost, getDoc } from "@typespec/compiler";
 import { readFacts } from "../lib/debugger_lib.mjs";
 
 // A build script that runs before or outside an install: console-backed, of
@@ -238,32 +238,83 @@ function storageClasses(document) {
   };
 }
 
-function contractDocument(facts) {
+function contractDocument(program, facts) {
   log.debug("Entering contractDocument().");
   const variables = [];
   for (const [property, f] of facts.contractVariables) {
-    const entry = { name: property.name, readBy: f.readBy.slice() };
+    const entry = { name: property.name, required: !property.optional,
+                    readBy: f.readBy.slice() };
     if (f.consumer) {
       entry.consumer = f.consumer;
     }
     if (f.defaultValue !== undefined) {
       entry.defaultValue = f.defaultValue;
     }
-    const doc = property.decorators.find(function (d) {
-      return d.decorator.name === "$docFromComment" ||
-        d.decorator.name === "$doc";
-    });
-    if (doc && doc.args && doc.args[1]) {
-      entry.doc = String(doc.args[1].jsValue || "");
-    }
+    entry.doc = (getDoc(program, property) || "").replace(/\s+/g, " ");
     variables.push(entry);
   }
   const paths = [];
   for (const [property, f] of facts.contractPaths) {
-    paths.push({ name: property.name, path: f.path, kind: f.kind });
+    paths.push({ name: property.name, path: f.path, kind: f.kind,
+                 doc: (getDoc(program, property) || "").replace(/\s+/g, " ")
+    });
   }
   log.debug("Leaving contractDocument().");
   return { variables: variables, paths: paths };
+}
+
+// THE DOCUMENTS THAT QUOTE THE MODEL. A table in a CLAUDE.md that repeats a
+// model drifts from it the first time somebody edits one and not the other,
+// so the generator writes it, between two marker comments, and --check
+// compares it like any generated file.
+function markdownTable(contract) {
+  log.debug("Entering markdownTable().");
+  const rows = ["| Variable | Read by | Effect |", "|---|---|---|"];
+  contract.variables.forEach(function (v) {
+    const read = v.readBy.map(function (r) {
+      return r === "node" ? "node" : "`" + r + "`";
+    }).join(", ");
+    const extra = v.defaultValue !== undefined ?
+      " Default `" + v.defaultValue + "`." : "";
+    rows.push("| `" + v.name + "`" + (v.required ? "" : " (optional)") +
+      " | " + read + " | " + v.doc.replace(/\|/g, "\\|") + extra + " |");
+  });
+  log.debug("Leaving markdownTable().");
+  return rows.join("\n") + "\n";
+}
+
+const REGIONS = [
+  { file: "embedded/CLAUDE.md", name: "embedded-variables",
+    render: function (outputs) {
+      return markdownTable(outputs.contract);
+    } }
+];
+
+function regionMarkers(name) {
+  log.debug("Entering regionMarkers(). " + name);
+  log.debug("Leaving regionMarkers().");
+  return {
+    begin: "<!-- model:" + name + " (generated from models/; do not " +
+      "edit) -->\n",
+    end: "<!-- /model:" + name + " -->"
+  };
+}
+
+// The file's text with the region replaced, or an Error naming what is
+// missing.
+function withRegion(text, name, content) {
+  log.debug("Entering withRegion(). " + name);
+  const m = regionMarkers(name);
+  const a = text.indexOf(m.begin);
+  const b = text.indexOf(m.end);
+  if (a === -1 || b === -1 || b < a) {
+    log.debug("Leaving withRegion(). No markers.");
+    throw new Error("the region " + name + " has no markers; add\n  " +
+      m.begin.trim() + "\n  " + m.end);
+  }
+  log.debug("Leaving withRegion().");
+  return text.slice(0, a + m.begin.length) + content +
+    text.slice(b);
 }
 
 function outboundPolicyList(facts) {
@@ -323,9 +374,17 @@ async function generate() {
     files["config.schema.json"] = json(configSchema(scratch, outbound));
     files["storage.json"] = json(storage.document);
     files["storage_classes.json"] = json(storageClasses(storage.document));
-    files["embedded_contract.json"] = json(contractDocument(facts));
+    const contract = contractDocument(program, facts);
+    files["embedded_contract.json"] = json(contract);
+    const regions = REGIONS.map(function (r) {
+      const file = path.join(ROOT, r.file);
+      const text = fs.readFileSync(file, "utf8");
+      return { file: file,
+               text: withRegion(text, r.name,
+                                r.render({ contract: contract })) };
+    });
     log.debug("Leaving generate().");
-    return files;
+    return { files: files, regions: regions };
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
@@ -334,7 +393,8 @@ async function generate() {
 async function main() {
   log.debug("Entering main().");
   const check = process.argv.indexOf("--check") !== -1;
-  const files = await generate();
+  const generated = await generate();
+  const files = generated.files;
   const existing = readTree(OUT);
   const stale = [];
   for (const name of Object.keys(files)) {
@@ -344,6 +404,11 @@ async function main() {
     }
     delete existing[target];
   }
+  generated.regions.forEach(function (r) {
+    if (fs.readFileSync(r.file, "utf8") !== r.text) {
+      stale.push(path.relative(ROOT, r.file));
+    }
+  });
   const extra = Object.keys(existing).map(function (f) {
     return path.relative(ROOT, f);
   });
@@ -362,7 +427,7 @@ async function main() {
       return;
     }
     log.info("common/model/ is current (" + Object.keys(files).length +
-      " files).");
+      " files, " + generated.regions.length + " documents).");
     log.debug("Leaving main(). Current.");
     return;
   }
@@ -370,6 +435,9 @@ async function main() {
   for (const name of Object.keys(files)) {
     fs.writeFileSync(path.join(OUT, name), files[name]);
   }
+  generated.regions.forEach(function (r) {
+    fs.writeFileSync(r.file, r.text);
+  });
   extra.forEach(function (f) {
     fs.rmSync(path.join(ROOT, f));
   });
