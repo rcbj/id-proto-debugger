@@ -1,0 +1,493 @@
+{
+  "family": "tls",
+  "about": "POST /tls/connect, GET /tls/limits and GET /tls/server-certificate. Recorded against the api as it was before the family switched to the model, on api/env/docker-tests.js SERVED OVER TLS, as the containerized stack serves it: GET /tls/server-certificate answers 404 on a plain listener and the PEM on a TLS one, and the suite replays against the second. Every target that gets past the refusals is tls.invalid (RFC 6761), except the one that needs an address to reach a later check, which is 127.0.0.1 and is refused before anything is dialled.",
+  "cases": [
+    {
+      "name": "connect: an empty body is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and port are required."
+        }
+      }
+    },
+    {
+      "name": "connect: a host and no port is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and port are required."
+        }
+      }
+    },
+    {
+      "name": "connect: a null port is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": null
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and port are required."
+        }
+      }
+    },
+    {
+      "name": "connect: an empty port is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and port are required."
+        }
+      }
+    },
+    {
+      "name": "connect: an empty host is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "",
+        "port": 443
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and port are required."
+        }
+      }
+    },
+    {
+      "name": "connect: a blank host is refused by the probe",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "   ",
+        "port": 443
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A host is required.",
+          "code": "ETLSNOHOST"
+        }
+      }
+    },
+    {
+      "name": "connect: a port that is not a number is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": "https"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A port from 1 to 65535 is required; got \"https\".",
+          "code": "ETLSBADPORT"
+        }
+      }
+    },
+    {
+      "name": "connect: a port above 65535 is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 70000
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A port from 1 to 65535 is required; got 70000.",
+          "code": "ETLSBADPORT"
+        }
+      }
+    },
+    {
+      "name": "connect: an unknown TLS version is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "minVersion": "TLSv9"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "minVersion must be one of TLSv1, TLSv1.1, TLSv1.2, TLSv1.3; got \"TLSv9\".",
+          "code": "ETLSBADVERSION"
+        }
+      }
+    },
+    {
+      "name": "connect: an empty version range is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "minVersion": "TLSv1.3",
+        "maxVersion": "TLSv1.2"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "minVersion TLSv1.3 is above maxVersion TLSv1.2, which allows no version at all.",
+          "code": "ETLSBADVERSION"
+        }
+      }
+    },
+    {
+      "name": "connect: a client certificate with no key is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "clientCertificatePem": "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A client certificate was supplied with no private key. Mutual authentication needs both — the certificate is what is sent, the key is what proves it is yours.",
+          "code": "ETLSNOCLIENTKEY"
+        }
+      }
+    },
+    {
+      "name": "connect: an httpRequest with no path is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "httpRequest": {
+          "path": ""
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "httpRequest needs a path — the request made over the connection is a GET, and the path is the only part of it a caller chooses.",
+          "code": "ETLSBADHTTPPATH"
+        }
+      }
+    },
+    {
+      "name": "connect: an httpRequest path that is not absolute is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "httpRequest": "index.html"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The httpRequest path must start with \"/\"; got \"index.html\". This is a request over a connection that has already been made, so it carries an origin-form path and never a URL.",
+          "code": "ETLSBADHTTPPATH"
+        }
+      }
+    },
+    {
+      "name": "connect: an httpRequest path with whitespace is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "httpRequest": {
+          "path": "/a b"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The httpRequest path contains whitespace, a carriage return or a line feed. It is refused rather than escaped: a newline in a request line is how a caller writes somebody else's header, and escaping it would mean guessing which of the two was meant. Percent-encode it.",
+          "code": "ETLSBADHTTPPATH"
+        }
+      }
+    },
+    {
+      "name": "connect: an httpRequest path over the length cap is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "httpRequest": {
+          "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The httpRequest path is 2049 characters; this endpoint allows 2048.",
+          "code": "ETLSBADHTTPPATH"
+        }
+      }
+    },
+    {
+      "name": "connect: a truststore over the anchor cap is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "trustCertificates": [
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n",
+          "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n"
+        ]
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A truststore of 65 certificates was supplied; this endpoint accepts at most 64.",
+          "code": "ETLSTRUSTTOOLARGE"
+        }
+      }
+    },
+    {
+      "name": "connect: a groups list OpenSSL could not read is refused",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "127.0.0.1",
+        "port": 443,
+        "groups": "X25519MLKEM768; x25519"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "groups must be a colon-separated list of OpenSSL names — letters, digits, +, ., _ and - — for example \"X25519MLKEM768:x25519\" or \"mldsa65:ecdsa_secp384r1_sha384\". Got \"X25519MLKEM768; x25519\".",
+          "code": "ETLSBADNAMELIST"
+        }
+      }
+    },
+    {
+      "name": "connect: a well-formed request reaches the network",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "servername": "tls.invalid",
+        "minVersion": "TLSv1.2",
+        "maxVersion": "TLSv1.3",
+        "alpnProtocols": [
+          "h2",
+          "http/1.1"
+        ],
+        "trustCertificates": [],
+        "includeSystemRoots": true,
+        "mutualAuthProbe": false,
+        "httpRequest": {
+          "path": "/"
+        }
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve tls.invalid: getaddrinfo ENOTFOUND tls.invalid",
+          "code": "ETLSDNS"
+        }
+      }
+    },
+    {
+      "name": "connect: a port given as text reaches the network",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": "8443",
+        "trustCertificates": "-----BEGIN CERTIFICATE-----\nAA==\n-----END CERTIFICATE-----\n"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve tls.invalid: getaddrinfo ENOTFOUND tls.invalid",
+          "code": "ETLSDNS"
+        }
+      }
+    },
+    {
+      "name": "connect: a boolean for the port",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": true
+      },
+      "changed": "port is an integer or its text in the model, refused with the route's own sentence otherwise. Until then true passed the presence check and the probe refused it as not being a port from 1 to 65535.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "A port from 1 to 65535 is required; got true.",
+          "code": "ETLSBADPORT"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and port are required."
+        }
+      }
+    },
+    {
+      "name": "connect: a string for alpnProtocols",
+      "method": "POST",
+      "path": "/tls/connect",
+      "body": {
+        "host": "tls.invalid",
+        "port": 443,
+        "alpnProtocols": "h2"
+      },
+      "changed": "alpnProtocols is an array or null in the model. Until then a string was silently replaced with no ALPN at all, so the caller asked to offer h2 and offered nothing.",
+      "before": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve tls.invalid: getaddrinfo ENOTFOUND tls.invalid",
+          "code": "ETLSDNS"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `alpnProtocols` must be a JSON array or null. GET /api-docs describes what tlsConnect takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "limits",
+      "method": "GET",
+      "path": "/tls/limits",
+      "volatile": [
+        "nodeVersion",
+        "systemRootCount"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "allowedPorts": "any",
+          "connectionTimeoutMs": 5000,
+          "callTimeoutMs": 10000,
+          "maxChainBytes": 1048576,
+          "maxTrustAnchors": 64,
+          "postHandshakeGraceMs": 750,
+          "tlsVersions": [
+            "TLSv1",
+            "TLSv1.1",
+            "TLSv1.2",
+            "TLSv1.3"
+          ],
+          "addressPolicyEnabled": false,
+          "mutualAuthProbeAvailable": true,
+          "httpRequestAvailable": true,
+          "httpRequestMethod": "GET",
+          "httpResponseGraceMs": 2000,
+          "maxHttpPathLength": 2048,
+          "nodeVersion": "v22.23.3",
+          "systemRootCount": 119
+        }
+      }
+    },
+    {
+      "name": "server certificate: the PEM this api serves",
+      "method": "GET",
+      "path": "/tls/server-certificate",
+      "volatile": [
+        "(not JSON)"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "(not JSON)": "-----BEGIN CERTIFICATE-----\nMIIBmTCCAT+gAwIBAgIUGqhi62/219cf7GN1kO0pMkxUB2UwCgYIKoZIzj0EAwIw\nFDESMBAGA1UEAwwJbG9jYWxob3N0MB4XDTI2MTExNzA0MDUxN1oXDTI2MTExOTA0\nMDUxN1owFDESMBAGA1UEAwwJbG9jYWxob3N0MFkwEwYHKoZIzj0CAQYIKoZIzj0D\nAQcDQgAE5c/aHxR7YzRHURkTn7gG1KpdqSWa77ByCphimEMeW1bIIUL2sdNuLQtF\nVucrpsVMb/mByv7iJ2rKN0dIxs7l6aNvMG0wHQYDVR0OBBYEFOiS84hQPH4X0MDd\nuNWsrACABP5YMB8GA1UdIwQYMBaAFOiS84hQPH4X0MDduNWsrACABP5YMA8GA1Ud\nEwEB/wQFMAMBAf8wGgYDVR0RBBMwEYIJbG9jYWxob3N0hwR/AAABMAoGCCqGSM49\nBAMCA0gAMEUCIQD8oKciN1WToOWwu8p5RUmG91kwa8R+UGKNNT9pibshqAIgOHhW\nBGXNDN+z2qtqe2G8a9OR0rtU9Yi1+L3F2JQHR7w=\n-----END CERTIFICATE-----\n"
+        }
+      }
+    }
+  ]
+}

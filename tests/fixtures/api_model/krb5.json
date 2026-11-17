@@ -1,0 +1,592 @@
+{
+  "family": "krb5",
+  "about": "POST /krb5/kdc, /krb5/service, /krb5/spnego and GET /krb5/limits. Recorded against the api as it was before the family switched to the model (docs/data-model.md), on api/env/docker-tests.js. Every target that gets past the pre-flight is a *.invalid name, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 502 on any machine. The messages are the smallest frames the pre-flight accepts: 6a00 (an AS-REQ) and 6e00 (a bare AP-REQ).",
+  "cases": [
+    {
+      "name": "kdc: an empty body is refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and message are required. message is the Kerberos request, base64-encoded."
+        }
+      }
+    },
+    {
+      "name": "kdc: a host and no message is refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and message are required. message is the Kerberos request, base64-encoded."
+        }
+      }
+    },
+    {
+      "name": "kdc: an empty host is refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "",
+        "message": "agA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and message are required. message is the Kerberos request, base64-encoded."
+        }
+      }
+    },
+    {
+      "name": "kdc: a message that is not base64 is refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "message": "!!!not base64!!!"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "message is not valid base64. It must be the Kerberos request encoded as base64 or base64url; note that node decodes invalid base64 silently, so this is checked here rather than surfacing later as \"not a Kerberos request\"."
+        }
+      }
+    },
+    {
+      "name": "kdc: a message that decodes to nothing is refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "message": " "
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "message decoded to zero bytes."
+        }
+      }
+    },
+    {
+      "name": "kdc: a blank host is refused by the relay",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "   ",
+        "message": "agA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "No KDC host given.",
+          "code": "EKRB5NOHOST"
+        }
+      }
+    },
+    {
+      "name": "kdc: a port that is not a number is refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "port": "eighty-eight",
+        "message": "agA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The KDC port is not a number: \"eighty-eight\".",
+          "code": "EKRB5NOPORT"
+        }
+      }
+    },
+    {
+      "name": "kdc: bytes that are not a KDC request are refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "message": "MIIB"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to relay this payload: this is not a request a KDC answers: the first byte is 0x30, and it must be 0x6a (AS-REQ) or 0x6c (TGS-REQ). It looks like text — was it decoded from base64 before being sent? This endpoint carries Kerberos KDC requests, not arbitrary bytes — see api/krb5_frame.js for why that restriction exists.",
+          "code": "EKRB5NOTKERBEROS"
+        }
+      }
+    },
+    {
+      "name": "kdc: an AP-REQ is refused and pointed at /krb5/service",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "message": "bgA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to relay this payload: this is not a request a KDC answers: the first byte is 0x6e, and it must be 0x6a (AS-REQ) or 0x6c (TGS-REQ). 0x6e is AP-REQ, which goes to a SERVICE rather than to a KDC — use POST /krb5/service for that. This endpoint carries Kerberos KDC requests, not arbitrary bytes — see api/krb5_frame.js for why that restriction exists.",
+          "code": "EKRB5NOTKERBEROS"
+        }
+      }
+    },
+    {
+      "name": "kdc: a declared length that does not match is refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "message": "agU="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to relay this payload: the AS-REQ declares 5 bytes of content, so the whole message should be 7 bytes, but 2 were supplied. A message this service cannot account for is not one it will relay. This endpoint carries Kerberos KDC requests, not arbitrary bytes — see api/krb5_frame.js for why that restriction exists.",
+          "code": "EKRB5NOTKERBEROS"
+        }
+      }
+    },
+    {
+      "name": "kdc: a port outside krb5AllowedPorts is refused",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "port": 9,
+        "message": "agA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to connect to port 9. This relay carries Kerberos to Kerberos ports only (88, 464, 749). It is a raw byte relay, so an unrestricted port would make it a port scanner with a caller-chosen payload. Add the port to krb5AllowedPorts if this deployment needs it.",
+          "code": "EKRB5PORTNOTALLOWED"
+        }
+      }
+    },
+    {
+      "name": "kdc: a well-formed request over tcp reaches the network",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "message": "agA="
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve kdc.invalid: getaddrinfo ENOTFOUND kdc.invalid (ENOTFOUND).",
+          "code": "EKRB5DNS"
+        }
+      }
+    },
+    {
+      "name": "kdc: a well-formed request over udp, port as text, reaches the network",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "port": "88",
+        "transport": "udp",
+        "message": "agA="
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve kdc.invalid: getaddrinfo ENOTFOUND kdc.invalid (ENOTFOUND).",
+          "code": "EKRB5DNS"
+        }
+      }
+    },
+    {
+      "name": "kdc: a number for the message",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "message": 123
+      },
+      "changed": "message is a string in the model and refused with the route's own sentence otherwise. Until then a number was stringified and decoded as base64, so 123 reached the relay as two bytes that were not Kerberos, a refusal naming the wrong mistake.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to relay this payload: this is not a request a KDC answers: the first byte is 0xd7, and it must be 0x6a (AS-REQ) or 0x6c (TGS-REQ). This endpoint carries Kerberos KDC requests, not arbitrary bytes — see api/krb5_frame.js for why that restriction exists.",
+          "code": "EKRB5NOTKERBEROS"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host and message are required. message is the Kerberos request, base64-encoded."
+        }
+      }
+    },
+    {
+      "name": "kdc: a boolean for the port",
+      "method": "POST",
+      "path": "/krb5/kdc",
+      "body": {
+        "host": "kdc.invalid",
+        "port": true,
+        "message": "agA="
+      },
+      "changed": "port is an integer, its text, or null in the model. Until then the relay refused true as a port that is not a number; the model now refuses it as the wrong JSON type, before the handler.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "The KDC port is not a number: true.",
+          "code": "EKRB5NOPORT"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `port` must be a JSON integer or a JSON string or null. GET /api-docs describes what krb5Kdc takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "service: an empty body is refused",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host, port and message are required. Unlike the KDC there is no default port: a Kerberos service can be on any port, so it has to be named."
+        }
+      }
+    },
+    {
+      "name": "service: no port is refused",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "message": "bgA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host, port and message are required. Unlike the KDC there is no default port: a Kerberos service can be on any port, so it has to be named."
+        }
+      }
+    },
+    {
+      "name": "service: port 0 is refused as missing",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": 0,
+        "message": "bgA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host, port and message are required. Unlike the KDC there is no default port: a Kerberos service can be on any port, so it has to be named."
+        }
+      }
+    },
+    {
+      "name": "service: an empty port is refused as missing",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": "",
+        "message": "bgA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host, port and message are required. Unlike the KDC there is no default port: a Kerberos service can be on any port, so it has to be named."
+        }
+      }
+    },
+    {
+      "name": "service: a message that is not base64 is refused",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": 8888,
+        "message": "!!"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "message is not valid base64."
+        }
+      }
+    },
+    {
+      "name": "service: a message that decodes to nothing is refused",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": 8888,
+        "message": " "
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "message decoded to zero bytes."
+        }
+      }
+    },
+    {
+      "name": "service: a KDC request is refused and pointed at /krb5/kdc",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": 8888,
+        "message": "agA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to relay this payload: this is not something a Kerberos service accepts: the first byte is 0x6a, and it must be 0x60 (a GSS InitialContextToken wrapping an AP-REQ) or 0x6e (a bare AP-REQ). 0x6a is AS-REQ, which goes to a KDC — use POST /krb5/kdc for that. This endpoint carries Kerberos AP-REQs, not arbitrary bytes — see api/krb5_frame.js for why that restriction exists.",
+          "code": "EKRB5NOTKERBEROS"
+        }
+      }
+    },
+    {
+      "name": "service: a GSS token naming another mechanism is refused",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": 8888,
+        "message": "YA0GBisGAQUFAgEAbgEA"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to relay this payload: the GSS token does not name the Kerberos v5 mechanism — it names SPNEGO (1.3.6.1.5.5.2), which this build does not implement. This endpoint carries Kerberos AP-REQs, not arbitrary bytes — see api/krb5_frame.js for why that restriction exists.",
+          "code": "EKRB5NOTKERBEROS"
+        }
+      }
+    },
+    {
+      "name": "service: a port outside krb5ServicePorts is refused",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": 9,
+        "message": "bgA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing to connect to port 9. This deployment allows Kerberos service traffic to 8888 only. Add the port to krb5ServicePorts, or set it to \"any\".",
+          "code": "EKRB5PORTNOTALLOWED"
+        }
+      }
+    },
+    {
+      "name": "service: a port that is not a number is refused",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": "x",
+        "message": "bgA="
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The KDC port is not a number: \"x\".",
+          "code": "EKRB5NOPORT"
+        }
+      }
+    },
+    {
+      "name": "service: a well-formed request reaches the network",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": 8888,
+        "message": "bgA="
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "Could not resolve svc.invalid: getaddrinfo ENOTFOUND svc.invalid (ENOTFOUND).",
+          "code": "EKRB5DNS"
+        }
+      }
+    },
+    {
+      "name": "service: a boolean for the port",
+      "method": "POST",
+      "path": "/krb5/service",
+      "body": {
+        "host": "svc.invalid",
+        "port": true,
+        "message": "bgA="
+      },
+      "changed": "port is an integer, its text, or null in the model, refused with the route's own sentence otherwise. Until then true passed the presence check and the relay refused it as a port that is not a number.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "The KDC port is not a number: true.",
+          "code": "EKRB5NOPORT"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "host, port and message are required. Unlike the KDC there is no default port: a Kerberos service can be on any port, so it has to be named."
+        }
+      }
+    },
+    {
+      "name": "spnego: an empty body is refused",
+      "method": "POST",
+      "path": "/krb5/spnego",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required. It is the SPNEGO-protected resource to fetch."
+        }
+      }
+    },
+    {
+      "name": "spnego: an empty url is refused",
+      "method": "POST",
+      "path": "/krb5/spnego",
+      "body": {
+        "url": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required. It is the SPNEGO-protected resource to fetch."
+        }
+      }
+    },
+    {
+      "name": "spnego: a url that is not http(s) is refused",
+      "method": "POST",
+      "path": "/krb5/spnego",
+      "body": {
+        "url": "ftp://spnego.invalid/"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http(s) URL."
+        }
+      }
+    },
+    {
+      "name": "spnego: a token that is not base64 is refused",
+      "method": "POST",
+      "path": "/krb5/spnego",
+      "body": {
+        "url": "http://spnego.invalid/",
+        "token": "!!"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "token is not valid base64. It is the SPNEGO token exactly as it appears after \"Negotiate \" in the Authorization header."
+        }
+      }
+    },
+    {
+      "name": "spnego: the unauthenticated first request reaches the network",
+      "method": "POST",
+      "path": "/krb5/spnego",
+      "body": {
+        "url": "http://spnego.invalid/"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND spnego.invalid",
+          "code": "ENOTFOUND"
+        }
+      }
+    },
+    {
+      "name": "spnego: a request with a token reaches the network",
+      "method": "POST",
+      "path": "/krb5/spnego",
+      "body": {
+        "url": "https://spnego.invalid/protected",
+        "token": "YIIBAA==",
+        "sslValidate": false
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND spnego.invalid",
+          "code": "ENOTFOUND"
+        }
+      }
+    },
+    {
+      "name": "spnego: a number for the url",
+      "method": "POST",
+      "path": "/krb5/spnego",
+      "body": {
+        "url": 7
+      },
+      "changed": "url is a string in the model and refused with the route's own sentence otherwise. Until then a number passed the presence check and was refused as not being an http(s) URL.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http(s) URL."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required. It is the SPNEGO-protected resource to fetch."
+        }
+      }
+    },
+    {
+      "name": "limits",
+      "method": "GET",
+      "path": "/krb5/limits",
+      "expect": {
+        "status": 200,
+        "body": {
+          "allowedPorts": [
+            88,
+            464,
+            749
+          ],
+          "servicePorts": [
+            8888
+          ],
+          "serviceEnabled": true,
+          "addressPolicyEnabled": false,
+          "spnegoEnabled": true,
+          "spnegoBodyChars": 16384,
+          "limits": {
+            "connectTimeout": 5000,
+            "callTimeout": 10000,
+            "maxReplyBytes": 1048576
+          }
+        }
+      }
+    }
+  ]
+}

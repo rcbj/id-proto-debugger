@@ -2813,18 +2813,15 @@ app.get('/api-docs', model.route('apiDocumentIndex'), function (req, res) {
  * @returns {object} 400 - the request was refused (see the reason)
  * @returns {object} 502 - the KDC could not be reached or did not answer
  */
-app.post('/krb5/kdc', function (req, res) {
+app.post('/krb5/kdc', model.route('krb5Kdc'), function (req, res) {
   log.debug('Entering POST /krb5/kdc.');
   var b = req.body || {};
   var host = b.host;
   var port = (b.port === undefined || b.port === null || b.port === '') ? 88 : b.port;
   var transport = b.transport || 'tcp';
-
-  if (!host || !b.message) {
-    log.debug('Leaving POST /krb5/kdc. Missing host or message.');
-    return res.status(STATUS_400).json({
-      error: 'host and message are required. message is the Kerberos request, base64-encoded.' });
-  }
+  // host and message — present, non-empty strings — were held to
+  // models/api/krb5.tsp by model.route() before this ran, with the sentence
+  // this handler used to answer. What is left is about values.
 
   // Node's base64 decoder is LENIENT: Buffer.from('!!!not base64!!!', 'base64')
   // does not throw, it silently skips the characters it does not recognise and
@@ -2890,11 +2887,15 @@ app.post('/krb5/kdc', function (req, res) {
  * @returns {object} 400 - the request was refused (see the reason)
  * @returns {object} 502 - the service could not be reached or did not answer
  */
-app.post('/krb5/service', function (req, res) {
+app.post('/krb5/service', model.route('krb5Service'),
+    function (req, res) {
   log.debug('Entering POST /krb5/service.');
   var b = req.body || {};
-  if (!b.host || !b.port || !b.message) {
-    log.debug('Leaving POST /krb5/service. Missing host, port or message.');
+  // host and message were held to models/api/krb5.tsp by model.route(),
+  // with this sentence. The port stays here: absent, null, empty AND 0 are
+  // all "no port", and 0 is a value, which the schema does not judge.
+  if (!b.port) {
+    log.debug('Leaving POST /krb5/service. Missing port.');
     return res.status(STATUS_400).json({
       error: 'host, port and message are required. Unlike the KDC there is no default port: a ' +
              'Kerberos service can be on any port, so it has to be named.' });
@@ -2907,6 +2908,7 @@ app.post('/krb5/service', function (req, res) {
   }
   var message = Buffer.from(normalised, 'base64');
   if (!message.length) {
+    log.debug('Leaving POST /krb5/service. message decoded to nothing.');
     return res.status(STATUS_400).json({ error: 'message decoded to zero bytes.' });
   }
 
@@ -2982,17 +2984,16 @@ app.post('/krb5/service', function (req, res) {
  * @returns {object} 400 - the request was refused (see the reason)
  * @returns {object} 502 - the resource could not be reached
  */
-app.post('/krb5/spnego', function (req, res) {
+app.post('/krb5/spnego', model.route('krb5Spnego'),
+    function (req, res) {
   log.debug('Entering POST /krb5/spnego.');
   var b = req.body || {};
   var url = b.url;
   var sslValidate = (b.sslValidate === false || b.sslValidate === 'false') ?
       false : true;
-  if (!url) {
-    log.debug('Leaving POST /krb5/spnego. No url.');
-    return res.status(STATUS_400).json({
-      error: 'url is required. It is the SPNEGO-protected resource to fetch.' });
-  }
+  // url's presence, as a non-empty string, was held to models/api/krb5.tsp
+  // by model.route() with the sentence this handler used to answer. Its
+  // scheme is a value, and stays here.
   if (!/^https?:\/\//i.test(url)) {
     log.debug('Leaving POST /krb5/spnego. Not an http(s) url.');
     return res.status(STATUS_400).json({
@@ -3082,7 +3083,7 @@ app.post('/krb5/spnego', function (req, res) {
  * @route GET /krb5/limits
  * @returns {object} 200 - the ports, timeouts and caps in force
  */
-app.get('/krb5/limits', function (req, res) {
+app.get('/krb5/limits', model.route('krb5Limits'), function (req, res) {
   log.debug('Entering GET /krb5/limits.');
   log.debug('Leaving GET /krb5/limits.');
   return res.status(STATUS_200).json({
@@ -3406,14 +3407,13 @@ app.get('/ldap/limits', model.route('ldapLimits'),
  * @returns {object} 400 - the request was refused (see the reason)
  * @returns {object} 502 - the server could not be reached
  */
-app.post('/tls/connect', function (req, res) {
+app.post('/tls/connect', model.route('tlsConnect'), function (req, res) {
   log.debug('Entering POST /tls/connect.');
   var b = req.body || {};
-  if (!b.host || b.port === undefined || b.port === null || b.port === '') {
-    log.debug('Leaving POST /tls/connect. Missing host or port.');
-    return res.status(STATUS_400).json({
-      error: 'host and port are required.' });
-  }
+  // host and port — present, host a non-empty string, port an integer or
+  // non-empty text — were held to models/api/tls.tsp by model.route(), with
+  // the sentence this handler used to answer. Every value check is the
+  // probe's.
   tlsProbe.connect({
     host: b.host,
     port: b.port,
@@ -3480,7 +3480,7 @@ app.post('/tls/connect', function (req, res) {
  * @route GET /tls/limits
  * @returns {object} 200 - the ports, timeouts and caps in force
  */
-app.get('/tls/limits', function (req, res) {
+app.get('/tls/limits', model.route('tlsLimits'), function (req, res) {
   log.debug('Entering GET /tls/limits.');
   log.debug('Leaving GET /tls/limits.');
   return res.status(STATUS_200).json(tlsProbe.limits());
@@ -4269,17 +4269,14 @@ const SPIFFE_REFUSED_BY_POLICY = [
  * @returns {object} 400 - this service refused the request (see the reason)
  * @returns {object} 502 - the server could not be reached, or was not who it had to be
  */
-app.post('/spiffe/call', function (req, res) {
+app.post('/spiffe/call', model.route('spiffeCall'), function (req, res) {
   log.debug('Entering POST /spiffe/call.');
   const body = req.body || {};
-  if (!body.address) {
-    log.debug('Leaving POST /spiffe/call. No address.');
-    return res.status(STATUS_400).json({
-      error: 'address is required: host:port, tcp://host:port or ' +
-             'unix:///path/to/api.sock. Note that a unix: path is resolved ' +
-             'on the machine running this api, which is not the machine ' +
-             'running your browser.' });
-  }
+  // address — present, a non-empty string — was held to
+  // models/api/spiffe.tsp by model.route(), with the sentence this handler
+  // used to answer (a unix: path is resolved on the machine running this
+  // api, which is not the machine running your browser). Everything about
+  // its value is spiffe_client.js's.
   const startedAt = Date.now();
   spiffe.call(body).then(function (answer) {
     answer.timing = { totalMs: Date.now() - startedAt };
@@ -4323,7 +4320,8 @@ app.post('/spiffe/call', function (req, res) {
  * @returns {object} 400 - this service refused the request
  * @returns {object} 502 - the endpoint could not be reached
  */
-app.post('/spiffe/bundle', function (req, res) {
+app.post('/spiffe/bundle', model.route('spiffeBundle'),
+    function (req, res) {
   log.debug('Entering POST /spiffe/bundle.');
   const body = req.body || {};
   const url = String(body.url || '').trim();
@@ -4394,7 +4392,8 @@ app.post('/spiffe/bundle', function (req, res) {
  * @route GET /spiffe/limits
  * @returns {object} 200 - the ports, socket paths, timeouts, caps and catalogue
  */
-app.get('/spiffe/limits', function (req, res) {
+app.get('/spiffe/limits', model.route('spiffeLimits'),
+    function (req, res) {
   log.debug('Entering GET /spiffe/limits.');
   log.debug('Leaving GET /spiffe/limits.');
   return res.status(STATUS_200).json(spiffe.limits());
@@ -4419,7 +4418,8 @@ app.get('/spiffe/limits', function (req, res) {
  * @returns {string} 200 - the PEM
  * @returns {object} 404 - this service is not serving TLS
  */
-app.get('/tls/server-certificate', function (req, res) {
+app.get('/tls/server-certificate',
+    model.route('tlsServerCertificate'), function (req, res) {
   log.debug('Entering GET /tls/server-certificate.');
   var pem = tlsListener.serverCertificate();
   if (!pem) {

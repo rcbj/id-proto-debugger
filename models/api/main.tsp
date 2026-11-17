@@ -30,6 +30,9 @@ import "./saml.tsp";
 import "./wsfed.tsp";
 import "./wstrust.tsp";
 import "./oauth.tsp";
+import "./krb5.tsp";
+import "./tls.tsp";
+import "./spiffe.tsp";
 
 using Http;
 using OpenAPI;
