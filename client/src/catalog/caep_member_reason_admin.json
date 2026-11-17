@@ -1,0 +1,6 @@
+{
+  "name": "reason_admin",
+  "required": false,
+  "type": "langmap",
+  "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+}

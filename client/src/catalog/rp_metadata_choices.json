@@ -1,0 +1,97 @@
+[
+  {
+    "choice": "subject_types_supported",
+    "partner": "subject_type",
+    "from": "OpenID Connect Core 1.0"
+  },
+  {
+    "choice": "id_token_signing_alg_values_supported",
+    "partner": "id_token_signed_response_alg",
+    "from": "OpenID Connect Dynamic Client Registration 1.0"
+  },
+  {
+    "choice": "id_token_encryption_alg_values_supported",
+    "partner": "id_token_encrypted_response_alg",
+    "from": "OpenID Connect Dynamic Client Registration 1.0"
+  },
+  {
+    "choice": "id_token_encryption_enc_values_supported",
+    "partner": "id_token_encrypted_response_enc",
+    "from": "OpenID Connect Dynamic Client Registration 1.0"
+  },
+  {
+    "choice": "userinfo_signing_alg_values_supported",
+    "partner": "userinfo_signed_response_alg",
+    "from": "OpenID Connect Core 1.0 section 5.3.2"
+  },
+  {
+    "choice": "userinfo_encryption_alg_values_supported",
+    "partner": "userinfo_encrypted_response_alg",
+    "from": "OpenID Connect Core 1.0 section 5.3.2"
+  },
+  {
+    "choice": "userinfo_encryption_enc_values_supported",
+    "partner": "userinfo_encrypted_response_enc",
+    "from": "OpenID Connect Core 1.0 section 5.3.2"
+  },
+  {
+    "choice": "request_object_signing_alg_values_supported",
+    "partner": "request_object_signing_alg",
+    "from": "OpenID Connect Dynamic Client Registration 1.0"
+  },
+  {
+    "choice": "request_object_encryption_alg_values_supported",
+    "partner": "request_object_encryption_alg",
+    "from": "OpenID Connect Dynamic Client Registration 1.0"
+  },
+  {
+    "choice": "request_object_encryption_enc_values_supported",
+    "partner": "request_object_encryption_enc",
+    "from": "OpenID Connect Dynamic Client Registration 1.0"
+  },
+  {
+    "choice": "token_endpoint_auth_methods_supported",
+    "partner": "token_endpoint_auth_method",
+    "from": "OpenID Connect Dynamic Client Registration 1.0"
+  },
+  {
+    "choice": "token_endpoint_auth_signing_alg_values_supported",
+    "partner": "token_endpoint_auth_signing_alg",
+    "from": "OpenID Connect Dynamic Client Registration 1.0"
+  },
+  {
+    "choice": "backchannel_authentication_request_signing_alg_values_supported",
+    "partner": "backchannel_authentication_request_signing_alg",
+    "from": "OpenID Connect Client-Initiated Backchannel Authentication"
+  },
+  {
+    "choice": "authorization_signing_alg_values_supported",
+    "partner": "authorization_signed_response_alg",
+    "from": "JWT Secured Authorization Response Mode"
+  },
+  {
+    "choice": "authorization_encryption_alg_values_supported",
+    "partner": "authorization_encrypted_response_alg",
+    "from": "JWT Secured Authorization Response Mode"
+  },
+  {
+    "choice": "authorization_encryption_enc_values_supported",
+    "partner": "authorization_encrypted_response_enc",
+    "from": "JWT Secured Authorization Response Mode"
+  },
+  {
+    "choice": "introspection_signing_alg_values_supported",
+    "partner": "introspection_signed_response_alg",
+    "from": "RFC 9701"
+  },
+  {
+    "choice": "introspection_encryption_alg_values_supported",
+    "partner": "introspection_encrypted_response_alg",
+    "from": "RFC 9701"
+  },
+  {
+    "choice": "introspection_encryption_enc_values_supported",
+    "partner": "introspection_encrypted_response_enc",
+    "from": "RFC 9701"
+  }
+]

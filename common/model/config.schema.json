@@ -1,0 +1,508 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "config.schema.json",
+  "$defs": {
+    "ApiConfig": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "ApiConfig.json",
+      "type": "object",
+      "properties": {
+        "apiUrl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "This service's own origin, as the client reaches it."
+        },
+        "uiUrl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The client's origin: the CORS allow-list and every redirect back."
+        },
+        "https": {
+          "type": "boolean",
+          "description": "Bind https (common/tls_listener.js). Off is plain HTTP."
+        },
+        "hostname": {
+          "type": "string",
+          "description": "The interface to bind. Read as `host`; `hostname` is the older name."
+        },
+        "host": {
+          "type": "string"
+        },
+        "port": {
+          "$ref": "Port.json"
+        },
+        "logLevel": {
+          "$ref": "LogLevel.json"
+        },
+        "tlsCertFile": {
+          "type": "string",
+          "description": "The TLS pair, when https is on, if not the stack's default files."
+        },
+        "tlsKeyFile": {
+          "type": "string"
+        },
+        "callTimeout": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Milliseconds for a whole outbound call. Positive.",
+          "x-outbound-policy": true
+        },
+        "connectionTimeout": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Milliseconds to a usable connection: DNS, TCP and TLS. Positive.",
+          "x-outbound-policy": true
+        },
+        "maxContentLength": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Bytes of a response before it is abandoned. Positive.",
+          "x-outbound-policy": true
+        },
+        "maxRedirects": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647,
+          "description": "Redirects followed. 0 is legal and means none.",
+          "x-outbound-policy": true
+        },
+        "userAgent": {
+          "type": "string",
+          "description": "The User-Agent; {{VERSION}} is the build's version.",
+          "x-outbound-policy": true
+        },
+        "keepAlive": {
+          "type": "boolean",
+          "description": "Pool outbound connections. Only an explicit false turns it off.",
+          "x-outbound-policy": true
+        },
+        "blockPrivateNetworkCalls": {
+          "type": "boolean",
+          "description": "The address policy. Only an explicit false turns it off.",
+          "x-outbound-policy": true
+        },
+        "blockedAddressRanges": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "CIDR blocks or first-last pairs the address policy refuses.",
+          "x-outbound-policy": true
+        },
+        "allowedAddressRanges": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Non-empty: an allow-list that REPLACES the block-list. Embedded only.",
+          "x-outbound-policy": true
+        },
+        "krb5AllowedPorts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "description": "Ports POST /krb5/kdc may dial.",
+          "x-outbound-policy": true
+        },
+        "krb5ServicePorts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "description": "Ports POST /krb5/service may dial. Empty turns it off.",
+          "x-outbound-policy": true
+        },
+        "ldapAllowedPorts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "description": "Ports an LDAP URL may name.",
+          "x-outbound-policy": true
+        },
+        "ldapMaxEntries": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "exclusiveMinimum": 0,
+          "description": "Entries one LDAP search returns at most.",
+          "x-outbound-policy": true
+        },
+        "tlsAllowedPorts": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              }
+            },
+            {
+              "type": "string",
+              "const": "any"
+            }
+          ],
+          "description": "Ports POST /tls/connect may dial, or \"any\".",
+          "x-outbound-policy": true
+        },
+        "spiffeAllowedPorts": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "description": "Ports a SPIFFE TCP address may name.",
+          "x-outbound-policy": true
+        },
+        "spiffeAllowedSocketPaths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Directories a SPIFFE unix-socket path must be under.",
+          "x-outbound-policy": true
+        },
+        "spiffeMaxStreamMessages": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "Messages read from one SPIFFE server stream."
+        },
+        "spiffeStreamTimeout": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "Milliseconds a SPIFFE server stream may stay open."
+        },
+        "scimMaxRequestBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfMaxRequestBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "gnapMaxRequestBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfReceiverEnabled": {
+          "type": "boolean"
+        },
+        "ssfReceiverTtlMs": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfReceiverIdleTtlMs": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfReceiverMaxInboxes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfReceiverMaxInboxesPerCaller": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfReceiverMaxEvents": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfReceiverMaxEventBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "ssfReceiverMaxInboxBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        "smartcardReaderEnabled": {
+          "type": "boolean",
+          "description": "Open the PC/SC reader (docker-compose-smartcard.yml)."
+        },
+        "spEntityId": {
+          "type": "string"
+        },
+        "acsUrl": {
+          "type": "string"
+        },
+        "sloUrl": {
+          "type": "string"
+        },
+        "wsfedAcsUrl": {
+          "type": "string"
+        },
+        "validateResponses": {
+          "type": "boolean",
+          "description": "Hold every answer to the API document and keep the record at\nGET /model/gaps. A test setting: it costs a schema check per answer."
+        }
+      },
+      "required": [
+        "apiUrl",
+        "uiUrl",
+        "port",
+        "logLevel",
+        "callTimeout",
+        "connectionTimeout",
+        "maxContentLength",
+        "maxRedirects",
+        "blockPrivateNetworkCalls",
+        "blockedAddressRanges"
+      ],
+      "description": "The api service's configuration: one of api/env/*.js.",
+      "additionalProperties": false
+    },
+    "Port": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "Port.json",
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647
+        },
+        {
+          "type": "string"
+        }
+      ],
+      "description": "A TCP port, as a number or as the string a config file often holds."
+    },
+    "LogLevel": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "LogLevel.json",
+      "anyOf": [
+        {
+          "type": "string",
+          "const": "trace"
+        },
+        {
+          "type": "string",
+          "const": "debug"
+        },
+        {
+          "type": "string",
+          "const": "info"
+        },
+        {
+          "type": "string",
+          "const": "warn"
+        },
+        {
+          "type": "string",
+          "const": "error"
+        },
+        {
+          "type": "string",
+          "const": "fatal"
+        }
+      ],
+      "description": "A bunyan level."
+    },
+    "ClientConfig": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "$id": "ClientConfig.json",
+      "type": "object",
+      "properties": {
+        "apiUrl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The api's origin, as the browser reaches it."
+        },
+        "uiUrl": {
+          "type": "string",
+          "description": "This service's own origin. May be empty when read in node: the embedded\nfile takes it from window.location, which exists only in the page."
+        },
+        "https": {
+          "type": "boolean"
+        },
+        "hostname": {
+          "type": "string"
+        },
+        "port": {
+          "$ref": "Port.json"
+        },
+        "logLevel": {
+          "$ref": "LogLevel.json"
+        },
+        "backendAvailable": {
+          "type": "boolean",
+          "description": "False on the static sites, which have no api behind them."
+        },
+        "samlEdgeLanding": {
+          "type": "boolean",
+          "description": "The static sites' Lambda"
+        },
+        "wsfedEdgeLanding": {
+          "type": "boolean"
+        },
+        "spEntityId": {
+          "type": "string"
+        },
+        "acsUrl": {
+          "type": "string"
+        },
+        "sloUrl": {
+          "type": "string"
+        },
+        "wsfedRealm": {
+          "type": "string"
+        },
+        "wsfedAcsUrl": {
+          "type": "string"
+        },
+        "wsfedMetadataUrlDefault": {
+          "type": "string"
+        },
+        "samlMetadataUrlDefault": {
+          "type": "string"
+        },
+        "wstrustStsUrlDefault": {
+          "type": "string"
+        },
+        "oid4vciIssuerUrlDefault": {
+          "type": "string"
+        },
+        "oid4vpVerifierUrlDefault": {
+          "type": "string"
+        },
+        "oid4vciIssuerSiteUrlDefault": {
+          "type": "string"
+        },
+        "oid4vpVerifierSiteUrlDefault": {
+          "type": "string"
+        },
+        "rfc8414MetadataUrlDefault": {
+          "type": "string"
+        },
+        "krb5RealmDefault": {
+          "type": "string"
+        },
+        "krb5KdcHostDefault": {
+          "type": "string"
+        },
+        "krb5KdcPortDefault": {
+          "type": "string"
+        },
+        "krb5PrincipalDefault": {
+          "type": "string"
+        },
+        "krb5PasswordDefault": {
+          "type": "string"
+        },
+        "krb5SpnegoUrlDefault": {
+          "type": "string"
+        },
+        "krb5SpnegoSpnDefault": {
+          "type": "string"
+        },
+        "ldapUrlDefault": {
+          "type": "string"
+        },
+        "ldapBaseDnDefault": {
+          "type": "string"
+        },
+        "ldapBindDnDefault": {
+          "type": "string"
+        },
+        "ldapPasswordDefault": {
+          "type": "string"
+        },
+        "spiffeTrustDomainDefault": {
+          "type": "string"
+        },
+        "spiffeWorkloadAddressDefault": {
+          "type": "string"
+        },
+        "spiffeServerAddressDefault": {
+          "type": "string"
+        },
+        "spiffeBundleUrlDefault": {
+          "type": "string"
+        },
+        "scimBaseUrlDefault": {
+          "type": "string"
+        },
+        "scimSignInUrlDefault": {
+          "type": "string"
+        },
+        "ssfTransmitterUrlDefault": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "apiUrl",
+        "uiUrl",
+        "port",
+        "logLevel",
+        "backendAvailable",
+        "spEntityId",
+        "acsUrl",
+        "sloUrl",
+        "wsfedRealm",
+        "wsfedAcsUrl",
+        "wsfedMetadataUrlDefault",
+        "samlMetadataUrlDefault",
+        "wstrustStsUrlDefault",
+        "oid4vciIssuerUrlDefault",
+        "oid4vpVerifierUrlDefault",
+        "oid4vciIssuerSiteUrlDefault",
+        "oid4vpVerifierSiteUrlDefault",
+        "rfc8414MetadataUrlDefault",
+        "krb5RealmDefault",
+        "krb5KdcHostDefault",
+        "krb5KdcPortDefault",
+        "krb5PrincipalDefault",
+        "krb5PasswordDefault",
+        "krb5SpnegoUrlDefault",
+        "krb5SpnegoSpnDefault",
+        "ldapUrlDefault",
+        "ldapBaseDnDefault",
+        "ldapBindDnDefault",
+        "ldapPasswordDefault",
+        "scimBaseUrlDefault",
+        "scimSignInUrlDefault",
+        "ssfTransmitterUrlDefault"
+      ],
+      "description": "The client service's configuration: one of client/src/env/*.js.",
+      "additionalProperties": false
+    }
+  },
+  "x-outbound-policy": [
+    "callTimeout",
+    "connectionTimeout",
+    "maxContentLength",
+    "maxRedirects",
+    "userAgent",
+    "keepAlive",
+    "blockPrivateNetworkCalls",
+    "blockedAddressRanges",
+    "allowedAddressRanges",
+    "krb5AllowedPorts",
+    "krb5ServicePorts",
+    "ldapAllowedPorts",
+    "ldapMaxEntries",
+    "tlsAllowedPorts",
+    "spiffeAllowedPorts",
+    "spiffeAllowedSocketPaths"
+  ]
+}

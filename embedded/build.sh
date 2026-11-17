@@ -226,11 +226,15 @@ log "writing ${OUT}"
 rm -rf "${OUT}/ui" "${OUT}/api" "${OUT}/common" "${OUT}/version.json"
 cp -a "${WORK}/ui" "${OUT}/ui"
 cp -a "${WORK}/tree/api" "${OUT}/api"
-# What the api requires as ../common/... — api/Dockerfile's two COPYs into
-# /usr/src/common, and nothing more.
+# What the api requires as ../common/... — api/Dockerfile's four COPYs into
+# /usr/src/common, and nothing more. common/model is the generated API
+# document and configuration schema (models/CLAUDE.md): the api refuses to
+# start without them, and the embedded tree's contract is one of them.
 mkdir -p "${OUT}/common"
 cp -a "${WORK}/tree/common/tls_listener.js" "${OUT}/common/tls_listener.js"
 cp -a "${WORK}/tree/common/spiffe" "${OUT}/common/spiffe"
+cp -a "${WORK}/tree/common/model" "${OUT}/common/model"
+cp -a "${WORK}/tree/common/model_config.js" "${OUT}/common/model_config.js"
 cp "${OUT}/api/version.json" "${OUT}/version.json"
 
 # ---------------------------------------------------------------------------

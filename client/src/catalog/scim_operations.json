@@ -1,0 +1,327 @@
+[
+  {
+    "id": "serviceProviderConfig",
+    "label": "ServiceProviderConfig",
+    "group": "discovery",
+    "method": "GET",
+    "path": "/ServiceProviderConfig",
+    "need": "none",
+    "body": null,
+    "query": [],
+    "section": "RFC 7644 section 4",
+    "what": "What this server supports: filtering, sorting, PATCH, bulk, ETag, changePassword, and the authentication schemes it advertises. Read it first — everything else on this page is a promise it made."
+  },
+  {
+    "id": "resourceTypes",
+    "label": "ResourceTypes",
+    "group": "discovery",
+    "method": "GET",
+    "path": "/ResourceTypes",
+    "need": "none",
+    "body": null,
+    "query": [],
+    "section": "RFC 7644 section 4",
+    "what": "The resource types this server has, and for each one its endpoint and the schema extensions it carries."
+  },
+  {
+    "id": "resourceType",
+    "label": "One ResourceType",
+    "group": "discovery",
+    "method": "GET",
+    "path": "/ResourceTypes/{id}",
+    "need": "none",
+    "body": null,
+    "query": [],
+    "idLabel": "Type name",
+    "idExample": "User",
+    "section": "RFC 7644 section 4",
+    "what": "One of them, by name — \"User\" or \"Group\". Note the id here is a NAME and not a resource id; that asymmetry is in the specification."
+  },
+  {
+    "id": "schemas",
+    "label": "Schemas",
+    "group": "discovery",
+    "method": "GET",
+    "path": "/Schemas",
+    "need": "none",
+    "body": null,
+    "query": [],
+    "section": "RFC 7643 section 7",
+    "what": "Every attribute this server knows, with its characteristics: required, canonical values, mutability, returned, uniqueness. This is the document that says whether a field you sent was ever going to be stored."
+  },
+  {
+    "id": "schema",
+    "label": "One Schema",
+    "group": "discovery",
+    "method": "GET",
+    "path": "/Schemas/{id}",
+    "need": "none",
+    "body": null,
+    "query": [],
+    "idLabel": "Schema URN",
+    "idExample": "urn:ietf:params:scim:schemas:core:2.0:User",
+    "section": "RFC 7643 section 7",
+    "what": "One schema by its URN."
+  },
+  {
+    "id": "listUsers",
+    "label": "List users",
+    "group": "user",
+    "resourceType": "User",
+    "method": "GET",
+    "path": "/Users",
+    "need": "read",
+    "body": null,
+    "query": [
+      "filter",
+      "sortBy",
+      "sortOrder",
+      "startIndex",
+      "count",
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.4.2",
+    "what": "The list, filtered, sorted, paged and projected by the query string. An empty filter means everybody, which is what count and startIndex are for."
+  },
+  {
+    "id": "createUser",
+    "label": "Create user",
+    "group": "user",
+    "resourceType": "User",
+    "method": "POST",
+    "path": "/Users",
+    "need": "write",
+    "body": "User",
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.3",
+    "what": "201 with the created resource and a Location header. userName is the one required attribute and the one with a uniqueness constraint, so this is where a 409 comes from."
+  },
+  {
+    "id": "searchUsers",
+    "label": "Search users (POST /.search)",
+    "group": "user",
+    "resourceType": "User",
+    "method": "POST",
+    "path": "/Users/.search",
+    "need": "read",
+    "body": "SearchRequest",
+    "query": [],
+    "section": "RFC 7644 section 3.4.3",
+    "what": "The same query as a POST body. It exists for a filter too long for a URL and for one carrying something that should not be in a server's access log."
+  },
+  {
+    "id": "readUser",
+    "label": "Read user",
+    "group": "user",
+    "resourceType": "User",
+    "method": "GET",
+    "path": "/Users/{id}",
+    "need": "read",
+    "body": null,
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.4.1",
+    "what": "One user by id. The id is opaque — do not build it, use the one the create or the list gave you."
+  },
+  {
+    "id": "replaceUser",
+    "label": "Replace user (PUT)",
+    "group": "user",
+    "resourceType": "User",
+    "method": "PUT",
+    "path": "/Users/{id}",
+    "need": "write",
+    "body": "User",
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.5.1",
+    "what": "Replaces the resource with what you send. Every attribute you leave out is one you are asking to have removed — which is the difference between this and PATCH and the mistake this operation exists to let you make on purpose."
+  },
+  {
+    "id": "modifyUser",
+    "label": "Modify user (PATCH)",
+    "group": "user",
+    "resourceType": "User",
+    "method": "PATCH",
+    "path": "/Users/{id}",
+    "need": "write",
+    "body": "PatchOp",
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.5.2",
+    "what": "add, replace and remove against a path — and the path grammar is the part everybody gets wrong: emails[type eq \"work\"].value is a path, not a property name. A PATCH that changes nothing answers 204 with no body."
+  },
+  {
+    "id": "deleteUser",
+    "label": "Delete user",
+    "group": "user",
+    "resourceType": "User",
+    "method": "DELETE",
+    "path": "/Users/{id}",
+    "need": "write",
+    "body": null,
+    "query": [],
+    "section": "RFC 7644 section 3.6",
+    "what": "204 and no body. There is no soft delete in SCIM — active:false is a different thing and does not do this."
+  },
+  {
+    "id": "listGroups",
+    "label": "List groups",
+    "group": "group",
+    "resourceType": "Group",
+    "method": "GET",
+    "path": "/Groups",
+    "need": "read",
+    "body": null,
+    "query": [
+      "filter",
+      "sortBy",
+      "sortOrder",
+      "startIndex",
+      "count",
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.4.2",
+    "what": "The list. A group's members come back as ids with a $ref."
+  },
+  {
+    "id": "createGroup",
+    "label": "Create group",
+    "group": "group",
+    "resourceType": "Group",
+    "method": "POST",
+    "path": "/Groups",
+    "need": "write",
+    "body": "Group",
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.3",
+    "what": "displayName is the required attribute. Members may be sent at creation or added afterwards with a PATCH."
+  },
+  {
+    "id": "searchGroups",
+    "label": "Search groups (POST /.search)",
+    "group": "group",
+    "resourceType": "Group",
+    "method": "POST",
+    "path": "/Groups/.search",
+    "need": "read",
+    "body": "SearchRequest",
+    "query": [],
+    "section": "RFC 7644 section 3.4.3",
+    "what": "The same query as a POST body."
+  },
+  {
+    "id": "readGroup",
+    "label": "Read group",
+    "group": "group",
+    "resourceType": "Group",
+    "method": "GET",
+    "path": "/Groups/{id}",
+    "need": "read",
+    "body": null,
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.4.1",
+    "what": "One group by id, with its members resolved."
+  },
+  {
+    "id": "replaceGroup",
+    "label": "Replace group (PUT)",
+    "group": "group",
+    "resourceType": "Group",
+    "method": "PUT",
+    "path": "/Groups/{id}",
+    "need": "write",
+    "body": "Group",
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.5.1",
+    "what": "Replaces it, membership included. Sending a group with no members empties it."
+  },
+  {
+    "id": "modifyGroup",
+    "label": "Modify group (PATCH)",
+    "group": "group",
+    "resourceType": "Group",
+    "method": "PATCH",
+    "path": "/Groups/{id}",
+    "need": "write",
+    "body": "PatchOp",
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.5.2",
+    "what": "How membership is normally changed: add or remove against the \"members\" path. Membership is a fact about the GROUP, so it is never changed through a User resource."
+  },
+  {
+    "id": "deleteGroup",
+    "label": "Delete group",
+    "group": "group",
+    "resourceType": "Group",
+    "method": "DELETE",
+    "path": "/Groups/{id}",
+    "need": "write",
+    "body": null,
+    "query": [],
+    "section": "RFC 7644 section 3.6",
+    "what": "204. Deleting a group deletes the membership, not the members."
+  },
+  {
+    "id": "searchAll",
+    "label": "Search everything (POST /.search)",
+    "group": "query",
+    "method": "POST",
+    "path": "/.search",
+    "need": "read",
+    "body": "SearchRequest",
+    "query": [],
+    "section": "RFC 7644 section 3.4.3",
+    "what": "One query across BOTH resource types at once, which is the one thing the per-type /.search cannot do. The ListResponse comes back mixed, so read each entry's schemas to tell a User from a Group."
+  },
+  {
+    "id": "bulk",
+    "label": "Bulk",
+    "group": "query",
+    "method": "POST",
+    "path": "/Bulk",
+    "need": "write",
+    "body": "BulkRequest",
+    "query": [],
+    "section": "RFC 7644 section 3.7",
+    "what": "Many operations in one request, each with a bulkId the later ones can reference as bulkId:name. There is no read operation inside a bulk, so it is a write however harmless the contents look."
+  },
+  {
+    "id": "me",
+    "label": "/Me",
+    "group": "query",
+    "method": "GET",
+    "path": "/Me",
+    "need": "read",
+    "body": null,
+    "query": [
+      "attributes",
+      "excludedAttributes"
+    ],
+    "section": "RFC 7644 section 3.11",
+    "what": "An alias for whoever the request authenticated as. A server with no authenticated subject has nothing to alias, and this project's mock answers 501 saying so — which is a more useful answer than a 404 or a guess."
+  }
+]

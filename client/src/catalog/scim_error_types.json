@@ -1,0 +1,12 @@
+{
+  "invalidFilter": "The filter is not valid section 3.4.2.2 grammar, or asks for something this server cannot evaluate.",
+  "tooMany": "The filter matched more than the server is willing to return. Narrow it or page it.",
+  "uniqueness": "A value that has to be unique is already somebody else's — on a User that is almost always userName.",
+  "mutability": "A read-only attribute was written, or an immutable one was changed after it was set.",
+  "invalidSyntax": "The body is not the structure this operation expects — a missing or wrong \"schemas\" member is the usual cause.",
+  "invalidPath": "The PATCH \"path\" is not valid section 3.5.2 path grammar.",
+  "noTarget": "The PATCH path is valid grammar but names nothing on this resource, and the operation needs a target that exists.",
+  "invalidValue": "A value is the wrong type, is missing when required, or is not one this attribute accepts.",
+  "invalidVers": "The version in the request is not one this server speaks.",
+  "sensitive": "The request put something sensitive in the URL. Send it in a POST body instead — that is what /.search is for."
+}

@@ -117,7 +117,10 @@ function persistedEls() {
 // written before. wsfed_signer_cert is deliberately NOT in this list: it is the
 // IdP's signing certificate, someone else's public credential, not part of this
 // key pair — the counterpart of wst_enc_cert on the WS-Trust page.
-var KEYPAIR_FIELDS = ['wsfed_rp_private_key', 'wsfed_rp_cert'];
+// The model's (models/storage/, class `keypair`), not a list typed here:
+// the fields this page's save checkbox gates, as field ids.
+var KEYPAIR_FIELDS = require("./secret_storage")
+  .keyPairKeys(STORE_PREFIX + 'wsfed_save_keypair', STORE_PREFIX);
 
 function keyPairMayBeStored() {
   log.debug("Entering keyPairMayBeStored().");

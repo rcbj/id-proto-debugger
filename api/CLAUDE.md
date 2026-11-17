@@ -841,9 +841,25 @@ See `docs/saml11.md`.
 
 ## Dependency overrides
 
-`api/package.json` carries three, and each pins something this service does not depend on directly. Two are for `express-swagger-generator@1.1.17` — an unmaintained package the api uses once, at startup, to build the Swagger document out of the JSDoc in `server.js`:
+`api/package.json` carries one, the version-selective `brace-expansion` pair below. It carried two more until 2026-11-16, `validator` and `js-yaml`, both for `express-swagger-generator@1.1.17` — an unmaintained package the api used once, at startup, to build a Swagger 2.0 document out of the JSDoc in `server.js`. That package is gone: the api serves `common/model/openapi.json`, generated from `models/api/` (see "The API document" below), and its overrides went with it, along with 548 lines of lock.
 
-* **`validator: ^13.15.22`**, and
-* **`js-yaml: ^3.15.1`** (GHSA/CVE-2026-59870's weakness in the 3.x line: `resolveYamlOmap()` enforced key uniqueness with `objectKeys.indexOf()` inside the per-element loop, so an `!!omap` of *n* entries cost O(n²) and blocked the event loop — 80,000 entries took **4,690 ms** on 3.15.0 and **187 ms** on 3.15.1, which replaces the linear scan with a `hasOwnProperty` map). It arrives four levels down: `express-swagger-generator → swagger-parser → json-schema-ref-parser → js-yaml@^3.12.0`. **Nothing attacker-supplied reaches it** — the api parses no YAML of its own (`grep yaml api/server.js` is empty) and the only document `json-schema-ref-parser` sees is the one generated from this repository's own source — so the alert is hygiene rather than an open door. The override exists anyway, because the transitive range `^3.12.0` would happily resolve back to 3.15.0.
+Two traps when changing them. **npm will not re-resolve an override you edit**: `packages[""]` in this lock records no `overrides` key, so `npm install --package-lock-only` (even with `--force`) reports "up to date" and leaves the old version pinned. Delete the offending `node_modules/<pkg>` entry from `package-lock.json` and install again — npm then re-resolves that one package and honours the override, which is a three-line lock diff rather than a full regeneration. And **the override is version-selective on purpose**: `brace-expansion@1` / `brace-expansion@2` exist in two majors here, so a single unversioned entry makes npm prune one of them.
 
-Two traps when changing them. **npm will not re-resolve an override you edit**: `packages[""]` in this lock records no `overrides` key, so `npm install --package-lock-only` (even with `--force`) reports "up to date" and leaves the old version pinned. Delete the offending `node_modules/<pkg>` entry from `package-lock.json` and install again — npm then re-resolves that one package and honours the override, which is a three-line lock diff rather than a full regeneration. And **the third override is version-selective on purpose**: `brace-expansion@1` / `brace-expansion@2` exist in two majors here, so a single unversioned entry makes npm prune one of them.
+## The API document, and every route's validator
+
+**What every route accepts and answers is written in `models/api/<family>.tsp`**, compiled into `common/model/openapi.json` by `models/tools/generate.mjs`, and committed. `api/model_validate.js` builds each operation's request validator from that file, and a route opts in by naming its operation:
+
+```js
+app.post('/ldap/bind', model.route('ldapBind'), function (req, res) { ... });
+```
+
+**A new route gets a model and a `model.route()` in the same commit**, and a recording in `tests/fixtures/api_model/` before its first hand-written check is deleted: `tests/api_model_wire.js` fails on an operation in the document that no fixture replays. `models/CLAUDE.md` has the rules and the five-step switch every family went through; the one to remember here is that **the schema refuses only what no handler could use** (a wrong JSON type, a missing required member) and never the content of a protocol message the api forwards, which is `@passthrough`. Every check about a value — the address policy, a port allow-list, a URL's scheme — stays in the code that makes it and is named in the model with `@checkedInCode`.
+
+**The configuration is held to a model too.** `server.js` checks its `CONFIG_FILE` against `ApiConfig` (`models/config/api_config.tsp`) before anything reads it and refuses to start on a misspelt or mistyped key, naming it. A new setting is a property there first; the outbound-policy ones carry `@outboundPolicy`, and `tests/data_model.js` holds that list to the sixteen this file describes.
+
+**`validateResponses`** (on in `env/docker-tests.js` only) checks every answer against its operation's documented response, logs a mismatch as `MODEL GAP`, and keeps the record at `GET /model/gaps`, which `tests/api_model_gaps.js` reads LAST in the suite. A non-JSON answer has its status checked. The answer itself is never changed.
+
+**`GET /api-docs.json`** is the document, with this build's version and the server this api is reached at (embedded: `uiUrl` + `/api`). **`GET /api-docs`** is Swagger UI over it, which can try an operation, served with its assets from this api's own `node_modules` (`/api-docs/assets/`, static and outside the document) and never from a CDN; every path in it is relative, so it works embedded under `/api`. `swagger-ui-dist` depends on **`@scarf/scarf`, an install-time analytics hook**, which `scarfSettings.enabled: false` in `package.json` and `SCARF_ANALYTICS=false` in the Dockerfile both turn off; keep both. **`GET /api-docs/operations`** is the same document as a page with no script at all.
+
+**A request body that is neither JSON nor a form** (a Security Event Token pushed to the SSF receiver as `application/secevent+jwt`) is validated against the string schema the document gives its media type.
+

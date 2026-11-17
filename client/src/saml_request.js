@@ -351,7 +351,10 @@ function persistedEls() {
 // button beside the fields) and pastes it back here, and pastes the private key
 // into the Decryption Key field on the response page, which is already written
 // to cope with an empty prefill.
-var KEYPAIR_FIELDS = ['saml_sp_private_key', 'saml_sp_public_key'];
+// The model's (models/storage/, class `keypair`), not a list typed here:
+// the fields this page's save checkbox gates, as field ids.
+var KEYPAIR_FIELDS = require("./secret_storage")
+  .keyPairKeys(STORE_PREFIX + 'saml_save_keypair', STORE_PREFIX);
 
 function keyPairMayBeStored() {
   log.debug("Entering keyPairMayBeStored().");

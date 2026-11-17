@@ -1,0 +1,6 @@
+{
+  "name": "event_timestamp",
+  "required": false,
+  "type": "number",
+  "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+}

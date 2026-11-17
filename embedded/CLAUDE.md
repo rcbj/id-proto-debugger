@@ -45,7 +45,7 @@ path or variable in it is a change to the mock STS too.
 ```
 <OUT>/ui/            client/build.js, DEPLOYMENT=embedded, CONFIG_FILE=./env/embedded.js
 <OUT>/api/           a runnable api: `cd <OUT>/api && node server.js`
-<OUT>/common/        tls_listener.js and spiffe/ — what the api requires as ../common/...
+<OUT>/common/        tls_listener.js, spiffe/, model_config.js and model/ — what the api requires as ../common/...
 <OUT>/version.json   the build's M.N.P.B (the same record as api/version.json)
 ```
 
@@ -53,8 +53,9 @@ path or variable in it is a change to the mock STS too.
 `api/` (its `env/embedded.js` included), production `node_modules` with the
 `ldapjs` link to `node-ldapjs` inside the package root, `data.js` and
 `xmldsig.js` from `common/`, the repo-root `VERSION`, the client's `version.js`
-and the stamped `version.json`. `<OUT>/common` is that Dockerfile's two COPYs
-into `/usr/src/common` and nothing more. **When `api/Dockerfile` stages
+and the stamped `version.json`. `<OUT>/common` is that Dockerfile's four COPYs
+into `/usr/src/common` and nothing more — `model/` being the generated API
+document, configuration schema and this contract (`models/CLAUDE.md`). **When `api/Dockerfile` stages
 something new beside the api, `build.sh` needs the same line**, or the image
 works and the embedded api dies at startup with `Cannot find module`.
 
@@ -92,15 +93,22 @@ image mirror (after `docker login ghcr.io`), as `dockerimage.yml` does.
 
 The mock STS forks `<OUT>/api/server.js` with cwd `<OUT>/api` and sets:
 
+The table is generated from `models/contract/main.tsp` (models/CLAUDE.md):
+edit the model, run `node models/tools/generate.mjs`, and the table and
+`common/model/embedded_contract.json` follow. A rename there is a change to
+iya-sts too.
+
+<!-- model:embedded-variables (generated from models/; do not edit) -->
 | Variable | Read by | Effect |
 |---|---|---|
-| `CONFIG_FILE` | `api/server.js` | absolute path of `<OUT>/api/env/embedded.js` |
-| `DEBUGGER_LISTEN_SOCKET` | `common/tls_listener.js` | bind plain HTTP on this unix socket (see below) |
-| `DEBUGGER_UI_URL` | `api/env/embedded.js` | the debugger origin, no trailing slash; `uiUrl` = it, `apiUrl` = it + `/api`, `spEntityId` = it + `/saml/sp`, `acsUrl`/`sloUrl`/`wsfedAcsUrl` = apiUrl + `/samlacs`, `/samlslo`, `/wsfed` |
-| `DEBUGGER_ALLOWED_ADDRESS_RANGES` | `api/env/embedded.js` → `api/ssrf_guard.js` | a JSON array of ranges; non-empty = allow-list mode |
-| `DEBUGGER_BLOCK_PRIVATE_NETWORK_CALLS` | `api/env/embedded.js` | `"true"`/`"false"`, only without an allow-list; default true |
-| `DEBUGGER_LOG_LEVEL` | `api/env/embedded.js` | default `info` |
-| `NODE_EXTRA_CA_CERTS` | node | the anchor for the mock STS's own certificate |
+| `CONFIG_FILE` | `api/server.js` | Absolute path of `<OUT>/api/env/embedded.js`. |
+| `DEBUGGER_LISTEN_SOCKET` | `common/tls_listener.js`, `api/env/embedded.js` | Bind plain HTTP on this unix socket, whatever the configuration says about https. The socket is chmod 0600 and is the access control. |
+| `DEBUGGER_UI_URL` | `api/env/embedded.js` | The debugger origin, no trailing slash. uiUrl is it; apiUrl is it + /api; spEntityId is it + /saml/sp; acsUrl, sloUrl and wsfedAcsUrl are apiUrl + /samlacs, /samlslo and /wsfed. |
+| `DEBUGGER_ALLOWED_ADDRESS_RANGES` (optional) | `api/env/embedded.js` | A JSON array of address ranges. Non-empty is allow-list mode, which replaces the block-list; a list with no usable entry fails closed. |
+| `DEBUGGER_BLOCK_PRIVATE_NETWORK_CALLS` (optional) | `api/env/embedded.js` | "true" or "false", only without an allow-list. Default `true`. |
+| `DEBUGGER_LOG_LEVEL` (optional) | `api/env/embedded.js` | A bunyan level. Default `info`. |
+| `NODE_EXTRA_CA_CERTS` (optional) | node | The anchor for iya-sts's own certificate. Read by node itself. |
+<!-- /model:embedded-variables -->
 
 **The socket.** `tls_listener.listen()` takes `options.socketPath` or
 `DEBUGGER_LISTEN_SOCKET`, and a socket OUTRANKS `https` and `TLS_ENABLED` —

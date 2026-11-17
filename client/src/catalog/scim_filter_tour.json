@@ -1,0 +1,86 @@
+[
+  {
+    "op": "eq",
+    "filter": "userName eq \"{userName}\"",
+    "expectMatch": true,
+    "what": "equal — the one every client sends"
+  },
+  {
+    "op": "ne",
+    "filter": "userName ne \"{userName}\"",
+    "expectMatch": false,
+    "what": "not equal"
+  },
+  {
+    "op": "co",
+    "filter": "userName co \"{tag}\"",
+    "expectMatch": true,
+    "what": "contains"
+  },
+  {
+    "op": "sw",
+    "filter": "userName sw \"{prefix}\"",
+    "expectMatch": true,
+    "what": "starts with"
+  },
+  {
+    "op": "ew",
+    "filter": "userName ew \"{tag}\"",
+    "expectMatch": true,
+    "what": "ends with"
+  },
+  {
+    "op": "pr",
+    "filter": "userName pr",
+    "expectMatch": true,
+    "what": "present — no comparison value at all"
+  },
+  {
+    "op": "gt",
+    "filter": "meta.created gt \"2000-01-01T00:00:00Z\"",
+    "expectMatch": true,
+    "what": "greater than, on a dateTime"
+  },
+  {
+    "op": "ge",
+    "filter": "meta.created ge \"2000-01-01T00:00:00Z\"",
+    "expectMatch": true,
+    "what": "greater than or equal"
+  },
+  {
+    "op": "lt",
+    "filter": "meta.created lt \"2999-01-01T00:00:00Z\"",
+    "expectMatch": true,
+    "what": "less than"
+  },
+  {
+    "op": "le",
+    "filter": "meta.created le \"2999-01-01T00:00:00Z\"",
+    "expectMatch": true,
+    "what": "less than or equal"
+  },
+  {
+    "op": "and",
+    "filter": "userName eq \"{userName}\" and active eq true",
+    "expectMatch": true,
+    "what": "and"
+  },
+  {
+    "op": "or",
+    "filter": "userName eq \"{userName}\" or userName eq \"nobody\"",
+    "expectMatch": true,
+    "what": "or"
+  },
+  {
+    "op": "not",
+    "filter": "not (userName eq \"nobody\")",
+    "expectMatch": true,
+    "what": "not, with the grouping parentheses it needs"
+  },
+  {
+    "op": "complex",
+    "filter": "emails[type eq \"work\"]",
+    "expectMatch": true,
+    "what": "a complex attribute filter — the value filter grammar, which is where a hand-rolled parser stops working"
+  }
+]

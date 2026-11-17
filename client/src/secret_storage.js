@@ -34,30 +34,42 @@ var log = bunyan.createLogger({
   })()
 });
 
+// THE LISTS ARE THE STORAGE MODEL'S. models/storage/*.tsp declares every
+// key the client names with its class, and models/tools/generate.mjs writes
+// these four lists into common/model/storage_classes.json, which browserify
+// inlines here (it bundles a required .json). A new secret is declared there
+// as class `secret`, not added to an array in this file. They were literals
+// here until 2026-11-16; tests/data_model.js holds the generated lists to
+// the ones they replaced.
+var CLASSES = require("../../common/model/storage_classes.json");
+
 // Keys a secret or a password was written under by an earlier build, or
 // could be by a field id. None of them may be written again.
-var SECRET_KEYS = [
-  "client_secret",
-  "token_client_secret",
-  "refresh_client_secret",
-  "revocation_client_secret",
-  "tokenexchange_client_secret",
-  "introspection_client_secret",
-  "userinfo_client_secret",
-  "token_password",
-  "password"
-];
+var SECRET_KEYS = CLASSES.secretKeys.slice();
 
 // Bearer credentials kept for the tab only.
-var SESSION_KEYS = [
-  "registration_access_token",
-  "dcr_initial_access_token",
-  "introspection_bearer_token"
-];
+var SESSION_KEYS = CLASSES.sessionKeys.slice();
 
 // Members of a client registration that are credentials. The metadata
 // editor may show them for the page load; its stored copy may not.
-var SECRET_MEMBERS = ["client_secret", "registration_access_token"];
+var SECRET_MEMBERS = CLASSES.secretMembers.slice();
+
+/**
+ * The keys of key material a save checkbox gates, by the checkbox's own
+ * storage key (`samltools_saml_save_keypair`), with `prefix` (the page's
+ * STORE_PREFIX) taken off each so a page can compare them with field ids.
+ * Empty for a checkbox the model does not know, which a page then treats as
+ * gating nothing — tests/data_model.js fails before that can ship.
+ */
+function keyPairKeys(optOutKey, prefix) {
+  log.debug("Entering keyPairKeys(). " + optOutKey);
+  var keys = (CLASSES.keypairs[optOutKey] || []).map(function (key) {
+    return prefix && key.indexOf(prefix) === 0 ?
+        key.slice(prefix.length) : key;
+  });
+  log.debug("Leaving keyPairKeys(). " + keys.length);
+  return keys;
+}
 
 function removeQuietly(store, key) {
   log.debug("Entering removeQuietly().");
@@ -157,6 +169,7 @@ module.exports = {
   SECRET_KEYS: SECRET_KEYS,
   SESSION_KEYS: SESSION_KEYS,
   SECRET_MEMBERS: SECRET_MEMBERS,
+  keyPairKeys: keyPairKeys,
   purgeOnLoad: purgeOnLoad,
   sessionGet: sessionGet,
   sessionSet: sessionSet,

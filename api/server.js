@@ -61,6 +61,35 @@ var log = bunyan.createLogger({
                                 level: LOG_LEVEL });
 log.info("Log initialized. logLevel=" + log.level());
 
+// THE CONFIGURATION IS HELD TO ITS MODEL BEFORE ANYTHING READS IT.
+// common/model/config.schema.json's ApiConfig is generated from
+// models/config/api_config.tsp and closes the object, so a misspelt key in an
+// env file is refused here, by name, instead of silently leaving the setting
+// at its default. Refusing to start is the same choice tls_listener.js makes
+// for a missing certificate: a service that came up on a configuration other
+// than the one written down is worse than one that did not come up.
+const modelValidate = require('./model_validate.js');
+(function checkApiConfig() {
+  log.debug("Entering checkApiConfig().");
+  const problems = modelValidate.checkConfig(appconfig, 'ApiConfig');
+  if (problems.length) {
+    problems.forEach(function (problem) {
+      log.fatal('Configuration ' + process.env.CONFIG_FILE + ': ' + problem +
+                '.');
+    });
+    log.fatal('Refusing to start: the configuration does not match ' +
+              'models/config/api_config.tsp.');
+    log.debug("Leaving checkApiConfig(). Refused.");
+    process.exit(1);
+  }
+  log.debug("Leaving checkApiConfig().");
+})();
+
+// The API document, enforced: every route that names an operation is held to
+// it (see model_validate.js). `validateResponses` is a test setting.
+const model = modelValidate.createModel({
+  validateResponses: appconfig.validateResponses === true });
+
 // ---------------------------------------------------------------------------
 // Outbound call timeout, in milliseconds, applied to every axios call this
 // service makes (appconfig.callTimeout, set in api/env/*.js).
@@ -822,7 +851,6 @@ var claimDescriptions = fs.readFileSync(path.join(__dirname, 'jwt.xml'),
 var cachedClaimDescriptions = true;
 
 const app = express();
-const expressSwagger = require('express-swagger-generator')(app);
 
 // ---------------------------------------------------------------------------
 // EMBEDDED IN THE MOCK STS: a unix socket, and one trusted peer in front of it.
@@ -956,17 +984,24 @@ app.use(cors(corsOptions));
  */
 /**
  * System healthcheck
- * @route GET /healthcheck
- * @group System - Support operations
- * @returns {HealthcheckResponse.model} 200 - Health Check Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.get('/healthcheck', function (req, res) {
+app.get('/healthcheck', model.route('healthcheck'), function (req, res) {
+  log.debug("Entering GET /healthcheck.");
+  log.debug("Leaving GET /healthcheck.");
   res
   .status(STATUS_200)
   .json({
     message: 'Success' });
+});
+
+/**
+ * The answers this process sent that its API document does not describe.
+ * 404 unless validateResponses is on, which only a test configuration sets.
+ */
+app.get('/model/gaps', model.route('modelGaps'), function (req, res) {
+  log.debug("Entering GET /model/gaps.");
+  log.debug("Leaving GET /model/gaps.");
+  return model.gapsHandler(req, res);
 });
 
 // The IANA JWT claim registry: the one outbound call in this service whose URL
@@ -978,13 +1013,9 @@ const IANA_JWT_CLAIMS_URL = 'https://www.iana.org/assignments/jwt/jwt.xml';
 
 /**
  * Retrieve Claims Description.
- * @route GET /claimdescription
- * @group Metadata - Support operations
- * @returns {HealthcheckResponse.model} 200 - Claim Description Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.get('/claimdescription', function(req, res) {
+app.get('/claimdescription', model.route('claimDescription'),
+        function(req, res) {
   log.debug("Entering GET /claimdescription.");
   try {
     if(cachedClaimDescriptions) {
@@ -1075,23 +1106,23 @@ app.get('/claimdescription', function(req, res) {
  * it is a dev/debugger-only tool (SSRF by design); do not expose publicly.
  *
  * The target URL is passed base64-encoded in ?url= to survive query escaping.
- * @route GET /samlmetadata
- * @group SAML - SAML support operations
- * @returns {string} 200 - The metadata XML document
- * @returns {Error.model} 400 - Missing/invalid url parameter
- * @returns {Error.model} 500 - Fetch error
  */
-app.get('/samlmetadata', function (req, res) {
+// `url` is a single string by the time this runs: models/api/saml.tsp holds
+// the query to that, so a repeated ?url= is refused there rather than joined
+// with a comma and decoded into a URL nobody wrote.
+app.get('/samlmetadata', model.route('samlMetadata'), function (req, res) {
   log.debug('Entering GET /samlmetadata.');
   var target;
   try {
     target = Buffer.from(String(req.query.url || ''),
         'base64').toString('utf8').trim();
   } catch (e) {
+    log.debug('Leaving GET /samlmetadata. Not base64.');
     return res.status(STATUS_400).json({
       error: 'Invalid url parameter (expected base64).' });
   }
   if (!/^https?:\/\//i.test(target)) {
+    log.debug('Leaving GET /samlmetadata. Not http(s).');
     return res.status(STATUS_400).json({
       error: 'url must be an absolute http(s) URL.' });
   }
@@ -1123,6 +1154,7 @@ app.get('/samlmetadata', function (req, res) {
             error.message : String(error)) });
     }
   });
+  log.debug('Leaving GET /samlmetadata. The fetch is under way.');
 });
 
 // ---------------------------------------------------------------------------
@@ -1187,10 +1219,8 @@ function signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg) {
 
 /**
  * Sign a SAML AuthnRequest for the chosen binding.
- * @route POST /samlsign
- * @group SAML - SAML support operations
  */
-app.post('/samlsign', function (req, res) {
+app.post('/samlsign', model.route('samlSign'), function (req, res) {
   log.debug('Entering POST /samlsign.');
   try {
     var b = req.body || {
@@ -1205,10 +1235,11 @@ app.post('/samlsign', function (req, res) {
     var relayState = b.relayState || '';
     var rootElement = b.rootElement ||
         'AuthnRequest'; // AuthnRequest | LogoutRequest
-    if (!xml || !privateKeyPem) {
-      return res.status(STATUS_400).json({
-        error: 'xml and privateKeyPem are required.' });
-    }
+    // xml and privateKeyPem are both non-empty strings by the time this runs:
+    // models/api/saml.tsp refuses either missing, empty or of another type
+    // with the sentence this handler always answered ("xml and privateKeyPem
+    // are required."). Every other member is a string or null there too, so
+    // a numeric destination is a 400 rather than a TypeError from indexOf.
     // The api signs with RSA only (it holds no post-quantum signer), and
     // sigAlg is the caller's choice. An ECDSA, HMAC or misspelt URI is the
     // caller's error, so it is a 400 naming the methods on offer rather than
@@ -1226,6 +1257,7 @@ app.post('/samlsign', function (req, res) {
       if (relayState) params.RelayState = relayState;
       // signedXml is also returned so the UI can display the enveloped-signed
       // document (e.g. the "Build Request" button).
+      log.debug('Leaving POST /samlsign. The POST binding.');
       return res.json({
         mode: 'post', location: dest || '', params: params,
             signedXml: signedXml });
@@ -1266,14 +1298,16 @@ app.post('/samlsign', function (req, res) {
     // string (e.g. "Build Request" before metadata is loaded).
     var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
         qs) : qs;
+    log.debug('Leaving POST /samlsign. The redirect binding.');
     return res.json({
       mode: 'redirect', location: location, queryString: qs });
   } catch (e) {
     log.error('samlsign: ' + (e && e.stack ? e.stack : e));
     res.status(STATUS_500).json({
-      error: 'sign failed: ' + (e && e.message ? e.message : String(e)) 
+      error: 'sign failed: ' + (e && e.message ? e.message : String(e))
     });
   }
+  log.debug('Leaving POST /samlsign.');
 });
 
 /**
@@ -1282,10 +1316,10 @@ app.post('/samlsign', function (req, res) {
  * SOAP back-channel that needs the SP signing key + the IdP's ARS URL. The
  * browser registers them here and gets back the RelayState (art:<id>) to carry
  * in its (browser-signed) redirect request.
- * @route POST /samlartifactctx
- * @group SAML - SAML support operations
  */
-app.post('/samlartifactctx', function (req, res) {
+app.post('/samlartifactctx', model.route('samlArtifactContext'),
+         function (req, res) {
+  log.debug('Entering POST /samlartifactctx.');
   var b = req.body || {
     };
   // THE KEY IS OPTIONAL AND THE ADDRESS IS NOT, which is a change of shape
@@ -1296,11 +1330,12 @@ app.post('/samlartifactctx', function (req, res) {
   // in a call whose error text names privateKeyPem and nothing else, several
   // steps before anything SAML-shaped happens. resolveArtifact() below signs
   // when there is a key and sends it unsigned when there is not.
-  if (!b.arsUrl) {
-    return res.status(STATUS_400).json({
-      error: 'arsUrl is required.'
-    });
-  }
+  //
+  // arsUrl is a non-empty string by the time this runs: models/api/saml.tsp
+  // refuses it missing, empty or of another type with the sentence this
+  // handler always answered ("arsUrl is required."). A number used to be
+  // stashed, and failed only later, at the landing, as an artifact that did
+  // not resolve.
   var id = stashArtifactCtx({
     arsUrl: b.arsUrl,
     privateKeyPem: b.privateKeyPem || '',
@@ -1322,6 +1357,7 @@ app.post('/samlartifactctx', function (req, res) {
   });
   res.json({
     relayState: 'art:' + id });
+  log.debug('Leaving POST /samlartifactctx.');
 });
 
 // Decode a SAML protocol message from a binding parameter: POST binding is raw
@@ -1537,9 +1573,6 @@ function resolveArtifact(artifact, relayState) {
  * SAML Assertion Consumer Service (ACS). Receives the IdP's SAMLResponse
  * (POST form field or GET query) or a SAMLart artifact, stashes the response,
  * and redirects the browser to the client results page with the stash id.
- * @route POST /samlacs
- * @route GET /samlacs
- * @group SAML - SAML support operations
  */
 function handleSamlAcs(req, res) {
   log.debug("Entering handleSamlAcs().");
@@ -1600,33 +1633,40 @@ function handleSamlAcs(req, res) {
   }
   log.debug("Leaving handleSamlAcs().");
 }
-app.post('/samlacs', handleSamlAcs);
-app.get('/samlacs', handleSamlAcs);
+// What an identity provider sends is validated for its envelope only
+// (models/api/saml.tsp): every member is optional and of any type, so a
+// field nobody expected, or one sent twice, still reaches the results page.
+// The relay-state check above stays here, because it answers as text/plain.
+app.post('/samlacs', model.route('samlAcsPost'), handleSamlAcs);
+app.get('/samlacs', model.route('samlAcsGet'), handleSamlAcs);
 // SAML 1.1's Browser/Artifact consumer, at a location of its own. A SAML 1.1
 // service provider picks the browser profile by which assertion consumer its
 // shire names (the profile bound to that AssertionConsumerService in its
 // metadata), so POST and artifact cannot share /samlacs. Same handler: what
 // arrives here is a SAMLart and TARGET on a GET.
-app.get('/samlacs/artifact', handleSamlAcs);
+app.get('/samlacs/artifact', model.route('samlAcsArtifact'), handleSamlAcs);
 
 // Single Logout service. Receives the IdP's LogoutResponse (or an IdP-initiated
 // LogoutRequest) and shows it on the results page. Reuses the ACS handler,
 // which decodes/stashes any SAMLResponse and redirects to the viewer.
-app.post('/samlslo', handleSamlAcs);
-app.get('/samlslo', handleSamlAcs);
+app.post('/samlslo', model.route('samlSloPost'), handleSamlAcs);
+app.get('/samlslo', model.route('samlSloGet'), handleSamlAcs);
 
 /**
  * Fetch a stashed SAMLResponse by id (set by the ACS redirect).
- * @route GET /samlresponse
- * @group SAML - SAML support operations
  */
-app.get('/samlresponse', function (req, res) {
+app.get('/samlresponse', model.route('samlResponse'), function (req, res) {
+  log.debug('Entering GET /samlresponse.');
   sweepSamlExchanges();
   var ex = samlExchanges.get(String(req.query.id || ''));
-  if (!ex) return res.status(STATUS_404).json({
-    error: 'not found or expired' });
+  if (!ex) {
+    log.debug('Leaving GET /samlresponse. Not found.');
+    return res.status(STATUS_404).json({
+      error: 'not found or expired' });
+  }
   res.json({
     responseXml: ex.responseXml, relayState: ex.relayState });
+  log.debug('Leaving GET /samlresponse.');
 });
 
 // ---------------------------------------------------------------------------
@@ -1646,9 +1686,6 @@ app.get('/samlresponse', function (req, res) {
 // ---------------------------------------------------------------------------
 /**
  * WS-Federation passive sign-in landing (captures wresult).
- * @route POST /wsfed
- * @route GET /wsfed
- * @group WS-Federation - WS-Federation support operations
  */
 function handleWsFedLanding(req, res) {
   log.debug("Entering handleWsFedLanding().");
@@ -1679,21 +1716,26 @@ function handleWsFedLanding(req, res) {
   }
   log.debug("Leaving handleWsFedLanding().");
 }
-app.post('/wsfed', handleWsFedLanding);
-app.get('/wsfed', handleWsFedLanding);
+// The envelope only, as for the SAML landings (models/api/wsfed.tsp).
+app.post('/wsfed', model.route('wsfedLandingPost'), handleWsFedLanding);
+app.get('/wsfed', model.route('wsfedLandingGet'), handleWsFedLanding);
 
 /**
  * Fetch a stashed wresult by id (alias of GET /samlresponse; shared stash).
- * @route GET /wsfedresponse
- * @group WS-Federation - WS-Federation support operations
  */
-app.get('/wsfedresponse', function (req, res) {
+app.get('/wsfedresponse', model.route('wsfedResponse'),
+        function (req, res) {
+  log.debug('Entering GET /wsfedresponse.');
   sweepSamlExchanges();
   var ex = samlExchanges.get(String(req.query.id || ''));
-  if (!ex) return res.status(STATUS_404).json({
-    error: 'not found or expired' });
+  if (!ex) {
+    log.debug('Leaving GET /wsfedresponse. Not found.');
+    return res.status(STATUS_404).json({
+      error: 'not found or expired' });
+  }
   res.json({
     responseXml: ex.responseXml, relayState: ex.relayState });
+  log.debug('Leaving GET /wsfedresponse.');
 });
 
 // ---------------------------------------------------------------------------
@@ -1716,13 +1758,8 @@ app.get('/wsfedresponse', function (req, res) {
 // ---------------------------------------------------------------------------
 /**
  * Proxy a WS-Trust RequestSecurityToken to an STS (dodges CORS).
- * @route POST /wstrust
- * @group WS-Trust - WS-Trust support operations
- * @returns {object} 200 - { status, body } from the STS
- * @returns {Error.model} 400 - Missing url/soap
- * @returns {Error.model} 500 - STS call error
  */
-app.post('/wstrust', function (req, res) {
+app.post('/wstrust', model.route('wstrustProxy'), function (req, res) {
   log.debug('Entering POST /wstrust.');
   var b = req.body || {
     };
@@ -1733,11 +1770,12 @@ app.post('/wstrust', function (req, res) {
   // Default to validating TLS; only skip it when the caller explicitly opts
   // out.
   var sslValidate = verifiesCertificates(b.sslValidate);
-  if (!url || !soap) {
-    return res.status(STATUS_400).json({
-      error: 'url and soap are required.' });
-  }
+  // url and soap are both non-empty strings by the time this runs:
+  // models/api/wstrust.tsp refuses either missing, empty or of another type
+  // with the sentence this handler always answered ("url and soap are
+  // required."). The scheme is still this handler's.
   if (!/^https?:\/\//i.test(url)) {
+    log.debug('Leaving POST /wstrust. Not http(s).');
     return res.status(STATUS_400).json({
       error: 'url must be an absolute http(s) URL.' });
   }
@@ -1780,7 +1818,26 @@ app.post('/wstrust', function (req, res) {
       error: 'STS call failed: ' + (error && error.message ?
           error.message : String(error)) });
   });
+  log.debug('Leaving POST /wstrust. The call is under way.');
 });
+
+// ---------------------------------------------------------------------------
+// THE OAUTH 2.0 / OPENID CONNECT PROXIES, held to models/api/oauth.tsp.
+//
+// model.route() checks each body's SHAPE before the handler runs: the
+// endpoint URL the api is told to call is a non-empty string and the only
+// required member, and sslValidate, auth_style and http_trace are a boolean,
+// a string or null. Every protocol parameter the user typed is a string or
+// null and NOTHING MORE: its content goes to the far end as typed, because a
+// debugger has to be able to send a malformed request and show the
+// authorization server's error. Do not add a content check here or there.
+//
+// None of these handlers checked anything before the model did, so there was
+// no hand-written check to delete; a missing URL used to reach axios and come
+// back as a 500 "Invalid URL" (tests/fixtures/api_model/oauth.json, each case
+// marked `changed`). What a URL may be — http(s), and an address the policy
+// allows — is still api/ssrf_guard.js's, at connect time.
+// ---------------------------------------------------------------------------
 
 /**
  * @typedef TokenRequest
@@ -1819,14 +1876,8 @@ app.post('/wstrust', function (req, res) {
 
 /**
  * Wrapper around OAuth2 Token Endpoint
- * @route POST /token
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {TokenRequest.model} req.body.required - Token Endpoint Request
- * @returns {TokenResponse.model} 200 - Token Endpoint Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/token', (req, res) => {
+app.post('/token', model.route('oauthToken'), (req, res) => {
   try {
     log.info('Entering app.post for /token.');
     const body = req.body;
@@ -1961,14 +2012,8 @@ app.post('/token', (req, res) => {
 
 /**
  * Wrapper around OAuth2 Introspection Endpoint
- * @route POST /introspection
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {IntrospectionRequest.model} req.body.required - Token Endpoint Request
- * @returns {IntrospectionResponse.model} 200 - Token Endpoint Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/introspection', (req, res) => {
+app.post('/introspection', model.route('oauthIntrospection'), (req, res) => {
 try {
   log.info('Entering app.post for /introspection.');
   const body = req.body;
@@ -2059,14 +2104,8 @@ try {
 
 /**
  * Wrapper around the OAuth2 Token Revocation Endpoint (RFC 7009)
- * @route POST /revoke
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {RevocationRequest.model} req.body.required - Token Revocation Request
- * @returns {object} 200 - Token Revocation Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/revoke', (req, res) => {
+app.post('/revoke', model.route('oauthRevoke'), (req, res) => {
   try {
     log.info('Entering app.post for /revoke.');
     const body = req.body;
@@ -2179,14 +2218,8 @@ app.post('/revoke', (req, res) => {
 
 /**
  * Wrapper around the OAuth2 Token Endpoint for Token Exchange (RFC 8693)
- * @route POST /tokenexchange
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {TokenExchangeRequest.model} req.body.required - Token Exchange Request
- * @returns {object} 200 - Token Exchange Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/tokenexchange', (req, res) => {
+app.post('/tokenexchange', model.route('oauthTokenExchange'), (req, res) => {
   try {
     log.info('Entering app.post for /tokenexchange.');
     const body = req.body;
@@ -2326,14 +2359,9 @@ app.post('/tokenexchange', (req, res) => {
 
 /**
  * Wrapper around the OAuth2 Device Authorization Endpoint (RFC 8628)
- * @route POST /deviceauthorization
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {DeviceAuthorizationRequest.model} req.body.required - Device Authorization Request
- * @returns {object} 200 - Device Authorization Response (device_code, user_code, verification_uri, ...)
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/deviceauthorization', (req, res) => {
+app.post('/deviceauthorization', model.route('oauthDeviceAuthorization'),
+         (req, res) => {
   try {
     log.info('Entering app.post for /deviceauthorization.');
     const body = req.body;
@@ -2432,14 +2460,8 @@ app.post('/deviceauthorization', (req, res) => {
  * Proxies create (POST registration_endpoint), read (GET), update (PUT) and
  * delete (DELETE) against the client configuration endpoint so the browser is
  * not blocked by CORS.
- * @route POST /register
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {RegistrationRequest.model} req.body.required - Dynamic Client Registration Request
- * @returns {object} 200 - Registration Endpoint Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/register', (req, res) => {
+app.post('/register', model.route('oauthRegister'), (req, res) => {
   try {
     log.info('Entering app.post for /register.');
     const body = req.body;
@@ -2523,7 +2545,7 @@ app.post('/register', (req, res) => {
   }
 });
 
-app.post('/userinfo', (req, res) => {
+app.post('/userinfo', model.route('oauthUserInfoPost'), (req, res) => {
   log.info('Entering app.post for /userinfo.');
   userinfo_common(req, res);
   log.debug("Leaving app.post for /userinfo.");
@@ -2531,14 +2553,8 @@ app.post('/userinfo', (req, res) => {
 
 /**
  * Wrapper around OIDC UserInfo Endpoint
- * @route POST /userinfo
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {UserInfoRequest.model} req.body.required - UserInfo Endpoint Request
- * @returns {UserInfoResponse.model} 200 - UserInfo Endpoint Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
-app.get('/userinfo', (req, res) => {
+app.get('/userinfo', model.route('oauthUserInfo'), (req, res) => {
   log.info("Entering app.get for /userinfo.");
   userinfo_common(req, res);
   log.debug("Leaving app.get for /userinfo.");
@@ -2640,64 +2656,147 @@ try {
   log.debug("Leaving userinfo_common().");
 }
 
-let options = {
-    swaggerDefinition: {
-        info: {
-            description: 'IDPTools API',
-            title: 'Swagger',
-            version: '1.0.0',
-        },
-        host: 'localhost:4000',
-        basePath: '/',
-        produces: [
-            "application/json",
-        ],
-        schemes: ['http', 'https'],
-        securityDefinitions: {
-        }
-    },
-    basedir: __dirname, //app absolute path
-    files: ['server.js'] //Path to the API handle folder
-};
-// Embedded behind the mock STS the document's "try it" calls have to go to the
-// debugger's public origin under `/api` — `localhost:4000` is a port nothing
-// listens on there. Taken from uiUrl, which api/env/embedded.js derives from
-// DEBUGGER_UI_URL, rather than from a request: this document is built once.
-if (LISTEN_SOCKET && uiUrl) {
-  try {
-    var embeddedOrigin = new URL(uiUrl);
-    options.swaggerDefinition.host = embeddedOrigin.host;
-    options.swaggerDefinition.basePath = '/api';
-    options.swaggerDefinition.schemes = [embeddedOrigin.protocol
-        .replace(/:$/, '')];
-  } catch (e) {
-    log.warn('uiUrl is not a URL (' + ((e && e.message) || e) + '); the ' +
-             'API document keeps its standalone host.');
-  }
+// ---------------------------------------------------------------------------
+// THE API DOCUMENT, SERVED. common/model/openapi.json is generated from
+// models/api/ (models/CLAUDE.md) and is the same document every route's
+// validator is built from, so what a caller reads here is what a request
+// meets. It replaced express-swagger-generator's Swagger 2.0, which was
+// built from JSDoc comments that nothing held to the code.
+//
+// Its version is this build's, and its server is where this api is reached:
+// embedded behind the mock STS that is the debugger's public origin under
+// `/api` (taken from uiUrl, which api/env/embedded.js derives from
+// DEBUGGER_UI_URL, rather than from a request: the document is built once).
+// ---------------------------------------------------------------------------
+const API_DOCUMENT = model.document(APP_VERSION,
+  (LISTEN_SOCKET && uiUrl) ? uiUrl.replace(/\/+$/, '') + '/api' :
+    (appconfig.apiUrl || null));
+
+function escapeHtml(text) {
+  log.debug("Entering escapeHtml().");
+  log.debug("Leaving escapeHtml().");
+  return String(text).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
+             "'": '&#39;' }[c];
+  });
 }
+
+// A page listing every operation, written from the document. Self-contained
+// on purpose — no script, no stylesheet from anywhere — for a reader who
+// wants the list rather than the explorer.
+function apiDocumentIndex(doc) {
+  log.debug("Entering apiDocumentIndex().");
+  const rows = [];
+  Object.keys(doc.paths || {}).sort().forEach(function (route) {
+    Object.keys(doc.paths[route]).forEach(function (method) {
+      const op = doc.paths[route][method];
+      if (!op || !op.operationId) {
+        return;
+      }
+      rows.push('<tr><td>' + escapeHtml((op.tags || [''])[0]) + '</td><td>' +
+        '<code>' + escapeHtml(method.toUpperCase()) + ' ' +
+        escapeHtml(route) + '</code></td><td><code>' +
+        escapeHtml(op.operationId) + '</code></td><td>' +
+        escapeHtml(op.description || op.summary || '') + '</td></tr>');
+    });
+  });
+  log.debug("Leaving apiDocumentIndex(). " + rows.length);
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>' + escapeHtml(doc.info.title) + '</title><style>' +
+    'body{font:14px/1.45 system-ui,sans-serif;margin:16px;color:#1b1b1b;' +
+    'background:#fff}table{border-collapse:collapse;width:100%}' +
+    'td,th{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;' +
+    'vertical-align:top}code{font-size:13px}' +
+    '@media (prefers-color-scheme: dark){body{background:#151515;' +
+    'color:#e8e8e8}td,th{border-color:#333}}</style></head><body>' +
+    '<h1>' + escapeHtml(doc.info.title) + ' <small>' +
+    escapeHtml(doc.info.version) + '</small></h1><p>The OpenAPI 3.1 ' +
+    'document is <a href="../api-docs.json">api-docs.json</a>, and the ' +
+    '<a href="../api-docs">explorer</a> can try it. Every route ' +
+    'below is validated against it.</p><table><thead><tr><th>Family</th>' +
+    '<th>Operation</th><th>operationId</th><th>What it does</th></tr>' +
+    '</thead><tbody>' + rows.join('') + '</tbody></table></body></html>';
+}
+
+/**
+ * The API document, OpenAPI 3.1.
+ */
+app.get('/api-docs.json', model.route('apiDocument'), function (req, res) {
+  log.debug("Entering GET /api-docs.json.");
+  log.debug("Leaving GET /api-docs.json.");
+  return res.status(STATUS_200).json(API_DOCUMENT);
+});
+
+/**
+ * Every operation in the API document, as a page with no script at all.
+ */
+app.get('/api-docs/operations', model.route('apiOperations'),
+        function (req, res) {
+  log.debug("Entering GET /api-docs/operations.");
+  log.debug("Leaving GET /api-docs/operations.");
+  return res.status(STATUS_200).type('html')
+    .send(apiDocumentIndex(API_DOCUMENT));
+});
+
+// THE EXPLORER. Swagger UI, from swagger-ui-dist, served from this api's own
+// node_modules rather than a CDN, so a page that shows a caller what this
+// service accepts does not also send that caller to somebody else's server.
+// swagger-ui-dist depends on @scarf/scarf, an install-time analytics hook;
+// api/package.json sets scarfSettings.enabled false, which scarf honours,
+// and api/Dockerfile sets SCARF_ANALYTICS=false as well. Every path below is
+// RELATIVE, so the page works embedded behind the mock STS under /api.
+const SWAGGER_UI_DIR = require('swagger-ui-dist').absolutePath();
+app.use('/api-docs/assets', express.static(SWAGGER_UI_DIR, {
+  index: false, fallthrough: false }));
+
+const API_DOCS_PAGE = '<!doctype html><html lang="en"><head>' +
+  '<meta charset="utf-8"><meta name="viewport" ' +
+  'content="width=device-width, initial-scale=1">' +
+  '<title>id-proto-debugger API</title>' +
+  '<link rel="stylesheet" href="api-docs/assets/swagger-ui.css">' +
+  '</head><body><div id="swagger-ui"></div>' +
+  '<script src="api-docs/assets/swagger-ui-bundle.js"></script>' +
+  '<script src="api-docs/init.js"></script></body></html>';
+
+// JavaScript in a string, served to the browser: not this file's control
+// flow, so the logging convention does not reach inside it.
+const API_DOCS_INIT = 'window.addEventListener("load", function () {' +
+  ' window.ui = SwaggerUIBundle({ url: "api-docs.json",' +
+  ' dom_id: "#swagger-ui", deepLinking: true }); });\n';
+
+/**
+ * The API document in Swagger UI, which can also try an operation.
+ */
+app.get('/api-docs', model.route('apiDocumentIndex'), function (req, res) {
+  log.debug("Entering GET /api-docs.");
+  log.debug("Leaving GET /api-docs.");
+  return res.status(STATUS_200).type('html').send(API_DOCS_PAGE);
+});
+
+/**
+ * The explorer's initializer: where the document is and where to draw it.
+ */
+app.get('/api-docs/init.js', model.route('apiDocumentInit'),
+        function (req, res) {
+  log.debug("Entering GET /api-docs/init.js.");
+  log.debug("Leaving GET /api-docs/init.js.");
+  return res.status(STATUS_200).type('application/javascript')
+    .send(API_DOCS_INIT);
+});
+
 /**
  * Relay a Kerberos v5 message to a KDC and return its reply.
- * @route POST /krb5/kdc
- * @param {string} host.body.required - the KDC's host name or address
- * @param {integer} port.body - the KDC's port; defaults to 88
- * @param {string} transport.body - "tcp" (default) or "udp"
- * @param {string} message.body.required - the request, base64
- * @returns {object} 200 - the KDC's reply, base64, with timings
- * @returns {object} 400 - the request was refused (see the reason)
- * @returns {object} 502 - the KDC could not be reached or did not answer
  */
-app.post('/krb5/kdc', function (req, res) {
+app.post('/krb5/kdc', model.route('krb5Kdc'), function (req, res) {
   log.debug('Entering POST /krb5/kdc.');
   var b = req.body || {};
   var host = b.host;
   var port = (b.port === undefined || b.port === null || b.port === '') ? 88 : b.port;
   var transport = b.transport || 'tcp';
-
-  if (!host || !b.message) {
-    log.debug('Leaving POST /krb5/kdc. Missing host or message.');
-    return res.status(STATUS_400).json({
-      error: 'host and message are required. message is the Kerberos request, base64-encoded.' });
-  }
+  // host and message — present, non-empty strings — were held to
+  // models/api/krb5.tsp by model.route() before this ran, with the sentence
+  // this handler used to answer. What is left is about values.
 
   // Node's base64 decoder is LENIENT: Buffer.from('!!!not base64!!!', 'base64')
   // does not throw, it silently skips the characters it does not recognise and
@@ -2755,19 +2854,16 @@ app.post('/krb5/kdc', function (req, res) {
 
 /**
  * Present a Kerberos AP-REQ to a service and return its answer.
- * @route POST /krb5/service
- * @param {string} host.body.required - the service's host name or address
- * @param {integer} port.body.required - the service's port
- * @param {string} message.body.required - a GSS-wrapped AP-REQ (or a bare one), base64
- * @returns {object} 200 - the service's answer, base64 (or null when it sent none)
- * @returns {object} 400 - the request was refused (see the reason)
- * @returns {object} 502 - the service could not be reached or did not answer
  */
-app.post('/krb5/service', function (req, res) {
+app.post('/krb5/service', model.route('krb5Service'),
+    function (req, res) {
   log.debug('Entering POST /krb5/service.');
   var b = req.body || {};
-  if (!b.host || !b.port || !b.message) {
-    log.debug('Leaving POST /krb5/service. Missing host, port or message.');
+  // host and message were held to models/api/krb5.tsp by model.route(),
+  // with this sentence. The port stays here: absent, null, empty AND 0 are
+  // all "no port", and 0 is a value, which the schema does not judge.
+  if (!b.port) {
+    log.debug('Leaving POST /krb5/service. Missing port.');
     return res.status(STATUS_400).json({
       error: 'host, port and message are required. Unlike the KDC there is no default port: a ' +
              'Kerberos service can be on any port, so it has to be named.' });
@@ -2780,6 +2876,7 @@ app.post('/krb5/service', function (req, res) {
   }
   var message = Buffer.from(normalised, 'base64');
   if (!message.length) {
+    log.debug('Leaving POST /krb5/service. message decoded to nothing.');
     return res.status(STATUS_400).json({ error: 'message decoded to zero bytes.' });
   }
 
@@ -2846,25 +2943,16 @@ app.post('/krb5/service', function (req, res) {
 // the four limits and the User-Agent apply unchanged and automatically.
 /**
  * Perform one step of a SPNEGO (RFC 4178) HTTP handshake and report both sides.
- * @route POST /krb5/spnego
- * @param {string} url.body.required - the protected resource, an http(s) URL
- * @param {string} token.body - the SPNEGO token, base64; omitted for the
- *                              unauthenticated first request
- * @param {boolean} sslValidate.body - verify the TLS certificate (default true)
- * @returns {object} 200 - what was sent and what came back, headers included
- * @returns {object} 400 - the request was refused (see the reason)
- * @returns {object} 502 - the resource could not be reached
  */
-app.post('/krb5/spnego', function (req, res) {
+app.post('/krb5/spnego', model.route('krb5Spnego'),
+    function (req, res) {
   log.debug('Entering POST /krb5/spnego.');
   var b = req.body || {};
   var url = b.url;
   var sslValidate = verifiesCertificates(b.sslValidate);
-  if (!url) {
-    log.debug('Leaving POST /krb5/spnego. No url.');
-    return res.status(STATUS_400).json({
-      error: 'url is required. It is the SPNEGO-protected resource to fetch.' });
-  }
+  // url's presence, as a non-empty string, was held to models/api/krb5.tsp
+  // by model.route() with the sentence this handler used to answer. Its
+  // scheme is a value, and stays here.
   if (!/^https?:\/\//i.test(url)) {
     log.debug('Leaving POST /krb5/spnego. Not an http(s) url.');
     return res.status(STATUS_400).json({
@@ -2951,10 +3039,8 @@ app.post('/krb5/spnego', function (req, res) {
  * What the Kerberos relay will and will not do, so the page can say so before a
  * call fails. A debugger that discovers its own limits by hitting them is a
  * debugger that reports them as somebody else's fault.
- * @route GET /krb5/limits
- * @returns {object} 200 - the ports, timeouts and caps in force
  */
-app.get('/krb5/limits', function (req, res) {
+app.get('/krb5/limits', model.route('krb5Limits'), function (req, res) {
   log.debug('Entering GET /krb5/limits.');
   log.debug('Leaving GET /krb5/limits.');
   return res.status(STATUS_200).json({
@@ -3049,13 +3135,10 @@ const LDAP_REFUSED_BY_POLICY = [
  */
 function runLdapOperation(name, operation, req, res) {
   log.debug('Entering runLdapOperation(). operation=' + name);
+  // The body's shape — `url` present, every member the JSON type it must
+  // be — was held to models/api/ldap.tsp by model.route() before this ran.
+  // What is left is about values, and those are ldap_client.js's.
   const body = req.body || {};
-  if (!body.url) {
-    log.debug('Leaving runLdapOperation(). No url.');
-    return res.status(STATUS_400).json({
-      error: 'url is required, and must be an ldap:// or ldaps:// URL naming ' +
-             'the directory server.' });
-  }
   operation(body).then(function (result) {
     log.info('POST /ldap/' + name + ' ' + result.target.url + ' -> ' +
              (result.ok ? 'success' : (result.result &&
@@ -3084,15 +3167,8 @@ function runLdapOperation(name, operation, req, res) {
 
 /**
  * Bind to a directory — the LDAP authentication exchange, on its own.
- * @route POST /ldap/bind
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN; omit or empty for an anonymous bind
- * @param {string} password.body - the simple-bind password
- * @returns {object} 200 - the result, including a REFUSED bind with its code
- * @returns {object} 400 - this service refused the request (see the reason)
- * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/bind', function (req, res) {
+app.post('/ldap/bind', model.route('ldapBind'), function (req, res) {
   log.debug('Entering POST /ldap/bind.');
   runLdapOperation('bind', ldap.bind, req, res);
   log.debug('Leaving POST /ldap/bind.');
@@ -3100,20 +3176,8 @@ app.post('/ldap/bind', function (req, res) {
 
 /**
  * Search a directory.
- * @route POST /ldap/search
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} baseDn.body.required - the search base
- * @param {string} scope.body - base, one or sub (default sub)
- * @param {string} filter.body - an RFC 4515 filter (default (objectClass=*))
- * @param {array} attributes.body - the attributes to return; empty means all
- * @param {integer} sizeLimit.body - the client's own cap on entries returned
- * @returns {object} 200 - the entries, with the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/search', function (req, res) {
+app.post('/ldap/search', model.route('ldapSearch'), function (req, res) {
   log.debug('Entering POST /ldap/search.');
   runLdapOperation('search', ldap.search, req, res);
   log.debug('Leaving POST /ldap/search.');
@@ -3121,17 +3185,8 @@ app.post('/ldap/search', function (req, res) {
 
 /**
  * Add an entry — a user, a group, a container.
- * @route POST /ldap/add
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry to create
- * @param {object} attributes.body.required - name to value or array of values
- * @returns {object} 200 - the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/add', function (req, res) {
+app.post('/ldap/add', model.route('ldapAdd'), function (req, res) {
   log.debug('Entering POST /ldap/add.');
   runLdapOperation('add', ldap.add, req, res);
   log.debug('Leaving POST /ldap/add.');
@@ -3139,16 +3194,8 @@ app.post('/ldap/add', function (req, res) {
 
 /**
  * Delete an entry.
- * @route POST /ldap/delete
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry to remove
- * @returns {object} 200 - the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/delete', function (req, res) {
+app.post('/ldap/delete', model.route('ldapDelete'), function (req, res) {
   log.debug('Entering POST /ldap/delete.');
   runLdapOperation('delete', ldap.del, req, res);
   log.debug('Leaving POST /ldap/delete.');
@@ -3156,17 +3203,8 @@ app.post('/ldap/delete', function (req, res) {
 
 /**
  * Modify an entry's attributes — which is also how group membership changes.
- * @route POST /ldap/modify
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry to change
- * @param {array} changes.body.required - {operation, type, values} per change
- * @returns {object} 200 - the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/modify', function (req, res) {
+app.post('/ldap/modify', model.route('ldapModify'), function (req, res) {
   log.debug('Entering POST /ldap/modify.');
   runLdapOperation('modify', ldap.modify, req, res);
   log.debug('Leaving POST /ldap/modify.');
@@ -3174,18 +3212,9 @@ app.post('/ldap/modify', function (req, res) {
 
 /**
  * Rename or move an entry.
- * @route POST /ldap/modifydn
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry to rename
- * @param {string} newRdn.body.required - its new relative DN
- * @param {string} newSuperior.body - a new parent DN, to move it as well
- * @returns {object} 200 - the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/modifydn', function (req, res) {
+app.post('/ldap/modifydn', model.route('ldapModifyDn'),
+         function (req, res) {
   log.debug('Entering POST /ldap/modifydn.');
   runLdapOperation('modifyDN', ldap.modifyDn, req, res);
   log.debug('Leaving POST /ldap/modifydn.');
@@ -3193,18 +3222,8 @@ app.post('/ldap/modifydn', function (req, res) {
 
 /**
  * Compare an attribute value without reading the entry.
- * @route POST /ldap/compare
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry
- * @param {string} attribute.body.required - the attribute to compare
- * @param {string} value.body - the value to compare it against
- * @returns {object} 200 - compareTrue (6) or compareFalse (5), neither an error
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/compare', function (req, res) {
+app.post('/ldap/compare', model.route('ldapCompare'), function (req, res) {
   log.debug('Entering POST /ldap/compare.');
   runLdapOperation('compare', ldap.compare, req, res);
   log.debug('Leaving POST /ldap/compare.');
@@ -3215,10 +3234,9 @@ app.post('/ldap/compare', function (req, res) {
  * call fails — the same reason GET /krb5/limits exists. It is also how the page
  * tells an older api from a broken one: a build without LDAP answers 404 here,
  * which is a different thing from a directory that will not answer.
- * @route GET /ldap/limits
- * @returns {object} 200 - the ports, timeouts, caps and vocabulary in force
  */
-app.get('/ldap/limits', function (req, res) {
+app.get('/ldap/limits', model.route('ldapLimits'),
+        function (req, res) {
   log.debug('Entering GET /ldap/limits.');
   log.debug('Leaving GET /ldap/limits.');
   return res.status(STATUS_200).json({
@@ -3255,41 +3273,14 @@ app.get('/ldap/limits', function (req, res) {
 
 /**
  * Open a TLS connection and report both sides of the handshake.
- * @route POST /tls/connect
- * @param {string} host.body.required - the server's host name or address
- * @param {integer} port.body.required - the server's port
- * @param {string} servername.body - SNI / hostname to verify; defaults to host
- * @param {string} minVersion.body - TLSv1 | TLSv1.1 | TLSv1.2 | TLSv1.3
- * @param {string} maxVersion.body - TLSv1 | TLSv1.1 | TLSv1.2 | TLSv1.3
- * @param {string} ciphers.body - an OpenSSL cipher list
- * @param {string} groups.body - an OpenSSL supported-groups list, which is
- *     where the post-quantum key exchange is chosen: "X25519MLKEM768" is the
- *     hybrid OpenSSL 3.5 offers by default, and naming it here is how a
- *     caller proves it was used rather than assuming it
- * @param {string} sigalgs.body - an OpenSSL signature-algorithms list, e.g.
- *     "mldsa65" to ask whether the peer can authenticate post-quantum at all
- * @param {array} alpnProtocols.body - ALPN protocols to offer
- * @param {array} trustCertificates.body - the truststore, PEM
- * @param {boolean} includeSystemRoots.body - add the platform roots as well
- * @param {string} clientCertificatePem.body - client certificate, PEM
- * @param {string} clientKeyPem.body - its private key, PEM
- * @param {boolean} mutualAuthProbe.body - also connect without the client
- *     certificate, to find out whether the server requires one
- * @param {object} httpRequest.body - {path} to GET over the connection once it
- *     is made, so the SERVER's account of it comes back too. GET only, and the
- *     path is the only part of the request a caller contributes
- * @returns {object} 200 - the handshake report (including a failed handshake)
- * @returns {object} 400 - the request was refused (see the reason)
- * @returns {object} 502 - the server could not be reached
  */
-app.post('/tls/connect', function (req, res) {
+app.post('/tls/connect', model.route('tlsConnect'), function (req, res) {
   log.debug('Entering POST /tls/connect.');
   var b = req.body || {};
-  if (!b.host || b.port === undefined || b.port === null || b.port === '') {
-    log.debug('Leaving POST /tls/connect. Missing host or port.');
-    return res.status(STATUS_400).json({
-      error: 'host and port are required.' });
-  }
+  // host and port — present, host a non-empty string, port an integer or
+  // non-empty text — were held to models/api/tls.tsp by model.route(), with
+  // the sentence this handler used to answer. Every value check is the
+  // probe's.
   tlsProbe.connect({
     host: b.host,
     port: b.port,
@@ -3353,10 +3344,8 @@ app.post('/tls/connect', function (req, res) {
 /**
  * What the TLS probe will and will not do, so the page can say so before a call
  * fails rather than reporting its own limits as somebody else's fault.
- * @route GET /tls/limits
- * @returns {object} 200 - the ports, timeouts and caps in force
  */
-app.get('/tls/limits', function (req, res) {
+app.get('/tls/limits', model.route('tlsLimits'), function (req, res) {
   log.debug('Entering GET /tls/limits.');
   log.debug('Leaving GET /tls/limits.');
   return res.status(STATUS_200).json(tlsProbe.limits());
@@ -3391,16 +3380,8 @@ app.get('/tls/limits', function (req, res) {
 // ---------------------------------------------------------------------------
 /**
  * Perform one SCIM request on the caller's behalf.
- * @route POST /scim
- * @group SCIM - SCIM 2.0 provisioning support
- * @param {object} request.body.required - {url, method, headers, body,
- *     sslValidate, http_trace}
- * @returns {object} 200 - {ok, status, headers, body, rawBody, scimType,
- *     detail, http_exchange} — including a SCIM error, which is an answer
- * @returns {object} 400 - this service refused to send it (see the reason)
- * @returns {object} 502 - the SCIM server could not be reached
  */
-app.post('/scim', function (req, res) {
+app.post('/scim', model.route('scimCall'), function (req, res) {
   log.debug('Entering POST /scim.');
   var described = scimProxy.describeRequest(req.body || {}, appconfig);
   if (!described.ok) {
@@ -3463,10 +3444,9 @@ app.post('/scim', function (req, res) {
  * What the SCIM proxy will and will not do, so the page can say so before a
  * call fails rather than reporting its own limits as somebody else's fault.
  * It is also how the page knows there is an api at all.
- * @route GET /scim/limits
- * @returns {object} 200 - the methods, refused headers, caps and status rule
  */
-app.get('/scim/limits', function (req, res) {
+app.get('/scim/limits', model.route('scimLimits'),
+        function (req, res) {
   log.debug('Entering GET /scim/limits.');
   log.debug('Leaving GET /scim/limits.');
   return res.status(STATUS_200).json(scimProxy.limits(appconfig));
@@ -3476,7 +3456,7 @@ app.get('/scim/limits', function (req, res) {
 // as Validation Protocol 2.0 says, an HTTP GET with the signed
 // parameters as the query string. A verifier answer, including
 // BAD_OTP, is a 200. See otp_verify.js.
-app.post('/otp/verify', function (req, res) {
+app.post('/otp/verify', model.route('otpVerify'), function (req, res) {
   log.debug('Entering POST /otp/verify.');
   var described = otpVerify.describeRequest(req.body || {});
   if (!described.ok) {
@@ -3527,7 +3507,7 @@ app.post('/otp/verify', function (req, res) {
     });
 });
 
-app.get('/otp/limits', function (req, res) {
+app.get('/otp/limits', model.route('otpLimits'), function (req, res) {
   log.debug('Entering GET /otp/limits.');
   log.debug('Leaving GET /otp/limits.');
   return res.status(STATUS_200).json(otpVerify.limits());
@@ -3537,7 +3517,8 @@ app.get('/otp/limits', function (req, res) {
 // is this machine, and the relay is off unless smartcardReaderEnabled
 // is true (403 otherwise). A card status word is a 200. A missing
 // library, reader or card is a 502.
-app.get('/smartcard/limits', function (req, res) {
+app.get('/smartcard/limits', model.route('smartcardLimits'),
+        function (req, res) {
   log.debug('Entering GET /smartcard/limits.');
   var limits = smartcardReader.limits(appconfig);
   // HID, for OTP challenge-response: a YubiKey on USB does not answer it
@@ -3552,7 +3533,8 @@ app.get('/smartcard/limits', function (req, res) {
 // management-key authentication, which the page computes from the card's
 // answer. Same switch as the relay; closed with a card reset. See
 // smartcard_reader.js.
-app.post('/smartcard/session', function (req, res) {
+app.post('/smartcard/session', model.route('smartcardSessionOpen'),
+         function (req, res) {
   log.debug('Entering POST /smartcard/session.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving POST /smartcard/session. Relay off.');
@@ -3575,19 +3557,18 @@ app.post('/smartcard/session', function (req, res) {
   log.debug('Leaving POST /smartcard/session. Opening.');
 });
 
-app.post('/smartcard/session/transmit', function (req, res) {
+app.post('/smartcard/session/transmit',
+         model.route('smartcardSessionTransmit'), function (req, res) {
   log.debug('Entering POST /smartcard/session/transmit.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving POST /smartcard/session/transmit. Relay off.');
     return res.status(STATUS_403).json({
       error: smartcardReader.DISABLED_MESSAGE });
   }
+  // The session id (32 lower-case hex characters) is the model's check:
+  // models/api/smartcard.tsp, SessionId, answers with this route's old
+  // sentence. It runs before the relay switch above.
   var body = req.body || {};
-  if (!smartcardReader.checkSessionId(body.id)) {
-    log.debug('Leaving POST /smartcard/session/transmit. Bad id.');
-    return res.status(STATUS_400).json({ error: 'The session id is 32 ' +
-        'hex characters.' });
-  }
   // The same APDU checks as /smartcard/transmit, with a placeholder reader.
   var described = smartcardReader.describeTransmit(
       Object.assign({}, body, { reader: 'session' }));
@@ -3608,14 +3589,12 @@ app.post('/smartcard/session/transmit', function (req, res) {
   log.debug('Leaving POST /smartcard/session/transmit. Sent.');
 });
 
-app.post('/smartcard/session/close', function (req, res) {
+app.post('/smartcard/session/close',
+         model.route('smartcardSessionClose'), function (req, res) {
   log.debug('Entering POST /smartcard/session/close.');
+  // The session id is the model's check (models/api/smartcard.tsp,
+  // SessionId), with this route's old sentence.
   var id = (req.body || {}).id;
-  if (!smartcardReader.checkSessionId(id)) {
-    log.debug('Leaving POST /smartcard/session/close. Bad id.');
-    return res.status(STATUS_400).json({ error: 'The session id is 32 ' +
-        'hex characters.' });
-  }
   smartcardReader.closeSession(id).then(function (closed) {
     return res.status(STATUS_200).json({ closed: closed });
   });
@@ -3625,7 +3604,8 @@ app.post('/smartcard/session/close', function (req, res) {
 // OTP-slot challenge-response over HID, for a browser with no WebHID. The
 // same switch as the reader relay; needs a native api (see otp_hid.js). A
 // key's answer is a 200, a bad request a 400, no HID or no key a 502.
-app.post('/smartcard/otp/challenge', function (req, res) {
+app.post('/smartcard/otp/challenge',
+         model.route('smartcardOtpChallenge'), function (req, res) {
   log.debug('Entering POST /smartcard/otp/challenge.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving POST /smartcard/otp/challenge. Relay off.');
@@ -3651,7 +3631,8 @@ app.post('/smartcard/otp/challenge', function (req, res) {
   log.debug('Leaving POST /smartcard/otp/challenge. Sent.');
 });
 
-app.get('/smartcard/readers', function (req, res) {
+app.get('/smartcard/readers', model.route('smartcardReaders'),
+        function (req, res) {
   log.debug('Entering GET /smartcard/readers.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving GET /smartcard/readers. Disabled.');
@@ -3672,7 +3653,8 @@ app.get('/smartcard/readers', function (req, res) {
     });
 });
 
-app.post('/smartcard/transmit', function (req, res) {
+app.post('/smartcard/transmit', model.route('smartcardTransmit'),
+         function (req, res) {
   log.debug('Entering POST /smartcard/transmit.');
   if (!smartcardReader.enabled(appconfig)) {
     log.debug('Leaving POST /smartcard/transmit. Disabled.');
@@ -3722,14 +3704,8 @@ app.post('/smartcard/transmit', function (req, res) {
  * the transmitter explaining exactly what is wrong, and it is the most useful
  * thing this workflow can put on the screen.
  * ---------------------------------------------------------------------------
- * @route POST /ssf/call
- * @param {object} request.body - url, method, headers, body, sslValidate,
- *     and for the mtls proof clientCertificatePem and clientKeyPem
- * @returns {object} 200 - the transmitter's answer, whatever its status
- * @returns {object} 400 - this service refused to send it
- * @returns {object} 502 - the transmitter could not be reached
  */
-app.post('/ssf/call', function (req, res) {
+app.post('/ssf/call', model.route('ssfCall'), function (req, res) {
   log.debug('Entering POST /ssf/call.');
   var described = ssfProxy.describeRequest(req.body || {}, appconfig);
   if (!described.ok) {
@@ -3794,11 +3770,8 @@ app.post('/ssf/call', function (req, res) {
  * path at all, and whether push delivery is available — a static deployment
  * gets no answer here, which is a stronger signal than a configuration flag
  * because it is the api itself saying so.
- * @route GET /ssf/limits
- * @returns {object} 200 - the methods, refused headers, caps, status rule and
- *                         the receiver's own limits
  */
-app.get('/ssf/limits', function (req, res) {
+app.get('/ssf/limits', model.route('ssfLimits'), function (req, res) {
   log.debug('Entering GET /ssf/limits.');
   log.debug('Leaving GET /ssf/limits.');
   return res.status(STATUS_200).json(
@@ -3904,11 +3877,6 @@ app.get('/oid4vp/limits', function (req, res) {
  * and that body string. A GNAP error is a 200 carrying the status,
  * because the error code is the thing the page is here to show. A
  * refusal by this service is a 400. A network failure is a 502.
- * @route POST /gnap/call
- * @param {object} request.body - url, method, headers, body, sslValidate
- * @returns {object} 200 - the authorization server's answer
- * @returns {object} 400 - this service refused to send it
- * @returns {object} 502 - the authorization server could not be reached
  */
 /**
  * The https agent for one mtls-proved GNAP call. It is the guard's
@@ -3931,7 +3899,7 @@ function gnapClientCertificateAgent(described) {
   return agent;
 }
 
-app.post('/gnap/call', function (req, res) {
+app.post('/gnap/call', model.route('gnapCall'), function (req, res) {
   log.debug('Entering POST /gnap/call.');
   var described = gnapProxy.describeRequest(req.body || {}, appconfig);
   if (!described.ok) {
@@ -4008,10 +3976,9 @@ app.post('/gnap/call', function (req, res) {
 /**
  * What the GNAP relay will forward. A static deployment gets no answer
  * here, and the page then calls the authorization server itself.
- * @route GET /gnap/limits
- * @returns {object} 200 - methods, refused headers and caps
  */
-app.get('/gnap/limits', function (req, res) {
+app.get('/gnap/limits', model.route('gnapLimits'),
+        function (req, res) {
   log.debug('Entering GET /gnap/limits.');
   log.debug('Leaving GET /gnap/limits.');
   return res.status(STATUS_200).json(gnapProxy.limits(appconfig));
@@ -4032,11 +3999,9 @@ app.get('/gnap/limits', function (req, res) {
  * expiries, the caps and a configuration switch). The caller's address is
  * what `ssfReceiverMaxInboxesPerCaller` counts.
  * ---------------------------------------------------------------------------
- * @route POST /ssf/receiver
- * @returns {object} 200 - the inbox and the URL to put in a stream
- * @returns {object} 400 - refused: disabled, or at the inbox limit
  */
-app.post('/ssf/receiver', function (req, res) {
+app.post('/ssf/receiver', model.route('ssfReceiverCreate'),
+        function (req, res) {
   log.debug('Entering POST /ssf/receiver.');
   var made = ssfReceiver.create(appconfig, req.body || {}, req.ip);
   if (!made.ok) {
@@ -4071,12 +4036,9 @@ app.post('/ssf/receiver', function (req, res) {
  * A Security Event Token arrives. The answer here goes back to the
  * TRANSMITTER, so it is RFC 8935's: 202 with an empty body on success, 400
  * with `{err, description}` on a refusal.
- * @route POST /ssf/receiver/:id
- * @returns 202 - accepted, no body
- * @returns {object} 400 - refused, with the SET Error Code and why
- * @returns {object} 404 - no such receiver
  */
-app.post('/ssf/receiver/:id', function (req, res) {
+app.post('/ssf/receiver/:id', model.route('ssfReceiverPush'),
+        function (req, res) {
   log.debug('Entering POST /ssf/receiver/:id.');
   var answer = ssfReceiver.deliver(appconfig, req.params.id, {
     body: req.body,
@@ -4105,11 +4067,9 @@ app.post('/ssf/receiver/:id', function (req, res) {
  * What has arrived. `after` is a CURSOR and not a destructive read: the page
  * keeps its own history and a drain that emptied the inbox would make a second
  * tab useless.
- * @route GET /ssf/receiver/:id/events
- * @returns {object} 200 - the inbox and everything since `after`
- * @returns {object} 404 - no such receiver
  */
-app.get('/ssf/receiver/:id/events', function (req, res) {
+app.get('/ssf/receiver/:id/events', model.route('ssfReceiverEvents'),
+        function (req, res) {
   log.debug('Entering GET /ssf/receiver/:id/events.');
   var out = ssfReceiver.drain(appconfig, req.params.id, req.query.after);
   if (!out.ok) {
@@ -4123,11 +4083,9 @@ app.get('/ssf/receiver/:id/events', function (req, res) {
 
 /**
  * Empty an inbox (POST with `action=clear`) or delete it outright.
- * @route DELETE /ssf/receiver/:id
- * @returns {object} 200 - what happened
- * @returns {object} 404 - no such receiver
  */
-app.delete('/ssf/receiver/:id', function (req, res) {
+app.delete('/ssf/receiver/:id', model.route('ssfReceiverDelete'),
+        function (req, res) {
   log.debug('Entering DELETE /ssf/receiver/:id.');
   var clearOnly = String(req.query.clear || '') === 'true';
   if (clearOnly) {
@@ -4217,29 +4175,15 @@ const SPIFFE_REFUSED_BY_POLICY = [
 
 /**
  * One call on either gRPC surface: the Workload API or the SPIRE Server API.
- * @route POST /spiffe/call
- * @param {string} address.body.required - host:port, tcp://host:port or unix:///path
- * @param {string} service.body.required - workload, entry, agent, bundle, svid, trustdomain or debug
- * @param {string} method.body.required - the method name as the .proto writes it
- * @param {object} request.body - the request message; bytes fields take base64
- * @param {object} identity.body - {certPem, keyPem}: the X509-SVID to present
- * @param {string} trustBundle.body - PEM or base64 DER to verify the server against
- * @param {string} serverIdentityMode.body - spiffe-id, trust-domain or none
- * @returns {object} 200 - the answer, INCLUDING a gRPC status that is not OK
- * @returns {object} 400 - this service refused the request (see the reason)
- * @returns {object} 502 - the server could not be reached, or was not who it had to be
  */
-app.post('/spiffe/call', function (req, res) {
+app.post('/spiffe/call', model.route('spiffeCall'), function (req, res) {
   log.debug('Entering POST /spiffe/call.');
   const body = req.body || {};
-  if (!body.address) {
-    log.debug('Leaving POST /spiffe/call. No address.');
-    return res.status(STATUS_400).json({
-      error: 'address is required: host:port, tcp://host:port or ' +
-             'unix:///path/to/api.sock. Note that a unix: path is resolved ' +
-             'on the machine running this api, which is not the machine ' +
-             'running your browser.' });
-  }
+  // address — present, a non-empty string — was held to
+  // models/api/spiffe.tsp by model.route(), with the sentence this handler
+  // used to answer (a unix: path is resolved on the machine running this
+  // api, which is not the machine running your browser). Everything about
+  // its value is spiffe_client.js's.
   const startedAt = Date.now();
   spiffe.call(body).then(function (answer) {
     answer.timing = { totalMs: Date.now() - startedAt };
@@ -4276,14 +4220,9 @@ app.post('/spiffe/call', function (req, res) {
 
 /**
  * Fetch a SPIFFE bundle endpoint and say what is wrong with what came back.
- * @route POST /spiffe/bundle
- * @param {string} url.body.required - the bundle endpoint URL
- * @param {boolean} sslValidate.body - verify the endpoint's TLS certificate
- * @returns {object} 200 - the document and the report, INCLUDING a bad one
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the endpoint could not be reached
  */
-app.post('/spiffe/bundle', function (req, res) {
+app.post('/spiffe/bundle', model.route('spiffeBundle'),
+    function (req, res) {
   log.debug('Entering POST /spiffe/bundle.');
   const body = req.body || {};
   const url = String(body.url || '').trim();
@@ -4351,16 +4290,14 @@ app.post('/spiffe/bundle', function (req, res) {
  * also how the page tells an older api from a broken one: a build without
  * SPIFFE answers 404 here, which is a different thing from a SPIRE server that
  * will not answer.
- * @route GET /spiffe/limits
- * @returns {object} 200 - the ports, socket paths, timeouts, caps and catalogue
  */
-app.get('/spiffe/limits', function (req, res) {
+app.get('/spiffe/limits', model.route('spiffeLimits'),
+    function (req, res) {
   log.debug('Entering GET /spiffe/limits.');
   log.debug('Leaving GET /spiffe/limits.');
   return res.status(STATUS_200).json(spiffe.limits());
 });
 
-expressSwagger(options)
 
 /**
  * The certificate this service is serving, as PEM, so that a caller can trust
@@ -4375,12 +4312,9 @@ expressSwagger(options)
  * 404 on a plain listener rather than an empty 200: "this service is not
  * serving TLS" and "this service is serving TLS and will not say with what"
  * are different answers and a caller acts differently on them.
- *
- * @route GET /tls/server-certificate
- * @returns {string} 200 - the PEM
- * @returns {object} 404 - this service is not serving TLS
  */
-app.get('/tls/server-certificate', function (req, res) {
+app.get('/tls/server-certificate',
+    model.route('tlsServerCertificate'), function (req, res) {
   log.debug('Entering GET /tls/server-certificate.');
   var pem = tlsListener.serverCertificate();
   if (!pem) {

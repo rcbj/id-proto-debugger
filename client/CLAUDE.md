@@ -1,5 +1,19 @@
 # client/ — the Express frontend (port 3000) and everything in the browser
 
+**Two things here are the abstract data model's (`models/CLAUDE.md`).**
+`client/src/env/*.js` is held to `ClientConfig` (`models/config/`) by
+`check_config.js`, which `build.js` runs before bundling and `Dockerfile`
+runs before its first browserify, so a misspelt key stops the build. And
+every browser storage key a module names is declared in `models/storage/`
+with its class: **a new `setItem` key gets a declaration in the same
+commit**, or `tests/data_model.js` fails naming it. `secret_storage.js`'s
+secret, bearer and secret-member lists, and the three key-pair panes'
+`KEYPAIR_FIELDS`, are read from the generated
+`common/model/storage_classes.json` (a relative `require` browserify inlines),
+so a new secret is declared there as class `secret` rather than added to an
+array here. `sd_jwt_vc.js` keeps its holder-key list as a literal, because the
+tests image copies it flat; `data_model.js` holds that literal to the model.
+
 **It serves TLS.** `https://localhost:3000` on the host launchers,
 `https://client:3000` on the containerized bridge — `common/tls_listener.js`
 decides it, `https: true` in `client/src/env/local.js` and

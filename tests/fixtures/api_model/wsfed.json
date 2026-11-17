@@ -1,0 +1,217 @@
+{
+  "family": "wsfed",
+  "about": "WS-Federation's Passive Requestor Profile landing (POST and GET /wsfed) and GET /wsfedresponse. Recorded against the api as it was before the family switched to the model (docs/data-model.md). The landing is what an identity provider's browser reaches, so it is sent as a form or a query string, and answers with a 302; a sign-in's Location carries a stash id that is new every run, hence volatile, and a sign-out's does not. Nothing here connects anywhere.",
+  "cases": [
+    {
+      "name": "landing (POST): a wresult is stashed and the browser sent on",
+      "method": "POST",
+      "path": "/wsfed",
+      "form": {
+        "wa": "wsignin1.0",
+        "wresult": "<t:RequestSecurityTokenResponse xmlns:t=\"http://schemas.xmlsoap.org/ws/2005/02/trust\"><t:TokenType>urn:oasis:names:tc:SAML:2.0:assertion</t:TokenType></t:RequestSecurityTokenResponse>",
+        "wctx": "wire-ctx"
+      },
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?id=6306cf6a6398130593271e9b949983a5"
+      }
+    },
+    {
+      "name": "landing (POST): a field nobody expects does not stop it",
+      "method": "POST",
+      "path": "/wsfed",
+      "form": {
+        "wa": "wsignin1.0",
+        "wresult": "<t:RequestSecurityTokenResponse xmlns:t=\"http://schemas.xmlsoap.org/ws/2005/02/trust\"><t:TokenType>urn:oasis:names:tc:SAML:2.0:assertion</t:TokenType></t:RequestSecurityTokenResponse>",
+        "wtrealm": "urn:x",
+        "x": "y"
+      },
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?id=6b8a6bf9901a8b1a010f310759507e68"
+      }
+    },
+    {
+      "name": "landing (POST): a sign-out carries no token",
+      "method": "POST",
+      "path": "/wsfed",
+      "form": {
+        "wa": "wsignout1.0"
+      },
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?signout=wsignout1.0"
+      }
+    },
+    {
+      "name": "landing (POST): an empty form is a sign-out of no kind",
+      "method": "POST",
+      "path": "/wsfed",
+      "form": {},
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?signout=1"
+      }
+    },
+    {
+      "name": "landing (POST): an empty wresult is no wresult",
+      "method": "POST",
+      "path": "/wsfed",
+      "form": {
+        "wa": "wsignin1.0",
+        "wresult": ""
+      },
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?signout=wsignin1.0"
+      }
+    },
+    {
+      "name": "landing (POST): the same landing accepts a JSON body",
+      "method": "POST",
+      "path": "/wsfed",
+      "body": {
+        "wa": "wsignin1.0",
+        "wresult": "<t:RequestSecurityTokenResponse xmlns:t=\"http://schemas.xmlsoap.org/ws/2005/02/trust\"><t:TokenType>urn:oasis:names:tc:SAML:2.0:assertion</t:TokenType></t:RequestSecurityTokenResponse>"
+      },
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?id=4eed5fc108c60231e29caa3153cb3c47"
+      }
+    },
+    {
+      "name": "landing (POST): a JSON body that is an array carries no member",
+      "method": "POST",
+      "path": "/wsfed",
+      "body": [
+        "wresult"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?signout=1"
+      }
+    },
+    {
+      "name": "landing (GET): wsignoutcleanup1.0 arrives as a GET",
+      "method": "GET",
+      "path": "/wsfed?wa=wsignoutcleanup1.0",
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?signout=wsignoutcleanup1.0"
+      }
+    },
+    {
+      "name": "landing (GET): no parameters",
+      "method": "GET",
+      "path": "/wsfed",
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?signout=1"
+      }
+    },
+    {
+      "name": "landing (GET): a wresult in the query",
+      "method": "GET",
+      "path": "/wsfed?wa=wsignin1.0&wresult=%3Ct%3ARequestSecurityTokenResponse%20xmlns%3At%3D%22http%3A%2F%2Fschemas.xmlsoap.org%2Fws%2F2005%2F02%2Ftrust%22%3E%3Ct%3ATokenType%3Eurn%3Aoasis%3Anames%3Atc%3ASAML%3A2.0%3Aassertion%3C%2Ft%3ATokenType%3E%3C%2Ft%3ARequestSecurityTokenResponse%3E&wctx=c",
+      "volatile": [
+        "location"
+      ],
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?id=bbd580f3f56b5700e58730b0e420b4d8"
+      }
+    },
+    {
+      "name": "landing (GET): a repeated wa is passed on as written",
+      "method": "GET",
+      "path": "/wsfed?wa=wsignout1.0&wa=wsignoutcleanup1.0",
+      "expect": {
+        "status": 302,
+        "body": {
+          "(not JSON)": ""
+        },
+        "location": "https://client:3000/wsfed_response.html?signout=wsignout1.0%2Cwsignoutcleanup1.0"
+      }
+    },
+    {
+      "name": "response: no id is not found",
+      "method": "GET",
+      "path": "/wsfedresponse",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not found or expired"
+        }
+      }
+    },
+    {
+      "name": "response: an id nothing was stashed under is not found",
+      "method": "GET",
+      "path": "/wsfedresponse?id=0123456789abcdef",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "not found or expired"
+        }
+      }
+    },
+    {
+      "name": "response: a repeated id is the wrong type",
+      "method": "GET",
+      "path": "/wsfedresponse?id=a&id=b",
+      "changed": "A repeated ?id= is a list, not the one string the endpoint takes; it used to be joined with a comma and looked up as an id that cannot exist. The model refuses it.",
+      "before": {
+        "status": 404,
+        "body": {
+          "error": "not found or expired"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: query parameter `id` must be a string. GET /api-docs describes what wsfedResponse takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    }
+  ]
+}

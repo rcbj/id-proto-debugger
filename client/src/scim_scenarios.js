@@ -82,47 +82,12 @@ var log = bunyan.createLogger({
 });
 
 // ---------------------------------------------------------------------------
-// THE FILTER TOUR.
-//
-// RFC 7644 section 3.4.2.2 defines these operators and a server advertises
-// filter support as one boolean — so a client that has only ever sent `eq` has
-// no idea which of the other ten its server actually evaluates. Each row is a
-// filter TEMPLATE with `{userName}` and `{family}` substituted at plan time.
-//
-// `pr` takes no comparison value and `not`/`and`/`or` are grouping rather than
-// comparison, which is why they are separate rows rather than a value on one.
+// THE FILTER TOUR: RFC 7644 section 3.4.2.2's operators, one filter TEMPLATE
+// each, with `{userName}`, `{tag}` and `{prefix}` substituted at plan time.
+// The rows, and why `pr`, `and`, `or` and `not` are rows of their own, are in
+// models/catalog/scim.tsp (SCIM_FILTER_TOUR).
 // ---------------------------------------------------------------------------
-var FILTER_TOUR = [
-  { op: 'eq', filter: 'userName eq "{userName}"', expectMatch: true,
-    what: 'equal — the one every client sends' },
-  { op: 'ne', filter: 'userName ne "{userName}"', expectMatch: false,
-    what: 'not equal' },
-  { op: 'co', filter: 'userName co "{tag}"', expectMatch: true,
-    what: 'contains' },
-  { op: 'sw', filter: 'userName sw "{prefix}"', expectMatch: true,
-    what: 'starts with' },
-  { op: 'ew', filter: 'userName ew "{tag}"', expectMatch: true,
-    what: 'ends with' },
-  { op: 'pr', filter: 'userName pr', expectMatch: true,
-    what: 'present — no comparison value at all' },
-  { op: 'gt', filter: 'meta.created gt "2000-01-01T00:00:00Z"',
-    expectMatch: true, what: 'greater than, on a dateTime' },
-  { op: 'ge', filter: 'meta.created ge "2000-01-01T00:00:00Z"',
-    expectMatch: true, what: 'greater than or equal' },
-  { op: 'lt', filter: 'meta.created lt "2999-01-01T00:00:00Z"',
-    expectMatch: true, what: 'less than' },
-  { op: 'le', filter: 'meta.created le "2999-01-01T00:00:00Z"',
-    expectMatch: true, what: 'less than or equal' },
-  { op: 'and', filter: 'userName eq "{userName}" and active eq true',
-    expectMatch: true, what: 'and' },
-  { op: 'or', filter: 'userName eq "{userName}" or userName eq "nobody"',
-    expectMatch: true, what: 'or' },
-  { op: 'not', filter: 'not (userName eq "nobody")', expectMatch: true,
-    what: 'not, with the grouping parentheses it needs' },
-  { op: 'complex', filter: 'emails[type eq "work"]', expectMatch: true,
-    what: 'a complex attribute filter — the value filter grammar, which is ' +
-        'where a hand-rolled parser stops working' }
-];
+var FILTER_TOUR = require("./catalog/scim_filter_tour.json");
 
 // ---------------------------------------------------------------------------
 // Step construction. One function so that every step in every scenario has the
@@ -428,160 +393,46 @@ function headerValue(headers, name) {
 //
 // Each row is a definition rather than a plan: `build(options)` produces the
 // steps, because the count of users, the seed and the prefix are the caller's.
-// `userCount`/`groupCount` say which of those a scenario reads, so the page can
-// show only the controls a scenario actually uses instead of a fixed form with
-// three fields that do nothing on eight of the twelve.
+// The rows — id, label, `takes`, `writes`, `needsAuth`, `what` — are data and
+// live in models/catalog/scim.tsp (SCIM_SCENARIOS); the builders are code and
+// stay here, attached by id. A row with no builder, or a builder with no row,
+// stops this module loading rather than offering a scenario that cannot run.
 // ---------------------------------------------------------------------------
-var SCENARIOS = [
-  {
-    id: 'discovery',
-    label: 'Discovery — what does this server support?',
-    takes: [],
-    writes: false,
-    what: 'Reads the three documents a client should read before it sends ' +
-        'anything: the ServiceProviderConfig, the ResourceTypes and the ' +
-        'Schemas. Needs no scope anywhere, which is what makes it the right ' +
-        'first thing to run against a server you have not met.',
-    build: buildDiscovery
-  },
-  {
-    id: 'user-lifecycle',
-    label: 'One user, all the way round',
-    takes: ['seed', 'prefix'],
-    writes: true,
-    what: 'Create a user carrying every optional attribute RFC 7643 section ' +
-        '4.1 defines, read it back, replace it with a PUT, modify it with ' +
-        'three PATCH operations, then delete it and confirm the id is gone. ' +
-        'The read-back is the interesting step: what comes back is what the ' +
-        'server actually STORED, and the difference from what was sent is ' +
-        'the answer to "does this field work".',
-    build: buildUserLifecycle
-  },
-  {
-    id: 'provision-team',
-    label: 'Provision a team',
-    takes: ['userCount', 'seed', 'prefix'],
-    writes: true,
-    what: 'Create N users, create a group, add all of them to it in one ' +
-        'PATCH, read the group back, remove one member, then tear the whole ' +
-        'thing down. This is what a provisioning integration does on its ' +
-        'first run, and the membership PATCH is where most of them are ' +
-        'wrong: membership is a fact about the GROUP and is never changed ' +
-        'through a User resource.',
-    build: buildProvisionTeam
-  },
-  {
-    id: 'deprovision',
-    label: 'Deprovision — create N, then delete N',
-    takes: ['userCount', 'seed', 'prefix'],
-    writes: true,
-    what: 'The single most common thing a SCIM client is built to do and the ' +
-        'least often tested. Each delete is followed by a read that expects ' +
-        'a 404, because a delete that answers 204 and leaves the resource ' +
-        'behind is a deprovisioning path that has never actually worked.',
-    build: buildDeprovision
-  },
-  {
-    id: 'modify-sweep',
-    label: 'Modify a population',
-    takes: ['userCount', 'seed', 'prefix'],
-    writes: true,
-    what: 'Create N users and then PATCH every one of them three ways: ' +
-        'replace a simple attribute, add a value to a multi-valued one, and ' +
-        'remove a sub-attribute through a value filter path — ' +
-        'emails[type eq "home"], which is the section 3.5.2 path grammar ' +
-        'that a server treating a path as a property name gets wrong.',
-    build: buildModifySweep
-  },
-  {
-    id: 'bulk',
-    label: 'Bulk — many operations, one request',
-    takes: ['userCount', 'seed', 'prefix'],
-    writes: true,
-    what: 'One BulkRequest that creates N users and a group whose members ' +
-        'are those users, referenced as bulkId:name — the feature that makes ' +
-        'a bulk more than a loop, because the group is created in the same ' +
-        'request as the users it contains. Then one more bulk that deletes ' +
-        'the lot.',
-    build: buildBulk
-  },
-  {
-    id: 'paging',
-    label: 'Paging and sorting',
-    takes: ['userCount', 'seed', 'prefix'],
-    writes: true,
-    what: 'Create N users, then walk the list a page at a time with count ' +
-        'and startIndex, sorted both ways. SCIM paging is 1-INDEXED — ' +
-        'startIndex 1 is the first resource, not the second — which is the ' +
-        'off-by-one every client written against a 0-indexed API brings ' +
-        'with it.',
-    build: buildPaging
-  },
-  {
-    id: 'filter-tour',
-    label: 'Every filter operator',
-    takes: ['seed', 'prefix'],
-    writes: true,
-    what: 'Create one user, then send all fourteen forms of RFC 7644 ' +
-        'section 3.4.2.2 filter against it: the ten comparison operators, ' +
-        'the three grouping ones, and a complex value filter. A server ' +
-        'advertises filtering as one boolean, so this is the only way to ' +
-        'find out which of them it really evaluates.',
-    build: buildFilterTour
-  },
-  {
-    id: 'search-post',
-    label: 'Query by POST (/.search)',
-    takes: ['seed', 'prefix'],
-    writes: true,
-    what: 'The same queries as a POST body — per resource type and then ' +
-        'across both at once, which the per-type endpoint cannot do. Note ' +
-        'that attributes and excludedAttributes are ARRAYS in a ' +
-        'SearchRequest and a comma-separated string in a query string; that ' +
-        'asymmetry is in the specification and is why a /.search often ' +
-        'returns everything when the caller asked for two fields.',
-    build: buildSearchPost
-  },
-  {
-    id: 'enterprise',
-    label: 'The enterprise extension',
-    takes: ['seed', 'prefix'],
-    writes: true,
-    what: 'Create two users, set the second as the first\'s manager, and ' +
-        'PATCH the section 4.3 extension attributes through their full URN ' +
-        'paths — which is what makes an extension attribute different from a ' +
-        'core one and is the part a client that has only sent core ' +
-        'attributes has never exercised.',
-    build: buildEnterprise
-  },
-  {
-    id: 'negatives',
-    label: 'The refusals',
-    takes: ['seed', 'prefix'],
-    writes: true,
-    what: 'Every error this server can be made to produce on purpose: a ' +
-        'refused userName, a duplicate one, an id that names nothing, a ' +
-        'filter that cannot be parsed, a PATCH path that is not path ' +
-        'grammar, and /Me. A client\'s error handling is the half that is ' +
-        'never exercised, because a permissive server is hard to make say ' +
-        'no — so these steps expect the refusal and FAIL if the server ' +
-        'allows it.',
-    build: buildNegatives
-  },
-  {
-    id: 'scope-refusal',
-    label: 'Read scope cannot write',
-    takes: [],
-    writes: true,
-    needsAuth: true,
-    what: 'Sends a write with a credential that carries only the read ' +
-        'scope and expects a 403. It is the one scenario that asserts the ' +
-        'access control policy rather than the protocol, so it needs a ' +
-        'server with authentication turned on and a second, read-only ' +
-        'credential configured in the pane above.',
-    build: buildScopeRefusal
+var SCENARIO_BUILDERS = {
+  'discovery': buildDiscovery,
+  'user-lifecycle': buildUserLifecycle,
+  'provision-team': buildProvisionTeam,
+  'deprovision': buildDeprovision,
+  'modify-sweep': buildModifySweep,
+  'bulk': buildBulk,
+  'paging': buildPaging,
+  'filter-tour': buildFilterTour,
+  'search-post': buildSearchPost,
+  'enterprise': buildEnterprise,
+  'negatives': buildNegatives,
+  'scope-refusal': buildScopeRefusal
+};
+
+function withBuilders(rows, builders) {
+  log.debug("Entering withBuilders(). " + rows.length + " row(s).");
+  var unused = Object.keys(builders);
+  var out = rows.map(function (row) {
+    var build = builders[row.id];
+    if (typeof build !== 'function') {
+      throw new Error('scenario ' + row.id + ' has no builder');
+    }
+    unused.splice(unused.indexOf(row.id), 1);
+    return Object.assign({}, row, { build: build });
+  });
+  if (unused.length) {
+    throw new Error('builder(s) with no scenario row: ' + unused.join(', '));
   }
-];
+  log.debug("Leaving withBuilders().");
+  return out;
+}
+
+var SCENARIOS = withBuilders(require("./catalog/scim_scenarios.json"),
+                             SCENARIO_BUILDERS);
 
 var SCENARIOS_BY_ID = (function () {
   var index = {};
@@ -1414,18 +1265,7 @@ function buildScopeRefusal(options) {
 // what order, over how many users — and it is seeded, so the page can show the
 // seed and a person can run precisely this again.
 // ---------------------------------------------------------------------------
-var RANDOM_PHASES = [
-  { id: 'user-lifecycle', weight: 2 },
-  { id: 'provision-team', weight: 3 },
-  { id: 'deprovision', weight: 2 },
-  { id: 'modify-sweep', weight: 2 },
-  { id: 'bulk', weight: 2 },
-  { id: 'paging', weight: 1 },
-  { id: 'filter-tour', weight: 1 },
-  { id: 'search-post', weight: 1 },
-  { id: 'enterprise', weight: 1 },
-  { id: 'negatives', weight: 1 }
-];
+var RANDOM_PHASES = require("./catalog/scim_random_phases.json");
 
 function randomScenario(options) {
   log.debug("Entering randomScenario().");

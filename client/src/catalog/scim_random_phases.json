@@ -1,0 +1,42 @@
+[
+  {
+    "id": "user-lifecycle",
+    "weight": 2
+  },
+  {
+    "id": "provision-team",
+    "weight": 3
+  },
+  {
+    "id": "deprovision",
+    "weight": 2
+  },
+  {
+    "id": "modify-sweep",
+    "weight": 2
+  },
+  {
+    "id": "bulk",
+    "weight": 2
+  },
+  {
+    "id": "paging",
+    "weight": 1
+  },
+  {
+    "id": "filter-tour",
+    "weight": 1
+  },
+  {
+    "id": "search-post",
+    "weight": 1
+  },
+  {
+    "id": "enterprise",
+    "weight": 1
+  },
+  {
+    "id": "negatives",
+    "weight": 1
+  }
+]

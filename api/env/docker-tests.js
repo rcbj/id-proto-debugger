@@ -423,7 +423,14 @@ var config = {
     "::1/128",            // IPv6 loopback
     "fe80::/10",          // IPv6 link-local
     "fc00::/7"            // IPv6 unique local
-  ]
+  ],
+  // HOLD EVERY ANSWER TO THE API DOCUMENT (api/model_validate.js). Each
+  // answer is checked against its operation's response schema in
+  // common/model/openapi.json, and one that does not match is logged as
+  // MODEL GAP and kept at GET /model/gaps, which the suite's last job reads.
+  // The answer itself is never changed. A test setting only: it costs a
+  // schema check per answer and protects nobody using the tool.
+  validateResponses: true
 };
 
 module.exports = config;

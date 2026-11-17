@@ -1,0 +1,609 @@
+{
+  "family": "ssf",
+  "about": "POST /ssf/call, GET /ssf/limits and the push receiver's four routes. Recorded against the api as it was before the family switched to the model (docs/data-model.md). Every outbound target is ssf.invalid, which RFC 6761 guarantees never resolves. A receiver's id is generated, so the cases that reach an inbox by id use one that was never created; the inbox created here asks for a 1 ms idle lifetime, so it is gone by the next request and replaying this file never reaches ssfReceiverMaxInboxesPerCaller. The size caps (ssfMaxRequestBytes, ssfReceiverMaxEventBytes) and the refusals of a push to a live inbox are driven by tests/api_ssf.js.",
+  "cases": [
+    {
+      "name": "ssf call: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required. It is the ABSOLUTE URL of the SSF endpoint, which the page takes from the transmitter's own configuration metadata rather than composing — SSF fixes no path, so every endpoint is discovered."
+        }
+      }
+    },
+    {
+      "name": "ssf call: an empty url is refused",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required. It is the ABSOLUTE URL of the SSF endpoint, which the page takes from the transmitter's own configuration metadata rather than composing — SSF fixes no path, so every endpoint is discovered."
+        }
+      }
+    },
+    {
+      "name": "ssf call: a relative url is refused",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "/x"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http:// or https:// URL. A relative one has no host for this service to resolve, and resolving it against this service's own address would make this endpoint a way to reach the api's own routes."
+        }
+      }
+    },
+    {
+      "name": "ssf call: a url that is not a string",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": 5
+      },
+      "changed": "The model types url as a string or null and refuses anything else naming the member. Until then the proxy stringified a number and refused \"5\" as a relative URL, which named the wrong problem.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http:// or https:// URL. A relative one has no host for this service to resolve, and resolving it against this service's own address would make this endpoint a way to reach the api's own routes."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `url` must be a JSON string or null. GET /api-docs describes what ssfCall takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "ssf call: a method outside the protocol's is refused",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/",
+        "method": "OPTIONS"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "method must be one of GET, POST, PUT, PATCH, DELETE. SSF 1.0 uses exactly those five, and forwarding an arbitrary method would make this endpoint useful for something other than Shared Signals."
+        }
+      }
+    },
+    {
+      "name": "ssf call: headers that are not an object",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/",
+        "headers": [
+          "Accept"
+        ]
+      },
+      "changed": "headers is an object or null in the model, so an array is refused naming the member. Until then the proxy refused it with its own sentence; the refusal is the same, only its words and code are the model's.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "headers must be an object of name to value."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `headers` must be a JSON object or null. GET /api-docs describes what ssfCall takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "ssf call: a header name that is not a token is refused",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/",
+        "headers": {
+          "Bad Name": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The header name \"Bad Name\" is not a token (RFC 7230 section 3.2.6), so it is not a header name at all."
+        }
+      }
+    },
+    {
+      "name": "ssf call: a framing header is refused",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/",
+        "headers": {
+          "Host": "elsewhere.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "This endpoint will not forward the Host header. It would send the request to a different virtual host than the URL names, which is how a proxy is turned into an open one. Everything else is forwarded as sent — the refusals here are about the SHAPE of the request rather than its content."
+        }
+      }
+    },
+    {
+      "name": "ssf call: a CR/LF in a header value is refused",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/",
+        "headers": {
+          "X-Note": "a\r\nInjected: b"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "The value of X-Note contains a carriage return or a line feed. That is header injection rather than a header value, and it is refused before it is anything else."
+        }
+      }
+    },
+    {
+      "name": "ssf call: a body on a GET is refused",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/",
+        "method": "GET",
+        "body": {
+          "a": 1
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A GET carries no body in SSF 1.0, and this endpoint refuses one rather than dropping it — a body that is silently discarded is how the wrong method goes unnoticed. Reading a stream takes its id in the query string."
+        }
+      }
+    },
+    {
+      "name": "ssf call: a well-formed GET reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/ssf/stream?stream_id=1",
+        "method": "GET"
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The transmitter could not be reached: getaddrinfo ENOTFOUND ssf.invalid",
+          "code": "ENOTFOUND"
+        }
+      }
+    },
+    {
+      "name": "ssf call: a DELETE carries its body, and reaches the network",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/ssf/stream",
+        "method": "DELETE",
+        "body": {
+          "stream_id": "1"
+        }
+      },
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The transmitter could not be reached: getaddrinfo ENOTFOUND ssf.invalid",
+          "code": "ENOTFOUND"
+        }
+      }
+    },
+    {
+      "name": "ssf call: a well-formed POST reaches the network, with its trace",
+      "method": "POST",
+      "path": "/ssf/call",
+      "body": {
+        "url": "https://ssf.invalid/ssf/stream",
+        "method": "POST",
+        "body": {
+          "delivery": {
+            "method": "urn:ietf:rfc:8936"
+          }
+        },
+        "sslValidate": "false",
+        "http_trace": "true"
+      },
+      "volatile": [
+        "http_exchange.timing",
+        "http_exchange.request.headers.User-Agent"
+      ],
+      "expect": {
+        "status": 502,
+        "body": {
+          "error": "The transmitter could not be reached: getaddrinfo ENOTFOUND ssf.invalid",
+          "code": "ENOTFOUND",
+          "http_exchange": {
+            "request": {
+              "method": "POST",
+              "url": "https://ssf.invalid/ssf/stream",
+              "headers": {
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "Identity Protocol Debugger/0.9.5.20261117040209"
+              },
+              "body": "{\"delivery\":{\"method\":\"urn:ietf:rfc:8936\"}}"
+            },
+            "response": null,
+            "timing": {
+              "totalMs": 6
+            },
+            "error": "getaddrinfo ENOTFOUND ssf.invalid"
+          }
+        }
+      }
+    },
+    {
+      "name": "ssf limits",
+      "method": "GET",
+      "path": "/ssf/limits",
+      "volatile": [
+        "receiver.held"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "methods": [
+            "GET",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE"
+          ],
+          "refusedHeaders": [
+            "connection",
+            "content-length",
+            "host",
+            "keep-alive",
+            "proxy-authorization",
+            "te",
+            "trailer",
+            "transfer-encoding",
+            "upgrade"
+          ],
+          "refusedHeaderReasons": {
+            "host": "It would send the request to a different virtual host than the URL names, which is how a proxy is turned into an open one.",
+            "content-length": "The body framing is this service's to set — a caller that could set it could smuggle a second request inside the first.",
+            "transfer-encoding": "Body framing again, and the other half of the same smuggling pair.",
+            "connection": "Hop-by-hop (RFC 7230 section 6.1). It belongs to the connection this service opens, not to the request being carried.",
+            "keep-alive": "Hop-by-hop (RFC 7230 section 6.1). It describes the connection this service opens and has nothing to say about the request being carried.",
+            "upgrade": "Hop-by-hop, and it asks to stop speaking HTTP altogether — on a connection this service owns and the caller does not.",
+            "te": "Hop-by-hop. It negotiates a transfer coding for THIS hop, which is this service's to choose.",
+            "trailer": "Hop-by-hop, and it belongs with the framing headers above: it announces fields that arrive after a chunked body.",
+            "proxy-authorization": "It authenticates to a proxy rather than to the transmitter, so forwarding it would send this service's hop credentials somewhere they do not belong."
+          },
+          "maxRequestBytes": 262144,
+          "maxResponseBytes": 1048576,
+          "callTimeoutMs": 10000,
+          "connectionTimeoutMs": 5000,
+          "maxRedirects": 5,
+          "sslValidateDefault": true,
+          "receiver": {
+            "enabled": true,
+            "ttlMs": 3600000,
+            "idleTtlMs": 1800000,
+            "maxInboxes": 20,
+            "maxInboxesPerCaller": 5,
+            "maxEvents": 200,
+            "maxEventBytes": 65536,
+            "maxInboxBytes": 1048576,
+            "ceilings": "ttlMs, idleTtlMs and maxInboxBytes are each the default and the CEILING for one inbox: POST /ssf/receiver may ask for less, never more. maxInboxes and maxInboxesPerCaller are not per inbox. Raising any of them means editing ssfReceiver* in the api's env file.",
+            "held": 0,
+            "mediaType": "application/secevent+jwt",
+            "verifies": false,
+            "note": "A browser cannot be an HTTP server, so it cannot be the far end of RFC 8935 push delivery. This service hosts one on the page's behalf: ask for an inbox, put its URL in the stream's delivery.endpoint_url, and drain what arrives. RFC 8936 POLL delivery needs none of this — the receiver comes to the transmitter — which is why the deployed static sites can still run the whole workflow over that method.",
+            "doesNotVerify": "This service does not check a signature and cannot: it holds no key of the transmitter's. A receiver that refused what it could not verify would be unable to show anybody WHY, which is the question being asked. The page verifies."
+          },
+          "addressPolicy": "The same one every outbound call from this service obeys: api/ssrf_guard.js, installed on the shared axios instance, so loopback and private ranges are refused on the request AND on any redirect into one. It is not re-implemented here.",
+          "addressPolicyEnabled": false,
+          "statusRule": "A refusal by this service is a 400; a network failure is a 502; and an SSF error from the transmitter is a 200 carrying that status and its {err, description}. Those refusals are the most useful thing this workflow can show — a 403 naming the scope, a 400 naming the member of a subject identifier RFC 9493 does not define — and reporting them as failures would throw all of it away.",
+          "deliveryFromTheBrowser": "POLL delivery (RFC 8936) works with no api at all: the receiver comes to the transmitter. PUSH delivery (RFC 8935) cannot, because a browser cannot be an HTTP server — which is a property of the specification rather than of this service. The receiver below is how this api stands in.",
+          "whatThisIsNot": "Not a general HTTP proxy. Five methods, no body on a GET, and the framing headers are refused."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: an authorization over 4096 characters is refused",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "authorization": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "That authorization_header is 4097 characters; this receiver takes at most 4096."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: a ttlMs that is not a number is refused",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "ttlMs": "soon"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "ttlMs must be a positive whole number; it was \"soon\". Leave it out for the default (ssfReceiverTtlMs, 3600000)."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: a negative ttlMs is refused",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "ttlMs": -5
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "ttlMs must be a positive whole number; it was -5. Leave it out for the default (ssfReceiverTtlMs, 3600000)."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: a fractional idleTtlMs is refused",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "idleTtlMs": 1.5
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "idleTtlMs must be a positive whole number; it was 1.5. Leave it out for the default (ssfReceiverIdleTtlMs, 1800000)."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: a ttlMs above the ceiling is refused",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "ttlMs": 3600001
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "ttlMs 3600001 is above this service's ceiling, ssfReceiverTtlMs = 3600000. A page may ask for less, never more; raising the ceiling means editing ssfReceiverTtlMs in the api's env file."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: a maxInboxBytes smaller than one event is refused",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "maxInboxBytes": 1024
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "maxInboxBytes 1024 is smaller than one event may be (ssfReceiverMaxEventBytes = 65536), so an inbox that size could refuse a single push."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: a ttlMs that is a boolean",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "ttlMs": true
+      },
+      "changed": "ttlMs is a number, a string or null in the model, so a boolean is refused naming the member. Until then ssf_receiver.js refused it as not a positive whole number; the refusal is the same, only its words and code are the model's.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "ttlMs must be a positive whole number; it was true. Leave it out for the default (ssfReceiverTtlMs, 3600000)."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `ttlMs` must be a JSON number or a JSON string or null. GET /api-docs describes what ssfReceiverCreate takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: an authorization that is not a string",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "authorization": 12345
+      },
+      "changed": "authorization is a string or null in the model. Until then a number was stringified and an inbox was created requiring the header \"12345\", which no caller meant, and which held one of the caller's ssfReceiverMaxInboxesPerCaller places for half an hour.",
+      "before": {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "inbox": {
+            "id": "4e93c4d976c691c081e2f560ddcf9221",
+            "label": "",
+            "createdAt": "2026-11-17T04:02:17.509Z",
+            "lastPushAt": "",
+            "authenticated": true,
+            "idleTtlMs": 1800000,
+            "ttlMs": 3600000,
+            "maxInboxBytes": 1048576,
+            "expiresAt": "2026-11-17T04:32:17.509Z",
+            "pushes": 0,
+            "dropped": 0,
+            "waiting": 0
+          },
+          "deliveryEndpoint": "http://localhost:5002/ssf/receiver/4e93c4d976c691c081e2f560ddcf9221",
+          "note": "Put deliveryEndpoint in the stream's delivery.endpoint_url. The TRANSMITTER has to be able to reach it, which is why it is this api's address as you reached it rather than a configured one.",
+          "authentication": "Every push must carry the authorization_header this inbox was created with, or it is answered 401 authentication_failed."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `authorization` must be a JSON string or null. GET /api-docs describes what ssfReceiverCreate takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: an inbox is created (and expires by the next request)",
+      "method": "POST",
+      "path": "/ssf/receiver",
+      "body": {
+        "label": "api_model_wire",
+        "authorization": "Bearer wire",
+        "idleTtlMs": 1,
+        "ttlMs": "60000"
+      },
+      "volatile": [
+        "inbox.id",
+        "inbox.createdAt",
+        "inbox.expiresAt",
+        "deliveryEndpoint"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "inbox": {
+            "id": "d439d3e2ad1c46af37afac6d025e5d00",
+            "label": "api_model_wire",
+            "createdAt": "2026-11-17T04:02:17.511Z",
+            "lastPushAt": "",
+            "authenticated": true,
+            "idleTtlMs": 1,
+            "ttlMs": 60000,
+            "maxInboxBytes": 1048576,
+            "expiresAt": "2026-11-17T04:02:17.512Z",
+            "pushes": 0,
+            "dropped": 0,
+            "waiting": 0
+          },
+          "deliveryEndpoint": "http://localhost:5002/ssf/receiver/d439d3e2ad1c46af37afac6d025e5d00",
+          "note": "Put deliveryEndpoint in the stream's delivery.endpoint_url. The TRANSMITTER has to be able to reach it, which is why it is this api's address as you reached it rather than a configured one.",
+          "authentication": "Every push must carry the authorization_header this inbox was created with, or it is answered 401 authentication_failed."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: a push to an inbox that does not exist",
+      "method": "POST",
+      "path": "/ssf/receiver/0123456789abcdef0123456789abcdef",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "invalid_request",
+          "description": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs). A receiver that has gone away is a stream that should be deleted at the transmitter."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: a push with a JSON body to an inbox that does not exist",
+      "method": "POST",
+      "path": "/ssf/receiver/nope",
+      "body": {
+        "set": "eyJ"
+      },
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "invalid_request",
+          "description": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs). A receiver that has gone away is a stream that should be deleted at the transmitter."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: reading an inbox that does not exist",
+      "method": "GET",
+      "path": "/ssf/receiver/0123456789abcdef0123456789abcdef/events?after=3",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: reading an inbox that does not exist, with a cursor that is not a number",
+      "method": "GET",
+      "path": "/ssf/receiver/nope/events?after=soon",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: clearing an inbox that does not exist",
+      "method": "DELETE",
+      "path": "/ssf/receiver/nope?clear=true",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no receiver with that id here."
+        }
+      }
+    },
+    {
+      "name": "ssf receiver: deleting an inbox that does not exist",
+      "method": "DELETE",
+      "path": "/ssf/receiver/0123456789abcdef0123456789abcdef",
+      "expect": {
+        "status": 404,
+        "body": {
+          "error": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs)."
+        }
+      }
+    },
+    {
+      "name": "receiver push: a SET pushed as application/secevent+jwt to an inbox that does not exist",
+      "method": "POST",
+      "path": "/ssf/receiver/00000000000000000000000000000000",
+      "text": "eyJhbGciOiJub25lIiwidHlwIjoic2VjZXZlbnQrand0In0.eyJpc3MiOiJodHRwczovL3R4LmV4YW1wbGUiLCJqdGkiOiIxIiwiaWF0IjoxLCJldmVudHMiOnt9fQ.",
+      "contentType": "application/secevent+jwt",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "invalid_request",
+          "description": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs). A receiver that has gone away is a stream that should be deleted at the transmitter."
+        }
+      }
+    },
+    {
+      "name": "receiver push: a SET pushed as application/jwt to an inbox that does not exist",
+      "method": "POST",
+      "path": "/ssf/receiver/00000000000000000000000000000000",
+      "text": "eyJhbGciOiJub25lIiwidHlwIjoic2VjZXZlbnQrand0In0.eyJpc3MiOiJodHRwczovL3R4LmV4YW1wbGUiLCJqdGkiOiIxIiwiaWF0IjoxLCJldmVudHMiOnt9fQ.",
+      "contentType": "application/jwt",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "invalid_request",
+          "description": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs). A receiver that has gone away is a stream that should be deleted at the transmitter."
+        }
+      }
+    }
+  ]
+}

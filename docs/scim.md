@@ -1088,8 +1088,18 @@ with the save box clear the token must be in the field and nowhere else.
 
 `OPERATIONS` in `scim_client.js` is the single source for six things — the method
 and path, the body shape, the query parameters, the scope, the labels, and what a
-scenario step compiles to. Add a row there and the page's selector, its query
-editor, its body generator and the history log all follow. A seventh endpoint
+scenario step compiles to. **Its rows are not in that file**: they are
+`SCIM_OPERATIONS` in `models/catalog/scim.tsp`, generated into
+`client/src/catalog/scim_operations.json` by `node models/tools/generate.mjs`,
+which the module requires. Add a row there (the closed `ScimOperation` model
+refuses a member it does not name, and a method, group, scope or body outside
+its unions), regenerate, and the page's selector, its query editor, its body
+generator and the history log all follow. The same file holds the module's other
+tables — the scimType codes, the authentication schemes, the generator's
+vocabulary, the filter tour, the scenario rows and the random phases — and
+`tests/data_model.js` holds each module's exported table to its generated JSON.
+A scenario's `build()` is code and stays in `scim_scenarios.js`, attached by id;
+a row without a builder stops the module loading. A seventh endpoint
 added as a button on the page and *not* as a row here is the defect the
 arrangement exists to prevent: it would be uncovered by
 `scim_engine.js`'s completeness check, which walks the table rather than the

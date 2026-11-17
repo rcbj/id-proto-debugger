@@ -1,0 +1,42 @@
+{
+  "secretKeys": [
+    "client_secret",
+    "introspection_client_secret",
+    "password",
+    "refresh_client_secret",
+    "revocation_client_secret",
+    "token_client_secret",
+    "token_password",
+    "tokenexchange_client_secret",
+    "userinfo_client_secret"
+  ],
+  "sessionKeys": [
+    "dcr_initial_access_token",
+    "introspection_bearer_token",
+    "registration_access_token"
+  ],
+  "secretMembers": [
+    "client_secret",
+    "registration_access_token"
+  ],
+  "keypairs": {
+    "samltools_saml_save_keypair": [
+      "samltools_saml_sp_private_key",
+      "samltools_saml_sp_public_key"
+    ],
+    "sdjwtvc_save_holder_key": [
+      "sdjwtvc_dpop_private_jwk",
+      "sdjwtvc_holder_private_jwk",
+      "sdjwtvc_previous_holder_private_jwk",
+      "sdjwtvc_refreshed_holder_private_jwk"
+    ],
+    "wsfedtools_wsfed_save_keypair": [
+      "wsfedtools_wsfed_rp_cert",
+      "wsfedtools_wsfed_rp_private_key"
+    ],
+    "wstrust_wst_save_keypair": [
+      "wstrust_wst_sp_cert",
+      "wstrust_wst_sp_private_key"
+    ]
+  }
+}

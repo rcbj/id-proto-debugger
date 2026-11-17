@@ -75,6 +75,8 @@ two specifications.
 
 ### What that means for this code
 
+**Since 2026-11-16 the vocabulary's ROWS are in `models/catalog/ssf_events.tsp`**, typed TypeSpec `const`s that `models/tools/generate.mjs` writes to `client/src/catalog/`. `ssf_events.js` requires them and keeps the code: each row's `generate` function, the member checks and the description. A new event type is a row there, then a generator in `GENERATE`, which the module refuses to load without. `tests/data_model.js` holds every exported table to its generated file. See `models/CLAUDE.md`, "Catalogues", and docs/caep.md and docs/risc.md, which describe the rows as the table they were.
+
 `client/src/ssf_events.js` is the vocabulary and **was the only file the other
 two parts changed**. `client/src/ssf_client.js` is the pipe — the subject
 grammar, the SET envelope, stream configurations, both deliveries — and

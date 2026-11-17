@@ -100,6 +100,11 @@ COPY api/node-ldapjs ./node-ldapjs
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get -y install \
         --no-install-recommends libpcsclite1 libpcsclite-dev python3 make g++
+# swagger-ui-dist (the /api-docs explorer) depends on @scarf/scarf, whose
+# install script reports the install to its vendor. package.json's
+# scarfSettings.enabled false turns it off; this is the same switch for the
+# build environment, so neither alone has to be trusted.
+ENV SCARF_ANALYTICS=false
 RUN npm install --omit=dev \
     && node -e "require('pcsclite'); console.log('pcsclite loads')"
 RUN DEBIAN_FRONTEND=noninteractive apt-get -y purge libpcsclite-dev \
@@ -130,6 +135,11 @@ COPY common/spiffe/ /usr/src/common/spiffe/
 # the identical decision and the two must not disagree: an https page whose
 # form posts to an http api is a form Chrome does not submit at all.
 COPY common/tls_listener.js /usr/src/common/tls_listener.js
+# The generated API document and configuration schema. server.js checks its
+# configuration against one and builds every route's validator from the
+# other at startup, and will not start without them. See models/CLAUDE.md.
+COPY common/model/ /usr/src/common/model/
+COPY common/model_config.js /usr/src/common/model_config.js
 
 # Application version: the repo-root VERSION file (M.N.P) plus the shared stamping
 # module, which is the client's — there is one implementation of the scheme and
