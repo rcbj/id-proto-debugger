@@ -1123,17 +1123,22 @@ app.get('/claimdescription', function(req, res) {
  * @returns {Error.model} 400 - Missing/invalid url parameter
  * @returns {Error.model} 500 - Fetch error
  */
-app.get('/samlmetadata', function (req, res) {
+// `url` is a single string by the time this runs: models/api/saml.tsp holds
+// the query to that, so a repeated ?url= is refused there rather than joined
+// with a comma and decoded into a URL nobody wrote.
+app.get('/samlmetadata', model.route('samlMetadata'), function (req, res) {
   log.debug('Entering GET /samlmetadata.');
   var target;
   try {
     target = Buffer.from(String(req.query.url || ''),
         'base64').toString('utf8').trim();
   } catch (e) {
+    log.debug('Leaving GET /samlmetadata. Not base64.');
     return res.status(STATUS_400).json({
       error: 'Invalid url parameter (expected base64).' });
   }
   if (!/^https?:\/\//i.test(target)) {
+    log.debug('Leaving GET /samlmetadata. Not http(s).');
     return res.status(STATUS_400).json({
       error: 'url must be an absolute http(s) URL.' });
   }
@@ -1165,6 +1170,7 @@ app.get('/samlmetadata', function (req, res) {
             error.message : String(error)) });
     }
   });
+  log.debug('Leaving GET /samlmetadata. The fetch is under way.');
 });
 
 // ---------------------------------------------------------------------------
@@ -1232,7 +1238,7 @@ function signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg) {
  * @route POST /samlsign
  * @group SAML - SAML support operations
  */
-app.post('/samlsign', function (req, res) {
+app.post('/samlsign', model.route('samlSign'), function (req, res) {
   log.debug('Entering POST /samlsign.');
   try {
     var b = req.body || {
@@ -1247,10 +1253,11 @@ app.post('/samlsign', function (req, res) {
     var relayState = b.relayState || '';
     var rootElement = b.rootElement ||
         'AuthnRequest'; // AuthnRequest | LogoutRequest
-    if (!xml || !privateKeyPem) {
-      return res.status(STATUS_400).json({
-        error: 'xml and privateKeyPem are required.' });
-    }
+    // xml and privateKeyPem are both non-empty strings by the time this runs:
+    // models/api/saml.tsp refuses either missing, empty or of another type
+    // with the sentence this handler always answered ("xml and privateKeyPem
+    // are required."). Every other member is a string or null there too, so
+    // a numeric destination is a 400 rather than a TypeError from indexOf.
     // The api signs with RSA only (it holds no post-quantum signer), and
     // sigAlg is the caller's choice. An ECDSA, HMAC or misspelt URI is the
     // caller's error, so it is a 400 naming the methods on offer rather than
@@ -1268,6 +1275,7 @@ app.post('/samlsign', function (req, res) {
       if (relayState) params.RelayState = relayState;
       // signedXml is also returned so the UI can display the enveloped-signed
       // document (e.g. the "Build Request" button).
+      log.debug('Leaving POST /samlsign. The POST binding.');
       return res.json({
         mode: 'post', location: dest || '', params: params,
             signedXml: signedXml });
@@ -1308,14 +1316,16 @@ app.post('/samlsign', function (req, res) {
     // string (e.g. "Build Request" before metadata is loaded).
     var location = dest ? (dest + (dest.indexOf('?') >= 0 ? '&' : '?') +
         qs) : qs;
+    log.debug('Leaving POST /samlsign. The redirect binding.');
     return res.json({
       mode: 'redirect', location: location, queryString: qs });
   } catch (e) {
     log.error('samlsign: ' + (e && e.stack ? e.stack : e));
     res.status(STATUS_500).json({
-      error: 'sign failed: ' + (e && e.message ? e.message : String(e)) 
+      error: 'sign failed: ' + (e && e.message ? e.message : String(e))
     });
   }
+  log.debug('Leaving POST /samlsign.');
 });
 
 /**
@@ -1327,7 +1337,9 @@ app.post('/samlsign', function (req, res) {
  * @route POST /samlartifactctx
  * @group SAML - SAML support operations
  */
-app.post('/samlartifactctx', function (req, res) {
+app.post('/samlartifactctx', model.route('samlArtifactContext'),
+         function (req, res) {
+  log.debug('Entering POST /samlartifactctx.');
   var b = req.body || {
     };
   // THE KEY IS OPTIONAL AND THE ADDRESS IS NOT, which is a change of shape
@@ -1338,11 +1350,12 @@ app.post('/samlartifactctx', function (req, res) {
   // in a call whose error text names privateKeyPem and nothing else, several
   // steps before anything SAML-shaped happens. resolveArtifact() below signs
   // when there is a key and sends it unsigned when there is not.
-  if (!b.arsUrl) {
-    return res.status(STATUS_400).json({
-      error: 'arsUrl is required.'
-    });
-  }
+  //
+  // arsUrl is a non-empty string by the time this runs: models/api/saml.tsp
+  // refuses it missing, empty or of another type with the sentence this
+  // handler always answered ("arsUrl is required."). A number used to be
+  // stashed, and failed only later, at the landing, as an artifact that did
+  // not resolve.
   var id = stashArtifactCtx({
     arsUrl: b.arsUrl,
     privateKeyPem: b.privateKeyPem || '',
@@ -1364,6 +1377,7 @@ app.post('/samlartifactctx', function (req, res) {
   });
   res.json({
     relayState: 'art:' + id });
+  log.debug('Leaving POST /samlartifactctx.');
 });
 
 // Decode a SAML protocol message from a binding parameter: POST binding is raw
@@ -1626,33 +1640,42 @@ function handleSamlAcs(req, res) {
   }
   log.debug("Leaving handleSamlAcs().");
 }
-app.post('/samlacs', handleSamlAcs);
-app.get('/samlacs', handleSamlAcs);
+// What an identity provider sends is validated for its envelope only
+// (models/api/saml.tsp): every member is optional and of any type, so a
+// field nobody expected, or one sent twice, still reaches the results page.
+// The relay-state check above stays here, because it answers as text/plain.
+app.post('/samlacs', model.route('samlAcsPost'), handleSamlAcs);
+app.get('/samlacs', model.route('samlAcsGet'), handleSamlAcs);
 // SAML 1.1's Browser/Artifact consumer, at a location of its own. A SAML 1.1
 // service provider picks the browser profile by which assertion consumer its
 // shire names (the profile bound to that AssertionConsumerService in its
 // metadata), so POST and artifact cannot share /samlacs. Same handler: what
 // arrives here is a SAMLart and TARGET on a GET.
-app.get('/samlacs/artifact', handleSamlAcs);
+app.get('/samlacs/artifact', model.route('samlAcsArtifact'), handleSamlAcs);
 
 // Single Logout service. Receives the IdP's LogoutResponse (or an IdP-initiated
 // LogoutRequest) and shows it on the results page. Reuses the ACS handler,
 // which decodes/stashes any SAMLResponse and redirects to the viewer.
-app.post('/samlslo', handleSamlAcs);
-app.get('/samlslo', handleSamlAcs);
+app.post('/samlslo', model.route('samlSloPost'), handleSamlAcs);
+app.get('/samlslo', model.route('samlSloGet'), handleSamlAcs);
 
 /**
  * Fetch a stashed SAMLResponse by id (set by the ACS redirect).
  * @route GET /samlresponse
  * @group SAML - SAML support operations
  */
-app.get('/samlresponse', function (req, res) {
+app.get('/samlresponse', model.route('samlResponse'), function (req, res) {
+  log.debug('Entering GET /samlresponse.');
   sweepSamlExchanges();
   var ex = samlExchanges.get(String(req.query.id || ''));
-  if (!ex) return res.status(STATUS_404).json({
-    error: 'not found or expired' });
+  if (!ex) {
+    log.debug('Leaving GET /samlresponse. Not found.');
+    return res.status(STATUS_404).json({
+      error: 'not found or expired' });
+  }
   res.json({
     responseXml: ex.responseXml, relayState: ex.relayState });
+  log.debug('Leaving GET /samlresponse.');
 });
 
 // ---------------------------------------------------------------------------
@@ -1705,21 +1728,28 @@ function handleWsFedLanding(req, res) {
   }
   log.debug("Leaving handleWsFedLanding().");
 }
-app.post('/wsfed', handleWsFedLanding);
-app.get('/wsfed', handleWsFedLanding);
+// The envelope only, as for the SAML landings (models/api/wsfed.tsp).
+app.post('/wsfed', model.route('wsfedLandingPost'), handleWsFedLanding);
+app.get('/wsfed', model.route('wsfedLandingGet'), handleWsFedLanding);
 
 /**
  * Fetch a stashed wresult by id (alias of GET /samlresponse; shared stash).
  * @route GET /wsfedresponse
  * @group WS-Federation - WS-Federation support operations
  */
-app.get('/wsfedresponse', function (req, res) {
+app.get('/wsfedresponse', model.route('wsfedResponse'),
+        function (req, res) {
+  log.debug('Entering GET /wsfedresponse.');
   sweepSamlExchanges();
   var ex = samlExchanges.get(String(req.query.id || ''));
-  if (!ex) return res.status(STATUS_404).json({
-    error: 'not found or expired' });
+  if (!ex) {
+    log.debug('Leaving GET /wsfedresponse. Not found.');
+    return res.status(STATUS_404).json({
+      error: 'not found or expired' });
+  }
   res.json({
     responseXml: ex.responseXml, relayState: ex.relayState });
+  log.debug('Leaving GET /wsfedresponse.');
 });
 
 // ---------------------------------------------------------------------------
@@ -1748,7 +1778,7 @@ app.get('/wsfedresponse', function (req, res) {
  * @returns {Error.model} 400 - Missing url/soap
  * @returns {Error.model} 500 - STS call error
  */
-app.post('/wstrust', function (req, res) {
+app.post('/wstrust', model.route('wstrustProxy'), function (req, res) {
   log.debug('Entering POST /wstrust.');
   var b = req.body || {
     };
@@ -1760,11 +1790,12 @@ app.post('/wstrust', function (req, res) {
   // out.
   var sslValidate = (b.sslValidate === false || b.sslValidate === 'false') ?
       false : true;
-  if (!url || !soap) {
-    return res.status(STATUS_400).json({
-      error: 'url and soap are required.' });
-  }
+  // url and soap are both non-empty strings by the time this runs:
+  // models/api/wstrust.tsp refuses either missing, empty or of another type
+  // with the sentence this handler always answered ("url and soap are
+  // required."). The scheme is still this handler's.
   if (!/^https?:\/\//i.test(url)) {
+    log.debug('Leaving POST /wstrust. Not http(s).');
     return res.status(STATUS_400).json({
       error: 'url must be an absolute http(s) URL.' });
   }
@@ -1807,6 +1838,7 @@ app.post('/wstrust', function (req, res) {
       error: 'STS call failed: ' + (error && error.message ?
           error.message : String(error)) });
   });
+  log.debug('Leaving POST /wstrust. The call is under way.');
 });
 
 /**

@@ -1,0 +1,216 @@
+{
+  "family": "wstrust",
+  "about": "POST /wstrust, the WS-Trust SOAP proxy. Recorded against the api as it was before the family switched to the model (docs/data-model.md). Every target is sts.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 500 on any machine.",
+  "cases": [
+    {
+      "name": "an empty body is refused",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url and soap are required."
+        }
+      }
+    },
+    {
+      "name": "a url without soap is refused",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "https://sts.invalid/sts"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url and soap are required."
+        }
+      }
+    },
+    {
+      "name": "soap without a url is refused",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "soap": "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"><s:Body><t:RequestSecurityToken xmlns:t=\"http://docs.oasis-open.org/ws-sx/ws-trust/200512\"><t:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</t:RequestType></t:RequestSecurityToken></s:Body></s:Envelope>"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url and soap are required."
+        }
+      }
+    },
+    {
+      "name": "an empty soap is refused",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "https://sts.invalid/sts",
+        "soap": ""
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url and soap are required."
+        }
+      }
+    },
+    {
+      "name": "a url that is not http(s) is refused",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "ftp://sts.invalid/sts",
+        "soap": "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"><s:Body><t:RequestSecurityToken xmlns:t=\"http://docs.oasis-open.org/ws-sx/ws-trust/200512\"><t:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</t:RequestType></t:RequestSecurityToken></s:Body></s:Envelope>"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http(s) URL."
+        }
+      }
+    },
+    {
+      "name": "a relative url is refused",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "/sts",
+        "soap": "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"><s:Body><t:RequestSecurityToken xmlns:t=\"http://docs.oasis-open.org/ws-sx/ws-trust/200512\"><t:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</t:RequestType></t:RequestSecurityToken></s:Body></s:Envelope>"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http(s) URL."
+        }
+      }
+    },
+    {
+      "name": "a url of the wrong JSON type",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": 443,
+        "soap": "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"><s:Body><t:RequestSecurityToken xmlns:t=\"http://docs.oasis-open.org/ws-sx/ws-trust/200512\"><t:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</t:RequestType></t:RequestSecurityToken></s:Body></s:Envelope>"
+      },
+      "changed": "url must be a JSON string; a number used to be refused by the scheme check instead. Still a 400; the model answers with the handler's sentence for a missing url.",
+      "before": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http(s) URL."
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url and soap are required."
+        }
+      }
+    },
+    {
+      "name": "soap of the wrong JSON type",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "https://sts.invalid/sts",
+        "soap": {
+          "Envelope": {}
+        }
+      },
+      "changed": "soap must be a JSON string; an object used to be serialized by axios and posted to the STS as JSON. The model refuses it with the handler's sentence for a missing soap.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "STS call failed: getaddrinfo ENOTFOUND sts.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url and soap are required."
+        }
+      }
+    },
+    {
+      "name": "sslValidate of the wrong JSON type",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "https://sts.invalid/sts",
+        "soap": "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"><s:Body><t:RequestSecurityToken xmlns:t=\"http://docs.oasis-open.org/ws-sx/ws-trust/200512\"><t:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</t:RequestType></t:RequestSecurityToken></s:Body></s:Envelope>",
+        "sslValidate": 0
+      },
+      "changed": "sslValidate must be a boolean or text (a form sends text); a number used to be read as true. The model refuses it.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "STS call failed: getaddrinfo ENOTFOUND sts.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `sslValidate` must be a JSON boolean or a JSON string or null. GET /api-docs describes what wstrustProxy takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "a well-formed SOAP 1.2 request reaches the network (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "https://sts.invalid/sts",
+        "soap": "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"><s:Body><t:RequestSecurityToken xmlns:t=\"http://docs.oasis-open.org/ws-sx/ws-trust/200512\"><t:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</t:RequestType></t:RequestSecurityToken></s:Body></s:Envelope>",
+        "soapVersion": "1.2",
+        "action": "http://docs.oasis-open.org/ws-sx/ws-trust/200512/RST/Issue",
+        "sslValidate": true
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "STS call failed: getaddrinfo ENOTFOUND sts.invalid"
+        }
+      }
+    },
+    {
+      "name": "SOAP 1.1, given as a JSON number, with validation off as text",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "http://sts.invalid/sts",
+        "soap": "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"><s:Body><t:RequestSecurityToken xmlns:t=\"http://docs.oasis-open.org/ws-sx/ws-trust/200512\"><t:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</t:RequestType></t:RequestSecurityToken></s:Body></s:Envelope>",
+        "soapVersion": 1.1,
+        "action": "urn:issue",
+        "sslValidate": "false"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "STS call failed: getaddrinfo ENOTFOUND sts.invalid"
+        }
+      }
+    },
+    {
+      "name": "a member nobody expects does not stop it",
+      "method": "POST",
+      "path": "/wstrust",
+      "body": {
+        "url": "https://sts.invalid/sts",
+        "soap": "<s:Envelope xmlns:s=\"http://www.w3.org/2003/05/soap-envelope\"><s:Body><t:RequestSecurityToken xmlns:t=\"http://docs.oasis-open.org/ws-sx/ws-trust/200512\"><t:RequestType>http://docs.oasis-open.org/ws-sx/ws-trust/200512/Issue</t:RequestType></t:RequestSecurityToken></s:Body></s:Envelope>",
+        "unexpected": [
+          1,
+          2
+        ]
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "STS call failed: getaddrinfo ENOTFOUND sts.invalid"
+        }
+      }
+    }
+  ]
+}
