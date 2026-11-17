@@ -396,6 +396,10 @@ COPY client/src/dpop.js ./
 # with the same code the pages use.
 COPY client/src/did.js ./
 COPY client/src/metadata_client.js client/src/vci_metadata.js client/src/op_metadata.js ./
+# The protocol catalogues those modules (and ssf_events.js, scim_client.js)
+# require as "./catalog/<name>.json" — generated from models/catalog/, and a
+# sibling path precisely so that a flat copy like these can resolve it.
+COPY client/src/catalog ./catalog
 # The Kerberos v5 codec, loaded directly by tests/krb5_crypto_vectors.js so the
 # RFC 3961/3962/8009 vectors can be checked with no browser and no KDC.
 #

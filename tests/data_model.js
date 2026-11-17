@@ -135,6 +135,9 @@ function live() {
                    path.join(scratch, "models", "node_modules"), "dir");
     copyTree(path.join(ROOT, "common", "model"),
              path.join(scratch, "common", "model"), []);
+    // The catalogues, so the copy starts as current as the original.
+    copyTree(path.join(ROOT, "client", "src", "catalog"),
+             path.join(scratch, "client", "src", "catalog"), []);
     // The documents the generator writes a region of.
     fs.mkdirSync(path.join(scratch, "embedded"));
     fs.copyFileSync(path.join(ROOT, "embedded", "CLAUDE.md"),
