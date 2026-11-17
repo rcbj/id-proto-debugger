@@ -503,12 +503,13 @@ async function registerApplication(spBase, callbackUri) {
 // proves that realm is up and answering AS ITSELF before anything is
 // configured against it.
 //
-// The SAML documents are asked for BY THE NAME REALM 1 WILL USE, because the
-// mock mints per-service-provider metadata (`saml2.perApplicationEntityId`) —
-// so a document fetched without that name carries a DIFFERENT entityID from
-// the one assertions will actually arrive with, and `fedPeer` is checked
-// against the Issuer, so the flow would be refused with "it was issued by
-// somebody else".
+// The SAML documents are asked for at the path named for realm 1's
+// application, which iya-sts still serves, and the entityID is READ from them
+// rather than assumed: `fedPeer` is checked against the Issuer, and a wrong
+// one is refused with "it was issued by somebody else". Since iya-sts #523
+// (in 1.0.0) every SAML entityID of a realm is that realm's OAuth issuer, so
+// the name no longer changes it; `saml2.perApplicationEntityId` was retired
+// with the rest (#358).
 // ---------------------------------------------------------------------------
 async function fetchText(url, what) {
   log.debug("Entering fetchText(). " + url);
@@ -626,19 +627,20 @@ async function readOidcMetadata(idpBase) {
 // ---------------------------------------------------------------------------
 // WHAT REALM 1 STAMPS ON WHAT IT ISSUES TO THIS APPLICATION.
 //
-// Needed because "was this issued by realm 1" is not one question across the
-// five protocols and cannot be asked by looking for realm 1's base URL. An
-// OAuth issuer IS that base URL; a SAML 2.0 <Issuer> is an entityID the mock
-// mints per service provider from it; and a SAML **1.1** issuer is neither —
-// `saml11.providerId` defaults to the URN `urn:sts-mock:idp:saml11`, which
-// carries no realm and no host at all, so a check for `spBase` inside a 1.1
-// assertion looks for something that is not there and never was. The
-// WS-Federation token is a SAML 1.1 assertion by default and inherits that.
+// Since iya-sts #523 (in 1.0.0) this is one string per realm: every SAML
+// 2.0 <Issuer> and entityID, the SAML 1.1 providerID and the WS-Federation
+// entityID is the realm's OAuth issuer, with no override. Until then they
+// were three shapes — a per-service-provider entityID
+// (`saml2.perApplicationEntityId`) and, for SAML 1.1 and the WS-Federation
+// token built on it, the URN `saml11.providerId` defaulted to — and the
+// settings that made them were retired (#358).
 //
-// So it is READ from the document realm 1 publishes for this application, the
-// same way the partner's is read from realm 2's. The alternative — writing the
-// three shapes down here — is a second copy of `providerIdFor()` that agrees
-// with the mock until somebody changes a setting.
+// It is still READ from the document realm 1 publishes for this application,
+// the same way the partner's is read from realm 2's, rather than taken to be
+// `spBase`: the OAuth issuer is the base the request arrived on unless
+// `oauth2.issuer` pins it, and a check that wrote the rule down here would be
+// a second copy of iya-sts's that agrees with it until somebody changes a
+// setting.
 // ---------------------------------------------------------------------------
 async function readLocalIssuer(spBase) {
   log.debug("Entering readLocalIssuer(). " + APP_PROTOCOL);
