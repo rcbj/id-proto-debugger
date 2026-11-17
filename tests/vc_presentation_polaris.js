@@ -50,8 +50,7 @@ const fs = require("fs");
 const path = require("path");
 const browserFlags = require("./browser_flags.js");
 const common = require("./jwt_vc_json_common.js");
-const consentScreen = require("./consent_screen.js");
-const { usernameFor } = require("./random_username.js");
+const walletIssuance = require("./wallet_issuance.js");
 const { Command, Option } = require("commander");
 const { loadUrl } = require("./page_load.js");
 const { waitForStatus, waitForValue } = require("./wait_for");
@@ -171,71 +170,23 @@ async function es256Credential(driver) {
 // anything this job wrote.
 async function mintEs256(driver) {
   log.debug("Entering mintEs256().");
-  await common.provisionWallet(issuerBase,
-    { why: "the wallet whose ES256 credential is presented to Polaris" });
-  const screen = await common.offerFromThePortalWallet(driver, {
-    By: By, until: until, stsBase: issuerBase,
-    username: usernameFor("polaris"), mode: "cross-device",
-    configuration: SD_JWT_CONFIG_ID, signingAlg: "ES256", wait: stepWait,
-    consentScreen: consentScreen });
-  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
-  await pageBundleReady(driver);
-  await driver.executeScript("localStorage.clear();");
-  await driver.navigate().refresh();
-  await pageBundleReady(driver);
-  await driver.wait(until.elementLocated(By.id("scan_offer_input")),
-                    stepWait);
-  await driver.executeScript(
-    "document.getElementById('scan_offer_input').value = arguments[0];",
-    screen.offerUri);
-  await clickId(driver, "scan_offer_button");
-  await driver.wait(until.elementLocated(By.id("start_issuance_button")),
-    stepWait, "taking the offer should offer Start Issuance");
-  await driver.sleep(1000);
-  await clickId(driver, "start_issuance_button");
-  await driver.wait(until.urlContains("vc-issuance-2.html"), stepWait,
-    "a pre-authorized offer goes straight to the Token Request");
-  await pageBundleReady(driver);
-  await driver.wait(until.elementLocated(By.id("vc_tx_code")), stepWait);
-  await driver.executeScript(
-    "document.getElementById('vc_tx_code').value = arguments[0];" +
-    "vcissuance2.onTxCodeChange();", screen.txCode);
-  await clickId(driver, "vc_token_request_button");
-  await driver.wait(async function () {
-    return !!(await driver.executeScript(
-      "var e = document.getElementById('vc_access_token');" +
-      "return e ? (e.value || e.textContent || '').trim() : '';"));
-  }, stepWait, "the Transaction Code should redeem the pre-authorized code");
-  await clickId(driver, "vc_approve_button");
-  await driver.wait(until.urlContains("vc-issuance-3.html"), stepWait,
-    "approving should issue the credential and open step 3");
-  const stored = await driver.wait(async function () {
-    return await driver.executeScript(
-      "var c = localStorage.getItem('sdjwtvc_credential');" +
-      "var k = localStorage.getItem('sdjwtvc_holder_private_jwk');" +
-      "return c && k ? { credential: c, holder: k } : null;");
-  }, stepWait, "the wallet should store the credential and its holder key");
-  const held = { credential: stored.credential };
-  const parts = String(held.credential).split("~");
-  held.header = common.jsonFromB64u(parts[0].split(".")[0]);
-  held.payload = common.jsonFromB64u(parts[0].split(".")[1]);
+  const held = await walletIssuance.collect(driver, {
+    By: By, until: until, baseUrl: baseUrl, issuerBase: issuerBase,
+    configuration: SD_JWT_CONFIG_ID, signingAlg: "ES256", label: "polaris",
+    wait: stepWait });
   assert.strictEqual(held.header.alg, "ES256", "the offer chose ES256 and " +
     "the credential is signed " + held.header.alg + "; Polaris checks ES256");
-  const holderPublic = JSON.parse(stored.holder);
-  assert.ok(held.payload.cnf && held.payload.cnf.jwk &&
-            held.payload.cnf.jwk.x === holderPublic.x,
-    "the credential must be bound to the holder key the WALLET generated");
-  const carried = parts.slice(1).filter(Boolean).map(function (d) {
-    return JSON.parse(common.b64uDecode(d).toString("utf8"))[1];
-  });
+  walletIssuance.assertBoundToTheWalletsKey(held);
+  const carried = String(held.credential).split("~").slice(1)
+    .filter(Boolean).map(function (d) {
+      return JSON.parse(common.b64uDecode(d).toString("utf8"))[1];
+    });
   ASKED.forEach(function (name) {
     assert.ok(carried.indexOf(name) !== -1, "the credential must carry " +
       name + " for Polaris to ask for it; it carries " + carried.join(", "));
   });
   assert.ok(!held.header.x5c, "the credential still carries x5c, so " +
             oid4vciHeaderNote());
-  log.info("[issuance] the wallet collected an ES256 " + held.payload.vct +
-           " through its own issuance pages.");
   log.debug("Leaving mintEs256().");
   return held;
 }

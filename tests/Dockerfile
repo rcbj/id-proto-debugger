@@ -382,6 +382,10 @@ COPY tests/vc_presentation_polaris.js ./
 # ISO mdoc: the engine test and the test issuer it and
 # vc_presentation_protocols.js require (a shared module, scheduled by nothing).
 COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
+# A credential collected through the wallet's own issuance pages from an
+# offer made on iya-sts's portal: shared by vc_presentation_protocols.js and
+# vc_presentation_polaris.js, and scheduled by nothing.
+COPY tests/wallet_issuance.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires
