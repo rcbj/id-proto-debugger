@@ -1,7 +1,7 @@
 # THE THIRD-PARTY IMAGES THE STACKS USE, AND WHERE THEIR COPIES LIVE.
 #
-# Every image the four compose files (docker-compose-run-tests.yml,
-# docker-compose.yml, local-tests.yml, keycloak-tests.yml, and the overlays on
+# Every image the three compose files (docker-compose-run-tests.yml,
+# docker-compose.yml, keycloak-tests.yml, and the overlays on
 # top of them) pull or build FROM is copied into a PRIVATE package under
 #
 #   ghcr.io/rcbj/id-proto-debugger/mirror/<mirror path>

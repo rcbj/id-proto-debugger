@@ -260,7 +260,7 @@ async function test() {
   options.addArguments("--unsafely-treat-insecure-origin-as-secure=" +
                        baseUrl.replace(/\/+$/, ""));
   // The mock STS serves https on a certificate it generated at startup (see
-  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // STS_HTTPS in keycloak-tests.yml). This trusts THAT KEY and no other, and adds
   // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
   // makes the whole argument. This file builds its Chrome options by hand
   // rather than through addBrowserAccessFlags(), which is why the call is here

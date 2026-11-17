@@ -84,7 +84,6 @@ const COMPOSE_FILE_NAMES = [
   "docker-compose-run-tests-no-host-ports.yml",
   "docker-compose-coverage.yml",
   "docker-compose.yml",
-  "local-tests.yml",
   "keycloak-tests.yml",
 ];
 

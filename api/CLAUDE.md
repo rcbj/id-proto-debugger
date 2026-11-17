@@ -70,7 +70,7 @@ A fifth setting is not a limit but an identity: **`userAgent`**, default `Identi
 ## `sts_truststore.sh`: the image's entrypoint, and it is a truststore rather than a switch
 
 The mock STS serves its **main port over TLS** in this project's test stacks
-(`STS_HTTPS=true` on the `sts` service in `local-tests.yml`,
+(`STS_HTTPS=true` on the `sts` service in
 `docker-compose-run-tests.yml` and `keycloak-tests.yml`). That is not a
 preference: the RFC 9700 pass is a **trust realm** on that one instance now
 rather than a second container, a realm binds no socket of its own, and the pass

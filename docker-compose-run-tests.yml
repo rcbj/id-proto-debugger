@@ -156,8 +156,7 @@ services:
       sts:
         condition: service_healthy
     # The stack's TLS pair, generated on the host before compose starts. See
-    # the same mount in local-tests.yml and the header of
-    # common/tls_listener.js: ONE pair for the api and the client, because the
+    # the header of common/tls_listener.js: ONE pair for the api and the client, because the
     # mock STS has to be handed the api's anchor in order to push to it.
     volumes:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
@@ -201,8 +200,7 @@ services:
       args:
         CONFIG_FILE: ${CONFIG_FILE}
     # The stack's TLS pair, generated on the host before compose starts. See
-    # the same mount in local-tests.yml and the header of
-    # common/tls_listener.js: ONE pair for the api and the client, because the
+    # the header of common/tls_listener.js: ONE pair for the api and the client, because the
     # mock STS has to be handed the api's anchor in order to push to it.
     volumes:
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
@@ -454,8 +452,7 @@ services:
       # every other job in the pool would see change under it.
       - STS_KEYS_EDDSA_SIGNING=true
       # The stack's anchor, so this service can PUSH a Security Event Token to
-      # the api over TLS (RFC 8935). See the long note on the same line in
-      # local-tests.yml: this is the only outbound connection from the mock to
+      # the api over TLS (RFC 8935). This is the only outbound connection from the mock to
       # the api, and without the anchor the push fails the handshake and reads
       # as a transmitter that sent nothing.
       - NODE_EXTRA_CA_CERTS=/etc/idptools/tls/stack-tls-cert.pem
@@ -508,8 +505,7 @@ services:
           #
           # The certificate is generated with SANs localhost, sts, sts-mock,
           # sts.example.com and 127.0.0.1, so this name must stay OUT of that
-          # list. local-tests.yml provides the same name through the api's
-          # extra_hosts, because that stack has no Docker DNS at all.
+          # list.
           - sts-not-in-the-certificate
     ports:
       - 8081:8081
@@ -799,10 +795,9 @@ services:
       # transmitter itself and the test would wait for an event that had
       # already arrived somewhere else.
       #
-      # `tests` is this service's compose DNS name. The local launcher needs
-      # no such entry and deliberately has none: local-tests.yml puts every
-      # service on HOST networking, where the test's own default of
-      # `localhost` is already the right answer.
+      # `tests` is this service's compose DNS name. A HOST-networked stack
+      # (keycloak-tests.yml) needs no such entry, since the test's own
+      # default of `localhost` is already the right answer there.
       SSF_RECEIVER_HOST: tests
       COMPANION_URL: http://companion:9700
       # The SPKI pin for the stack's own certificate, so Chrome in here

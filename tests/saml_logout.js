@@ -36,9 +36,9 @@ var waitTime = appconfig.waitTime;
 // directory entry, then saml2.defaultSingleLogoutService, and then falls back to
 // the assertion consumer service URL that service provider last used — which is
 // a GUESS, is logged as one, and happens to be right here because the debugger's
-// /samlacs and /samlslo are the same handler. local-run-tests.sh declares it
-// through the management API anyway, so that the run exercises the declared path
-// rather than the fallback; see there.
+// /samlacs and /samlslo are the same handler. It can be declared through the
+// management API instead, so that a run exercises the declared path rather
+// than the fallback.
 // ---------------------------------------------------------------------------
 var IDP = (process.env.SAML_IDP || "keycloak").toLowerCase();
 
@@ -198,8 +198,8 @@ async function ssoLogin(driver, metadataUrl, spEntityId, user, binding,
   // The SP's own Single Logout endpoint, which is NOT on the page: a
   // <samlp:LogoutRequest> carries no return address, so where a LogoutResponse
   // goes is something the service provider has to have DECLARED. common.sh
-  // exports it (SAML_SLO_URL) and local-run-tests.sh has its own name for the
-  // mock's copy of it. With neither set, nothing is registered and the mock
+  // exports it (SAML_SLO_URL), and SAML_STS_SLO_URL names iya-sts's copy of
+  // it. With neither set, nothing is registered and the mock
   // falls back to the last assertion consumer service URL — which is a guess,
   // is logged as one by that service, and is right on this stack because the
   // api answers /samlacs and /samlslo with one handler.
@@ -341,7 +341,7 @@ async function test() {
       "PrivateNetworkAccessSendPreflights,LocalNetworkAccessChecks");
 
   // The mock STS serves https on a certificate it generated at startup (see
-  // STS_HTTPS in local-tests.yml). This trusts THAT KEY and no other, and adds
+  // STS_HTTPS in keycloak-tests.yml). This trusts THAT KEY and no other, and adds
   // nothing when the run has no pin — browser_flags.js's addStsTrustFlags()
   // makes the whole argument. Without it the IdP half of this test meets a
   // certificate interstitial instead of a sign-in screen, and what the log

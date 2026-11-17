@@ -13,11 +13,9 @@ set -x
 # tests passed (--exit-code-from tests). On that default run the stack is
 # always torn down at the end.
 #
-# This is the command CLAUDE.md documents. It also carries every option
-# ./local-run-tests.sh had — the focused loops, --saml-dev, --sts-url and
-# --krb5-real-dc — which that launcher is being retired in favour of; see
-# usage() below. To run against an already-deployed site, use
-# ./remote-run-tests.sh.
+# This is the command CLAUDE.md documents, and it carries the focused
+# loops, --saml-dev, --sts-url and --krb5-real-dc; see usage() below. To run
+# against an already-deployed site, use ./remote-run-tests.sh.
 #
 # Usage:
 #   ./docker-run-tests.sh
@@ -277,9 +275,9 @@ esac
 # INSIDE the tests container) reaches the api/client by their compose DNS names.
 # That requires ./env/docker-tests.js (apiUrl=http://api:4000, uiUrl=
 # http://client:3000, spEntityId=http://client:3000/saml/sp) — NOT ./env/local.js,
-# whose localhost URLs only work when the browser runs on the host (see
-# ./local-run-tests.sh). It must also match the runtime CONFIG_FILE the compose
-# file pins for the api/client services. Baking local.js here made the SAML
+# whose localhost URLs only work when the browser runs on the host. It must
+# also match the runtime CONFIG_FILE the compose file pins for the api/client
+# services. Baking local.js here made the SAML
 # metadata load hit http://localhost:4000 from inside the container → connection
 # refused. The tests container sets its own correct in-container SAML defaults
 # (SAML_SP_ENTITY_ID, API_BASE_URL, ...) in tests/run-tests-in-container.sh, so
@@ -737,20 +735,6 @@ trap onExit EXIT
 # v1 recreate bug ("KeyError: 'ContainerConfig'") pre-existing containers trigger.
 docker_compose "${COMPOSE_ARGS[@]}" down -v --remove-orphans 2>/dev/null || true
 
-# And tear down the LOCAL stack's containers as well, because several services —
-# keycloak-wsfed among them — carry the same hard-coded `container_name` in both
-# compose files while the two files configure them completely differently: the
-# local one runs keycloak-wsfed on host networking with a WildFly port-offset of 2
-# (so it binds 8082/8445), the containerized one on a bridge network with no offset
-# (8080/8443, published as 8082:8080). A container left over from a local run is
-# therefore the wrong container for this run, and the giveaway is a log that shows
-# WildFly binding 8082 when this stack expects 8080. Best-effort and quiet: the
-# file may not exist in a trimmed checkout, and nothing here should fail a run.
-if [ -f "local-tests.yml" ];
-then
-  docker_compose -f local-tests.yml down --remove-orphans 2>/dev/null || true
-fi
-
 # THE BIND MOUNTS, CREATED HERE AND MADE WRITABLE BY ANY UID.
 #
 # Every image this repository builds now runs as an unprivileged user (uid
@@ -875,10 +859,9 @@ runPartialStack()
   fi
   if inList sts "${services}";
   then
-    # No requireStsReachable() / requireStsSpiffeListeners() here, unlike
-    # ./local-run-tests.sh: those guard against a stranger holding a HOST
-    # port under host networking, and on this bridge network every listener
-    # is in the container's own namespace — a squatter on the host can only
+    # No requireStsReachable() here: it guards against a stranger holding a
+    # HOST port under host networking, and on this bridge network every
+    # listener is in the container's own namespace — a squatter on the host can only
     # make the port PUBLISH fail, which `up` reports itself.
     composeUpAndWait --no-deps sts
     check_return_code $?

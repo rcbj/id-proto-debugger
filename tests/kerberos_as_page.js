@@ -591,7 +591,7 @@ async function test() {
   // this stack to be up. See tests/expectation.js.
   mustBeReady(reachable, "the client, the api and the mock STS (which " +
               "carries the KDC on port " + kdcPort + "). Start the stack, " +
-              "or run ./local-run-tests.sh which does.");
+              "or run ./docker-run-tests.sh which does.");
   if (reachable.kdcPort && reachable.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + reachable.kdcPort +
         " but this test was told " +

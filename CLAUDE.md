@@ -335,8 +335,8 @@ release, not this repository's, and it already runs as **uid 10001**; it binds
 88 (TCP and UDP), 389 and 636 — all privileged. The two bridged stacks
 (`docker-compose.yml`, `docker-compose-run-tests.yml`) keep that uid and set
 `sysctls: net.ipv4.ip_unprivileged_port_start: 0`, which is per network
-namespace and so lowers the bar inside that container alone. The two
-host-network stacks (`local-tests.yml`, `keycloak-tests.yml`) cannot set a
+namespace and so lowers the bar inside that container alone. The
+host-network stack (`keycloak-tests.yml`) cannot set a
 per-namespace sysctl from a container, so there it runs as `user: "0:0"`. The
 reason is the SPIRE Server API's Unix socket, which the tests container dials
 and which reads as a protocol failure when it goes wrong: since iya-sts
@@ -403,8 +403,8 @@ TEST_CONCURRENCY=6 ./run-coverage.sh
 # `process.exit()` in a catch SKIPS the finally that quits the driver, which
 # is the bug that made the backstop necessary.
 # It is forwarded to the containerized launchers the same way TEST_CONCURRENCY
-# is, so it works on all three.
-TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
+# is, so it works on all of them.
+TEST_JOB_TIMEOUT_MS=300000 ./docker-run-tests.sh
 
 # HOW LONG A BROWSER WAIT MAY TAKE. `waitTime` in tests/env/*.js is the
 # timeout every driver.wait() in the suite is given and it is 2000ms, which
@@ -418,18 +418,16 @@ TEST_JOB_TIMEOUT_MS=300000 ./local-run-tests.sh
 # fail. Forwarded past sudo and into compose exactly as the two above are.
 TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 
-# Tests from local shell, dependencies still in containers. BEING RETIRED:
-# since 2026-11-12 every option it has is also an option of
-# ./docker-run-tests.sh, which is what the commands below now use. The focused
-# modes there do not re-implement the jobs — each names a subset of the jobs
+# The focused modes of ./docker-run-tests.sh (below) do not re-implement the
+# jobs — each names a subset of the jobs
 # tests/run-report.js already builds (TEST_SELECT, `selectJobs()` there), starts
 # only the services that subset needs (`--wait`ed, `--no-deps`), runs the
-# tests container with `compose run`, and LEAVES THE STACK UP. Also new there:
+# tests container with `compose run`, and LEAVES THE STACK UP. Also there:
 # --keep-stack (the full suite, left up), --saml-dev and --sts-url=<base>
 # (docker-compose-run-tests-external-sts.yml). A browser on the HOST reaches
 # iya-sts at https://localhost:8081, but the debugger's pages are built for
 # the compose names and need `127.0.0.1 client api sts keycloak` in /etc/hosts.
-./local-run-tests.sh
+./docker-run-tests.sh --keep-stack
 
 # Against a site that is ALREADY DEPLOYED, with everything on the other side
 # of each protocol started locally
@@ -535,11 +533,11 @@ context and on any build-time download that is not in its shrinking
 start of every `tests.yml` run), and `tests/image_mirror_coverage.js` fails when
 a `FROM` or an `image:` is not covered, and when the compose files name
 different iya-sts releases. **Since 2026-11-13 the same holds for every stack
-and for iya-sts's own image**: `docker-compose.yml`, `local-tests.yml` and
+and for iya-sts's own image**: `docker-compose.yml` and
 `keycloak-tests.yml` carry the same `x-mirror-contexts` block and mirror
 `image:` paths, iya-sts's release is pulled as the mirror's copy
 (`iya-sts:<version>` in the list), and `tests/image_mirror_coverage.js` holds
-all four files to it. The local and remote launchers check the login with
+all three files to it. The remote launcher checks the login with
 `requireGhcrMirror()` too. What the stack builds is named
 `${IMAGE_REGISTRY}/<name>:${IMAGE_TAG}` (default
 `ghcr.io/rcbj/id-proto-debugger/…:latest`) and `tests.yml` pushes it, under the

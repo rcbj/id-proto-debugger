@@ -191,7 +191,7 @@ init()
   # krb5_mit_client.js has no page and no relay; `kinit` opens the socket in
   # the test's own process, so it reads KRB5_TEST_KDC_HOST and run-report.js
   # defaults THAT to localhost, which is right on a host launcher
-  # (local-tests.yml is host-networked, so the mock's port 88 is the host's).
+  # (keycloak-tests.yml is host-networked, so the mock's port 88 is the host's).
   # Here it is not: nothing listens on 88 in this
   # container, and `kinit` would answer `Cannot contact any KDC for realm
   # EXAMPLE.COM` — a message naming neither the variable nor the stack.

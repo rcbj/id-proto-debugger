@@ -381,8 +381,8 @@ chmod -R 0777 coverage tests/report || true
 # The rationale for keeping a week does not survive being checked either: it
 # said other launchers write into this directory, and none does. The
 # instrumented bundles and the beacon exist only under the coverage overlay
-# (docker-compose-coverage.yml, COVERAGE=true), so ./docker-run-tests.sh and
-# ./local-run-tests.sh ship no browser coverage at all and have nothing to
+# (docker-compose-coverage.yml, COVERAGE=true), so ./docker-run-tests.sh
+# ships no browser coverage at all and have nothing to
 # lose here. The other two domains were already per-run — c8 writes
 # coverage/node/tmp and coverage/api/tmp fresh — which is why frontend was the
 # one domain whose local and CI numbers disagreed.
@@ -435,15 +435,8 @@ trap onExit EXIT
 
 # Start from a clean slate, as ./docker-run-tests.sh does: leftover containers and
 # the Keycloak DB volume from a previous run make provisioning 409 on a stale
-# realm, and several services carry the same hard-coded container_name in
-# local-tests.yml while being configured incompatibly there (host networking, a
-# WildFly port-offset), so a container left behind by ./local-run-tests.sh is the
-# wrong container for this run. Best-effort and quiet in both cases.
+# realm. Best-effort and quiet.
 ${COMPOSE} down -v --remove-orphans 2>/dev/null || true
-if [ -f "local-tests.yml" ];
-then
-  CONFIG_FILE=./env/local.js docker_compose -f local-tests.yml down --remove-orphans 2>/dev/null || true
-fi
 
 # Bring the WS-Federation side-car up on its own first and stop if it does not
 # stay up. It is the slowest and most fragile service here — Keycloak 8.0.1 on

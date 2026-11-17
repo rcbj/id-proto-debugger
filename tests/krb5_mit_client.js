@@ -127,8 +127,7 @@ var companionUrl = (process.env.COMPANION_URL || "http://localhost:9700")
 // against SPIFFE_*, and for the identical reason.
 //
 // `KRB5_KDC_HOST` is the API'S view: the five page jobs type that address into
-// a page and the api's relay resolves it, so it is the compose name `sts` on
-// both stacks (local-tests.yml gives the api an `extra_hosts` entry for it).
+// a page and the api's relay resolves it, so it is the compose name `sts`.
 // NOTHING resolves a name for this file — `kinit` opens the socket itself, out
 // here — so `sts` means nothing on a host run and MIT says
 // `Cannot contact any KDC for realm 'EXAMPLE.COM'`, a message naming neither
@@ -137,7 +136,7 @@ var companionUrl = (process.env.COMPANION_URL || "http://localhost:9700")
 // same shell.
 //
 // So: `localhost` by default, which is right on a host launcher (every service
-// on local-tests.yml is host-networked, so the mock's port 88 IS the host's),
+// on keycloak-tests.yml is host-networked, so the mock's port 88 IS the host's),
 // and `run-tests-in-container.sh` sets these two to `sts` for the bridge stack
 // exactly as it does STS_URL and SPIFFE_TEST_*.
 //
@@ -1264,7 +1263,7 @@ async function test() {
   }
   mustBeReady(ready, "the mock STS with its KDC reachable at " +
               kdcHost + ":" + kdcPort + ", serving the realm this job " +
-              "expects. Start the stack, or run ./local-run-tests.sh.");
+              "expects. Start the stack, or run ./docker-run-tests.sh.");
   if (ready.kdcPort && ready.kdcPort !== String(kdcPort)) {
     log.warn("the mock STS reports its KDC on port " + ready.kdcPort +
         "; using that.");
