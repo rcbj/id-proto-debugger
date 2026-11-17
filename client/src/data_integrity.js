@@ -34,12 +34,13 @@
 // The one difference that is NOT a column, and that costs everybody once:
 // a DataIntegrityProof's options are canonicalized under the DOCUMENT's
 // @context (and a proof that carries its own @context must carry exactly
-// that one — compared for equality, not as a prefix), while the legacy types
-// follow jsonld-signatures, which lets a proof's own @context win and falls
-// back to https://w3id.org/security/v2 when the document names none. Some
-// pre-2020 signers ALWAYS used security/v2; verification tries that second
-// reading only for the legacy types, and says so when it is the one that
-// verified.
+// that one — compared for equality, not as a prefix; the JCS suites instead
+// keep the @context in the proof and check the document's begins with it),
+// while the legacy types follow jsonld-signatures, which lets a proof's own
+// @context win and falls back to https://w3id.org/security/v2 when the
+// document names none. Some pre-2020 signers ALWAYS used security/v2. Such a
+// proof is INVALID here — the debugger implements the specification — and
+// the reason says that it would have verified under that reading.
 //
 // WHAT THIS DOES NOT DECIDE. It verifies that the key the verificationMethod
 // names made this signature over this document. Whether that key may speak
@@ -52,10 +53,16 @@
 // and the same in a page served over plain HTTP as anywhere else. Only RDFC
 // canonicalization is asynchronous (jsonld), so the API is promises.
 //
+// RDFC-1.0 IS REGISTERED, NOT REQUIRED. jsonld and rdf-canonize are most of a
+// bundle, and this module is reached from vp_protocols.js, which nearly every
+// VC page loads for reasons that have nothing to do with JSON-LD. So the JCS
+// suites work everywhere, and the RDFC suites and legacy types work wherever
+// data_integrity_rdfc.js has been loaded, which registers the canonicalizer
+// here. A page that does not load it gets an error naming the module.
+//
 // NO DOM.
 // ---------------------------------------------------------------------------
 
-var jsonld = require("jsonld");
 var provider = require("./crypto_provider");
 var cbytes = require("./crypto_bytes");
 var jsonldContexts = require("./jsonld_contexts");
@@ -240,10 +247,31 @@ function jcs(value) {
 // RDFC-1.0 to N-Quads, in safe mode (a term that expands to nothing is an
 // error, not a silently unsigned claim), with no base IRI, through the
 // offline loader. These are jsonld-signatures' own options.
+var rdfcCanonize = null;
+
+// data_integrity_rdfc.js hands in jsonld.canonize.
+function registerRdfc(canonize) {
+  log.debug("Entering registerRdfc().");
+  rdfcCanonize = canonize;
+  log.debug("Leaving registerRdfc().");
+}
+
+function rdfcAvailable() {
+  log.debug("Entering rdfcAvailable().");
+  log.debug("Leaving rdfcAvailable().");
+  return typeof rdfcCanonize === "function";
+}
+
 function rdfc(doc, loader) {
   log.debug("Entering rdfc().");
+  if (!rdfcAvailable()) {
+    log.debug("Leaving rdfc(). Not registered.");
+    return Promise.reject(new Error("RDFC-1.0 canonicalization is not " +
+      "loaded on this page (data_integrity_rdfc.js registers it); only the " +
+      "JCS cryptosuites are available here."));
+  }
   log.debug("Leaving rdfc().");
-  return jsonld.canonize(doc, {
+  return rdfcCanonize(doc, {
     algorithm: "RDFC-1.0",
     format: "application/n-quads",
     base: null,
@@ -610,8 +638,11 @@ function didKeyJwk(did) {
 // A resolver for callers that have no policy of their own: did:key and
 // did:jwk read in place, other DIDs and https URLs through did.js with the
 // caller's fetch. The Verifier passes its own instead.
-function defaultResolveKey(fetchImpl) {
+// options.allowHttp lets did:web fall back to plain http, for the stacks
+// here that serve a DID document without TLS (did.js tries https first).
+function defaultResolveKey(fetchImpl, options) {
   log.debug("Entering defaultResolveKey().");
+  var allowHttp = !!(options && options.allowHttp);
   log.debug("Leaving defaultResolveKey().");
   return function resolveKey(vm) {
     log.debug("Entering resolveKey(). " + String(vm).slice(0, 80));
@@ -631,7 +662,7 @@ function defaultResolveKey(fetchImpl) {
       return Promise.reject(e);
     }
     log.debug("Leaving resolveKey(). Resolving.");
-    return didLib.resolveVerificationMethod(url, { allowHttp: false,
+    return didLib.resolveVerificationMethod(url, { allowHttp: allowHttp,
       fetch: fetchImpl }).then(function (r) {
       return methodToJwk(r.method);
     });
@@ -692,13 +723,53 @@ function verifySignature(row, prim, jwk, proof, data) {
   return { valid: good, alg: prim.jws };
 }
 
+// What a signature that verifies only under a non-conformant reading says
+// about its signer.
+var DIAGNOSES = {
+  "implicit-context": function (id) {
+    log.debug("Entering DIAGNOSES.implicit-context().");
+    log.debug("Leaving DIAGNOSES.implicit-context().");
+    return "the signature does not verify as " + id + " defines it, and " +
+      "WOULD verify had the document's @context been added to proof " +
+      "options that do not carry it: the signer hashed an @context it did " +
+      "not write into the proof (" + id + " Proof Configuration step 2 " +
+      "requires the proof to carry it).";
+  },
+  "security-v2": function (id) {
+    log.debug("Entering DIAGNOSES.security-v2().");
+    log.debug("Leaving DIAGNOSES.security-v2().");
+    return "the signature does not verify with the proof options read " +
+      "under the document's @context, and WOULD verify read under " +
+      "https://w3id.org/security/v2: the signer used the pre-2020 " +
+      "jsonld-signatures canonicalization of " + id + "'s options.";
+  }
+};
+
+// Canonicalize, hash and check the signature under one reading.
+async function readSignature(row, prim, jwk, proof, unsecured, variant,
+                             loader) {
+  log.debug("Entering readSignature(). " + variant);
+  var vd;
+  try {
+    vd = await verifyData(row, proof, unsecured, jwk, variant, loader);
+  } catch (e) {
+    log.debug("Leaving readSignature(). Canonicalization failed.");
+    return { valid: false, reason: "canonicalization failed (every " +
+      "@context must be one this debugger ships or was given, and every " +
+      "term defined): " + e.message };
+  }
+  var r = verifySignature(row, prim, jwk, proof, vd.data);
+  log.debug("Leaving readSignature(). " + r.valid);
+  return r;
+}
+
 // One proof on one document. opts: { resolveKey(vm) -> Promise<JWK>,
 // documentLoader, fetch (for the default resolver) }. Answers
 //   { valid, unsupported, reason, suite, proofType, verificationMethod,
 //     proofPurpose, challenge, domain, created, expires, jwk, alg,
-//     contextReading, nonConformant, spec }
-// `nonConformant` is set when the signature verified only under a reading
-// the specification does not allow; a caller reports it as a warning.
+//     diagnosis, spec }
+// `diagnosis` is set on an INVALID proof that would have verified under a
+// reading the specification does not allow, and names that defect.
 // and never throws for a bad proof: a reason is the answer.
 async function verifyOneProof(doc, proof, opts) {
   log.debug("Entering verifyOneProof().");
@@ -768,38 +839,27 @@ async function verifyOneProof(doc, proof, opts) {
     log.debug("Leaving verifyOneProof(). Wrong key type.");
     return Object.assign(out, { reason: e.message });
   }
-  var readings = row.legacy ? ["document", "security-v2"] :
-      (row.canon === "jcs" && p["@context"] === undefined ?
-       ["document", "implicit-context"] : ["document"]);
-  var last = null;
-  for (var i = 0; i < readings.length; i++) {
-    var vd;
-    try {
-      vd = await verifyData(row, p, unsecured, jwk, readings[i],
-                            o.documentLoader);
-    } catch (e) {
-      last = { valid: false, reason: "canonicalization failed (every " +
-        "@context must be one this debugger ships or was given, and every " +
-        "term defined): " + e.message };
-      continue;
+  // The specification's reading decides. When it fails, the readings a
+  // non-conformant signer is known to use are tried ONLY to say what went
+  // wrong: a proof that verifies under one of them is still invalid, and the
+  // reason names the defect (#475; the debugger implements the spec, and
+  // compatibility with such signers is not its job).
+  var spec = await readSignature(row, prim, jwk, p, unsecured, "document",
+                                 o.documentLoader);
+  Object.assign(out, spec);
+  if (!out.valid) {
+    var alternatives = row.legacy ? ["security-v2"] :
+        (row.canon === "jcs" && p["@context"] === undefined ?
+         ["implicit-context"] : []);
+    for (var i = 0; i < alternatives.length; i++) {
+      var alt = await readSignature(row, prim, jwk, p, unsecured,
+                                    alternatives[i], o.documentLoader);
+      if (alt.valid) {
+        out.diagnosis = DIAGNOSES[alternatives[i]](id);
+        out.reason = out.diagnosis;
+        break;
+      }
     }
-    var r = verifySignature(row, prim, jwk, p, vd.data);
-    last = r;
-    if (r.valid) {
-      out.contextReading = readings[i];
-      break;
-    }
-  }
-  Object.assign(out, last || {});
-  if (out.valid && out.contextReading === "implicit-context") {
-    out.nonConformant = id + " verifies only when the document's @context " +
-      "is added to proof options that do not carry it: the signer hashed " +
-      "an @context it did not write into the proof, which a verifier " +
-      "following the specification rejects.";
-  } else if (out.valid && out.contextReading === "security-v2") {
-    out.nonConformant = id + " verifies only with its options read under " +
-      "https://w3id.org/security/v2 rather than the document's @context " +
-      "(the pre-2020 jsonld-signatures behaviour).";
   }
   if (!out.valid && !out.reason) {
     out.reason = "the signature does not verify with " +
@@ -848,6 +908,8 @@ module.exports = {
   suitesForKey: suitesForKey,
   jcs: jcs,
   rdfc: rdfc,
+  registerRdfc: registerRdfc,
+  rdfcAvailable: rdfcAvailable,
   withSuiteContext: withSuiteContext,
   methodToJwk: methodToJwk,
   didKeyJwk: didKeyJwk,

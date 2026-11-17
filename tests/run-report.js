@@ -3904,6 +3904,17 @@ function buildJobs() {
     env: {},
   });
 
+  // The same engine against iya-sts's own vc_data_integrity.js, loaded in
+  // process from the image the stack runs: its credentials verified here,
+  // ours there, and the wallet's holder VP through its Verifier. Fails,
+  // naming the image, when that tree cannot be had.
+  jobs.push({
+    name: "Data Integrity proofs against iya-sts (both directions, and the " +
+        "wallet's holder VP through its Verifier, in node)",
+    script: "data_integrity_iyasts.js",
+    env: {},
+  });
+
   // The debugger as an OpenID4VP 1.0 VERIFIER (#364): the DCQL builder, the
   // Verifier's x509 identity (read back by node and by the wallet's own
   // verifyX509Request), and verifyResponse() over dc+sd-jwt, mso_mdoc,

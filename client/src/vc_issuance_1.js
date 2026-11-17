@@ -335,7 +335,67 @@ function buildConfigRows() {
 
   var body = el("config_rows");
   if (body) body.innerHTML = html;
+  attachFormatChoices();
   log.debug("Leaving buildConfigRows().");
+}
+
+// The format field offers every format identifier, and the signing algorithm
+// field the identifiers THAT format defines, as suggestions (#474). Changing
+// the format moves the binding and algorithm placeholders with it.
+function attachFormatChoices() {
+  log.debug("Entering attachFormatChoices().");
+  var formatInput = el(vciMetadata.idFor("format"));
+  var algInput = el(vciMetadata.idFor(
+      "credential_signing_alg_values_supported"));
+  if (!formatInput || !algInput) {
+    log.debug("Leaving attachFormatChoices(). Fields absent.");
+    return;
+  }
+  var formats = document.createElement("datalist");
+  formats.id = "vci_format_choices";
+  vcFormats.formatIds().forEach(function (id) {
+    var o = document.createElement("option");
+    o.value = id;
+    o.textContent = vcFormats.format(id).name;
+    formats.appendChild(o);
+  });
+  formatInput.parentNode.appendChild(formats);
+  formatInput.setAttribute("list", formats.id);
+  var algs = document.createElement("datalist");
+  algs.id = "vci_signing_alg_choices";
+  algInput.parentNode.appendChild(algs);
+  algInput.setAttribute("list", algs.id);
+  var previous = formatInput.value;
+  formatInput.addEventListener("focus", function () {
+    previous = formatInput.value;
+  });
+  formatInput.addEventListener("change", function () {
+    vciMetadata.onFormatChange(previous);
+    previous = formatInput.value;
+    renderSigningAlgChoices();
+  });
+  log.debug("Leaving attachFormatChoices().");
+}
+
+// The signing algorithm suggestions for the format the field now names.
+function renderSigningAlgChoices() {
+  log.debug("Entering renderSigningAlgChoices().");
+  var list = el("vci_signing_alg_choices");
+  var row = vcFormats.format(val(vciMetadata.idFor("format")));
+  if (!list) {
+    log.debug("Leaving renderSigningAlgChoices(). No list.");
+    return;
+  }
+  list.innerHTML = "";
+  (row ? row.signingAlgs : []).forEach(function (a) {
+    var o = document.createElement("option");
+    o.value = String(a);
+    if (vcFormats.COSE_ALG_NAMES[String(a)]) {
+      o.textContent = vcFormats.COSE_ALG_NAMES[String(a)];
+    }
+    list.appendChild(o);
+  });
+  log.debug("Leaving renderSigningAlgChoices().");
 }
 
 // --- reading and writing the pane ------------------------------------------
@@ -353,6 +413,7 @@ function loadConfiguration() {
   });
   opMetadata.loadFromLocalStorage();
   vciMetadata.loadFromLocalStorage();
+  renderSigningAlgChoices();
   // The DID fields and the use-DIDs box, after the metadata load: the box's
   // default follows the chosen credential's FORMAT, which vciMetadata has only
   // just restored. Rendering it before that reads an empty format and defaults
@@ -430,10 +491,7 @@ function restoreDefaults() {
     metadataClient.setMetadataField(m.name, m.dflt);
     opMetadata.markNotDefined(m.name, false);
   });
-  vciMetadata.VCI_METADATA.concat(vciMetadata.VCI_CONFIG_METADATA)
-                                  .forEach(function (m) {
-    metadataClient.setMetadataField(vciMetadata.idFor(m.name), m.dflt);
-  });
+  vciMetadata.restoreDefaultFields();
   saveConfiguration();
   // The credential configuration id is one of the defaults just restored, and
   // the pane's rows belong to whichever credential it now names.

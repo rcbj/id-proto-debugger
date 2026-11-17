@@ -24,12 +24,12 @@
 // are interoperability checks, since ECDSA with a random nonce has no single
 // right answer.
 //
-// It also pins the two readings the specifications do NOT allow and the
-// module reports as `nonConformant` rather than refusing outright: a JCS
-// proof whose signer hashed the document's @context but did not write it
-// into the proof (this wallet's own ecdsa-jcs-2019 holder proof did exactly
-// that until #475), and a legacy proof whose options were canonicalized
-// under security/v2.
+// It also pins a reading the specifications do NOT allow, which the module
+// REFUSES and diagnoses: a JCS proof whose signer hashed the document's
+// @context but did not write it into the proof (this wallet's own
+// ecdsa-jcs-2019 holder proof did exactly that until #475). The debugger
+// implements the specification; tolerating such a signer is not its job,
+// naming its defect is.
 //
 // Every implementation used here is a RELEASED version, pinned in
 // tests/package.json. No browser and no services, so this never skips.
@@ -77,7 +77,7 @@ function load(name) {
   return paths.requireSharedModule([path.join(SRC, name)],
                                    "client/src/" + name);
 }
-const di = load("data_integrity.js");
+const di = load("data_integrity_rdfc.js");
 const contexts = load("jsonld_contexts.js");
 const didLib = load("did.js");
 
@@ -176,7 +176,6 @@ async function both(name, makeSuite, ours, privateJwk, vm, v2) {
     purpose: new AssertionProofPurpose(), documentLoader: loader });
   var r = await di.verifyProof(signed, { resolveKey: resolveKey });
   assert.ok(r.valid, label + ": theirs must verify here: " + r.reason);
-  assert.ok(!r.proofs[0].nonConformant, label + ": theirs is conformant");
   assert.ok(!(await di.verifyProof(tampered(signed),
     { resolveKey: resolveKey })).valid, label + ": tampered theirs fails");
   var mine = await di.createProof(credential(v2), { suite: ours,
@@ -444,9 +443,9 @@ async function ownRoundTrips() {
   log.debug("Leaving ownRoundTrips().");
 }
 
-// The two readings the specifications forbid, verified but flagged.
-async function nonConformantReadings() {
-  log.debug("Entering nonConformantReadings().");
+// The @context rules, and a forbidden reading refused with its defect named.
+async function contextRules() {
+  log.debug("Entering contextRules().");
   var provider = paths.requireCryptoModule("crypto_provider.js");
   var kp = provider.generateKeyPair("ec-p256");
   var priv = provider.exportKey(kp, "jwk");
@@ -461,9 +460,10 @@ async function nonConformantReadings() {
   var stripped = JSON.parse(JSON.stringify(jcsSigned));
   delete stripped.proof["@context"];
   var r = await di.verifyProof(stripped, { resolveKey: resolveKey });
-  assert.ok(r.valid && r.proofs[0].nonConformant &&
-            r.proofs[0].contextReading === "implicit-context",
-            "a JCS proof that dropped its @context verifies, flagged");
+  assert.ok(!r.valid && /WOULD verify had the document's @context/.test(
+            r.proofs[0].diagnosis || ""),
+            "a JCS proof that dropped its @context is refused, and the " +
+            "reason names the defect: " + r.reason);
 
   // A JCS proof's @context must be a PREFIX of the document's.
   var other = JSON.parse(JSON.stringify(jcsSigned));
@@ -481,8 +481,8 @@ async function nonConformantReadings() {
   assert.ok(!r.valid && /not the document's/.test(r.reason),
             "an RDFC proof under a different @context is refused");
   log.info("PASS JCS context rules: carried, prefix-checked, and a dropped " +
-           "one flagged as non-conformant; RDFC context must be equal.");
-  log.debug("Leaving nonConformantReadings().");
+           "one refused with its defect named; RDFC context must be equal.");
+  log.debug("Leaving contextRules().");
 }
 
 async function main() {
@@ -490,7 +490,7 @@ async function main() {
   jsigs = require("jsonld-signatures");
   AssertionProofPurpose = jsigs.purposes.AssertionProofPurpose;
   await ownRoundTrips();
-  await nonConformantReadings();
+  await contextRules();
   await dataIntegritySuites();
   await ed25519Legacy();
   await secp256k1Vector();

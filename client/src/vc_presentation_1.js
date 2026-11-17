@@ -520,13 +520,16 @@ function renderRequest() {
           " one — a presentation cannot convert between formats, so issue a " +
       requestedFormat + " credential first");
   }
-  // ldp_vc needs no holder private key at all: the bbs-2023 derived proof IS
-  // the holder's act, and the credential names its subject by id rather than by
-  // a cnf key the wallet must sign with. Requiring one here refused every
-  // ldp_vc request for want of a key the format never uses.
-  else if (held.parsed && held.parsed.format === sdJwtVc.FORMAT_LDP_VC) {
-    holderKeyAdvisory = "This credential is ldp_vc with a bbs-2023 proof, so " +
-        "no holder key is needed: " +
+  // A selectively disclosable ldp_vc (bbs-2023) needs no holder private key
+  // at all: the derived proof IS the holder's act, and the credential names
+  // its subject by id rather than by a cnf key the wallet must sign with.
+  // Requiring one here refused every such request for want of a key the
+  // format never uses. Any other ldp_vc goes whole inside a VP the holder
+  // signs, so it needs the key like a jwt_vc_json does, below (#475).
+  else if (held.parsed && held.parsed.format === sdJwtVc.FORMAT_LDP_VC &&
+           held.parsed.ldpSelective) {
+    holderKeyAdvisory = "This credential is ldp_vc with a " +
+        held.parsed.ldpSuite + " proof, so no holder key is needed: " +
       "the derived proof itself is what proves the holder made this presentation.";
   }
   else if (!sdJwtVc.getJson(sdJwtVc.KEYS.HOLDER_PRIVATE_JWK)) {

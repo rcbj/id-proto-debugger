@@ -22,6 +22,8 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var didLib = require("./did");
+// An ldp_vc's issuer proof, in any suite this debugger verifies (#475).
+var dataIntegrity = require("./data_integrity_rdfc");
 
 var log = bunyan.createLogger({ name: 'vc_issuance_3',
                                 level: appconfig.LOG_LEVEL || 'info' });
@@ -133,10 +135,21 @@ function renderDisclosures(rows, sdDigests) {
           esc(typeof v === "object" ? JSON.stringify(v) : String(v)) +
               "</td></tr>";
       }).join("") + "</tbody>";
+    if (!parsed.ldpSelective) {
+      el("vc_disclosure_summary").innerHTML =
+        '<span class="vc-status vc-pending">This credential is ' +
+        '<code>ldp_vc</code> with a <code>' + esc(parsed.ldpSuite) +
+        '</code> proof, which has no selective disclosure: the proof covers ' +
+        'every statement, so it is presented whole, inside a Verifiable ' +
+        'Presentation its holder signs.</span>';
+      log.debug("Leaving renderDisclosures(). ldp_vc, whole.");
+      return;
+    }
     el("vc_disclosure_summary").innerHTML =
       '<span class="vc-status vc-pending">This credential is ' +
           '<code>ldp_vc</code> with a ' +
-      '<code>bbs-2023</code> proof. It carries no Disclosures: selective ' +
+      '<code>' + esc(parsed.ldpSuite) + '</code> proof. It carries no ' +
+      'Disclosures: selective ' +
           'disclosure here is over the ' +
       "credential's canonical statements, chosen when it is presented, and " +
           "each presentation is a " +
@@ -301,6 +314,10 @@ function verify() {
     log.debug("Leaving verify().");
     return false;
   }
+  if (parsed.format === sdJwtVc.FORMAT_LDP_VC) {
+    log.debug("Leaving verify(). ldp_vc.");
+    return verifyLdp();
+  }
   var checks = [];
   var payload = parsed.payload || {};
   var header = parsed.header || {};
@@ -417,6 +434,81 @@ function verify() {
              e.message, "vc-bad");
     });
   log.debug("Leaving verify().");
+  return false;
+}
+
+// An ldp_vc as issued (#475): what secures it, who it is bound to, when it
+// is valid, and the issuer's proof verified by data_integrity.js against the
+// key its verificationMethod names. A selective suite's base proof (bbs-2023)
+// is reported rather than verified here: it is checked where the holder
+// derives from it, on the presentation pages.
+function verifyLdp() {
+  log.debug("Entering verifyLdp().");
+  var checks = [];
+  var doc = parsed.document || {};
+  var proof = [].concat(doc.proof || [])[0] || {};
+  checks.push({
+    name: "Proof",
+    ok: !!parsed.ldpSuite,
+    detail: parsed.ldpSuite + (proof.type === "DataIntegrityProof" ?
+        " (a DataIntegrityProof cryptosuite)" : " (a Linked Data proof " +
+        "type that predates Data Integrity)") + ", proofPurpose " +
+        proof.proofPurpose + ", by " + proof.verificationMethod + "."
+  });
+  var bound = sdJwtVc.boundHolderJwk(parsed);
+  checks.push({
+    name: "Holder binding (credentialSubject.id)",
+    ok: !!bound,
+    detail: bound ? "the subject is a DID naming a " + bound.kty + " key" +
+        (holderKeyMatches(bound) ? " — the holder key generated in step 2." :
+         " that is NOT the holder key generated in step 2.") :
+        "the subject is not a did:jwk or did:key, so no holder key can be " +
+        "read from it."
+  });
+  var w = sdJwtVc.validityWindowOf(parsed);
+  var now = Math.floor(Date.now() / 1000);
+  checks.push({
+    name: "Validity window",
+    ok: (!w.expires || w.expires > now) && (!w.notBefore ||
+        w.notBefore <= now),
+    detail: w.notBeforeMember + " " + isoOf(w.notBefore) + ", " +
+        w.expiresMember + " " + isoOf(w.expires) + "."
+  });
+  renderChecks(checks);
+  status("vc_credential_status", "Verifying the issuer's proof …",
+         "vc-pending");
+  var resolveKey = dataIntegrity.defaultResolveKey(undefined,
+                                                   { allowHttp: true });
+  dataIntegrity.verifyProof(doc, { resolveKey: resolveKey })
+    .then(function (r) {
+      var p = r.proofs[0] || {};
+      if (p.unsupported) {
+        checks.push({ name: "Issuer proof", ok: false, warn: true,
+                      detail: p.reason });
+        renderChecks(checks);
+        status("vc_credential_status", p.reason, "vc-pending");
+        return;
+      }
+      checks.push({
+        name: "Issuer proof",
+        ok: r.valid,
+        detail: r.valid ? p.suite + " by " + p.verificationMethod +
+            " verifies." : "DOES NOT verify: " + (p.reason || r.reason) + "."
+      });
+      renderChecks(checks);
+      status("vc_credential_status", r.valid ?
+        "The credential's issuer proof is valid." :
+        "The credential's issuer proof is INVALID.",
+        r.valid ? "vc-ok" : "vc-bad");
+    })
+    .catch(function (e) {
+      checks.push({ name: "Issuer proof", ok: false,
+                    detail: "could not be checked: " + e.message });
+      renderChecks(checks);
+      status("vc_credential_status", "Could not verify the issuer proof: " +
+             e.message, "vc-bad");
+    });
+  log.debug("Leaving verifyLdp().");
   return false;
 }
 
