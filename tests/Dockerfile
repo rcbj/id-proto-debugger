@@ -491,6 +491,9 @@ COPY tests/krb5_field_naming.js ./
 # krb5 block above already copies flat beside the codec it requires.
 COPY tests/krb5_ticket_history.js ./
 COPY client/src/kerberos_panes.js ./
+# kerberos_panes.js requires ./kerberos_hex inside a function, so a flat copy
+# that reached that path without it would fail when called (#429).
+COPY client/src/kerberos_hex.js ./
 # The Operations History pane. It loads client/src/kerberos_history.js, which
 # requires client/src/op_history.js — the store the SAML, WS-Trust and
 # WS-Federation logs share — so both come in flat.
@@ -878,6 +881,10 @@ COPY tests/run-report.js ./
 # rather than this line. Both scim_client.js and scim_scenarios.js are ALSO
 # browser bundle source, so a rename on either side has to be made here too.
 COPY client/src/scim_client.js client/src/scim_scenarios.js ./
+# scim_client.js requires ./rfc6750 (Copy Token's credentials), and a flat
+# copy resolves that beside itself. Found by flatCopiedModulesCarryTheirRequires()
+# in jwk_pem_encoding.js (#429).
+COPY client/src/rfc6750.js ./
 COPY api/scim_proxy.js ./
 COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 # ---------------------------------------------------------------------------
@@ -906,6 +913,9 @@ COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 COPY client/src/ssf_client.js client/src/ssf_events.js ./
 COPY client/src/ssf_history.js client/src/caep_session.js ./
 COPY client/src/risc_account.js ./
+# Both caep_session.js and risc_account.js require ./session_handoff, which
+# a flat copy resolves beside itself (#429).
+COPY client/src/session_handoff.js ./
 COPY api/ssf_proxy.js api/ssf_receiver.js ./
 COPY tests/ssf_engine.js tests/ssf_protocol.js ./
 COPY tests/api_ssf.js tests/ssf_page.js ./
