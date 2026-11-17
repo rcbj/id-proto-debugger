@@ -20,6 +20,9 @@
 //  3. a case for every operation in the document, so a new operation cannot
 //     arrive without its recordings.
 //
+// A case sends `body` (JSON) or `form` (form-encoded); a 3xx is recorded
+// with its `location`, which `volatile` may name like a body member.
+//
 // A case whose answer CHANGED on purpose carries `changed` (why) and
 // `before` (what the api answered until then), so the delta is in the file
 // rather than in somebody's memory of a review.
@@ -86,10 +89,17 @@ function readFamilies() {
   return families;
 }
 
+// A case sends `body` as JSON, or `form` as application/x-www-form-urlencoded
+// (what an identity provider's browser POSTs), and redirects are NOT
+// followed: a 3xx is recorded with its Location, which for the SAML and
+// WS-Federation endpoints is the answer.
 async function send(testCase) {
   log.debug("Entering send(). " + testCase.method + " " + testCase.path);
-  const init = { method: testCase.method, headers: {} };
-  if (testCase.body !== undefined) {
+  const init = { method: testCase.method, headers: {}, redirect: "manual" };
+  if (testCase.form !== undefined) {
+    init.headers["Content-Type"] = "application/x-www-form-urlencoded";
+    init.body = new URLSearchParams(testCase.form).toString();
+  } else if (testCase.body !== undefined) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(testCase.body);
   }
@@ -109,8 +119,13 @@ async function send(testCase) {
   } catch (e) {
     body = { "(not JSON)": raw };
   }
+  const answer = { status: response.status, body: body };
+  const location = response.headers.get("location");
+  if (location !== null) {
+    answer.location = location;
+  }
   log.debug("Leaving send(). " + response.status);
-  return { status: response.status, body: body };
+  return answer;
 }
 
 // Removes each dotted path a case names as volatile, so what is left is
@@ -119,6 +134,10 @@ function withoutVolatile(answer, volatile) {
   log.debug("Entering withoutVolatile().");
   const copy = JSON.parse(JSON.stringify(answer));
   (volatile || []).forEach(function (dotted) {
+    if (dotted === "location") {
+      delete copy.location;
+      return;
+    }
     const parts = dotted.split(".");
     let node = copy.body;
     for (let i = 0; i < parts.length - 1 && node; i++) {
