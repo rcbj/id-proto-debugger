@@ -2043,8 +2043,15 @@ async function tokenStatusLists(env) {
   failsOnly(r, ["pid[0].status.list", "status"], "typ is not statuslist+jwt");
   r = await at({ idx: 3, uri: URI + "/expired" });
   failsOnly(r, ["pid[0].status.list", "status"], "an expired list");
+  // A list that could not be fetched is a check NOT PERFORMED (#470 B3):
+  // nothing fails, and the row says what could not be fetched.
   r = await at({ idx: 3, uri: URI + "/missing" });
-  failsOnly(r, ["pid[0].status.list", "status"], "a list that will not load");
+  eq(failedIds(r), [], "a list that will not load: nothing fails");
+  eq(checkById(r, "pid[0].status.list").status, "skip",
+     "a list that will not load is a skip");
+  ok(/could not fetch .*\/missing/.test(
+    checkById(r, "pid[0].status.list").detail),
+     checkById(r, "pid[0].status.list").detail);
   r = await at({ idx: 3, uri: URI + "/cwt" });
   failsOnly(r, ["pid[0].status.list", "status"],
             "a CWT in tag 61 with no type and a signature of 0x01s");

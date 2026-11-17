@@ -3284,7 +3284,11 @@ async function checkTokenStatus(s, key, ref, issuer) {
   try {
     fetched = await fetchStatusText(ctx, uri, STATUS_LIST_ACCEPT);
   } catch (e) {
-    s.add(key + ".list", listLabel, FAIL, "fetching " + uri + " failed: " +
+    // A list that could not be FETCHED is a check not performed, not a
+    // defect in the credential (#470 B3): the fetch may have failed for a
+    // reason that is this debugger's (CORS, a proxy, the network). A list
+    // that arrives and is wrong is a FAIL, below.
+    s.add(key + ".list", listLabel, SKIP, "could not fetch " + uri + ": " +
           e.message);
     s.add(key, label, SKIP, "the status list could not be read (idx " +
           idx + ").");
@@ -3593,8 +3597,18 @@ async function checkBitstringEntry(s, key, entry, issuer) {
           JSON.stringify(messages)) + ".");
   }
   var read;
+  var text;
   try {
-    var text = await fetchStatusText(ctx, url, BITSTRING_ACCEPT);
+    text = await fetchStatusText(ctx, url, BITSTRING_ACCEPT);
+  } catch (e) {
+    // Not fetched is not performed, as in checkTokenStatus() (#470 B3).
+    s.add(key + ".list", listLabel, SKIP, "could not fetch " + url + ": " +
+          e.message);
+    s.add(key, label, SKIP, "the status list could not be read.");
+    log.debug("Leaving checkBitstringEntry(). Not fetched.");
+    return;
+  }
+  try {
     read = await readStatusListCredential(text, ctx);
   } catch (e) {
     s.add(key + ".list", listLabel, FAIL, "reading " + url + " failed: " +
