@@ -173,8 +173,10 @@ async function walletHoldsACredential(driver, where) {
   // device" link (the by-value offer) in the same card as the Transaction
   // Code, but the card belongs to the POST's answer and a later redraw of
   // the page drops it, so a second read of the DOM races it. The offer
-  // document behind credential_offer_uri is the same offer and is not
-  // spent by being fetched; the wallet's `accept` takes an offer by value.
+  // document behind credential_offer_uri is the same offer. iya-sts 1.0.0
+  // does not spend it when it is fetched; OpenID4VCI 1.0 does not say either
+  // way, and this job fetches it exactly once. The wallet's `accept` takes
+  // an offer by value.
   const params = new URL(screen.offerUri.replace(
       /^[a-z0-9+.-]+:\/\//i, "https://x/")).searchParams;
   const offerUri = params.get("credential_offer_uri") || "";
@@ -183,13 +185,32 @@ async function walletHoldsACredential(driver, where) {
   if (!byValue) {
     const fetched = await fetch(offerUri);
     const offerText = await fetched.text();
+    let offer = null;
+    // OpenID4VCI 1.0 section 4.1.1: credential_issuer and
+    // credential_configuration_ids are REQUIRED; grants is OPTIONAL.
     check("the offer by reference resolves to a Credential Offer",
         function () {
           assert.strictEqual(fetched.status, 200, offerUri + " answered " +
               fetched.status + ": " + offerText.slice(0, 200));
-          const offer = JSON.parse(offerText);
-          assert.ok(offer.credential_issuer && offer.grants,
+          offer = JSON.parse(offerText);
+          assert.ok(typeof offer.credential_issuer === "string" &&
+              offer.credential_issuer.length > 0, offerText.slice(0, 200));
+          assert.ok(Array.isArray(offer.credential_configuration_ids) &&
+              offer.credential_configuration_ids.length > 0,
               offerText.slice(0, 200));
+        });
+    // What THIS job expects of the offer, which the spec leaves optional: a
+    // pre-authorized code grant with a Transaction Code, because the portal
+    // was asked for a cross-device offer and `accept --tx-code` redeems one.
+    check("the offer carries a pre-authorized code grant with a " +
+        "Transaction Code (the cross-device offer this job asked for)",
+        function () {
+          const grant = (offer.grants || {})[
+            "urn:ietf:params:oauth:grant-type:pre-authorized_code"];
+          assert.ok(grant && grant["pre-authorized_code"],
+              JSON.stringify(offer.grants || null).slice(0, 200));
+          assert.ok(grant.tx_code, "the grant names no tx_code: " +
+              JSON.stringify(grant).slice(0, 200));
         });
     byValue = "openid-credential-offer://?credential_offer=" +
         encodeURIComponent(JSON.stringify(JSON.parse(offerText)));
