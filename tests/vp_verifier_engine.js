@@ -497,8 +497,8 @@ function nodeJwe(header, plaintext, recipientPublicJwk) {
 }
 
 // OpenID4VP 1.0 section 8.3 and RFC 7516's header rules on a direct_post.jwt
-// answer (#468, M6). Every defect fails EXACTLY its own row and the answer
-// is still opened.
+// answer (#468, M6), and section 8.2's form encoding (#469, D2). Every
+// defect fails EXACTLY its own row and the answer is still opened.
 async function jweHeaderRules(env, jwtSession, form, fetchJson, fields) {
   log.debug("Entering jweHeaderRules().");
   const pub = env.enc.publicJwk;
@@ -519,6 +519,11 @@ async function jweHeaderRules(env, jwtSession, form, fetchJson, fields) {
     eq((checkById(r, id) || {}).status, "pass", id + " on a correct JWE");
   });
   ok(!checkById(r, "response.jwe.zip"), "no zip, no zip row");
+  ok(!checkById(r, "response.encoding"), "no contentType, no encoding row");
+  r = await send(nodeJwe(right, plain, pub), {}, "application/x-www-form-" +
+                 "urlencoded; charset=UTF-8");
+  allPass(r, "posted as a form");
+  eq(checkById(r, "response.encoding").status, "pass");
   r = await send(nodeJwe(Object.assign({}, right, { enc: "A256GCM" }), plain,
                  pub));
   allPass(r, "A256GCM, the other value this Verifier offers");
@@ -584,8 +589,18 @@ async function jweHeaderRules(env, jwtSession, form, fetchJson, fields) {
                  pub));
   failsOnly(r, ["response.jwe.zip"], "zip DEF over bytes that are not " +
             "DEFLATE");
-  log.info("PASS #468 M6: the JWE's kid, alg, enc, crit and zip, each " +
-           "its own row.");
+
+  // Section 8.2: the answer MUST be form-encoded. JSON is opened, checked,
+  // and FAILs its own row.
+  r = await send(nodeJwe(right, plain, pub), {}, "application/json");
+  failsOnly(r, ["response.encoding"], "a JSON answer (section 8.2)");
+  eq(checkById(r, "response.decrypt").status, "pass");
+  r = await run({ fields: form, session: Object.assign({}, jwtSession,
+    { responseMode: "direct_post", decryptionJwk: undefined }),
+    fetchJson: fetchJson, contentType: "text/plain" });
+  failsOnly(r, ["response.encoding"], "a plain answer as text/plain");
+  log.info("PASS #468 M6 and #469 D2: the JWE's kid, alg, enc, crit and " +
+           "zip, and the form encoding, each its own row.");
   log.debug("Leaving jweHeaderRules().");
 }
 
@@ -3019,8 +3034,8 @@ async function securityFindings(env) {
 // second declaration silently replaces the first, and the merged engine
 // failed a correct mdoc answer with no hint why. A source check names it.
 // ---------------------------------------------------------------------------
-// #468: the request side's findings, each against something this tree did
-// not write.
+// #468 and #469: the request side's findings, each against something this
+// tree did not write.
 // ---------------------------------------------------------------------------
 function nodeEdJws(header, payload, privateKey) {
   log.debug("Entering nodeEdJws().");
@@ -3146,6 +3161,40 @@ async function requestSideFindings(env) {
   ok(checkById(r, "pid[0].kb.signature").status === "fail",
      "a damaged Ed25519 KB-JWT signature fails");
 
+  // C17. Section 5.9.3: "Requests using the redirect_uri Client Identifier
+  // Prefix cannot be signed".
+  const plain = verifier.requestObjectClaims({
+    clientId: "redirect_uri:https://v.example/response",
+    responseUri: "https://v.example/response", responseMode: "direct_post",
+    nonce: "n", dcql: session.dcql });
+  await rejects(function () {
+    return verifier.signRequestObject({ claims: plain,
+                                        identity: env.identity });
+  }, /redirect_uri.*never signed.*cannot be signed/,
+  "signRequestObject must refuse a redirect_uri: request even with an x5c");
+  await rejects(function () {
+    return verifier.signRequestObject({ claims: plain,
+      identity: verifier.makeRequestKey() });
+  }, /5\.9\.3/, "and with a bare key");
+  eq(verifier.clientIdFor("redirect_uri", {},
+     { redirectUri: "https://v.example/response" }),
+     "redirect_uri:https://v.example/response",
+     "a redirect_uri Client Identifier needs no identity at all");
+
+  // C18. "pre-registered" is a client_id_prefixes_supported value (section
+  // 10.1), not a prefix: "pre-registered:x" is a Client Identifier of its
+  // own and signs as a pre-registered client.
+  const typed = verifier.clientIdFor("pre-registered", null,
+    { clientId: "pre-registered:x" });
+  eq(typed, "pre-registered:x");
+  const key = verifier.makeRequestKey();
+  const pre = await verifier.signRequestObject({ identity: key,
+    claims: verifier.requestObjectClaims({ clientId: typed,
+      responseUri: "https://v.example/response", responseMode: "direct_post",
+      nonce: "n", dcql: session.dcql }) });
+  eq(decodeCompact(pre).header.kid, key.publicJwk.kid,
+     "pre-registered:x is signed as a pre-registered client (kid)");
+
   // M8. Section 5.1: with request_uri_method=post the Verifier SHOULD send
   // client_metadata beside request_uri.
   const md = { vp_formats_supported: formats };
@@ -3159,8 +3208,8 @@ async function requestSideFindings(env) {
     requestUri: "https://v.example/req", clientMetadata: md }));
   ok(!u.searchParams.has("client_metadata"),
      "under get the Request Object carries it, and nothing else does");
-  log.info("PASS #468 M5 (KeyUsage read from the DER), M7 (Ed25519 signed " +
-           "by node) and M8.");
+  log.info("PASS #468 M5 (KeyUsage read from the DER), M7 (Ed25519 " +
+           "signed by node) and M8; #469 C17 and C18.");
   log.debug("Leaving requestSideFindings().");
 }
 
@@ -3207,10 +3256,10 @@ async function main() {
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 1040, "only " + assertions + " assertions ran; " +
-            "expected at least 1040");
-  assert.ok(checksSeen >= 3850, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 3850");
+  assert.ok(assertions >= 1050, "only " + assertions + " assertions ran; " +
+            "expected at least 1050");
+  assert.ok(checksSeen >= 3900, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 3900");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }

@@ -55,7 +55,10 @@ and a repeated field collapses), so `server.js` keeps the raw text for these
 paths (`keepOid4vpVerifierBody()`) and the module reads it with
 `URLSearchParams`. A field sent twice is stored as an array of both values. A
 JSON object body is accepted too, and each event records the `Content-Type`
-the Wallet sent. Any other media type gets a 400 and is recorded
+the Wallet sent. Section 8.2 says the answer MUST be
+`application/x-www-form-urlencoded`, so a JSON answer's `response` event
+carries a `problem` naming that rule, and the page's verdict has a FAIL row
+for it (`response.encoding`). Any other media type gets a 400 and is recorded
 as `response-refused`. An answer to an unknown or expired session gets a
 **404** and never a 200, so a Wallet is never told that an answer was
 received when nobody will read it.
@@ -67,6 +70,12 @@ cryptographically random value in the URL", and a URL the page configured
 once is the same for every Wallet. The `response` event records it as
 `redirectUri` and `responseCode`. HAIP 1.0 section 5.1 makes a `redirect_uri`
 mandatory for a same-device flow, so the page warns when none is set.
+
+**A POST to `request_uri`** is held to section 5.10 the same way: "the
+content type application/x-www-form-urlencoded and the Accept header set to
+application/oauth-authz-req+jwt". A POST that breaks either is still served,
+and its `request-fetched` event carries a `problem` naming the rule (and
+`accept`, the header as sent). The page prints it in its event list.
 
 ## Live signing (`request_uri_method=post`)
 

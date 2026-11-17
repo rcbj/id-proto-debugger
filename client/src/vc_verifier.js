@@ -397,8 +397,12 @@ function decodeJws(compact) {
 }
 
 // THE PREFIXES THAT NEED A CERTIFICATE. The others sign with a bare key
-// (decentralized_identifier, verifier_attestation, pre-registered).
-var X509_PREFIXES = ["x509_hash", "x509_san_dns", "redirect_uri"];
+// (decentralized_identifier, verifier_attestation, pre-registered), except
+// redirect_uri, which signs with nothing at all: OpenID4VP 1.0 section
+// 5.9.3, "Requests using the redirect_uri Client Identifier Prefix cannot
+// be signed" (#469, C17). It needs no certificate, no key and no secure
+// context.
+var X509_PREFIXES = ["x509_hash", "x509_san_dns"];
 
 // The key a request is signed with, and what a wallet must be given to
 // trust it, for one Client Identifier prefix. `dnsName` is the host the
@@ -407,6 +411,16 @@ var X509_PREFIXES = ["x509_hash", "x509_san_dns", "redirect_uri"];
 async function makeSigner(prefix, dnsName, caIssuersUrl) {
   log.debug("Entering makeSigner(). " + prefix);
   var signer = { prefix: prefix, attester: null, trust: "" };
+  if (prefix === "redirect_uri") {
+    // Unsigned: there is no identity to make, so nothing is generated and
+    // no Web Crypto is asked for.
+    signer.identity = {};
+    signer.trust = "Nothing: a redirect_uri request is unsigned, and the " +
+      "Client Identifier is the URL the answer goes to (section 5.9.3).";
+    signer.dnsName = dnsName;
+    log.debug("Leaving makeSigner(). Unsigned.");
+    return signer;
+  }
   if (X509_PREFIXES.indexOf(prefix) >= 0) {
     // THE CERTIFICATE NEEDS WEB CRYPTO until #463 moves x509.js and
     // key_material.js onto the pure-JS module. Said here by name rather
@@ -791,7 +805,8 @@ function eventLine(event) {
       Object.keys(event.fields || {}).join(", ") + "." +
       (event.redirectUri ? " It was sent on to " + event.redirectUri +
         " (response_code " + event.responseCode + ", fresh for this " +
-        "answer: section 8.2)." : "");
+        "answer: section 8.2)." : "") +
+      (event.problem ? " " + event.problem : "");
   } else if (event.kind === "response-refused") {
     text = at + "The api refused a POST to response_uri: " +
       (event.problem || "no reason given") + ".";
@@ -863,7 +878,7 @@ async function poll() {
     if (answer) {
       current.answered = true;
       setText("vpv_wait_status", "The wallet answered.", "vc-ok");
-      await checkFields(answer.fields || {});
+      await checkFields(answer.fields || {}, answer.contentType || "");
       log.debug("Leaving poll(). Answered.");
       return;
     }
@@ -968,7 +983,10 @@ function renderChecks(result) {
   log.debug("Leaving renderChecks(). failed=" + failed);
 }
 
-async function checkFields(fields) {
+// `contentType` is the media type the api recorded the answer as arriving
+// in, which verifyResponse() holds to section 8.2; undefined for an answer
+// that did not come through response_uri (pasted, or the DC API).
+async function checkFields(fields, contentType) {
   log.debug("Entering checkFields().");
   if (!current) {
     setText("vpv_verdict", "There is no request on this page to check the " +
@@ -982,7 +1000,7 @@ async function checkFields(fields) {
       fields: fields,
       session: Object.assign({}, current.session,
                              { trustAnchors: trustAnchorsFromPage() }),
-      fetchJson: fetchJson, fetchText: fetchText,
+      fetchJson: fetchJson, fetchText: fetchText, contentType: contentType,
       now: Math.floor(Date.now() / 1000) });
     renderChecks(result);
     log.debug("Leaving checkFields(). ok=" + result.ok);

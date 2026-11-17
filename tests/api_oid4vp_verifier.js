@@ -177,7 +177,8 @@ function moduleLifecycle() {
     const form = "wallet_metadata=" + encodeURIComponent(JSON.stringify(
       { vp_formats_supported: { "dc+sd-jwt": {} } })) + "&wallet_nonce=wn-42";
     const r = verifier.fetchRequest(cfg, made.id, { method: "POST",
-      contentType: "application/x-www-form-urlencoded", rawBody: form });
+      contentType: "application/x-www-form-urlencoded",
+      accept: "application/oauth-authz-req+jwt", rawBody: form });
     assert.strictEqual(r.status, 200);
     assert.strictEqual(r.body, jws);
   });
@@ -236,6 +237,11 @@ function moduleLifecycle() {
     assert.strictEqual(events[1].walletNonce, "wn-42");
     assert.deepStrictEqual(events[1].walletMetadata,
       { vp_formats_supported: { "dc+sd-jwt": {} } });
+    assert.ok(!/Accept|content type/.test(events[1].problem || ""),
+      "a POST to request_uri as section 5.10 has it (form, Accept " +
+      "application/oauth-authz-req+jwt) reports neither: " +
+      events[1].problem);
+    assert.strictEqual(events[1].accept, "application/oauth-authz-req+jwt");
     assert.deepStrictEqual(events[3].fields, {
       vp_token: '{"q":["eyJ.a.b~"]}',
       state: ["s 1", "s2"],
@@ -251,6 +257,8 @@ function moduleLifecycle() {
       "and the fresh value in it");
     assert.deepStrictEqual(events[4].fields, { response: "a.b.c.d.e" });
     assert.strictEqual(events[4].contentType, "application/json");
+    assert.match(events[4].problem, /section 8\.2.*MUST.*x-www-form-urlencoded/,
+      "a JSON answer is kept AND reported (D2)");
     assert.notStrictEqual(events[4].responseCode, events[3].responseCode);
     assert.match(events[5].problem, /text\/plain/);
     events.forEach(function (e, i) {
@@ -289,15 +297,69 @@ function moduleLifecycle() {
   log.debug("Leaving moduleLifecycle().");
 }
 
-// #468, M3: every redirect_uri carries a fresh 128-bit response_code,
-// beside whatever query and fragment the page gave it.
+// #469 and #468: what the module REPORTS without refusing. D1 — a POST to
+// request_uri that breaks section 5.10's media type or Accept MUST is
+// served, and its event names the rule; D2 is in moduleLifecycle(). M3 — every
+// redirect_uri carries a fresh 128-bit response_code, beside whatever query
+// and fragment the page gave it.
 function moduleReportedProblems() {
   log.debug("Entering moduleReportedProblems().");
-  log.info("[module] section 8.2's fresh value");
+  log.info("[module] accept and report: section 5.10's POST, section " +
+           "8.2's fresh value");
   verifier.reset();
   const cfg = {};
   const made = verifier.create(cfg,
     { redirectUri: "https://rp.example/done?lang=en#top" }, "a");
+  const bearer = "Bearer " + made.secret;
+  const jws = fakeJws({ client_id: "x509_hash:abc", nonce: "n-p" });
+  verifier.publish(cfg, made.id, bearer, { requestObject: jws });
+  const RIGHT = "application/oauth-authz-req+jwt";
+  const cases = [
+    ["a conforming POST", { contentType:
+      "application/x-www-form-urlencoded", accept: RIGHT,
+      rawBody: "wallet_metadata=%7B%7D" }, null],
+    ["Accept in another case, among others, with a q", { contentType:
+      "application/x-www-form-urlencoded",
+      accept: "application/OAuth-Authz-Req+JWT;q=1, */*;q=0.1",
+      rawBody: "wallet_metadata=%7B%7D" }, null],
+    ["a JSON body", { contentType: "application/json", accept: RIGHT,
+      rawBody: '{"wallet_metadata":{}}' },
+     /JSON.*section 5\.10.*MUST use the content type application\/x-www/],
+    ["no Accept", { contentType: "application/x-www-form-urlencoded",
+      rawBody: "wallet_metadata=%7B%7D" },
+     /no Accept header.*section 5\.10/],
+    ["Accept */* only", { contentType: "application/x-www-form-urlencoded",
+      accept: "*/*", rawBody: "wallet_metadata=%7B%7D" },
+     /Accept "\*\/\*"/],
+    ["text/plain and no Accept", { contentType: "text/plain",
+      rawBody: "wallet_metadata=%7B%7D" },
+     /"text\/plain".*content type.*no Accept header/]
+  ];
+  cases.forEach(function (c, i) {
+    check("request_uri POST, " + c[0] + ": served, " + (c[2] ?
+      "and the problem is reported" : "and nothing is reported"),
+    function () {
+      const r = verifier.fetchRequest(cfg, made.id,
+        Object.assign({ method: "POST" }, c[1]));
+      assert.strictEqual(r.status, 200, "accept and report: it is served");
+      assert.strictEqual(r.body, jws);
+      const ev = verifier.events(cfg, made.id, bearer, i).events[0];
+      assert.strictEqual(ev.kind, "request-fetched");
+      // No wallet_nonce, so section 5.10's nonce problem is not in play.
+      const own = String(ev.problem || "");
+      if (c[2]) {
+        assert.match(own, c[2]);
+      } else {
+        assert.strictEqual(own, "", "nothing but the nonce: " + ev.problem);
+      }
+    });
+  });
+  check("a GET is never held to section 5.10's POST rules", function () {
+    verifier.fetchRequest(cfg, made.id, { method: "GET" });
+    const ev = verifier.events(cfg, made.id, bearer, cases.length).events[0];
+    assert.strictEqual(ev.method, "GET");
+    assert.ok(!("problem" in ev));
+  });
   check("redirect_uri keeps the page's query and fragment, and the " +
     "response_code goes in the query", function () {
     const r = verifier.respond(cfg, made.id, { contentType:
@@ -516,7 +578,8 @@ function walletPost(nonce) {
     (nonce ? "&wallet_nonce=" + encodeURIComponent(nonce) : "");
   log.debug("Leaving walletPost().");
   return { method: "POST", contentType: "application/x-www-form-urlencoded",
-    rawBody: form, remoteAddress: "192.0.2.9" };
+    accept: "application/oauth-authz-req+jwt", rawBody: form,
+    remoteAddress: "192.0.2.9" };
 }
 
 async function moduleLiveSigning() {
@@ -892,7 +955,8 @@ async function routes() {
       assert.strictEqual(got.text, jws);
     });
     const posted = await call("POST", base + "/request", { form:
-      "wallet_metadata=%7B%22a%22%3A1%7D&wallet_nonce=wn-http" });
+      "wallet_metadata=%7B%22a%22%3A1%7D&wallet_nonce=wn-http",
+      headers: { Accept: "application/oauth-authz-req+jwt" } });
     check("POST request_uri serves the same JWS", function () {
       assert.strictEqual(posted.status, 200);
       assert.strictEqual(posted.text, jws);
@@ -935,6 +999,12 @@ async function routes() {
         assert.deepStrictEqual(kinds, ["request-fetched", "request-fetched",
           "ca-fetched", "response", "response-refused"]);
         assert.strictEqual(drained.body.events[1].walletNonce, "wn-http");
+        assert.strictEqual(drained.body.events[1].accept,
+          "application/oauth-authz-req+jwt", "server.js hands the module " +
+          "the Wallet's Accept header");
+        assert.ok(!/Accept|content type/.test(
+          drained.body.events[1].problem || ""),
+          String(drained.body.events[1].problem));
         assert.strictEqual(drained.body.events[3].responseCode,
           new URL(answered.body.redirect_uri).searchParams
             .get("response_code"));
@@ -1153,7 +1223,7 @@ async function main() {
     log.info("[routes] not run: no API_URL. run-report.js passes one on " +
       "every target with an api; a static site has none.");
   }
-  const floor = API_URL ? 83 : 56;
+  const floor = API_URL ? 90 : 63;
   assert.ok(checks >= floor, "Only " + checks + " checks ran and this file " +
     "defines at least " + floor + ". A section has stopped being called.");
   log.info(checks + " checks passed.");

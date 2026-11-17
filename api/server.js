@@ -4283,6 +4283,7 @@ function oid4vpVerifierServeRequest(req, res) {
   var out = oid4vpVerifier.fetchRequest(appconfig, req.params.id, {
     method: req.method,
     contentType: req.get('content-type') || '',
+    accept: req.get('accept') || '',
     rawBody: req.oid4vpRawBody,
     parsed: req.body,
     remoteAddress: req.ip

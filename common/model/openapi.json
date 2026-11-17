@@ -2371,6 +2371,12 @@
                 "type": "object",
                 "additionalProperties": {}
               }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {}
+              }
             }
           }
         }
@@ -2493,7 +2499,7 @@
     "/oid4vp/verifier/{id}/response": {
       "post": {
         "operationId": "oid4vpVerifierResponse",
-        "description": "A Wallet's answer (section 8.2), kept field by field as it arrived.\n`redirect_uri`, when the page set one, carries a fresh `response_code`\nfor this answer.",
+        "description": "A Wallet's answer (section 8.2), kept field by field as it arrived. A\nJSON body is kept too, and its `response` event carries a `problem`\nnaming section 8.2's form-encoding MUST. `redirect_uri`, when the page\nset one, carries a fresh `response_code` for this answer.",
         "parameters": [
           {
             "name": "id",
@@ -10926,6 +10932,10 @@
             "type": "string",
             "description": "The Content-Type header as the Wallet sent it."
           },
+          "accept": {
+            "type": "string",
+            "description": "request-fetched by POST: the Accept header as the Wallet sent it.\nSection 5.10 says it MUST be application/oauth-authz-req+jwt."
+          },
           "fields": {
             "type": "object",
             "additionalProperties": {},
@@ -10940,7 +10950,7 @@
           },
           "problem": {
             "type": "string",
-            "description": "Why something that arrived was not kept."
+            "description": "What was wrong with what arrived. On response-refused, why it was\nnot kept. On request-fetched and response, a MUST the Wallet broke\nwhile the api still served or kept it (accept and report): a\nrequest_uri POST that is not application/x-www-form-urlencoded or\nhas no Accept of application/oauth-authz-req+jwt (section 5.10), a\nJSON answer to response_uri (section 8.2), a wallet_nonce no\npre-signed object can carry."
           },
           "redirectUri": {
             "type": "string",

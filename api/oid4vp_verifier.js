@@ -695,9 +695,55 @@ function walletError(status, description, code) {
   return out;
 }
 
+// One more thing wrong with what arrived, added to the event's `problem`
+// rather than replacing what is already there: a POST can be both the
+// wrong media type and missing its Accept.
+function addProblem(event, text) {
+  log.debug('Entering addProblem().');
+  event.problem = event.problem ? event.problem + ' ' + text : text;
+  log.debug('Leaving addProblem().');
+}
+
+// Does an Accept header name this media type? Each media range is compared
+// without its parameters (q=, charset), case-insensitively (RFC 9110
+// section 12.5.1). A wildcard does not count: section 5.10 says the header
+// is SET TO application/oauth-authz-req+jwt.
+function accepts(accept, type) {
+  log.debug('Entering accepts().');
+  var found = String(accept || '').split(',').some(function (range) {
+    return range.split(';')[0].trim().toLowerCase() === type;
+  });
+  log.debug('Leaving accepts(). ' + found);
+  return found;
+}
+
+// The two MUSTs of OpenID4VP 1.0 section 5.10 on a request_uri POST (#469,
+// D1): "The request MUST use the HTTP POST method with the https scheme,
+// and the content type application/x-www-form-urlencoded and the Accept
+// header set to application/oauth-authz-req+jwt." A POST that breaks either
+// is still SERVED — a debugger shows what the Wallet does next — and the
+// event's `problem` names the rule, so the page prints it.
+function requestPostProblems(event, asked, read) {
+  log.debug('Entering requestPostProblems().');
+  var type = mediaTypeOf(asked.contentType);
+  if (type !== 'application/x-www-form-urlencoded') {
+    addProblem(event, 'The POST was sent as ' + (type ? (read.kind ===
+        'json' ? 'JSON ("' + type + '")' : '"' + type + '"') :
+        'no Content-Type') + '. OpenID4VP section 5.10: it MUST use ' +
+        'the content type application/x-www-form-urlencoded.');
+  }
+  if (!accepts(asked.accept, REQUEST_OBJECT_MEDIA_TYPE)) {
+    addProblem(event, 'The POST ' + (asked.accept ? 'had Accept "' +
+        String(asked.accept) + '"' : 'had no Accept header') + '. ' +
+        'OpenID4VP section 5.10: it MUST have the Accept header set to ' +
+        REQUEST_OBJECT_MEDIA_TYPE + '.');
+  }
+  log.debug('Leaving requestPostProblems().');
+}
+
 // ---------------------------------------------------------------------------
 // GET or POST /oid4vp/verifier/:id/request — a Wallet fetches the Request
-// Object. `request` is { method, contentType, rawBody, parsed,
+// Object. `request` is { method, contentType, accept, rawBody, parsed,
 // remoteAddress }. Under request_uri_method=post (section 5.10) the body
 // carries `wallet_metadata` and `wallet_nonce`, which are recorded. Without
 // live signing the object served is the one the page signed beforehand,
@@ -726,6 +772,10 @@ function fetchRequest(appconfig, id, request) {
   if (method === 'POST') {
     var read = fieldsOf(asked);
     event.contentType = String(asked.contentType || '');
+    if (asked.accept) {
+      event.accept = String(asked.accept);
+    }
+    requestPostProblems(event, asked, read);
     if (read.fields) {
       var meta = read.fields.wallet_metadata;
       if (meta !== undefined) {
@@ -752,8 +802,8 @@ function fetchRequest(appconfig, id, request) {
       // not what came with it.
       delete event.walletMetadata;
       delete event.walletNonce;
-      event.problem = 'The POST body was ' + bytes + ' bytes, above ' +
-          'oid4vpVerifierMaxResponseBytes, and was not kept.';
+      addProblem(event, 'The POST body was ' + bytes + ' bytes, above ' +
+          'oid4vpVerifierMaxResponseBytes, and was not kept.');
       bytes = 0;
     }
     if (one.liveSigning) {
@@ -761,11 +811,11 @@ function fetchRequest(appconfig, id, request) {
       return waitForSigning(appconfig, one, event, bytes, nonceSent);
     }
     if (nonceSent) {
-      event.problem = 'The Wallet sent a wallet_nonce and this session ' +
+      addProblem(event, 'The Wallet sent a wallet_nonce and this session ' +
           'has no live signing, so it was served the Request Object ' +
           'signed in advance, which does not carry it. OpenID4VP section ' +
           '5.10: the Verifier MUST use it; section 5.10.1: a Wallet given ' +
-          'an object without it MUST terminate.';
+          'an object without it MUST terminate.');
     }
   }
   record(appconfig, one, event, bytes);
@@ -962,6 +1012,12 @@ function redirectWithCode(redirectUri) {
 // The answer is section 8.2's: 200 with a JSON object, carrying
 // `redirect_uri` when the page set one — with a fresh `response_code` in it
 // (redirectWithCode()), which the `response` event records.
+//
+// A JSON body is ACCEPTED and REPORTED (#469, D2): section 8.2, "The
+// Authorization Response MUST be encoded in the request body using the
+// format defined by the application/x-www-form-urlencoded HTTP content
+// type." The fields are kept and the event carries a `problem` naming that
+// MUST, which the page turns into a FAIL row of the verdict.
 // ---------------------------------------------------------------------------
 function respond(appconfig, id, request) {
   log.debug('Entering respond(). ' + id);
@@ -1001,6 +1057,12 @@ function respond(appconfig, id, request) {
     fields: read.fields };
   if (asked.remoteAddress) {
     event.remoteAddress = String(asked.remoteAddress);
+  }
+  if (read.kind === 'json') {
+    event.problem = 'The answer was sent as JSON ("' +
+        mediaTypeOf(contentType) + '"). OpenID4VP 1.0 section 8.2: the ' +
+        'Authorization Response MUST be encoded in the request body as ' +
+        'application/x-www-form-urlencoded. It was kept and is checked.';
   }
   var body = {};
   if (one.redirectUri) {

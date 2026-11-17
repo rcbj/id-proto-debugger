@@ -901,9 +901,12 @@ function requestObjectClaims(opts) {
 //                             made from opts.attester)
 //   pre-registered            kid: the key's thumbprint; no x5c. The wallet
 //                             holds preRegisteredJwks().
-//   redirect_uri              x5c when the identity has one, as in PR 1
-//                             (section 5.9.3 says such requests are not
-//                             signed; the page sends them by value)
+//   redirect_uri              REFUSED (#469, C17). Section 5.9.3:
+//                             "Requests using the redirect_uri Client
+//                             Identifier Prefix cannot be signed because
+//                             there is no method for the Wallet to obtain a
+//                             trusted key for verification." The page sends
+//                             them unsigned, by value.
 async function signRequestObject(opts) {
   log.debug("Entering signRequestObject().");
   var o = opts || {};
@@ -929,6 +932,15 @@ async function signRequestObject(opts) {
     log.debug("Leaving signRequestObject(). origin.");
     throw new Error("an origin: Client Identifier is never signed.");
   }
+  if (who.prefix === "redirect_uri") {
+    log.debug("Leaving signRequestObject(). redirect_uri.");
+    throw new Error("a redirect_uri: Client Identifier is never signed: " +
+                    "OpenID4VP 1.0 section 5.9.3, \"Requests using the " +
+                    "redirect_uri Client Identifier Prefix cannot be " +
+                    "signed because there is no method for the Wallet to " +
+                    "obtain a trusted key for verification.\" Send it " +
+                    "unsigned, by value.");
+  }
   if (who.prefix === "x509_hash" || who.prefix === "x509_san_dns") {
     if (!isArray(identity.x5c) || !identity.x5c.length) {
       log.debug("Leaving signRequestObject(). No x5c.");
@@ -947,10 +959,8 @@ async function signRequestObject(opts) {
     header.jwt = o.attestation || await verifierAttestation({
       attester: o.attester, identity: identity, sub: who.value,
       now: o.now, redirectUris: o.redirectUris });
-  } else if (who.prefix === "" || who.prefix === "pre-registered") {
+  } else if (who.prefix === "") {
     header.kid = preRegisteredJwks(identity).keys[0].kid;
-  } else if (isArray(identity.x5c) && identity.x5c.length) {
-    header.x5c = identity.x5c;
   }
   var signed = await jws.signJwsAsync({
     algId: alg.algId,
@@ -4158,6 +4168,34 @@ async function jwePlaintext(report, opened) {
   }
 }
 
+// How the answer was ENCODED on its way to response_uri (#469, D2). Section
+// 8.2: "The Authorization Response MUST be encoded in the request body
+// using the format defined by the application/x-www-form-urlencoded HTTP
+// content type", and section 8.3.1 says the same of direct_post.jwt's
+// `response` field. The api keeps a JSON body (accept and report), and this
+// row is where it is REPORTED: a FAIL, because the MUST is the Wallet's and
+// a Wallet that breaks it would be refused by a Verifier that implements
+// only the form. The answer is still opened and checked. No row when the
+// media type is not known (a pasted answer) or under the DC API, which
+// hands the page an object and has no body at all.
+function checkEncoding(report, contentType, dc) {
+  log.debug("Entering checkEncoding().");
+  if (contentType === undefined || contentType === null || dc) {
+    log.debug("Leaving checkEncoding(). Not known.");
+    return;
+  }
+  var type = String(contentType).split(";")[0].trim().toLowerCase();
+  var form = type === "application/x-www-form-urlencoded";
+  addCheck(report, "response.encoding", "response", "The answer was " +
+           "posted as a form", form ? PASS : FAIL, form ? "Content-Type " +
+           type + ", as section 8.2 requires." : "it was posted as " +
+           (type ? JSON.stringify(type) : "no Content-Type") + ". " +
+           "OpenID4VP 1.0 section 8.2: the Authorization Response MUST be " +
+           "encoded as application/x-www-form-urlencoded. The api kept " +
+           "it, and it is checked below as if it had been.");
+  log.debug("Leaving checkEncoding(). " + form);
+}
+
 async function openResponse(report, parsed, session) {
   log.debug("Entering openResponse().");
   var g = "response";
@@ -4369,6 +4407,9 @@ function finish(report, presentations) {
 //              draft-ietf-oauth-status-list's id-kp-oauthStatusSigning,
 //              which has no assigned number yet (section 14.9)
 //   now        optional: the time to judge validity at
+//   contentType  optional: the Content-Type the answer was POSTed with to
+//              response_uri, as the api recorded it. When given, it is held
+//              to section 8.2 (response.encoding)
 async function verifyResponse(opts) {
   log.debug("Entering verifyResponse().");
   var o = opts || {};
@@ -4384,6 +4425,7 @@ async function verifyResponse(opts) {
       log.debug("verifyResponse(): DC API data is not JSON: " + e.message);
     }
   }
+  checkEncoding(report, o.contentType, dc);
   var outer = parseResponse(input);
   if (outer.error) {
     addCheck(report, "response.error", g, "The Wallet answered with a " +
