@@ -127,27 +127,34 @@ when a **verifier** asks for part of a credential over
 landing page, and it presents whatever credential the issuance workflow left in this browser — the two workflows
 meet at those `localStorage` keys and nowhere else.
 
-### Step 0 — Choose a flow (`vc-presentation-0.html`)
-The three shapes an OID4VP request can take. All of them **start at the verifier**, because a presentation is
-something a verifier asks for:
+### Step 0 — Choose the protocol and the flow (`vc-presentation-0.html`)
+The page is titled *How is the credential being asked for?* It asks two things. First, **which protocol** the
+answer is given under: OpenID4VP 1.0, OpenID4VC HAIP 1.0 or SIOPv2 (see *Three protocols* above). The choice is
+kept in `sdjwtvp_protocol` and decides which of `vp_protocols.js`'s rules step 1 applies. Second, **how the
+request reaches the wallet**. All three flows **start at the verifier**, because a presentation is something a
+verifier asks for:
 
 | Flow | How the request travels | What the wallet can prove about the asker |
 |---|---|---|
-| Same device, by value | The whole request in the query string | Nothing cryptographic: `client_id` uses the `redirect_uri` prefix, so the request *cannot* be signed. What binds it to the verifier is that the presentation goes to that same URL |
-| Same device, signed by reference | `client_id` + `request_uri`; the wallet fetches a signed Request Object ([RFC 9101](https://www.rfc-editor.org/rfc/rfc9101.html)) | That the request really came from a pre-registered client with a known key, and that the claims asked for are the ones it signed |
-| Cross device | A QR code (`openid4vp://…`) on the verifier's screen | The same as by value — and nothing can be redirected, which is why `direct_post` exists |
+| Same device, by value | The whole request in the query string | Nothing cryptographic: `client_id` uses the `redirect_uri` prefix, so the request *cannot* be signed. What binds it to the verifier is that the presentation goes to that same URL. HAIP greys this flow out, because HAIP requires a signed request |
+| Same device, signed by reference | `client_id` + `request_uri`; the wallet fetches a signed Request Object ([RFC 9101](https://www.rfc-editor.org/rfc/rfc9101.html)) | That the request came from the client its prefix names (`x509_hash` / `x509_san_dns`, or pre-registered) and that it signed the claims asked for |
+| Cross device | A QR code (`openid4vp://…`) on the verifier's screen | The same as by value. Nothing can be redirected, which is why `direct_post` exists |
 
-The page also says whether this wallet is holding a credential *and* the private half of the key it is bound to,
-because without both there is nothing to present.
+The page also says whether this wallet holds a credential *and* the private half of the key it is bound to.
 
 ### Step 1 — The verifier's request (`vc-presentation-1.html`)
 Nothing is disclosed here. The page answers three questions: **who** is asking (the Client Identifier and what its
 prefix lets the wallet conclude — with the signature verified when there is one), **what** they are asking for (the
 **DCQL** query decoded into claim paths, shown in green when the credential can disclose them and red when it
 cannot, with the `vct` checked against the credential in hand), and **how** the answer travels
-(`response_type=vp_token`, `response_mode`, `response_uri`). A request that cannot be answered — no `nonce`, no
-`dcql_query`, no credential, no holder key — says so instead of letting step 2 discover it. A pane takes a request
-pasted from a QR code for the cross-device flow.
+(`response_type=vp_token`, `response_mode`, `response_uri`). Each of the chosen protocol's rules is shown with its
+verdict: a **refused** rule (no `nonce`, no `dcql_query`, a `redirect_uri` Client Identifier whose response goes
+elsewhere, OpenID4VP 1.0 section 5.9.3) turns **Continue** off, and a **warning** only advises. So do the wallet's
+own problems: no credential blocks, and a missing holder key blocks *only* when the user kept key saving on.
+With saving turned off (`sdjwtvc_save_holder_key` = `"0"`) the missing key is an advisory, because the field
+that supplies it is on step 2. An `ldp_vc` request asks step 1 for no holder key, but step 2 still needs the
+private key of the `credentialSubject.id` DID whenever holder binding is required (DCQL's default) or an ID
+Token is asked for. A pane takes a request pasted from a QR code for the cross-device flow.
 
 ### Step 2 — Choose what to disclose (`vc-presentation-2.html`)
 The page selective disclosure exists for. One checkbox per Disclosure, marked with whether *this* verifier asked
@@ -167,22 +174,28 @@ without selective disclosure would force on you. From that choice the wallet ass
 **Refuse** is a first-class answer: OID4VP defines `access_denied` for it, and the verifier is told the request was
 seen and declined — which is not the same as never having arrived.
 
-### Step 3 — The verdict (`vc-presentation-3.html`)
-Two accounts of the same event. **What the wallet sent**, with the presentation's parts coloured (issuer-signed
-JWT · Disclosure · KB-JWT) and re-checked here over the bytes themselves — `sd_hash` recomputed, every
-Disclosure's digest looked up in `_sd`, the KB-JWT's `nonce` and `aud` compared with the request. And **what the
-verifier did**: its verdict check by check, what it asked for, what it received, and any **over-disclosure** —
-because a verifier accepts extra claims without complaint, so the wallet is the only party that can care.
+### Step 3 — The result (`vc-presentation-3.html`)
+The page is still titled *The Verdict*, and it shows the wallet's side in full. **What The Wallet Sent**, with
+the presentation's parts coloured (issuer-signed JWT · Disclosure · KB-JWT); **The Wallet's Own Checks**,
+re-run over the bytes themselves (`sd_hash` recomputed, every Disclosure's digest looked up in `_sd`, the
+KB-JWT's `nonce` and `aud` compared with the request; the mdoc and ldp_vc equivalents for those formats); **How
+It Was Answered**; and **What The Verifier Answered**, which is the HTTP answer to the response and nothing
+more. A real Verifier reports its decision to its own operator, not to the wallet, so this page does not show a
+verdict check by check. It does name any **over-disclosure**, because a verifier accepts extra claims without
+complaint and the wallet is the only party that can care.
 
-### Mock Verifier for testing
-The `sts/` service also hosts a **mock OID4VP Verifier**: a web page at `/oid4vp/verifier`, `/oid4vp/start` which
-builds the Authorization Request (by value, signed by reference, or as a QR code), `/oid4vp/request/:id` serving
-the signed Request Object, and `POST /oid4vp/response` as the Response URI. It verifies properly — the issuer's
-signature, every presented Disclosure's digest against `_sd`, the KB-JWT's `typ`, `alg`, `nonce`, `aud`, `iat` and
-`sd_hash`, its signature against the credential's own `cnf.jwk`, the validity window, the `vct`, and whether the
-claims it asked for actually arrived — and records a **per-check verdict** so a failure says *which* rule was
-broken. `GET /oid4vp/result/:state` (not part of OID4VP; a real verifier shows the End-User its own page) makes
-that verdict readable, which is what step 3 and the test suite use.
+### The Verifier the suite uses
+iya-sts is the Verifier on the test stacks. Its demonstration pages moved to the companion site
+(`http://localhost:9700/verifier`), and the old `GET /oid4vp/start` and `GET /oid4vp/result/:state` doors are gone
+(iya-sts #591 / #594). A test now starts a verification with **`POST /admin-api/verifications/start`**, which needs
+an admin-API token and answers the wallet URL carrying the request, and reads the outcome as the Verifier's
+operator would, with **`GET /admin-api/verifications?state=`**. The signed Request Object and the Response URI
+are still iya-sts's own (`/oid4vp/request/:id`, `POST /oid4vp/response`), and HAIP's trust anchor is
+`/oid4vp/verifier-certificate`. It verifies properly: the issuer's signature, every presented Disclosure's digest
+against `_sd`, the KB-JWT's `typ`, `alg`, `nonce`, `aud`, `iat` and `sd_hash`, its signature against the
+credential's own `cnf.jwk`, the validity window, the `vct`, and whether the claims it asked for arrived. It
+records a **per-check verdict**, so a failure names the rule that was broken. `tests/jwt_vc_json_common.js` holds
+the starter every presentation test shares.
 
 The suite is `tests/sd_jwt_vc_presentation.js`, and it is deliberately both halves:
 

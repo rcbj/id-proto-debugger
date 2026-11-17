@@ -157,8 +157,8 @@ function clientIdentifier(clientId) {
     prefix: prefix, value: id.slice(colon + 1), signable: true,
     note: "The prefix says how the wallet is meant to authenticate the " +
         "verifier and find its metadata. This " +
-          "workflow implements the pre-registered and redirect_uri " +
-              "cases; for " + prefix +
+          "workflow implements the pre-registered, redirect_uri, " +
+              "x509_hash and x509_san_dns cases; for " + prefix +
           " it shows what arrived without claiming to have validated it."
   };
 }
