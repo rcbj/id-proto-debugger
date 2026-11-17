@@ -131,9 +131,9 @@ var DEFAULT_RESPONSE_ENC = "A128GCM";
 // the key itself, and names its verification method in the header's kid.
 var SUBJECT_JWK_THUMBPRINT = "urn:ietf:params:oauth:jwk-thumbprint";
 var SUBJECT_DID_JWK = "did:jwk";
-var SUBJECT_DID_KEY = "did:key";
+var SUBJECT_DID_KEY_METHOD = "did:key";
 var SUBJECT_SYNTAXES = [SUBJECT_JWK_THUMBPRINT, SUBJECT_DID_JWK,
-                        SUBJECT_DID_KEY];
+                        SUBJECT_DID_KEY_METHOD];
 
 // How long a self-issued ID Token lives. Short, because nothing but the
 // Verifier's own clock checks it and the nonce already makes it single-use.
@@ -728,7 +728,7 @@ function subjectFor(syntax, privateOrPublicJwk) {
     log.debug("Leaving subjectFor(). did:jwk");
     return Promise.resolve({ sub: didJwk, kid: didJwk + "#0", subJwk: null });
   }
-  if (syntax === SUBJECT_DID_KEY) {
+  if (syntax === SUBJECT_DID_KEY_METHOD) {
     var didKey = didLib.jwkToDidKey(pub);
     log.debug("Leaving subjectFor(). did:key");
     return Promise.resolve({ sub: didKey,
@@ -1087,7 +1087,7 @@ module.exports = {
   DEFAULT_RESPONSE_ENC: DEFAULT_RESPONSE_ENC,
   SUBJECT_JWK_THUMBPRINT: SUBJECT_JWK_THUMBPRINT,
   SUBJECT_DID_JWK: SUBJECT_DID_JWK,
-  SUBJECT_DID_KEY: SUBJECT_DID_KEY,
+  SUBJECT_DID_KEY: SUBJECT_DID_KEY_METHOD,
   SUBJECT_SYNTAXES: SUBJECT_SYNTAXES,
   ID_TOKEN_LIFETIME_S: ID_TOKEN_LIFETIME_S,
   protocols: protocols,

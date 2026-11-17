@@ -507,6 +507,17 @@ COPY client/src/kerberos_hex.js ./
 # WS-Federation logs share — so both come in flat.
 COPY tests/krb5_operation_history.js ./
 COPY client/src/kerberos_history.js client/src/op_history.js ./
+
+# ---------------------------------------------------------------------------
+# Staging stage 1b. Split off the end of stage 1 on 2026-11-16, when the
+# merges of that day took stage 1 to 101 layer instructions against the
+# budget of 100 (everyDockerfileStaysUnderTheLayerLimit() in
+# tests/jwk_pem_encoding.js). Same rules as stage 1. The final image copies it
+# immediately after stage 1, so every line below lands in the order it always
+# did and a basename collision still resolves the same way.
+# ---------------------------------------------------------------------------
+FROM ubuntu:latest AS files1b
+WORKDIR /usr/src/app
 #
 # THE WIRING HALF OF BOTH PANE TESTS reads the five pages, their bundles and the
 # two partials as TEXT — a page that includes a pane and never mount()s it
@@ -1244,6 +1255,7 @@ RUN CFT=https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing && \
 # /usr/src/client and /usr/src/common are the repository-shaped layout several
 # tests resolve as ../client and ../common.
 COPY --from=files1 /usr/src /usr/src
+COPY --from=files1b /usr/src /usr/src
 COPY --from=files2 /usr/src /usr/src
 COPY --from=files3 /usr/src /usr/src
 

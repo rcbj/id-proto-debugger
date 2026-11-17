@@ -30,6 +30,9 @@
       "sdjwtvc_previous_holder_private_jwk",
       "sdjwtvc_refreshed_holder_private_jwk"
     ],
+    "sdjwtvp_siop_save_pairwise": [
+      "sdjwtvp_siop_pairwise_keys"
+    ],
     "wsfedtools_wsfed_save_keypair": [
       "wsfedtools_wsfed_rp_cert",
       "wsfedtools_wsfed_rp_private_key"

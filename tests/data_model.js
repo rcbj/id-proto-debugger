@@ -64,7 +64,7 @@ var log = bunyan.createLogger({ name: "data_model",
 log.info("Log initialized. logLevel=" + log.level());
 
 // The outbound-policy settings (api/CLAUDE.md, "the address policy and the
-// sixteen settings"). Written out here as well as in the model on purpose:
+// seventeen settings"). Written out here as well as in the model on purpose:
 // a setting dropped from the model's list would otherwise vanish from the
 // rule without anybody deciding it should.
 const OUTBOUND_POLICY = [
@@ -72,7 +72,7 @@ const OUTBOUND_POLICY = [
   "userAgent", "keepAlive", "blockPrivateNetworkCalls",
   "blockedAddressRanges", "allowedAddressRanges", "krb5AllowedPorts",
   "krb5ServicePorts", "ldapAllowedPorts", "ldapMaxEntries", "tlsAllowedPorts",
-  "spiffeAllowedPorts", "spiffeAllowedSocketPaths"
+  "spiffeAllowedPorts", "spiffeAllowedSocketPaths", "oid4vpMaxRequestBytes"
 ];
 
 function sourceRoot() {
@@ -288,7 +288,10 @@ const REPLACED = {
       "wsfedtools_wsfed_rp_cert"],
     sdjwtvc_save_holder_key: ["sdjwtvc_holder_private_jwk",
       "sdjwtvc_refreshed_holder_private_jwk",
-      "sdjwtvc_previous_holder_private_jwk", "sdjwtvc_dpop_private_jwk"]
+      "sdjwtvc_previous_holder_private_jwk", "sdjwtvc_dpop_private_jwk"],
+    // Added with SIOPv2 (#432/#436), after the lists above were replaced:
+    // the presentation workflow's pairwise subject keys and their checkbox.
+    sdjwtvp_siop_save_pairwise: ["sdjwtvp_siop_pairwise_keys"]
   }
 };
 

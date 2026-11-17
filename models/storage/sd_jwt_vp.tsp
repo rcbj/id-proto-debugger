@@ -16,6 +16,9 @@ namespace IdProtoDebugger.Storage;
 @storageGroup("client/src/sd_jwt_vp.js")
 model SdJwtVpKeys {
   @storageKey(#{ class: "ordinary" })
+  sdjwtvp_api_ssl_validate: unknown;
+
+  @storageKey(#{ class: "ordinary" })
   sdjwtvp_presentation: unknown;
 
   @storageKey(#{ class: "ordinary" })
@@ -26,6 +29,15 @@ model SdJwtVpKeys {
 
   @storageKey(#{ class: "ordinary" })
   sdjwtvp_selected_disclosures: unknown;
+
+  // SIOPv2 pairwise subject key pairs, one per Verifier. Kept only while
+  // sdjwtvp_siop_save_pairwise is not "0"; clearing it removes them
+  // (client/src/vc_presentation_2.js).
+  @storageKey(#{ class: "keypair", optOut: "sdjwtvp_siop_save_pairwise" })
+  sdjwtvp_siop_pairwise_keys: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  sdjwtvp_siop_save_pairwise: unknown;
 
   @storageKey(#{ class: "ordinary" })
   sdjwtvp_use_case: unknown;
@@ -38,4 +50,7 @@ model SdJwtVpKeys {
 
   @storageKey(#{ class: "ordinary" })
   sdjwtvp_verifier_site_url: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  sdjwtvp_via_api: unknown;
 }

@@ -171,6 +171,14 @@
           "description": "Directories a SPIFFE unix-socket path must be under.",
           "x-outbound-policy": true
         },
+        "oid4vpMaxRequestBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "exclusiveMinimum": 0,
+          "description": "Bytes of request a wallet may hand POST /oid4vp/call to carry. Positive;\nthe route uses 262144 when it is absent or not positive.",
+          "x-outbound-policy": true
+        },
         "spiffeMaxStreamMessages": {
           "type": "integer",
           "minimum": -2147483648,
@@ -503,6 +511,7 @@
     "ldapMaxEntries",
     "tlsAllowedPorts",
     "spiffeAllowedPorts",
-    "spiffeAllowedSocketPaths"
+    "spiffeAllowedSocketPaths",
+    "oid4vpMaxRequestBytes"
   ]
 }

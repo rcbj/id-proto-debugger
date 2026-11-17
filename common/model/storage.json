@@ -2224,9 +2224,19 @@
       "group": "client/src/sd_jwt_vc.js"
     },
     {
+      "key": "sdjwtvp_api_ssl_validate",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
       "key": "sdjwtvp_presentation",
       "class": "ordinary",
       "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_protocol",
+      "class": "ordinary",
+      "group": "client/src/vp_protocols.js"
     },
     {
       "key": "sdjwtvp_request",
@@ -2242,6 +2252,22 @@
       "key": "sdjwtvp_selected_disclosures",
       "class": "ordinary",
       "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_siop_pairwise_keys",
+      "class": "keypair",
+      "group": "client/src/sd_jwt_vp.js",
+      "optOut": "sdjwtvp_siop_save_pairwise"
+    },
+    {
+      "key": "sdjwtvp_siop_save_pairwise",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_siop_subject_syntax",
+      "class": "ordinary",
+      "group": "client/src/vp_protocols.js"
     },
     {
       "key": "sdjwtvp_use_case",
@@ -2262,6 +2288,16 @@
       "key": "sdjwtvp_verifier_site_url",
       "class": "ordinary",
       "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_via_api",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_x509_trust_anchor",
+      "class": "ordinary",
+      "group": "client/src/vp_protocols.js"
     },
     {
       "key": "session_handoff_active",

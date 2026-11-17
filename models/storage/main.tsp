@@ -59,6 +59,7 @@ import "./token_detail.tsp";
 import "./token_handoff.tsp";
 import "./userinfo.tsp";
 import "./vc_issuance_1.tsp";
+import "./vp_protocols.tsp";
 import "./webauthn_analyzer.tsp";
 import "./webauthn_lab.tsp";
 import "./wsfed_request.tsp";
