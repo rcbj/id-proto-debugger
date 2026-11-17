@@ -4,7 +4,7 @@
 
 | What | Written in | Generated into `common/model/` | What reads it |
 |---|---|---|---|
-| **The api's HTTP surface**: all 63 operations, what each accepts and what each answers, by status | `models/api/<family>.tsp` | `openapi.json` (OpenAPI 3.1) | `api/model_validate.js`, which builds every route's request validator from it; the api serves it at `GET /api-docs.json` |
+| **The api's HTTP surface**: all 67 operations, what each accepts and what each answers, by status | `models/api/<family>.tsp` | `openapi.json` (OpenAPI 3.1) | `api/model_validate.js`, which builds every route's request validator from it; the api serves it at `GET /api-docs.json` |
 | **The two services' configuration files** | `models/config/` | `config.schema.json` (JSON Schema 2020-12, both objects closed) | the api at startup; `client/build.js` and `client/Dockerfile` before bundling |
 | **Every browser storage key** the client names (532), with what it is: a secret never stored, a bearer token kept in sessionStorage only, key material behind a save checkbox, an output, or configuration | `models/storage/` | `storage.json`, and `storage_classes.json` (the four lists that are enforced) | `client/src/secret_storage.js` and the three key-pair panes; `tests/data_model.js` |
 | **The embedded deployment's contract** with iya-sts: the variables the api child reads, and the tree `embedded/build.sh` writes | `models/contract/` | `embedded_contract.json`, and the variables table in `embedded/CLAUDE.md` | `embedded/build.sh` ships it in the tree; `tests/data_model.js` |

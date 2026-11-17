@@ -19,6 +19,9 @@
       "name": "Shared Signals"
     },
     {
+      "name": "OpenID4VP"
+    },
+    {
       "name": "GNAP"
     },
     {
@@ -1757,6 +1760,87 @@
         },
         "tags": [
           "Service"
+        ]
+      }
+    },
+    "/oid4vp/call": {
+      "post": {
+        "operationId": "oid4vpCall",
+        "description": "Carry one request to a Verifier. A Verifier's own error is a 200 carrying\nits status.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.Answer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Oid4vp.Refused"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.Unreachable"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Oid4vp.CallRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oid4vp/limits": {
+      "get": {
+        "operationId": "oid4vpLimits",
+        "description": "What the OpenID4VP proxy does. A static deployment has no api and gets no\nanswer, which is how the page knows.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.Limits"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
         ]
       }
     },
@@ -8518,6 +8602,191 @@
         },
         "additionalProperties": {},
         "description": "OIDC UserInfo claims (OIDC Core 5.3.2), as sent, when JSON."
+      },
+      "Oid4vp.Answer": {
+        "type": "object",
+        "required": [
+          "status",
+          "ok",
+          "headers",
+          "body",
+          "json"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "body": {
+            "type": "string"
+          },
+          "json": {},
+          "http_exchange": {
+            "$ref": "#/components/schemas/HttpExchange"
+          }
+        },
+        "description": "What the Verifier said. `body` is the text as it arrived (a Request Object\nis a JWS; a reply may be JSON or nothing); `json` is its parse when it is\nJSON, and null otherwise."
+      },
+      "Oid4vp.CallRequest": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The request_uri, response_uri or redirect_uri, exactly as the Verifier\nnamed it.",
+            "x-checked-in-code": "api/oid4vp_proxy.js: required, and an absolute http:// or https:// URL; the address policy applies when it is called"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "GET or POST, any case. Absent is GET.",
+            "x-checked-in-code": "api/oid4vp_proxy.js: GET or POST, compared upper-cased"
+          },
+          "headers": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Header name to value; each value is sent as text, null is dropped.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ssf_proxy.js sanitizeHeaders(): each name a token, no framing or hop-by-hop header, no CR or LF in a value"
+          },
+          "body": {
+            "description": "The form-encoded body, exactly as it is to travel. Empty is none.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/oid4vp_proxy.js: a string, none on a GET, at most oid4vpMaxRequestBytes"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false or \"false\" turns off certificate verification.",
+            "x-checked-in-code": "api/oid4vp_proxy.js: only false or \"false\" turns verification off"
+          },
+          "http_trace": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "true or \"true\" attaches http_exchange to the answer.",
+            "x-checked-in-code": "api/server.js: only true or \"true\" asks for the trace"
+          }
+        },
+        "description": "One request to a Verifier, as the wallet composed it."
+      },
+      "Oid4vp.Limits": {
+        "type": "object",
+        "required": [
+          "methods",
+          "refusedHeaders",
+          "maxRequestBytes",
+          "statusRule"
+        ],
+        "properties": {
+          "methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "refusedHeaders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "maxRequestBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "statusRule": {
+            "type": "string"
+          }
+        },
+        "description": "What the OpenID4VP proxy will and will not do."
+      },
+      "Oid4vp.Refused": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "http_exchange": {
+            "$ref": "#/components/schemas/HttpExchange"
+          }
+        },
+        "description": "This service refused the request: its shape, or the address policy on the\nURL or a redirect hop (then `code` is EBLOCKEDADDRESS or\nEPROTOCOLNOTALLOWED)."
+      },
+      "Oid4vp.Unreachable": {
+        "type": "object",
+        "required": [
+          "error",
+          "code"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "http_exchange": {
+            "$ref": "#/components/schemas/HttpExchange"
+          }
+        },
+        "description": "The Verifier could not be reached. `code` is the network error's."
       },
       "Otp.Limits": {
         "type": "object",

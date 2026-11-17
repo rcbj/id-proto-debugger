@@ -1,0 +1,125 @@
+{
+  "family": "oid4vp",
+  "about": "POST /oid4vp/call and GET /oid4vp/limits (api/oid4vp_proxy.js), added by #436 after the data model was recorded (#437). The refusals and the limits document were computed from api/oid4vp_proxy.js with api/env/docker-tests.js, the configuration the containerized stack runs; every outbound target is verifier.invalid, so no case leaves the api.",
+  "cases": [
+    {
+      "name": "oid4vp call: an empty body is refused for its url",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {},
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url is required: the request_uri, the response_uri, or the redirect_uri a SIOPv2 post goes to, exactly as the Verifier named it."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a url that is not http(s) is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "ftp://verifier.invalid/request"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "url must be an absolute http:// or https:// URL. OpenID4VP names every endpoint absolutely, and a relative one resolved against this service would reach the api's own routes."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a method other than GET or POST is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/request",
+        "method": "PUT"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "method must be GET or POST. A wallet fetches a Request Object and posts an answer, and nothing else crosses in OpenID4VP; another method would make this endpoint useful for something that is not a presentation."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a body that is not a string is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/response",
+        "method": "POST",
+        "body": {
+          "vp_token": "x"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "body must be a string: OpenID4VP's bodies are application/x-www-form-urlencoded, and the page sends them encoded exactly as they are to travel."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a GET carrying a body is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/request",
+        "method": "GET",
+        "body": "state=1"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "A GET carries no body. Fetching a Request Object by POST is request_uri_method=post, and is sent as a POST; a body silently dropped from a GET is how the wrong method goes unnoticed."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a framing header is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/request",
+        "headers": {
+          "Content-Length": "5"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "This endpoint will not forward the Content-Length header. The body framing is this service's to set — a caller that could set it could smuggle a second request inside the first. Everything else is forwarded as sent — the refusals here are about the SHAPE of the request rather than its content."
+        }
+      }
+    },
+    {
+      "name": "oid4vp limits: what the proxy will and will not do",
+      "method": "GET",
+      "path": "/oid4vp/limits",
+      "expect": {
+        "status": 200,
+        "body": {
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "refusedHeaders": [
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "keep-alive",
+            "upgrade",
+            "te",
+            "trailer",
+            "proxy-authorization"
+          ],
+          "maxRequestBytes": 262144,
+          "statusRule": "a 400 is this service refusing; a 502 is the Verifier unreachable; anything the Verifier answered is a 200 with its status inside."
+        }
+      }
+    }
+  ]
+}
