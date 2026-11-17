@@ -60,3 +60,21 @@ op modelGaps(): Ok<ModelGaps> | {
   @statusCode statusCode: 404;
   @body body: IdProtoDebugger.Api.Refusal;
 };
+
+/** The API document itself: this file's output, OpenAPI 3.1. */
+@tag("Service")
+@route("/api-docs.json")
+@get
+@operationId("apiDocument")
+op apiDocument(): Ok<Record<unknown>>;
+
+/** Every operation in the API document, as a self-contained HTML page. */
+@tag("Service")
+@route("/api-docs")
+@get
+@operationId("apiDocumentIndex")
+op apiDocumentIndex(): {
+  @statusCode statusCode: 200;
+  @header contentType: "text/html";
+  @body body: string;
+};

@@ -41,6 +41,51 @@
     }
   ],
   "paths": {
+    "/api-docs": {
+      "get": {
+        "operationId": "apiDocumentIndex",
+        "description": "Every operation in the API document, as a self-contained HTML page.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/api-docs.json": {
+      "get": {
+        "operationId": "apiDocument",
+        "description": "The API document itself: this file's output, OpenAPI 3.1.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {}
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Service"
+        ]
+      }
+    },
     "/claimdescription": {
       "get": {
         "operationId": "claimDescription",

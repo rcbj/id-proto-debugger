@@ -848,7 +848,6 @@ var claimDescriptions = fs.readFileSync(path.join(__dirname, 'jwt.xml'),
 var cachedClaimDescriptions = true;
 
 const app = express();
-const expressSwagger = require('express-swagger-generator')(app);
 
 // ---------------------------------------------------------------------------
 // EMBEDDED IN THE MOCK STS: a unix socket, and one trusted peer in front of it.
@@ -2719,41 +2718,90 @@ try {
   log.debug("Leaving userinfo_common().");
 }
 
-let options = {
-    swaggerDefinition: {
-        info: {
-            description: 'IDPTools API',
-            title: 'Swagger',
-            version: '1.0.0',
-        },
-        host: 'localhost:4000',
-        basePath: '/',
-        produces: [
-            "application/json",
-        ],
-        schemes: ['http', 'https'],
-        securityDefinitions: {
-        }
-    },
-    basedir: __dirname, //app absolute path
-    files: ['server.js'] //Path to the API handle folder
-};
-// Embedded behind the mock STS the document's "try it" calls have to go to the
-// debugger's public origin under `/api` — `localhost:4000` is a port nothing
-// listens on there. Taken from uiUrl, which api/env/embedded.js derives from
-// DEBUGGER_UI_URL, rather than from a request: this document is built once.
-if (LISTEN_SOCKET && uiUrl) {
-  try {
-    var embeddedOrigin = new URL(uiUrl);
-    options.swaggerDefinition.host = embeddedOrigin.host;
-    options.swaggerDefinition.basePath = '/api';
-    options.swaggerDefinition.schemes = [embeddedOrigin.protocol
-        .replace(/:$/, '')];
-  } catch (e) {
-    log.warn('uiUrl is not a URL (' + ((e && e.message) || e) + '); the ' +
-             'API document keeps its standalone host.');
-  }
+// ---------------------------------------------------------------------------
+// THE API DOCUMENT, SERVED. common/model/openapi.json is generated from
+// models/api/ (models/CLAUDE.md) and is the same document every route's
+// validator is built from, so what a caller reads here is what a request
+// meets. It replaced express-swagger-generator's Swagger 2.0, which was
+// built from JSDoc comments that nothing held to the code.
+//
+// Its version is this build's, and its server is where this api is reached:
+// embedded behind the mock STS that is the debugger's public origin under
+// `/api` (taken from uiUrl, which api/env/embedded.js derives from
+// DEBUGGER_UI_URL, rather than from a request: the document is built once).
+// ---------------------------------------------------------------------------
+const API_DOCUMENT = model.document(APP_VERSION,
+  (LISTEN_SOCKET && uiUrl) ? uiUrl.replace(/\/+$/, '') + '/api' :
+    (appconfig.apiUrl || null));
+
+function escapeHtml(text) {
+  log.debug("Entering escapeHtml().");
+  log.debug("Leaving escapeHtml().");
+  return String(text).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;',
+             "'": '&#39;' }[c];
+  });
 }
+
+// A page listing every operation, written from the document. Self-contained
+// on purpose — no script, no stylesheet from anywhere — because the
+// explorers that would render it interactively are either another
+// dependency tree or a CDN this api would then send its callers to.
+function apiDocumentIndex(doc) {
+  log.debug("Entering apiDocumentIndex().");
+  const rows = [];
+  Object.keys(doc.paths || {}).sort().forEach(function (route) {
+    Object.keys(doc.paths[route]).forEach(function (method) {
+      const op = doc.paths[route][method];
+      if (!op || !op.operationId) {
+        return;
+      }
+      rows.push('<tr><td>' + escapeHtml((op.tags || [''])[0]) + '</td><td>' +
+        '<code>' + escapeHtml(method.toUpperCase()) + ' ' +
+        escapeHtml(route) + '</code></td><td><code>' +
+        escapeHtml(op.operationId) + '</code></td><td>' +
+        escapeHtml(op.description || op.summary || '') + '</td></tr>');
+    });
+  });
+  log.debug("Leaving apiDocumentIndex(). " + rows.length);
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1">' +
+    '<title>' + escapeHtml(doc.info.title) + '</title><style>' +
+    'body{font:14px/1.45 system-ui,sans-serif;margin:16px;color:#1b1b1b;' +
+    'background:#fff}table{border-collapse:collapse;width:100%}' +
+    'td,th{border-bottom:1px solid #ddd;padding:6px 8px;text-align:left;' +
+    'vertical-align:top}code{font-size:13px}' +
+    '@media (prefers-color-scheme: dark){body{background:#151515;' +
+    'color:#e8e8e8}td,th{border-color:#333}}</style></head><body>' +
+    '<h1>' + escapeHtml(doc.info.title) + ' <small>' +
+    escapeHtml(doc.info.version) + '</small></h1><p>The OpenAPI 3.1 ' +
+    'document is <a href="api-docs.json">api-docs.json</a>. Every route ' +
+    'below is validated against it.</p><table><thead><tr><th>Family</th>' +
+    '<th>Operation</th><th>operationId</th><th>What it does</th></tr>' +
+    '</thead><tbody>' + rows.join('') + '</tbody></table></body></html>';
+}
+
+/**
+ * The API document, OpenAPI 3.1.
+ * @route GET /api-docs.json
+ */
+app.get('/api-docs.json', model.route('apiDocument'), function (req, res) {
+  log.debug("Entering GET /api-docs.json.");
+  log.debug("Leaving GET /api-docs.json.");
+  return res.status(STATUS_200).json(API_DOCUMENT);
+});
+
+/**
+ * Every operation in the API document, as a page.
+ * @route GET /api-docs
+ */
+app.get('/api-docs', model.route('apiDocumentIndex'), function (req, res) {
+  log.debug("Entering GET /api-docs.");
+  log.debug("Leaving GET /api-docs.");
+  return res.status(STATUS_200).type('html')
+    .send(apiDocumentIndex(API_DOCUMENT));
+});
+
 /**
  * Relay a Kerberos v5 message to a KDC and return its reply.
  * @route POST /krb5/kdc
@@ -4352,7 +4400,6 @@ app.get('/spiffe/limits', function (req, res) {
   return res.status(STATUS_200).json(spiffe.limits());
 });
 
-expressSwagger(options)
 
 /**
  * The certificate this service is serving, as PEM, so that a caller can trust

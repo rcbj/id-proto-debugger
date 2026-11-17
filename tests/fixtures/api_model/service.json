@@ -1,6 +1,6 @@
 {
   "family": "service",
-  "about": "GET /healthcheck and GET /model/gaps. The second depends on validateResponses, which api/env/docker-tests.js turns on; its gaps are whatever the run so far produced, so they are volatile.",
+  "about": "GET /healthcheck, GET /model/gaps, and the API document at GET /api-docs.json and GET /api-docs. The document changes whenever a model does, so only its OpenAPI version is compared; the page, likewise, only by status. GET /model/gaps depends on validateResponses, which api/env/docker-tests.js turns on.",
   "cases": [
     {
       "name": "healthcheck",
@@ -25,6 +25,38 @@
         "body": {
           "validateResponses": true,
           "gaps": []
+        }
+      }
+    },
+    {
+      "name": "the API document is OpenAPI 3.1",
+      "method": "GET",
+      "path": "/api-docs.json",
+      "volatile": [
+        "info",
+        "servers",
+        "tags",
+        "paths",
+        "components"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "openapi": "3.1.0"
+        }
+      }
+    },
+    {
+      "name": "the API document as a page",
+      "method": "GET",
+      "path": "/api-docs",
+      "volatile": [
+        "(not JSON)"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "(not JSON)": "(the operations page; compared by status only)"
         }
       }
     }
