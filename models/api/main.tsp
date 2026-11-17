@@ -25,6 +25,7 @@ import "./ldap.tsp";
 import "./scim.tsp";
 import "./ssf.tsp";
 import "./gnap.tsp";
+import "./smartcard.tsp";
 
 using Http;
 using OpenAPI;
