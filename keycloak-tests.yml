@@ -117,8 +117,8 @@ services:
       # certificates it issues, so it is moved rather than set to 0.
       - PKI_HTTP_PORT=8083
       # ---------------------------------------------------------------------
-      # THE MAIN PORT IS HTTPS HERE TOO, for the reason local-tests.yml and
-      # docker-compose-run-tests.yml give at length: the RFC 9700 pass is a
+      # THE MAIN PORT IS HTTPS HERE TOO, for the reason
+      # docker-compose-run-tests.yml gives at length: the RFC 9700 pass is a
       # TRUST REALM on this one instance now (`/realm/rfc9700/...`) rather than
       # a second container, a realm binds no socket of its own, and that pass is
       # only honest over TLS — requirement 8.1 is that every configured

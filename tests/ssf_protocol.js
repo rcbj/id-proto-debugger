@@ -80,7 +80,7 @@ const jws = paths.requireSharedModule(
 // It is a WS-Trust ENDPOINT and carries a path: the launchers set it to
 // `https://localhost:8081/sts` (`https://sts:8081/sts` containerized), so the
 // discovery document was looked for under `/sts/ssf` and answered 404.
-// local-run-tests.sh's own comment on it says it may be pointed at a real
+// The launchers have said it may be pointed at a real
 // Apache CXF STS, which answers nothing else here at all.
 //
 // `STS_URL` is the mock's base URL and is the right fallback: set only on the

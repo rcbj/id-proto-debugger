@@ -23,7 +23,7 @@ the api's 474 own-code missing branches, and roughly 2,935 of the frontend's
 against it would have written the ones that already existed.
 
 Coverage is **opt-in**. The default build and the normal test runs
-(`docker-run-tests.sh`, `local-run-tests.sh`) are completely unaffected; nothing
+(`docker-run-tests.sh`, `remote-run-tests.sh`) are completely unaffected; nothing
 is instrumented unless you explicitly enable it.
 
 ## How it works

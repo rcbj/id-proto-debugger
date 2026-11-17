@@ -300,7 +300,7 @@ async function gate() {
     log.debug("Leaving gate(). Unreachable.");
     mustBeAbleTo(false, "The mock STS this job was pointed at,", STS_URL +
       ", could not be reached (" + e.message + "). Start the stack, or run " +
-      "./local-run-tests.sh which does.");
+      "./docker-run-tests.sh which does.");
   }
   if (described.status !== 200 || !described.body || !described.body.enabled) {
     log.debug("Leaving gate(). Not enabled.");

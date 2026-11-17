@@ -363,7 +363,7 @@ provider at all.
 ```bash
 # The whole SAML suite, both versions, against the mock STS only — the fastest
 # loop, and the one that includes SAML 1.1 (the Keycloak half cannot).
-./local-run-tests.sh --saml-only=sts
+./docker-run-tests.sh --saml-only=sts
 
 # One binding, with a stack already up. SAML11_METADATA_URL names the mock's
 # per-relying-party 1.1 descriptor; nothing has to be provisioned, because that

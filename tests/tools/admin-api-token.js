@@ -18,9 +18,9 @@
 //
 // THIS IS THE ONE PLACE A RUN OBTAINS ONE. `run-report.js` calls it once,
 // before any job starts, and hands the result to every job it spawns together
-// with `tools/attach-admin-token.js`, which presents it. The `--*-only` modes
-// in `local-run-tests.sh` get the same token from `mintAdminApiToken()` in
-// `common/common.sh`, which runs this file as a program.
+// with `tools/attach-admin-token.js`, which presents it. The launchers get
+// the same token from `mintAdminApiToken()` in `common/common.sh`, which runs
+// this file as a program.
 //
 // IT IS A TOOL AND NOT A TEST, which is why it is under `tools/`: three source
 // -inspection jobs (`browser_tests_headless.js`, `driver_quit_reachable.js`,

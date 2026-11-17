@@ -129,5 +129,5 @@ pages, since our wallet will not build a presentation carrying someone else's no
 Wiring: the verifier container listens on 7004 with its own CORS proxy on **7003** (walt.id sends no CORS headers,
 and its `urlPrefix` must name an address the browser can use), configured from `waltid/verifier-config/*.conf`
 rendered per run by `renderWaltidConfig()` with a freshly generated request-signing key. It is in both compose
-files — `docker-compose-run-tests.yml` and `local-tests.yml` — and the job is skipped, not failed, when
+files — `docker-compose-run-tests.yml` and `keycloak-tests.yml` — and the job is skipped, not failed, when
 `WALTID_VERIFIER_URL` is unset.

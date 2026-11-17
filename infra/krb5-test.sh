@@ -20,7 +20,7 @@
 # prints what to run to remove it by hand; nothing else will.
 #
 # KRB5_TEST_SCRIPTS chooses what runs against the live DC (default
-# krb5_real_dc.js). ./local-run-tests.sh --krb5-real-dc uses it to offer the
+# krb5_real_dc.js). ./docker-run-tests.sh --krb5-real-dc uses it to offer the
 # capture refresh as well as the test.
 # ---------------------------------------------------------------------------
 #
@@ -257,7 +257,7 @@ KEYTAB_B64="$(node -e 'process.stdout.write(require("/tmp/krb5-dc.json").keytab_
 # Run whatever was asked for against the live DC.
 #
 # KRB5_TEST_SCRIPTS is a space-separated list of scripts under tests/, and it
-# exists so that ./local-run-tests.sh --krb5-real-dc can choose between running
+# exists so that ./docker-run-tests.sh --krb5-real-dc can choose between running
 # the test and REFRESHING THE CAPTURE without a second copy of the apply / wait
 # / teardown logic above. There must be exactly one implementation of the
 # teardown: it is the only thing that stops a Windows instance running until

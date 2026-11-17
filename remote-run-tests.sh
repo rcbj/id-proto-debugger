@@ -8,8 +8,9 @@ set -x
 # the local dev server, https://test.idptools.com, or https://idptools.com —
 # using the local identity-provider stack this script starts (keycloak-tests.yml).
 #
-# Unlike local-run-tests.sh, this does NOT start the debugger/api stack: the target
-# site is already deployed (or served by your own local dev server). It DOES start
+# Unlike docker-run-tests.sh, this does NOT start the debugger/api stack: the
+# target site is already deployed (or served by your own local dev server).
+# It DOES start
 # everything the suite needs on the other side of the protocol, all on this host's
 # loopback:
 #
@@ -78,7 +79,7 @@ init()
   fi
 
   # Dedicated Keycloak container (isolated compose project so it never clashes
-  # with local-run-tests.sh's stack).
+  # with another launcher's stack).
   KEYCLOAK_COMPOSE_FILE="${KEYCLOAK_COMPOSE_FILE:-keycloak-tests.yml}"
   KEYCLOAK_COMPOSE_PROJECT="${KEYCLOAK_COMPOSE_PROJECT:-idptools-kctest}"
 
@@ -674,7 +675,7 @@ check_return_code $?
 # sts_jws_verification.js died on `Cannot find module './enrollment_profiles'`
 # on the 2026-09-28 live run, loading a checkout). Copied out of the image the
 # stack runs, once, into a cache; see warmIyaStsTree(). Fatal when it cannot
-# be had, as local-run-tests.sh's is.
+# be had, as docker-run-tests.sh's is.
 warmIyaStsTree "${CURRENT_DIR}"
 check_return_code $?
 resetKeycloakRealm

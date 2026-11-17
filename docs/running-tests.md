@@ -4,7 +4,7 @@ The full description of every job is in [What each test covers](test-suite-map.m
 
 To run the docker-based tests locally, run the following commmand:
 ```sudo CONFIG_FILE=./env/local.js docker compose -f docker-compose-run-tests.yml up --abort-on-container-exit```
-To run tests locally, run: ```./local-run-tests.sh```
+To run the full suite from the host launcher, run: ```./docker-run-tests.sh```
 
 If you need to pop up the browser for troubleshooting, pass in the --browser option to the test scripts.
 
@@ -30,6 +30,6 @@ The SAML tests sign the AuthnRequest and LogoutRequest, and decrypt an encrypted
 | `SAML_SP_CERT` | the matching certificate, PEM | the tests, as the SP public key |
 | `SAML_SP_SIGNING_CERT` | the same certificate as base64 DER | `configureKeycloak`, which registers it on the SAML client so Keycloak validates the request signature |
 
-So the key exists only in the environment of the run that generated it: on the host for `./local-run-tests.sh` and `./remote-run-tests.sh`, and inside the tests container for the fully-containerized suite (`tests/run-tests-in-container.sh` generates its own, so nothing is baked into the image). The generator turns the shell's `set -x` trace off around the key material and logs only a SHA-256 fingerprint, so the private key never reaches a build log.
+So the key exists only in the environment of the run that generated it: on the host for `./remote-run-tests.sh`, and inside the tests container for the fully-containerized suite (`tests/run-tests-in-container.sh` generates its own, so nothing is baked into the image). The generator turns the shell's `set -x` trace off around the key material and logs only a SHA-256 fingerprint, so the private key never reaches a build log.
 
 Running a single SAML test script by hand needs those variables in the environment — its certificate is what Keycloak was told to trust, so a self-generated pair would not validate. The scripts say so and stop if they are missing.
