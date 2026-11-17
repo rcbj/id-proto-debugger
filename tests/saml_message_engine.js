@@ -49,7 +49,7 @@
 //
 // It needs no server, no browser and no network, so it never skips.
 //
-// TEN SECTIONS:
+// THIRTEEN SECTIONS:
 //
 //   1. classification — which binding, from the blob alone, in five shapes
 //   2. the artifact — 2.0 type 0x0004 and both 1.1 types
@@ -62,6 +62,10 @@
 //      document
 //   9. assertionsOf() — plaintext, advice and encrypted, in document order
 //  10. summarizeResponse() — both versions, the envelope, and a bare assertion
+//  11. requiredResponseSignature() — which signature SAML 1.1 Browser/POST
+//      requires, and a real Response signature in Shibboleth's shape
+//  12. trust — verifying against the IdP's published keys, not KeyInfo
+//  13. metadataExpiry() — validUntil, earliest bound wins
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -95,6 +99,13 @@ const sm = paths.requireSharedModule(
   [path.join(__dirname, "saml_message.js"),
    path.join(__dirname, "..", "client", "src", "saml_message.js")],
   "client/src/saml_message.js");
+
+// The XML Signature implementation, for section 11's one real signature. In
+// the tests image it is copied flat as xmldsig.js (tests/Dockerfile).
+const xd = paths.requireSharedModule(
+  [path.join(__dirname, "xmldsig.js"),
+   path.join(__dirname, "..", "common", "xmldsig.js")],
+  "common/xmldsig.js");
 
 let checks = 0;
 
@@ -872,8 +883,8 @@ function anAssertionsPartsAreReadInBothVersions() {
 
   check('SAML 1.1 puts it in CHILD ELEMENTS, and there may be several',
       function () {
-    // saml-profile-1.1 section 4.1.1.4 requires cm:artifact for
-    // Browser/Artifact and 4.2.1.4 requires cm:bearer for Browser/POST. A
+    // sstc-saml-bindings-1.1 section 4.1.1.6 requires cm:artifact for
+    // Browser/Artifact and 4.1.2.5 requires cm:bearer for Browser/POST. A
     // reader that looks only for @Method reports the profile as unstated on
     // every 1.1 assertion, which in the 1.1 browser profiles is the whole of
     // what distinguishes the two.
@@ -1550,9 +1561,225 @@ function shibbolethAttributeNamesAreWhole() {
   log.debug("Leaving shibbolethAttributeNamesAreWhole().");
 }
 
+// ---------------------------------------------------------------------------
+// 11. WHICH SIGNATURE THE SAML 1.1 PROFILE REQUIRES (#425).
+//
+// sstc-saml-bindings-1.1 section 4.1.2.4: on Browser/POST the <samlp:Response>
+// MUST be signed and the assertion MAY be. That is Shibboleth's default, and a
+// relying party that checks only the assertion verifies nothing there. The
+// profile is read off the assertion's confirmation method, because nothing on
+// the response names its binding. Then a real signature in that shape:
+// Response only, referenced through ResponseID, which must verify and must
+// stop verifying when the Status is changed.
+// ---------------------------------------------------------------------------
+function response11For(id, method, signedStatus) {
+  log.debug("Entering response11For().");
+  const xml =
+    '<samlp:Response ' + NS1 + ' ResponseID="' + id + '" MajorVersion="1" ' +
+        'MinorVersion="1" IssueInstant="2026-11-16T12:00:00Z" ' +
+        'Recipient="https://sp.example.test/acs">' +
+      '<samlp:Status><samlp:StatusCode Value="' +
+        (signedStatus || 'samlp:Success') + '"/></samlp:Status>' +
+      (method ?
+      '<saml:Assertion AssertionID="' + id + '_a" MajorVersion="1" ' +
+          'MinorVersion="1" Issuer="https://idp.example.test/idp" ' +
+          'IssueInstant="2026-11-16T12:00:00Z">' +
+        '<saml:AuthenticationStatement ' +
+            'AuthenticationMethod="urn:oasis:names:tc:SAML:1.0:am:password" ' +
+            'AuthenticationInstant="2026-11-16T12:00:00Z">' +
+          '<saml:Subject><saml:NameIdentifier>jdoe</saml:NameIdentifier>' +
+            '<saml:SubjectConfirmation><saml:ConfirmationMethod>' + method +
+            '</saml:ConfirmationMethod></saml:SubjectConfirmation>' +
+          '</saml:Subject>' +
+        '</saml:AuthenticationStatement>' +
+      '</saml:Assertion>' : '') +
+    '</samlp:Response>';
+  log.debug("Leaving response11For().");
+  return xml;
+}
+
+function theSaml11ProfileDecidesTheResponseSignature() {
+  log.debug("Entering theSaml11ProfileDecidesTheResponseSignature().");
+  const bearer = 'urn:oasis:names:tc:SAML:1.0:cm:bearer';
+  const artifact = 'urn:oasis:names:tc:SAML:1.0:cm:artifact';
+  check('SAML 1.1 Browser/POST requires the Response to be signed',
+      function () {
+    const need = sm.requiredResponseSignature(response11For('_p', bearer));
+    assert.strictEqual(need.rule, 'response');
+    assert.strictEqual(need.profile, 'Browser/POST');
+    assert.ok(need.why.indexOf('4.1.2.4') >= 0, need.why);
+  });
+  check('SAML 1.1 Browser/Artifact requires no signature on the Response',
+      function () {
+    const need = sm.requiredResponseSignature(response11For('_a', artifact));
+    assert.strictEqual(need.rule, 'none');
+    assert.strictEqual(need.profile, 'Browser/Artifact');
+  });
+  check('no verdict without an assertion, for SAML 2.0, or off a Response',
+      function () {
+    assert.strictEqual(sm.requiredResponseSignature(
+        response11For('_n', '', 'samlp:Requester')).rule, '');
+    assert.strictEqual(sm.requiredResponseSignature(
+        '<samlp:Response ' + NS2 + ' ID="_r2" Version="2.0" ' +
+        'IssueInstant="2026-11-16T12:00:00Z"/>').rule, '');
+    assert.strictEqual(
+        sm.requiredResponseSignature(SIGNED_AUTHN_REQUEST).rule, '');
+  });
+  check('a Shibboleth-shaped 1.1 Response signature verifies through ' +
+      'ResponseID, and a changed Status breaks it', function () {
+    const keyPair = xd.generateKeyPair(2048, "saml-message-engine");
+    const signed = xd.signEnveloped(response11For('_shib', bearer), {
+      privateKeyPem: keyPair.privateKeyPem,
+      certPem: keyPair.certPem,
+      sigAlg: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256',
+      placement: 'first',
+      refUri: '#_shib'
+    });
+    const root = sm.parseXml(signed).documentElement;
+    const sig = sm.messageSignature(root);
+    assert.ok(sig, 'the Response carries no signature of its own');
+    assert.strictEqual(sig.reference, '#_shib');
+    assert.strictEqual(sm.directChild(root, 'Signature'),
+        root.firstChild && root.firstChild.localName === 'Signature' ?
+        root.firstChild : null,
+        'a SAML 1.1 Response puts ds:Signature first');
+    const assertion = sm.tags(root, 'Assertion')[0];
+    assert.strictEqual(sm.messageSignature(assertion), null,
+        'the assertion should be unsigned in this shape');
+    const res = xd.verifyXmlSignature(signed);
+    assert.ok(res.valid, JSON.stringify(res));
+    assert.strictEqual(res.references[0].uri, '#_shib');
+    const tampered = signed.replace('samlp:Success', 'samlp:Requester');
+    assert.notStrictEqual(tampered, signed);
+    assert.strictEqual(xd.verifyXmlSignature(tampered).valid, false,
+        'the Response signature covers the Status');
+  });
+  log.debug("Leaving theSaml11ProfileDecidesTheResponseSignature().");
+}
+
+// ---------------------------------------------------------------------------
+// 12. TRUST: THE IDENTITY PROVIDER'S PUBLISHED KEYS, NOT THE DOCUMENT'S OWN.
+//
+// A certificate in KeyInfo came with the document, so verifying with it shows
+// the document was not altered and nothing about who signed it: a forged
+// response carrying its own certificate verifies. xmldsig's
+// verifyXmlSignatureTrusted() verifies against the metadata's signing
+// certificates, ANY of several (Shibboleth publishes a back-channel key first
+// and signs Browser/POST with the second), and splitCertificates() reads the
+// field a reader pastes them into.
+// ---------------------------------------------------------------------------
+function signaturesAreCheckedAgainstTrustedKeys() {
+  log.debug("Entering signaturesAreCheckedAgainstTrustedKeys().");
+  const bearer = 'urn:oasis:names:tc:SAML:1.0:cm:bearer';
+  const RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
+  const idp = xd.generateKeyPair(2048, "front-channel");
+  const backChannel = xd.generateKeyPair(2048, "back-channel");
+  const attacker = xd.generateKeyPair(2048, "attacker");
+  function signWith(keyPair, id) {
+    log.debug("Entering signWith().");
+    log.debug("Leaving signWith().");
+    return xd.signEnveloped(response11For(id, bearer), {
+      privateKeyPem: keyPair.privateKeyPem, certPem: keyPair.certPem,
+      sigAlg: RSA, placement: 'first', refUri: '#' + id });
+  }
+  const trusted = [xd.certPemToB64(backChannel.certPem),
+                   xd.certPemToB64(idp.certPem)];
+  check('splitCertificates reads PEM blocks, blank-line-separated base64, ' +
+      'and drops duplicates', function () {
+    const a = xd.certPemToB64(idp.certPem);
+    const b = xd.certPemToB64(attacker.certPem);
+    assert.deepStrictEqual(
+        sm.splitCertificates(idp.certPem + '\n' + attacker.certPem), [a, b]);
+    const wrapped = (a.match(/.{1,64}/g) || []).join('\n');
+    assert.deepStrictEqual(
+        sm.splitCertificates(wrapped + '\n\n' + b + '\n\n' + a), [a, b]);
+    assert.deepStrictEqual(sm.splitCertificates('  \n '), []);
+  });
+  check('a response signed with the SECOND trusted key verifies, naming it',
+      function () {
+    const res = xd.verifyXmlSignatureTrusted(signWith(idp, '_t1'), trusted);
+    assert.ok(res.valid, JSON.stringify(res));
+    assert.strictEqual(res.trusted, true);
+    assert.strictEqual(res.trustedIndex, 1);
+    assert.strictEqual(res.trustedFingerprint,
+        xd.certFingerprint(idp.certPem));
+    assert.ok(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(res.trustedFingerprint),
+        res.trustedFingerprint);
+  });
+  check('a forged response carrying its OWN certificate verifies against ' +
+      'KeyInfo and NOT against the trusted keys', function () {
+    const forged = signWith(attacker, '_t2');
+    assert.strictEqual(xd.verifyXmlSignature(forged).valid, true,
+        'KeyInfo alone cannot tell a forgery from the real thing');
+    const res = xd.verifyXmlSignatureTrusted(forged, trusted);
+    assert.strictEqual(res.valid, false);
+    assert.strictEqual(res.trusted, false);
+    assert.strictEqual(res.untrustedSigner, true);
+    assert.strictEqual(res.keyInfoValid, true);
+    assert.ok(res.error.indexOf('none of the 2 trusted') >= 0, res.error);
+  });
+  check('a trusted key does not rescue an altered document, and an empty ' +
+      'trust list is refused by name', function () {
+    const altered = signWith(idp, '_t3')
+        .replace('samlp:Success', 'samlp:Requester');
+    const res = xd.verifyXmlSignatureTrusted(altered, trusted);
+    assert.strictEqual(res.valid, false);
+    assert.ok(!res.untrustedSigner, 'an altered document is not an ' +
+        'untrusted signer');
+    const none = xd.verifyXmlSignatureTrusted(signWith(idp, '_t4'), []);
+    assert.strictEqual(none.valid, false);
+    assert.ok(none.error.indexOf('No trusted certificate') >= 0, none.error);
+  });
+  log.debug("Leaving signaturesAreCheckedAgainstTrustedKeys().");
+}
+
+// ---------------------------------------------------------------------------
+// 13. METADATA EXPIRY: validUntil bounds the element and everything in it
+// (saml-metadata-2.0-os section 2.2.1), so the IdP descriptor expires at the
+// earliest validUntil on it or on anything enclosing it. Shibboleth's stock
+// example metadata is stamped with the instant it was generated.
+// ---------------------------------------------------------------------------
+function metadataExpiryIsTheEarliestBound() {
+  log.debug("Entering metadataExpiryIsTheEarliestBound().");
+  const now = new Date('2026-11-17T00:00:00Z');
+  function md(outer, inner) {
+    log.debug("Entering md().");
+    log.debug("Leaving md().");
+    return '<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"' +
+        (outer ? ' validUntil="' + outer + '"' : '') + '>' +
+      '<EntityDescriptor entityID="https://idp.example.test">' +
+        '<IDPSSODescriptor protocolSupportEnumeration="' +
+            'urn:oasis:names:tc:SAML:1.1:protocol"' +
+            (inner ? ' validUntil="' + inner + '"' : '') + '/>' +
+      '</EntityDescriptor></EntitiesDescriptor>';
+  }
+  check('metadata with no validUntil never expires', function () {
+    assert.deepStrictEqual(sm.metadataExpiry(md('', ''), now),
+        { validUntil: '', expired: false });
+  });
+  check('an expired enclosing EntitiesDescriptor expires the IdP descriptor',
+      function () {
+    const out = sm.metadataExpiry(md('2026-11-16T00:00:00Z',
+        '2030-01-01T00:00:00Z'), now);
+    assert.strictEqual(out.validUntil, '2026-11-16T00:00:00Z');
+    assert.strictEqual(out.expired, true);
+  });
+  check('the earliest bound wins, and a future one is not expired',
+      function () {
+    const out = sm.metadataExpiry(md('2031-01-01T00:00:00Z',
+        '2030-01-01T00:00:00Z'), now);
+    assert.strictEqual(out.validUntil, '2030-01-01T00:00:00Z');
+    assert.strictEqual(out.expired, false);
+  });
+  log.debug("Leaving metadataExpiryIsTheEarliestBound().");
+}
+
 function test() {
   log.debug("Entering test().");
   shibbolethAttributeNamesAreWhole();
+  theSaml11ProfileDecidesTheResponseSignature();
+  signaturesAreCheckedAgainstTrustedKeys();
+  metadataExpiryIsTheEarliestBound();
   everyPastedShapeIsClassified();
   theSaml11RequestIsTheShibbolethProfile();
   theArtifactIsBytesAndNotAMessage();

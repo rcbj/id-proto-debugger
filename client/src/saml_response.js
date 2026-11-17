@@ -100,6 +100,10 @@ var SAML_RESP_KEY = 'saml_last_response';
 // by the signature-validation option.
 var lastAssertionXml = '';
 
+// The whole protocol message as it arrived, for the same reason: the
+// Response-level signature is verified against these bytes.
+var lastResponseXml = '';
+
 // The first <xenc:EncryptedData> in the response (an EncryptedAssertion, or a
 // message/wrapper-level EncryptedData), serialized — used by the decrypt
 // option.
@@ -274,6 +278,7 @@ function render(responseXml, isFresh) {
   var msgType = doc.documentElement ? doc.documentElement.localName : '';
   var isLogout = msgType === 'LogoutResponse';
   var version = samlVersionOf(doc.documentElement);
+  lastResponseXml = responseXml;
 
   buildResponseDetailsTable(doc);
 
@@ -298,8 +303,12 @@ function render(responseXml, isFresh) {
     : (isSaml1(version)
        ? '(no <saml:Assertion> — the Response carries a status and nothing ' +
          'else. SAML 1.1 has no encrypted assertion in the browser profiles, ' +
-         'so this is an error rather than something to decrypt; see the ' +
-         'Details tab.)'
+         'so this is not something to decrypt; see the Details tab. If the ' +
+         'status is Success and the Response came from resolving an ' +
+         'artifact, it is the answer sstc-saml-bindings-1.1 section 4.1.1.6 ' +
+         'requires for a requester the identity provider could not ' +
+         'authenticate as the artifact\'s destination site: load the SP key ' +
+         'pair on the request page so the API signs its <samlp:Request>.)'
        : '(no <Assertion> — the response may be an error or encrypted)');
   setVal('saml_assertion_xml', assertionXml ?
          formatXml(assertionXml) : noAssertionNote);
@@ -496,8 +505,8 @@ function buildAttributesTable(assertion) {
   }
 
   // HOW THE ASSERTION CLAIMS TO HAVE ARRIVED, which in the SAML 1.1 browser
-  // profiles IS the profile: saml-profile-1.1 section 4.1.1.4 requires
-  // cm:artifact for Browser/Artifact and 4.2.1.4 requires cm:bearer for
+  // profiles IS the profile: sstc-saml-bindings-1.1 section 4.1.1.6 requires
+  // cm:artifact for Browser/Artifact and 4.1.2.5 requires cm:bearer for
   // Browser/POST. A relying party that does not check works perfectly with
   // either, which is exactly why it is worth showing. The three
   // SubjectConfirmationData values below it are SAML 2.0's bearer check
@@ -773,6 +782,11 @@ function renderFromStorage(msgIfMissing) {
 // table.
 function formatSigResult(res) {
   log.debug("Entering formatSigResult().");
+  if (res.untrustedSigner) {
+    log.debug("Leaving formatSigResult(). Untrusted signer.");
+    return '<span style="color:#b00;"><strong>INVALID</strong>: ' +
+        esc(res.error) + '</span>';
+  }
   if (res.error) {
     log.debug("Leaving formatSigResult().");
     return '<span style="color:#b00;">Cannot validate: ' + esc(res.error) +
@@ -794,35 +808,237 @@ function formatSigResult(res) {
       esc(res.canonicalization || '') + '</td></tr>';
   html += '<tr><td class="saml-key">Signer (cert CN)</td><td>' +
       esc(res.signerSubject || '(from KeyInfo)') + '</td></tr>';
+  html += '<tr><td class="saml-key">Verified with</td><td>' +
+      (res.trusted ? 'trusted certificate ' + (res.trustedIndex + 1) +
+       ' (SHA-256 ' + esc(res.trustedFingerprint || '') + ')' +
+       (res.keyInfoValid ? '' : '. The certificate in KeyInfo does not ' +
+        'verify it, or there is none') :
+       'the certificate in its own KeyInfo. That proves the document was ' +
+       'not altered after signing, and nothing about who signed it.') +
+      '</td></tr>';
   html += '</table>';
   log.debug("Leaving formatSigResult().");
   return html;
 }
 
-// Validate the enveloped XML digital signature on the extracted assertion,
-// using the certificate embedded in the signature's KeyInfo. Reuses xmldsig.js.
-function validateAssertionSignature() {
-  log.debug("Entering validateAssertionSignature().");
-  var details = el('saml_sig_details');
-  if (!lastAssertionXml || lastAssertionXml.indexOf('<') < 0) {
-    setVal('saml_sig_status', 'No assertion available to validate.');
-    if (details) details.innerHTML = '';
-    log.debug("Leaving validateAssertionSignature().");
-    return false;
+// What the reader asked to verify against: the IdP's published signing
+// certificates (the default whenever there are any), or each signature's own
+// KeyInfo certificate.
+function trustSettings() {
+  log.debug("Entering trustSettings().");
+  var modeEl = el('saml_sig_trust');
+  var certsEl = el('saml_trusted_certs');
+  var mode = (modeEl && modeEl.value) || 'trusted';
+  var certs = sm.splitCertificates(certsEl ? certsEl.value : '');
+  log.debug("Leaving trustSettings(). mode=" + mode + ", " + certs.length +
+            " trusted.");
+  return { mode: mode, certs: certs };
+}
+
+// The trusted certificates the SAML request page left behind: every signing
+// certificate in the IdP metadata it last loaded (samltools_saml_signer_certs,
+// #425) and its Signer Certificate field, without duplicates. Read on load; a
+// reader's edits to the field are used and never written back.
+function prefillTrustedCerts() {
+  log.debug("Entering prefillTrustedCerts().");
+  var field = el('saml_trusted_certs');
+  var trust = el('saml_sig_trust');
+  if (!field || field.value) {
+    log.debug("Leaving prefillTrustedCerts(). Nothing to fill.");
+    return;
   }
-  var res;
+  var certs = [];
   try {
-    res = xd.verifyXmlSignature(lastAssertionXml);
+    var listed = JSON.parse(localStorage.getItem(
+        'samltools_saml_signer_certs') || '[]');
+    if (Array.isArray(listed)) certs = certs.concat(listed);
+    var one = localStorage.getItem('samltools_saml_signer_cert');
+    if (one) certs.push(one);
   } catch (e) {
-    setVal('saml_sig_status', 'Validation error: ' + e.message);
-    log.debug("Leaving validateAssertionSignature().");
+    log.debug("No stored signer certificates: " + e.message);
+  }
+  var unique = sm.splitCertificates(certs.join('\n\n'));
+  field.value = unique.join('\n\n');
+  if (trust && !unique.length) trust.value = 'keyinfo';
+  log.debug("Leaving prefillTrustedCerts(). " + unique.length + " certs.");
+}
+
+// Verify one enveloped signature as trustSettings() says, never throwing: an
+// exception becomes a result with an `error`, which formatSigResult() already
+// renders.
+function verifyEnveloped(xml) {
+  log.debug("Entering verifyEnveloped().");
+  try {
+    var how = trustSettings();
+    var res;
+    if (how.mode === 'keyinfo') {
+      res = xd.verifyXmlSignature(xml);
+    } else if (!how.certs.length) {
+      res = { valid: false,
+              error: 'no trusted certificate: load the IdP metadata on the ' +
+                     'SAML request page, paste the IdP signing ' +
+                     'certificate above, or choose KeyInfo.' };
+    } else {
+      res = xd.verifyXmlSignatureTrusted(xml, how.certs);
+    }
+    log.debug("Leaving verifyEnveloped().");
+    return res;
+  } catch (e) {
+    log.debug("Leaving verifyEnveloped(). " + e.message);
+    return { valid: false, error: e.message };
+  }
+}
+
+// The message's own signature. verifyXmlSignature() checks the FIRST
+// <ds:Signature> in document order. On a well-formed Response that is the
+// message's (SAML 1.1 puts it first, SAML 2.0 right after <saml:Issuer>), but
+// a document where an assertion's comes first would have the assertion's
+// signature reported as the message's. So the reference it checked must be
+// the one the message's own signature names, and that reference must name
+// the message.
+function verifyMessageSignature(msg, msgSig) {
+  log.debug("Entering verifyMessageSignature().");
+  var rootId = msg.getAttribute('ID') || msg.getAttribute('ResponseID') || '';
+  var ref = msgSig.reference || '';
+  if (ref !== '' && ref !== '#' + rootId) {
+    log.debug("Leaving verifyMessageSignature(). Foreign reference.");
+    return { valid: false,
+             error: 'its Reference names ' + ref + ', not this ' +
+                    msg.localName + '\'s own id (#' + rootId + '), so it ' +
+                    'does not sign the message.' };
+  }
+  var res = verifyEnveloped(lastResponseXml);
+  var checked = (res.references && res.references[0]) ?
+      res.references[0].uri : ref;
+  if (!res.error && checked !== ref) {
+    log.debug("Leaving verifyMessageSignature(). Checked another signature.");
+    return { valid: false,
+             error: 'the first <ds:Signature> in the document is not the ' +
+                    'message\'s own, so the message signature could not be ' +
+                    'checked on its own.' };
+  }
+  log.debug("Leaving verifyMessageSignature().");
+  return res;
+}
+
+function sigSection(title, covers, res) {
+  log.debug("Entering sigSection().");
+  log.debug("Leaving sigSection().");
+  return '<h4 style="margin:8px 0 2px;">' + esc(title) + '</h4>' +
+      '<div class="saml-note">' + esc(covers) + '</div>' +
+      formatSigResult(res);
+}
+
+function verdictWord(res) {
+  log.debug("Entering verdictWord().");
+  if (res.untrustedSigner) {
+    log.debug("Leaving verdictWord(). Untrusted signer.");
+    return 'INVALID (signed by an untrusted key)';
+  }
+  if (res.error) {
+    log.debug("Leaving verdictWord(). Cannot validate.");
+    return 'cannot be validated';
+  }
+  log.debug("Leaving verdictWord().");
+  return res.valid ? 'VALID' : 'INVALID';
+}
+
+// Validate EVERY enveloped signature the response carries, each on its own:
+// the one on the <samlp:Response> and the one on the assertion. They protect
+// different things. The message signature covers the Status, Recipient /
+// Destination and InResponseTo, and is lost once the assertion is lifted out;
+// the assertion signature travels with the assertion and says nothing about
+// the Status. SAML 1.1 Browser/POST requires the first (#425), which is what
+// Shibboleth sends, and checking only the second verified nothing there.
+// Verifies against the trusted IdP certificates or each signature's KeyInfo,
+// as trustSettings() says.
+function validateSignatures() {
+  log.debug("Entering validateSignatures().");
+  var details = el('saml_sig_details');
+  if (details) details.innerHTML = '';
+  if (!lastResponseXml || lastResponseXml.indexOf('<') < 0) {
+    setVal('saml_sig_status', 'No response available to validate.');
+    log.debug("Leaving validateSignatures(). Nothing rendered.");
     return false;
   }
-  setVal('saml_sig_status', res.error ? ('Cannot validate: ' +
-         res.error) : (res.valid ?
-         'Assertion signature VALID.' : 'Assertion signature INVALID.'));
-  if (details) details.innerHTML = formatSigResult(res);
-  log.debug("Leaving validateAssertionSignature().");
+  var doc = new DOMParser().parseFromString(lastResponseXml,
+      'application/xml');
+  var msg = doc.documentElement;
+  if (!msg || doc.getElementsByTagName('parsererror').length) {
+    setVal('saml_sig_status', 'Cannot validate: the response is not ' +
+           'well-formed XML.');
+    log.debug("Leaving validateSignatures(). Malformed.");
+    return false;
+  }
+  var html = '';
+  var parts = [];
+  var checked = 0;
+
+  var msgSig = sm.messageSignature(msg);
+  var msgName = msg.localName || 'message';
+  if (msgSig) {
+    var mres = verifyMessageSignature(msg, msgSig);
+    checked++;
+    parts.push(msgName + ' signature ' + verdictWord(mres));
+    html += sigSection('<' + msgName + '> signature',
+        'Covers the whole message, Status, Recipient / Destination and ' +
+        'InResponseTo included. It is lost once the assertion is taken out ' +
+        'of the message.', mres);
+  } else {
+    parts.push(msgName + ' not signed');
+    html += '<h4 style="margin:8px 0 2px;">&lt;' + esc(msgName) +
+        '&gt; signature</h4><div class="saml-note">The message carries no ' +
+        '&lt;ds:Signature&gt; of its own.</div>';
+  }
+
+  var assertionEl = lastAssertionXml && lastAssertionXml.indexOf('<') >= 0 ?
+      new DOMParser().parseFromString(lastAssertionXml, 'application/xml')
+        .documentElement : null;
+  if (assertionEl && sm.messageSignature(assertionEl)) {
+    var ares = verifyEnveloped(lastAssertionXml);
+    checked++;
+    parts.push('assertion signature ' + verdictWord(ares));
+    html += sigSection('Assertion signature',
+        'Covers this assertion only. It travels with the assertion and ' +
+        'says nothing about the message\'s Status.', ares);
+  } else if (assertionEl) {
+    parts.push('assertion not signed');
+    html += '<h4 style="margin:8px 0 2px;">Assertion signature</h4>' +
+        '<div class="saml-note">The assertion carries no ' +
+        '&lt;ds:Signature&gt; of its own.' + (msgSig ? ' The message ' +
+        'signature above covers it while it stays inside this message.' :
+        '') + '</div>';
+  }
+
+  // What the profile requires, said as a finding rather than an error: an
+  // unsigned Browser/POST Response is exactly what this page exists to show.
+  var need = sm.requiredResponseSignature(lastResponseXml);
+  var finding = '';
+  if (need.rule === 'response' && !msgSig) {
+    finding = ' NOT COMPLIANT: ' + need.profile + ' requires a signed ' +
+        '<samlp:Response>.';
+  }
+  if (need.why) {
+    html += '<p class="saml-note"><strong>Profile:</strong> ' +
+        esc(need.why) + (finding ? ' <strong style="color:#b00;">This ' +
+        'Response is not signed.</strong>' : '') + '</p>';
+  }
+
+  var how = trustSettings();
+  var against = how.mode === 'keyinfo' ?
+      ' Checked against KeyInfo: integrity only, the signer is not ' +
+      'authenticated.' :
+      ' Checked against ' + how.certs.length + ' trusted certificate(s).';
+  if (!checked) {
+    setVal('saml_sig_status', 'No signature was found on this response or ' +
+           'its assertion.' + finding);
+  } else {
+    var line = parts.join('; ');
+    setVal('saml_sig_status', line.charAt(0).toUpperCase() + line.slice(1) +
+           '.' + finding + against);
+  }
+  if (details) details.innerHTML = html;
+  log.debug("Leaving validateSignatures(). " + checked + " checked.");
   return false;
 }
 
@@ -930,6 +1146,7 @@ function handleEdgeHandoff(posted) {
 window.onload = function () {
   log.debug("Entering onload().");
   renderOperationHistory();
+  prefillTrustedCerts();
   // Prefill the decryption key from the SP private key stored by the SAML Test
   // Tools page (the IdP encrypts to the SP's certificate).
   try {
@@ -1016,7 +1233,7 @@ module.exports = {
   showTab,
   viewSignerCert,
   copyField,
-  validateAssertionSignature,
+  validateSignatures,
   decryptAssertion,
   clearOperationHistory
 };

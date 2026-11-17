@@ -1385,10 +1385,13 @@ function buildArtifactResolveMessage(artifact, ctx) {
   var id = '_' + crypto.randomBytes(16).toString('hex');
   var instant = new Date().toISOString();
   if (ctx.samlVersion === '1.1') {
-    // saml-bindings-1.1 section 3.2.3. MajorVersion/MinorVersion rather than a
-    // Version attribute, RequestID rather than ID, and NO <Issuer> — SAML 1.1
-    // has no element for a requester to name itself in, which is why the
-    // responder identifies the caller by the transport or not at all.
+    // sstc-saml-bindings-1.1 section 4.1.1.6. MajorVersion/MinorVersion rather
+    // than a Version attribute, RequestID rather than ID, and NO <Issuer> —
+    // SAML 1.1 has no element for a requester to name itself in. The
+    // responder knows whom the artifact was issued to and authenticates the
+    // caller as that party, by TLS or by this message's signature (section
+    // 4.1.1.6 requires one or the other); Shibboleth checks the signature
+    // against the SP metadata's signing key.
     var req = '<samlp:Request ' +
         'xmlns:samlp="urn:oasis:names:tc:SAML:1.0:protocol"' +
         ' xmlns:saml="urn:oasis:names:tc:SAML:1.0:assertion"' +
@@ -1454,10 +1457,23 @@ function resolveArtifact(artifact, relayState) {
         return reject(new Error('signing the artifact resolution request ' +
                       'failed: ' + e.message));
       }
+    } else if (ctx.samlVersion === '1.1') {
+      // SAML 1.1 REQUIRES the requester be authenticated here
+      // (sstc-saml-bindings-1.1 section 4.1.1.6: the SOAP binding "MUST
+      // provide ... bilateral authentication"), and a source site that cannot
+      // tell who asked answers Success with NO assertions — which is what
+      // Shibboleth does (#425). A signature over the <samlp:Request> is how
+      // this API authenticates; without a key it can only send it unsigned.
+      log.warn('resolveArtifact: no SP private key was registered for this ' +
+               'flow, so the SAML 1.1 artifact resolution request is being ' +
+               'sent UNSIGNED. sstc-saml-bindings-1.1 section 4.1.1.6 ' +
+               'requires the requester to be authenticated; an identity ' +
+               'provider that enforces it answers Success with no ' +
+               'assertion. Load the SP key pair to sign it.');
     } else {
       log.info('resolveArtifact: no SP private key was registered for this ' +
                'flow, so the artifact resolution request is being sent ' +
-               'UNSIGNED. Neither version requires a signature here; an ' +
+               'UNSIGNED. SAML 2.0 does not require a signature here; an ' +
                'identity provider that wants one refuses with a SAML status ' +
                'rather than an HTTP error.');
     }

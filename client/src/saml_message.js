@@ -1127,9 +1127,10 @@ function attributesOf(root) {
 
 // HOW THE ASSERTION CLAIMS TO HAVE REACHED THE RELYING PARTY. The two
 // versions put this in different places and in the SAML 1.1 browser profiles
-// it IS the profile: saml-profile-1.1 section 4.1.1.4 requires cm:artifact for
-// Browser/Artifact and 4.2.1.4 requires cm:bearer for Browser/POST, and a
-// relying party that never looks works perfectly with either. SAML 2.0 puts
+// it IS the profile: sstc-saml-bindings-1.1 section 4.1.1.6 requires
+// cm:artifact for Browser/Artifact and 4.1.2.5 requires cm:bearer for
+// Browser/POST, and a relying party that never looks works perfectly with
+// either. SAML 2.0 puts
 // the method on <saml:SubjectConfirmation> and the interesting part —
 // Recipient, NotOnOrAfter, InResponseTo, Address — in the
 // <saml:SubjectConfirmationData> beneath it, which is the bearer check every
@@ -1778,7 +1779,138 @@ function saml11AuthnRequestParams(fields) {
   return out;
 }
 
+// WHEN A METADATA DOCUMENT STOPS BEING VALID (#425). saml-metadata-2.0-os
+// section 2.2.1: validUntil on an EntitiesDescriptor, an EntityDescriptor or
+// a role descriptor is the expiration time of that element and of
+// everything inside it, so the identity provider's descriptor expires at the
+// EARLIEST validUntil on it or on any element enclosing it. Shibboleth's
+// installer writes its example idp-metadata.xml with validUntil set to the
+// moment it was generated, so that document has expired before anybody reads
+// it, and a reader that ignores the attribute uses it without a word.
+//
+// Returns { validUntil, expired } for the first IDPSSODescriptor (the
+// document root when it has none); validUntil is '' when nothing bounds it.
+function metadataExpiry(xml, now) {
+  log.debug("Entering metadataExpiry().");
+  var doc = parseXml(xml);
+  if (!doc || !doc.documentElement) {
+    log.debug("Leaving metadataExpiry(). Not XML.");
+    return { validUntil: '', expired: false };
+  }
+  var node = tags(doc, 'IDPSSODescriptor')[0] || doc.documentElement;
+  var earliest = '';
+  var earliestMs = Infinity;
+  while (node && node.nodeType === 1) {
+    var v = attr(node, 'validUntil');
+    var ms = v ? Date.parse(v) : NaN;
+    if (!isNaN(ms) && ms < earliestMs) {
+      earliestMs = ms;
+      earliest = v;
+    }
+    node = node.parentNode;
+  }
+  var at = (now instanceof Date ? now : new Date()).getTime();
+  log.debug("Leaving metadataExpiry(). validUntil=" + (earliest || '(none)'));
+  return { validUntil: earliest, expired: earliest !== '' && earliestMs <= at };
+}
+
+// The certificates in a field a reader may paste several into, as a list of
+// bare base64 DER bodies with no duplicates (#425). PEM blocks are taken
+// wherever they are; text with no PEM block is split on BLANK lines, because
+// a bare base64 certificate is commonly wrapped at 64 columns and splitting on
+// every newline would cut one certificate into twenty.
+function splitCertificates(text) {
+  log.debug("Entering splitCertificates().");
+  var src = String(text || '');
+  var out = [];
+  function add(body) {
+    var b64 = String(body || '').replace(/\s+/g, '');
+    if (b64 && out.indexOf(b64) < 0) out.push(b64);
+  }
+  var pem = /-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/g;
+  var m;
+  var found = false;
+  while ((m = pem.exec(src)) !== null) {
+    found = true;
+    add(m[1]);
+  }
+  if (!found) {
+    src.split(/\n\s*\n/).forEach(add);
+  }
+  log.debug("Leaving splitCertificates(). " + out.length + " found.");
+  return out;
+}
+
+// WHICH SIGNATURE A SAML 1.1 BROWSER PROFILE REQUIRES ON A LOGIN RESPONSE,
+// read off the response itself (#425).
+//
+// sstc-saml-bindings-1.1 section 4.1.2.4: on Browser/POST the <samlp:Response>
+// MUST be signed, and the assertions in it MAY be. The browser carries the
+// Response, so it is the Response that has to be protected. Browser/Artifact
+// (section 4.1.1) returns its Response over the SOAP back channel, which the
+// binding authenticates, and requires no signature on it.
+//
+// Nothing on the response says which binding delivered it, but the assertion
+// does: the confirmation method IS the profile (cm:bearer for Browser/POST,
+// cm:artifact for Browser/Artifact). A response with no readable assertion
+// gets no verdict, because there is nothing to tell the profile by.
+//
+// SAML 2.0 gets no verdict either. Its rule (saml-profiles-2.0-os section
+// 4.1.3.5) depends on the binding, and a 2.0 assertion is cm:bearer on both.
+//
+// Returns { rule, profile, why }: `rule` is 'response' (the Response must be
+// signed), 'none' (no signature is required) or '' (no verdict).
+var CM_SAML1_BEARER = 'urn:oasis:names:tc:SAML:1.0:cm:bearer';
+var CM_SAML1_ARTIFACT = 'urn:oasis:names:tc:SAML:1.0:cm:artifact';
+
+function requiredResponseSignature(xml) {
+  log.debug("Entering requiredResponseSignature().");
+  var doc = parseXml(xml);
+  var msg = doc && doc.documentElement;
+  if (!msg || msg.localName !== 'Response') {
+    log.debug("Leaving requiredResponseSignature(). Not a Response.");
+    return { rule: '', profile: '', why: 'not a login <Response>.' };
+  }
+  if (String(samlVersionOf(msg) || '').charAt(0) !== '1') {
+    log.debug("Leaving requiredResponseSignature(). SAML 2.0.");
+    return { rule: '', profile: '',
+             why: 'SAML 2.0: either the Response or each assertion may ' +
+                  'carry the signature (saml-profiles-2.0-os section ' +
+                  '4.1.3.5).' };
+  }
+  var methods = [];
+  assertionsOf(msg).forEach(function (entry) {
+    if (entry.advice || !entry.summary) {
+      return;
+    }
+    (entry.summary.confirmations || []).forEach(function (c) {
+      if (c.method) methods.push(c.method);
+    });
+  });
+  if (methods.indexOf(CM_SAML1_BEARER) >= 0) {
+    log.debug("Leaving requiredResponseSignature(). Browser/POST.");
+    return { rule: 'response', profile: 'Browser/POST',
+             why: 'SAML 1.1 Browser/POST (sstc-saml-bindings-1.1 section ' +
+                  '4.1.2.4): the <samlp:Response> MUST be signed; signing ' +
+                  'the assertion is optional.' };
+  }
+  if (methods.indexOf(CM_SAML1_ARTIFACT) >= 0) {
+    log.debug("Leaving requiredResponseSignature(). Browser/Artifact.");
+    return { rule: 'none', profile: 'Browser/Artifact',
+             why: 'SAML 1.1 Browser/Artifact (sstc-saml-bindings-1.1 ' +
+                  'section 4.1.1): the Response came back over the ' +
+                  'authenticated SOAP back channel and need not be signed.' };
+  }
+  log.debug("Leaving requiredResponseSignature(). No confirmation method.");
+  return { rule: '', profile: '',
+           why: 'no assertion names a cm:bearer or cm:artifact ' +
+                'confirmation, so the browser profile cannot be told.' };
+}
+
 module.exports = {
+  requiredResponseSignature: requiredResponseSignature,
+  metadataExpiry: metadataExpiry,
+  splitCertificates: splitCertificates,
   SAML11_REQUEST_PARAMS: SAML11_REQUEST_PARAMS,
   saml11AuthnRequestParams: saml11AuthnRequestParams,
   NS_SAML1P: NS_SAML1P,
