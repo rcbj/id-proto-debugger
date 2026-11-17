@@ -635,9 +635,12 @@ time, and a derived and an EC P-256 YubiHSM Auth credential, records,
 and resets the three applets again. It refuses a key whose serial is
 not `--serial`. It needs yubikey-manager 5.8 or later (4.x has no
 YubiHSM Auth); on a preview key reporting firmware 0.0.x it lifts
-yubikit's version checks. The key's serial is replaced by 12345678, as
-in `tests/smartcard_recorded.json`, and PIV attestation is left out
-because the serial is signed inside it. OpenPGP fingerprints are not
+yubikit's version checks. The key's serial is replaced by 12345678 and
+the factory attestation key's fingerprint (`C5`'s fourth entry, as
+unique to the device as the serial) by `0102...14`, in this file and in
+`tests/smartcard_recorded.json` alike; the placeholder is not zeros, so
+that slot still decodes as a fingerprint of its own. PIV attestation is
+left out because the serial is signed inside it. OpenPGP fingerprints are not
 written on the card, so they read as unset; GnuPG's own fingerprints
 are held separately (above). The capture of 2026-11-17 was a 2026 PIV
 ML preview key (firmware 0.0.1).

@@ -2054,6 +2054,11 @@ async function realCardVectors() {
           k + ": no reason given for the missing public key");
     }
   });
+  // The fourth fingerprint is the factory attestation key's, replaced in
+  // the capture by 01..14 (it identifies the device, as the serial does).
+  var ATT_FPR = "0102030405060708090a0b0c0d0e0f1011121314";
+  assert.ok(new RegExp("^Fingerprints=[^\n]*attestation " + ATT_FPR, "m")
+      .test(ardText), "the attestation fingerprint is not its own entry");
   ["Fingerprints", "CA fingerprints", "Generation"].forEach(function (row) {
     assert.ok(new RegExp("^" + row + "=[^\n]*attestation ", "m")
         .test(ardText), row + ": the fourth (attestation) slot is not named");

@@ -30,7 +30,9 @@
 #
 # The key's serial is replaced by 12345678 wherever it appears (GET
 # SERIAL, the OpenPGP AID), as tests/smartcard_recorded.json
-# does. PIV attestation is not captured: the serial is signed inside the
+# does, and the factory attestation key's fingerprint (C5's fourth entry,
+# as unique to the device as the serial) by 0102...14. PIV attestation is
+# not captured: the serial is signed inside the
 # attestation certificate, and a real attestation chain is already held
 # by tests/smartcard_engine.js (piv-go's vector).
 # ---------------------------------------------------------------------------
@@ -55,6 +57,11 @@ from yubikit.piv import (DEFAULT_MANAGEMENT_KEY, KEY_TYPE,
                          MANAGEMENT_KEY_TYPE, SLOT, PivSession)
 
 SCRUBBED_SERIAL = 12345678
+# The fingerprint of the key's factory attestation key, the fourth 20-byte
+# entry of C5 on a YubiKey 5.2 and later: unique to the device, like the
+# serial. Replaced by 01..14, which is neither zeros (an empty slot) nor
+# anything a key holds, so the fourth slot still decodes into its own row.
+SCRUBBED_ATTESTATION_FPR = bytes(range(1, 21)).hex()
 PIV_PIN = "123456"
 PGP_ADMIN = "12345678"
 HSM_MGMT = bytes(16)
@@ -214,6 +221,13 @@ def oracle_pgp_yubikit(conn):
     return out
 
 
+def attestation_fingerprint(conn):
+    """The fourth (attestation) entry of C5, read by yubikit, or ""."""
+    fps = OpenPgpSession(conn).get_fingerprints()
+    att = fps.get(KEY_REF.ATT)
+    return att.hex() if att else ""
+
+
 def capture_pgp(conn):
     plan = [
         ("Application related data", pgp_get_data(0x6E)),
@@ -263,9 +277,14 @@ def reset_all(conn):
     HsmAuthSession(conn).reset()
 
 
-def scrub(obj, serial):
-    """Replace the serial in every encoding it is seen in here."""
+def scrub(obj, serial, attestation_fpr):
+    """Replace the serial in every encoding it is seen in here, and the
+    attestation key's fingerprint."""
     text = json.dumps(obj)
+    if attestation_fpr and attestation_fpr.strip("0"):
+        text = text.replace(attestation_fpr.lower(), SCRUBBED_ATTESTATION_FPR)
+        text = text.replace(attestation_fpr.upper(),
+                            SCRUBBED_ATTESTATION_FPR.upper())
     dec = str(serial)
     hex4 = "%08x" % serial
     bcd = "%08d" % serial
@@ -287,6 +306,7 @@ def main():
             (info.version,))
         allow_development_firmware()
     subprocess.run(["gpgconf", "--kill", "scdaemon"], check=False)
+    att_fpr = ""
     out = {"captured": datetime.date.today().isoformat(),
            "note": "Real YubiKey answers to smartcard.js's read plans; "
                    "written by tests/tools/smartcard_capture.py. "
@@ -301,15 +321,19 @@ def main():
                           "yubikit": oracle_piv(conn)}
             out["pgp"] = {"steps": capture_pgp(conn),
                           "yubikit": oracle_pgp_yubikit(conn)}
+            att_fpr = attestation_fingerprint(conn)
             out["hsm"] = {"steps": capture_hsm(conn),
                           "yubikit": oracle_hsm(conn)}
     finally:
         with dev.open_connection(SmartCardConnection) as conn:
             log("resetting PIV, OpenPGP, YubiHSM Auth to factory defaults")
             reset_all(conn)
-    out = scrub(out, args.serial)
+    out = scrub(out, args.serial, att_fpr)
     if re.search(str(args.serial), json.dumps(out)):
         raise SystemExit("serial survived the scrub; not writing")
+    if att_fpr.strip("0") and att_fpr in json.dumps(out).lower():
+        raise SystemExit("attestation fingerprint survived the scrub; "
+                         "not writing")
     with open(args.out, "w") as f:
         json.dump(out, f, indent=2)
         f.write("\n")
