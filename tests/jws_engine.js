@@ -646,6 +646,99 @@ function checkTamperingAndJson() {
 }
 
 // ---------------------------------------------------------------------------
+// 10b. RSASSA-PKCS1-v1_5 VERIFICATION IS STRICT ABOUT THE DigestInfo.
+//
+//     The js backend verifies RS256/384/512 with node-forge, and node-forge up
+//     to 1.4.0 accepted a signature whose DigestInfo carried extra elements
+//     (GHSA-86w9-cpqp-85rv) — the shape of a Bleichenbacher-style forgery
+//     against a small public exponent. 1.4.3 refuses it. This check is what
+//     keeps it refused: a dependency downgrade, a lockfile resolving an older
+//     forge, or a hand-written verifier replacing forge's would each turn
+//     these signatures "valid" and fail here (#350).
+//
+//     Each signature below is a REAL RSA private-key operation over a
+//     hand-built encoded message (RFC 8017 §9.2), made with node's raw RSA,
+//     so the only thing wrong with it is the DigestInfo inside.
+// ---------------------------------------------------------------------------
+const DIGEST_INFO_OIDS = {
+  RS256: { oid: "0609608648016503040201", node: "sha256" },
+  RS384: { oid: "0609608648016503040202", node: "sha384" },
+  RS512: { oid: "0609608648016503040203", node: "sha512" }
+};
+
+function derSequence(body) {
+  log.debug("Entering derSequence().");
+  // Every DigestInfo here is under 128 octets, so the short length form is
+  // the right one; assert it rather than encode a long form nobody tests.
+  assert.ok(body.length < 128, "derSequence(): body too long for this test.");
+  log.debug("Leaving derSequence().");
+  return Buffer.concat([Buffer.from([0x30, body.length]), body]);
+}
+
+function digestInfo(algId, octets, algorithmExtra, trailingExtra) {
+  log.debug("Entering digestInfo().");
+  const d = DIGEST_INFO_OIDS[algId];
+  const hash = crypto.createHash(d.node).update(octets).digest();
+  const algorithm = derSequence(Buffer.concat([Buffer.from(d.oid, "hex"),
+    Buffer.from("0500", "hex"), algorithmExtra]));
+  const digest = Buffer.concat([Buffer.from([0x04, hash.length]), hash]);
+  log.debug("Leaving digestInfo().");
+  return derSequence(Buffer.concat([algorithm, digest, trailingExtra]));
+}
+
+function rawPkcs1Sign(privateKey, bits, info) {
+  log.debug("Entering rawPkcs1Sign().");
+  const k = bits / 8;
+  const em = Buffer.concat([Buffer.from([0x00, 0x01]),
+    Buffer.alloc(k - 3 - info.length, 0xff), Buffer.from([0x00]), info]);
+  log.debug("Leaving rawPkcs1Sign().");
+  return crypto.privateEncrypt({ key: privateKey,
+    padding: crypto.constants.RSA_NO_PADDING }, em);
+}
+
+function checkRsaDigestInfoStrict() {
+  log.debug("Entering checkRsaDigestInfoStrict().");
+  const bits = 2048;
+  const pair = crypto.generateKeyPairSync("rsa", { modulusLength: bits });
+  const publicPem = pair.publicKey.export({ type: "spki", format: "pem" });
+  const none = Buffer.alloc(0);
+  const variants = [
+    // The control: if this one fails, the encoder above is wrong and the
+    // refusals below prove nothing.
+    { name: "a well-formed DigestInfo", alg: none, tail: none, valid: true },
+    // The advisory's own case: an extra element nested in the
+    // AlgorithmIdentifier, after the NULL parameters.
+    { name: "an extra element in the AlgorithmIdentifier",
+      alg: Buffer.from("3000", "hex"), tail: none, valid: false },
+    { name: "an extra OCTET STRING in the AlgorithmIdentifier",
+      alg: Buffer.from("0404deadbeef", "hex"), tail: none, valid: false },
+    { name: "an extra element after the digest",
+      alg: none, tail: Buffer.from("0500", "hex"), valid: false }
+  ];
+  Object.keys(DIGEST_INFO_OIDS).forEach(function (algId) {
+    const header = Buffer.from(JSON.stringify({ alg: algId }))
+      .toString("base64url");
+    const payload = Buffer.from(PAYLOAD).toString("base64url");
+    const input = Buffer.from(header + "." + payload, "ascii");
+    variants.forEach(function (v) {
+      const sig = rawPkcs1Sign(pair.privateKey, bits,
+        digestInfo(algId, input, v.alg, v.tail));
+      const compact = header + "." + payload + "." +
+        sig.toString("base64url");
+      const verdict = jws.verifyJws({ jws: compact, publicKey: publicPem,
+        algId: algId });
+      assert.strictEqual(verdict.valid, v.valid, algId + " with " + v.name +
+        " must " + (v.valid ? "" : "NOT ") + "verify" +
+        (v.valid ? "." : " — is node-forge older than 1.4.3? " +
+          "(GHSA-86w9-cpqp-85rv, #350)"));
+    });
+  });
+  log.info("[rsa/digestinfo] OK — RS256/384/512 verify a well-formed " +
+           "DigestInfo and refuse three with extra elements.");
+  log.debug("Leaving checkRsaDigestInfoStrict().");
+}
+
+// ---------------------------------------------------------------------------
 // 11. THE KEY FORMS, which are what let five pages stop each carrying their
 //     own reading of "the user pasted something".
 //
@@ -1035,6 +1128,7 @@ async function test() {
   checkEddsaCurves();
   checkUnsecured();
   checkTamperingAndJson();
+  checkRsaDigestInfoStrict();
   checkKeyForms();
   await checkBackendsAgree();
   checkVerbatimHeader();
