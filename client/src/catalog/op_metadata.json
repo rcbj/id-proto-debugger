@@ -1,0 +1,152 @@
+[
+  {
+    "name": "issuer",
+    "type": "string",
+    "dflt": "https://localhost/oidc"
+  },
+  {
+    "name": "scopes_supported",
+    "type": "array",
+    "dflt": "openid, profile, email, address, phone, offline_access"
+  },
+  {
+    "name": "response_types_supported",
+    "type": "array",
+    "dflt": "code, id_token, id_token token, code id_token, code token, code id_token token"
+  },
+  {
+    "name": "response_modes_supported",
+    "type": "array",
+    "dflt": "query, fragment, form_post"
+  },
+  {
+    "name": "grant_types_supported",
+    "type": "array",
+    "dflt": "authorization_code, implicit, refresh_token, client_credentials, password, urn:ietf:params:oauth:grant-type:device_code"
+  },
+  {
+    "name": "acr_values_supported",
+    "type": "array",
+    "dflt": "0, 1"
+  },
+  {
+    "name": "subject_types_supported",
+    "type": "array",
+    "dflt": "public, pairwise"
+  },
+  {
+    "name": "id_token_signing_alg_values_supported",
+    "type": "array",
+    "dflt": "RS256, RS384, RS512, ES256, PS256, HS256"
+  },
+  {
+    "name": "id_token_encryption_alg_values_supported",
+    "type": "array",
+    "dflt": "RSA-OAEP, RSA-OAEP-256, ECDH-ES, A128KW"
+  },
+  {
+    "name": "id_token_encryption_enc_values_supported",
+    "type": "array",
+    "dflt": "A128GCM, A192GCM, A256GCM, A128CBC-HS256"
+  },
+  {
+    "name": "userinfo_signing_alg_values_supported",
+    "type": "array",
+    "dflt": "RS256, ES256, HS256"
+  },
+  {
+    "name": "userinfo_encryption_alg_values_supported",
+    "type": "array",
+    "dflt": "RSA-OAEP, RSA-OAEP-256, ECDH-ES"
+  },
+  {
+    "name": "userinfo_encryption_enc_values_supported",
+    "type": "array",
+    "dflt": "A128GCM, A256GCM, A128CBC-HS256"
+  },
+  {
+    "name": "request_object_signing_alg_values_supported",
+    "type": "array",
+    "dflt": "none, RS256, ES256, PS256"
+  },
+  {
+    "name": "request_object_encryption_alg_values_supported",
+    "type": "array",
+    "dflt": "RSA-OAEP, RSA-OAEP-256, ECDH-ES"
+  },
+  {
+    "name": "request_object_encryption_enc_values_supported",
+    "type": "array",
+    "dflt": "A128GCM, A256GCM, A128CBC-HS256"
+  },
+  {
+    "name": "token_endpoint_auth_methods_supported",
+    "type": "array",
+    "dflt": "client_secret_basic, client_secret_post, client_secret_jwt, private_key_jwt, none"
+  },
+  {
+    "name": "token_endpoint_auth_signing_alg_values_supported",
+    "type": "array",
+    "dflt": "RS256, ES256, PS256, HS256"
+  },
+  {
+    "name": "display_values_supported",
+    "type": "array",
+    "dflt": "page, popup, touch, wap"
+  },
+  {
+    "name": "claim_types_supported",
+    "type": "array",
+    "dflt": "normal, aggregated, distributed"
+  },
+  {
+    "name": "claims_supported",
+    "type": "array",
+    "dflt": "sub, iss, aud, exp, iat, auth_time, nonce, acr, amr, azp, name, given_name, family_name, preferred_username, email, email_verified"
+  },
+  {
+    "name": "service_documentation",
+    "type": "string",
+    "dflt": "https://localhost/oidc/docs"
+  },
+  {
+    "name": "claims_locales_supported",
+    "type": "array",
+    "dflt": "en-US, en-GB, fr-CA"
+  },
+  {
+    "name": "ui_locales_supported",
+    "type": "array",
+    "dflt": "en-US, en-GB, fr-CA"
+  },
+  {
+    "name": "claims_parameter_supported",
+    "type": "boolean",
+    "dflt": "false"
+  },
+  {
+    "name": "request_parameter_supported",
+    "type": "boolean",
+    "dflt": "false"
+  },
+  {
+    "name": "request_uri_parameter_supported",
+    "type": "boolean",
+    "dflt": "true"
+  },
+  {
+    "name": "require_request_uri_registration",
+    "type": "boolean",
+    "dflt": "false"
+  },
+  {
+    "name": "op_policy_uri",
+    "type": "string",
+    "dflt": "https://localhost/oidc/policy"
+  },
+  {
+    "name": "op_tos_uri",
+    "type": "string",
+    "dflt": "https://localhost/oidc/tos"
+  }
+]

@@ -46,93 +46,14 @@ var log = bunyan.createLogger({
 
 var metadataClient = require("./metadata_client");
 
-var OP_METADATA = [
-  { name: "issuer", type: "string", dflt: "https://localhost/oidc" },
-  { name: "scopes_supported", type: "array",
-   dflt: "openid, profile, email, address, phone, offline_access" },
-  { name: "response_types_supported", type: "array", dflt: "code, id_token, " +
-   "id_token token, code id_token, code token, code id_token token" },
-  { name: "response_modes_supported", type: "array",
-   dflt: "query, fragment, form_post" },
-  { name: "grant_types_supported", type: "array", dflt: "authorization_code, " +
-   "implicit, refresh_token, client_credentials, password, " +
-   "urn:ietf:params:oauth:grant-type:device_code" },
-  { name: "acr_values_supported", type: "array", dflt: "0, 1" },
-  { name: "subject_types_supported", type: "array", dflt: "public, pairwise" },
-  { name: "id_token_signing_alg_values_supported", type: "array",
-   dflt: "RS256, RS384, RS512, ES256, PS256, HS256" },
-  { name: "id_token_encryption_alg_values_supported", type: "array",
-   dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES, A128KW" },
-  { name: "id_token_encryption_enc_values_supported", type: "array",
-   dflt: "A128GCM, A192GCM, A256GCM, A128CBC-HS256" },
-  { name: "userinfo_signing_alg_values_supported", type: "array",
-   dflt: "RS256, ES256, HS256" },
-  { name: "userinfo_encryption_alg_values_supported", type: "array",
-   dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES" },
-  { name: "userinfo_encryption_enc_values_supported", type: "array",
-   dflt: "A128GCM, A256GCM, A128CBC-HS256" },
-  { name: "request_object_signing_alg_values_supported", type: "array",
-   dflt: "none, RS256, ES256, PS256" },
-  { name: "request_object_encryption_alg_values_supported", type: "array",
-   dflt: "RSA-OAEP, RSA-OAEP-256, ECDH-ES" },
-  { name: "request_object_encryption_enc_values_supported", type: "array",
-   dflt: "A128GCM, A256GCM, A128CBC-HS256" },
-  { name: "token_endpoint_auth_methods_supported", type: "array",
-   dflt: "client_secret_basic, client_secret_post, client_secret_jwt, " +
-   "private_key_jwt, none" },
-  { name: "token_endpoint_auth_signing_alg_values_supported", type: "array",
-   dflt: "RS256, ES256, PS256, HS256" },
-  { name: "display_values_supported", type: "array",
-   dflt: "page, popup, touch, wap" },
-  { name: "claim_types_supported", type: "array",
-   dflt: "normal, aggregated, distributed" },
-  { name: "claims_supported", type: "array", dflt: "sub, iss, aud, exp, iat, " +
-   "auth_time, nonce, acr, amr, azp, name, given_name, family_name, " +
-   "preferred_username, email, email_verified" },
-  { name: "service_documentation", type: "string",
-   dflt: "https://localhost/oidc/docs" },
-  { name: "claims_locales_supported", type: "array",
-   dflt: "en-US, en-GB, fr-CA" },
-  { name: "ui_locales_supported", type: "array", dflt: "en-US, en-GB, fr-CA" },
-  { name: "claims_parameter_supported", type: "boolean", dflt: "false" },
-  { name: "request_parameter_supported", type: "boolean", dflt: "false" },
-  { name: "request_uri_parameter_supported", type: "boolean", dflt: "true" },
-  { name: "require_request_uri_registration", type: "boolean", dflt: "false" },
-  { name: "op_policy_uri", type: "string",
-   dflt: "https://localhost/oidc/policy" },
-  { name: "op_tos_uri", type: "string", dflt: "https://localhost/oidc/tos" }
-];
-
-// ---------------------------------------------------------------------------
-// Members RFC 8414 (OAuth 2.0 Authorization Server Metadata) section 2 defines
-// that OpenID Connect Discovery 1.0 does NOT.
-//
-// Kept as a separate list because that distinction is real — an OIDC Discovery
-// document legitimately omits all six, and they should show the
-// -->not defined<-- note when it does — but every pane that shows OpenID
-// Provider metadata shows these as well, so the operations below run over both
-// lists (ALL_METADATA).
-// ---------------------------------------------------------------------------
-var AS_ONLY_METADATA = [
-  { name: "revocation_endpoint_auth_methods_supported", type: "array",
-   dflt: "client_secret_basic, client_secret_post, private_key_jwt" },
-  { name: "revocation_endpoint_auth_signing_alg_values_supported",
-   type: "array", dflt: "RS256, ES256, PS256" },
-  { name: "introspection_endpoint_auth_methods_supported", type: "array",
-   dflt: "client_secret_basic, client_secret_post, private_key_jwt" },
-  { name: "introspection_endpoint_auth_signing_alg_values_supported",
-   type: "array", dflt: "RS256, ES256, PS256" },
-  { name: "code_challenge_methods_supported", type: "array",
-   dflt: "S256, plain" },
-  // RFC 9449 section 5.1, registered by that document rather than by RFC 8414.
-  // It belongs in this list because its presence is the ONLY signal a client
-  // has that DPoP is on offer: there is no other discovery mechanism, so an
-  // authorization server that supports DPoP and omits this will never be asked
-  // for it. Default empty, because absent means "has not said so" and inventing
-  // a default would claim support nobody advertised.
-  { name: "dpop_signing_alg_values_supported", type: "array", dflt: "" },
-  { name: "signed_metadata", type: "string", dflt: "" }
-];
+// The rows are models/catalog/oauth.tsp, generated into ./catalog/. OP_METADATA
+// is OpenID Connect Discovery 1.0 section 3, less the five members the pane
+// carried under their own element ids before this table existed (see
+// LEGACY_FIELDS below). AS_ONLY_METADATA is what RFC 8414 section 2 (and RFC
+// 9449 section 5.1) define and Discovery does not: an OIDC Discovery document
+// legitimately omits all of them, so they are kept as a list of their own.
+var OP_METADATA = require("./catalog/op_metadata.json");
+var AS_ONLY_METADATA = require("./catalog/as_only_metadata.json");
 
 // Every member the Configuration Parameters panes carry: an authorization
 // server can define both sets, and the panes have a field for each.

@@ -16,5 +16,7 @@
 // A catalogue moved here only after the generated rows were shown to equal
 // the literal they replaced (models/CLAUDE.md, "Catalogues").
 
+import "./oauth.tsp";
+
 namespace IdProtoDebugger.Catalog;
 
