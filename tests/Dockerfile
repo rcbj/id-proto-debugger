@@ -841,7 +841,7 @@ COPY tests/gnap_live.js tests/gnap_protocol.js tests/api_gnap.js \
 # a flat copy of that module. A second copy would make the job load
 # whichever file resolution order found.
 COPY tests/smartcard_engine.js tests/smartcard_page.js \
-     tests/smartcard_recorded.json ./
+     tests/smartcard_recorded.json tests/smartcard_card_vectors.json ./
 # The three api modules the engine job loads. They decide and do not
 # pull axios. Flat, beside the test, because this image has no api
 # tree. Do not also flat-copy the client codecs: the job reads those

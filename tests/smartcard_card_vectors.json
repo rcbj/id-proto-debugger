@@ -1,0 +1,145 @@
+{
+  "captured": "2026-11-17",
+  "note": "Real YubiKey answers to smartcard.js's read plans; written by tests/tools/smartcard_capture.py. Serial replaced by 12345678.",
+  "piv": {
+    "steps": [
+      {
+        "label": "Version (GET VERSION)",
+        "command": "00fd000000",
+        "data": "000001",
+        "status": "9000"
+      },
+      {
+        "label": "Serial (GET SERIAL)",
+        "command": "00f8000000",
+        "data": "00bc614e",
+        "status": "9000"
+      },
+      {
+        "label": "CHUID",
+        "command": "00cb3fff055c035fc10200",
+        "data": "",
+        "status": "6a82"
+      },
+      {
+        "label": "Certificate, slot 9A (authentication)",
+        "command": "00cb3fff055c035fc10500",
+        "data": "53820159708201503082014c3081f4a0030201020214495a00520d74117c76b872ea456c43810d934d57300a06082a8648ce3d04030230273125302306035504030c1c69642d70726f746f2d64656275676765722063617074757265203941301e170d3236303130313030303030305a170d3336303130313030303030305a30273125302306035504030c1c69642d70726f746f2d646562756767657220636170747572652039413059301306072a8648ce3d020106082a8648ce3d03010703420004a6ac8f20556135fe6c8925cfab1751f82701b24d45ed451e7ca31b79d6e854f9c7dd956879cbc1ef30a655e760c27556e9bca1609390b921f8e917a3672d7f31300a06082a8648ce3d0403020347003044022041a100a6a9778cc42552da0ff7bcf06bc2d30efc45c1b0d718fc45ea15275ebe02207e2c263f37c1d27d13a4d5b6dd56b28e91ed9f47d0fa13530052fdb1bdc5bd51710100fe00",
+        "status": "9000"
+      },
+      {
+        "label": "Certificate, slot 9C (signature)",
+        "command": "00cb3fff055c035fc10a00",
+        "data": "",
+        "status": "6a82"
+      }
+    ],
+    "yubikit": {
+      "version": "0.0.1",
+      "certificate9a": {
+        "der": "3082014c3081f4a0030201020214495a00520d74117c76b872ea456c43810d934d57300a06082a8648ce3d04030230273125302306035504030c1c69642d70726f746f2d64656275676765722063617074757265203941301e170d3236303130313030303030305a170d3336303130313030303030305a30273125302306035504030c1c69642d70726f746f2d646562756767657220636170747572652039413059301306072a8648ce3d020106082a8648ce3d03010703420004a6ac8f20556135fe6c8925cfab1751f82701b24d45ed451e7ca31b79d6e854f9c7dd956879cbc1ef30a655e760c27556e9bca1609390b921f8e917a3672d7f31300a06082a8648ce3d0403020347003044022041a100a6a9778cc42552da0ff7bcf06bc2d30efc45c1b0d718fc45ea15275ebe02207e2c263f37c1d27d13a4d5b6dd56b28e91ed9f47d0fa13530052fdb1bdc5bd51",
+        "subject": "CN=id-proto-debugger capture 9A",
+        "serialNumber": "495a00520d74117c76b872ea456c43810d934d57",
+        "notBefore": "2026-01-01T00:00:00+00:00",
+        "notAfter": "2036-01-01T00:00:00+00:00",
+        "spki": "3059301306072a8648ce3d020106082a8648ce3d03010703420004a6ac8f20556135fe6c8925cfab1751f82701b24d45ed451e7ca31b79d6e854f9c7dd956879cbc1ef30a655e760c27556e9bca1609390b921f8e917a3672d7f31"
+      }
+    }
+  },
+  "pgp": {
+    "steps": [
+      {
+        "label": "Application related data",
+        "command": "00ca006e00",
+        "data": "6e8201434f10d27600012401030400061234567800005f520800730000e00590007f74038101207382011cc00a7d00133e080000ff0000c109132a8648ce3d030107c20b122b060104019755010501c30a162b06010401da470f01da06010800001100c407017f7f7f030003c5500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000102030405060708090a0b0c0d0e0f1011121314c6500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000cd106955b9006955b9006955b90069d6bce6de0801010201030181027f66080202133e0202133ed6020020d7020020d8020020d9020020",
+        "status": "9000"
+      },
+      {
+        "label": "Cardholder related data",
+        "command": "00ca006500",
+        "data": "65095b005f2d005f350139",
+        "status": "9000"
+      },
+      {
+        "label": "Security support template",
+        "command": "00ca007a00",
+        "data": "7a059303000000",
+        "status": "9000"
+      },
+      {
+        "label": "Signature key",
+        "command": "0047810002b60000",
+        "data": "7f4943864104b8f6e02acc79759bb350ede56e795c1a6164e294d8e6bf599d59c302c37936cfe990b5f97f2bb3fb54db7d5b5a66500d460c6656d24240600a7072e040e28871",
+        "status": "9000"
+      },
+      {
+        "label": "Decryption key",
+        "command": "0047810002b80000",
+        "data": "7f492286209e682596f5fab1d884c07392dc23f149cd564201cb915306aeb2930bbd49df3d",
+        "status": "9000"
+      },
+      {
+        "label": "Authentication key",
+        "command": "0047810002a40000",
+        "data": "7f49228620de876af8b5e1014f425947d7644a514088e3828b33f51f7398baecc92319073c",
+        "status": "9000"
+      }
+    ],
+    "yubikit": {
+      "version": "0.0.1",
+      "keys": {
+        "sig": {
+          "fingerprint": "0000000000000000000000000000000000000000",
+          "generated": 1767225600,
+          "algorithm": "SECP256R1",
+          "spki": "3059301306072a8648ce3d020106082a8648ce3d03010703420004b8f6e02acc79759bb350ede56e795c1a6164e294d8e6bf599d59c302c37936cfe990b5f97f2bb3fb54db7d5b5a66500d460c6656d24240600a7072e040e28871"
+        },
+        "dec": {
+          "fingerprint": "0000000000000000000000000000000000000000",
+          "generated": 1767225600,
+          "algorithm": "X25519",
+          "spki": "302a300506032b656e0321009e682596f5fab1d884c07392dc23f149cd564201cb915306aeb2930bbd49df3d"
+        },
+        "aut": {
+          "fingerprint": "0000000000000000000000000000000000000000",
+          "generated": 1767225600,
+          "algorithm": "Ed25519",
+          "spki": "302a300506032b6570032100de876af8b5e1014f425947d7644a514088e3828b33f51f7398baecc92319073c"
+        }
+      }
+    }
+  },
+  "hsm": {
+    "steps": [
+      {
+        "label": "Version",
+        "command": "0007000000",
+        "data": "000001",
+        "status": "9000"
+      },
+      {
+        "label": "Credentials (LIST)",
+        "command": "0005000000",
+        "data": "7213260064656275676765722d64657269766564087214270164656275676765722d65632d746f75636808",
+        "status": "9000"
+      }
+    ],
+    "yubikit": {
+      "version": "0.0.1",
+      "credentials": [
+        {
+          "label": "debugger-derived",
+          "algorithm": "AES128_YUBICO_AUTHENTICATION",
+          "touchRequired": false,
+          "counter": 8
+        },
+        {
+          "label": "debugger-ec-touch",
+          "algorithm": "EC_P256_YUBICO_AUTHENTICATION",
+          "touchRequired": true,
+          "counter": 8
+        }
+      ]
+    }
+  }
+}
