@@ -42,4 +42,13 @@ model VcIssuance1Keys {
   // DID document members, under did.js's idFor() ("did_" + member).
   @storageKey(#{ class: "ordinary", prefix: true })
   did_: unknown;
+
+  @storageKey(#{ class: "output" })
+  didcfg_info: unknown;
+
+  @storageKey(#{ class: "output" })
+  didcfg_source: unknown;
+
+  @storageKey(#{ class: "output" })
+  vci_info_source: unknown;
 }

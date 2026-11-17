@@ -267,6 +267,16 @@
       "group": "client/src/vc_issuance_1.js"
     },
     {
+      "key": "didcfg_info",
+      "class": "output",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "didcfg_source",
+      "class": "output",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
       "key": "didcfg_url",
       "class": "ordinary",
       "group": "client/src/vc_issuance_1.js"
@@ -3639,6 +3649,11 @@
       "group": "client/src/bbs2023.js"
     },
     {
+      "key": "vci_authorization_servers",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
       "key": "vci_batch_credential_issuance",
       "class": "ordinary",
       "group": "client/src/vc_issuance_2.js"
@@ -3647,6 +3662,16 @@
       "key": "vci_credential_configuration_id",
       "class": "ordinary",
       "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "vci_credential_definition",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
+      "key": "vci_credential_endpoint",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
     },
     {
       "key": "vci_credential_issuer",
@@ -3664,9 +3689,24 @@
       "group": "client/src/vc_issuance_2.js"
     },
     {
+      "key": "vci_credential_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
+      "key": "vci_cryptographic_binding_methods_supported",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
       "key": "vci_deferred_credential_endpoint",
       "class": "ordinary",
       "group": "client/src/vc_issuance_2.js"
+    },
+    {
+      "key": "vci_display",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
     },
     {
       "key": "vci_format",
@@ -3679,9 +3719,44 @@
       "group": "client/src/vc_issuance_2.js"
     },
     {
+      "key": "vci_info_source",
+      "class": "output",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
       "key": "vci_metadata_endpoint",
       "class": "ordinary",
       "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "vci_nonce_endpoint",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
+      "key": "vci_notification_endpoint",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
+      "key": "vci_proof_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
+      "key": "vci_scope",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
+      "key": "vci_signed_metadata",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
+    },
+    {
+      "key": "vci_vct",
+      "class": "ordinary",
+      "group": "client/src/vci_metadata.js"
     },
     {
       "key": "verification_uri",

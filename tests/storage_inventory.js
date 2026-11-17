@@ -64,9 +64,19 @@ const KEY_FUNCTIONS = ["storeField"];
 const KEY_BUILDERS = { "didLib.idFor": "did_", "vciMetadata.idFor": "vci_",
                        "storeKey": "didtools_" };
 
-// Tables of field descriptors ({ name, ... }) a module stores each `name` of
-// under that name (vc_issuance_1.js's plainFields()).
-const FIELD_TABLES = { "vc_issuance_1.js": ["CLIENT_FIELDS", "ENDPOINT_FIELDS"] };
+// Tables of field descriptors ({ name, ... }) a module stores each `name` of,
+// under a prefix: vc_issuance_1.js's plainFields() under the name itself,
+// vci_metadata.js's metadata members under idFor()'s "vci_".
+const FIELD_TABLES = {
+  "vc_issuance_1.js": { prefix: "", tables: ["CLIENT_FIELDS",
+                                             "ENDPOINT_FIELDS"] },
+  "vci_metadata.js": { prefix: "vci_", tables: ["VCI_METADATA",
+                                                "VCI_CONFIG_METADATA"] }
+};
+
+// Calls every string argument of which is a storage key:
+// metadataClient.createStore(infoKey, sourceKey).
+const STORE_FACTORIES = ["metadataClient.createStore"];
 
 function calleeName(callee) {
   log.debug("Entering calleeName().");
@@ -348,6 +358,15 @@ function inventory(clientDir) {
         const dot = name.indexOf(".");
         const wrapped = dot > 0 && WRAPPERS[name.slice(0, dot)] &&
           WRAPPERS[name.slice(0, dot)].indexOf(name.slice(dot + 1)) !== -1;
+        if (STORE_FACTORIES.indexOf(name) !== -1) {
+          node.arguments.forEach(function (arg) {
+            const found = resolveKey(arg, constants);
+            if (found.key !== undefined) {
+              note(keys, found.key, f, "local", name);
+            }
+          });
+          return;
+        }
         if (wrapped || KEY_FUNCTIONS.indexOf(name) !== -1) {
           const found = resolveKey(node.arguments[0], constants);
           if (found.key !== undefined) {
@@ -373,7 +392,8 @@ function inventory(clientDir) {
         }
       }
     });
-    (FIELD_TABLES[f] || []).forEach(function (table) {
+    const fieldTables = FIELD_TABLES[f] || { prefix: "", tables: [] };
+    fieldTables.tables.forEach(function (table) {
       walk.simple(ast, {
         VariableDeclarator: function (node) {
           if (!node.id || node.id.name !== table || !node.init ||
@@ -388,7 +408,8 @@ function inventory(clientDir) {
               const k = p.key && (p.key.name || p.key.value);
               if (k === "name" && p.value.type === "Literal" &&
                   typeof p.value.value === "string") {
-                note(keys, p.value.value, f, "unknown", table);
+                note(keys, fieldTables.prefix + p.value.value, f, "unknown",
+                     table);
               }
             });
           });
