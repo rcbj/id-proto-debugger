@@ -606,7 +606,7 @@ code you write **as you write it**, not as a later sweep.
   starts the api from a checkout before anything is known to be
   installed), `client/check_config.js`, `models/lib/*.mjs` and
   `models/tools/*.mjs` (loaded by the TypeSpec compiler, or run before any
-  install that has bunyan) plus `waltid/cors-proxy.js`,
+  install that has bunyan) plus `tests/cors-proxy/cors-proxy.js`,
   which run before or outside an install (`static_site.js` is additionally read
   by `tests/static_site_exclusions.js`, which must not need
   `client/node_modules` either), and **`client/src/coverage_beacon.js`**, which looks like an
@@ -644,9 +644,10 @@ code you write **as you write it**, not as a later sweep.
     function *returns*, out in node. Those functions and everything they declare
     are exempt from this rule, and say so in a comment.
   * **The name `log` may already be taken — check before adding a shim.**
-    `waltid/cors-proxy.js`, `client/build.js` and `extension/src/background.js`
-    each already had a `function log(message)` of their own writing one line per
-    request/step, and each was given a console-backed `var log = {…}` above it.
+    `tests/cors-proxy/cors-proxy.js`, `client/build.js` and
+    `extension/src/background.js` each already had a `function log(message)`
+    of their own writing one line per request/step, and each was given a
+    console-backed `var log = {…}` above it.
     A function declaration and a `var` of the same name are **one binding**, so
     the object assignment wins and every existing call becomes `log is not a
     function` — in the proxy, thrown from `server.listen()`'s callback, so it

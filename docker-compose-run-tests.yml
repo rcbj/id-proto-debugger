@@ -543,7 +543,7 @@ services:
   # them for that reason — and a browser-based wallet cannot read a response
   # without them. This IS the address the wallet uses, and the address the
   # issuer's baseUrl names, because every URL walt.id publishes is built from it.
-  # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
+  # A stock node image runs it: tests/cors-proxy/cors-proxy.js has no dependencies.
   waltid-issuer:
     container_name: waltid-issuer
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
@@ -551,12 +551,12 @@ services:
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     environment:
-      - WALTID_UPSTREAM=waltid-issuer-api:7006
-      - WALTID_PROXY_PORT=7005
+      - CORS_PROXY_UPSTREAM=waltid-issuer-api:7006
+      - CORS_PROXY_PORT=7005
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
     healthcheck:
       # The whole chain: this proxy answering, and the issuer behind it serving
       # the metadata a wallet asks for first. The probe lives here rather than on
@@ -612,12 +612,12 @@ services:
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     environment:
-      - WALTID_UPSTREAM=waltid-verifier-api:7004
-      - WALTID_PROXY_PORT=7003
+      - CORS_PROXY_UPSTREAM=waltid-verifier-api:7004
+      - CORS_PROXY_PORT=7003
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
     healthcheck:
       # /livez is the health endpoint walt.id's service-commons registers for
       # every service. The probe lives on the proxy, not the verifier, because
@@ -768,25 +768,25 @@ services:
       - keycloak
 
   # TLS and CORS in front of Polaris, which sends no CORS headers and whose
-  # URLs HAIP has be https: waltid/cors-proxy.js in its TLS mode, under the
+  # URLs HAIP has be https: tests/cors-proxy/cors-proxy.js in its TLS mode, under the
   # stack's own certificate (whose SANs carry `polaris` for this). Healthy
-  # once it ANSWERS: a 502 while no request is being served still says the
-  # proxy is up.
+  # once the proxy's own /__proxy/health answers, which does not touch
+  # Polaris: polaris-verifier's healthcheck already gates on Polaris (#431).
   polaris:
     container_name: polaris
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     environment:
-      - WALTID_UPSTREAM=polaris-verifier:9080
-      - WALTID_PROXY_PORT=7010
+      - CORS_PROXY_UPSTREAM=polaris-verifier:9080
+      - CORS_PROXY_PORT=7010
       - CORS_PROXY_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
       - CORS_PROXY_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
       - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"require('https').get({host:'localhost',port:7010,path:'/',rejectUnauthorized:false},function(){process.exit(0)}).on('error',function(){process.exit(1)})\""]
+      test: ["CMD-SHELL", "node -e \"require('https').get({host:'localhost',port:7010,path:'/__proxy/health',rejectUnauthorized:false},function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)})\""]
       interval: 5s
       timeout: 5s
       retries: 20

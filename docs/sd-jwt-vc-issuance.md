@@ -265,7 +265,7 @@ construction.
 
 One thing walt.id does **not** do is CORS: its services install no CORS plugin at all (walt.id's own compose
 stack fronts every one of them for that reason), and a browser-based wallet cannot read a response without
-`Access-Control-Allow-Origin`. So the container runs behind a small proxy — `waltid/cors-proxy.js`, no
+`Access-Control-Allow-Origin`. So the container runs behind a small proxy — `tests/cors-proxy/cors-proxy.js`, no
 dependencies, run by a stock `node` image — that adds those headers and answers preflights itself, and the
 issuer's `baseUrl` names the **proxy**: every URL walt.id publishes has to be one the browser can actually use,
 and the proof of possession's `aud` has to be that same identifier, so the proxy cannot merely forward — it has

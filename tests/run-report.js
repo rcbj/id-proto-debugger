@@ -1695,6 +1695,18 @@ function buildJobs() {
     env: {},
   });
 
+  // The test-stack CORS proxy (tests/cors-proxy/cors-proxy.js, #431), in
+  // node in front of throwaway upstreams, plain and TLS. It fronts walt.id's
+  // issuer and verifier and Polaris, and until this job it was exercised
+  // only through them — so a broken preflight read as four walt.id failures
+  // naming walt.id. Needs no stack.
+  jobs.push({
+    name: "CORS proxy (preflight, exposed headers, origin allow-list, " +
+        "upstream TLS, health — in node)",
+    script: "cors_proxy_engine.js",
+    env: {},
+  });
+
   // The post-quantum engines, in node, and the third job of this shape. Its
   // reason for existing is sharper than the two above: almost nothing else in
   // the world can read these bytes yet, so a pane that signs and verifies its

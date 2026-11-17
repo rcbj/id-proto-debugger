@@ -189,20 +189,20 @@ services:
   # them for that reason — and a browser-based wallet cannot read a response
   # without them. This IS the address the wallet uses, and the address the
   # issuer's baseUrl names, because every URL walt.id publishes is built from it.
-  # A stock node image runs it: waltid/cors-proxy.js has no dependencies.
+  # A stock node image runs it: tests/cors-proxy/cors-proxy.js has no dependencies.
   waltid-issuer:
     image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
     # The stock node image runs as root unless told otherwise; it ships a
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     network_mode: "host"
     environment:
-      - WALTID_UPSTREAM=localhost:7006
-      - WALTID_PROXY_PORT=7005
+      - CORS_PROXY_UPSTREAM=localhost:7006
+      - CORS_PROXY_PORT=7005
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
     healthcheck:
       # The whole chain: this proxy answering, and the issuer behind it serving
       # the metadata a wallet asks for first. The probe lives here rather than on
@@ -249,13 +249,13 @@ services:
     # `node` account at uid 1000 for exactly this. The proxy binds 7005/7003
     # (above 1024), reads one bind-mounted script and writes nothing.
     user: "node"
-    command: ["node", "/waltid/cors-proxy.js"]
+    command: ["node", "/cors-proxy/cors-proxy.js"]
     network_mode: "host"
     environment:
-      - WALTID_UPSTREAM=localhost:7004
-      - WALTID_PROXY_PORT=7003
+      - CORS_PROXY_UPSTREAM=localhost:7004
+      - CORS_PROXY_PORT=7003
     volumes:
-      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ./tests/cors-proxy/cors-proxy.js:/cors-proxy/cors-proxy.js:ro
     healthcheck:
       # /livez is what walt.id's service-commons registers for every service. The
       # probe is on the proxy because the verifier image has no shell for CMD-SHELL

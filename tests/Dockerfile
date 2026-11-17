@@ -393,6 +393,10 @@ COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
 # offer made on iya-sts's portal: shared by vc_presentation_protocols.js and
 # vc_presentation_polaris.js, and scheduled by nothing.
 COPY tests/wallet_issuance.js ./
+# The test-stack CORS proxy and its node job (#431). The proxy lands FLAT as
+# cors-proxy.js (hyphen) beside cors_proxy_engine.js (underscore), so the two
+# never collide; the job finds it here or in tests/cors-proxy/ on a host run.
+COPY tests/cors_proxy_engine.js tests/cors-proxy/cors-proxy.js ./
 # The deferred and QR-image pre-authorized offers through the wallet pages
 # (#365); it collects with wallet_issuance.js above.
 COPY tests/vci_offer_modes.js ./

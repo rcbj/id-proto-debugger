@@ -113,7 +113,7 @@ call the wallet makes to the Verifier goes through `POST /oid4vp/call`
 Wiring, all in `docker-compose-run-tests.yml`:
 
 * `polaris-verifier` runs the image with its entrypoint replaced by `tests/polaris/serve-loop.sh`. The package serves one request per process (`serve --once`), and a tests container has no Docker to start one per case. The loop restarts `serve` when the job drops a file in the `polaris-data` volume they share. The job reads the launch parameters from `serve.log` and the verdict from `result.json`.
-* `polaris` is `waltid/cors-proxy.js` in its TLS mode. Polaris sends no CORS headers, and HAIP's `request_uri` and `response_uri` are https. Polaris runs `--no-local-tls --public-base-url https://polaris:7010`, and the stack certificate carries a `polaris` SAN for it.
+* `polaris` is `tests/cors-proxy/cors-proxy.js` in its TLS mode. Polaris sends no CORS headers, and HAIP's `request_uri` and `response_uri` are https. Polaris runs `--no-local-tls --public-base-url https://polaris:7010`, and the stack certificate carries a `polaris` SAN for it.
 * **Polaris verifies an issuer's `x5c` chain links with ECDSA only, and iya-sts's CA tiers are RSA-signed.** A credential carrying iya-sts's chain is refused as "does not chain to any configured trust anchor", whatever anchor is configured. The job therefore mints with `oid4vci.credentialCertificateHeader=none` for the length of one issuance, then restores it under `sts-vc`, and gives Polaris iya-sts's ES256 key through `--issuer-jwks`.
 * The job is scheduled only where `POLARIS_DATA_DIR` is set, which is the containerized stack.
 
