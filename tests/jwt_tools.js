@@ -416,12 +416,17 @@ async function jwtToolsActivities(driver) {
       function (v) { return v.split(".").length === 5; },
       "No 5-part JWE was produced for " + alg + ".");
 
-    // ECDH-ES "direct" agrees the content key rather than wrapping one, so its
-    // encrypted_key segment is empty; every other alg carries a wrapped key.
+    // Direct key agreement — ECDH-ES, and a bare ML-KEM-n
+    // (draft-ietf-jose-pqc-kem-05 section 6.1: "The JWE Encrypted Key MUST
+    // be absent") — agrees the content key rather than wrapping one, so its
+    // encrypted_key segment is empty. Every other alg carries something
+    // there: a wrapped key, an HPKE-encrypted one, or (Integrated HPKE-n)
+    // the encapsulated secret itself.
     var segments = produced.split(".");
-    if (alg === "ECDH-ES") {
+    var direct = alg === "ECDH-ES" || /^ML-KEM-[0-9]+$/.test(alg);
+    if (direct) {
       assert.strictEqual(segments[1], "",
-        "ECDH-ES is direct key agreement, so the encrypted_key segment must " +
+        alg + " is direct key agreement, so the encrypted_key segment must " +
             "be empty. Got: " +
         segments[1].slice(0, 40));
     } else {
@@ -434,6 +439,18 @@ async function jwtToolsActivities(driver) {
     assert.strictEqual(header.alg, alg,
       "the protected header should name the algorithm used. Got: " +
           JSON.stringify(header));
+    // The KEM ciphertext travels in "ek" for ML-KEM and HPKE Key
+    // Encryption; Integrated HPKE-n has none and no enc (#312).
+    if (alg.indexOf("ML-KEM") === 0 || /^HPKE-[0-9]+-KE$/.test(alg)) {
+      assert.ok(typeof header.ek === "string" && header.ek.length > 0,
+        alg + " must carry the KEM output in an ek header. Got: " +
+            JSON.stringify(header));
+    }
+    if (/^HPKE-[0-9]+$/.test(alg)) {
+      assert.strictEqual(header.enc, undefined,
+        alg + " is HPKE Integrated Encryption and must write no enc. Got: " +
+            JSON.stringify(header));
+    }
     if (alg.indexOf("ECDH-ES") === 0) {
       assert.ok(header.epk && header.epk.crv,
         alg + " must publish the ephemeral public key it agreed with " +
