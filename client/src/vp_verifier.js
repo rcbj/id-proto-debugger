@@ -1199,14 +1199,33 @@ async function didJwks(did, fetchJson) {
            candidates: candidates };
 }
 
-// /.well-known/jwt-vc-issuer, SD-JWT VC section 4: the key discovery
-// route of an https iss.
+// An error that means "no key could be had" rather than "the credential is
+// wrong" (#469 B2, #467 B3's reporting half): a fetch that failed, a DID
+// that did not resolve, an issuer with no route to its keys. The issuer
+// signature is then a SKIP — not performed, essential, so the verdict is
+// incomplete — and never a signature FAIL.
+function unresolved(message) {
+  log.debug("Entering unresolved().");
+  var e = new Error(message);
+  e.unresolved = true;
+  log.debug("Leaving unresolved().");
+  return e;
+}
+
+// /.well-known/jwt-vc-issuer, SD-JWT VC section 4. For a dc+sd-jwt it is
+// THE key discovery route of an https iss, and its rules are MUSTs (section
+// 4.3: the issuer value must be identical to iss), so a document that
+// breaks them is a FAIL. For jwt_vc_json no specification defines it
+// (#469, B2): it is tried as one route among several, and anything short
+// of keys from it is "could not resolve the issuer's key", not a forgery.
 async function issuerMetadataKeys(iss, kidDid, fetchJson, jwtVc) {
   log.debug("Entering issuerMetadataKeys().");
-  var why = "";
+  var why = jwtVc ? " (SD-JWT VC's JWT VC Issuer Metadata, tried for " +
+    "jwt_vc_json as one route; no jwt_vc_json specification defines it)" :
+    "";
   if (!fetchJson) {
     log.debug("Leaving issuerMetadataKeys(). No fetch.");
-    throw new Error("no fetchJson was given to read " + iss + "'s keys.");
+    throw unresolved("no fetchJson was given to read " + iss + "'s keys.");
   }
   var url = jwtVcIssuerUrl(iss);
   var meta;
@@ -1214,13 +1233,13 @@ async function issuerMetadataKeys(iss, kidDid, fetchJson, jwtVc) {
     meta = await fetchJson(url);
   } catch (e) {
     log.debug("Leaving issuerMetadataKeys(). Fetch failed.");
-    throw new Error("could not fetch " + url + why + ": " + e.message);
+    throw unresolved("could not fetch " + url + why + ": " + e.message);
   }
   if (!meta || meta.issuer !== iss) {
     var wrong = url + " names issuer " + JSON.stringify(meta &&
       meta.issuer) + ", not " + iss + " (SD-JWT VC section 4.3)" + why + ".";
     log.debug("Leaving issuerMetadataKeys(). Wrong issuer.");
-    throw new Error(wrong);
+    throw jwtVc ? unresolved(wrong) : new Error(wrong);
   }
   var jwks = meta.jwks || null;
   if (!jwks && meta.jwks_uri) {
@@ -1228,7 +1247,7 @@ async function issuerMetadataKeys(iss, kidDid, fetchJson, jwtVc) {
       jwks = await fetchJson(meta.jwks_uri);
     } catch (e) {
       log.debug("Leaving issuerMetadataKeys(). jwks_uri failed.");
-      throw new Error("could not fetch " + meta.jwks_uri + " (the " +
+      throw unresolved("could not fetch " + meta.jwks_uri + " (the " +
                        "jwks_uri of " + url + "): " + e.message);
     }
   }
@@ -1236,7 +1255,7 @@ async function issuerMetadataKeys(iss, kidDid, fetchJson, jwtVc) {
     var none = url + " carries neither jwks nor a jwks_uri that answers " +
       "with keys" + why + ".";
     log.debug("Leaving issuerMetadataKeys(). No keys.");
-    throw new Error(none);
+    throw jwtVc ? unresolved(none) : new Error(none);
   }
   log.debug("Leaving issuerMetadataKeys(). Metadata.");
   return { key: jwks, from: (meta.jwks ? url : meta.jwks_uri) +
@@ -1246,7 +1265,9 @@ async function issuerMetadataKeys(iss, kidDid, fetchJson, jwtVc) {
 
 // Where an issuer's key is: the x5c leaf, else the DID the issuer IS, else
 // /.well-known/jwt-vc-issuer under an https issuer (SD-JWT VC section 2.5,
-// the two key discovery mechanisms; jwt_vc_json takes the same route).
+// the two key discovery mechanisms). jwt_vc_json (`opts.format`) takes the
+// same routes in that order, but its metadata route is not its own
+// specification's (#469, B2; see issuerMetadataKeys()).
 //
 // The header's kid NEVER chooses the issuer (#467, S1). Until then a DID in
 // kid was resolved whenever iss was not a DID, so an SD-JWT VC claiming
@@ -1254,6 +1275,9 @@ async function issuerMetadataKeys(iss, kidDid, fetchJson, jwtVc) {
 // kid verified "with the key from the did:jwk itself". A DID in kid is used
 // only when iss IS that DID; an https iss gets its keys from its own
 // metadata, and an x5c chain's trust is reported by x5cTrust().
+//
+// A thrown error with `unresolved` set means no key could be had (#469):
+// the caller reports a SKIP, not a signature FAIL.
 async function issuerKey(header, payload, fetchJson, opts) {
   log.debug("Entering issuerKey().");
   var jwtVc = !!(opts && opts.format === FORMAT_JWT_VC_JSON);
@@ -1283,7 +1307,7 @@ async function issuerKey(header, payload, fetchJson, opts) {
       found = await didJwks(iss, fetchJson);
     } catch (e) {
       log.debug("Leaving issuerKey(). DID unresolved.");
-      throw new Error("the issuer's DID " + iss + " could not be " +
+      throw unresolved("the issuer's DID " + iss + " could not be " +
                        "resolved: " + e.message);
     }
     log.debug("Leaving issuerKey(). DID.");
@@ -1297,14 +1321,14 @@ async function issuerKey(header, payload, fetchJson, opts) {
   }
   if (kidDid) {
     log.debug("Leaving issuerKey(). DID kid without a DID iss.");
-    throw new Error("kid names " + kidDid + " but iss is " +
+    throw unresolved("kid names " + kidDid + " but iss is " +
                      (iss || "absent") + ": a DID in kid is used only " +
                      "when iss IS that DID, so it cannot say who the " +
                      "issuer is (SD-JWT VC section 2.5), and no other " +
                      "route leads to the issuer's key.");
   }
   log.debug("Leaving issuerKey(). Nowhere.");
-  throw new Error("the credential carries no x5c and its iss (" +
+  throw unresolved("the credential carries no x5c and its iss (" +
                    (iss || "absent") + ") is neither a DID nor an https " +
                    "URL, so there is nowhere to find its key.");
 }
@@ -1748,7 +1772,8 @@ function x5cTrust(chain, opts) {
 }
 
 // `opts.format` is the credential's format: jwt_vc_json's issuer key routes
-// are not SD-JWT VC's.
+// are not SD-JWT VC's (#469, B2). A key that could not be had is a SKIP —
+// essential, so the verdict is incomplete — never a signature FAIL.
 async function checkIssuerSignature(s, key, compact, header, payload,
                                     ctx, label, opts) {
   log.debug("Entering checkIssuerSignature().");
@@ -1756,7 +1781,9 @@ async function checkIssuerSignature(s, key, compact, header, payload,
   try {
     found = await issuerKey(header, payload, ctx.fetchJson, opts);
   } catch (e) {
-    s.add(key, label, FAIL, "no issuer key: " + e.message, true);
+    s.add(key, label, e.unresolved ? SKIP : FAIL, e.unresolved ?
+          "could not resolve the issuer's key: " + e.message :
+          "no issuer key: " + e.message, true);
     log.debug("Leaving checkIssuerSignature(). No key.");
     return false;
   }
@@ -2813,7 +2840,9 @@ async function readStatusListCredential(text, ctx) {
       found = await issuerKey(d.header, keyPayload, ctx.fetchJson,
                               { format: FORMAT_JWT_VC_JSON });
     } catch (e) {
-      problems.push("no key for its signature: " + e.message);
+      problems.push((e.unresolved ? "could not resolve the key for its " +
+                     "signature: " : "no key for its signature: ") +
+                    e.message);
     }
     if (found) {
       var v = verifyFound(t, found, d.header);

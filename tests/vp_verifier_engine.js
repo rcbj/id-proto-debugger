@@ -50,7 +50,8 @@
 //     SD-JWT VC -27's aka_vcts and extends examples (Figures 4, 16, 17),
 //     OpenID4VP 1.0 Appendix B.1.1's type_values examples expanded as
 //     IRIs, mdocs signed here with -9, -35, SHA-384/512 digests and
-//     DeviceMac, and the Data Integrity proof @context rules.
+//     DeviceMac, and the Data Integrity proof @context rules; plus issuer
+//     keys that cannot be had reported as a SKIP (B2/B3).
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -2568,9 +2569,15 @@ async function securityFindings(env) {
   const forged = nodeJws({ alg: "ES256", typ: "dc+sd-jwt",
                            kid: attackerDid + "#0" }, sdPayload(GOV),
                          attacker);
+  // With no network the issuer's key cannot be had (#469 B3): an
+  // incomplete verdict naming the URL — still never a pass.
   let r = await sendSd(forged);
-  failsOnly(r, ["p[0].issuer.signature"], "S1: https iss, an attacker's " +
-            "did:jwk in kid, no network");
+  incompleteOnly(r, ["p[0].issuer.signature"], "S1: https iss, an " +
+                 "attacker's did:jwk in kid, no network");
+  ok(/could not fetch https:\/\/gov\.example\/\.well-known\/jwt-vc-issuer/
+     .test(checkById(r, "p[0].issuer.signature").detail),
+     "S1, no network: the row names the URL: " +
+     checkById(r, "p[0].issuer.signature").detail);
   // With the real issuer's metadata on hand the forgery still fails, and
   // the row says the DID in kid was not used.
   const gov = ecPair();
@@ -2597,7 +2604,8 @@ async function securityFindings(env) {
   r = await sendSd(nodeJws({ alg: "ES256", typ: "dc+sd-jwt",
                              kid: attackerDid + "#0" },
                            sdPayload("urn:example:gov"), attacker));
-  failsOnly(r, ["p[0].issuer.signature"], "S1: a urn iss with a DID kid");
+  incompleteOnly(r, ["p[0].issuer.signature"], "S1: a urn iss with a DID " +
+                 "kid: no route leads to the issuer's key");
   ok(/only when iss IS that DID/.test(checkById(r,
      "p[0].issuer.signature").detail), "S1: the urn case says why");
   // A DID iss whose kid names ANOTHER DID.
@@ -3013,6 +3021,56 @@ async function jwtVcJsonFindings(env) {
      session, "example_jwt_vc", vc)), "example_jwt_vc[0].types").detail),
      "C6: a compact type_values value is reported as such");
 
+  // B2: an https issuer with no route to its key.
+  const httpsVc = exampleVc(issuer, { iss: "https://example.gov/issuers/" +
+                                      "565049" });
+  r = await sendOne(session, "example_jwt_vc", httpsVc,
+                    { fetchJson: docFetcher({}) });
+  incompleteOnly(r, ["example_jwt_vc[0].vc.signature"], "B2: jwt_vc_json, " +
+                 "an https issuer with no key route");
+  ok(new RegExp("could not resolve the issuer's key: could not fetch " +
+     "https://example\\.gov/\\.well-known/jwt-vc-issuer/issuers/565049")
+     .test(checkById(r, "example_jwt_vc[0].vc.signature").detail),
+     "B2: the row names the URL and says no jwt_vc_json spec defines it: " +
+     checkById(r, "example_jwt_vc[0].vc.signature").detail);
+  ok(/no jwt_vc_json specification defines it/.test(checkById(r,
+     "example_jwt_vc[0].vc.signature").detail), "B2: and says why");
+  r = await sendOne(session, "example_jwt_vc", httpsVc);
+  incompleteOnly(r, ["example_jwt_vc[0].vc.signature"], "B2: no fetchJson");
+  // Metadata naming another issuer is, for jwt_vc_json, a route that did
+  // not lead anywhere — not a forgery.
+  const wrongMeta = {};
+  wrongMeta["https://example.gov/.well-known/jwt-vc-issuer/issuers/565049"] =
+    { issuer: "https://elsewhere.example", jwks: { keys: [] } };
+  r = await sendOne(session, "example_jwt_vc", httpsVc,
+                    { fetchJson: docFetcher(wrongMeta) });
+  incompleteOnly(r, ["example_jwt_vc[0].vc.signature"], "B2: metadata " +
+                 "for another issuer");
+  // And for dc+sd-jwt the same metadata is a MUST broken: a FAIL.
+  const sdIssuer = ecPair();
+  const sdDcql = { credentials: [{ id: "p", format: "dc+sd-jwt",
+    require_cryptographic_holder_binding: false,
+    meta: { vct_values: [VCT] } }] };
+  const sdSession = jwtVcSession(env, sdDcql);
+  const sdJwt = nodeJws({ alg: "ES256", typ: "dc+sd-jwt" },
+    { iss: "https://example.gov/issuers/565049", vct: VCT,
+      iat: Math.floor(Date.now() / 1000) - 60 }, sdIssuer);
+  r = await sendOne(sdSession, "p", sdJwt + "~",
+                    { fetchJson: docFetcher(wrongMeta) });
+  failsOnly(r, ["p[0].issuer.signature"], "B2: dc+sd-jwt metadata naming " +
+            "another issuer is a FAIL (SD-JWT VC section 4.3)");
+  // B3's reporting half for dc+sd-jwt: a jwks_uri that cannot be fetched.
+  const brokenUri = {};
+  brokenUri["https://example.gov/.well-known/jwt-vc-issuer/issuers/565049"] =
+    { issuer: "https://example.gov/issuers/565049",
+      jwks_uri: "https://example.gov/jwks" };
+  r = await sendOne(sdSession, "p", sdJwt + "~",
+                    { fetchJson: docFetcher(brokenUri) });
+  incompleteOnly(r, ["p[0].issuer.signature"], "B3: a jwks_uri that " +
+                 "cannot be fetched");
+  ok(/could not fetch https:\/\/example\.gov\/jwks/.test(checkById(r,
+     "p[0].issuer.signature").detail), "B3: the row names the jwks_uri");
+
   // C2, C15, C16 on a VP JWT signed by node, binding required, the holder
   // a did:key that is the credential's sub (C3).
   const subjectVc = exampleVc(issuer, { sub: holder.did });
@@ -3089,7 +3147,8 @@ async function jwtVcJsonFindings(env) {
      "C4: the binding row names cnf.kid");
   log.info("PASS #469 jwt_vc_json: a bare VC (C1), iat optional and the " +
            "freshness window a policy (C2), DID holders (C3), cnf.kid " +
-           "(C4), aud arrays (C15) and exp/nbf (C16).");
+           "(C4), aud arrays (C15), exp/nbf (C16), and issuer key routes " +
+           "that fail as a SKIP (B2/B3).");
   log.debug("Leaving jwtVcJsonFindings().");
 }
 
@@ -3158,6 +3217,9 @@ async function didIssuerKeys(env) {
      "C7: and says so");
   r = await sendOne(session, "w", vcBy(ecPair()), { fetchJson: fetchJson });
   failsOnly(r, ["w[0].vc.signature"], "C7: no kid, signed by neither key");
+  r = await sendOne(session, "w", vcBy(k1, did + "#key-1"));
+  incompleteOnly(r, ["w[0].vc.signature"], "B2: a did:web that cannot be " +
+                 "resolved");
   log.info("PASS #469 C7: DID issuer keys by relative id, absolute id, " +
            "their own kid, and with no kid at all.");
   log.debug("Leaving didIssuerKeys().");
@@ -3531,10 +3593,10 @@ async function main() {
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 1150, "only " + assertions + " assertions ran; " +
-            "expected at least 1150");
-  assert.ok(checksSeen >= 4380, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 4380");
+  assert.ok(assertions >= 1180, "only " + assertions + " assertions ran; " +
+            "expected at least 1180");
+  assert.ok(checksSeen >= 4450, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 4450");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }
