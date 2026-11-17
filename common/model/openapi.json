@@ -35,9 +35,557 @@
     },
     {
       "name": "WS-Trust"
+    },
+    {
+      "name": "OAuth 2.0 / OpenID Connect"
     }
   ],
   "paths": {
+    "/claimdescription": {
+      "get": {
+        "operationId": "claimDescription",
+        "description": "The IANA \"JSON Web Token Claims\" registry, as IANA publishes it (XML),\nfetched once and kept for the life of the process. The token page labels\nthe claims it shows from it.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistryError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
+        ]
+      }
+    },
+    "/deviceauthorization": {
+      "post": {
+        "operationId": "oauthDeviceAuthorization",
+        "description": "Start the device authorization grant.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedDeviceAuthorizationAnswer"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuth.DeviceAuthorizationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
     "/gnap/call": {
       "post": {
         "operationId": "gnapCall",
@@ -139,6 +687,313 @@
         "tags": [
           "Service"
         ]
+      }
+    },
+    "/introspection": {
+      "post": {
+        "operationId": "oauthIntrospection",
+        "description": "Introspect a token.",
+        "parameters": [
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "description": "Forwarded to the introspection endpoint as it arrived: Basic client\ncredentials or a Bearer token.",
+            "schema": {
+              "type": "string"
+            },
+            "x-passthrough": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedIntrospectionAnswer"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuth.IntrospectionRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/ldap/add": {
@@ -683,6 +1538,605 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/Otp.VerifyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/register": {
+      "post": {
+        "operationId": "oauthRegister",
+        "description": "Create, read, update or delete a dynamically registered client.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RegistrationSucceeded"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedRegistrationAnswer"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuth.RegistrationRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/revoke": {
+      "post": {
+        "operationId": "oauthRevoke",
+        "description": "Revoke an access or refresh token.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RevocationAccepted"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "The request has succeeded and a new resource has been created as a result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RevocationAccepted"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "The request has been accepted for processing, but processing has not yet completed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RevocationAccepted"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "There is no content to send for this request, but the headers may be useful. ",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RevocationAccepted"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedOAuthError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuth.RevocationRequest"
               }
             }
           }
@@ -2168,6 +3622,1298 @@
         },
         "tags": [
           "Shared Signals"
+        ]
+      }
+    },
+    "/token": {
+      "post": {
+        "operationId": "oauthToken",
+        "description": "Make a token request: every grant the workflow offers.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuth.TokenRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tokenexchange": {
+      "post": {
+        "operationId": "oauthTokenExchange",
+        "description": "Exchange one token for another.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedTokenAnswer"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuth.TokenExchangeRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/userinfo": {
+      "get": {
+        "operationId": "oauthUserInfo",
+        "description": "Call a UserInfo endpoint.",
+        "parameters": [
+          {
+            "name": "userinfo_endpoint",
+            "in": "query",
+            "required": true,
+            "description": "The UserInfo endpoint, base64, with its query already on it. The api\nalways calls it with GET.",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "x-checked-in-code": "api/ssrf_guard.js, through the outbound agents in api/server.js: http: and https: only, and the address policy (blockPrivateNetworkCalls, blockedAddressRanges). Anything axios cannot parse as a URL fails the call (500)",
+            "explode": false
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "description": "The page repeats the scope here; the api does not read it.",
+            "schema": {
+              "type": "string"
+            },
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "claims",
+            "in": "query",
+            "required": false,
+            "description": "The page repeats the claims request here; the api does not read it.",
+            "schema": {
+              "type": "string"
+            },
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "description": "The access token, forwarded as it arrived.",
+            "schema": {
+              "type": "string"
+            },
+            "x-passthrough": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              },
+              "application/jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              },
+              "application/jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              },
+              "application/jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              },
+              "application/jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
+        ]
+      },
+      "post": {
+        "operationId": "oauthUserInfoPost",
+        "description": "The same call, made with POST by a page set to; the api still GETs.",
+        "parameters": [
+          {
+            "name": "userinfo_endpoint",
+            "in": "query",
+            "required": true,
+            "description": "The UserInfo endpoint, base64, with its query already on it. The api\nalways calls it with GET.",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "x-checked-in-code": "api/ssrf_guard.js, through the outbound agents in api/server.js: http: and https: only, and the address policy (blockPrivateNetworkCalls, blockedAddressRanges). Anything axios cannot parse as a URL fails the call (500)",
+            "explode": false
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "description": "The page repeats the scope here; the api does not read it.",
+            "schema": {
+              "type": "string"
+            },
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "claims",
+            "in": "query",
+            "required": false,
+            "description": "The page repeats the claims request here; the api does not read it.",
+            "schema": {
+              "type": "string"
+            },
+            "x-passthrough": true,
+            "explode": false
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "description": "The access token, forwarded as it arrived.",
+            "schema": {
+              "type": "string"
+            },
+            "x-passthrough": true
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              },
+              "application/jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              },
+              "application/jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              },
+              "application/jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              },
+              "application/jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "303": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "307": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                    },
+                    {
+                      "$ref": "#/components/schemas/OAuth.Failure"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          },
+          "504": {
+            "description": "What the far end answered, relayed with its own status.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuth.RelayedUserInfoAnswer"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OAuth 2.0 / OpenID Connect"
         ]
       }
     },
@@ -3693,6 +6439,1074 @@
           }
         },
         "description": "The validator's own refusal: the body was not the JSON shape this\noperation takes. `code` is always EMODELREQUEST, and `error` names the\nmember and what was wrong with it."
+      },
+      "OAuth.DeviceAuthorizationAnswer": {
+        "type": "object",
+        "properties": {
+          "device_code": {},
+          "user_code": {},
+          "verification_uri": {},
+          "verification_uri_complete": {},
+          "expires_in": {},
+          "interval": {}
+        },
+        "additionalProperties": {},
+        "description": "A device authorization response (RFC 8628 section 3.2), as sent."
+      },
+      "OAuth.DeviceAuthorizationRequest": {
+        "type": "object",
+        "required": [
+          "device_authorization_endpoint"
+        ],
+        "properties": {
+          "device_authorization_endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The device authorization endpoint the api POSTs to.",
+            "x-checked-in-code": "api/ssrf_guard.js, through the outbound agents in api/server.js: http: and https: only, and the address policy (blockPrivateNetworkCalls, blockedAddressRanges). Anything axios cannot parse as a URL fails the call (500)"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth_style": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          }
+        },
+        "description": "A device authorization request (RFC 8628 section 3.1)."
+      },
+      "OAuth.ExchangeResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "statusText",
+          "headers",
+          "body",
+          "bodyTruncated",
+          "bodyLength"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "statusText": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "body": {
+            "type": "string",
+            "description": "As received, cut at the api's trace limit."
+          },
+          "bodyTruncated": {
+            "type": "boolean"
+          },
+          "bodyLength": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "description": "The far end's answer, in the trace."
+      },
+      "OAuth.Failure": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            ]
+          },
+          "http_exchange": {
+            "$ref": "#/components/schemas/OAuth.HttpExchange",
+            "description": "Present when the caller asked for http_trace, on /token and\n/tokenexchange. `response` is null in it."
+          }
+        },
+        "description": "The api's own failure: the far end could not be reached or gave no\nanswer (a name that does not resolve, a refused connection, a timeout, a\nbody past maxContentLength, too many redirects, a blocked address or\nscheme), or the call could not be made at all. `error` is an object only\nwhere a handler's last-resort catch serialized an Error, which is `{}`."
+      },
+      "OAuth.HttpExchange": {
+        "type": "object",
+        "required": [
+          "request",
+          "response",
+          "timing",
+          "error"
+        ],
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "body": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "method",
+              "url",
+              "headers",
+              "body"
+            ]
+          },
+          "response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OAuth.ExchangeResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timing": {
+            "type": "object",
+            "properties": {
+              "totalMs": {
+                "type": "integer",
+                "format": "int64"
+              }
+            },
+            "required": [
+              "totalMs"
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "The HTTP exchange the api had with the far end (buildHttpTrace() in\napi/server.js): the request as SENT, User-Agent and any Authorization\nheader included; the response, or null when none came back; how long\nthe outbound call took; and why it failed, when it did."
+      },
+      "OAuth.IntrospectionAnswer": {
+        "type": "object",
+        "properties": {
+          "active": {},
+          "scope": {},
+          "client_id": {},
+          "username": {},
+          "token_type": {},
+          "exp": {},
+          "iat": {},
+          "nbf": {},
+          "sub": {},
+          "aud": {},
+          "iss": {},
+          "jti": {}
+        },
+        "additionalProperties": {},
+        "description": "An introspection response (RFC 7662 section 2.2), as sent."
+      },
+      "OAuth.IntrospectionRequest": {
+        "type": "object",
+        "required": [
+          "introspectionEndpoint"
+        ],
+        "properties": {
+          "introspectionEndpoint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The introspection endpoint the api POSTs to.",
+            "x-checked-in-code": "api/ssrf_guard.js, through the outbound agents in api/server.js: http: and https: only, and the address policy (blockPrivateNetworkCalls, blockedAddressRanges). Anything axios cannot parse as a URL fails the call (500)"
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "token_type_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          }
+        },
+        "description": "An introspection request (RFC 7662 section 2.1). The caller's\nAuthorization header is forwarded as it arrived."
+      },
+      "OAuth.OAuthError": {
+        "type": "object",
+        "properties": {
+          "error": {},
+          "error_description": {},
+          "error_uri": {}
+        },
+        "additionalProperties": {},
+        "description": "An OAuth 2.0 error response (RFC 6749 section 5.2), as the far end sent\nit. Its members are the far end's, so they are documented, not held."
+      },
+      "OAuth.RegistrationAnswer": {
+        "type": "object",
+        "properties": {
+          "client_id": {},
+          "client_secret": {},
+          "registration_access_token": {},
+          "registration_client_uri": {}
+        },
+        "additionalProperties": {},
+        "description": "A client information response (RFC 7591 section 3.2.1), as sent."
+      },
+      "OAuth.RegistrationRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The HTTP method, any case. Absent, null or empty is POST."
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "registration_endpoint for create, registration_client_uri after.",
+            "x-checked-in-code": "api/ssrf_guard.js, through the outbound agents in api/server.js: http: and https: only, and the address policy (blockPrivateNetworkCalls, blockedAddressRanges). Anything axios cannot parse as a URL fails the call (500)"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bearer_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An initial access token, or the registration access token, sent as\n`Authorization: Bearer` with this value after it.",
+            "x-passthrough": true
+          },
+          "metadata": {
+            "description": "The client metadata, sent as the JSON body on POST and PUT.",
+            "x-passthrough": true
+          }
+        },
+        "description": "A dynamic client registration call: create (POST the registration\nendpoint), read (GET), update (PUT) or delete (DELETE the client\nconfiguration endpoint), RFC 7591 / RFC 7592."
+      },
+      "OAuth.RegistrationSucceeded": {
+        "type": "object",
+        "required": [
+          "message",
+          "status",
+          "statusText"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "enum": [
+              "Client registration request succeeded."
+            ]
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "statusText": {
+            "type": "string"
+          }
+        },
+        "description": "The api's summary of a registration call the far end answered with no\nbody — a DELETE's 204 (RFC 7592 section 2.3) — sent as 200 so the\nbrowser receives a body at all."
+      },
+      "OAuth.RegistryError": {
+        "type": "object",
+        "additionalProperties": {},
+        "description": "Whatever IANA's server answered instead of the registry, relayed."
+      },
+      "OAuth.RelayedDeviceAuthorizationAnswer": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/OAuth.DeviceAuthorizationAnswer"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "The far end's body as the api relays it: the JSON value it sent, or the\ntext when it was not JSON (an HTML error page, an empty body as \"\").\n`T` describes the object a conforming server sends; nothing about it is\nheld, because the api relays a non-conforming one unchanged."
+      },
+      "OAuth.RelayedIntrospectionAnswer": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/OAuth.IntrospectionAnswer"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "The far end's body as the api relays it: the JSON value it sent, or the\ntext when it was not JSON (an HTML error page, an empty body as \"\").\n`T` describes the object a conforming server sends; nothing about it is\nheld, because the api relays a non-conforming one unchanged."
+      },
+      "OAuth.RelayedOAuthError": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/OAuth.OAuthError"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "The far end's body as the api relays it: the JSON value it sent, or the\ntext when it was not JSON (an HTML error page, an empty body as \"\").\n`T` describes the object a conforming server sends; nothing about it is\nheld, because the api relays a non-conforming one unchanged."
+      },
+      "OAuth.RelayedRegistrationAnswer": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/OAuth.RegistrationAnswer"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "The far end's body as the api relays it: the JSON value it sent, or the\ntext when it was not JSON (an HTML error page, an empty body as \"\").\n`T` describes the object a conforming server sends; nothing about it is\nheld, because the api relays a non-conforming one unchanged."
+      },
+      "OAuth.RelayedRegistryError": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/OAuth.RegistryError"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "The far end's body as the api relays it: the JSON value it sent, or the\ntext when it was not JSON (an HTML error page, an empty body as \"\").\n`T` describes the object a conforming server sends; nothing about it is\nheld, because the api relays a non-conforming one unchanged."
+      },
+      "OAuth.RelayedTokenAnswer": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/OAuth.TokenAnswer"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "The far end's body as the api relays it: the JSON value it sent, or the\ntext when it was not JSON (an HTML error page, an empty body as \"\").\n`T` describes the object a conforming server sends; nothing about it is\nheld, because the api relays a non-conforming one unchanged."
+      },
+      "OAuth.RelayedUserInfoAnswer": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/OAuth.UserInfoAnswer"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number",
+            "format": "double"
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "The far end's body as the api relays it: the JSON value it sent, or the\ntext when it was not JSON (an HTML error page, an empty body as \"\").\n`T` describes the object a conforming server sends; nothing about it is\nheld, because the api relays a non-conforming one unchanged."
+      },
+      "OAuth.RevocationAccepted": {
+        "type": "object",
+        "required": [
+          "message",
+          "status",
+          "statusText",
+          "data"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "enum": [
+              "Token revocation request accepted (RFC 7009)."
+            ]
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "statusText": {
+            "type": "string"
+          },
+          "data": {}
+        },
+        "description": "The api's summary of a revocation the far end accepted. RFC 7009 has\nthe server answer 200 with an empty body, so the api says what happened\nitself and puts whatever body there was in `data`."
+      },
+      "OAuth.RevocationRequest": {
+        "type": "object",
+        "required": [
+          "revocation_endpoint"
+        ],
+        "properties": {
+          "revocation_endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The revocation endpoint the api POSTs to.",
+            "x-checked-in-code": "api/ssrf_guard.js, through the outbound agents in api/server.js: http: and https: only, and the address policy (blockPrivateNetworkCalls, blockedAddressRanges). Anything axios cannot parse as a URL fails the call (500)"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth_style": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "token_type_hint": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          }
+        },
+        "description": "A revocation request (RFC 7009 section 2.1)."
+      },
+      "OAuth.TokenAnswer": {
+        "type": "object",
+        "properties": {
+          "access_token": {},
+          "token_type": {},
+          "expires_in": {},
+          "refresh_token": {},
+          "scope": {},
+          "id_token": {},
+          "issued_token_type": {},
+          "error": {},
+          "error_description": {},
+          "error_uri": {},
+          "http_exchange": {
+            "$ref": "#/components/schemas/OAuth.HttpExchange",
+            "description": "The api's own, attached when http_trace asked for it and the body is\nan object that has no member of this name already."
+          }
+        },
+        "additionalProperties": {},
+        "description": "A token response (RFC 6749 section 5.1, OIDC Core 3.1.3.3, RFC 8693\nsection 2.2), or an error, as the far end sent it."
+      },
+      "OAuth.TokenExchangeRequest": {
+        "type": "object",
+        "required": [
+          "token_endpoint"
+        ],
+        "properties": {
+          "token_endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The token endpoint the api POSTs to.",
+            "x-checked-in-code": "api/ssrf_guard.js, through the outbound agents in api/server.js: http: and https: only, and the address policy (blockPrivateNetworkCalls, blockedAddressRanges). Anything axios cannot parse as a URL fails the call (500)"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth_style": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "http_trace": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grant_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sent as typed; the page sends the token-exchange URN.",
+            "x-passthrough": true
+          },
+          "subject_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "subject_token_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "actor_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "actor_token_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "requested_token_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "audience": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          }
+        },
+        "description": "A token exchange request (RFC 8693 section 2.1)."
+      },
+      "OAuth.TokenRequest": {
+        "type": "object",
+        "required": [
+          "token_endpoint"
+        ],
+        "properties": {
+          "token_endpoint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The token endpoint the api POSTs to.",
+            "x-checked-in-code": "api/ssrf_guard.js, through the outbound agents in api/server.js: http: and https: only, and the address policy (blockPrivateNetworkCalls, blockedAddressRanges). Anything axios cannot parse as a URL fails the call (500)"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth_style": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "http_trace": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "grant_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Chooses which parameters convertToOAuth2Format() sends:\nauthorization_code, client_credentials, password, refresh_token or\nurn:ietf:params:oauth:grant-type:device_code. Anything else is sent\nwith only resource, scope and the custom parameters.",
+            "x-passthrough": true
+          },
+          "client_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "client_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Never stored by the page; a dummy in every fixture.",
+            "x-passthrough": true
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "redirect_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "code_verifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "refresh_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "device_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "resource": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "x-passthrough": true
+          },
+          "customParams": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Parameter name to value, each appended to the form body as typed.",
+            "x-passthrough": true
+          }
+        },
+        "description": "A token request (RFC 6749 section 4, RFC 7636, RFC 8628 section 3.4),\nturned into a form body by common/data.js convertToOAuth2Format()."
+      },
+      "OAuth.UserInfoAnswer": {
+        "type": "object",
+        "properties": {
+          "sub": {}
+        },
+        "additionalProperties": {},
+        "description": "OIDC UserInfo claims (OIDC Core 5.3.2), as sent, when JSON."
       },
       "Otp.HttpExchange": {
         "type": "object",

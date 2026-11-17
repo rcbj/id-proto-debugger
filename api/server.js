@@ -1026,7 +1026,8 @@ const IANA_JWT_CLAIMS_URL = 'https://www.iana.org/assignments/jwt/jwt.xml';
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.get('/claimdescription', function(req, res) {
+app.get('/claimdescription', model.route('claimDescription'),
+        function(req, res) {
   log.debug("Entering GET /claimdescription.");
   try {
     if(cachedClaimDescriptions) {
@@ -1841,6 +1842,24 @@ app.post('/wstrust', model.route('wstrustProxy'), function (req, res) {
   log.debug('Leaving POST /wstrust. The call is under way.');
 });
 
+// ---------------------------------------------------------------------------
+// THE OAUTH 2.0 / OPENID CONNECT PROXIES, held to models/api/oauth.tsp.
+//
+// model.route() checks each body's SHAPE before the handler runs: the
+// endpoint URL the api is told to call is a non-empty string and the only
+// required member, and sslValidate, auth_style and http_trace are a boolean,
+// a string or null. Every protocol parameter the user typed is a string or
+// null and NOTHING MORE: its content goes to the far end as typed, because a
+// debugger has to be able to send a malformed request and show the
+// authorization server's error. Do not add a content check here or there.
+//
+// None of these handlers checked anything before the model did, so there was
+// no hand-written check to delete; a missing URL used to reach axios and come
+// back as a 500 "Invalid URL" (tests/fixtures/api_model/oauth.json, each case
+// marked `changed`). What a URL may be — http(s), and an address the policy
+// allows — is still api/ssrf_guard.js's, at connect time.
+// ---------------------------------------------------------------------------
+
 /**
  * @typedef TokenRequest
  * @property {string} grant_type.required - The OAuth2 / OIDC Grant / Flow Type
@@ -1885,7 +1904,7 @@ app.post('/wstrust', model.route('wstrustProxy'), function (req, res) {
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/token', (req, res) => {
+app.post('/token', model.route('oauthToken'), (req, res) => {
   try {
     log.info('Entering app.post for /token.');
     const body = req.body;
@@ -2027,7 +2046,7 @@ app.post('/token', (req, res) => {
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/introspection', (req, res) => {
+app.post('/introspection', model.route('oauthIntrospection'), (req, res) => {
 try {
   log.info('Entering app.post for /introspection.');
   const body = req.body;
@@ -2125,7 +2144,7 @@ try {
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/revoke', (req, res) => {
+app.post('/revoke', model.route('oauthRevoke'), (req, res) => {
   try {
     log.info('Entering app.post for /revoke.');
     const body = req.body;
@@ -2245,7 +2264,7 @@ app.post('/revoke', (req, res) => {
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/tokenexchange', (req, res) => {
+app.post('/tokenexchange', model.route('oauthTokenExchange'), (req, res) => {
   try {
     log.info('Entering app.post for /tokenexchange.');
     const body = req.body;
@@ -2392,7 +2411,8 @@ app.post('/tokenexchange', (req, res) => {
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/deviceauthorization', (req, res) => {
+app.post('/deviceauthorization', model.route('oauthDeviceAuthorization'),
+         (req, res) => {
   try {
     log.info('Entering app.post for /deviceauthorization.');
     const body = req.body;
@@ -2498,7 +2518,7 @@ app.post('/deviceauthorization', (req, res) => {
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.post('/register', (req, res) => {
+app.post('/register', model.route('oauthRegister'), (req, res) => {
   try {
     log.info('Entering app.post for /register.');
     const body = req.body;
@@ -2582,7 +2602,7 @@ app.post('/register', (req, res) => {
   }
 });
 
-app.post('/userinfo', (req, res) => {
+app.post('/userinfo', model.route('oauthUserInfoPost'), (req, res) => {
   log.info('Entering app.post for /userinfo.');
   userinfo_common(req, res);
   log.debug("Leaving app.post for /userinfo.");
@@ -2597,7 +2617,7 @@ app.post('/userinfo', (req, res) => {
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.get('/userinfo', (req, res) => {
+app.get('/userinfo', model.route('oauthUserInfo'), (req, res) => {
   log.info("Entering app.get for /userinfo.");
   userinfo_common(req, res);
   log.debug("Leaving app.get for /userinfo.");

@@ -29,6 +29,7 @@ import "./smartcard.tsp";
 import "./saml.tsp";
 import "./wsfed.tsp";
 import "./wstrust.tsp";
+import "./oauth.tsp";
 
 using Http;
 using OpenAPI;
