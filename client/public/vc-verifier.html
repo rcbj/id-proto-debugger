@@ -168,7 +168,9 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                      placeholder="https://verifier.example/done"
                      onchange="return vcverifier.settingsChanged();" />
               <span class="vc-note">Returned as <code>redirect_uri</code> in the answer to the wallet&rsquo;s
-              POST (section 8.2). Empty: none.</span></td>
+              POST (section 8.2), with a fresh random <code>response_code</code> added for each answer, as
+              section 8.2 requires. Empty: none &mdash; which a same-device flow should not be (HAIP 1.0
+              section 5.1: Verifiers MUST include one).</span></td>
         </tr>
       </tbody>
     </table>
@@ -193,7 +195,8 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
         <tr>
           <td><label for="vpv_invocation">Authorization Request</label></td>
           <td><textarea id="vpv_invocation" class="vc-mono" rows="4" cols="80" readonly="readonly"></textarea>
-              <br/><a id="vpv_invocation_link" href="#" style="display: none;">Open it on this device</a></td>
+              <br/><a id="vpv_invocation_link" href="#" style="display: none;">Open it on this device</a>
+              <span class="vc-status" id="vpv_same_device_note">&nbsp;</span></td>
         </tr>
         <tr>
           <td>For a wallet on another device</td>

@@ -313,9 +313,18 @@ function asksForVpToken(params) {
 
 // The prefix of a Client Identifier (OpenID4VP 1.0 section 5.9), "" when it
 // has none, which is the pre-registered case.
+//
+// "pre-registered" is NOT one of them (#469, C18). Section 10.1 lists it
+// among the client_id_prefixes_supported VALUES, where it "represents the
+// behavior when no Client Identifier Prefix is used"; section 5.9.3 defines
+// no "pre-registered:" prefix. So a client_id "pre-registered:abc" is a
+// Client Identifier whose part before the colon is no recognised prefix,
+// which section 5.9.2 says a Wallet "can treat ... as referring to a
+// pre-registered client or it may refuse" — it is the WHOLE string, not
+// "abc" under a prefix.
 var CLIENT_ID_PREFIXES = ["redirect_uri", "x509_san_dns", "x509_hash",
   "decentralized_identifier", "verifier_attestation", "openid_federation",
-  "origin", "pre-registered"];
+  "origin"];
 
 function clientIdPrefix(clientId) {
   log.debug("Entering clientIdPrefix().");

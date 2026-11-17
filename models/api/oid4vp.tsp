@@ -218,6 +218,10 @@ model VerifierEvent {
   /** The Content-Type header as the Wallet sent it. */
   contentType?: string;
 
+  /** request-fetched by POST: the Accept header as the Wallet sent it.
+   *  Section 5.10 says it MUST be application/oauth-authz-req+jwt. */
+  accept?: string;
+
   /** The answer's fields, each the text that arrived. */
   fields?: Record<unknown>;
 
@@ -227,8 +231,23 @@ model VerifierEvent {
   walletNonce?: unknown;
   remoteAddress?: string;
 
-  /** Why something that arrived was not kept. */
+  /** What was wrong with what arrived. On response-refused, why it was
+   *  not kept. On request-fetched and response, a MUST the Wallet broke
+   *  while the api still served or kept it (accept and report): a
+   *  request_uri POST that is not application/x-www-form-urlencoded or
+   *  has no Accept of application/oauth-authz-req+jwt (section 5.10), a
+   *  JSON answer to response_uri (section 8.2), a wallet_nonce no
+   *  pre-signed object can carry. */
   problem?: string;
+
+  /** response: the redirect_uri the Wallet was answered with, carrying
+   *  this answer's response_code. */
+  redirectUri?: string;
+
+  /** response: the fresh, cryptographically random value (128 bits,
+   *  base64url) added to redirect_uri as `response_code` for this one
+   *  answer (section 8.2; the name is section 13.3's). */
+  responseCode?: string;
 
   /** Live signing: on a request-fetched event, the Wallet is held and the
    *  page signs for it at /request/{signingId}; on request-signed, which
@@ -402,7 +421,10 @@ op verifierRequestGet(@path id: string): {
 @operationId("oid4vpVerifierRequestPost")
 op verifierRequestPost(
   @path id: string,
-  @header contentType: "application/x-www-form-urlencoded",
+  /** Section 5.10 makes it a form; a JSON body is still served, and its
+   *  request-fetched event carries a `problem` saying so. */
+  @header contentType: "application/x-www-form-urlencoded" |
+    "application/json",
   @passthrough
   @body body: Record<unknown>,
 ): {
@@ -422,7 +444,10 @@ op verifierCa(@path id: string): {
   @body body: bytes;
 } | NoSession<WalletError>;
 
-/** A Wallet's answer (section 8.2), kept field by field as it arrived. */
+/** A Wallet's answer (section 8.2), kept field by field as it arrived. A
+ *  JSON body is kept too, and its `response` event carries a `problem`
+ *  naming section 8.2's form-encoding MUST. `redirect_uri`, when the page
+ *  set one, carries a fresh `response_code` for this answer. */
 @tag("OpenID4VP")
 @route("/oid4vp/verifier/{id}/response")
 @post

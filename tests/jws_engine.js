@@ -586,6 +586,89 @@ function checkEddsaCurves() {
 }
 
 // ---------------------------------------------------------------------------
+// 8b. The FULLY-SPECIFIED EdDSA identifiers (#468, M7):
+//     draft-ietf-jose-fully-specified-algorithms-13 section 2.2 registers
+//     "Ed25519" and "Ed448" as `alg` values naming one curve each, and
+//     OpenID4VP 1.0 Appendix B.3.4 has a Verifier advertise them for SD-JWT
+//     VC. Every JWS here is signed by NODE (OpenSSL), so a reading of the
+//     draft this module shares with itself cannot pass.
+// ---------------------------------------------------------------------------
+function checkFullySpecifiedEddsa() {
+  log.debug("Entering checkFullySpecifiedEddsa().");
+  const b64u = function b64u(x) {
+    log.debug("Entering b64u().");
+    log.debug("Leaving b64u().");
+    return Buffer.from(x).toString("base64url");
+  };
+  [["Ed25519", "ed25519"], ["Ed448", "ed448"]].forEach(function (pair) {
+    const alg = pair[0];
+    const kp = crypto.generateKeyPairSync(pair[1]);
+    const publicJwk = kp.publicKey.export({ format: "jwk" });
+    const nodeSigned = function nodeSigned(header) {
+      log.debug("Entering nodeSigned(). " + header.alg);
+      const input = b64u(JSON.stringify(header)) + "." + b64u(PAYLOAD);
+      log.debug("Leaving nodeSigned().");
+      return input + "." + b64u(crypto.sign(null, Buffer.from(input),
+                                            kp.privateKey));
+    };
+    const full = nodeSigned({ alg: alg, typ: "JWT" });
+    const byHeader = jws.verifyJws({ jws: full, publicKey: publicJwk });
+    assert.ok(byHeader.valid, alg + ": a node-signed JWS whose header says " +
+      alg + " must verify by its header: " +
+      JSON.stringify(byHeader.signatures));
+    const chosen = jws.verifyJws({ jws: full, publicKey: publicJwk,
+                                   algId: alg });
+    assert.ok(chosen.valid, alg + ": and when the verifier chooses " + alg +
+      ": " + JSON.stringify(chosen.signatures));
+    const asSet = jws.verifyJws({ jws: full, algId: alg,
+      publicKey: { keys: [Object.assign({ kid: "k" }, publicJwk)] } });
+    assert.ok(asSet.valid, alg + ": and against a one-key JWK Set");
+    const poly = jws.verifyJws({ jws: full, publicKey: publicJwk,
+                                 algId: "EdDSA" });
+    assert.ok(!poly.valid && /alg=/.test(poly.signatures[0].reason),
+      alg + ": a verifier that chose EdDSA must see the header's " + alg +
+      " as a mismatch (RFC 8725 section 3.1), not quietly accept it");
+    const polySigned = nodeSigned({ alg: "EdDSA" });
+    assert.ok(jws.verifyJws({ jws: polySigned, publicKey: publicJwk,
+      algId: "EdDSA" }).valid, alg + ": a verifier that names the EdDSA " +
+      "family verifies RFC 8037's alg, the curve read from the key");
+    assert.ok(!jws.verifyJws({ jws: polySigned, publicKey: publicJwk,
+      algId: alg }).valid, alg + ": and one that chose " + alg +
+      " refuses a header of EdDSA");
+    const tampered = full.slice(0, -4) + (full.slice(-4) === "AAAA" ?
+      "BBBB" : "AAAA");
+    assert.ok(!jws.verifyJws({ jws: tampered, publicKey: publicJwk,
+      algId: alg }).valid, alg + ": a damaged signature must not verify");
+    // Signing under the fully-specified id writes it, and OpenSSL agrees.
+    const mine = jws.signJws({ algId: alg, payload: PAYLOAD,
+      privateKey: { jwk: kp.privateKey.export({ format: "jwk" }) } });
+    assert.strictEqual(mine.header.alg, alg);
+    const parts = mine.serialized.split(".");
+    assert.ok(crypto.verify(null, Buffer.from(parts[0] + "." + parts[1]),
+      kp.publicKey, Buffer.from(parts[2], "base64url")),
+      alg + ": OpenSSL must verify what this module signed as " + alg);
+  });
+  const crossKey = crypto.generateKeyPairSync("ed448").publicKey
+    .export({ format: "jwk" });
+  const kp25519 = crypto.generateKeyPairSync("ed25519");
+  const in25519 = Buffer.from(JSON.stringify({ alg: "Ed25519" }))
+    .toString("base64url") + "." + Buffer.from(PAYLOAD)
+    .toString("base64url");
+  const sig25519 = crypto.sign(null, Buffer.from(in25519),
+                               kp25519.privateKey).toString("base64url");
+  assert.ok(!jws.verifyJws({ jws: in25519 + "." + sig25519,
+    publicKey: crossKey }).valid, "an Ed25519 JWS must not verify under " +
+    "an Ed448 key");
+  assert.ok(jws.algIds().indexOf("Ed25519") === -1 &&
+            jws.algIds().indexOf("Ed448") === -1,
+            "the aliases are not menu rows: algIds() is unchanged");
+  log.info("[fully-specified] OK — Ed25519 and Ed448 headers, signed by " +
+           "OpenSSL, verify; EdDSA stays the family; the verifier's choice " +
+           "still wins.");
+  log.debug("Leaving checkFullySpecifiedEddsa().");
+}
+
+// ---------------------------------------------------------------------------
 // 9. The Unsecured JWS. It is in the registry, it authenticates nothing, and
 //    the reason to implement it is that a relying party which accepts one has
 //    a critical defect you have to be able to demonstrate.
@@ -1126,6 +1209,7 @@ async function test() {
   checkDetachedAndUnencoded();
   checkHeaderRules();
   checkEddsaCurves();
+  checkFullySpecifiedEddsa();
   checkUnsecured();
   checkTamperingAndJson();
   checkRsaDigestInfoStrict();

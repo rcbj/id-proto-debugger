@@ -220,7 +220,13 @@ function regenerateDcql() {
     setVal("vpv_dcql", JSON.stringify(dcql, null, 2));
     setText("vpv_dcql_status", "Generated from the fields above.", "vc-ok");
   } catch (e) {
-    setText("vpv_dcql_status", e.message, "vc-bad");
+    // Not generated (#468, M4): the query the fields describe is one a
+    // Wallet must reject — most often a type field left empty, which
+    // Appendix B makes REQUIRED for every format. The last query that WAS
+    // generated is cleared, so "Create the request" cannot quietly send a
+    // query the fields no longer describe.
+    setVal("vpv_dcql", "");
+    setText("vpv_dcql_status", "Not generated: " + e.message, "vc-bad");
   }
   saveState();
   log.debug("Leaving regenerateDcql().");
@@ -391,8 +397,12 @@ function decodeJws(compact) {
 }
 
 // THE PREFIXES THAT NEED A CERTIFICATE. The others sign with a bare key
-// (decentralized_identifier, verifier_attestation, pre-registered).
-var X509_PREFIXES = ["x509_hash", "x509_san_dns", "redirect_uri"];
+// (decentralized_identifier, verifier_attestation, pre-registered), except
+// redirect_uri, which signs with nothing at all: OpenID4VP 1.0 section
+// 5.9.3, "Requests using the redirect_uri Client Identifier Prefix cannot
+// be signed" (#469, C17). It needs no certificate, no key and no secure
+// context.
+var X509_PREFIXES = ["x509_hash", "x509_san_dns"];
 
 // The key a request is signed with, and what a wallet must be given to
 // trust it, for one Client Identifier prefix. `dnsName` is the host the
@@ -401,6 +411,16 @@ var X509_PREFIXES = ["x509_hash", "x509_san_dns", "redirect_uri"];
 async function makeSigner(prefix, dnsName, caIssuersUrl) {
   log.debug("Entering makeSigner(). " + prefix);
   var signer = { prefix: prefix, attester: null, trust: "" };
+  if (prefix === "redirect_uri") {
+    // Unsigned: there is no identity to make, so nothing is generated and
+    // no Web Crypto is asked for.
+    signer.identity = {};
+    signer.trust = "Nothing: a redirect_uri request is unsigned, and the " +
+      "Client Identifier is the URL the answer goes to (section 5.9.3).";
+    signer.dnsName = dnsName;
+    log.debug("Leaving makeSigner(). Unsigned.");
+    return signer;
+  }
   if (X509_PREFIXES.indexOf(prefix) >= 0) {
     // THE CERTIFICATE NEEDS WEB CRYPTO until #463 moves x509.js and
     // key_material.js onto the pure-JS module. Said here by name rather
@@ -556,7 +576,10 @@ async function createRequest() {
         : verifier.authorizationRequestUri({
           scheme: val("vpv_scheme"), clientId: clientId,
           requestUri: hosted.requestUri,
-          requestUriMethod: live ? "post" : undefined });
+          requestUriMethod: live ? "post" : undefined,
+          // Section 5.1: under post the Verifier SHOULD send its
+          // capabilities beside request_uri (#468, M8).
+          clientMetadata: live ? claims.client_metadata : undefined });
     }
     current = {
       hosted: hosted,
@@ -676,6 +699,29 @@ async function askThroughDcApi() {
   return false;
 }
 
+// THE SAME-DEVICE FLOW without a redirect_uri (#468, M3). "Open it on this
+// device" is the same-device flow, and HAIP 1.0 section 5.1 says of it:
+// "Verifiers MUST include redirect_uri in the HTTP response to the Wallet's
+// HTTP POST to the response_uri". This page has no HAIP mode, so it says so
+// whenever a request is made with none configured: the wallet's browser
+// then has nowhere to return to, and the session binding that redirect
+// carries (OpenID4VP section 8.2's fresh value) is absent. A QR code
+// scanned by another device needs none.
+function sameDeviceNote() {
+  log.debug("Entering sameDeviceNote().");
+  if (val("vpv_redirect_uri").trim()) {
+    setText("vpv_same_device_note", "");
+    log.debug("Leaving sameDeviceNote(). Configured.");
+    return;
+  }
+  setText("vpv_same_device_note", "No redirect_uri is configured (pane " +
+    "2), so a wallet on THIS device has nowhere to send its browser back " +
+    "to. For a same-device flow HAIP 1.0 section 5.1 says Verifiers MUST " +
+    "include one; a QR code scanned on another device needs none.",
+    "vc-pending");
+  log.debug("Leaving sameDeviceNote(). Missing.");
+}
+
 function showRequest(invocation, clientId, requestObject, claims) {
   log.debug("Entering showRequest().");
   setVal("vpv_invocation", invocation);
@@ -685,6 +731,7 @@ function showRequest(invocation, clientId, requestObject, claims) {
     link.style.display = "inline";
   }
   showQr(invocation);
+  sameDeviceNote();
   setVal("vpv_client_id", clientId);
   setVal("vpv_request_uri", requestObject ? current.hosted.requestUri : "");
   setVal("vpv_response_uri", current.hosted.responseUri);
@@ -755,7 +802,11 @@ function eventLine(event) {
   } else if (event.kind === "response") {
     text = at + "The wallet posted its answer (" +
       (event.contentType || "?") + "): " +
-      Object.keys(event.fields || {}).join(", ") + ".";
+      Object.keys(event.fields || {}).join(", ") + "." +
+      (event.redirectUri ? " It was sent on to " + event.redirectUri +
+        " (response_code " + event.responseCode + ", fresh for this " +
+        "answer: section 8.2)." : "") +
+      (event.problem ? " " + event.problem : "");
   } else if (event.kind === "response-refused") {
     text = at + "The api refused a POST to response_uri: " +
       (event.problem || "no reason given") + ".";
@@ -827,7 +878,7 @@ async function poll() {
     if (answer) {
       current.answered = true;
       setText("vpv_wait_status", "The wallet answered.", "vc-ok");
-      await checkFields(answer.fields || {});
+      await checkFields(answer.fields || {}, answer.contentType || "");
       log.debug("Leaving poll(). Answered.");
       return;
     }
@@ -932,7 +983,10 @@ function renderChecks(result) {
   log.debug("Leaving renderChecks(). failed=" + failed);
 }
 
-async function checkFields(fields) {
+// `contentType` is the media type the api recorded the answer as arriving
+// in, which verifyResponse() holds to section 8.2; undefined for an answer
+// that did not come through response_uri (pasted, or the DC API).
+async function checkFields(fields, contentType) {
   log.debug("Entering checkFields().");
   if (!current) {
     setText("vpv_verdict", "There is no request on this page to check the " +
@@ -946,7 +1000,7 @@ async function checkFields(fields) {
       fields: fields,
       session: Object.assign({}, current.session,
                              { trustAnchors: trustAnchorsFromPage() }),
-      fetchJson: fetchJson, fetchText: fetchText,
+      fetchJson: fetchJson, fetchText: fetchText, contentType: contentType,
       now: Math.floor(Date.now() / 1000) });
     renderChecks(result);
     log.debug("Leaving checkFields(). ok=" + result.ok);
@@ -999,6 +1053,7 @@ async function reset() {
     link.style.display = "none";
   }
   showQr("");
+  setText("vpv_same_device_note", "");
   var list = el("vpv_events");
   if (list) {
     list.innerHTML = "";
