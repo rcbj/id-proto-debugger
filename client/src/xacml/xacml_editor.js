@@ -107,7 +107,28 @@ const RULE_ALG_MENU = [
             'because this PDP always evaluates in document order.' },
     { uri: model.RULE_ALG.ORDERED_PERMIT_OVERRIDES,
         label: 'ordered-permit-overrides',
-        what: 'permit-overrides with the evaluation order fixed.' }
+        what: 'permit-overrides with the evaluation order fixed.' },
+    // THE LEGACY 1.0 / 1.1 IDENTIFIERS. The PDP evaluates them (they are
+    // genuinely different functions: no extended Indeterminate), so an imported
+    // document may name one. Until 2026-11-17 the menu did not, so the editor
+    // selected nothing for such a policy and Update silently wrote the first
+    // option, deny-unless-permit, over the document's own algorithm.
+    { uri: model.RULE_ALG.LEGACY_DENY_OVERRIDES,
+        label: 'deny-overrides (legacy 1.0)',
+        what: 'The XACML 1.0 deny-overrides, which predates extended ' +
+            'Indeterminate. Kept for documents that name it.' },
+    { uri: model.RULE_ALG.LEGACY_PERMIT_OVERRIDES,
+        label: 'permit-overrides (legacy 1.0)',
+        what: 'The XACML 1.0 permit-overrides, which predates extended ' +
+            'Indeterminate. Kept for documents that name it.' },
+    { uri: model.RULE_ALG.LEGACY_ORDERED_DENY_OVERRIDES,
+        label: 'ordered-deny-overrides (legacy 1.1)',
+        what: 'The XACML 1.1 ordered-deny-overrides. Kept for documents ' +
+            'that name it.' },
+    { uri: model.RULE_ALG.LEGACY_ORDERED_PERMIT_OVERRIDES,
+        label: 'ordered-permit-overrides (legacy 1.1)',
+        what: 'The XACML 1.1 ordered-permit-overrides. Kept for documents ' +
+            'that name it.' }
 ];
 // THE POLICY-COMBINING ALGORITHMS, WHICH ARE NOT THE RULE-COMBINING ONES AND
 // ARE ALMOST SPELT THE SAME.
@@ -154,7 +175,28 @@ const POLICY_ALG_MENU = [
             'because this PDP always evaluates in document order.' },
     { uri: model.POLICY_ALG.ORDERED_PERMIT_OVERRIDES,
         label: 'ordered-permit-overrides',
-        what: 'permit-overrides with the evaluation order fixed.' }
+        what: 'permit-overrides with the evaluation order fixed.' },
+    // THE LEGACY 1.0 / 1.1 IDENTIFIERS. The PDP evaluates them (they are
+    // genuinely different functions: no extended Indeterminate), so an imported
+    // document may name one. Until 2026-11-17 the menu did not, so the editor
+    // selected nothing for such a policy and Update silently wrote the first
+    // option, deny-unless-permit, over the document's own algorithm.
+    { uri: model.POLICY_ALG.LEGACY_DENY_OVERRIDES,
+        label: 'deny-overrides (legacy 1.0)',
+        what: 'The XACML 1.0 deny-overrides, which predates extended ' +
+            'Indeterminate. Kept for documents that name it.' },
+    { uri: model.POLICY_ALG.LEGACY_PERMIT_OVERRIDES,
+        label: 'permit-overrides (legacy 1.0)',
+        what: 'The XACML 1.0 permit-overrides, which predates extended ' +
+            'Indeterminate. Kept for documents that name it.' },
+    { uri: model.POLICY_ALG.LEGACY_ORDERED_DENY_OVERRIDES,
+        label: 'ordered-deny-overrides (legacy 1.1)',
+        what: 'The XACML 1.1 ordered-deny-overrides. Kept for documents ' +
+            'that name it.' },
+    { uri: model.POLICY_ALG.LEGACY_ORDERED_PERMIT_OVERRIDES,
+        label: 'ordered-permit-overrides (legacy 1.1)',
+        what: 'The XACML 1.1 ordered-permit-overrides. Kept for documents ' +
+            'that name it.' }
 ];
 // ---------------------------------------------------------------------------
 // WHAT MAY BE ADDED AT A NODE.
