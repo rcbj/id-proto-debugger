@@ -358,6 +358,18 @@ async function walletPresents(driver, where, credential, round) {
     assert.ok(answered.json && answered.json.ok, answered.stdout);
   });
   const seen = await waitForVerdict(driver);
+  // WHAT WAS ASKED AND WHAT CAME BACK, so a "not disclosed" says which side
+  // is wrong: the DCQL claims the page sent, and the claims the page found
+  // disclosed in the wallet's answer.
+  const asked = await driver.executeScript(
+      "try { return JSON.stringify(JSON.parse(document.getElementById(" +
+      "  'vpv_dcql').value).credentials.map(function (c) {" +
+      "  return { id: c.id, claims: c.claims || null }; })); }" +
+      "catch (e) { return ''; }");
+  const disclosed = await textOf(driver, "vpv_claims_out");
+  log.info("  asked (DCQL claims): " + asked);
+  log.info("  disclosed (as the page read the answer): " +
+           String(disclosed).replace(/\s+/g, " ").slice(0, 600));
   check("every check on the wallet's answer passes (" + round.label + ")",
       function () {
         assert.ok(/every check passed/i.test(seen.verdict),

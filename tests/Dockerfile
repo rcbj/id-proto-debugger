@@ -73,8 +73,8 @@
 #     (an archive has no .git to read them from).
 # ---------------------------------------------------------------------------
 FROM rust:1.97-bookworm AS oid4vc-wallet
-ENV OID4VC_WALLET_COMMIT=616d059cb0a6bb19b9a5e9cd64ccc9354286664d
-ENV OID4VC_WALLET_SHA256=f34c36434f1510534a40c09242a345a57e4635b516d69a8a18b6f2c3fbb7bab8
+ENV OID4VC_WALLET_COMMIT=7cf061a63e2c1f9814b404b0415e65765f1b979a
+ENV OID4VC_WALLET_SHA256=377c1c266d65492f084d04e37e98181c6840a6ca95d0ac971225ead9756b2c57
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get -y install --no-install-recommends \
       libudev-dev libpcsclite-dev pkg-config \
