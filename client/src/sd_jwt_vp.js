@@ -49,6 +49,7 @@ var metadataClient = require("./metadata_client");
 var jws = require("./jws");
 var sdJwtVc = require("./sd_jwt_vc");
 var vpProtocols = require("./vp_protocols");
+var mdoc = require("./mdoc");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -411,6 +412,13 @@ function claimNameForPath(path, format) {
       parts[0] === "credentialSubject") {
     parts = parts.slice(1);
   }
+  // An mdoc claim is [namespace, element], and the namespace has dots of
+  // its own (org.iso.18013.5.1), so the dotted form cannot be split on its
+  // first one: the element is the LAST segment. ISO/IEC 18013-5 element
+  // identifiers are snake_case and carry no dot.
+  if (format === sdJwtVc.FORMAT_MSO_MDOC && parts.length > 1) {
+    parts = parts.slice(-1);
+  }
   log.debug("Leaving claimNameForPath().");
   return parts.join(".");
 }
@@ -602,8 +610,36 @@ function signVpJwt(opts) {
 // return the same shape so the pages that display and submit it do not branch:
 // `selected` and `sdHash` are simply absent for a VP JWT, because that format
 // has nothing to select and nothing to commit to beyond its own signature.
+// An mdoc presentation: a DeviceResponse disclosing the selected elements,
+// device-signed over OpenID4VP's session transcript (mdoc.js). Its holder
+// proof is that device signature, so the shape returned has no KB-JWT.
+function buildMdocPresentation(opts) {
+  log.debug("Entering buildMdocPresentation().");
+  var parsed = opts.parsed && opts.parsed.mdoc ? opts.parsed.mdoc :
+      mdoc.parseIssuerSigned(opts.credential);
+  log.debug("Leaving buildMdocPresentation().");
+  return mdoc.deviceResponse({
+    parsed: parsed,
+    selected: opts.selected || [],
+    devicePrivateJwk: opts.holderPrivateJwk,
+    clientId: opts.aud,
+    nonce: opts.nonce,
+    responseUri: opts.responseUri || "",
+    encryptionJwk: opts.encryptionJwk || null
+  }).then(function (r) {
+    log.debug("Leaving buildMdocPresentation(). " + r.disclosed.length +
+              " element(s).");
+    return { presentation: r.deviceResponse, prefix: "", sdHash: "",
+             kb: null, format: sdJwtVc.FORMAT_MSO_MDOC, mdoc: r };
+  });
+}
+
 function buildPresentationFor(opts) {
   var format = sdJwtVc.credentialFormat(opts.credential);
+  if (format === sdJwtVc.FORMAT_MSO_MDOC) {
+    log.debug("Leaving buildPresentationFor(). mso_mdoc.");
+    return buildMdocPresentation(opts);
+  }
   if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) {
     log.debug("Leaving buildPresentationFor().");
     return buildPresentation(opts);
@@ -638,6 +674,12 @@ function vpToken(credentialQueryId, presentation) {
 // rather than from what the wallet believes it sent.
 function presentedClaims(presentation) {
   log.debug("Entering presentedClaims().");
+  if (mdoc.looksLikeDeviceResponse(presentation)) {
+    var read = mdoc.readDeviceResponse(presentation);
+    log.debug("Leaving presentedClaims(). mso_mdoc.");
+    return { parsed: read.parsed, claims: mdoc.claimsOf(read.parsed),
+             mdoc: read };
+  }
   // A VP JWT carries the credential inside its vp claim, so what reached the
   // Verifier is read from the EMBEDDED credential — reading the outer JWT would
   // report the presentation's own claims (nonce, aud) as if they were the
@@ -695,6 +737,7 @@ module.exports = {
   signKbJwt: signKbJwt,
   buildPresentation: buildPresentation,
   buildPresentationFor: buildPresentationFor,
+  buildMdocPresentation: buildMdocPresentation,
   signVpJwt: signVpJwt,
   vpToken: vpToken,
   presentedClaims: presentedClaims

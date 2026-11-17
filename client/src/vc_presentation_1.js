@@ -375,8 +375,13 @@ function renderRequestedClaims() {
   var rows = "";
   queries.forEach(function (q) {
     var paths = sdJwtVp.dcqlClaimPaths(q);
-    var vcts = ((q.meta || {}).vct_values || []).join(", ");
-    var heldVct = held && held.parsed ? (held.parsed.payload || {}).vct : "";
+    // An mdoc query names its type by meta.doctype_value, which plays the
+    // part vct_values plays for an SD-JWT VC.
+    var vcts = ((q.meta || {}).vct_values ||
+                ((q.meta || {}).doctype_value ? [q.meta.doctype_value] :
+                 [])).join(", ");
+    var heldVct = held && held.parsed ? ((held.parsed.payload || {}).vct ||
+                                         held.parsed.docType || "") : "";
     var typeOk = !vcts || !heldVct || vcts.indexOf(heldVct) !== -1;
     rows += "<tr><td>" + esc(q.id || "—") + "</td><td>" + esc(q.format || "—") +
         "</td>" +
@@ -386,7 +391,8 @@ function renderRequestedClaims() {
                 "required" : "not required") + "</td>" +
             "<td>" + (paths.length
               ? paths.map(function (p) {
-                  var have = !!available[p];
+                  var have = !!available[p] ||
+                      !!available[sdJwtVp.claimNameForPath(p, q.format)];
                   return '<span class="' + (have ? "vc-ok" : "vc-bad") + '">' +
                       esc(p) +
                          (have ? "" : " (not in the credential you hold)") +

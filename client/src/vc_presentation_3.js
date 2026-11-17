@@ -31,6 +31,7 @@ var sdJwtVp = require("./sd_jwt_vp");
 var vpProtocols = require("./vp_protocols");
 var didLib = require("./did");
 var dpop = require("./dpop");
+var mdoc = require("./mdoc");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_3',
                                 level: appconfig.logLevel });
@@ -118,7 +119,8 @@ function renderWhatWasSent() {
   // The parts, called out — the same treatment step 3 of the issuance workflow
   // gives a credential, except that here the last element is a KB-JWT rather
   // than nothing.
-  var parts = String(sent.presentation || "").split("~");
+  var parts = mdoc.looksLikeDeviceResponse(sent.presentation) ?
+      [sent.presentation] : String(sent.presentation || "").split("~");
   setHtml("vp_sent_serialized", parts.map(function (part, i) {
     if (part === "") return "";
     var cls = i === 0 ? "vc-part-jwt" : (i === parts.length - 1 ?
@@ -141,11 +143,13 @@ function renderWhatWasSent() {
   // everything. Its unit is the claim.
   var jwtVcJson = presented && presented.parsed &&
                   presented.parsed.format === sdJwtVc.FORMAT_JWT_VC_JSON;
+  // An mdoc's unit is the element, and its names are the claim map's.
+  var isMdoc = !!(presented && presented.mdoc);
   var disclosed = presented
-    ? (jwtVcJson ? Object.keys(presented.claims ||
+    ? ((jwtVcJson || isMdoc) ? Object.keys(presented.claims ||
         {}).length : (presented.parsed.disclosures || []).length)
     : 0;
-  var unit = jwtVcJson ? "claim" : "Disclosure";
+  var unit = jwtVcJson ? "claim" : isMdoc ? "mdoc element" : "Disclosure";
 
   // Asked-for against actually-sent, compared by NAME rather than by count.
   // Counting was wrong in both directions: withholding one requested claim
@@ -157,7 +161,7 @@ function renderWhatWasSent() {
   // A requested DCQL path names a claim at some depth; the Disclosure that has
   // to be sent for it is the one at the head of that path.
   var disclosedNames = presented
-    ? (jwtVcJson
+    ? ((jwtVcJson || isMdoc)
         ? Object.keys(presented.claims || {})
         : (presented.parsed.disclosures ||
            []).map(function (d) { return d.name; }).filter(Boolean))
@@ -287,6 +291,10 @@ function recheckOwnPresentation() {
     return Promise.resolve(true);
   }
 
+  if (mdoc.looksLikeDeviceResponse(sent.presentation)) {
+    log.debug("Leaving recheckOwnPresentation(). mso_mdoc.");
+    return recheckMdoc();
+  }
   var parsed;
   try {
     parsed = sdJwtVc.parseCredential(sent.presentation);
@@ -420,6 +428,43 @@ function recheckOwnPresentation() {
     });
 }
 
+// An mdoc re-checked from the DeviceResponse that went: the issuer's
+// signature and every element's digest, then the device signature over the
+// transcript rebuilt from what the wallet recorded about the request.
+function recheckMdoc() {
+  log.debug("Entering recheckMdoc().");
+  var read;
+  try {
+    read = mdoc.readDeviceResponse(sent.presentation);
+  } catch (e) {
+    status("vp_recheck_status", "The DeviceResponse cannot be read: " +
+           e.message, "vc-bad");
+    log.debug("Leaving recheckMdoc(). Unreadable.");
+    return Promise.resolve(false);
+  }
+  log.debug("Leaving recheckMdoc().");
+  return mdoc.checkIssuerSigned(read.parsed).then(function (checks) {
+    return mdoc.checkDeviceSignature(read, {
+      clientId: sent.clientId, nonce: sent.nonce,
+      responseUri: sent.responseUri,
+      encryptionJwk: sent.encryptionJwk || null
+    }).then(function (ok) {
+      checks.push({ name: "Device signature", ok: ok, detail: ok ?
+        "verifies with the MSO's device key over the session transcript " +
+        "for this client_id, nonce and response URI" +
+        (sent.encryptionJwk ? ", and the key the answer was encrypted to." :
+         ".") : "does NOT verify over the transcript for this request." });
+      checks.push({ name: "Selective disclosure", ok: true, detail:
+        read.parsed.items.length + " element(s) went; the rest of the mdoc " +
+        "was withheld and is represented only by digests in the MSO." });
+      renderRecheck(checks);
+      return checks.every(function (c) {
+        return c.ok;
+      });
+    });
+  });
+}
+
 // The wallet's own verdict table. Shared by both formats: the checks differ,
 // how they are shown does not.
 function renderRecheck(checks) {
@@ -474,6 +519,10 @@ function idTokenSubjectKey(header, payload) {
 // check.
 function presentationHolderKey() {
   log.debug("Entering presentationHolderKey().");
+  if (mdoc.looksLikeDeviceResponse(sent.presentation)) {
+    log.debug("Leaving presentationHolderKey(). mso_mdoc.");
+    return mdoc.readDeviceResponse(sent.presentation).parsed.deviceJwk;
+  }
   try {
     var p = JSON.parse(sent.presentation);
     var vm = ((p && p.proof) || {}).verificationMethod || "";

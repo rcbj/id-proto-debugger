@@ -36,6 +36,7 @@ var sdJwtVp = require("./sd_jwt_vp");
 var bbs2023 = require("./bbs2023");
 var didLib = require("./did");
 var vpProtocols = require("./vp_protocols");
+var cbor = require("./cbor");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_2',
                                 level: appconfig.logLevel });
@@ -400,7 +401,8 @@ function renderDisclosureTable() {
                         .map(function (r) { return r.name; });
   setHtml("vp_selection_summary",
     "Selected " + selectedEncoded().length + " of " + state.rows.length +
-        " Disclosure(s). " +
+        (state.format === sdJwtVc.FORMAT_MSO_MDOC ?
+         " mdoc element(s) (namespace/element). " : " Disclosure(s). ") +
     (missing.length
       ? '<span class="vc-bad">Not selected, though the verifier ' +
           'asked for it: ' + esc(missing.join(", ")) +
@@ -572,7 +574,12 @@ function buildPresentation() {
     holderPrivateJwk: priv,
     aud: params.client_id,
     nonce: params.nonce,
-    keyBinding: keyBinding
+    keyBinding: keyBinding,
+    // An mdoc's device signature covers the session transcript, which names
+    // where the answer goes and, under direct_post.jwt, the key it is
+    // encrypted to (OpenID4VP 1.0 Appendix B.2.6.1).
+    responseUri: vpProtocols.responseTarget(params),
+    encryptionJwk: responseEncryptionKey()
   }).then(function (built) {
     state.built = built;
     setValue("vp_presentation", built.presentation);
@@ -584,6 +591,18 @@ function buildPresentation() {
       setValue("vp_kb_jwt", built.vp.jwt);
       setJson("vp_kb_header", built.vp.header);
       setJson("vp_kb_payload", built.vp.payload);
+    } else if (built.mdoc) {
+      // An mdoc's holder proof is its device signature, over the session
+      // transcript: shown where a KB-JWT would be.
+      setValue("vp_kb_jwt", "");
+      setJson("vp_kb_header", { deviceAuth: "deviceSignature",
+        cose: "COSE_Sign1, ES256 (-7), detached",
+        signedOver: "DeviceAuthenticationBytes",
+        disclosed: built.mdoc.disclosed.map(function (it) {
+          return it.namespace + "/" + it.elementIdentifier;
+        }) });
+      setJson("vp_kb_payload", { SessionTranscript:
+        cbor.toPlain(built.mdoc.transcript) });
     } else if (built.kb) {
       setValue("vp_kb_jwt", built.kb.jwt);
       setJson("vp_kb_header", built.kb.header);
@@ -820,6 +839,7 @@ function finishResponse() {
       var encrypting = mode === "direct_post.jwt" ?
         vpProtocols.encryptResponse({ fields: fields,
           clientMetadata: state.request.clientMetadata,
+          kid: (responseEncryptionKey() || {}).kid,
           enc: (el("vp_response_enc") || {}).value }) :
         Promise.resolve(null);
       return encrypting.then(function (encryption) {
@@ -854,6 +874,21 @@ function renderEncryption(encryption) {
       "read what is above; anybody on the way sees this.");
   }
   log.debug("Leaving renderEncryption().");
+}
+
+// The Verifier key a direct_post.jwt answer is encrypted to, or null. One
+// choice, made here, because an mdoc's device signature names it and the
+// encryption must then use the same key.
+function responseEncryptionKey() {
+  log.debug("Entering responseEncryptionKey().");
+  var params = (state.request && state.request.params) || {};
+  if (vpProtocols.responseMode(params) !== "direct_post.jwt") {
+    log.debug("Leaving responseEncryptionKey(). Not encrypted.");
+    return null;
+  }
+  var keys = vpProtocols.encryptionKeys(state.request.clientMetadata);
+  log.debug("Leaving responseEncryptionKey(). " + keys.length + " key(s).");
+  return keys[0] || null;
 }
 
 // Kept for the name: every caller that used to draw the call now finishes the
@@ -991,6 +1026,9 @@ function recordSent(response) {
       ((built.vpElement || {}).proof || {}).cryptosuite : "",
     sentAt: new Date().toISOString(),
     responseUri: r.delivery ? r.delivery.target : "",
+    // The public key the answer was encrypted to: an mdoc's device signature
+    // names it, so step 3 needs it to re-check that signature.
+    encryptionJwk: r.encryption ? r.encryption.key : null,
     clientId: params.client_id,
     nonce: params.nonce,
     state: params.state || "",
@@ -1460,6 +1498,13 @@ function onload() {
           "Presentation JWT signed with the " +
       "bound key — there is no Key Binding JWT, and no Disclosures to " +
           "choose between.");
+  } else if (state.format === sdJwtVc.FORMAT_MSO_MDOC) {
+    setText("vp_key_binding",
+      "This credential is an ISO mdoc, so holder binding is the device " +
+      "signature: a COSE_Sign1 by the device key the Mobile Security " +
+      "Object names, over a session transcript binding this Verifier's " +
+      "client_id, the nonce, where the answer goes and, encrypted, the key " +
+      "it is encrypted to. There is no Key Binding JWT.");
   } else
   setText("vp_key_binding", sdJwtVp.requiresKeyBinding(state.credentialQuery)
     ? "required — the presentation carries a Key Binding JWT signed by the holder key"

@@ -113,7 +113,7 @@ defines. It presents whatever credential the
 
 <p class="vc-note">Every protocol and every flow ends the same way for a presentation: your wallet builds it in the
 format of the credential it holds &mdash; an <strong>SD-JWT+KB</strong> for <code>dc+sd-jwt</code>, a Verifiable
-Presentation JWT for <code>jwt_vc_json</code>, a <code>bbs-2023</code> derived proof for <code>ldp_vc</code> &mdash;
+Presentation JWT for <code>jwt_vc_json</code>, a <code>bbs-2023</code> derived proof for <code>ldp_vc</code>, a device-signed DeviceResponse for an ISO mdoc (<code>mso_mdoc</code>) &mdash;
 bound to this request and this verifier by the holder key. Under <strong>SIOPv2</strong> a self-issued ID Token
 goes with it, signed by that same key. What differs is how the request reaches the wallet, how much the wallet can
 prove about who sent it, and whether the answer travels encrypted.</p>

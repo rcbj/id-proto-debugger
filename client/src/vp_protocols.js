@@ -30,8 +30,9 @@
 // one — and the choice is made once because each changes what the wallet must
 // REFUSE, not merely what it shows.
 //
-// HAIP 1.0 profiles two credential formats, SD-JWT VC and ISO mdoc. This
-// wallet also presents jwt_vc_json and ldp_vc under the HAIP transport (the
+// HAIP 1.0 profiles two credential formats, SD-JWT VC and ISO mdoc, and
+// this wallet presents both (mdoc.js). It also presents jwt_vc_json and
+// ldp_vc under the HAIP transport (the
 // signed x509_hash request and the encrypted response), and says so on every
 // page that does it: what HAIP constrains about the TRANSPORT applies to any
 // format, and what it constrains about the FORMAT is reported as a departure
@@ -941,7 +942,8 @@ function walletMetadata() {
                      "kb-jwt_alg_values": ["ES256"] },
       jwt_vc_json: { alg_values: ["ES256"] },
       ldp_vc: { proof_type_values: ["DataIntegrityProof"],
-                cryptosuite_values: ["bbs-2023", "ecdsa-jcs-2019"] }
+                cryptosuite_values: ["bbs-2023", "ecdsa-jcs-2019"] },
+      mso_mdoc: { issuerauth_alg_values: [-7], deviceauth_alg_values: [-7] }
     },
     client_id_prefixes_supported: ["redirect_uri", "x509_hash",
                                    "x509_san_dns", "pre-registered"],

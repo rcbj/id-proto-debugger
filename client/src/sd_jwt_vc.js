@@ -39,6 +39,7 @@ var log = bunyan.createLogger({
 
 var metadataClient = require("./metadata_client");
 var vciMetadata = require("./vci_metadata");
+var mdoc = require("./mdoc");
 
 var KEYS = {
   // "active" while the workflow is driving oauth2_oidc_1.html /
@@ -1453,6 +1454,9 @@ function parseSdJwt(serialized) {
 var FORMAT_SD_JWT = "dc+sd-jwt";
 var FORMAT_JWT_VC_JSON = "jwt_vc_json";
 var FORMAT_LDP_VC = "ldp_vc";
+// ISO/IEC 18013-5 mdoc: base64url CBOR, as OpenID4VCI 1.0 Appendix A.2
+// delivers it. See mdoc.js.
+var FORMAT_MSO_MDOC = "mso_mdoc";
 
 // Which format some stored bytes are.
 //
@@ -1495,6 +1499,11 @@ function credentialFormat(serialized) {
     log.debug("Leaving credentialFormat().");
     return FORMAT_SD_JWT;
   }
+  // No dots and no tildes: base64url CBOR, which only an mdoc is here.
+  if (raw.indexOf(".") === -1 && mdoc.looksLikeMdoc(raw)) {
+    log.debug("Leaving credentialFormat(). mso_mdoc.");
+    return FORMAT_MSO_MDOC;
+  }
   if (raw.split(".").length === 3) {
     log.debug("Leaving credentialFormat().");
     return FORMAT_JWT_VC_JSON;
@@ -1526,6 +1535,32 @@ function parseLdpVc(serialized) {
     signature: (doc.proof || {}).proofValue || "",
     credentialSubject: subject,
     disclosures: [],
+    kbJwt: ""
+  };
+}
+
+// An mdoc, parsed into the same shape as the other three. Each issued
+// element is a row the holder can select, keyed "namespace/element" (an
+// element identifier is only unique within its namespace). The device key
+// the MSO names is surfaced as payload.cnf.jwk, which is where every other
+// part of the wallet looks for the key a credential is bound to.
+function parseMdoc(serialized) {
+  log.debug("Entering parseMdoc().");
+  var parsed = mdoc.parseIssuerSigned(serialized);
+  log.debug("Leaving parseMdoc().");
+  return {
+    serialized: String(serialized).trim(),
+    mdoc: parsed,
+    header: { alg: parsed.alg, docType: parsed.docType },
+    payload: { docType: parsed.docType, validity: parsed.validity,
+               cnf: parsed.deviceJwk ? { jwk: parsed.deviceJwk } : undefined },
+    signature: "",
+    credentialSubject: {},
+    disclosures: parsed.items.map(function (it) {
+      return { encoded: it.namespace + "/" + it.elementIdentifier,
+               name: it.elementIdentifier, value: it.value,
+               namespace: it.namespace };
+    }),
     kbJwt: ""
   };
 }
@@ -1582,6 +1617,10 @@ function claimsOf(parsed) {
     log.debug("Leaving claimsOf().");
     return out;
   }
+  if (parsed.format === FORMAT_MSO_MDOC) {
+    log.debug("Leaving claimsOf(). mso_mdoc.");
+    return mdoc.claimsOf(parsed.mdoc);
+  }
   (parsed.disclosures || []).forEach(function (d) {
     if (d && d.name != null) out[d.name] = d.value;
   });
@@ -1593,21 +1632,24 @@ function claimsOf(parsed) {
 function parseCredential(serialized) {
   log.debug("Entering parseCredential().");
   var format = credentialFormat(serialized);
-  if (!format) throw new Error("This does not look like an SD-JWT VC or a " +
-      "jwt_vc_json credential.");
+  if (!format) throw new Error("This does not look like an SD-JWT VC, a " +
+      "jwt_vc_json, an ldp_vc or an ISO mdoc credential.");
   var parsed = format === FORMAT_LDP_VC ? parseLdpVc(serialized)
              : format === FORMAT_JWT_VC_JSON ? parseJwtVc(serialized)
+             : format === FORMAT_MSO_MDOC ? parseMdoc(serialized)
              : parseSdJwt(serialized);
   parsed.format = format;
   parsed.claims = claimsOf(parsed);
   // ldp_vc IS selectively disclosable — more so than SD-JWT, and unlinkably —
   // but over canonical statements rather than Disclosures.
   parsed.selectivelyDisclosable = format === FORMAT_SD_JWT ||
-      format === FORMAT_LDP_VC;
+      format === FORMAT_LDP_VC || format === FORMAT_MSO_MDOC;
   // What the credential says it IS: a vct for an SD-JWT VC, a type array for a
   // W3C VC. Both are surfaced so a caller can name the credential without
   // knowing which format it holds.
   parsed.vct = (parsed.payload || {}).vct || "";
+  // An mdoc names its type by docType, which plays vct's part.
+  parsed.docType = format === FORMAT_MSO_MDOC ? parsed.mdoc.docType : "";
   parsed.types = format === FORMAT_JWT_VC_JSON ? [].concat((parsed.vc ||
       {}).type || [])
                : format === FORMAT_LDP_VC ? [].concat((parsed.document ||
@@ -1635,7 +1677,7 @@ function credentialLabel(parsed) {
     return types.length ? types.join(", ") : "Verifiable Credential";
   }
   log.debug("Leaving credentialLabel().");
-  return parsed.vct || "credential";
+  return parsed.vct || parsed.docType || "credential";
 }
 
 // --- holder binding, whichever way the format expresses it ------------------
@@ -2009,6 +2051,7 @@ module.exports = {
   FORMAT_SD_JWT: FORMAT_SD_JWT,
   FORMAT_JWT_VC_JSON: FORMAT_JWT_VC_JSON,
   FORMAT_LDP_VC: FORMAT_LDP_VC,
+  FORMAT_MSO_MDOC: FORMAT_MSO_MDOC,
   parseLdpVc: parseLdpVc,
   digestForDisclosure: digestForDisclosure,
   collectSdDigests: collectSdDigests,

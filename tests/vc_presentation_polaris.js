@@ -295,7 +295,8 @@ async function presentTo(driver, held, params, anchor, withhold) {
   if (withhold) {
     await driver.executeScript(
       "var name = arguments[0];" +
-      "var rows = document.querySelectorAll('#vp_disclosures_table tbody tr');" +
+      "var rows = document.querySelectorAll(" +
+      "  '#vp_disclosures_table tbody tr');" +
       "Array.prototype.forEach.call(rows, function (r) {" +
       "  if (r.textContent.indexOf(name) < 0) { return; }" +
       "  var c = r.querySelector('input[type=checkbox]');" +

@@ -3768,6 +3768,17 @@ function buildJobs() {
     env: {},
   });
 
+  // ISO mdoc in the wallet (client/src/mdoc.js), in node, against an issuer
+  // written apart from it (tests/mdoc_test_issuer.js): reading, the digest
+  // and issuer-signature checks, and a DeviceResponse whose device signature
+  // the issuer's own encoder verifies over OpenID4VP's session transcript.
+  jobs.push({
+    name: "ISO mdoc wallet (IssuerSigned, MSO digests, DeviceResponse and " +
+        "its device signature over the OpenID4VP transcript, in node)",
+    script: "mdoc_engine.js",
+    env: {},
+  });
+
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
   // Issuer the STS service hosts, the three vc-issuance pages, and the
   // ?sdjwtvc=1 hand-off through oauth2_oidc_1.html / oauth2_oidc_2.html. Needs
