@@ -1644,6 +1644,25 @@ function buildJobs() {
     env: {},
   });
 
+  // common/crypto/crypto_provider.js, the one cryptography facade of issue
+  // #463 that JOSE, XML DSig/Enc and COSE are to call, in node with no
+  // browser, against node's own crypto (OpenSSL), which shares no code with
+  // the @noble / node-forge the facade is built on: every classical key type
+  // generated here must re-export from node BYTE-IDENTICAL as SPKI and
+  // PKCS#8, node's keys must import to node's own JWK, every signature
+  // algorithm signs one way and verifies the other (ECDSA raw and DER,
+  // including P-521's long-form DER), ECDH/X25519/X448, HMAC, HKDF, PBKDF2,
+  // AES-GCM/CBC/KW, ChaCha20-Poly1305 and RSA-OAEP agree with node, plus RFC
+  // 7638, 8037, 3394, 5869, 7518 App. C, 9052 C.7 and SP 800-185 values.
+  // Also asserts the facade's source never names Web Crypto. No browser and
+  // no services, so it never skips.
+  jobs.push({
+    name: "Crypto provider (common/crypto facade vs OpenSSL: keys, " +
+        "signatures, ECDH, KDFs, ciphers, key wrap, in node)",
+    script: "crypto_provider_engine.js",
+    env: {},
+  });
+
   // The Digital Signature page's STATEFUL hash-based signature pane, in node
   // with no browser, and the job with the most to prove of any in this
   // directory: LMS/HSS and XMSS/XMSS^MT are the only signature schemes in

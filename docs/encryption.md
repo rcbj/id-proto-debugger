@@ -316,9 +316,9 @@ has to remember is the version that gets forgotten, and it fails by passing.
 | `client/public/encryption_tools.html` | the nine panes |
 | `client/public/css/tool_panes.css` | the shared pane look (was `digital_signature.css`) |
 | `client/src/encryption_tools.js` | the page bundle — DOM only |
-| `client/src/crypto_bytes.js` | bytes and encodings, shared by five modules |
-| `client/src/symmetric_crypto.js` | ciphers, modes, ChaCha20, and the MACs |
-| `client/src/pk_encryption.js` | RSA, ECIES, ML-KEM, ElGamal/DHIES |
+| `common/crypto/crypto_bytes.js` | bytes and encodings, shared by five modules |
+| `common/crypto/symmetric_crypto.js` | ciphers, modes, ChaCha20, and the MACs |
+| `common/crypto/pk_encryption.js` | RSA, ECIES, ML-KEM, ElGamal/DHIES |
 | `client/src/tool_panes.js` | the pane grid's behaviour, shared with Digital Signature |
 | `tests/crypto_engines.js` | the vectors, in node |
 | `tests/encryption_tools.js` | the page, in a browser |
