@@ -1693,8 +1693,10 @@
             <td>Request a grant, follow the interaction, continue,
               rotate the client key, or revoke. The interaction hash
               is section 4.2.3. The access token stays opaque. Mutual
-              TLS is a property of the connection, so this page does
-              not offer that proof.</td>
+              TLS (section 7.3.2) is a property of the connection,
+              which a browser cannot choose, so that proof is made
+              through the api, which presents the client certificate
+              in the handshake of that one call.</td>
           </tr>
           <tr>
             <td><a href="https://www.rfc-editor.org/rfc/rfc9421"

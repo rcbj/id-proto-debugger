@@ -49,8 +49,9 @@ token is one the page can present to the transmitter: **Fill a Shared
 Signals call** writes `GET /ssf/stream` with the token into the
 Signed call pane.
 
-Send signs the request and shows the signature base beside the
-answer. Continue posts `interact_ref` to the continuation URI when
+Send signs the request and shows it beside the answer; for
+`httpsig` that includes the signature base, and `jws` / `jwsd` have
+none. Continue posts `interact_ref` to the continuation URI when
 one was returned. A `too_fast` answer names the wait and does not
 sleep; it also carries a fresh continuation token, which the page
 keeps. Revoke grant is a `DELETE` of the continuation URI (section

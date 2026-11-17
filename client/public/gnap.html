@@ -139,8 +139,8 @@
            title="The authorization server's grant request endpoint (RFC 9635 section 2).">
   </div>
   <div class="saml-row">
-    <label title="How the client key is proved: an HTTP message signature (httpsig), a detached JWS (jwsd) or an attached JWS (jws).">Proof
-      <select id="gnap_proof" title="How the client key is proved: an HTTP message signature (httpsig), a detached JWS (jwsd) or an attached JWS (jws).">
+    <label title="How the client key is proved: an HTTP message signature (httpsig), a detached JWS (jwsd), an attached JWS (jws), or the TLS client certificate (mtls, through the API only).">Proof
+      <select id="gnap_proof" title="How the client key is proved: an HTTP message signature (httpsig), a detached JWS (jwsd), an attached JWS (jws), or the TLS client certificate (mtls, through the API only).">
         <option value="httpsig">httpsig</option>
         <option value="jwsd">jwsd</option>
         <option value="jws">jws</option>
@@ -319,7 +319,7 @@
   <div class="saml-row">
     <button type="button" id="gnap_rotate_token" title="Rotate the access token at its management URI (RFC 9635 section 6.1)." onclick="return gnap.rotateToken();">
       Rotate the access token</button>
-    <button type="button" id="gnap_rotate_key" title="Rotate to a new client key at the continue URI, signed with both keys (RFC 9635 section 7.3.4)." onclick="return gnap.rotateKey();">
+    <button type="button" id="gnap_rotate_key" title="Rotate to a new client key at the token management URI, presenting the management token and signed with both keys (RFC 9635 section 6.1.1)." onclick="return gnap.rotateKey();">
       Rotate the client key</button>
     <button type="button" id="gnap_revoke_token"
             onclick="return gnap.revokeToken();">
