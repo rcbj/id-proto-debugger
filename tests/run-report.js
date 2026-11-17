@@ -283,6 +283,7 @@ const JOB_LOCKS = {
   "vc_did.js": "sts-vc",
   "oid4vci_request_encryption.js": "sts-vc",
   "dpop_workflow.js": "sts-vc",
+  "vci_offer_modes.js": "sts-vc",
   "metadata_schema_validation.js": "sts-vc",
   // walt.id's issuer-api2 and verifier-api2.
   "sd_jwt_vc_waltid.js": "waltid",
@@ -4122,6 +4123,20 @@ function buildJobs() {
       name: "DPoP through the VC Issuance pages (the pane, the real binding, " +
           "Holder of Key)",
       script: "dpop_workflow.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // The chooser's cross-device and deferred cards (#365): a DEFERRED
+    // pre-authorized offer from iya-sts's portal, collected by the wallet
+    // polling the Deferred Credential Endpoint on its own, and a
+    // cross-device offer handed over as its QR CODE image and decoded on
+    // step 1. Nothing else drives either.
+    jobs.push({
+      name: "VC Issuance — deferred (H.3) and QR-image (H.2) pre-authorized " +
+          "offers through the wallet pages",
+      script: "vci_offer_modes.js",
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
