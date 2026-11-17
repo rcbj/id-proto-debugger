@@ -185,6 +185,19 @@ function resolveComponent(doc, schema) {
 // server.js installs for the SAML and WS-Federation endpoints).
 const BODY_TYPES = ['application/json', 'application/x-www-form-urlencoded'];
 
+// Media types whose body body-parser hands over as a STRING (server.js's
+// bodyParser.text): a Security Event Token pushed to the SSF receiver. Each
+// is validated as the string schema the document gives it.
+function textTypesOf(content) {
+  log.debug('Entering textTypesOf().');
+  const types = Object.keys(content || {}).filter(function (t) {
+    return BODY_TYPES.indexOf(t) === -1 && content[t].schema &&
+      content[t].schema.type === 'string';
+  });
+  log.debug('Leaving textTypesOf(). ' + types.length);
+  return types;
+}
+
 function jsonSchemaOf(content) {
   log.debug('Entering jsonSchemaOf().');
   const type = BODY_TYPES.find(function (t) {
@@ -243,6 +256,7 @@ function indexOperations(doc, ajv, coercing) {
         method: method.toUpperCase(),
         path: route,
         request: null,
+        textRequests: {},
         parameters: {},
         order: [],
         refusals: {},
@@ -278,6 +292,12 @@ function indexOperations(doc, ajv, coercing) {
           };
         }
       });
+      if (op.requestBody) {
+        textTypesOf(op.requestBody.content).forEach(function (t) {
+          entry.textRequests[t] = ajv.compile(
+            retarget(op.requestBody.content[t].schema));
+        });
+      }
       const body = op.requestBody && jsonSchemaOf(op.requestBody.content);
       if (body) {
         entry.request = ajv.compile(retarget(body));
@@ -580,6 +600,26 @@ function createModel(options) {
           log.debug('Leaving modelRoute(). Refused.');
           return res.status(400).json(answer);
         }
+      }
+      const textTypes = Object.keys(op.textRequests);
+      const textType = textTypes.length && req.is(textTypes);
+      if (textType) {
+        const text = typeof req.body === 'string' ? req.body : '';
+        const validate = op.textRequests[textType] ||
+          op.textRequests[textTypes.find(function (t) {
+            return req.is(t);
+          })];
+        if (validate && !validate(text)) {
+          const answer = chooseRefusal({ operationId: op.operationId,
+                                         order: [], required: [],
+                                         refusals: {} }, validate.errors);
+          log.info(op.method + ' ' + op.path + ' refused by the model: ' +
+                   answer.error);
+          log.debug('Leaving modelRoute(). Refused.');
+          return res.status(400).json(answer);
+        }
+        log.debug('Leaving modelRoute(). A text body.');
+        return next();
       }
       if (op.request) {
         const body = req.body === undefined ? {} : req.body;

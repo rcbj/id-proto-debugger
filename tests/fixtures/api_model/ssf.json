@@ -576,6 +576,34 @@
           "error": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs)."
         }
       }
+    },
+    {
+      "name": "receiver push: a SET pushed as application/secevent+jwt to an inbox that does not exist",
+      "method": "POST",
+      "path": "/ssf/receiver/00000000000000000000000000000000",
+      "text": "eyJhbGciOiJub25lIiwidHlwIjoic2VjZXZlbnQrand0In0.eyJpc3MiOiJodHRwczovL3R4LmV4YW1wbGUiLCJqdGkiOiIxIiwiaWF0IjoxLCJldmVudHMiOnt9fQ.",
+      "contentType": "application/secevent+jwt",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "invalid_request",
+          "description": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs). A receiver that has gone away is a stream that should be deleted at the transmitter."
+        }
+      }
+    },
+    {
+      "name": "receiver push: a SET pushed as application/jwt to an inbox that does not exist",
+      "method": "POST",
+      "path": "/ssf/receiver/00000000000000000000000000000000",
+      "text": "eyJhbGciOiJub25lIiwidHlwIjoic2VjZXZlbnQrand0In0.eyJpc3MiOiJodHRwczovL3R4LmV4YW1wbGUiLCJqdGkiOiIxIiwiaWF0IjoxLCJldmVudHMiOnt9fQ.",
+      "contentType": "application/jwt",
+      "expect": {
+        "status": 404,
+        "body": {
+          "err": "invalid_request",
+          "description": "There is no receiver with that id here. Either it was never created, it has been deleted, or it expired (ssfReceiverTtlMs). A receiver that has gone away is a stream that should be deleted at the transmitter."
+        }
+      }
     }
   ]
 }

@@ -20,7 +20,8 @@
 //  3. a case for every operation in the document, so a new operation cannot
 //     arrive without its recordings.
 //
-// A case sends `body` (JSON) or `form` (form-encoded); a 3xx is recorded
+// A case sends `body` (JSON), `form` (form-encoded) or `text` (under its
+// `contentType`, as a Security Event Token is pushed); a 3xx is recorded
 // with its `location`, which `volatile` may name like a body member.
 //
 // A case whose answer CHANGED on purpose carries `changed` (why) and
@@ -99,7 +100,10 @@ function readFamilies() {
 async function send(testCase) {
   log.debug("Entering send(). " + testCase.method + " " + testCase.path);
   const init = { method: testCase.method, headers: {}, redirect: "manual" };
-  if (testCase.form !== undefined) {
+  if (testCase.text !== undefined) {
+    init.headers["Content-Type"] = testCase.contentType || "text/plain";
+    init.body = String(testCase.text);
+  } else if (testCase.form !== undefined) {
     init.headers["Content-Type"] = "application/x-www-form-urlencoded";
     init.body = new URLSearchParams(testCase.form).toString();
   } else if (testCase.body !== undefined) {
