@@ -1190,6 +1190,65 @@ Transmitting events &mdash; this page as the transmitter</legend>
   </textarea>
   <div id="ssf_tx_decoded"></div>
   <div id="ssf_families"></div>
+  <h3 class="ssf-label" id="ssf_host_heading">A transmitter a receiver can
+    discover &mdash; hosted by the api</h3>
+  <details class="ssf-more">
+    <summary>Why "Push it" is not enough for some receivers</summary>
+    <p class="ssf-note">"Push it" sends one SET to an endpoint somebody gave
+    you. A receiver that treats its partner as a <strong>full SSF 1.0
+    transmitter</strong> &mdash; iya-sts&rsquo;s federation relationships do
+    &mdash; wants more: it fetches the transmitter&rsquo;s
+    <code>/.well-known/ssf-configuration</code> and <code>jwks_uri</code>,
+    creates its stream <em>at</em> the transmitter, may pause it or ask for a
+    verification event, and may poll. Each of those is a request to a server,
+    and a page is not one, so the api hosts a transmitter on this page&rsquo;s
+    behalf. <strong>This page still signs</strong>: the api publishes the
+    public key above and pushes or queues the SETs this page builds. The
+    owner key is held in this page&rsquo;s memory only; a reload loses
+    control and the transmitter expires on its own.</p>
+  </details>
+  <div class="ssf-row">
+    <input type="button" class="ssf-btn" id="btn_ssf_host"
+           value="Host a transmitter" onclick="return ssf.hostTransmitter();"
+           title="Asks the api to host a transmitter publishing the public key above.">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_host_refresh"
+           value="Refresh" onclick="return ssf.refreshHosted();"
+           title="Reads the streams the receiver created, what it asked for and what happened.">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_host_delete"
+           value="Delete" onclick="return ssf.deleteHosted();">
+  </div>
+  <div class="ssf-grid">
+    <div>
+      <label class="ssf-label" for="ssf_host_issuer">Issuer (point the
+        receiver here)</label>
+      <input class="ssf-field" type="text" id="ssf_host_issuer" readonly>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_host_discovery">Configuration
+        metadata</label>
+      <input class="ssf-field" type="text" id="ssf_host_discovery" readonly>
+    </div>
+    <div>
+      <label class="ssf-label" for="ssf_host_credential">Receiver credential
+        (its bearer token; shown once)</label>
+      <input class="ssf-field ssf-mono" type="text" id="ssf_host_credential"
+             readonly>
+    </div>
+  </div>
+  <div class="ssf-row">
+    <label class="ssf-label" for="ssf_host_stream">Stream</label>
+    <select class="ssf-field ssf-grow" id="ssf_host_stream"></select>
+    <input type="button" class="ssf-btn" id="btn_ssf_host_deliver"
+           value="Sign and deliver through it"
+           onclick="return ssf.deliverHosted();"
+           title="Signs the event above with this stream's aud and the transmitter's issuer, and hands it to the api to push or queue.">
+    <input type="button" class="ssf-btn ssf-btn-quiet" id="btn_ssf_host_verify"
+           value="Answer verification"
+           onclick="return ssf.answerHostedVerification();"
+           title="Signs and sends the verification event a receiver asked for, with its state.">
+  </div>
+  <input class="ssf-status ssf-grow" type="text" id="ssf_host_status" readonly>
+  <div id="ssf_host_streams"></div>
   </fieldset>
 </div>
 

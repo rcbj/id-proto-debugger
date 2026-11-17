@@ -63,10 +63,11 @@ var baseUrl = "https://localhost:3000";
 // reconfiguring itself and a session model that lives in the browser, and the
 // events it simulates are signed and sent BY the page — the debugger acting
 // as a transmitter, which is an ordinary fetch. They went to iya-sts's
-// `/ssf/receive` until iya-sts #593 deleted it; until
-// rcbj/id-proto-debugger#363 makes the debugger a transmitter iya-sts's
-// federation receiver can take signals from, they go to the api's own push
-// inbox. On a deployed static site there is no api, run-report.js hands no
+// `/ssf/receive` until iya-sts #593 deleted it, and they go to the api's own
+// push inbox now. The debugger as a transmitter iya-sts's federation receiver
+// takes signals from (#363) is ssf_protocol.js section 7's subject; this job
+// stays on the inbox because what it asserts is the page's session model,
+// not who receives. On a deployed static site there is no api, run-report.js hands no
 // API_URL, and the receiver endpoint is left empty: the page builds and signs
 // every event and says there is nowhere to send it.
 var apiUrl = process.env.API_URL || "";

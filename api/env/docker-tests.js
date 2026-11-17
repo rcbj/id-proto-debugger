@@ -293,6 +293,17 @@ var config = {
   // The most one inbox holds in total, oldest dropped first. Without it
   // the three caps above multiply out to a quarter of a gigabyte.
   ssfReceiverMaxInboxBytes: 1048576,
+  // The hosted SSF transmitter (#363, api/ssf_transmitter.js): a receiver
+  // discovers it, creates its stream there and polls it; the page signs.
+  // Each lifetime is the default AND the ceiling for one transmitter.
+  ssfTransmitterEnabled: true,
+  ssfTransmitterTtlMs: 3600000,
+  ssfTransmitterIdleTtlMs: 1800000,
+  ssfTransmitterMaxInstances: 10,
+  ssfTransmitterMaxInstancesPerCaller: 3,
+  ssfTransmitterMaxStreams: 5,
+  ssfTransmitterMaxQueued: 200,
+  ssfTransmitterMaxEventBytes: 65536,
   // The ports POST /tls/connect may open a TLS connection to — the TLS / mutual
   // TLS test the PKI page (client/public/pki.html) runs.
   //

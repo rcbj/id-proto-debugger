@@ -3307,6 +3307,10 @@ function buildJobs() {
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||
           "https://localhost:8081",
       SSF_RECEIVER_HOST: env.SSF_RECEIVER_HOST || "localhost",
+      // Section 7 drives the api's hosted transmitter (#363). A static site
+      // has no api, so the section is told there is none.
+      SSF_HOSTED_API_URL: ldapOff ? "" : (env.API_URL ||
+          "https://localhost:4000"),
     },
   });
 
@@ -3452,8 +3456,9 @@ function buildJobs() {
     script: "caep_page.js",
     env: {
       // API_URL only where this target HAS an api: the page's pushes land in
-      // its inbox until #363 (see the note at the top of caep_page.js). A
-      // static site gets none, and the job sends its events nowhere.
+      // its inbox (see the note at the top of caep_page.js; iya-sts as the
+      // receiver is ssf_protocol.js section 7). A static site gets none, and
+      // the job sends its events nowhere.
       API_URL: env.LDAP_AVAILABLE === "false" ? "" :
           (env.API_URL || "https://localhost:4000"),
       SSF_TRANSMITTER_URL: env.SSF_TRANSMITTER_URL || env.STS_URL ||

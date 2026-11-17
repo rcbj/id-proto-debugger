@@ -24,6 +24,7 @@ import "./service.tsp";
 import "./ldap.tsp";
 import "./scim.tsp";
 import "./ssf.tsp";
+import "./ssf_transmitter.tsp";
 import "./oid4vp.tsp";
 import "./gnap.tsp";
 import "./smartcard.tsp";
