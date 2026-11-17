@@ -386,6 +386,9 @@ COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
 # offer made on iya-sts's portal: shared by vc_presentation_protocols.js and
 # vc_presentation_polaris.js, and scheduled by nothing.
 COPY tests/wallet_issuance.js ./
+# The deferred and QR-image pre-authorized offers through the wallet pages
+# (#365); it collects with wallet_issuance.js above.
+COPY tests/vci_offer_modes.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires

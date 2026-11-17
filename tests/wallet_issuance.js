@@ -22,6 +22,9 @@
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
 const common = require("./jwt_vc_json_common.js");
 const consentScreen = require("./consent_screen.js");
 const { usernameFor } = require("./random_username.js");
@@ -49,8 +52,17 @@ async function clickId(driver, By, until, id, wait) {
 }
 
 // `opts`: { By, until, baseUrl, issuerBase, configuration, signingAlg
-// (optional), label, wait }. Clears the wallet's storage first: the credential
-// it then holds is the one this call collected and nothing else.
+// (optional), label, wait, mode, viaQrImage }. Clears the wallet's storage
+// first: the credential it then holds is the one this call collected and
+// nothing else.
+//
+// `mode` is the portal's: "cross-device" (H.2, the default) or "deferred"
+// (H.3), where the Credential Response carries a transaction_id and the
+// wallet collects the credential from the Deferred Credential Endpoint; the
+// answer then says so (`deferred`, with the transaction_id the wallet
+// showed). `viaQrImage` hands the wallet the offer as the portal's QR CODE
+// — an image file chosen on step 1 — rather than as the text it encodes
+// (#365).
 async function collect(driver, opts) {
   log.debug("Entering collect(). configuration=" + opts.configuration);
   const By = opts.By;
@@ -61,7 +73,8 @@ async function collect(driver, opts) {
            "its own issuance pages" });
   const screen = await common.offerFromThePortalWallet(driver, {
     By: By, until: until, stsBase: opts.issuerBase,
-    username: usernameFor(opts.label || "wallet"), mode: "cross-device",
+    username: usernameFor(opts.label || "wallet"),
+    mode: opts.mode || "cross-device",
     configuration: opts.configuration, signingAlg: opts.signingAlg,
     wait: wait, consentScreen: consentScreen });
   await loadUrl(driver, opts.baseUrl + "/vc-issuance-1.html");
@@ -70,9 +83,39 @@ async function collect(driver, opts) {
   await driver.navigate().refresh();
   await waitForContent.waitForPageBundle(driver, wait);
   await driver.wait(until.elementLocated(By.id("scan_offer_input")), wait);
-  await driver.executeScript(
-    "document.getElementById('scan_offer_input').value = arguments[0];",
-    screen.offerUri);
+  let readFromQr = "";
+  if (opts.viaQrImage) {
+    assert.ok(/^<svg/i.test(screen.qrMarkup || ""),
+      "the portal drew no SVG QR code to read: " +
+      String(screen.qrMarkup).slice(0, 80));
+    const svg = /xmlns=/.test(screen.qrMarkup) ? screen.qrMarkup
+      : screen.qrMarkup.replace(/^<svg/i,
+          '<svg xmlns="http://www.w3.org/2000/svg"');
+    const file = path.join(os.tmpdir(), "offer-qr-" + process.pid + "-" +
+                           Date.now() + ".svg");
+    fs.writeFileSync(file, svg);
+    await driver.findElement(By.id("scan_offer_image")).sendKeys(file);
+    await driver.wait(async function () {
+      const text = await driver.executeScript(
+        "return document.getElementById('scan_status').textContent;");
+      return /Read the QR code|not a Credential Offer|No QR code|not an image/
+        .test(text);
+    }, wait, "choosing the QR image should decode it on step 1");
+    const read = await driver.executeScript(
+      "return { status: document.getElementById('scan_status').textContent," +
+      "  text: document.getElementById('scan_offer_input').value };");
+    fs.unlinkSync(file);
+    assert.ok(/^Read the QR code/.test(read.status),
+      "the wallet could not read the portal's QR code: " + read.status);
+    assert.strictEqual(read.text, screen.offerUri,
+      "the QR code decoded to something other than the offer the portal " +
+      "showed beside it");
+    readFromQr = read.text;
+  } else {
+    await driver.executeScript(
+      "document.getElementById('scan_offer_input').value = arguments[0];",
+      screen.offerUri);
+  }
   await clickId(driver, By, until, "scan_offer_button", wait);
   await driver.wait(until.elementLocated(By.id("start_issuance_button")),
     wait, "taking the offer should offer Start Issuance");
@@ -92,7 +135,27 @@ async function collect(driver, opts) {
       "return e ? (e.value || e.textContent || '').trim() : '';"));
   }, wait, "the Transaction Code should redeem the pre-authorized code");
   await clickId(driver, By, until, "vc_approve_button", wait);
-  await driver.wait(until.urlContains("vc-issuance-3.html"), wait,
+  let deferredSeen = "";
+  if (opts.mode === "deferred") {
+    // H.3: the Credential Response is a transaction_id, step 2 opens its
+    // Deferred Issuance pane and polls on its own until the issuer is ready
+    // (iya-sts: oid4vci.deferredReadyMs, 4 s by default), then opens step 3.
+    await driver.wait(async function () {
+      return await driver.executeScript(
+        "var t = document.getElementById('vc_transaction_id');" +
+        "return t && t.textContent.trim() !== '' && " +
+        "  t.textContent.trim() !== '\u2014' ? t.textContent.trim() : '';") ||
+        (await driver.getCurrentUrl()).indexOf("vc-issuance-3.html") >= 0;
+    }, wait, "a deferred offer's Credential Response should open the " +
+        "Deferred Issuance pane with its transaction_id");
+    if ((await driver.getCurrentUrl()).indexOf("vc-issuance-2.html") >= 0) {
+      deferredSeen = await driver.executeScript(
+        "return document.getElementById('vc_transaction_id')" +
+        ".textContent.trim();");
+    }
+  }
+  await driver.wait(until.urlContains("vc-issuance-3.html"),
+    opts.mode === "deferred" ? wait + 20000 : wait,
     "approving should issue the credential and open step 3");
   const stored = await driver.wait(async function () {
     return await driver.executeScript(
@@ -114,8 +177,13 @@ async function collect(driver, opts) {
     held.payload = common.jsonFromB64u(parts[0].split(".")[1]);
     held.format = text.indexOf("~") !== -1 ? "dc+sd-jwt" : "jwt_vc_json";
   }
+  held.mode = opts.mode || "cross-device";
+  held.deferredTransactionId = deferredSeen;
+  held.readFromQr = readFromQr;
   log.info("[wallet] collected a " + held.format + " (" +
-           opts.configuration + ") through the issuance pages.");
+           opts.configuration + ", " + held.mode + (readFromQr
+             ? ", offer read from its QR code" : "") + ") through the " +
+           "issuance pages.");
   log.debug("Leaving collect().");
   return held;
 }
