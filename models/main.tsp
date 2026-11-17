@@ -12,3 +12,4 @@ import "./api/main.tsp";
 import "./config/main.tsp";
 import "./storage/main.tsp";
 import "./contract/main.tsp";
+import "./catalog/main.tsp";

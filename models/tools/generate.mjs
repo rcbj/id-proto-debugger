@@ -25,6 +25,9 @@
 //                       lists client/src/secret_storage.js enforces
 //   embedded_contract.json  the embedded tree's variables and paths
 //
+// and, from models/catalog/, one client/src/catalog/<name>.json per typed
+// `const` (the protocol catalogues a client module reads).
+//
 // Every file is JSON written with two-space indentation and a final newline,
 // so a diff of one is readable and --check compares bytes.
 
@@ -32,7 +35,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { compile, NodeHost, getDoc } from "@typespec/compiler";
+import { compile, NodeHost, getDoc, serializeValueAsJson } from
+  "@typespec/compiler";
+import { SyntaxKind } from "@typespec/compiler/ast";
 import { readFacts } from "../lib/debugger_lib.mjs";
 
 // A build script that runs before or outside an install: console-backed, of
@@ -56,6 +61,12 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MODELS = path.join(HERE, "..");
 const ROOT = path.join(MODELS, "..");
 const OUT = path.join(ROOT, "common", "model");
+// The protocol catalogues (models/catalog/) are read by client modules that
+// the tests image copies FLAT, so each is written beside them and required as
+// "./catalog/<name>.json", which resolves in a checkout, in a bundle and in
+// a flat copy alike.
+const CATALOG_OUT = path.join(ROOT, "client", "src", "catalog");
+const CATALOG_SRC = path.join(MODELS, "catalog");
 
 const STORAGE_CLASS_AREA = {
   secret: "none",
@@ -317,6 +328,56 @@ function withRegion(text, name, content) {
     text.slice(b);
 }
 
+// "SSF_EVENT_TYPES" -> "ssf_event_types.json".
+function catalogFileName(constName) {
+  log.debug("Entering catalogFileName(). " + constName);
+  log.debug("Leaving catalogFileName().");
+  return constName.toLowerCase() + ".json";
+}
+
+/**
+ * Every `const` declared in a file under models/catalog/, serialized as the
+ * JSON its declared type says it is. A catalogue is DATA — rows a client
+ * module reads — and a typed const is TypeSpec's own way to write data: the
+ * row model is closed, so a row with a member its model does not declare is
+ * a compile error, exactly like a decorator's argument.
+ */
+function catalogues(program) {
+  log.debug("Entering catalogues().");
+  const out = {};
+  for (const file of program.sourceFiles.values()) {
+    const where = file.file.path;
+    if (path.relative(CATALOG_SRC, where).startsWith("..")) {
+      continue;
+    }
+    const found = [];
+    (function walk(node) {
+      if (!node) {
+        return;
+      }
+      if (node.kind === SyntaxKind.ConstStatement) {
+        found.push(node);
+      }
+      const inner = node.statements;
+      if (Array.isArray(inner)) {
+        inner.forEach(walk);
+      } else if (inner) {
+        walk(inner);
+      }
+    })(file);
+    found.forEach(function (node) {
+      const value = program.checker.getValueForNode(node.value);
+      const name = catalogFileName(node.id.sv);
+      if (out[name]) {
+        throw new Error("two catalogues are both " + name);
+      }
+      out[name] = serializeValueAsJson(program, value, value.type);
+    });
+  }
+  log.debug("Leaving catalogues(). " + Object.keys(out).length);
+  return out;
+}
+
 function outboundPolicyList(facts) {
   log.debug("Entering outboundPolicyList().");
   const names = [];
@@ -374,6 +435,11 @@ async function generate() {
     files["config.schema.json"] = json(configSchema(scratch, outbound));
     files["storage.json"] = json(storage.document);
     files["storage_classes.json"] = json(storageClasses(storage.document));
+    const catalog = {};
+    const rows = catalogues(program);
+    Object.keys(rows).forEach(function (name) {
+      catalog[name] = json(rows[name]);
+    });
     const contract = contractDocument(program, facts);
     files["embedded_contract.json"] = json(contract);
     const regions = REGIONS.map(function (r) {
@@ -384,7 +450,7 @@ async function generate() {
                                 r.render({ contract: contract })) };
     });
     log.debug("Leaving generate().");
-    return { files: files, regions: regions };
+    return { files: files, regions: regions, catalog: catalog };
   } finally {
     fs.rmSync(scratch, { recursive: true, force: true });
   }
@@ -409,9 +475,18 @@ async function main() {
       stale.push(path.relative(ROOT, r.file));
     }
   });
-  const extra = Object.keys(existing).map(function (f) {
-    return path.relative(ROOT, f);
-  });
+  const existingCatalog = readTree(CATALOG_OUT);
+  for (const name of Object.keys(generated.catalog)) {
+    const target = path.join(CATALOG_OUT, name);
+    if (existingCatalog[target] !== generated.catalog[name]) {
+      stale.push(path.relative(ROOT, target));
+    }
+    delete existingCatalog[target];
+  }
+  const extra = Object.keys(existing).concat(Object.keys(existingCatalog))
+    .map(function (f) {
+      return path.relative(ROOT, f);
+    });
   if (check) {
     if (stale.length || extra.length) {
       log.error("common/model/ is not what models/ generates.");
@@ -438,6 +513,12 @@ async function main() {
   generated.regions.forEach(function (r) {
     fs.writeFileSync(r.file, r.text);
   });
+  if (Object.keys(generated.catalog).length) {
+    fs.mkdirSync(CATALOG_OUT, { recursive: true });
+  }
+  for (const name of Object.keys(generated.catalog)) {
+    fs.writeFileSync(path.join(CATALOG_OUT, name), generated.catalog[name]);
+  }
   extra.forEach(function (f) {
     fs.rmSync(path.join(ROOT, f));
   });
