@@ -1,0 +1,959 @@
+{
+  "family": "oauth",
+  "about": "POST /token, /introspection, /revoke, /tokenexchange, /deviceauthorization, /register; GET and POST /userinfo; GET /claimdescription. Recorded against the api as it was before the family switched to the model (docs/data-model.md). Every target is as.invalid, which RFC 6761 guarantees never resolves, so a well-formed request ends in the same 500 on any machine. Every credential here is a dummy. GET /claimdescription is the one case that leaves the machine: it fetches IANA's registry, so its text is volatile and only its status (and that the body is not JSON) is held.",
+  "cases": [
+    {
+      "name": "token: an empty body",
+      "method": "POST",
+      "path": "/token",
+      "body": {},
+      "changed": "The model requires token_endpoint, the one member no handler can do without. Until then the api made the outbound call with no URL and answered axios's \"Invalid URL\" as a 500, which read as the far end failing.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `token_endpoint` is required. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: a body that is an array",
+      "method": "POST",
+      "path": "/token",
+      "body": [],
+      "changed": "The body must be a JSON object. Until then an array reached convertToOAuth2Format() and the call failed with \"Invalid URL\" (500).",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `token_endpoint` must be a JSON object. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: a token_endpoint that is not a string",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": 5,
+        "grant_type": "client_credentials"
+      },
+      "changed": "token_endpoint is a string in the model. Until then a number reached axios and failed as \"Invalid URL\" (500).",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `token_endpoint` must be a JSON string. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: an empty token_endpoint",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "",
+        "grant_type": "client_credentials"
+      },
+      "changed": "token_endpoint must not be empty. Until then an empty one failed as \"Invalid URL\" (500); the page sends one when no endpoint is configured, and now hears why.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `token_endpoint` must NOT have fewer than 1 characters. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: a token_endpoint that is not http(s) is refused by the outbound call",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "ftp://as.invalid/token",
+        "grant_type": "client_credentials"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: Refusing to call ftp: — only http: and https: are allowed."
+        }
+      }
+    },
+    {
+      "name": "token: an sslValidate that is an object",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "client_credentials",
+        "sslValidate": {}
+      },
+      "changed": "sslValidate is a boolean, a string or null in the model (the page sends \"true\" and \"false\"). Until then an object was silently read as \"verify\".",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `sslValidate` must be a JSON boolean or a JSON string or null. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: an http_trace that is a number",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "client_credentials",
+        "http_trace": 5
+      },
+      "changed": "http_trace is a boolean, a string or null in the model. Until then a number was silently read as \"no trace\".",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `http_trace` must be a JSON boolean or a JSON string or null. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: an auth_style that is an array",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "client_credentials",
+        "auth_style": []
+      },
+      "changed": "auth_style is a boolean, a string or null in the model. Until then an array was truthy and put the client credentials in the body, which no caller meant.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `auth_style` must be a JSON boolean or a JSON string or null. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: a grant_type that is not a string",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": 5
+      },
+      "changed": "grant_type is a string or null in the model: a form parameter is text, and its CONTENT is still forwarded unchecked. Until then a number matched no grant and was sent as a request with no grant_type at all.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `grant_type` must be a JSON string or null. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: customParams that is not an object",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "client_credentials",
+        "customParams": "x=y"
+      },
+      "changed": "customParams is an object or null in the model. Until then a string was split into one parameter per character (0=x&1==&2=y), which no caller meant.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `customParams` must be a JSON object or null. GET /api-docs describes what oauthToken takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "token: client_credentials, credentials in the body, as the strings the page and the SCIM test send (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "client_credentials",
+        "client_id": "dummy-client",
+        "client_secret": "dummy-secret",
+        "scope": "openid profile",
+        "sslValidate": "false",
+        "auth_style": "post"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "token: authorization_code with PKCE, custom parameters and the HTTP trace (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "authorization_code",
+        "client_id": "dummy-client",
+        "client_secret": "dummy-secret",
+        "code": "dummy-code",
+        "redirect_uri": "https://client.invalid/callback",
+        "scope": "openid",
+        "code_verifier": "dummy-verifier-0123456789",
+        "customParams": {
+          "prompt": "login",
+          "acr_values": "urn:dummy"
+        },
+        "sslValidate": "true",
+        "auth_style": false,
+        "http_trace": true
+      },
+      "volatile": [
+        "http_exchange.timing",
+        "http_exchange.request.headers.User-Agent"
+      ],
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid",
+          "http_exchange": {
+            "request": {
+              "method": "POST",
+              "url": "https://as.invalid/token",
+              "headers": {
+                "content-type": "application/x-www-form-urlencoded",
+                "origin": "https://client:3000",
+                "authorization": "Basic ZHVtbXktY2xpZW50OmR1bW15LXNlY3JldA==",
+                "User-Agent": "Identity Protocol Debugger/0.9.5.20261117040226"
+              },
+              "body": "grant_type=authorization_code&client_id=dummy-client&code=dummy-code&redirect_uri=https://client.invalid/callback&code_verifier=dummy-verifier-0123456789&scope=openid&prompt=login&acr_values=urn:dummy"
+            },
+            "response": null,
+            "timing": {
+              "totalMs": 6
+            },
+            "error": "getaddrinfo ENOTFOUND as.invalid"
+          }
+        }
+      }
+    },
+    {
+      "name": "token: a malformed protocol message is forwarded as typed (unknown grant_type, empty client_id, odd scope)",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "not-a-grant",
+        "client_id": "",
+        "scope": "  open id é ",
+        "refresh_token": null,
+        "sslValidate": true,
+        "auth_style": true,
+        "http_trace": "true"
+      },
+      "volatile": [
+        "http_exchange.timing",
+        "http_exchange.request.headers.User-Agent"
+      ],
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid",
+          "http_exchange": {
+            "request": {
+              "method": "POST",
+              "url": "https://as.invalid/token",
+              "headers": {
+                "content-type": "application/x-www-form-urlencoded",
+                "User-Agent": "Identity Protocol Debugger/0.9.5.20261117040226"
+              },
+              "body": "client_id=&scope=  open id é "
+            },
+            "response": null,
+            "timing": {
+              "totalMs": 4
+            },
+            "error": "getaddrinfo ENOTFOUND as.invalid"
+          }
+        }
+      }
+    },
+    {
+      "name": "token: refresh_token, http_trace false, sslValidate null",
+      "method": "POST",
+      "path": "/token",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "refresh_token",
+        "client_id": "dummy-client",
+        "refresh_token": "dummy-refresh",
+        "sslValidate": null,
+        "http_trace": false
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "introspection: an empty body",
+      "method": "POST",
+      "path": "/introspection",
+      "body": {},
+      "changed": "The model requires introspectionEndpoint, the one member no handler can do without. Until then the api made the outbound call with no URL and answered axios's \"Invalid URL\" as a 500, which read as the far end failing.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `introspectionEndpoint` is required. GET /api-docs describes what oauthIntrospection takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "introspection: an introspectionEndpoint that is not a string",
+      "method": "POST",
+      "path": "/introspection",
+      "body": {
+        "introspectionEndpoint": 5,
+        "token": "dummy-token"
+      },
+      "changed": "introspectionEndpoint is a string in the model. Until then a number failed as \"Invalid URL\" (500).",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `introspectionEndpoint` must be a JSON string. GET /api-docs describes what oauthIntrospection takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "introspection: a token that is not a string",
+      "method": "POST",
+      "path": "/introspection",
+      "body": {
+        "introspectionEndpoint": "https://as.invalid/introspect",
+        "token": 5
+      },
+      "changed": "token is a string or null in the model. Until then a number was forwarded as text.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `token` must be a JSON string or null. GET /api-docs describes what oauthIntrospection takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "introspection: a well-formed request (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/introspection",
+      "body": {
+        "introspectionEndpoint": "https://as.invalid/introspect",
+        "token": "dummy-token",
+        "token_type_hint": "access_token"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "revoke: an empty body",
+      "method": "POST",
+      "path": "/revoke",
+      "body": {},
+      "changed": "The model requires revocation_endpoint, the one member no handler can do without. Until then the api made the outbound call with no URL and answered axios's \"Invalid URL\" as a 500, which read as the far end failing.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `revocation_endpoint` is required. GET /api-docs describes what oauthRevoke takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "revoke: a revocation_endpoint that is an array",
+      "method": "POST",
+      "path": "/revoke",
+      "body": {
+        "revocation_endpoint": [],
+        "token": "dummy-token"
+      },
+      "changed": "revocation_endpoint is a string in the model. Until then an array failed as \"Invalid URL\" (500).",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `revocation_endpoint` must be a JSON string. GET /api-docs describes what oauthRevoke takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "revoke: Basic authentication (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/revoke",
+      "body": {
+        "revocation_endpoint": "https://as.invalid/revoke",
+        "token": "dummy-token",
+        "token_type_hint": "refresh_token",
+        "client_id": "dummy-client",
+        "client_secret": "dummy-secret",
+        "auth_style": false,
+        "sslValidate": "true"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "revoke: credentials in the body (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/revoke",
+      "body": {
+        "revocation_endpoint": "https://as.invalid/revoke",
+        "token": "dummy-token",
+        "token_type_hint": "",
+        "client_id": "dummy-client",
+        "client_secret": "dummy-secret",
+        "auth_style": true,
+        "sslValidate": "false"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "tokenexchange: an empty body",
+      "method": "POST",
+      "path": "/tokenexchange",
+      "body": {},
+      "changed": "The model requires token_endpoint, the one member no handler can do without. Until then the api made the outbound call with no URL and answered axios's \"Invalid URL\" as a 500, which read as the far end failing.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `token_endpoint` is required. GET /api-docs describes what oauthTokenExchange takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "tokenexchange: an sslValidate that is a number",
+      "method": "POST",
+      "path": "/tokenexchange",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "sslValidate": 5
+      },
+      "changed": "sslValidate is a boolean, a string or null in the model. Until then a number was silently read as \"verify\".",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `sslValidate` must be a JSON boolean or a JSON string or null. GET /api-docs describes what oauthTokenExchange takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "tokenexchange: a subject_token that is not a string",
+      "method": "POST",
+      "path": "/tokenexchange",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "subject_token": {}
+      },
+      "changed": "subject_token is a string or null in the model. Until then an object was sent as subject_token=%5Bobject%20Object%5D.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `subject_token` must be a JSON string or null. GET /api-docs describes what oauthTokenExchange takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "tokenexchange: delegation with the HTTP trace (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/tokenexchange",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token": "dummy-subject",
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "actor_token": "dummy-actor",
+        "actor_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "requested_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "resource": "https://rs.invalid/",
+        "audience": "dummy-audience",
+        "scope": "read",
+        "client_id": "dummy-client",
+        "client_secret": "dummy-secret",
+        "auth_style": false,
+        "sslValidate": "true",
+        "http_trace": true
+      },
+      "volatile": [
+        "http_exchange.timing",
+        "http_exchange.request.headers.User-Agent"
+      ],
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid",
+          "http_exchange": {
+            "request": {
+              "method": "POST",
+              "url": "https://as.invalid/token",
+              "headers": {
+                "content-type": "application/x-www-form-urlencoded",
+                "authorization": "Basic ZHVtbXktY2xpZW50OmR1bW15LXNlY3JldA==",
+                "User-Agent": "Identity Protocol Debugger/0.9.5.20261117040226"
+              },
+              "body": "grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange&subject_token=dummy-subject&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&actor_token=dummy-actor&actor_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&requested_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Aaccess_token&resource=https%3A%2F%2Frs.invalid%2F&audience=dummy-audience&scope=read"
+            },
+            "response": null,
+            "timing": {
+              "totalMs": 5
+            },
+            "error": "getaddrinfo ENOTFOUND as.invalid"
+          }
+        }
+      }
+    },
+    {
+      "name": "tokenexchange: credentials in the body, no trace (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/tokenexchange",
+      "body": {
+        "token_endpoint": "https://as.invalid/token",
+        "grant_type": "not-token-exchange",
+        "subject_token": "dummy-subject",
+        "client_id": "dummy-client",
+        "auth_style": true
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "deviceauthorization: an empty body",
+      "method": "POST",
+      "path": "/deviceauthorization",
+      "body": {},
+      "changed": "The model requires device_authorization_endpoint, the one member no handler can do without. Until then the api made the outbound call with no URL and answered axios's \"Invalid URL\" as a 500, which read as the far end failing.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `device_authorization_endpoint` is required. GET /api-docs describes what oauthDeviceAuthorization takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "deviceauthorization: an auth_style that is an object",
+      "method": "POST",
+      "path": "/deviceauthorization",
+      "body": {
+        "device_authorization_endpoint": "https://as.invalid/device",
+        "client_id": "dummy-client",
+        "auth_style": {}
+      },
+      "changed": "auth_style is a boolean, a string or null in the model. Until then an object was truthy and moved the credentials into the body.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `auth_style` must be a JSON boolean or a JSON string or null. GET /api-docs describes what oauthDeviceAuthorization takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "deviceauthorization: a public client, as the page sends it (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/deviceauthorization",
+      "body": {
+        "device_authorization_endpoint": "https://as.invalid/device",
+        "client_id": "dummy-client",
+        "scope": "openid",
+        "sslValidate": "true"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "deviceauthorization: a confidential client (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/deviceauthorization",
+      "body": {
+        "device_authorization_endpoint": "https://as.invalid/device",
+        "client_id": "dummy-client",
+        "client_secret": "dummy-secret",
+        "scope": "openid",
+        "sslValidate": false
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "register: an empty body",
+      "method": "POST",
+      "path": "/register",
+      "body": {},
+      "changed": "The model requires url, the one member no handler can do without. Until then the api made the outbound call with no URL and answered axios's \"Invalid URL\" as a 500, which read as the far end failing.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `url` is required. GET /api-docs describes what oauthRegister takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "register: a method that is not a string",
+      "method": "POST",
+      "path": "/register",
+      "body": {
+        "method": 5,
+        "url": "https://as.invalid/register"
+      },
+      "changed": "method is a string or null in the model. Until then a number threw in toLowerCase() and the last-resort catch answered 500 {\"error\":{}}, which says nothing.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": {}
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `method` must be a JSON string or null. GET /api-docs describes what oauthRegister takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "register: a url that is not a string",
+      "method": "POST",
+      "path": "/register",
+      "body": {
+        "method": "POST",
+        "url": true
+      },
+      "changed": "url is a string in the model. Until then true failed as \"Invalid URL\" (500).",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `url` must be a JSON string. GET /api-docs describes what oauthRegister takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "register: create, with metadata and an initial access token (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/register",
+      "body": {
+        "method": "POST",
+        "url": "https://as.invalid/register",
+        "bearer_token": "dummy-iat",
+        "sslValidate": true,
+        "metadata": {
+          "client_name": "dummy",
+          "redirect_uris": [
+            "https://client.invalid/callback"
+          ]
+        }
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "register: read, as the page sends it (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/register",
+      "body": {
+        "method": "GET",
+        "url": "https://as.invalid/register/dummy",
+        "bearer_token": "dummy-rat",
+        "sslValidate": false
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "register: metadata that is not an object is forwarded as typed (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/register",
+      "body": {
+        "method": "PUT",
+        "url": "https://as.invalid/register/dummy",
+        "metadata": "not json"
+      },
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "userinfo GET: no userinfo_endpoint",
+      "method": "GET",
+      "path": "/userinfo",
+      "changed": "The model requires the userinfo_endpoint query parameter. Until then Buffer.from(undefined) threw and the api answered a 500 naming Buffer.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call could not be made: The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received undefined"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: query parameter `userinfo_endpoint` is required. GET /api-docs describes what oauthUserInfo takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "userinfo GET: an empty userinfo_endpoint",
+      "method": "GET",
+      "path": "/userinfo?userinfo_endpoint=",
+      "changed": "userinfo_endpoint must not be empty. Until then it failed as \"Invalid URL\" (500).",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: Invalid URL"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: query parameter `userinfo_endpoint` must NOT have fewer than 1 characters. GET /api-docs describes what oauthUserInfo takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "userinfo GET: a well-formed request (a name that cannot resolve)",
+      "method": "GET",
+      "path": "/userinfo?userinfo_endpoint=aHR0cHM6Ly9hcy5pbnZhbGlkL3VzZXJpbmZv",
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "userinfo GET: scope and claims beside the endpoint, as the page sends them (a name that cannot resolve)",
+      "method": "GET",
+      "path": "/userinfo?scope=openid&claims=%7B%7D&userinfo_endpoint=aHR0cHM6Ly9hcy5pbnZhbGlkL3VzZXJpbmZvP3Njb3BlPW9wZW5pZCZjbGFpbXM9JTdCJTdE",
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "userinfo POST: no userinfo_endpoint",
+      "method": "POST",
+      "path": "/userinfo",
+      "changed": "The model requires the userinfo_endpoint query parameter. Until then Buffer.from(undefined) threw and the api answered a 500 naming Buffer.",
+      "before": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call could not be made: The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received undefined"
+        }
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: query parameter `userinfo_endpoint` is required. GET /api-docs describes what oauthUserInfoPost takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
+      "name": "userinfo POST: a well-formed request (a name that cannot resolve)",
+      "method": "POST",
+      "path": "/userinfo?&userinfo_endpoint=aHR0cHM6Ly9hcy5pbnZhbGlkL3VzZXJpbmZvPw%3D%3D",
+      "expect": {
+        "status": 500,
+        "body": {
+          "error": "The outbound call failed: getaddrinfo ENOTFOUND as.invalid"
+        }
+      }
+    },
+    {
+      "name": "claimdescription: the IANA JWT claims registry, as XML (fetched over the internet; its text is volatile)",
+      "method": "GET",
+      "path": "/claimdescription",
+      "volatile": [
+        "(not JSON)"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "(not JSON)": "(the registry XML; volatile, not kept)"
+        }
+      }
+    }
+  ]
+}

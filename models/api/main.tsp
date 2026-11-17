@@ -22,6 +22,7 @@ import "../lib/debugger_lib.tsp";
 import "./common.tsp";
 import "./service.tsp";
 import "./ldap.tsp";
+import "./oauth.tsp";
 
 using Http;
 using OpenAPI;
