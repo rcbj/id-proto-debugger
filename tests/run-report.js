@@ -4073,12 +4073,14 @@ function buildJobs() {
   }
 
   // The cryptosuite ABOVE the primitive: JSON-LD canonicalization, the base
-  // proof, and selective disclosure. The STS issues with one BBS implementation
-  // and the wallet derives with the other, so neither marks its own homework.
+  // proof, and selective disclosure, as W3C Data Integrity BBS Cryptosuites
+  // v1.0 has them. Held to the specification's own Appendix A vectors and to
+  // Digital Bazaar's independent implementation in both directions, so
+  // nothing here marks its own homework. Node only, never skipped.
   {
     jobs.push({
-      name: "bbs-2023 cryptosuite (ldp_vc issue, derive, verify across two " +
-          "implementations)",
+      name: "bbs-2023 cryptosuite (W3C vc-di-bbs vectors, and Digital " +
+          "Bazaar's implementation both ways)",
       script: "bbs2023_cryptosuite.js",
       env: {},
     });

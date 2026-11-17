@@ -1047,11 +1047,11 @@ function walletNonce() {
 
 // ---------------------------------------------------------------------------
 // ldp_vc holder binding: a W3C VerifiablePresentation around the bbs-2023
-// derived credential, secured with an ecdsa-jcs-2019 Data Integrity proof by
-// the holder (OpenID4VP 1.0 Appendix B.1.3.2: challenge is the nonce, domain
-// the Client Identifier). The derived proof says the issuer signed these
-// statements; this one says the holder is the one presenting them, now, to
-// this Verifier.
+// reveal document (the credential with its derived proof), secured with an
+// ecdsa-jcs-2019 Data Integrity proof by the holder (OpenID4VP 1.0 Appendix
+// B.1.3.2: challenge is the nonce, domain the Client Identifier). The
+// derived proof says the issuer signed these values; this one says the
+// holder is the one presenting them, now, to this Verifier.
 // ---------------------------------------------------------------------------
 
 // RFC 8785 JSON Canonicalization Scheme. Member names sort by UTF-16 code
@@ -1133,8 +1133,8 @@ function ecdsaJcs2019Proof(opts) {
 }
 
 // The VP itself. `credential` is what the derived proof produced (the
-// envelope the page already builds); `holder` the DID the credential names
-// as its subject.
+// reveal document the page already builds); `holder` the DID the credential
+// names as its subject.
 function ldpVerifiablePresentation(opts) {
   log.debug("Entering ldpVerifiablePresentation(). holder=" + opts.holder);
   var vp = {

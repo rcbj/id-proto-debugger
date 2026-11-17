@@ -23,8 +23,9 @@
 //     credential points at it;
 //   * the base proof actually verifies, and an edited credential does not.
 //
-// tests/bbs2023_cryptosuite.js covers the cryptosuite across two
-// implementations; this covers the ISSUER endpoint and what it advertises.
+// tests/bbs2023_cryptosuite.js covers the cryptosuite against the W3C
+// specification's vectors and an independent implementation; this covers
+// the ISSUER endpoint and what it advertises.
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");

@@ -24,7 +24,8 @@
 //     over direct_post and direct_post.jwt — and each of fifteen defects
 //     fails EXACTLY the check it targets and no other;
 //   * mso_mdoc against tests/mdoc_test_issuer.js, jwt_vc_json with a VC JWT
-//     signed here, and ldp_vc bbs-2023 inside an ecdsa-jcs-2019 VP;
+//     signed here, and ldp_vc bbs-2023 (W3C reveal documents, bare and in
+//     an ecdsa-jcs-2019 VP, and the pre-W3C envelope refused);
 //   * PR 3: the decentralized_identifier, verifier_attestation and
 //     pre-registered Request Objects decoded here and verified with node
 //     against the key did.js resolves / the attestation's cnf.jwk / the
@@ -860,6 +861,9 @@ async function jwtVcJsonRoundTrip(env) {
 }
 
 // ---------------------------------------------------------------------------
+// ldp_vc with bbs-2023 as W3C Data Integrity BBS Cryptosuites v1.0 has it
+// (#470 B1): a reveal document with a derived proof, bare or inside an
+// ecdsa-jcs-2019 VP, verified from the document itself.
 async function ldpVcRoundTrip(env) {
   log.debug("Entering ldpVcRoundTrip().");
   const sk = bbs.keyGen(nodeCrypto.randomBytes(32));
@@ -867,7 +871,7 @@ async function ldpVcRoundTrip(env) {
   const vm = "https://issuer.example/bbs/keys/1";
   const docs = {};
   docs[vm] = { id: vm, type: "Multikey", controller: "https://issuer.example",
-               publicKeyMultibase: "u" + b64u(pk) };
+               publicKeyMultibase: bbs2023.publicKeyToMultikey(pk) };
   const fetchJson = function fetchJson(url) {
     log.debug("Entering fetchJson(). " + url);
     if (!docs[url]) {
@@ -889,71 +893,167 @@ async function ldpVcRoundTrip(env) {
                          family_name: "Mustermann" }
   };
   const issued = await bbs2023.createBaseProof(unsecured,
-    { verificationMethod: vm, created: "2026-01-01T00:00:00Z" }, sk, pk);
+    { verificationMethod: vm }, { secretKey: sk, publicKey: pk });
+  eq(issued.mandatoryPointers, ["/issuer", "/type", "/validFrom"],
+     "the default mandatory pointers the credential has");
+  ok(!("created" in issued.credential.proof), "no created in the proof");
   const clientId = verifier.clientIdFor("x509_hash", env.identity);
   const nonce = verifier.randomToken();
-  async function envelopeFor(n, indexes) {
-    log.debug("Entering envelopeFor().");
-    const derived = await bbs2023.deriveProof(issued.credential, pk, indexes,
-                                              new TextEncoder().encode(n));
-    const proofOptions = Object.assign({ "@context":
-      issued.credential["@context"] }, issued.credential.proof);
-    delete proofOptions.proofValue;
-    log.debug("Leaving envelopeFor().");
-    return { cryptosuite: "bbs-2023", proof: bbs2023.bytesToB64u(
-      derived.proof), disclosedIndexes: derived.disclosedIndexes,
-      disclosedStatements: derived.disclosedStatements,
-      proofOptions: proofOptions };
+  async function revealFor(credential, ph) {
+    log.debug("Entering revealFor().");
+    const derived = await bbs2023.deriveProof(credential, {
+      selectivePointers: ["/credentialSubject/given_name"],
+      presentationHeader: ph });
+    log.debug("Leaving revealFor().");
+    return derived.document;
   }
-  const all = issued.statements.map(function (s, i) {
-    return i;
-  });
+  async function inVp(credential) {
+    log.debug("Entering inVp().");
+    log.debug("Leaving inVp().");
+    return vp.ldpVerifiablePresentation({ credential: credential,
+      holder: holderDid, privateJwk: holder.privateJwk, nonce: nonce,
+      aud: clientId });
+  }
+  // type_values are compared as expanded IRIs (OpenID4VP 1.0 B.1.1).
   const dcql = verifier.buildDcql({ queries: [{ id: "ld", format: "ldp_vc",
+    types: ["https://www.w3.org/2018/credentials#VerifiableCredential",
+            "https://idptools.com/contexts/identity#IdentityCredential"],
     claims: [["credentialSubject", "given_name"]] }] });
   const session = { clientId: clientId, nonce: nonce, state: "st",
     responseMode: "direct_post", dcql: dcql,
     responseUri: "https://verifier.example/response" };
-  async function send(s, element) {
+  async function send(s, element, fetcher) {
     log.debug("Entering send().");
     log.debug("Leaving send().");
     return run({ fields: vp.formEncode({ vp_token: { ld: [element] },
-                 state: "st" }), session: s, fetchJson: fetchJson });
+                 state: "st" }), session: s,
+                 fetchJson: fetcher || fetchJson });
   }
-  const wrapped = await vp.ldpVerifiablePresentation({
-    credential: await envelopeFor(nonce, all), holder: holderDid,
-    privateJwk: holder.privateJwk, nonce: nonce, aud: clientId });
+  const revealed = await revealFor(issued.credential, nonce);
+  ok(!("family_name" in revealed.credentialSubject),
+     "the withheld claim is not in the reveal document");
+  eq(revealed.credentialSubject.id, holderDid,
+     "the subject's id travels with any claim of it");
+  const wrapped = await inVp(revealed);
   let r = await send(session, wrapped);
-  allPass(r, "ldp_vc bbs-2023 in an ecdsa-jcs-2019 VP");
+  allPass(r, "ldp_vc bbs-2023 reveal document in an ecdsa-jcs-2019 VP");
   ["ld[0].vp.proof", "ld[0].vp.challenge", "ld[0].vp.domain",
-   "ld[0].bbs.proof", "ld[0].vp.binding", "ld[0].claims"].forEach(
-    function (id) {
-      ok(checkById(r, id) && checkById(r, id).status === "pass",
-         id + " must pass: " + JSON.stringify(checkById(r, id)));
-    });
+   "ld[0].vc.proof", "ld[0].bbs.ph", "ld[0].vc.validity", "ld[0].types",
+   "ld[0].vp.binding", "ld[0].claims"].forEach(function (id) {
+    ok(checkById(r, id) && checkById(r, id).status === "pass",
+       id + " must pass: " + JSON.stringify(checkById(r, id)));
+  });
+  ok(/bbs-2023 by https:\/\/issuer\.example\/bbs\/keys\/1/.test(
+     checkById(r, "ld[0].vc.proof").detail),
+     checkById(r, "ld[0].vc.proof").detail);
+  r = await send(session, await inVp(await revealFor(issued.credential,
+                                                     "")));
+  allPass(r, "ldp_vc in a VP, presentation header empty");
+  ok(/empty/.test(checkById(r, "ld[0].bbs.ph").detail),
+     checkById(r, "ld[0].bbs.ph").detail);
   r = await send(Object.assign({}, session, { nonce: "other" }), wrapped);
-  failsOnly(r, ["ld[0].bbs.proof", "ld[0].vp.challenge"],
+  failsOnly(r, ["ld[0].bbs.ph", "ld[0].vp.challenge"],
             "ldp_vc, another nonce (both the BBS presentation header and " +
             "the VP challenge carry it)");
   r = await send(Object.assign({}, session, { clientId: "x509_hash:x" }),
                  wrapped);
   failsOnly(r, ["ld[0].vp.domain"], "ldp_vc, another Verifier");
+
+  // A tampered reveal document. Re-wrapped, so the holder's proof is good
+  // and only the issuer's derived proof can catch it.
+  const tampered = JSON.parse(JSON.stringify(revealed));
+  tampered.credentialSubject.given_name = "Mallory";
+  r = await send(session, await inVp(tampered));
+  failsOnly(r, ["ld[0].vc.proof"], "ldp_vc, a tampered reveal document " +
+            "re-wrapped by the holder");
   const forgedVp = JSON.parse(JSON.stringify(wrapped));
-  forgedVp.holder = holderDid;
-  const sts = forgedVp.verifiableCredential[0].disclosedStatements;
-  const at = sts.findIndex(function (st) {
-    return st.indexOf('"Erika"') !== -1;
-  });
-  ok(at !== -1, "a disclosed statement carries the given name");
-  sts[at] = sts[at].replace('"Erika"', '"Mallory"');
+  forgedVp.verifiableCredential[0].credentialSubject.given_name = "Mallory";
   r = await send(session, forgedVp);
-  ok(failedIds(r).indexOf("ld[0].bbs.proof") !== -1 &&
-     failedIds(r).indexOf("ld[0].vp.proof") !== -1,
-     "an altered statement must fail the BBS proof and the holder proof " +
-     "over it: " + JSON.stringify(failedIds(r)));
-  const bare = await envelopeFor(nonce, all);
-  r = await send(session, bare);
-  failsOnly(r, ["ld[0].vp.proof"], "ldp_vc, a bare envelope where holder " +
-            "binding is required");
+  failsOnly(r, ["ld[0].vc.proof", "ld[0].vp.proof", "ld[0].vp.binding"],
+            "ldp_vc, a reveal document altered inside a signed VP");
+
+  // Bare: the presentation header is the binding.
+  r = await send(session, revealed);
+  allPass(r, "ldp_vc, a bare reveal document whose presentation header " +
+          "is the nonce");
+  eq(checkById(r, "ld[0].vp.proof").status, "skip",
+     "a bare reveal document has no VP proof to check");
+  ok(checkById(r, "ld[0].bbs.ph").essential, "and its presentation header " +
+     "is then an essential check");
+  r = await send(session, await revealFor(issued.credential, "other"));
+  failsOnly(r, ["ld[0].bbs.ph"], "ldp_vc, a bare reveal document derived " +
+            "for another nonce");
+  r = await send(session, await revealFor(issued.credential, ""));
+  failsOnly(r, ["ld[0].bbs.ph"], "ldp_vc, a bare reveal document with no " +
+            "presentation header");
+
+  // The pre-W3C envelope this tree's wallet used to send.
+  const envelope = { cryptosuite: "bbs-2023", proof: b64u(Buffer.alloc(272)),
+    disclosedIndexes: [0], disclosedStatements: ["_:b0 <x:y> \"z\" .\n"],
+    proofOptions: { verificationMethod: vm } };
+  r = await send(session, envelope);
+  ok(failedIds(r).indexOf("ld[0].vc.proof") !== -1 && !r.ok,
+     "the pre-W3C envelope fails: " + JSON.stringify(failedIds(r)));
+  ok(/pre-W3C non-standard bbs-2023 envelope/.test(
+     checkById(r, "ld[0].vc.proof").detail),
+     checkById(r, "ld[0].vc.proof").detail);
+  r = await send(session, await inVp(envelope));
+  ok(/pre-W3C non-standard/.test(checkById(r, "ld[0].vc.proof").detail) &&
+     !r.ok, "and inside a VP too");
+
+  // S2: an https issuer and a derived proof by a key it does not control.
+  const thiefSk = bbs.keyGen(nodeCrypto.randomBytes(32));
+  const thiefPk = bbs.secretKeyToPublicKey(thiefSk);
+  const thiefKey = bbs2023.publicKeyToMultikey(thiefPk);
+  const foreign = await bbs2023.createBaseProof(unsecured,
+    { verificationMethod: "did:key:" + thiefKey + "#" + thiefKey },
+    { secretKey: thiefSk, publicKey: thiefPk });
+  r = await send(session, await inVp(await revealFor(foreign.credential,
+                                                     nonce)));
+  failsOnly(r, ["ld[0].vc.proof"], "ldp_vc, an https issuer with a foreign " +
+            "did:key Multikey");
+  ok(/not authorised by the issuer/.test(
+     checkById(r, "ld[0].vc.proof").detail),
+     checkById(r, "ld[0].vc.proof").detail);
+  // The issuer's own key URL, serving somebody else's key.
+  const swapped = {};
+  swapped[vm] = Object.assign({}, docs[vm], { publicKeyMultibase: thiefKey });
+  r = await send(session, wrapped, function swappedJson(url) {
+    log.debug("Entering swappedJson().");
+    log.debug("Leaving swappedJson().");
+    return Promise.resolve(swapped[url]);
+  });
+  failsOnly(r, ["ld[0].vc.proof"], "ldp_vc, the verification method " +
+            "serves another key");
+  // A key that cannot be had is a SKIP, not a forgery (#470 B2).
+  r = await send(session, wrapped, function nothing() {
+    log.debug("Entering nothing().");
+    log.debug("Leaving nothing().");
+    return Promise.reject(new Error("unreachable"));
+  });
+  incompleteOnly(r, ["ld[0].vc.proof"], "ldp_vc, the issuer's BBS key " +
+                 "cannot be fetched");
+  // A raw base64url key where a Multikey belongs.
+  const raw = {};
+  raw[vm] = Object.assign({}, docs[vm], { publicKeyMultibase: "u" +
+    b64u(Buffer.from(pk)) });
+  r = await send(session, wrapped, function rawJson(url) {
+    log.debug("Entering rawJson().");
+    log.debug("Leaving rawJson().");
+    return Promise.resolve(raw[url]);
+  });
+  failsOnly(r, ["ld[0].vc.proof"], "ldp_vc, a raw base64url BBS key");
+  ok(/pre-W3C/.test(checkById(r, "ld[0].vc.proof").detail),
+     checkById(r, "ld[0].vc.proof").detail);
+
+  // Validity, which the default mandatory pointers always reveal.
+  const expired = await bbs2023.createBaseProof(Object.assign({}, unsecured,
+    { validUntil: "2026-02-01T00:00:00Z" }), { verificationMethod: vm },
+    { secretKey: sk, publicKey: pk });
+  r = await send(session, await inVp(await revealFor(expired.credential,
+                                                     nonce)));
+  failsOnly(r, ["ld[0].vc.validity"], "ldp_vc, an expired credential");
+
   const otherSuite = JSON.parse(JSON.stringify(wrapped));
   otherSuite.proof.cryptosuite = "eddsa-rdfc-2022";
   r = await send(session, otherSuite);
@@ -968,8 +1068,10 @@ async function ldpVcRoundTrip(env) {
      "ecdsa-sd-2023 is a skip that says why");
   ok(/ecdsa-sd-2023 is not verified/.test(
      checkById(r, "ld[0].vp.proof").detail));
-  log.info("PASS ldp_vc: bbs-2023 derived proof and ecdsa-jcs-2019 holder " +
-           "proof.");
+  ok(verifier.vpFormatsSupported().ldp_vc.cryptosuite_values
+     .indexOf("bbs-2023") !== -1, "bbs-2023 is advertised");
+  log.info("PASS ldp_vc: W3C bbs-2023 reveal documents, bare and in an " +
+           "ecdsa-jcs-2019 VP, and the pre-W3C envelope refused.");
   log.debug("Leaving ldpVcRoundTrip().");
 }
 
@@ -3593,10 +3695,10 @@ async function main() {
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 1180, "only " + assertions + " assertions ran; " +
-            "expected at least 1180");
-  assert.ok(checksSeen >= 4450, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 4450");
+  assert.ok(assertions >= 1230, "only " + assertions + " assertions ran; " +
+            "expected at least 1230");
+  assert.ok(checksSeen >= 4640, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 4640");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }

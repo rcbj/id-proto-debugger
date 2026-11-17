@@ -1858,7 +1858,7 @@ function presentationReadiness() {
       " of its claims, because jwt_vc_json has no selective disclosure"
     : parsed.format === FORMAT_LDP_VC
       ? "the " + credentialLabel(parsed) +
-          " above (ldp_vc, bbs-2023) — you choose which statements " +
+          " above (ldp_vc, bbs-2023) — you choose which claims " +
         "go, and each presentation is a fresh proof that cannot be linked to the last"
       : "the " + credentialLabel(parsed) + " above, with its " +
         parsed.disclosures.length + " selectively-disclosable claim(s)";

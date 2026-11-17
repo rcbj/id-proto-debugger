@@ -169,9 +169,9 @@ var DI_SUITES_NOT_VERIFIED = {
     "(HMAC-relabelled blank nodes, a CBOR-encoded proofValue carrying the " +
     "base signature, the ephemeral public key and one signature per " +
     "non-mandatory statement), which is not implemented here.",
-  "bbs-2023": "a bbs-2023 proof embedded in a credential is not verified; " +
-    "this debugger verifies bbs-2023 in the derived-proof envelope its own " +
-    "wallet presents."
+  "bbs-2023": "bbs-2023 secures a CREDENTIAL (a reveal document with a " +
+    "derived proof), not a presentation: there is no holder key in it to " +
+    "sign a VP with."
 };
 var FEDERATION_NOTE = "openid_federation needs an OpenID Federation 1.0 " +
   "trust chain (entity statements from the Verifier up to a trust anchor), " +
@@ -1919,8 +1919,8 @@ async function verifyDataIntegrity(doc, opts) {
     return Object.assign(out, { unsupported: true,
       reason: DI_SUITES_NOT_VERIFIED[suite] || "cryptosuite " +
         JSON.stringify(suite) + " is not one this debugger verifies (" +
-        Object.keys(DI_SUITES).join(", ") + ", and bbs-2023 in its " +
-        "envelope)." });
+        Object.keys(DI_SUITES).join(", ") + ", and bbs-2023 on a " +
+        "credential)." });
   }
   var pv = String(proof.proofValue || "");
   if (pv.charAt(0) !== "z") {
@@ -4284,9 +4284,9 @@ async function verifyMdoc(s, query, presentation, ctx) {
 // ---------------------------------------------------------------------------
 // ldp_vc: a VerifiablePresentation (or a bare credential) secured with Data
 // Integrity. The holder proof is any suite verifyDataIntegrity() verifies;
-// each credential is a bbs-2023 derived-proof envelope (what this
-// debugger's wallet presents) or a credential with its own Data Integrity
-// proof.
+// each credential carries its own Data Integrity proof, and a bbs-2023 one is
+// a REVEAL DOCUMENT with a derived proof (W3C Data Integrity BBS
+// Cryptosuites v1.0), verified by bbs2023.js from the document itself.
 // ---------------------------------------------------------------------------
 function asObject(value) {
   log.debug("Entering asObject().");
@@ -4298,83 +4298,128 @@ function asObject(value) {
   return value;
 }
 
-async function verifyBbsEnvelope(s, env, ctx, key) {
-  log.debug("Entering verifyBbsEnvelope().");
-  var id = key || "bbs.proof";
-  var label = "The bbs-2023 derived proof verifies";
+// A credential secured with bbs-2023: its one Data Integrity proof names
+// that cryptosuite.
+function isBbsCredential(cred) {
+  log.debug("Entering isBbsCredential().");
+  var is = [].concat((cred && cred.proof) || []).some(function (p) {
+    return p && p.cryptosuite === bbs2023.CRYPTOSUITE;
+  });
+  log.debug("Leaving isBbsCredential(). " + is);
+  return is;
+}
+
+// The issuer's BBS public key, from the derived proof's verificationMethod:
+// a did:key read in place (its id IS the Multikey), anything else resolved
+// through did.js or fetched as a verification method document. A key that
+// cannot be had is `unresolved` (#470 B2's rule); a key that is had and is
+// not a BLS12-381 G2 Multikey is a plain error.
+async function bbsIssuerKey(vm, ctx) {
+  log.debug("Entering bbsIssuerKey().");
+  var url = String(vm || "");
+  if (!url) {
+    log.debug("Leaving bbsIssuerKey(). None.");
+    throw new Error("the proof names no verificationMethod.");
+  }
+  var did = url.split("#")[0];
+  if (/^did:key:z/.test(did)) {
+    log.debug("Leaving bbsIssuerKey(). did:key.");
+    return bbs2023.multikeyToPublicKey(did.slice("did:key:".length));
+  }
+  if (!ctx.fetchJson && !didLib.isDid(url)) {
+    log.debug("Leaving bbsIssuerKey(). No fetchJson.");
+    throw unresolved("no fetchJson was given to read " + url + ".");
+  }
+  var resolved;
   try {
-    var options = env.proofOptions || {};
-    var resolved = await didLib.resolveVerificationMethod(
-      options.verificationMethod, { allowHttp: false,
-        fetch: ctx.fetchJson ? fetchAdapter(ctx.fetchJson) : undefined });
-    var multibase = (resolved.method || {}).publicKeyMultibase;
-    if (!multibase) {
-      throw new Error("the verification method publishes no " +
-                      "publicKeyMultibase.");
-    }
-    var header = await bbs2023.headerFor(options);
-    var ok = bbs2023.verifyDerived(bbs2023.multibaseToBytes(multibase),
-      bytes.b64uToBytes(env.proof), header,
-      bytes.strBytes(String(ctx.session.nonce || "")),
-      env.disclosedStatements || [], env.disclosedIndexes || []);
-    s.add(id, label, ok ? PASS : FAIL, ok ? "the issuer's BBS " +
-          "signature covers the " + (env.disclosedStatements || []).length +
-          " disclosed statement(s), with this request's nonce as the " +
-          "presentation header." : "the derived proof does NOT verify " +
-          "(another nonce, altered statements, or another issuer key).",
-          true);
+    resolved = await didLib.resolveVerificationMethod(url, {
+      allowHttp: false,
+      fetch: ctx.fetchJson ? fetchAdapter(ctx.fetchJson) : undefined });
   } catch (e) {
-    s.add(id, label, FAIL, e.message, true);
+    log.debug("Leaving bbsIssuerKey(). Unresolved.");
+    throw unresolved("could not resolve the verification method " + url +
+                     ": " + e.message);
   }
-  log.debug("Leaving verifyBbsEnvelope().");
+  var multibase = (resolved.method || {}).publicKeyMultibase;
+  if (!multibase) {
+    log.debug("Leaving bbsIssuerKey(). No Multikey.");
+    throw new Error("the verification method " + url + " publishes no " +
+      "publicKeyMultibase, so it has no BBS key (a BLS12-381 G2 key has " +
+      "no JOSE representation).");
+  }
+  log.debug("Leaving bbsIssuerKey().");
+  return bbs2023.multikeyToPublicKey(multibase);
 }
 
-// The IRI each term means, from the contexts the credential names — only the
-// ones bbs2023.js ships or was given, never fetched. A term no context
-// defines keeps its own name, matched as the last segment of a predicate.
-async function termIris(contexts) {
-  log.debug("Entering termIris().");
-  var out = {};
-  var list = [].concat(contexts || []);
-  for (var i = 0; i < list.length; i++) {
-    if (typeof list[i] !== "string") continue;
-    var loaded;
-    try {
-      loaded = await bbs2023.documentLoader(list[i]);
-    } catch (e) {
-      log.debug("termIris(): " + list[i] + " not available: " + e.message);
-      continue;
-    }
-    var defs = ((loaded || {}).document || {})["@context"] || {};
-    Object.keys(defs).forEach(function (term) {
-      var d = defs[term];
-      var iri = typeof d === "string" ? d : d && d["@id"];
-      if (typeof iri === "string" && /^[a-z][a-z0-9+.-]*:/i.test(iri)) {
-        out[term] = iri;
-      }
-    });
+// The bbs-2023 derived proof of one reveal document, in the shape
+// verifyDataIntegrity() answers, plus the presentation header it carries.
+async function verifyBbsCredential(cred, ctx) {
+  log.debug("Entering verifyBbsCredential().");
+  var proof = [].concat(cred.proof || []).filter(function (p) {
+    return p && p.cryptosuite === bbs2023.CRYPTOSUITE;
+  })[0] || {};
+  var vm = String(proof.verificationMethod || "");
+  var out = { valid: false, suite: bbs2023.CRYPTOSUITE,
+              verificationMethod: vm };
+  var publicKey;
+  try {
+    publicKey = await bbsIssuerKey(vm, ctx);
+  } catch (e) {
+    log.debug("Leaving verifyBbsCredential(). No key.");
+    return Object.assign(out, { unresolved: !!e.unresolved,
+      reason: e.unresolved ? "could not resolve the issuer's BBS key: " +
+        e.message : e.message });
   }
-  log.debug("Leaving termIris(). " + Object.keys(out).length + " term(s).");
-  return out;
+  var r = await bbs2023.verifyDerivedProof(cred, publicKey);
+  out.presentationHeader = r.presentationHeader || null;
+  if (!r.verified) {
+    log.debug("Leaving verifyBbsCredential(). Not verified.");
+    return Object.assign(out, { reason: r.reason });
+  }
+  if (proof.proofPurpose !== "assertionMethod") {
+    log.debug("Leaving verifyBbsCredential(). Wrong purpose.");
+    return Object.assign(out, { reason: "the derived proof verifies, but " +
+      "proofPurpose is " + JSON.stringify(proof.proofPurpose) + ", not " +
+      "assertionMethod." });
+  }
+  log.debug("Leaving verifyBbsCredential(). Valid.");
+  return Object.assign(out, { valid: true, reason: "bbs-2023 by " + vm +
+    ": " + r.reason });
 }
 
-function statementsHaveClaim(statements, claim, iris) {
-  log.debug("Entering statementsHaveClaim().");
-  var names = claim.path.filter(function (seg) {
-    return typeof seg === "string" && seg !== "credentialSubject";
-  });
-  var name = names[names.length - 1];
-  if (!name) {
-    log.debug("Leaving statementsHaveClaim(). No name.");
-    return false;
+// OpenID4VP 1.0 binds a presentation to its request by the nonce. A bbs-2023
+// derived proof carries a BBS presentation header; for a bare reveal
+// document that header IS the binding and must be the nonce, and inside a VP
+// the VP proof's challenge and domain bind it (Appendix B.1.3.2.5), so the
+// header may be the nonce or empty.
+function checkPresentationHeader(s, key, r, nonce, inVp) {
+  log.debug("Entering checkPresentationHeader(). inVp=" + inVp);
+  var label = "The derived proof's presentation header binds it to this " +
+      "request";
+  if (!r.presentationHeader) {
+    s.add(key, label, SKIP, "the derived proof could not be read, so it " +
+          "has no presentation header to compare.");
+    log.debug("Leaving checkPresentationHeader(). Unread.");
+    return;
   }
-  var iri = iris[name];
-  log.debug("Leaving statementsHaveClaim().");
-  return statements.some(function (st) {
-    if (iri) return st.indexOf("<" + iri + ">") !== -1;
-    return st.indexOf("#" + name + ">") !== -1 ||
-      st.indexOf("/" + name + ">") !== -1;
-  });
+  var ph = r.presentationHeader;
+  var text = bytes.bytesToStr(ph);
+  var isNonce = text === String(nonce || "") && ph.length > 0;
+  if (isNonce) {
+    s.add(key, label, PASS, "the presentation header is this request's " +
+          "nonce" + (inVp ? "." : ", which is what binds a bare reveal " +
+          "document to it."), !inVp);
+  } else if (inVp && !ph.length) {
+    s.add(key, label, PASS, "the presentation header is empty; the VP " +
+          "proof's challenge and domain bind the presentation " +
+          "(OpenID4VP 1.0 Appendix B.1.3.2.5).");
+  } else {
+    s.add(key, label, FAIL, "the presentation header is " +
+          JSON.stringify(text) + ", not this request's nonce" +
+          (inVp ? " (nor empty)" : ", and a bare reveal document has " +
+          "nothing else to bind it") + ".", !inVp);
+  }
+  log.debug("Leaving checkPresentationHeader().");
 }
 
 // Is a Data Integrity proof's verificationMethod one its issuer controls
@@ -4430,15 +4475,18 @@ function vmNotAuthorised(vm, issuerId) {
     "at or under that URL, nor is a did:web whose document does).";
 }
 
-// One credential with its own Data Integrity proof: the proof (by a key its
-// issuer controls, when the issuer is a DID), validity, and status.
+// One credential with its own Data Integrity proof — any suite
+// verifyDataIntegrity() verifies, or a bbs-2023 derived proof: the proof (by
+// a key its issuer controls), validity, and status. Answers the proof's
+// result, which for bbs-2023 carries the presentation header.
 async function verifyDiCredential(s, tag, cred, ctx) {
   log.debug("Entering verifyDiCredential(). " + tag);
   var label = "The credential's issuer proof verifies";
   var issuerId = issuerIdOf(cred);
-  var r = await verifyDataIntegrity(cred, { fetchJson: ctx.fetchJson,
-    purpose: "assertionMethod", now: ctx.now });
-  if (r.unsupported) {
+  var r = isBbsCredential(cred) ? await verifyBbsCredential(cred, ctx) :
+    await verifyDataIntegrity(cred, { fetchJson: ctx.fetchJson,
+      purpose: "assertionMethod", now: ctx.now });
+  if (r.unsupported || r.unresolved) {
     s.add(tag + "proof", label, SKIP, r.reason, true);
   } else if (!r.valid) {
     s.add(tag + "proof", label, FAIL, r.reason, true);
@@ -4453,39 +4501,7 @@ async function verifyDiCredential(s, tag, cred, ctx) {
   await checkCredentialStatus(s, tag + "status", statusRefsOf(cred),
     { header: {}, payload: { iss: issuerId }, id: issuerId }, ctx);
   log.debug("Leaving verifyDiCredential().");
-}
-
-// type_values against a bbs-2023 envelope (#469, C6): its disclosed N-Quad
-// statements carry the types already EXPANDED, as rdf:type objects. A type
-// the holder did not disclose is not there, so a miss is a SKIP that says
-// so rather than a FAIL.
-var RDF_TYPE = "<http://www.w3.org/1999/02/22-rdf-syntax-ns#type>";
-function checkStatementTypes(s, key, query, statements) {
-  log.debug("Entering checkStatementTypes().");
-  var label = "The credential's type is one the query asks for";
-  var typeValues = ((query.meta || {}).type_values) || [];
-  var iris = [];
-  (statements || []).forEach(function (st) {
-    var at = String(st).indexOf(" " + RDF_TYPE + " <");
-    if (at === -1) return;
-    var rest = String(st).slice(at + RDF_TYPE.length + 3);
-    var iri = rest.slice(0, rest.indexOf(">"));
-    if (iri && iris.indexOf(iri) === -1) iris.push(iri);
-  });
-  var shown = "the disclosed statements give the types [" +
-      iris.join(", ") + "]";
-  if (!typeValues.length) {
-    s.add(key, label, SKIP, shown + "; the query names no type_values.");
-  } else if (typesMatch(iris, typeValues)) {
-    s.add(key, label, PASS, shown + ", which match " +
-          JSON.stringify(typeValues) + " as expanded IRIs (OpenID4VP 1.0 " +
-          "Appendix B.1.1).");
-  } else {
-    s.add(key, label, SKIP, shown + "; " + JSON.stringify(typeValues) +
-          " is not among them as expanded IRIs, and a type the holder " +
-          "did not disclose cannot be seen in a derived proof.");
-  }
-  log.debug("Leaving checkStatementTypes().");
+  return r;
 }
 
 function holderIdOf(doc) {
@@ -4547,6 +4563,12 @@ async function verifyLdpVc(s, query, presentation, ctx) {
           JSON.stringify(proof.domain) + (domainOk ? "." : ", not " +
           (ctx.audience || "known: the request's origin was not given") +
           "."));
+  } else if (creds.length === 1 && isBbsCredential(creds[0])) {
+    s.add("vp.proof", "The VP's holder proof verifies", SKIP, "a bare " +
+          "bbs-2023 reveal document, with no VP around it: it is bound to " +
+          "this request by its presentation header (the bbs.ph check), " +
+          "which is how this Verifier accepts one. Baseline bbs-2023 does " +
+          "not bind a credential to a holder key.");
   } else {
     s.add("vp.proof", "The VP's holder proof verifies",
           requiresBinding(query) ? FAIL : SKIP, requiresBinding(query) ?
@@ -4555,36 +4577,14 @@ async function verifyLdpVc(s, query, presentation, ctx) {
           "the query does not require holder binding.");
   }
 
-  var statements = [];
-  var iris = {};
   var claimsRoot = null;
   var holder = holderIdOf(doc);
   for (var i = 0; i < creds.length; i++) {
     var env = creds[i];
     var tag = creds.length > 1 ? "vc[" + i + "]." : "vc.";
-    if (env && env.cryptosuite === "bbs-2023") {
-      var bbsStatements = env.disclosedStatements || [];
-      if (i === 0) {
-        iris = await termIris((env.proofOptions || {})["@context"]);
-        statements = bbsStatements;
-      }
-      await verifyBbsEnvelope(s, env, ctx, i === 0 ? "bbs.proof" :
-                              tag + "bbs.proof");
-      if (i === 0) checkStatementTypes(s, "types", query, bbsStatements);
-      s.add(tag + "status", "The credential's status", SKIP, "a bbs-2023 " +
-            "envelope presents N-Quad statements, and this debugger does " +
-            "not read a credentialStatus out of them.");
-      if (isVp && i === 0) {
-        var named = holder && bbsStatements.some(function (st) {
-          return st.indexOf("<" + holder + ">") !== -1;
-        });
-        s.add("vp.binding", "The holder is the credential's subject",
-              named && holderJwk ? PASS : FAIL, named ?
-              (holderJwk ? holder + " is a subject of the disclosed " +
-               "statements and signed the VP." : "the VP proof did not " +
-               "verify.") : "no disclosed statement names the holder " +
-              JSON.stringify(holder) + ".");
-      }
+    if (bbs2023.isPreW3cEnvelope(env)) {
+      s.add(tag + "proof", "The credential's issuer proof verifies", FAIL,
+            bbs2023.PRE_W3C_ENVELOPE, true);
       continue;
     }
     if (!isPlainObject(env)) {
@@ -4592,7 +4592,11 @@ async function verifyLdpVc(s, query, presentation, ctx) {
             "the embedded credential is not a JSON object.", true);
       continue;
     }
-    await verifyDiCredential(s, tag, env, ctx);
+    var proved = await verifyDiCredential(s, tag, env, ctx);
+    if (isBbsCredential(env)) {
+      checkPresentationHeader(s, (i === 0 ? "" : tag) + "bbs.ph", proved,
+                              ctx.session.nonce, isVp);
+    }
     if (i !== 0) continue;
     claimsRoot = env;
     await checkTypeValues(s, "types", query, env);
@@ -4618,13 +4622,11 @@ async function verifyLdpVc(s, query, presentation, ctx) {
           ", not by the holder " + holder + ".");
   }
   checkRequestedClaims(s, query, function (c) {
-    return claimsRoot ? pathPresent(claimsRoot, c) :
-      statementsHaveClaim(statements, c, iris);
+    return !!claimsRoot && pathPresent(claimsRoot, c);
   });
   log.debug("Leaving verifyLdpVc().");
-  return claimsRoot ? { statements: statements,
-                        credentialSubject: claimsRoot.credentialSubject } :
-    { statements: statements };
+  return claimsRoot ? { credentialSubject: claimsRoot.credentialSubject } :
+    {};
 }
 
 // ---------------------------------------------------------------------------

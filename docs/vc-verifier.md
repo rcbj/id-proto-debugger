@@ -84,13 +84,33 @@ answered. Per format:
 * **mso_mdoc**: the issuer-signed checks `mdoc.js` makes, the device
   signature over the OpenID4VP session transcript, and the doctype.
 * **ldp_vc**: Data Integrity proofs:
-  * `bbs-2023` derived proofs;
+  * `bbs-2023` derived proofs, as W3C Data Integrity BBS Cryptosuites v1.0
+    defines them (#470 B1): the credential is a **reveal document** with an
+    embedded `DataIntegrityProof` whose `proofValue` is a derived proof (CBOR
+    tag `0xd95d03`). The Verifier canonicalizes the reveal document itself,
+    relabels it with the proof's label map, splits it by the mandatory
+    indexes and runs BBS ProofVerify (`bbs2023.verifyDerivedProof()`). The
+    issuer's key is the `verificationMethod`'s Multikey (`z` + base58btc of
+    `0xeb01` and the 96-byte G2 key); a `did:key` is read in place, anything
+    else resolved or fetched. It must be the issuer's (the S2 rule below), and
+    the credential's `validFrom`/`validUntil` and status are checked like any
+    other `ldp_vc`;
+  * the derived proof's **presentation header** (`bbs.ph`). A bare reveal
+    document is accepted when its presentation header is the request's
+    `nonce`, which is then its only binding to the request and an essential
+    check. Inside a VP whose proof carries `challenge` = nonce and `domain` =
+    Client Identifier (Appendix B.1.3.2.5) the header may be the nonce or
+    empty;
+  * the **pre-W3C envelope** this debugger's wallet sent before #470
+    (`{cryptosuite, proof, disclosedStatements, disclosedIndexes,
+    proofOptions}`) is a FAIL that says so. It is not read;
   * `eddsa-rdfc-2022`, `ecdsa-rdfc-2019` (P-256 and P-384), `eddsa-jcs-2022`
     and `ecdsa-jcs-2019`, on the presentation and on each credential;
   * the proof's challenge and domain.
 
   `ecdsa-sd-2023` is reported as SKIP; its derived proofs are not
-  implemented.
+  implemented. Of bbs-2023's feature options only `baseline` is; a proof
+  using anonymous holder binding or pseudonyms is refused by name.
 
 **Whose key it is (#467).** A signature that verifies says nothing until
 something ties the key to the issuer:

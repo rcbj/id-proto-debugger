@@ -346,12 +346,16 @@ COPY client/src/metadata_schema.js ./
 # vectors through the page, so BOTH tests fail at load without this file.
 COPY client/src/bbs.js ./
 COPY tests/bbs_vectors.json ./
-# The bbs-2023 cryptosuite, BOTH implementations, for tests/bbs2023_cryptosuite.js
-# — the wallet's and the STS's. They share a basename and this image copies flat,
-# so the STS's is renamed on the way in; the test resolves either layout.
+# The wallet's bbs-2023 cryptosuite, flat, for the browser jobs that load it
+# for its JSON-LD contexts (ldp_vc_presentation.js and
+# vc_presentation_protocols.js). It requires cbor, crypto_bytes, did and mdoc,
+# all flat beside it. tests/bbs2023_cryptosuite.js reads it from
+# /usr/src/source-tree instead, and its vectors — the W3C vc-di-bbs
+# specification's own — are the fixture below.
 # client/src/bbs2023.js does require("./contexts/..."), so the vendored JSON-LD
 # contexts come too: canonicalization must never depend on fetching one.
 COPY client/src/bbs2023.js ./
+COPY tests/fixtures/vc_di_bbs_vectors.json ./fixtures/
 # (iya-sts's copy is NOT flattened here any more. It was, as ./sts_bbs2023.js,
 # on the grounds that it had no relative requires; since iya-sts v1.0.0 it
 # reads its JSON-LD contexts from ./contexts beside itself, which a flat copy

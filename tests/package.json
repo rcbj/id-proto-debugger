@@ -7,6 +7,7 @@
     "report:demo": "node run-report.js --demo"
   },
   "dependencies": {
+    "@digitalbazaar/bbs-2023-cryptosuite": "2.0.1",
     "@digitalbazaar/bbs-signatures": "^3.1.0",
     "@grpc/grpc-js": "^1.14.5",
     "@grpc/proto-loader": "^0.8.1",

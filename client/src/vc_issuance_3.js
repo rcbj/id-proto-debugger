@@ -137,9 +137,9 @@ function renderDisclosures(rows, sdDigests) {
       '<span class="vc-status vc-pending">This credential is ' +
           '<code>ldp_vc</code> with a ' +
       '<code>bbs-2023</code> proof. It carries no Disclosures: selective ' +
-          'disclosure here is over the ' +
-      "credential's canonical statements, chosen when it is presented, and " +
-          "each presentation is a " +
+          'disclosure here is by JSON pointer into the credential, chosen ' +
+          "when it is presented (the issuer's mandatory pointers always " +
+          "go), and each presentation is a " +
       'fresh proof that cannot be linked to the previous one.</span>';
     log.debug("Leaving renderDisclosures().");
     return;

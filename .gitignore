@@ -19,6 +19,9 @@ tests/fixtures/*
 # baseline tests/api_model_wire.js replays (models/CLAUDE.md). A directory
 # pattern above would hide them; `/*` lets this one directory back in.
 !tests/fixtures/api_model/
+# ...and the W3C vc-di-bbs specification's own test vectors, which
+# tests/bbs2023_cryptosuite.js asserts against (their source is inside).
+!tests/fixtures/vc_di_bbs_vectors.json
 sp-key.pem
 sp-cert.pem
 

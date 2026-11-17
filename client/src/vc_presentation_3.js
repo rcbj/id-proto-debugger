@@ -32,6 +32,7 @@ var vpProtocols = require("./vp_protocols");
 var didLib = require("./did");
 var dpop = require("./dpop");
 var mdoc = require("./mdoc");
+var bbs2023 = require("./bbs2023");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_3',
                                 level: appconfig.logLevel });
@@ -215,50 +216,56 @@ function renderWhatWasSent() {
   return true;
 }
 
-// The wallet's own re-check of the bytes it sent: sd_hash recomputed over them,
-// and every Disclosure's digest looked up in _sd. If the wallet cannot verify
-// its own presentation, no verifier will either.
-function recheckOwnPresentation() {
-  log.debug("Entering recheckOwnPresentation().");
-  if (!sent || !sent.presentation) {
-    log.debug("Leaving recheckOwnPresentation().");
-    return Promise.resolve(false);
+// The bbs-2023 half of recheckOwnPresentation().
+function recheckBbsPresentation() {
+  log.debug("Entering recheckBbsPresentation().");
+  var revealed = {};
+  try {
+    revealed = JSON.parse(sent.presentation);
+  } catch (e) {
+    revealed = {};
   }
-  // A bbs-2023 presentation is not a JWS at all, so none of the checks below
-  // apply: there is no KB-JWT, no sd_hash, and no issuer signature travelling
-  // with it. The derived proof is the signature, and the nonce is inside it.
-  if (String(sent.presentation ||
-      "").indexOf('"cryptosuite":"bbs-2023"') !== -1) {
-    var checks =
-        [];   // local: the shared one is declared after the parse below
-    var envelope = {};
-    try {
-      envelope = JSON.parse(sent.presentation);
-    } catch (e) {
-      envelope = {};
-    }
-    // Inside a holder-signed VerifiablePresentation when the request needed
-    // holder binding: the derived credential is its verifiableCredential.
-    var vpProof = null;
-    if ([].concat(envelope.type || []).indexOf("VerifiablePresentation") !==
-        -1) {
-      vpProof = envelope.proof || null;
-      envelope = [].concat(envelope.verifiableCredential || [])[0] || {};
-    }
-    var statements = [].concat(envelope.disclosedStatements || []);
-    checks.push({
-      name: "Derived proof present", ok: !!envelope.proof,
-      detail: envelope.proof
-        ? "a bbs-2023 derived proof, " + envelope.proof.length +
-            " characters of base64url."
-        : "there is no derived proof in what was sent."
-    });
-    checks.push({
-      name: "Statements disclosed", ok: statements.length > 0,
-      detail: statements.length +
-          " canonical statement(s) went. The rest of the credential was " +
-              "withheld — not hidden behind a digest, simply never proved."
-    });
+  // Inside a holder-signed VerifiablePresentation when the request needed
+  // holder binding: the reveal document is its verifiableCredential.
+  var vpProof = null;
+  if ([].concat(revealed.type || []).indexOf("VerifiablePresentation") !==
+      -1) {
+    vpProof = revealed.proof || null;
+    revealed = [].concat(revealed.verifiableCredential || [])[0] || {};
+  }
+  var checks = [];
+  var publicKey = null;
+  try {
+    var held = sdJwtVc.parseCredential(
+      sdJwtVc.get(sdJwtVc.KEYS.CREDENTIAL) || "");
+    publicKey = bbs2023.parseBaseProofValue(
+      ((held.document || {}).proof || {}).proofValue).publicKey;
+  } catch (e) {
+    log.warn("recheckBbsPresentation(): no base proof to read the " +
+             "issuer's key from: " + e.message);
+  }
+  var verifying = publicKey ?
+    bbs2023.verifyDerivedProof(revealed, publicKey) :
+    Promise.resolve({ verified: false, reason: "the credential this " +
+      "wallet holds is not here any more, so the issuer's key cannot be " +
+      "read from its base proof." });
+  log.debug("Leaving recheckBbsPresentation().");
+  return verifying.then(function (r) {
+    checks.push({ name: "Derived proof verifies", ok: r.verified,
+                  detail: r.reason });
+    var ph = r.presentationHeader ?
+        new TextDecoder().decode(r.presentationHeader) : null;
+    checks.push({ name: "Presentation header", ok: ph === sent.nonce,
+      detail: ph === null ? "the derived proof could not be read." :
+        "the presentation header is " + JSON.stringify(ph) + "; the " +
+        "request's nonce is " + JSON.stringify(sent.nonce) + ". It is " +
+        "bound INSIDE the proof: a replay is not caught by comparing a " +
+        "claim, the proof itself fails to verify." });
+    checks.push({ name: "Statements revealed", ok: !!r.nonMandatory,
+      detail: r.nonMandatory ? (r.mandatory || []).length + " mandatory " +
+        "and " + r.nonMandatory.length + " selectively disclosed " +
+        "statement(s) went. The rest of the credential was withheld — not " +
+        "hidden behind a digest, simply never proved." : "unknown." });
     if (vpProof) {
       checks.push({
         name: "Holder proof", ok: vpProof.challenge === sent.nonce &&
@@ -271,24 +278,37 @@ function recheckOwnPresentation() {
       });
     }
     checks.push({
-      name: "Freshness", ok: true,
-      detail: "the verifier's nonce is the presentation header, so it is " +
-          "bound INSIDE the proof. A " +
-              "replay is not caught by comparing a claim; the proof itself " +
-                  "fails to verify."
-    });
-    checks.push({
       name: "Unlinkability", ok: true,
-      detail: "this proof was re-randomised at derivation, so presenting the " +
-          "same credential again " +
-              "produces different bytes. Neither of the other two formats " +
-                  "can do that: they replay " +
-              "the issuer's signature verbatim."
+      detail: "this proof was re-randomised at derivation, so presenting " +
+          "the same credential again produces different bytes. Neither of " +
+          "the other two formats can do that: they replay the issuer's " +
+          "signature verbatim."
     });
     renderRecheck(checks);
-    log.debug("Leaving recheckOwnPresentation(). ldp_vc, " + checks.length +
+    log.debug("Leaving recheckBbsPresentation(). " + checks.length +
               " check(s).");
-    return Promise.resolve(true);
+    return true;
+  });
+}
+
+// The wallet's own re-check of the bytes it sent: sd_hash recomputed over them,
+// and every Disclosure's digest looked up in _sd. If the wallet cannot verify
+// its own presentation, no verifier will either.
+function recheckOwnPresentation() {
+  log.debug("Entering recheckOwnPresentation().");
+  if (!sent || !sent.presentation) {
+    log.debug("Leaving recheckOwnPresentation().");
+    return Promise.resolve(false);
+  }
+  // A bbs-2023 presentation is not a JWS at all, so none of the checks below
+  // apply: there is no KB-JWT and no sd_hash. It is a reveal document with a
+  // derived proof (W3C Data Integrity BBS Cryptosuites v1.0), and the wallet
+  // verifies it exactly as a verifier would — against the issuer's key, which
+  // the credential's base proof carries.
+  if (String(sent.presentation ||
+      "").indexOf('"cryptosuite":"bbs-2023"') !== -1) {
+    log.debug("Leaving recheckOwnPresentation(). ldp_vc.");
+    return recheckBbsPresentation();
   }
 
   if (mdoc.looksLikeDeviceResponse(sent.presentation)) {
