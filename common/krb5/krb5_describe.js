@@ -45,6 +45,9 @@ var kpac = require("./krb5_pac.js");
 var gss = require("./krb5_gss.js");
 var spnego = require("./krb5_spnego.js");
 var bunyan = require("bunyan");
+// Why CONFIG_FILE gave no log level, kept until the logger below exists to
+// report it (#322).
+var logLevelProblem = null;
 var log = bunyan.createLogger({
   name: "krb5_describe",
   level: (function () {
@@ -52,10 +55,16 @@ var log = bunyan.createLogger({
       return require(process.env.CONFIG_FILE).logLevel || "info";
     } catch (e) {
       // No CONFIG_FILE resolvable here — a node caller rather than a bundle.
+      // The logger does not exist yet, so the error is kept for it.
+      logLevelProblem = e;
       return "info";
     }
   })()
 });
+if (logLevelProblem) {
+  log.debug("No log level from CONFIG_FILE, using info: " +
+      ((logLevelProblem && logLevelProblem.message) || logLevelProblem));
+}
 
 // ---------------------------------------------------------------------------
 // Getting the bytes out of whatever was pasted.
@@ -1490,9 +1499,11 @@ function describeKrbError(e, problems) {
               var prof = null;
               try {
                 prof = kcrypto.etypeById(info.etype);
-              } catch (ignored) {
+              } catch (e) {
                 // An etype this build does not implement. There is nothing to
                 // say about its default, and saying nothing is correct here.
+                log.debug("Caught reading etype " + info.etype + ": " +
+                    ((e && e.message) || e));
                 prof = null;
               }
               if (prof && prof.defaultIterations) {
@@ -1606,6 +1617,8 @@ async function describeMechToken(bytes, keys, problems, label, known) {
     } catch (e2) {
       // identify() only peeks at a tag; a throw here means the bytes are not
       // ASN.1 at all, which the tree below reports better than a row would.
+      log.debug("Caught identifying a bare GSS token: " +
+          ((e2 && e2.message) || e2));
       bare = null;
     }
     if (bare) {

@@ -35,6 +35,9 @@ var prim = require("./krb5_primitives.js");
 var names = require("./krb5_field_names.js");
 
 var bunyan = require("bunyan");
+// Why CONFIG_FILE gave no log level, kept until the logger below exists to
+// report it (#322).
+var logLevelProblem = null;
 var log = bunyan.createLogger({
   name: "krb5_ranges",
   level: (function () {
@@ -42,10 +45,16 @@ var log = bunyan.createLogger({
       return require(process.env.CONFIG_FILE).logLevel || "info";
     } catch (e) {
       // No CONFIG_FILE resolvable here — a node caller rather than a bundle.
+      // The logger does not exist yet, so the error is kept for it.
+      logLevelProblem = e;
       return "info";
     }
   })()
 });
+if (logLevelProblem) {
+  log.debug("No log level from CONFIG_FILE, using info: " +
+      ((logLevelProblem && logLevelProblem.message) || logLevelProblem));
+}
 
 // A hex view of a 64KB message would be 4,096 rows; a cap keeps a pasted blob
 // from turning into a page nobody can scroll. Well above any real KDC message.

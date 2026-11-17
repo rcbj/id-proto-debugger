@@ -31,6 +31,9 @@
 var prim = require("./krb5_primitives.js");
 var kcrypto = require("./krb5_crypto.js");
 var bunyan = require("bunyan");
+// Why CONFIG_FILE gave no log level, kept until the logger below exists to
+// report it (#322).
+var logLevelProblem = null;
 var log = bunyan.createLogger({
   name: "krb5_keytab",
   level: (function () {
@@ -38,10 +41,16 @@ var log = bunyan.createLogger({
       return require(process.env.CONFIG_FILE).logLevel || "info";
     } catch (e) {
       // No CONFIG_FILE resolvable here — a node caller rather than a bundle.
+      // The logger does not exist yet, so the error is kept for it.
+      logLevelProblem = e;
       return "info";
     }
   })()
 });
+if (logLevelProblem) {
+  log.debug("No log level from CONFIG_FILE, using info: " +
+      ((logLevelProblem && logLevelProblem.message) || logLevelProblem));
+}
 
 var MAX_KEYTAB_BYTES = 1024 * 1024;
 var MAX_ENTRIES = 4096;
