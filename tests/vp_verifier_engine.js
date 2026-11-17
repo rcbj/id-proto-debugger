@@ -52,6 +52,20 @@
 //     IRIs, mdocs signed here with -9, -35, SHA-384/512 digests and
 //     DeviceMac, and the Data Integrity proof @context rules; plus issuer
 //     keys that cannot be had reported as a SKIP (B2/B3).
+//
+// Which checks are the SPECIFICATIONS' own vectors, byte for byte or value
+// for value (#471, T1), as opposed to inputs built here from their text:
+//
+//   * OpenID4VP 1.0 Appendix B.2.6.1 and B.2.6.2: the example JWK's
+//     thumbprint, the two HandoverInfo, Handover and SessionTranscript hex
+//     strings, rebuilt by the Verifier and by the wallet
+//     (openid4vpSpecVectors());
+//   * OpenID4VP 1.0 Appendix B.3.2: the example SD-JWT VC's _sd array, its
+//     three Disclosures and their printed SHA-256 hashes (ibid.);
+//   * draft-ietf-oauth-status-list-21 sections 4.1/4.2 and Appendix C.1 and
+//     C.3 (tokenStatusSpecVectors());
+//   * Bitstring Status List v1.0 Examples 1-3 (bitstringStatusLists());
+//   * the W3C eddsa-jcs-2022 test vector (cryptosuites()).
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -3947,6 +3961,197 @@ function oneDeclarationPerName() {
   log.debug("Leaving oneDeclarationPerName().");
 }
 
+// ---------------------------------------------------------------------------
+// OpenID4VP 1.0's own worked examples (#471, T1), as bytes the specification
+// prints. Nothing here is this tree's wallet: each input and each expected
+// value is copied from the text, and the spec's own hex is checked against
+// node's SHA-256 first, so a transcription error says so rather than
+// passing or failing the code for the wrong reason.
+//
+//   B.2.6.1  the input JWK's RFC 7638 thumbprint, OpenID4VPHandoverInfo,
+//            OpenID4VPHandover and the SessionTranscript, rebuilt from
+//            client_id, nonce, that JWK and response_uri;
+//   B.2.6.2  the same for OpenID4VPDCAPIHandoverInfo / OpenID4VPDCAPI-
+//            Handover, from the origin "https://example.com", nonce and JWK;
+//   B.3.2    the example SD-JWT VC's _sd array and its three Disclosures:
+//            the Verifier must find each printed digest for each printed
+//            Disclosure and put back John, Doe and 1940-01-01.
+//
+// Both transcripts are rebuilt twice, by the Verifier
+// (vp_verifier.mdocSessionTranscript) and by the wallet (mdoc.js
+// sessionTranscript), and must be the spec's bytes exactly.
+// ---------------------------------------------------------------------------
+const OID4VP_B26_JWK = { kty: "EC", crv: "P-256",
+  x: "DxiH5Q4Yx3UrukE2lWCErq8N8bqC9CHLLrAwLz5BmE0",
+  y: "XtLM4-3h5o3HUH0MHVJV0kyq0iBlrBwlh8qEDMZ4-Pc",
+  use: "enc", alg: "ECDH-ES", kid: "1" };
+const OID4VP_B26_NONCE = "exc7gBkxjx1rdc9udRrveKvSsJIq80avlXeLHhGwqtA";
+const OID4VP_B261_INFO =
+    "847818783530395f73616e5f646e733a6578616d706c652e636f6d782b6578633767" +
+    "426b786a7831726463397564527276654b7653734a4971383061766c58654c486847" +
+    "7771744158204283ec927ae0f208daaa2d026a814f2b22dca52cf85ffa8f3f8626c6" +
+    "bd669047781c68747470733a2f2f6578616d706c652e636f6d2f726573706f6e7365";
+const OID4VP_B261_HANDOVER =
+    "82714f70656e494434565048616e646f7665725820048bc053c00442af9b8eed494c" +
+    "efdd9d95240d254b046b11b68013722aad38ac";
+const OID4VP_B261_TRANSCRIPT =
+    "83f6f682714f70656e494434565048616e646f7665725820048bc053c00442af9b8e" +
+    "ed494cefdd9d95240d254b046b11b68013722aad38ac";
+const OID4VP_B262_INFO =
+    "837368747470733a2f2f6578616d706c652e636f6d782b6578633767426b786a7831" +
+    "726463397564527276654b7653734a4971383061766c58654c486847777174415820" +
+    "4283ec927ae0f208daaa2d026a814f2b22dca52cf85ffa8f3f8626c6bd669047";
+const OID4VP_B262_HANDOVER =
+    "82764f70656e4944345650444341504948616e646f7665725820fbece366f4212f97" +
+    "62c74cfdbf83b8c69e371d5d68cea09cb4c48ca6daab761a";
+const OID4VP_B262_TRANSCRIPT =
+    "83f6f682764f70656e4944345650444341504948616e646f7665725820fbece366f4" +
+    "212f9762c74cfdbf83b8c69e371d5d68cea09cb4c48ca6daab761a";
+
+function hexOf(b) {
+  log.debug("Entering hexOf().");
+  log.debug("Leaving hexOf().");
+  return Buffer.from(b).toString("hex");
+}
+
+function sha256Hex(hex) {
+  log.debug("Entering sha256Hex().");
+  log.debug("Leaving sha256Hex().");
+  return nodeCrypto.createHash("sha256").update(Buffer.from(hex, "hex"))
+    .digest("hex");
+}
+
+async function openid4vpSpecVectors(env) {
+  log.debug("Entering openid4vpSpecVectors().");
+  const mdoc = load("mdoc.js");
+  // The spec against itself, with node: each Handover's hash is SHA-256 of
+  // its Info, each SessionTranscript is [null, null, Handover], and the
+  // Info's third element is the JWK's thumbprint (node's SHA-256 of RFC
+  // 7638's member order).
+  const thumbHex = Buffer.from(thumbprintOf(OID4VP_B26_JWK), "base64url")
+    .toString("hex");
+  ok(OID4VP_B261_INFO.indexOf("5820" + thumbHex) !== -1,
+     "B.2.6.1: the Info's third element is the JWK's RFC 7638 thumbprint");
+  ok(OID4VP_B262_INFO.indexOf("5820" + thumbHex) !== -1,
+     "B.2.6.2: the Info's third element is the JWK's RFC 7638 thumbprint");
+  eq(OID4VP_B261_HANDOVER.slice(-64), sha256Hex(OID4VP_B261_INFO),
+     "B.2.6.1: the Handover hashes the Info (node's SHA-256)");
+  eq(OID4VP_B262_HANDOVER.slice(-64), sha256Hex(OID4VP_B262_INFO),
+     "B.2.6.2: the Handover hashes the Info (node's SHA-256)");
+  eq(OID4VP_B261_TRANSCRIPT, "83f6f6" + OID4VP_B261_HANDOVER,
+     "B.2.6.1: the SessionTranscript wraps the Handover");
+  eq(OID4VP_B262_TRANSCRIPT, "83f6f6" + OID4VP_B262_HANDOVER,
+     "B.2.6.2: the SessionTranscript wraps the Handover");
+
+  // The Verifier's thumbprint of the spec's JWK.
+  eq(Buffer.from(verifier.jwkThumbprint(OID4VP_B26_JWK), "base64url")
+    .toString("hex"), thumbHex, "B.2.6.1: jwkThumbprint() of the JWK");
+
+  // B.2.6.1, redirects: x509_san_dns:example.com, an encrypted response.
+  const redirect = { responseMode: "direct_post.jwt",
+    decryptionJwk: OID4VP_B26_JWK, clientId: "x509_san_dns:example.com",
+    nonce: OID4VP_B26_NONCE, responseUri: "https://example.com/response" };
+  eq(hexOf(mdoc.encode([redirect.clientId, redirect.nonce,
+    Buffer.from(thumbHex, "hex"), redirect.responseUri])), OID4VP_B261_INFO,
+     "B.2.6.1: OpenID4VPHandoverInfo, byte for byte");
+  let t = verifier.mdocSessionTranscript(redirect);
+  eq(hexOf(mdoc.encode(t.transcript[2])), OID4VP_B261_HANDOVER,
+     "B.2.6.1: the Verifier's OpenID4VPHandover, byte for byte");
+  eq(hexOf(mdoc.encode(t.transcript)), OID4VP_B261_TRANSCRIPT,
+     "B.2.6.1: the Verifier's SessionTranscript, byte for byte");
+  ok(t.encrypted, "B.2.6.1: direct_post.jwt carries the thumbprint");
+  const walletRedirect = await mdoc.sessionTranscript({
+    clientId: redirect.clientId, nonce: redirect.nonce,
+    encryptionJwk: OID4VP_B26_JWK, responseUri: redirect.responseUri });
+  eq(hexOf(mdoc.encode(walletRedirect)), OID4VP_B261_TRANSCRIPT,
+     "B.2.6.1: the wallet's SessionTranscript, byte for byte");
+
+  // B.2.6.2, the Digital Credentials API: origin https://example.com
+  // WITHOUT "origin:" and without a trailing slash, dc_api.jwt.
+  const dc = { responseMode: "dc_api.jwt", decryptionJwk: OID4VP_B26_JWK,
+    origin: "https://example.com", nonce: OID4VP_B26_NONCE };
+  eq(hexOf(mdoc.encode([dc.origin, dc.nonce,
+    Buffer.from(thumbHex, "hex")])), OID4VP_B262_INFO,
+     "B.2.6.2: OpenID4VPDCAPIHandoverInfo, byte for byte");
+  t = verifier.mdocSessionTranscript(dc);
+  eq(hexOf(mdoc.encode(t.transcript[2])), OID4VP_B262_HANDOVER,
+     "B.2.6.2: the Verifier's OpenID4VPDCAPIHandover, byte for byte");
+  eq(hexOf(mdoc.encode(t.transcript)), OID4VP_B262_TRANSCRIPT,
+     "B.2.6.2: the Verifier's SessionTranscript, byte for byte");
+  // The same request answered under dc_api (unencrypted) must NOT be the
+  // spec's bytes: its third element is null (B.2.6.2).
+  t = verifier.mdocSessionTranscript(Object.assign({}, dc,
+    { responseMode: "dc_api" }));
+  ok(hexOf(mdoc.encode(t.transcript)) !== OID4VP_B262_TRANSCRIPT &&
+     !t.encrypted, "B.2.6.2: dc_api's jwkThumbprint is null");
+
+  // B.3.2: the example SD-JWT VC, its _sd array and Disclosures as
+  // printed. Only cnf is replaced (by a holder key that can sign a
+  // KB-JWT); no digest covers it. The issuer, https://example.com/issuer,
+  // publishes a key made here in its jwt-vc-issuer metadata.
+  const B32_VCT = "https://credentials.example.com/identity_credential";
+  const B32_ISS = "https://example.com/issuer";
+  const disclosures = {
+    given_name: "WyIyR0xDNDJzS1F2ZUNmR2ZyeU5STjl3IiwgImdpdmVuX25hbWUiLCAi" +
+      "Sm9obiJd",
+    family_name: "WyJlbHVWNU9nM2dTTklJOEVZbnN4QV9BIiwgImZhbWlseV9uYW1lIiw" +
+      "gIkRvZSJd",
+    birthdate: "WyI2SWo3dE0tYTVpVlBHYm9TNXRtdlZBIiwgImJpcnRoZGF0ZSIsICIx" +
+      "OTQwLTAxLTAxIl0"
+  };
+  const printed = { given_name: "jsu9yVulwQQlhFlM_3JlzMaSFzglhQG0DpfayQwLUK4",
+    family_name: "TGf4oLbgwd5JQaHyKVQZU9UdGE0w5rtDsrZzfUaomLo",
+    birthdate: "tiTngp9_jhC389UP8_k67MXqoSfiHq3iK6o9un4we_Y" };
+  Object.keys(printed).forEach(function (name) {
+    eq(sha256b64u(disclosures[name]), printed[name],
+       "B.3.2: node's SHA-256 of the " + name + " Disclosure is the " +
+       "printed hash");
+  });
+  const signer = ecPair();
+  const holder = ecPair();
+  const docs = {};
+  docs["https://example.com/.well-known/jwt-vc-issuer/issuer"] =
+    { issuer: B32_ISS, jwks: { keys: [Object.assign({ kid: "b32",
+      alg: "ES256" }, signer.publicJwk)] } };
+  const fetchJson = function fetchJson(url) {
+    log.debug("Entering fetchJson(). " + url);
+    log.debug("Leaving fetchJson().");
+    return docs[url] ? Promise.resolve(docs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+  const jwt = nodeJws({ alg: "ES256", typ: "dc+sd-jwt", kid: "b32" }, {
+    _sd: ["3oUCnaKt7wqDKuyh-LgQozzfhgb8gO5Ni-RCWsWW2vA",
+          "8z8z9X9jUtb99gjejCwFAGz4aqlHf-sCqQ6eM_qmpUQ",
+          "Cxq4872UXXngGULT_kl8fdwVFkyK6AJfPZLy7L5_0kI",
+          "TGf4oLbgwd5JQaHyKVQZU9UdGE0w5rtDsrZzfUaomLo",
+          "jsu9yVulwQQlhFlM_3JlzMaSFzglhQG0DpfayQwLUK4",
+          "sFcViHN-JG3eTUyBmU4fkwusy5I1SLBhe1jNvKxP5xM",
+          "tiTngp9_jhC389UP8_k67MXqoSfiHq3iK6o9un4we_Y",
+          "xsKkGJXD1-e3I9zj0YyKNv-lU5YqhsEAF9NhOr8xga4"],
+    iss: B32_ISS, iat: 1683000000, exp: 1883000000, vct: B32_VCT,
+    _sd_alg: "sha-256", cnf: { jwk: holder.publicJwk } }, signer);
+  const clientId = verifier.clientIdFor("x509_hash", env.identity);
+  const session = { clientId: clientId, nonce: verifier.randomToken(),
+    responseMode: "direct_post", responseUri: "https://verifier.example/r",
+    dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+      vct: B32_VCT, claims: [["given_name"], ["family_name"],
+                             ["birthdate"]] }] }) };
+  const r = await run({ fields: { vp_token: { pid: [presentSdJwt(jwt,
+    [disclosures.given_name, disclosures.family_name, disclosures.birthdate],
+    { aud: clientId, nonce: session.nonce, key: holder })] } },
+    session: session, fetchJson: fetchJson });
+  allPass(r, "B.3.2: the example SD-JWT VC");
+  eq(checkById(r, "pid[0].disclosures").status, "pass");
+  eq([r.presentations[0].claims.given_name,
+      r.presentations[0].claims.family_name,
+      r.presentations[0].claims.birthdate], ["John", "Doe", "1940-01-01"],
+     "B.3.2: each printed Disclosure is found by its printed digest");
+  log.info("PASS OpenID4VP 1.0's own vectors: Appendix B.2.6.1 and " +
+           "B.2.6.2 (thumbprint, Info, Handover, SessionTranscript, by the " +
+           "Verifier and the wallet) and B.3.2's Disclosures.");
+  log.debug("Leaving openid4vpSpecVectors().");
+}
+
 async function main() {
   log.debug("Entering main().");
   randomTokens();
@@ -3960,6 +4165,7 @@ async function main() {
   await ldpVcRoundTrip(env);
   await prefixesAndWalletNonce(env);
   await dcApi(env);
+  await openid4vpSpecVectors(env);
   await tokenStatusLists(env);
   await tokenStatusSpecVectors(env);
   await statusSignerLinks(env);
@@ -3977,8 +4183,8 @@ async function main() {
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 1280, "only " + assertions + " assertions ran; " +
-            "expected at least 1280");
+  assert.ok(assertions >= 1300, "only " + assertions + " assertions ran; " +
+            "expected at least 1300");
   assert.ok(checksSeen >= 4900, "only " + checksSeen + " Verifier checks " +
             "were examined; expected at least 4900");
   log.info("vp_verifier_engine: all checks passed.");
