@@ -114,10 +114,10 @@ opens the certificate page when the key box holds a certificate.
 
 | Field | Default | What it does |
 |---|---|---|
-| **Key Management (`alg`)** | RSA-OAEP | Also RSA-OAEP-256, ECDH-ES (P-256), and ECDH-ES+A128KW, +A192KW, +A256KW, all on P-256. |
+| **Key Management (`alg`)** | RSA-OAEP | Also RSA-OAEP-256, ECDH-ES (P-256), and ECDH-ES+A128KW, +A192KW, +A256KW, all on P-256. And the draft post-quantum and HPKE algorithms: ML-KEM-512/768/1024 and their +A*KW forms, HPKE-0 … HPKE-16 and their -KE forms (HPKE-10/11 are X-Wing). See [`jwe-pq-kem.md`](jwe-pq-kem.md). |
 | **Content Encryption (`enc`)** | A256GCM | Also A192GCM, A128GCM, **A128CBC-HS256**, **A192CBC-HS384**, and **A256CBC-HS512**. |
 | **RSA Key Size** | 2048 | Also 3072, 4096, 1024 (insecure). Ignored for ECDH-ES. |
-| **Generate Keys** | | Recipient pair: RSA for `RSA-OAEP*`, P-256 for `ECDH-ES*`. |
+| **Generate Keys** | | Recipient pair: RSA for `RSA-OAEP*`, P-256 for `ECDH-ES*`. For ML-KEM and HPKE, a JWK pair (`kty: AKP`, or EC/OKP for HPKE-0 … 7) whose `alg` is the selected one, and the JWK box is ticked: these keys have no PEM form. Their **Download Keys** is JWK only. |
 | **Show keys as JWK** | off | PEM or JWK, same as pane 2. |
 | **Keystore format** / **Password** / **Download Keys** | PEM | Same export rules as pane 2. |
 | **Payload to Encrypt** | the signed JWT from pane 2 | Any text. A payload that is itself a JWS is marked `cty: JWT`. |
@@ -130,3 +130,7 @@ Chromium-based browsers, which do not implement 192-bit AES. Firefox and
 Node accept it. The 128-bit and 256-bit choices work in all of them.
 
 `RSA1_5` is not in the menu. Web Crypto does not implement it.
+
+A bare `HPKE-n` is HPKE Integrated Encryption. Its JWE has no `enc`, so the
+**Content Encryption** menu is not used, and the IV and tag segments are
+empty.

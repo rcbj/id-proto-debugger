@@ -44,7 +44,7 @@ With no anchor configured, the chain is still checked link by link, and the resu
 | `response_mode` | Who sends it | To |
 |---|---|---|
 | `direct_post` | the wallet (`fetch`) | `response_uri` |
-| `direct_post.jwt` | the wallet: **one form field, `response`**, a compact JWE (ECDH-ES on P-256, `enc` from `encrypted_response_enc_values_supported`, A128GCM when it says nothing) whose plaintext is the JSON of the response parameters and whose `kid` is the Verifier key's | `response_uri` |
+| `direct_post.jwt` | the wallet: **one form field, `response`**, a compact JWE (to the first Verifier key the wallet can use, by its `alg`: ECDH-ES on P-256, or ML-KEM or HPKE — X-Wing among them — outside HAIP; `enc` from `encrypted_response_enc_values_supported`, A128GCM when it says nothing) whose plaintext is the JSON of the response parameters and whose `kid` is the Verifier key's | `response_uri` |
 | `post` (SIOPv2 cross-device) | the wallet | `redirect_uri` |
 | `form_post` | the **browser**, as an auto-submitting form | `redirect_uri` |
 | `fragment` (the default for a token response) / `query` | the browser, redirected | `redirect_uri` |

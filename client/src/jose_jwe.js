@@ -36,6 +36,17 @@
 // no other implementation can open, which is why ENC_KEY_BYTES below is the
 // whole CEK length and the halves are taken in one place.
 //
+//   alg   ML-KEM-512/768/1024 and the     post-quantum key establishment, and
+//         +A*KW forms, HPKE-0 … HPKE-16   HPKE (X-Wing is HPKE-10/11) — every
+//         and their -KE forms             one of them from an Internet-Draft;
+//                                         jwe_kem.js names the revisions and
+//                                         does the key establishment, and
+//                                         hpke.js is the HPKE engine under it.
+//                                         The Integrated `HPKE-n` forms have
+//                                         NO `enc`: HPKE encrypts the payload
+//                                         itself and the IV and tag segments
+//                                         are empty.
+//
 // ECDH-ES is limited to P-256 when encrypting (which is what the wallets and
 // issuers this project talks to use); when decrypting, the curve is taken from
 // the incoming epk header, so P-384 and P-521 are read as well.
@@ -168,6 +179,7 @@ function isEcdh(alg) {
 // `tests/jose_jwe_encryption.js` checks the two against each other.
 // ---------------------------------------------------------------------------
 var symmetric = require("./symmetric_crypto");
+var kem = require("./jwe_kem");
 
 // Web Crypto is used for these key sizes; anything else is done in JavaScript.
 // AES-192 is the size every browser-grade Web Crypto refuses, so it is decided
@@ -302,7 +314,8 @@ function supportedAlgs() {
   log.debug("Entering supportedAlgs().");
   log.debug("Leaving supportedAlgs().");
   return ['RSA-OAEP', 'RSA-OAEP-256',
-          'ECDH-ES'].concat(Object.keys(ECDH_KW_BYTES));
+          'ECDH-ES'].concat(Object.keys(ECDH_KW_BYTES))
+    .concat(kem.algNames());
 }
 function supportedEncs() {
   log.debug("Entering supportedEncs().");
@@ -650,10 +663,41 @@ async function cbcHmacDecrypt(cekBytes, enc, iv, aad, ciphertext, tag) {
 // points, kept because jwt_tools.js has called them since before this file
 // existed. They are AES-GCM only and say so.
 // ---------------------------------------------------------------------------
-async function deriveCekBytes(alg, enc, protectedHeader, recipientPublicKey) {
+async function deriveCekBytes(alg, enc, protectedHeader, recipientPublicKey,
+                              opts) {
   log.debug("Entering deriveCekBytes(). alg=" + alg + ", enc=" + enc);
   var keyBytes = ENC_KEY_BYTES[enc];
   if (!keyBytes) throw new Error('unsupported content encryption: ' + enc);
+
+  if (kem.isMlKemAlg(alg)) {
+    // pqc-kem-05: the KEM ciphertext travels in "ek"; direct agreement makes
+    // the derived key the CEK, key wrap wraps a fresh one with it.
+    var agreed = kem.mlkemAgree(alg, enc, recipientPublicKey, keyBytes);
+    protectedHeader.ek = bytesToB64u(agreed.ek);
+    if (!kem.mlkemKwBytes(alg)) {
+      log.debug("Leaving deriveCekBytes(). " + alg + " direct.");
+      return { cekBytes: agreed.key, encryptedKey: '' };
+    }
+    var kwCek = randomCekBytes(keyBytes);
+    log.debug("Leaving deriveCekBytes(). " + alg + ".");
+    return { cekBytes: kwCek,
+             encryptedKey: bytesToB64u(await wrapRawBytes(kwCek,
+                                                          agreed.key)) };
+  }
+  if (kem.isHpkeAlg(alg)) {
+    if (kem.isIntegrated(alg)) {
+      throw new Error(alg + ' is HPKE Integrated Encryption, which has no ' +
+          'content encryption key. encryptCompact() performs it.');
+    }
+    var hpkeCek = randomCekBytes(keyBytes);
+    var sealed = kem.hpkeEncryptCek(alg, enc, hpkeCek, recipientPublicKey,
+                                    opts);
+    protectedHeader.ek = bytesToB64u(sealed.ek);
+    if (sealed.pskId) protectedHeader.psk_id = bytesToB64u(sealed.pskId);
+    log.debug("Leaving deriveCekBytes(). " + alg + ".");
+    return { cekBytes: hpkeCek,
+             encryptedKey: bytesToB64u(sealed.encryptedKey) };
+  }
 
   if (isEcdh(alg)) {
     var curve = curveOf(recipientPublicKey, ECDH_CURVE);
@@ -826,10 +870,41 @@ async function aesCbcOpen(encKey, iv, ciphertext) {
 }
 
 async function unwrapCekBytes(alg, enc, protectedHeader, encryptedKey,
-                              recipientPrivateKey) {
+                              recipientPrivateKey, opts) {
   log.debug("Entering unwrapCekBytes(). alg=" + alg + ", enc=" + enc);
   var keyBytes = ENC_KEY_BYTES[enc];
   if (!keyBytes) throw new Error('unsupported content encryption: ' + enc);
+
+  if (kem.isMlKemAlg(alg)) {
+    var agreed = kem.mlkemAgreeBack(alg, enc, protectedHeader.ek,
+                                    recipientPrivateKey, keyBytes);
+    if (!kem.mlkemKwBytes(alg)) {
+      // Direct Key Agreement: the JWE Encrypted Key MUST be absent.
+      if (encryptedKey) {
+        throw new Error(alg + ' is direct key agreement, so the JWE ' +
+            'Encrypted Key must be empty; this one is not.');
+      }
+      log.debug("Leaving unwrapCekBytes(). " + alg + " direct.");
+      return agreed;
+    }
+    log.debug("Leaving unwrapCekBytes(). " + alg + ".");
+    return unwrapRawBytes(b64uToBytes(encryptedKey), agreed);
+  }
+  if (kem.isHpkeAlg(alg)) {
+    if (kem.isIntegrated(alg)) {
+      throw new Error(alg + ' is HPKE Integrated Encryption, which has no ' +
+          'content encryption key. decryptCompact() performs it.');
+    }
+    var cekOut = kem.hpkeDecryptCek(alg, protectedHeader,
+                                    b64uToBytes(encryptedKey),
+                                    recipientPrivateKey, opts);
+    if (cekOut.length !== keyBytes) {
+      throw new Error('the HPKE-decrypted CEK is ' + cekOut.length +
+          ' bytes and ' + enc + ' needs ' + keyBytes + '.');
+    }
+    log.debug("Leaving unwrapCekBytes(). " + alg + ".");
+    return cekOut;
+  }
 
   if (isEcdh(alg)) {
     if (!protectedHeader.epk) throw new Error('an ECDH-ES JWE must carry an ' +
@@ -930,6 +1005,11 @@ async function encryptCompact(options) {
             options.enc);
   var alg = options.alg;
   var enc = options.enc;
+  if (kem.isIntegrated(alg)) {
+    var integrated = encryptIntegrated(options);
+    log.debug("Leaving encryptCompact(). Integrated.");
+    return integrated;
+  }
   if (!ENC_KEY_BYTES[enc]) throw new Error('unsupported content encryption: ' +
       enc);
 
@@ -940,7 +1020,9 @@ async function encryptCompact(options) {
   protectedHeader.alg = alg;
   protectedHeader.enc = enc;
 
-  var derived = await deriveCekBytes(alg, enc, protectedHeader, options.key);
+  var derived = await deriveCekBytes(alg, enc, protectedHeader, options.key,
+                                     { psk: options.psk,
+                                       pskId: options.pskId });
   var protectedB64 = strToB64u(JSON.stringify(protectedHeader));
   // RFC 7516: the AAD is ASCII(BASE64URL(protected header)).
   var aad = new TextEncoder().encode(protectedB64);
@@ -968,6 +1050,68 @@ async function encryptCompact(options) {
                  bytesToB64u(sealed.tag)].join('.');
   log.debug("Leaving encryptCompact(). " + compact.length + " characters.");
   return { jwe: compact, header: protectedHeader };
+}
+
+// HPKE Integrated Encryption (draft-ietf-jose-hpke-encrypt-22 section 5):
+// there is no CEK and no `enc`. The protected header is fixed FIRST, because
+// its encoded form is the HPKE aad; then HPKE seals the payload, its
+// encapsulated secret becomes the JWE Encrypted Key, and the IV and tag
+// segments are empty. An `enc` the caller passed is not written — section 5
+// says it MUST NOT be present — and the returned header shows that.
+function encryptIntegrated(options) {
+  log.debug("Entering encryptIntegrated(). alg=" + options.alg);
+  var alg = options.alg;
+  var protectedHeader = {};
+  Object.keys(options.header || {}).forEach(function (k) {
+    if (k !== 'enc' && k !== 'ek') protectedHeader[k] = options.header[k];
+  });
+  protectedHeader.alg = alg;
+  if (options.psk && options.pskId) {
+    protectedHeader.psk_id = bytesToB64u(bytes.asBytes(options.pskId));
+  }
+  var protectedB64 = strToB64u(JSON.stringify(protectedHeader));
+  var plaintextBytes = typeof options.plaintext === "string"
+    ? new TextEncoder().encode(options.plaintext)
+    : options.plaintext;
+  var sealed = kem.hpkeIntegratedSeal(alg, protectedB64, plaintextBytes,
+                                      options.key,
+                                      { psk: options.psk,
+                                        pskId: options.pskId });
+  var compact = [protectedB64, bytesToB64u(sealed.encryptedKey), '',
+                 bytesToB64u(sealed.ciphertext), ''].join('.');
+  log.debug("Leaving encryptIntegrated(). " + compact.length +
+            " characters.");
+  return { jwe: compact, header: protectedHeader };
+}
+
+function decryptIntegrated(options, parsed) {
+  log.debug("Entering decryptIntegrated().");
+  var header = parsed.header;
+  var parts = parsed.parts;
+  // Section 7.2 step 18, and section 5: no enc, no ek, empty IV and tag.
+  if (header.enc !== undefined) {
+    log.debug("Leaving decryptIntegrated(). enc present.");
+    throw new Error(header.alg + ' is HPKE Integrated Encryption, and its ' +
+        'JWE MUST NOT carry an "enc" header; this one says ' + header.enc +
+        '.');
+  }
+  if (header.ek !== undefined) {
+    log.debug("Leaving decryptIntegrated(). ek present.");
+    throw new Error(header.alg + ' is HPKE Integrated Encryption, whose ' +
+        'encapsulated secret is the JWE Encrypted Key; an "ek" header MUST ' +
+        'NOT be present.');
+  }
+  if (parts[2] !== '' || parts[4] !== '') {
+    log.debug("Leaving decryptIntegrated(). IV or tag present.");
+    throw new Error(header.alg + ' is HPKE Integrated Encryption, so the ' +
+        'JWE Initialization Vector and Authentication Tag MUST be empty.');
+  }
+  var plain = kem.hpkeIntegratedOpen(header.alg, header, parts[0],
+                                     b64uToBytes(parts[1]),
+                                     b64uToBytes(parts[3]), options.key,
+                                     { psk: options.psk });
+  log.debug("Leaving decryptIntegrated().");
+  return { plaintext: new TextDecoder().decode(plain), header: header };
 }
 
 // The protected header of a compact JWE, without decrypting anything — enough
@@ -1001,11 +1145,16 @@ async function decryptCompact(options) {
   var parsed = parseCompact(options.jwe);
   var header = parsed.header;
   var parts = parsed.parts;
+  if (kem.isIntegrated(header.alg)) {
+    var opened = decryptIntegrated(options, parsed);
+    log.debug("Leaving decryptCompact(). Integrated.");
+    return opened;
+  }
   if (!ENC_KEY_BYTES[header.enc]) throw new Error('unsupported content ' +
       'encryption: ' + header.enc);
 
   var cekBytes = await unwrapCekBytes(header.alg, header.enc, header, parts[1],
-      options.key);
+      options.key, { psk: options.psk });
   var aad = new TextEncoder().encode(parts[0]);
   var iv = b64uToBytes(parts[2]);
   var plaintext;
@@ -1083,6 +1232,12 @@ module.exports = {
   ECDH_CURVE_BITS: ECDH_CURVE_BITS,
   isEcdh: isEcdh,
   isRsa: isRsa,
+  // ML-KEM and HPKE (jwe_kem.js): which algorithms are KEM-based, which of
+  // those has no `enc`, and the key pairs they take.
+  isKemAlg: kem.isKemAlg,
+  isIntegrated: kem.isIntegrated,
+  describeKemAlg: kem.describeAlg,
+  generateKemKeyPair: kem.generateKeyPair,
   supportedAlgs: supportedAlgs,
   supportedEncs: supportedEncs,
   probeAesSupport: probeAesSupport,

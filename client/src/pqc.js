@@ -957,18 +957,18 @@ function joseSignatureAlgs() {
 // say what to put in the hash. The ML-KEM + P-256 pairing IS available here —
 // under Composite ML-KEM, where a draft does name the label.
 //
-// THERE IS NO ML-KEM BINDING FOR JWE, AND THAT IS A FACT ABOUT THE DRAFTS
-// RATHER THAN A GAP HERE. draft-ietf-jose-pqc-kem-06 is named for the JOSE
-// working group and its running header reads "PQ KEM for COSE": every binding
-// section in it (§6 "Post-Quantum KEM in COSE", §7 "COSE Ciphersuite
-// Registration", §8 "Use of AKP Key Type for PQC KEM Keys in COSE", and the
-// whole of its IANA section) registers COSE codepoints, and the words "JOSE"
-// appear in it three times — twice in its own filename and once in a citation
-// of RFC 9964's title. Its KDF section reads "The key derivation for COSE is
-// performed using KMAC". So there is currently no specified `alg` value, no
-// specified header parameter and no specified KDF context for ML-KEM in a
-// JWE, and this module deliberately does not invent one. jose_jwe.js says so
-// on the page instead.
+// ML-KEM IN A JWE IS NOT HERE, BUT IT DOES EXIST — in jwe_kem.js, which is
+// where JOSE things live. draft-ietf-jose-pqc-kem-06 (July 2026) is COSE-only:
+// its running header reads "PQ KEM for COSE" and every binding section
+// registers COSE codepoints. But revision -05 is the last one with JOSE text,
+// and it defines the JWE algorithms (ML-KEM-512/768/1024 and their +A*KW
+// forms), the `ek` header for the KEM ciphertext, and a KMAC256 KDF. HPKE
+// carries the rest: draft-ietf-jose-hpke-encrypt-22 (HPKE-0..7) and
+// draft-reddy-cose-jose-pqc-hybrid-hpke-11 (HPKE-8..16, X-Wing among them),
+// over the HPKE engine in hpke.js. jwe_kem.js names those revisions and the
+// one place it departs from -05 (the 64-byte ML-KEM seed, not -05's 32).
+// This module's KEMs are the raw primitives the Encryption page's KEM pane
+// offers; none of them knows what a JWE is.
 
 var mlkemCurves = {
   'P-256': { curve: p256, kind: 'ec', ssLen: 32 },
