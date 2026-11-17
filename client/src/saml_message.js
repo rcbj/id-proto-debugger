@@ -1778,6 +1778,33 @@ function saml11AuthnRequestParams(fields) {
   return out;
 }
 
+// The certificates in a field a reader may paste several into, as a list of
+// bare base64 DER bodies with no duplicates (#425). PEM blocks are taken
+// wherever they are; text with no PEM block is split on BLANK lines, because
+// a bare base64 certificate is commonly wrapped at 64 columns and splitting on
+// every newline would cut one certificate into twenty.
+function splitCertificates(text) {
+  log.debug("Entering splitCertificates().");
+  var src = String(text || '');
+  var out = [];
+  function add(body) {
+    var b64 = String(body || '').replace(/\s+/g, '');
+    if (b64 && out.indexOf(b64) < 0) out.push(b64);
+  }
+  var pem = /-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/g;
+  var m;
+  var found = false;
+  while ((m = pem.exec(src)) !== null) {
+    found = true;
+    add(m[1]);
+  }
+  if (!found) {
+    src.split(/\n\s*\n/).forEach(add);
+  }
+  log.debug("Leaving splitCertificates(). " + out.length + " found.");
+  return out;
+}
+
 // WHICH SIGNATURE A SAML 1.1 BROWSER PROFILE REQUIRES ON A LOGIN RESPONSE,
 // read off the response itself (#425).
 //
@@ -1846,6 +1873,7 @@ function requiredResponseSignature(xml) {
 
 module.exports = {
   requiredResponseSignature: requiredResponseSignature,
+  splitCertificates: splitCertificates,
   SAML11_REQUEST_PARAMS: SAML11_REQUEST_PARAMS,
   saml11AuthnRequestParams: saml11AuthnRequestParams,
   NS_SAML1P: NS_SAML1P,

@@ -1516,6 +1516,87 @@ function verifyXmlSignature(xml, opts) {
   return result;
 }
 
+// The SHA-256 fingerprint of a certificate (PEM or bare base64 DER), as
+// colon-separated upper-case hex: what a reader compares against the value an
+// identity provider publishes. '' when the input is not a certificate.
+function certFingerprint(certPemOrB64) {
+  log.debug("Entering certFingerprint().");
+  try {
+    var b64 = certPemToB64(pemWrapCert(certPemOrB64));
+    var md = forge.md.sha256.create();
+    md.update(forge.util.decode64(b64));
+    var hex = md.digest().toHex().toUpperCase();
+    log.debug("Leaving certFingerprint().");
+    return hex.match(/.{2}/g).join(':');
+  } catch (e) {
+    log.debug("Leaving certFingerprint(). Not a certificate: " + e.message);
+    return '';
+  }
+}
+
+// Verify the first enveloped signature in `xml` against a set of TRUSTED
+// certificates (#425), rather than against the one in its own KeyInfo.
+//
+// The difference is the whole of what a signature is for. A KeyInfo
+// certificate is supplied by whoever produced the document, so verifying with
+// it proves the document was not altered after signing and nothing about WHO
+// signed it: a forged response carrying a certificate of its own verifies.
+// A relying party trusts the keys its partner published (SAML metadata's
+// KeyDescriptor use="signing") and nothing else. Several may be trusted at
+// once — Shibboleth publishes a back-channel and a front-channel key, and a
+// key rollover publishes the old and the new — so the signature is valid when
+// ANY of them verifies it.
+//
+// The result is verifyXmlSignature()'s, plus:
+//   trusted        true when a trusted certificate verified it
+//   trustedIndex   which one (into `trustedCerts`), -1 when none did
+//   trustedFingerprint  that certificate's SHA-256 fingerprint
+//   keyInfoValid   whether the KeyInfo certificate verifies it — true with
+//                  `trusted` false is a document that is intact and was signed
+//                  by a key nobody trusts, which is reported as INVALID with
+//                  that sentence rather than as a broken digest.
+function verifyXmlSignatureTrusted(xml, trustedCerts) {
+  log.debug("Entering verifyXmlSignatureTrusted().");
+  var list = (trustedCerts || []).filter(function (c) {
+    return c && String(c).trim();
+  });
+  if (!list.length) {
+    log.debug("Leaving verifyXmlSignatureTrusted(). Nothing trusted.");
+    return { valid: false, trusted: false, trustedIndex: -1,
+             error: 'No trusted certificate was given.' };
+  }
+  var embedded = verifyXmlSignature(xml);
+  var last = null;
+  for (var i = 0; i < list.length; i++) {
+    var res = verifyXmlSignature(xml, { certPem: list[i] });
+    if (res.valid) {
+      res.trusted = true;
+      res.trustedIndex = i;
+      res.trustedFingerprint = certFingerprint(list[i]);
+      res.keyInfoValid = !!embedded.valid;
+      log.debug("Leaving verifyXmlSignatureTrusted(). Trusted cert " + i +
+                " verified it.");
+      return res;
+    }
+    last = res;
+  }
+  last = last || { valid: false };
+  last.valid = false;
+  last.trusted = false;
+  last.trustedIndex = -1;
+  last.keyInfoValid = !!embedded.valid;
+  if (!last.error && embedded.valid) {
+    last.untrustedSigner = true;
+    last.error = 'The document is intact, but it was signed with a key ' +
+        'none of the ' + list.length + ' trusted certificate(s) holds' +
+        (embedded.signerSubject ? ' (KeyInfo names "' +
+         embedded.signerSubject + '")' : '') + '.';
+  }
+  log.debug("Leaving verifyXmlSignatureTrusted(). No trusted cert verified " +
+            "it.");
+  return last;
+}
+
 // --- XML DECRYPTION (W3C xmlenc) -------------------------------------------
 // Inverse of encryptXml(): given an <xenc:EncryptedData> (as a string, or an
 // element containing one — e.g. a <saml:EncryptedAssertion>), RSA-unwrap the
@@ -3451,6 +3532,8 @@ module.exports = {
   verifyQueryString: verifyQueryString,
   signWsSecurity: signWsSecurity,
   verifyXmlSignature: verifyXmlSignature,
+  verifyXmlSignatureTrusted: verifyXmlSignatureTrusted,
+  certFingerprint: certFingerprint,
   generateKeyPair: generateKeyPair,
   selfSignedCertFor: selfSignedCertFor
 };

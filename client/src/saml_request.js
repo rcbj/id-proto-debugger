@@ -133,6 +133,13 @@ var SIG_ALG_RSA_SHA256 = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
 // signer certificate back out under this same prefix.
 var STORE_PREFIX = "samltools_";
 var NAMEID_OPTIONS_KEY = STORE_PREFIX + "nameid_options";
+// EVERY signing certificate the last metadata document named, as a JSON list
+// of bare base64 DER (#425). The Signer Certificate field holds one, and an
+// identity provider may publish several: Shibboleth lists a back-channel key
+// FIRST and the front-channel key that signs a Browser/POST response second,
+// and any identity provider rolling a key over lists the old and the new. The
+// SAML Response page verifies against this list (saml_response.js).
+var SIGNER_CERTS_KEY = STORE_PREFIX + "saml_signer_certs";
 
 // SAML 1.1's vocabulary. Every URI here carries `1.0` EXCEPT the protocol
 // support one, and that is not a typo anywhere: the assertion and protocol
@@ -640,19 +647,34 @@ function parseMetadata(xmlText) {
 
   // Signer certificate: KeyDescriptor[use=signing] X509Certificate. Fall back
   // to any KeyDescriptor if none is explicitly marked "signing".
+  // Every one of them is kept as well, in SIGNER_CERTS_KEY: the field shows
+  // the first, and the response is verified against all of them.
   var signerCert = '';
+  var signerCerts = [];
   var kds = tags(idp, 'KeyDescriptor');
   for (var m = 0; m < kds.length; m++) {
     var use = kds[m].getAttribute('use');
-    if (use === 'signing' || use === '' || use === null) {
-      var certEl = tags(kds[m], 'X509Certificate')[0];
+    if (use !== 'signing' && use !== '' && use !== null) continue;
+    var certEls = tags(kds[m], 'X509Certificate');
+    for (var c = 0; c < certEls.length; c++) {
+      var b64 = (certEls[c].textContent || '').replace(/\s+/g, '');
+      if (b64 && signerCerts.indexOf(b64) < 0) signerCerts.push(b64);
+    }
+  }
+  for (var n = 0; n < kds.length; n++) {
+    var kuse = kds[n].getAttribute('use');
+    if (kuse === 'signing' || kuse === '' || kuse === null) {
+      var certEl = tags(kds[n], 'X509Certificate')[0];
       if (certEl) {
         signerCert = (certEl.textContent || '').replace(/\s+/g, '');
-        if (use === 'signing') break; // prefer an explicit signing key
+        if (kuse === 'signing') break; // prefer an explicit signing key
       }
     }
   }
   setVal('saml_signer_cert', signerCert);
+  if (window.localStorage) {
+    localStorage.setItem(SIGNER_CERTS_KEY, JSON.stringify(signerCerts));
+  }
   // Default the encryption certificate to the IdP signer cert. A freshly loaded
   // metadata document OVERWRITES any previous value; between loads the user's
   // edits persist (localStorage). loadMetadata() calls saveState() after this.

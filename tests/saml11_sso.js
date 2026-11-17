@@ -649,6 +649,15 @@ async function assertSignatureValidates(driver, binding, loginWait) {
   assert(status.indexOf("assertion signature VALID") >= 0,
     "the SAML 1.1 assertion's signature should verify through " +
     "#<AssertionID>. status=" + status + "\n" + detail);
+  // Against the identity provider's PUBLISHED keys, not each signature's
+  // KeyInfo (#425): the page loaded iya-sts's metadata, so the trusted
+  // certificates are its KeyDescriptor use="signing" entries, and a KeyInfo
+  // verdict would prove only that nothing was altered.
+  assert(status.indexOf("trusted certificate(s)") >= 0 &&
+         detail.indexOf("trusted certificate ") >= 0,
+    "the signatures should be checked against the signing certificates in " +
+    "the metadata the request page loaded, not against KeyInfo. status=" +
+    status + "\n" + detail);
   if (binding !== "artifact") {
     assert(status.indexOf("Response signature VALID") >= 0,
       "on Browser/POST the <samlp:Response> must be signed and its " +

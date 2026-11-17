@@ -778,6 +778,11 @@ function renderFromStorage(msgIfMissing) {
 // table.
 function formatSigResult(res) {
   log.debug("Entering formatSigResult().");
+  if (res.untrustedSigner) {
+    log.debug("Leaving formatSigResult(). Untrusted signer.");
+    return '<span style="color:#b00;"><strong>INVALID</strong>: ' +
+        esc(res.error) + '</span>';
+  }
   if (res.error) {
     log.debug("Leaving formatSigResult().");
     return '<span style="color:#b00;">Cannot validate: ' + esc(res.error) +
@@ -799,17 +804,79 @@ function formatSigResult(res) {
       esc(res.canonicalization || '') + '</td></tr>';
   html += '<tr><td class="saml-key">Signer (cert CN)</td><td>' +
       esc(res.signerSubject || '(from KeyInfo)') + '</td></tr>';
+  html += '<tr><td class="saml-key">Verified with</td><td>' +
+      (res.trusted ? 'trusted certificate ' + (res.trustedIndex + 1) +
+       ' (SHA-256 ' + esc(res.trustedFingerprint || '') + ')' +
+       (res.keyInfoValid ? '' : '. The certificate in KeyInfo does not ' +
+        'verify it, or there is none') :
+       'the certificate in its own KeyInfo. That proves the document was ' +
+       'not altered after signing, and nothing about who signed it.') +
+      '</td></tr>';
   html += '</table>';
   log.debug("Leaving formatSigResult().");
   return html;
 }
 
-// Verify one enveloped signature, never throwing: an exception becomes a
-// result with an `error`, which formatSigResult() already renders.
+// What the reader asked to verify against: the IdP's published signing
+// certificates (the default whenever there are any), or each signature's own
+// KeyInfo certificate.
+function trustSettings() {
+  log.debug("Entering trustSettings().");
+  var modeEl = el('saml_sig_trust');
+  var certsEl = el('saml_trusted_certs');
+  var mode = (modeEl && modeEl.value) || 'trusted';
+  var certs = sm.splitCertificates(certsEl ? certsEl.value : '');
+  log.debug("Leaving trustSettings(). mode=" + mode + ", " + certs.length +
+            " trusted.");
+  return { mode: mode, certs: certs };
+}
+
+// The trusted certificates the SAML request page left behind: every signing
+// certificate in the IdP metadata it last loaded (samltools_saml_signer_certs,
+// #425) and its Signer Certificate field, without duplicates. Read on load; a
+// reader's edits to the field are used and never written back.
+function prefillTrustedCerts() {
+  log.debug("Entering prefillTrustedCerts().");
+  var field = el('saml_trusted_certs');
+  var trust = el('saml_sig_trust');
+  if (!field || field.value) {
+    log.debug("Leaving prefillTrustedCerts(). Nothing to fill.");
+    return;
+  }
+  var certs = [];
+  try {
+    var listed = JSON.parse(localStorage.getItem(
+        'samltools_saml_signer_certs') || '[]');
+    if (Array.isArray(listed)) certs = certs.concat(listed);
+    var one = localStorage.getItem('samltools_saml_signer_cert');
+    if (one) certs.push(one);
+  } catch (e) {
+    log.debug("No stored signer certificates: " + e.message);
+  }
+  var unique = sm.splitCertificates(certs.join('\n\n'));
+  field.value = unique.join('\n\n');
+  if (trust && !unique.length) trust.value = 'keyinfo';
+  log.debug("Leaving prefillTrustedCerts(). " + unique.length + " certs.");
+}
+
+// Verify one enveloped signature as trustSettings() says, never throwing: an
+// exception becomes a result with an `error`, which formatSigResult() already
+// renders.
 function verifyEnveloped(xml) {
   log.debug("Entering verifyEnveloped().");
   try {
-    var res = xd.verifyXmlSignature(xml);
+    var how = trustSettings();
+    var res;
+    if (how.mode === 'keyinfo') {
+      res = xd.verifyXmlSignature(xml);
+    } else if (!how.certs.length) {
+      res = { valid: false,
+              error: 'no trusted certificate: load the IdP metadata on the ' +
+                     'SAML request page, paste the IdP signing ' +
+                     'certificate above, or choose KeyInfo.' };
+    } else {
+      res = xd.verifyXmlSignatureTrusted(xml, how.certs);
+    }
     log.debug("Leaving verifyEnveloped().");
     return res;
   } catch (e) {
@@ -860,6 +927,10 @@ function sigSection(title, covers, res) {
 
 function verdictWord(res) {
   log.debug("Entering verdictWord().");
+  if (res.untrustedSigner) {
+    log.debug("Leaving verdictWord(). Untrusted signer.");
+    return 'INVALID (signed by an untrusted key)';
+  }
   if (res.error) {
     log.debug("Leaving verdictWord(). Cannot validate.");
     return 'cannot be validated';
@@ -875,7 +946,8 @@ function verdictWord(res) {
 // the assertion signature travels with the assertion and says nothing about
 // the Status. SAML 1.1 Browser/POST requires the first (#425), which is what
 // Shibboleth sends, and checking only the second verified nothing there.
-// Uses the certificate in each signature's KeyInfo.
+// Verifies against the trusted IdP certificates or each signature's KeyInfo,
+// as trustSettings() says.
 function validateSignatures() {
   log.debug("Entering validateSignatures().");
   var details = el('saml_sig_details');
@@ -948,13 +1020,18 @@ function validateSignatures() {
         'Response is not signed.</strong>' : '') + '</p>';
   }
 
+  var how = trustSettings();
+  var against = how.mode === 'keyinfo' ?
+      ' Checked against KeyInfo: integrity only, the signer is not ' +
+      'authenticated.' :
+      ' Checked against ' + how.certs.length + ' trusted certificate(s).';
   if (!checked) {
     setVal('saml_sig_status', 'No signature was found on this response or ' +
            'its assertion.' + finding);
   } else {
     var line = parts.join('; ');
     setVal('saml_sig_status', line.charAt(0).toUpperCase() + line.slice(1) +
-           '.' + finding);
+           '.' + finding + against);
   }
   if (details) details.innerHTML = html;
   log.debug("Leaving validateSignatures(). " + checked + " checked.");
@@ -1065,6 +1142,7 @@ function handleEdgeHandoff(posted) {
 window.onload = function () {
   log.debug("Entering onload().");
   renderOperationHistory();
+  prefillTrustedCerts();
   // Prefill the decryption key from the SP private key stored by the SAML Test
   // Tools page (the IdP encrypts to the SP's certificate).
   try {
