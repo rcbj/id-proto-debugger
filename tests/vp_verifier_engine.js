@@ -106,6 +106,7 @@ const sdJwtVp = load("sd_jwt_vp.js");
 const bbs2023 = load("bbs2023.js");
 const bbs = load("bbs.js");
 const didLib = load("did.js");
+const joseJwe = load("jose_jwe.js");
 
 // Every assertion goes through here, so the run can say how many it made
 // and refuse to call a run that made too few a pass.
@@ -281,26 +282,61 @@ function dcqlBuilder() {
   ok(!dcql.credentials[3].claims, "no claims means no claims member");
   eq(dcql.credential_sets, [{ options: [["pid"], ["mdl"]] },
      { options: [["w3c", "ld"]], required: false }]);
+  const V = "urn:x";
+  const D = "org.iso.18013.5.1.mDL";
   [[{ queries: [] }, /at least one/],
-   [{ queries: [{ format: "dc+sd-jwt" }] }, /no id/],
-   [{ queries: [{ id: "a b", format: "dc+sd-jwt" }] }, /alphanumeric/],
-   [{ queries: [{ id: "a", format: "dc+sd-jwt" },
-                { id: "a", format: "mso_mdoc" }] }, /twice/],
+   [{ queries: [{ format: "dc+sd-jwt", vct: V }] }, /no id/],
+   [{ queries: [{ id: "a b", format: "dc+sd-jwt", vct: V }] },
+    /alphanumeric/],
+   [{ queries: [{ id: "a", format: "dc+sd-jwt", vct: V },
+                { id: "a", format: "mso_mdoc", doctype: D }] }, /twice/],
    [{ queries: [{ id: "a", format: "vc+sd-jwt" }] }, /unknown format/],
-   [{ queries: [{ id: "a", format: "dc+sd-jwt", claims: [[]] }] },
+   [{ queries: [{ id: "a", format: "dc+sd-jwt", vct: V, claims: [[]] }] },
     /non-empty/],
-   [{ queries: [{ id: "a", format: "dc+sd-jwt", claims: [[""]] }] },
+   [{ queries: [{ id: "a", format: "dc+sd-jwt", vct: V, claims: [[""]] }] },
     /segment/],
-   [{ queries: [{ id: "a", format: "mso_mdoc", claims: [["ns"]] }] },
-    /namespace, element/],
-   [{ queries: [{ id: "a", format: "dc+sd-jwt" }],
-      credentialSets: [{ options: [["b"]] }] }, /no credential query/]
+   [{ queries: [{ id: "a", format: "mso_mdoc", doctype: D,
+                  claims: [["ns"]] }] }, /namespace, element/],
+   [{ queries: [{ id: "a", format: "dc+sd-jwt", vct: V }],
+      credentialSets: [{ options: [["b"]] }] }, /no credential query/],
+   // #468, M4: each format's REQUIRED meta member, never empty. Appendix
+   // B.3.5 vct_values "REQUIRED. A non-empty array of strings"; B.2.3
+   // doctype_value REQUIRED; B.1.1 type_values "REQUIRED. A non-empty
+   // array of string arrays", each inner array non-empty.
+   [{ queries: [{ id: "a", format: "dc+sd-jwt" }] }, /B\.3\.5/],
+   [{ queries: [{ id: "a", format: "dc+sd-jwt", vct: [] }] }, /B\.3\.5/],
+   [{ queries: [{ id: "a", format: "dc+sd-jwt", vct: "" }] }, /B\.3\.5/],
+   [{ queries: [{ id: "a", format: "dc+sd-jwt", vct: [V, ""] }] },
+    /B\.3\.5/],
+   [{ queries: [{ id: "a", format: "mso_mdoc" }] }, /B\.2\.3/],
+   [{ queries: [{ id: "a", format: "mso_mdoc", doctype: "" }] }, /B\.2\.3/],
+   [{ queries: [{ id: "a", format: "mso_mdoc", doctype: "  " }] },
+    /B\.2\.3/],
+   [{ queries: [{ id: "a", format: "jwt_vc_json" }] }, /B\.1\.1/],
+   [{ queries: [{ id: "a", format: "jwt_vc_json", types: [] }] },
+    /B\.1\.1/],
+   [{ queries: [{ id: "a", format: "ldp_vc", types: [[]] }] }, /B\.1\.1/],
+   [{ queries: [{ id: "a", format: "ldp_vc",
+                  types: [["VerifiableCredential"], []] }] }, /B\.1\.1/],
+   [{ queries: [{ id: "a", format: "jwt_vc_json", types: [""] }] },
+    /B\.1\.1/]
   ].forEach(function (c) {
     assertions++;
     assert.throws(function () {
       verifier.buildDcql(c[0]);
     }, c[1], "buildDcql must refuse " + JSON.stringify(c[0]));
   });
+  // The spec's own examples come back unchanged: section 6.4.1's first
+  // query and B.1.3.1.4's W3C one.
+  eq(verifier.buildDcql({ queries: [{ id: "my_credential",
+    format: "dc+sd-jwt",
+    vct: ["https://credentials.example.com/identity_credential"],
+    claims: [["last_name"], ["first_name"], ["address", "street_address"]]
+  }] }).credentials[0].meta, { vct_values:
+    ["https://credentials.example.com/identity_credential"] });
+  eq(verifier.buildDcql({ queries: [{ id: "example_jwt_vc",
+    format: "jwt_vc_json", types: [["IDCredential"]] }] })
+    .credentials[0].meta, { type_values: [["IDCredential"]] });
   log.info("PASS buildDcql, and each refusal by name.");
   log.debug("Leaving dcqlBuilder().");
   return dcql;
@@ -356,7 +392,7 @@ async function identityAndRequest() {
   assertions++;
 
   const dcql = verifier.buildDcql({ queries: [{ id: "pid",
-    format: "dc+sd-jwt", claims: [["given_name"]] }] });
+    format: "dc+sd-jwt", vct: VCT, claims: [["given_name"]] }] });
   for (const prefix of ["x509_hash", "x509_san_dns"]) {
     const clientId = verifier.clientIdFor(prefix, id,
       { dnsName: "verifier.example" });
@@ -436,6 +472,163 @@ function requestUris() {
   eq(u.searchParams.get("nonce"), "n&=?", "values are percent-encoded");
   log.info("PASS authorizationRequestUri round-trips through URL parsing.");
   log.debug("Leaving requestUris().");
+}
+
+// ---------------------------------------------------------------------------
+// A compact JWE written HERE with node's crypto, for #468 M6: ECDH-ES
+// (direct key agreement) on P-256, RFC 7518 section 4.6's Concat KDF with
+// empty PartyUInfo and PartyVInfo, then AES-GCM with the protected header's
+// base64url as the AAD (RFC 7516 section 5.1). Nothing from client/src
+// touches it, so the Verifier's reading of a header has to agree with
+// OpenSSL's AES-GCM and a KDF written from the RFC.
+// ---------------------------------------------------------------------------
+const GCM_BITS = { A128GCM: 128, A192GCM: 192, A256GCM: 256 };
+
+function concatKdf(z, enc, bits) {
+  log.debug("Entering concatKdf(). " + enc);
+  const u32 = function u32(n) {
+    log.debug("Entering u32().");
+    const b = Buffer.alloc(4);
+    b.writeUInt32BE(n);
+    log.debug("Leaving u32().");
+    return b;
+  };
+  const algId = Buffer.from(enc, "ascii");
+  const out = nodeCrypto.createHash("sha256").update(Buffer.concat([
+    u32(1), z, u32(algId.length), algId, u32(0), u32(0), u32(bits)
+  ])).digest().subarray(0, bits / 8);
+  log.debug("Leaving concatKdf().");
+  return out;
+}
+
+function nodeJwe(header, plaintext, recipientPublicJwk) {
+  log.debug("Entering nodeJwe(). " + header.enc);
+  const bits = GCM_BITS[header.enc];
+  const eph = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  const epk = eph.publicKey.export({ format: "jwk" });
+  const full = Object.assign({}, header,
+    { epk: { kty: "EC", crv: "P-256", x: epk.x, y: epk.y } });
+  const z = nodeCrypto.diffieHellman({ privateKey: eph.privateKey,
+    publicKey: nodeCrypto.createPublicKey({ key: { kty: "EC",
+      crv: "P-256", x: recipientPublicJwk.x, y: recipientPublicJwk.y },
+    format: "jwk" }) });
+  const cek = concatKdf(z, header.enc, bits);
+  const protectedB64 = b64u(JSON.stringify(full));
+  const iv = nodeCrypto.randomBytes(12);
+  const cipher = nodeCrypto.createCipheriv("aes-" + bits + "-gcm", cek, iv);
+  cipher.setAAD(Buffer.from(protectedB64, "ascii"));
+  const ct = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  log.debug("Leaving nodeJwe().");
+  return [protectedB64, "", b64u(iv), b64u(ct), b64u(tag)].join(".");
+}
+
+// OpenID4VP 1.0 section 8.3 and RFC 7516's header rules on a direct_post.jwt
+// answer (#468, M6), and section 8.2's form encoding (#469, D2). Every
+// defect fails EXACTLY its own row and the answer is still opened.
+async function jweHeaderRules(env, jwtSession, form, fetchJson, fields) {
+  log.debug("Entering jweHeaderRules().");
+  const pub = env.enc.publicJwk;
+  const plain = Buffer.from(JSON.stringify(fields));
+  const send = async function send(jwe, sessionOverride, contentType) {
+    log.debug("Entering send().");
+    const res = await run({ fields: vp.formEncode({ response: jwe }),
+      session: Object.assign({}, jwtSession, sessionOverride || {}),
+      fetchJson: fetchJson, contentType: contentType });
+    log.debug("Leaving send().");
+    return res;
+  };
+  const right = { alg: "ECDH-ES", enc: "A128GCM", kid: pub.kid };
+  let r = await send(nodeJwe(right, plain, pub));
+  allPass(r, "a JWE written with node's crypto");
+  ["response.jwe.kid", "response.jwe.alg", "response.jwe.enc",
+   "response.jwe.crit", "response.decrypt"].forEach(function (id) {
+    eq((checkById(r, id) || {}).status, "pass", id + " on a correct JWE");
+  });
+  ok(!checkById(r, "response.jwe.zip"), "no zip, no zip row");
+  ok(!checkById(r, "response.encoding"), "no contentType, no encoding row");
+  r = await send(nodeJwe(right, plain, pub), {}, "application/x-www-form-" +
+                 "urlencoded; charset=UTF-8");
+  allPass(r, "posted as a form");
+  eq(checkById(r, "response.encoding").status, "pass");
+  r = await send(nodeJwe(Object.assign({}, right, { enc: "A256GCM" }), plain,
+                 pub));
+  allPass(r, "A256GCM, the other value this Verifier offers");
+
+  r = await send(nodeJwe(Object.assign({}, right, { kid: "other" }), plain,
+                 pub));
+  failsOnly(r, ["response.jwe.kid"], "kid names another key (section 8.3)");
+  ok(/MUST include the same value/.test(checkById(r,
+     "response.jwe.kid").detail), "the row quotes section 8.3");
+  eq(checkById(r, "response.decrypt").status, "pass",
+     "a wrong kid is reported, and the answer still opens");
+  const noKid = Object.assign({}, right);
+  delete noKid.kid;
+  r = await send(nodeJwe(noKid, plain, pub));
+  failsOnly(r, ["response.jwe.kid"], "no kid when the key has one");
+  const keyNoKid = Object.assign({}, env.enc.privateJwk);
+  delete keyNoKid.kid;
+  r = await send(nodeJwe(noKid, plain, pub), { decryptionJwk: keyNoKid });
+  allPass(r, "no kid when the key has none");
+  eq(checkById(r, "response.jwe.kid").status, "skip");
+
+  r = await send(nodeJwe(Object.assign({}, right, { enc: "A192GCM" }), plain,
+                 pub));
+  failsOnly(r, ["response.jwe.enc"], "an enc the request did not offer");
+  eq(checkById(r, "response.decrypt").status, "pass");
+  // Section 8.3's own client_metadata example offers A128CBC-HS256.
+  const cbc = await joseJwe.encryptCompact({ alg: "ECDH-ES",
+    enc: "A128CBC-HS256", plaintext: plain.toString(), key: pub,
+    header: { kid: pub.kid } });
+  r = await send(cbc.jwe);
+  failsOnly(r, ["response.jwe.enc"], "A128CBC-HS256 when it was not offered");
+  r = await send(cbc.jwe, { encValuesSupported: ["A128GCM",
+                                                 "A128CBC-HS256"] });
+  allPass(r, "A128CBC-HS256 when the request offered it (section 8.3's " +
+          "example)");
+
+  const kw = await joseJwe.encryptCompact({ alg: "ECDH-ES+A128KW",
+    enc: "A128GCM", plaintext: plain.toString(), key: pub,
+    header: { kid: pub.kid } });
+  r = await send(kw.jwe);
+  failsOnly(r, ["response.jwe.alg"], "ECDH-ES+A128KW to an ECDH-ES key " +
+            "(section 8.3: alg MUST equal the chosen jwk's alg)");
+  eq(checkById(r, "response.decrypt").status, "pass");
+
+  // RFC 7515 section 4.1.11's own example extension, "exp".
+  r = await send(nodeJwe(Object.assign({}, right, { crit: ["exp"],
+    exp: 1363284000 }), plain, pub));
+  failsOnly(r, ["response.jwe.crit"], "crit names an extension this " +
+            "Verifier does not understand");
+  r = await send(nodeJwe(Object.assign({}, right, { crit: [] }), plain, pub));
+  failsOnly(r, ["response.jwe.crit"], "crit is the empty list");
+  ok(/empty list/.test(checkById(r, "response.jwe.crit").detail));
+
+  // RFC 7516 section 4.1.3: "DEF" is DEFLATE (RFC 1951), node's raw deflate.
+  r = await send(nodeJwe(Object.assign({}, right, { zip: "DEF" }),
+                 zlib.deflateRawSync(plain), pub));
+  allPass(r, "a zip DEF answer is inflated and checked");
+  eq(checkById(r, "response.jwe.zip").status, "pass");
+  r = await send(nodeJwe(Object.assign({}, right, { zip: "BR" }), plain,
+                 pub));
+  failsOnly(r, ["response.jwe.zip"], "a zip value nothing here undoes");
+  r = await send(nodeJwe(Object.assign({}, right, { zip: "DEF" }), plain,
+                 pub));
+  failsOnly(r, ["response.jwe.zip"], "zip DEF over bytes that are not " +
+            "DEFLATE");
+
+  // Section 8.2: the answer MUST be form-encoded. JSON is opened, checked,
+  // and FAILs its own row.
+  r = await send(nodeJwe(right, plain, pub), {}, "application/json");
+  failsOnly(r, ["response.encoding"], "a JSON answer (section 8.2)");
+  eq(checkById(r, "response.decrypt").status, "pass");
+  r = await run({ fields: form, session: Object.assign({}, jwtSession,
+    { responseMode: "direct_post", decryptionJwk: undefined }),
+    fetchJson: fetchJson, contentType: "text/plain" });
+  failsOnly(r, ["response.encoding"], "a plain answer as text/plain");
+  log.info("PASS #468 M6 and #469 D2: the JWE's kid, alg, enc, crit and " +
+           "zip, and the form encoding, each its own row.");
+  log.debug("Leaving jweHeaderRules().");
 }
 
 // ---------------------------------------------------------------------------
@@ -617,7 +810,12 @@ async function sdJwtRoundTrip(env) {
     clientMetadata: { jwks: { keys: [otherKey.publicJwk] } } });
   r = await run({ fields: { response: sealedElsewhere.jwe },
                   session: jwtSession, fetchJson: fetchJson });
-  failsOnly(r, ["response.decrypt"], "a JWE to another Verifier's key");
+  // Section 8.3: a JWE to another key names that key's kid, which is not
+  // the one this Verifier offered.
+  failsOnly(r, ["response.decrypt", "response.jwe.kid"],
+            "a JWE to another Verifier's key");
+  await jweHeaderRules(env, jwtSession, form, fetchJson, {
+    vp_token: { pid: [built.presentation] }, state: session.state });
 
   // --- one defect each, each failing exactly its own check ---------------
   const good = { aud: clientId, nonce: session.nonce, key: holder };
@@ -692,7 +890,7 @@ async function sdJwtRoundTrip(env) {
   // Holder binding not required: no KB-JWT is fine then.
   const unbound = Object.assign({}, session, { dcql: verifier.buildDcql({
     queries: [{ id: "pid", format: "dc+sd-jwt", requireBinding: false,
-                claims: [["given_name"]] }] }) });
+                vct: VCT, claims: [["given_name"]] }] }) });
   allPass(await run({ fields: vp.formEncode({ vp_token: { pid: [
     presentSdJwt(cred.jwt, wanted, null)] }, state: session.state }),
     session: unbound, fetchJson: fetchJson }), "no binding required");
@@ -909,6 +1107,7 @@ async function ldpVcRoundTrip(env) {
     return i;
   });
   const dcql = verifier.buildDcql({ queries: [{ id: "ld", format: "ldp_vc",
+    types: [["VerifiableCredential"]],
     claims: [["credentialSubject", "given_name"]] }] });
   const session = { clientId: clientId, nonce: nonce, state: "st",
     responseMode: "direct_post", dcql: dcql,
@@ -1054,7 +1253,7 @@ async function prefixesAndWalletNonce(env) {
      ["EC", "P-256", "ES256"]);
   ok(!key.publicJwk.d && key.privateJwk.d, "makeRequestKey: d only private");
   const dcql = verifier.buildDcql({ queries: [{ id: "pid",
-    format: "dc+sd-jwt", claims: [["given_name"]] }] });
+    format: "dc+sd-jwt", vct: VCT, claims: [["given_name"]] }] });
   const base = { responseUri: "https://verifier.example/response",
     responseMode: "direct_post", nonce: "n-1", state: "s-1", dcql: dcql };
 
@@ -1583,7 +1782,7 @@ async function tokenStatusLists(env) {
   const fetchText = textFetcher(docs, seen);
   const holder = ecPair();
   const dcql = verifier.buildDcql({ queries: [{ id: "pid",
-    format: "dc+sd-jwt", claims: [["given_name"]] }] });
+    format: "dc+sd-jwt", vct: VCT, claims: [["given_name"]] }] });
   const clientId = verifier.clientIdFor("x509_hash", env.identity);
   const session = { clientId: clientId, nonce: verifier.randomToken(),
     responseMode: "direct_post", dcql: dcql,
@@ -1709,7 +1908,7 @@ async function tokenStatusLists(env) {
   const mSession = { nonce: nonce, responseMode: "dc_api", origin: ORIGIN,
     trustAnchors: [auth.iacaPem],
     dcql: verifier.buildDcql({ queries: [{ id: "mdl", format: "mso_mdoc",
-      claims: [[NS, "given_name"]] }] }) };
+      doctype: mdocIssuer.DOCTYPE, claims: [[NS, "given_name"]] }] }) };
   async function mdocAt(status) {
     log.debug("Entering mdocAt().");
     const cred = issueMdocHere(auth, device.publicJwk,
@@ -1824,7 +2023,7 @@ async function tokenStatusSpecVectors(env) {
   const session = { clientId: clientId, nonce: verifier.randomToken(),
     responseMode: "direct_post", responseUri: "https://verifier.example/r",
     dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
-      claims: [["given_name"]] }] }) };
+      vct: VCT, claims: [["given_name"]] }] }) };
   async function entry(name, idx) {
     log.debug("Entering entry(). " + name + " " + idx);
     const cred = issueSdJwt(issuer, holder.publicJwk, { payload: { status:
@@ -2005,7 +2204,7 @@ async function statusSignerLinks(env) {
     responseMode: "direct_post", responseUri: "https://verifier.example/r",
     trustAnchors: [pki.ca.pem],
     dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
-      claims: [["given_name"]] }] }) };
+      vct: VCT, claims: [["given_name"]] }] }) };
   async function at(name, opts) {
     log.debug("Entering at(). " + name);
     const o = opts || {};
@@ -2144,7 +2343,8 @@ async function bitstringStatusLists(env) {
   };
   const clientId = verifier.clientIdFor("x509_hash", env.identity);
   const dcql = verifier.buildDcql({ queries: [{ id: "w3c",
-    format: "jwt_vc_json", claims: [["credentialSubject", "given_name"]] }] });
+    format: "jwt_vc_json", types: ["VerifiableCredential"],
+    claims: [["credentialSubject", "given_name"]] }] });
   const session = { clientId: clientId, nonce: verifier.randomToken(),
     responseMode: "direct_post", dcql: dcql };
   const seen = [];
@@ -2386,6 +2586,7 @@ async function cryptosuites(env) {
   const clientId = verifier.clientIdFor("x509_hash", env.identity);
   const nonce = verifier.randomToken();
   const dcql = verifier.buildDcql({ queries: [{ id: "ld", format: "ldp_vc",
+    types: [["VerifiableCredential"]],
     claims: [["credentialSubject", "given_name"]] }] });
   const session = { clientId: clientId, nonce: nonce,
                     responseMode: "direct_post", dcql: dcql };
@@ -2622,7 +2823,8 @@ async function securityFindings(env) {
 
   // jwt_vc_json takes the same route. The VP JWT is built here with node.
   const vcDcql = verifier.buildDcql({ queries: [{ id: "w",
-    format: "jwt_vc_json", requireBinding: false }] });
+    format: "jwt_vc_json", types: ["VerifiableCredential"],
+    requireBinding: false }] });
   const sendVc = async function sendVc(vcJwt, fetchJson) {
     log.debug("Entering sendVc().");
     const vpJwt = nodeJws({ alg: "ES256", typ: "JWT",
@@ -2673,7 +2875,8 @@ async function securityFindings(env) {
       proofValue: "z2HnFSSPPBzR36zdDgK8PbEHeXbR56YF24jwMpt3R1eHXQzJDMWS93F" +
         "CzpvJpwTWd3GAVFuUfjoJdcnTMuVor51aX" } };
   const ldDcql = verifier.buildDcql({ queries: [{ id: "u",
-    format: "ldp_vc", requireBinding: false }] });
+    format: "ldp_vc", types: [["VerifiableCredential"]],
+    requireBinding: false }] });
   const UNI = "https://university.example";
   const uniKey = suiteKey("P-384");
   const uniDid = "did:web:university.example";
@@ -3545,6 +3748,186 @@ async function proofContexts(env) {
 // certSignedBy() and a CERT_SIG_ALGS of different shapes; in JavaScript the
 // second declaration silently replaces the first, and the merged engine
 // failed a correct mdoc answer with no hint why. A source check names it.
+// ---------------------------------------------------------------------------
+// #468 and #469: the request side's findings, each against something this
+// tree did not write.
+// ---------------------------------------------------------------------------
+function nodeEdJws(header, payload, privateKey) {
+  log.debug("Entering nodeEdJws().");
+  const input = b64u(JSON.stringify(header)) + "." +
+    b64u(JSON.stringify(payload));
+  log.debug("Leaving nodeEdJws().");
+  return input + "." + b64u(nodeCrypto.sign(null, Buffer.from(input),
+                                            privateKey));
+}
+
+// RFC 5280 section 4.2.1.3's KeyUsage, read from a certificate's DER.
+const KU_BITS = ["digitalSignature", "nonRepudiation", "keyEncipherment",
+  "dataEncipherment", "keyAgreement", "keyCertSign", "cRLSign",
+  "encipherOnly", "decipherOnly"];
+
+function keyUsageOf(der) {
+  log.debug("Entering keyUsageOf().");
+  const forgeLib = require("node-forge");
+  const asn1 = forgeLib.asn1;
+  const cert = asn1.fromDer(Buffer.from(der).toString("binary"));
+  const tbs = cert.value[0];
+  const wrapped = tbs.value.filter(function (n) {
+    return n.tagClass === asn1.Class.CONTEXT_SPECIFIC && n.type === 3;
+  })[0];
+  const exts = wrapped.value[0].value;
+  for (const ext of exts) {
+    if (asn1.derToOid(ext.value[0].value) !== "2.5.29.15") {
+      continue;
+    }
+    const critical = ext.value.length === 3 &&
+      ext.value[1].value.charCodeAt(0) !== 0;
+    const octets = ext.value[ext.value.length - 1].value;
+    const bits = asn1.fromDer(octets).value;
+    const raw = typeof bits === "string" ? bits : "";
+    const names = [];
+    for (let i = 1; i < raw.length; i++) {
+      for (let b = 0; b < 8; b++) {
+        if (raw.charCodeAt(i) & (0x80 >> b)) {
+          names.push(KU_BITS[(i - 1) * 8 + b]);
+        }
+      }
+    }
+    log.debug("Leaving keyUsageOf().");
+    return { critical: critical, names: names };
+  }
+  log.debug("Leaving keyUsageOf(). None.");
+  return { critical: false, names: [] };
+}
+
+async function requestSideFindings(env) {
+  log.debug("Entering requestSideFindings().");
+  // M5. RFC 5480 section 3: an id-ecPublicKey end-entity certificate may
+  // assert digitalSignature, nonRepudiation and/or keyAgreement, never
+  // keyEncipherment. The KeyUsage BIT STRING is read straight out of the
+  // DER (node-forge's ASN.1 reader and RFC 5280 section 4.2.1.3's bit
+  // numbering written here), not through x509.js.
+  const leafKu = keyUsageOf(env.identity.leafDer);
+  ok(leafKu.critical, "the leaf carries a critical KeyUsage");
+  eq(leafKu.names, ["digitalSignature"],
+     "the P-256 leaf asserts digitalSignature only (RFC 5480 section 3)");
+  const rootKu = keyUsageOf(env.identity.rootDer);
+  ok(rootKu.names.indexOf("keyCertSign") !== -1 &&
+     rootKu.names.indexOf("keyEncipherment") === -1,
+     "the root signs certificates and asserts no keyEncipherment either: " +
+     rootKu.names.join(", "));
+  const nodeLeaf = new nodeCrypto.X509Certificate(env.identity.leafPem);
+  eq(nodeLeaf.publicKey.asymmetricKeyDetails.namedCurve, "prime256v1",
+     "node reads the leaf key as P-256");
+
+  // M7. Appendix B.3.4: fully-specified identifiers, so Ed25519.
+  const formats = verifier.vpFormatsSupported();
+  eq(formats["dc+sd-jwt"]["sd-jwt_alg_values"], ["ES256", "ES384",
+     "Ed25519"]);
+  eq(formats["dc+sd-jwt"]["kb-jwt_alg_values"], ["ES256", "ES384",
+     "Ed25519"]);
+  ok(formats["dc+sd-jwt"]["sd-jwt_alg_values"].indexOf("EdDSA") === -1 &&
+     formats["dc+sd-jwt"]["kb-jwt_alg_values"].indexOf("EdDSA") === -1,
+     "EdDSA is not fully specified and is not advertised for SD-JWT VC");
+  // ...and an SD-JWT VC whose issuer JWT AND KB-JWT both say "Ed25519",
+  // signed by node, verifies end to end.
+  const issuerKey = nodeCrypto.generateKeyPairSync("ed25519");
+  const holderKey = nodeCrypto.generateKeyPairSync("ed25519");
+  const issuerJwk = Object.assign({ kid: "iss-ed", alg: "Ed25519",
+    use: "sig" }, issuerKey.publicKey.export({ format: "jwk" }));
+  const holderJwk = holderKey.publicKey.export({ format: "jwk" });
+  const docs = {};
+  docs["https://issuer.example/.well-known/jwt-vc-issuer/tenant"] =
+    { issuer: ISSUER, jwks_uri: "https://issuer.example/jwks-ed" };
+  docs["https://issuer.example/jwks-ed"] = { keys: [issuerJwk] };
+  const fetchJson = function fetchJson(url) {
+    log.debug("Entering fetchJson(). " + url);
+    log.debug("Leaving fetchJson().");
+    return docs[url] ? Promise.resolve(JSON.parse(JSON.stringify(docs[url])))
+      : Promise.reject(new Error("no such document: " + url));
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const given = disclosure("e1", "given_name", "Erika");
+  const jwt = nodeEdJws({ alg: "Ed25519", typ: "dc+sd-jwt", kid: "iss-ed" },
+    { iss: ISSUER, iat: now - 60, exp: now + 3600, vct: VCT,
+      _sd_alg: "sha-256", _sd: [sha256b64u(given)],
+      cnf: { jwk: holderJwk } }, issuerKey.privateKey);
+  const clientId = verifier.clientIdFor("x509_hash", env.identity);
+  const session = { clientId: clientId, nonce: verifier.randomToken(),
+    state: "st-ed", responseMode: "direct_post",
+    dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+      vct: VCT, claims: [["given_name"]] }] }) };
+  const prefix = jwt + "~" + given + "~";
+  const kb = nodeEdJws({ alg: "Ed25519", typ: "kb+jwt" },
+    { iat: now, aud: clientId, nonce: session.nonce,
+      sd_hash: sha256b64u(prefix) }, holderKey.privateKey);
+  const fields = vp.formEncode({ vp_token: { pid: [prefix + kb] },
+                                 state: session.state });
+  let r = await run({ fields: fields, session: session,
+                      fetchJson: fetchJson });
+  allPass(r, "an SD-JWT VC and KB-JWT whose headers say Ed25519");
+  eq([checkById(r, "pid[0].issuer.signature").status,
+      checkById(r, "pid[0].kb.signature").status], ["pass", "pass"],
+     "both Ed25519 signatures were verified, not skipped");
+  const forged = prefix + kb.slice(0, -6) + (kb.slice(-6) === "AAAAAA" ?
+    "BBBBBB" : "AAAAAA");
+  r = await run({ fields: vp.formEncode({ vp_token: { pid: [forged] },
+    state: session.state }), session: session, fetchJson: fetchJson });
+  ok(checkById(r, "pid[0].kb.signature").status === "fail",
+     "a damaged Ed25519 KB-JWT signature fails");
+
+  // C17. Section 5.9.3: "Requests using the redirect_uri Client Identifier
+  // Prefix cannot be signed".
+  const plain = verifier.requestObjectClaims({
+    clientId: "redirect_uri:https://v.example/response",
+    responseUri: "https://v.example/response", responseMode: "direct_post",
+    nonce: "n", dcql: session.dcql });
+  await rejects(function () {
+    return verifier.signRequestObject({ claims: plain,
+                                        identity: env.identity });
+  }, /redirect_uri.*never signed.*cannot be signed/,
+  "signRequestObject must refuse a redirect_uri: request even with an x5c");
+  await rejects(function () {
+    return verifier.signRequestObject({ claims: plain,
+      identity: verifier.makeRequestKey() });
+  }, /5\.9\.3/, "and with a bare key");
+  eq(verifier.clientIdFor("redirect_uri", {},
+     { redirectUri: "https://v.example/response" }),
+     "redirect_uri:https://v.example/response",
+     "a redirect_uri Client Identifier needs no identity at all");
+
+  // C18. "pre-registered" is a client_id_prefixes_supported value (section
+  // 10.1), not a prefix: "pre-registered:x" is a Client Identifier of its
+  // own and signs as a pre-registered client.
+  const typed = verifier.clientIdFor("pre-registered", null,
+    { clientId: "pre-registered:x" });
+  eq(typed, "pre-registered:x");
+  const key = verifier.makeRequestKey();
+  const pre = await verifier.signRequestObject({ identity: key,
+    claims: verifier.requestObjectClaims({ clientId: typed,
+      responseUri: "https://v.example/response", responseMode: "direct_post",
+      nonce: "n", dcql: session.dcql }) });
+  eq(decodeCompact(pre).header.kid, key.publicJwk.kid,
+     "pre-registered:x is signed as a pre-registered client (kid)");
+
+  // M8. Section 5.1: with request_uri_method=post the Verifier SHOULD send
+  // client_metadata beside request_uri.
+  const md = { vp_formats_supported: formats };
+  let u = new URL(verifier.authorizationRequestUri({ clientId: "c",
+    requestUri: "https://v.example/req", requestUriMethod: "post",
+    clientMetadata: md }));
+  eq(u.searchParams.get("request_uri_method"), "post");
+  eq(JSON.parse(u.searchParams.get("client_metadata")), md,
+     "client_metadata travels beside request_uri under post");
+  u = new URL(verifier.authorizationRequestUri({ clientId: "c",
+    requestUri: "https://v.example/req", clientMetadata: md }));
+  ok(!u.searchParams.has("client_metadata"),
+     "under get the Request Object carries it, and nothing else does");
+  log.info("PASS #468 M5 (KeyUsage read from the DER), M7 (Ed25519 " +
+           "signed by node) and M8; #469 C17 and C18.");
+  log.debug("Leaving requestSideFindings().");
+}
+
 function oneDeclarationPerName() {
   log.debug("Entering oneDeclarationPerName().");
   const text = fs.readFileSync(path.join(SRC, "vp_verifier.js"), "utf8");
@@ -3589,14 +3972,15 @@ async function main() {
   await typeValueFindings(env);
   await mdocFindings(env);
   await proofContexts(env);
+  await requestSideFindings(env);
   log.info("vp_verifier_engine: " + assertions + " assertions, " +
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 1180, "only " + assertions + " assertions ran; " +
-            "expected at least 1180");
-  assert.ok(checksSeen >= 4450, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 4450");
+  assert.ok(assertions >= 1280, "only " + assertions + " assertions ran; " +
+            "expected at least 1280");
+  assert.ok(checksSeen >= 4900, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 4900");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }

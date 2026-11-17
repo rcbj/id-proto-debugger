@@ -1111,7 +1111,8 @@ function decryptIntegrated(options, parsed) {
                                      b64uToBytes(parts[3]), options.key,
                                      { psk: options.psk });
   log.debug("Leaving decryptIntegrated().");
-  return { plaintext: new TextDecoder().decode(plain), header: header };
+  return { plaintext: new TextDecoder().decode(plain), header: header,
+           plaintextBytes: plain };
 }
 
 // The protected header of a compact JWE, without decrypting anything — enough
@@ -1166,8 +1167,11 @@ async function decryptCompact(options) {
         b64uToBytes(parts[4]));
   }
 
+  // `plaintextBytes` as well as the text: a JWE with "zip": "DEF" (RFC 7516
+  // section 4.1.3) carries DEFLATE output, which no UTF-8 decoding survives.
   log.debug("Leaving decryptCompact().");
-  return { plaintext: new TextDecoder().decode(plaintext), header: header };
+  return { plaintext: new TextDecoder().decode(plaintext), header: header,
+           plaintextBytes: plaintext };
 }
 
 // ---------------------------------------------------------------------------
