@@ -258,6 +258,11 @@ const JOB_LOCKS = {
   "sd_jwt_vc_presentation.js": "sts-vc",
   "ldp_vc_issuance.js": "sts-vc",
   "ldp_vc_presentation.js": "sts-vc",
+  // Configures nothing, but every case's request is built from the
+  // Verifier configuration sd_jwt_vc_presentation.js pins (the claims and
+  // the default format), and its credentials from /admin/vc: a pin landing
+  // mid-case changes what is asked for under a credential minted before it.
+  "vc_presentation_protocols.js": "sts-vc",
   "ldp_vc_refresh.js": "sts-vc",
   "jwt_vc_json_issuance.js": "sts-vc",
   "jwt_vc_json_presentation.js": "sts-vc",
@@ -4034,8 +4039,8 @@ function buildJobs() {
     // 1.0 — x509_hash, a signed request by request_uri, an encrypted
     // direct_post.jwt answer — and SIOPv2, a self-issued ID Token beside the
     // presentation and on its own, for every format the wallet holds. It
-    // starts its own verifications and configures nothing, so it takes no
-    // lock.
+    // configures nothing, but holds `sts-vc` (JOB_LOCKS) because what it is
+    // asked for comes from the configuration other jobs pin.
     jobs.push({
       name: "VC Presentation — HAIP 1.0 and SIOPv2 (x509_hash, " +
           "direct_post.jwt, self-issued ID Tokens, every format)",
