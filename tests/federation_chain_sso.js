@@ -372,12 +372,13 @@ async function registerApplication(appBase, callbackUri) {
 // ---------------------------------------------------------------------------
 // WHAT REALM 4 PUBLISHES AS A SAML 2.0 IDENTITY PROVIDER, read from realm 4.
 //
-// Asked for BY THE SERVICE PROVIDER'S entityID, because the mock mints
-// per-service-provider identity provider metadata
-// (`saml2.perApplicationEntityId`): a document fetched without that name
-// carries a DIFFERENT entityID from the one assertions will actually arrive
-// with, and `fedPeer` is checked against the Issuer — so the flow would be
-// refused with "it was issued by somebody else".
+// Asked for at the service provider's own metadata path, which iya-sts still
+// serves. The entityID is READ from the document rather than assumed, because
+// `fedPeer` is checked against the Issuer and a wrong one is refused with "it
+// was issued by somebody else". Since iya-sts #523 (in 1.0.0) every SAML
+// entityID of a realm is that realm's OAuth issuer and has no override, so
+// the name in the path no longer changes it; `saml2.perApplicationEntityId`,
+// which made it per service provider, was retired with the rest (#358).
 // ---------------------------------------------------------------------------
 async function readSaml2Metadata(bridgeBase, spEntityId) {
   log.debug("Entering readSaml2Metadata().");
