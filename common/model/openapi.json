@@ -2317,7 +2317,7 @@
       },
       "post": {
         "operationId": "oid4vpVerifierRequestPost",
-        "description": "A Wallet fetches the Request Object by POST, request_uri_method=post\n(section 5.10), carrying wallet_metadata and wallet_nonce. Under live\nsigning the answer waits for the page, up to\noid4vpVerifierLiveSignWaitMs, then falls back to the pre-signed one.",
+        "description": "A Wallet fetches the Request Object by POST, request_uri_method=post\n(section 5.10), carrying wallet_metadata and wallet_nonce. Under live\nsigning the answer waits for the page, up to\noid4vpVerifierLiveSignWaitMs; a Wallet that sent a wallet_nonce is then\nanswered 503, and one that sent none gets the pre-signed object.",
         "parameters": [
           {
             "name": "id",
@@ -2341,6 +2341,16 @@
           },
           "404": {
             "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.WalletError"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "request_uri_method=post: the Wallet sent a wallet_nonce, which section\n5.10 says the Verifier MUST put in the Request Object, and the page did\nnot sign one carrying it in time (or too many Wallets already wait).\nSection 5.10.2: any HTTP error makes the Wallet terminate.",
             "content": {
               "application/json": {
                 "schema": {
@@ -10951,7 +10961,12 @@
           },
           "reason": {
             "type": "string",
-            "description": "request-signed with liveSigned false: why the pre-signed object was\nserved."
+            "description": "request-signed with liveSigned false: why the page's object was not\nserved, and what the Wallet got instead."
+          },
+          "httpStatus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "request-signed: the HTTP error the Wallet was answered with — 503\nwhen it sent a wallet_nonce no Request Object could be signed with in\ntime (OpenID4VP section 5.10.2). Absent when it got an object."
           }
         },
         "description": "One thing a Wallet did."

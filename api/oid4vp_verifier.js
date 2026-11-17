@@ -64,22 +64,33 @@
 //
 // ---------------------------------------------------------------------------
 // LIVE SIGNING (request_uri_method=post, section 5.10). A Wallet that POSTs
-// to request_uri sends `wallet_nonce` (and `wallet_metadata`), and the
-// Verifier SHOULD answer with a Request Object carrying that nonce. The key
-// is in the page, so this service cannot sign one; a session created with
-// `liveSigning: true` therefore HOLDS the Wallet's POST open, for at most
-// `oid4vpVerifierLiveSignWaitMs`, and records a `request-fetched` event with
-// a `signingId`. The page sees it on its next poll of /events, signs an
-// object carrying that wallet_nonce, and PUTs it to
-// /oid4vp/verifier/:id/request/:signingId; the held Wallet is answered with
-// it and a `request-signed` event says `liveSigned: true`. If the page does
-// not answer in time the Wallet is served the pre-signed object, exactly as
-// without live signing, and `request-signed` says `liveSigned: false` and
-// why. **A timeout falls back; it is never an error to the Wallet.** At most
-// `oid4vpVerifierMaxPendingSignings` Wallets wait on one session; one more
-// is served the pre-signed object at once. Every wait is a timer, and every
-// timer is cleared when its session ends — deleted, expired, swept, reset
-// or at shutdown() — so a session never outlives itself in the event loop.
+// to request_uri sends `wallet_nonce` (and `wallet_metadata`), and section
+// 5.10 is not optional about it: "When received, the Verifier MUST use it
+// as the wallet_nonce value in the signed authorization request object."
+// The key is in the page, so this service cannot sign one; a session
+// created with `liveSigning: true` therefore HOLDS the Wallet's POST open,
+// for at most `oid4vpVerifierLiveSignWaitMs`, and records a
+// `request-fetched` event with a `signingId`. The page sees it on its next
+// poll of /events, signs an object carrying that wallet_nonce, and PUTs it
+// to /oid4vp/verifier/:id/request/:signingId; the held Wallet is answered
+// with it and a `request-signed` event says `liveSigned: true`.
+//
+// **A Wallet that sent a wallet_nonce is never handed the pre-signed
+// object**, which cannot carry it: section 5.10.1 has the Wallet "terminate
+// request processing" on such an object, so serving it would only be a
+// slower, quieter failure. When the page does not sign in time, or
+// `oid4vpVerifierMaxPendingSignings` Wallets already wait on the session,
+// that Wallet is answered 503 `temporarily_unavailable` — section 5.10.2:
+// "If the Verifier responds with any HTTP error response, the Wallet MUST
+// terminate the process" — and `request-signed` records `liveSigned:
+// false`, `httpStatus: 503` and why. A POST WITHOUT a wallet_nonce has
+// nothing to echo, so it still falls back to the pre-signed object. A
+// session WITHOUT live signing serves the pre-signed object to every POST,
+// as a debugging affordance (a Wallet that does not terminate on it is the
+// finding), and the `request-fetched` event carries a `problem` saying the
+// object does not carry the nonce. Every wait is a timer, and every timer
+// is cleared when its session ends — deleted, expired, swept, reset or at
+// shutdown() — so a session never outlives itself in the event loop.
 //
 // IT IS IN MEMORY AND DIES WITH THE PROCESS, for the SSF receiver's reason:
 // what is held is a person's presented credentials, and this service writes
@@ -673,11 +684,13 @@ function sizeOf(request) {
 }
 
 // A Wallet-facing refusal, in OAuth's `{error, error_description}` shape,
-// since that is the one error shape a Wallet is sure to read.
-function walletError(status, description) {
+// since that is the one error shape a Wallet is sure to read. `code`
+// overrides the error code (RFC 6749 section 4.1.2.1's
+// temporarily_unavailable, for a live signature that could not be had).
+function walletError(status, description, code) {
   log.debug('Entering walletError(). ' + status);
-  var out = { ok: false, status: status, error: status === 404
-    ? 'not_found' : 'invalid_request', error_description: description };
+  var out = { ok: false, status: status, error: code || (status === 404
+    ? 'not_found' : 'invalid_request'), error_description: description };
   log.debug('Leaving walletError().');
   return out;
 }
@@ -688,11 +701,11 @@ function walletError(status, description) {
 // remoteAddress }. Under request_uri_method=post (section 5.10) the body
 // carries `wallet_metadata` and `wallet_nonce`, which are recorded. Without
 // live signing the object served is the one the page signed beforehand,
-// which CANNOT echo a wallet_nonce it never saw — the page reports that.
-// With it, a POST is held for the page to sign (waitForSigning()), and the
-// answer is `{ ok, status, signingId, pending, cancel }`: `pending` is a
-// promise of the answer, and `cancel()` releases the wait early (the
-// Wallet went away) to the same fallback a timeout gives.
+// which CANNOT echo a wallet_nonce it never saw, and the event's `problem`
+// says so (section 5.10: the Verifier MUST use it). With it, a POST is held
+// for the page to sign (waitForSigning()), and the answer is `{ ok, status,
+// signingId, pending, cancel }`: `pending` is a promise of the answer, and
+// `cancel()` releases the wait early (the Wallet went away).
 // ---------------------------------------------------------------------------
 function fetchRequest(appconfig, id, request) {
   log.debug('Entering fetchRequest(). ' + id);
@@ -706,6 +719,7 @@ function fetchRequest(appconfig, id, request) {
   var method = String(asked.method || 'GET').toUpperCase();
   var event = { kind: 'request-fetched', method: method };
   var bytes = 0;
+  var nonceSent = false;
   if (asked.remoteAddress) {
     event.remoteAddress = String(asked.remoteAddress);
   }
@@ -728,6 +742,7 @@ function fetchRequest(appconfig, id, request) {
       }
       if (read.fields.wallet_nonce !== undefined) {
         event.walletNonce = read.fields.wallet_nonce;
+        nonceSent = true;
       }
     }
     bytes = sizeOf(asked);
@@ -743,7 +758,14 @@ function fetchRequest(appconfig, id, request) {
     }
     if (one.liveSigning) {
       log.debug('Leaving fetchRequest(). Live signing.');
-      return waitForSigning(appconfig, one, event, bytes);
+      return waitForSigning(appconfig, one, event, bytes, nonceSent);
+    }
+    if (nonceSent) {
+      event.problem = 'The Wallet sent a wallet_nonce and this session ' +
+          'has no live signing, so it was served the Request Object ' +
+          'signed in advance, which does not carry it. OpenID4VP section ' +
+          '5.10: the Verifier MUST use it; section 5.10.1: a Wallet given ' +
+          'an object without it MUST terminate.';
     }
   }
   record(appconfig, one, event, bytes);
@@ -752,9 +774,12 @@ function fetchRequest(appconfig, id, request) {
 }
 
 // The `request-signed` event that closes a wait, and the Wallet's answer:
-// the page's object when it signed one, else whatever the page published
-// beforehand (read NOW, so a re-publish during the wait is what is served).
-function settle(appconfig, one, signingId, jws, reason) {
+// the page's object when it signed one; else, for a Wallet that sent a
+// wallet_nonce, a 503 (section 5.10.2), since whatever the page published
+// beforehand cannot carry that nonce; else the pre-signed object (read
+// NOW, so a re-publish during the wait is what is served). `gone` is a
+// Wallet that closed the connection: there is nobody left to answer.
+function settle(appconfig, one, signingId, jws, reason, gone) {
   log.debug('Entering settle(). ' + signingId);
   var entry = one.pending.get(signingId);
   if (!entry) {
@@ -765,27 +790,55 @@ function settle(appconfig, one, signingId, jws, reason) {
   timers.clear(entry.timer);
   var signed = { kind: 'request-signed', signingId: signingId,
     liveSigned: Boolean(jws) };
-  if (!jws) {
+  var answer;
+  if (jws) {
+    answer = served(jws);
+  } else if (gone) {
     signed.reason = reason;
+    answer = walletError(503, reason, 'temporarily_unavailable');
+  } else if (entry.nonceSent) {
+    signed.reason = reason + ' The Wallet sent a wallet_nonce, which the ' +
+        'Request Object signed in advance cannot carry, so it was answered ' +
+        '503 (OpenID4VP section 5.10.2) rather than given an object it ' +
+        'MUST refuse.';
+    signed.httpStatus = 503;
+    answer = walletError(503, reason + ' A Request Object carrying this ' +
+        'wallet_nonce could not be signed in time.',
+        'temporarily_unavailable');
+  } else {
+    signed.reason = reason + ' The Wallet sent no wallet_nonce, so the ' +
+        'Request Object signed in advance was served.';
+    answer = served(one.requestObject);
   }
   record(appconfig, one, signed, 0);
-  entry.resolve(served(jws || one.requestObject));
+  entry.resolve(answer);
   log.debug('Leaving settle(). liveSigned=' + signed.liveSigned);
   return true;
 }
 
-// Hold a Wallet's POST for the page to sign, or — at the cap — serve the
-// pre-signed object at once and say why.
-function waitForSigning(appconfig, one, event, bytes) {
+// Hold a Wallet's POST for the page to sign. At the cap, answer at once: a
+// 503 when the Wallet sent a wallet_nonce (section 5.10.2), else the
+// pre-signed object, and say which and why.
+function waitForSigning(appconfig, one, event, bytes, nonceSent) {
   log.debug('Entering waitForSigning(). ' + one.id);
   var max = setting(appconfig, 'oid4vpVerifierMaxPendingSignings',
                     DEFAULTS.maxPendingSignings);
   if (one.pending.size >= max) {
-    record(appconfig, one, event, bytes);
-    record(appconfig, one, { kind: 'request-signed', liveSigned: false,
-      reason: 'This session already holds ' + one.pending.size +
+    var full = 'This session already holds ' + one.pending.size +
         ' Wallet(s) waiting for the page to sign and ' +
-        'oid4vpVerifierMaxPendingSignings is ' + max + ', so the ' +
+        'oid4vpVerifierMaxPendingSignings is ' + max + '.';
+    record(appconfig, one, event, bytes);
+    if (nonceSent) {
+      record(appconfig, one, { kind: 'request-signed', liveSigned: false,
+        httpStatus: 503, reason: full + ' The Wallet sent a wallet_nonce, ' +
+          'which the Request Object signed in advance cannot carry, so it ' +
+          'was answered 503 (OpenID4VP section 5.10.2) at once.' }, 0);
+      log.debug('Leaving waitForSigning(). At the cap: 503.');
+      return walletError(503, full + ' No Request Object carrying this ' +
+          'wallet_nonce can be signed now.', 'temporarily_unavailable');
+    }
+    record(appconfig, one, { kind: 'request-signed', liveSigned: false,
+      reason: full + ' The Wallet sent no wallet_nonce, so the ' +
         'pre-signed Request Object was served at once.' }, 0);
     log.debug('Leaving waitForSigning(). At the cap.');
     return served(one.requestObject);
@@ -797,15 +850,13 @@ function waitForSigning(appconfig, one, event, bytes) {
   event.waitMs = wait;
   event.signBy = new Date(now() + wait).toISOString();
   record(appconfig, one, event, bytes);
-  var entry = { signingId: signingId };
+  var entry = { signingId: signingId, nonceSent: Boolean(nonceSent) };
   var pending = new Promise(function (resolve) {
     entry.resolve = resolve;
   });
   entry.timer = timers.set(function () {
     settle(appconfig, one, signingId, null, 'The page did not sign ' +
-        'within oid4vpVerifierLiveSignWaitMs (' + wait + ' ms), so the ' +
-        'pre-signed Request Object was served; it cannot carry this ' +
-        'wallet_nonce.');
+        'within oid4vpVerifierLiveSignWaitMs (' + wait + ' ms).');
   }, wait);
   // A held Wallet's socket keeps the process alive; the timer need not.
   if (entry.timer && typeof entry.timer.unref === 'function') {
@@ -816,14 +867,14 @@ function waitForSigning(appconfig, one, event, bytes) {
   return { ok: true, status: 200, signingId: signingId, pending: pending,
     cancel: function () {
       settle(appconfig, one, signingId, null, 'The Wallet closed the ' +
-          'connection before the page signed.');
+          'connection before the page signed.', true);
     } };
 }
 
 var NO_SUCH_SIGNING = 'No Wallet is waiting on that signingId in this ' +
     'session. It was never issued, it was already answered, or its wait ' +
-    '(oid4vpVerifierLiveSignWaitMs) ran out and the pre-signed Request ' +
-    'Object was served instead.';
+    '(oid4vpVerifierLiveSignWaitMs) ran out and the Wallet was answered ' +
+    'without it.';
 
 // ---------------------------------------------------------------------------
 // PUT /oid4vp/verifier/:id/request/:signingId — the page answers ONE held

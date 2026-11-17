@@ -55,4 +55,7 @@ model VcVerifierKeys {
 
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_dc_signed: unknown;
+
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_trust_anchors: unknown;
 }

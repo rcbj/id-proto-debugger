@@ -62,13 +62,17 @@ nobody will read it.
 
 ## Live signing (`request_uri_method=post`)
 
-Under `request_uri_method=post`, section 5.10 has the Verifier put the
-Wallet's `wallet_nonce` in the Request Object it returns, and lets it honour
-`wallet_metadata`. The api cannot sign, because the key stays in the page.
-Without live signing it serves the object the page signed *before* the Wallet
-arrived. That object cannot contain the nonce. The `request-fetched` event
-records `walletNonce` and `walletMetadata` (parsed when it is JSON), and the
-page reports the mismatch.
+Under `request_uri_method=post`, section 5.10 is not optional about the
+Wallet's `wallet_nonce`: "When received, the Verifier MUST use it as the
+wallet_nonce value in the signed authorization request object." Section
+5.10.1 has the Wallet terminate on an object without it. The api cannot sign,
+because the key stays in the page. Without live signing it serves the object
+the page signed *before* the Wallet arrived, and that object cannot contain
+the nonce. It is served anyway, so a Wallet that does not terminate on it can
+be seen. The `request-fetched` event records `walletNonce` and
+`walletMetadata` (parsed when it is JSON) and carries a `problem` saying the
+object served lacks the nonce. The page prints that `problem` in its event
+list.
 
 A session created with `liveSigning: true` closes that gap with a long poll:
 
@@ -85,18 +89,25 @@ A session created with `liveSigning: true` closes that gap with a long poll:
 3. The held Wallet gets **that** object as `application/oauth-authz-req+jwt`,
    and the api records `request-signed` with `liveSigned: true`. The
    session's pre-signed object is not replaced, so a later GET still gets it.
-4. If the page does not answer in time, the Wallet gets the pre-signed object
-   with a 200, and `request-signed` has `liveSigned: false` and a `reason`.
-   **A timeout falls back. It is never an error to the Wallet.** A Wallet
-   that closes its connection first ends the wait the same way, with its own
-   `reason`.
+4. If the page does not answer in time, a Wallet that sent a `wallet_nonce`
+   is answered **503** with `{ "error": "temporarily_unavailable",
+   "error_description": ... }`, never the pre-signed object, which cannot
+   carry the nonce. Section 5.10.2: "If the Verifier responds with any HTTP
+   error response, the Wallet MUST terminate the process." `request-signed`
+   has `liveSigned: false`, `httpStatus: 503` and a `reason`. A Wallet that
+   sent no `wallet_nonce` has nothing to echo, so it gets the pre-signed
+   object with a 200, and `request-signed` has `liveSigned: false` and a
+   `reason` with no `httpStatus`. A Wallet that closes its connection first
+   ends the wait with its own `reason`.
 
 A PUT for a `signingId` that was never issued, was already answered or has
 timed out gets a **404**. A wrong secret gets a 401. At most
 `oid4vpVerifierMaxPendingSignings` Wallets wait on one session. One more is
-served the pre-signed object at once: its `request-fetched` has no
+answered at once, by the same rule as a timeout: a 503 when it sent a
+`wallet_nonce`, else the pre-signed object. Its `request-fetched` has no
 `signingId`, and a `request-signed` with no `signingId` and `liveSigned:
-false` names the setting. A GET to `request_uri` is never held.
+false` names the setting (and has `httpStatus: 503` for the refusal). A GET
+to `request_uri` is never held.
 
 Every wait is a timer, and each is cleared when its session ends: on DELETE,
 on expiry (found by the sweep), and at shutdown (`shutdown()`, called on the
@@ -108,17 +119,18 @@ no longer exists.
 is waiting for a Wallet, and act on a `request-fetched` with a `signingId` at
 once. The page has `waitMs` (15 s by default) to sign and PUT. Signing is
 milliseconds, so a 500 ms poll leaves nearly all of it. A 404 from the PUT
-means the wait ran out and the Wallet already has the pre-signed object.
+means the wait ran out and the Wallet was already answered without it: a
+503 if it sent a `wallet_nonce`, else the pre-signed object.
 Every wait ends with a `request-signed` event carrying the same `signingId`.
 
 ## Events
 
 Each event is `{ seq, at, kind, method?, contentType?, fields?,
 walletMetadata?, walletNonce?, remoteAddress?, problem?, signingId?, waitMs?,
-signBy?, liveSigned?, reason? }`, and `kind` is one of `request-fetched`,
-`request-signed`, `ca-fetched`, `response` or `response-refused`. The last
-five members are live signing's (see above). `seq`
-starts at 0 and is never reused. `after` is the `next` returned by the
+signBy?, liveSigned?, reason?, httpStatus? }`, and `kind` is one of
+`request-fetched`, `request-signed`, `ca-fetched`, `response` or
+`response-refused`. The last six members are live signing's (see above).
+`seq` starts at 0 and is never reused. `after` is the `next` returned by the
 previous call. Reading is a cursor and not a destructive read, so a second
 tab sees the same events. A cursor that is not a number reads from 0, and a
 cursor ahead of `next` is clamped to it.
@@ -150,7 +162,7 @@ cursor ahead of `next` is clamped to it.
 | `oid4vpVerifierMaxSessionBytes` | 1048576 | All the answers one session holds, oldest dropped first |
 | `oid4vpVerifierMaxRequestObjectBytes` | 65536 | A Request Object or the CA certificate (DER) |
 | `oid4vpVerifierLiveSignWaitMs` | 15000 | How long a live-signing Wallet POST is held for the page |
-| `oid4vpVerifierMaxPendingSignings` | 4 | Wallets held at once per session; one more is served the pre-signed object |
+| `oid4vpVerifierMaxPendingSignings` | 4 | Wallets held at once per session; one more is answered 503 if it sent a `wallet_nonce`, else served the pre-signed object |
 
 `oid4vpVerifierMaxSessionBytes` exists for the reason
 `ssfReceiverMaxInboxBytes` does. Without it the three count caps multiply

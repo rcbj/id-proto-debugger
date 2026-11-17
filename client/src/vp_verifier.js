@@ -23,8 +23,9 @@
 // SD-JWT digests and sd_hash, every JWS, every Data Integrity proof, the
 // mdoc device signature, the x5c chain checks, the status lists) are pure
 // JavaScript — @noble/hashes, @noble/curves, node-forge and jws.js's 'js'
-// backend — so they work on an origin with no secure context. Three things it borrows are Web Crypto underneath and
-// inherit that module's limits: certificate ISSUANCE (x509.js), the ECDH-ES
+// backend — so they work on an origin with no secure context. Three things
+// it borrows are Web Crypto underneath and inherit that module's limits
+// (#463): certificate ISSUANCE (x509.js), the ECDH-ES
 // unwrap of a direct_post.jwt answer (jose_jwe.js) and the mdoc issuerAuth
 // check (mdoc.js). Status lists are decompressed with the platform's
 // DecompressionStream, which every current browser and node 18+ has.
@@ -54,12 +55,14 @@ var log = bunyan.createLogger({
 });
 
 var nobleSha256 = require("@noble/hashes/sha256").sha256;
+var nobleSha1 = require("@noble/hashes/sha1").sha1;
+var forge = require("node-forge");
+var cbor = require("./cbor");
 var nobleSha512 = require("@noble/hashes/sha512");
 var p256 = require("@noble/curves/p256").p256;
 var p384 = require("@noble/curves/p384").p384;
 var p521 = require("@noble/curves/p521").p521;
 var ed25519 = require("@noble/curves/ed25519").ed25519;
-var forge = require("node-forge");
 var bytes = require("./crypto_bytes");
 var jws = require("./jws");
 var x509 = require("./x509");
@@ -104,10 +107,42 @@ var DC_API_PROTOCOLS = {
 var ORIGIN_PREFIX = "origin:";
 var VERIFIER_ATTESTATION_TYP = "verifier-attestation+jwt";
 var STATUS_LIST_TYP = "statuslist+jwt";
-var STATUS_LIST_ACCEPT = "application/statuslist+jwt, " +
-    "application/statuslist+cwt;q=0.5";
-// draft-ietf-oauth-status-list section 7.1: the registered values.
+// draft-ietf-oauth-status-list-21 section 8.1 defines two media types. Only
+// the JWT form is verified here (the CWT form is recognised and reported),
+// so only the JWT form is asked for: advertising a form this Verifier
+// cannot check would invite a list it then cannot use.
+var STATUS_LIST_ACCEPT = "application/statuslist+jwt";
+// draft-ietf-oauth-status-list-21 section 7.1: the registered values.
 var TOKEN_STATUS_NAMES = { 0: "VALID", 1: "INVALID", 2: "SUSPENDED" };
+// Ibid.: "The Status Type value 0x03 and Status Type values in the range
+// 0x0C until 0x0F are permanently reserved as application specific ...
+// All other Status Type values are reserved for future registration."
+var TOKEN_STATUS_APPLICATION = [0x03, 0x0C, 0x0D, 0x0E, 0x0F];
+// W3C Bitstring Status List v1.0 section 4: a status list credential "might
+// be any media type registered for the purpose of expressing a verifiable
+// credential", e.g. application/vc for Data Integrity.
+var BITSTRING_ACCEPT = "application/vc, application/vc+jwt, " +
+    "application/vc+ld+json;q=0.9, application/ld+json;q=0.8, " +
+    "application/json;q=0.5";
+// Ibid. section 2.1: the statusPurpose values that "MUST be used for their
+// intended purpose".
+var BITSTRING_PURPOSES = ["refresh", "revocation", "suspension", "message"];
+// draft-ietf-oauth-status-list-21 section 10 defines id-kp-oauthStatusSigning
+// as { id-kp TBD }, and section 14.9 asks IANA for "1.3.6.1.5.5.7.3.TBD":
+// there is no number yet. A caller whose PKI uses one names it with
+// verifyResponse()'s statusSigningEku option.
+var STATUS_SIGNING_EKU_NAME = "id-kp-oauthStatusSigning";
+// The X.509 signature algorithms a certificate link is checked with, each a
+// jws.js row (pure JavaScript), and the ECDSA field length for DER to raw.
+var STATUS_CERT_SIG_ALGS = {
+  "1.2.840.10045.4.3.2": { alg: "ES256", len: 32 },
+  "1.2.840.10045.4.3.3": { alg: "ES384", len: 48 },
+  "1.2.840.10045.4.3.4": { alg: "ES512", len: 66 },
+  "1.2.840.113549.1.1.11": { alg: "RS256" },
+  "1.2.840.113549.1.1.12": { alg: "RS384" },
+  "1.2.840.113549.1.1.13": { alg: "RS512" },
+  "1.3.101.112": { alg: "EdDSA-Ed25519" }
+};
 // W3C Bitstring Status List v1.0: a list shorter than this many entries
 // gives its subjects no herd privacy (section 6.1); reported, not refused.
 var BITSTRING_MIN_ENTRIES = 131072;
@@ -1108,9 +1143,11 @@ async function didJwks(did, fetchJson) {
 async function issuerKey(header, payload, fetchJson) {
   log.debug("Entering issuerKey().");
   if (isArray(header.x5c) && header.x5c.length) {
-    // TODO(#467 S3): statusListSignature() takes this x5c key for a Status
-    // List Token without reporting the chain's trust; reporting it there
-    // means changing the status-list functions, which is separate work.
+    // A Status List Token's own x5c gets no trust row of its own: the
+    // `<key>.signer` row (#466 S5) passes only a signer LINKED to the
+    // credential's issuer (the same key, or the same CA chain with the
+    // status-signing EKU), and the credential's `issuer.trust` row reports
+    // whether that issuer's chain is trusted. An unlinked signer is SKIP.
     log.debug("Leaving issuerKey(). x5c.");
     return { key: bytes.derToPem(bytes.b64ToBytes(header.x5c[0]),
                                  "CERTIFICATE"),
@@ -1865,14 +1902,22 @@ function cborToPlain(v) {
 }
 
 // What a credential says about where its status is.
+// `other` names the status mechanisms beside status_list this debugger
+// does not read: draft-ietf-oauth-status-list-21 section 6.1 makes `status`
+// a container of mechanisms (registered in sections 14.2 and 14.4), and an
+// mdoc's MSO may carry ISO/IEC 18013-5's identifier_list there.
 function statusRefsOf(holder) {
   log.debug("Entering statusRefsOf().");
   var h = holder || {};
   var token = h.status && isPlainObject(h.status.status_list) ?
       h.status.status_list : null;
+  var other = isPlainObject(h.status) ? Object.keys(h.status).filter(
+    function (name) {
+      return name !== "status_list";
+    }) : [];
   var w3c = [].concat(h.credentialStatus || []).filter(isPlainObject);
   log.debug("Leaving statusRefsOf().");
-  return { token: token, w3c: w3c };
+  return { token: token, w3c: w3c, other: other };
 }
 
 function isoOf(seconds) {
@@ -1895,9 +1940,284 @@ async function fetchStatusText(ctx, url, accept) {
   return text;
 }
 
-// The signature on a Status List Token: its own key (x5c, a DID kid or iss,
-// an https iss) when it names one, else the credential issuer's, found the
-// same way as the issuer signature.
+// What a status list fetch answered, whatever the fetcher handed back: a
+// string (text), an ArrayBuffer or a typed array (bytes), or { body,
+// contentType } carrying either. Bytes are decoded as UTF-8 only when they
+// ARE UTF-8, so a binary body (a CWT) is never turned into replacement
+// characters and then misread.
+function statusBody(fetched) {
+  log.debug("Entering statusBody().");
+  var out = { text: null, bytes: null, contentType: "" };
+  var body = fetched;
+  if (fetched && typeof fetched === "object" &&
+      !(fetched instanceof ArrayBuffer) && !ArrayBuffer.isView(fetched) &&
+      "body" in fetched) {
+    out.contentType = String(fetched.contentType || "");
+    body = fetched.body;
+  }
+  if (typeof body === "string") {
+    out.text = body;
+  } else if (body instanceof ArrayBuffer || ArrayBuffer.isView(body)) {
+    out.bytes = body instanceof ArrayBuffer ? new Uint8Array(body) :
+      new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    try {
+      out.text = new TextDecoder("utf-8", { fatal: true }).decode(out.bytes);
+    } catch (e) {
+      out.text = null;
+    }
+  }
+  log.debug("Leaving statusBody().");
+  return out;
+}
+
+// A COSE_Sign1 found by DECODING the bytes, not by guessing from the first
+// one: RFC 9052 section 4.2's four-element array [protected bstr,
+// unprotected map, payload, signature bstr], tagged 18 or not, and RFC 8392
+// section 6's CWT tag 61 around it. Null when the bytes are not that.
+function coseSign1Of(raw) {
+  log.debug("Entering coseSign1Of().");
+  if (!raw || !raw.length) {
+    log.debug("Leaving coseSign1Of(). Empty.");
+    return null;
+  }
+  var v;
+  try {
+    v = cbor.decode(raw);
+  } catch (e) {
+    log.debug("Leaving coseSign1Of(). Not CBOR: " + e.message);
+    return null;
+  }
+  var tags = [];
+  while (v instanceof cbor.Tagged) {
+    tags.push(v.tag);
+    v = v.value;
+  }
+  var shaped = isArray(v) && v.length === 4 && v[0] instanceof Uint8Array &&
+      v[1] instanceof Map && v[3] instanceof Uint8Array &&
+      (v[2] === null || v[2] instanceof Uint8Array);
+  var tagsOk = tags.every(function (t) {
+    return t === 18 || t === 61;
+  });
+  if (!shaped || !tagsOk) {
+    log.debug("Leaving coseSign1Of(). Not a COSE_Sign1.");
+    return null;
+  }
+  log.debug("Leaving coseSign1Of(). Tags " + tags.join(","));
+  return { tags: tags };
+}
+
+// What a body that is not a compact JWS actually is, said plainly: a
+// COSE_Sign1, an HTML page (an error or sign-in page served in the list's
+// place), binary data, or text that is none of these.
+function describeStatusBody(body) {
+  log.debug("Entering describeStatusBody().");
+  var type = body.contentType.split(";")[0].trim().toLowerCase();
+  var served = type ? " (served as " + type + ")" : "";
+  var raw = body.bytes ||
+      (body.text !== null ? new TextEncoder().encode(body.text) : null);
+  var cose = coseSign1Of(raw);
+  if (cose) {
+    log.debug("Leaving describeStatusBody(). COSE_Sign1.");
+    return { kind: "cose", detail: "a COSE_Sign1 (CBOR" +
+      (cose.tags.indexOf(61) !== -1 ? ", in CWT tag 61" : "") + ")" +
+      served };
+  }
+  var text = body.text;
+  if (text !== null && (type === "text/html" ||
+      /^\s*<(!doctype\s+html|html[\s>])/i.test(text))) {
+    log.debug("Leaving describeStatusBody(). HTML.");
+    return { kind: "html", detail: "an HTML page" + served + ", most " +
+      "likely an error or sign-in page served in its place" };
+  }
+  if (text === null) {
+    log.debug("Leaving describeStatusBody(). Binary.");
+    return { kind: "binary", detail: body.bytes.length + " bytes of " +
+      "binary data, and not a COSE_Sign1" + served };
+  }
+  var shown = text.trim().slice(0, 60);
+  log.debug("Leaving describeStatusBody(). Text.");
+  return { kind: "text", detail: "text that is not a compact JWS" + served +
+    (shown ? ", beginning " + JSON.stringify(shown) : ", and empty") };
+}
+
+// RFC 7515 section 4.1.9: typ is a media type, so it compares
+// case-insensitively (RFC 2045), and "A recipient using the media type
+// value MUST treat it as if 'application/' were prepended to any 'typ'
+// value not containing a '/'" — so "application/statuslist+jwt" is
+// "statuslist+jwt".
+function mediaTypeOfTyp(typ) {
+  log.debug("Entering mediaTypeOfTyp().");
+  var t = String(typ === undefined || typ === null ? "" : typ).trim()
+    .toLowerCase();
+  log.debug("Leaving mediaTypeOfTyp().");
+  return t && t.indexOf("/") === -1 ? "application/" + t : t;
+}
+
+// The length of the DER item at `at`, header and contents.
+function derItemSize(b, at) {
+  log.debug("Entering derItemSize().");
+  var first = b[at + 1];
+  if (first < 0x80) {
+    log.debug("Leaving derItemSize(). Short form.");
+    return 2 + first;
+  }
+  var n = first & 0x7f;
+  var len = 0;
+  for (var i = 0; i < n; i++) {
+    len = len * 256 + b[at + 2 + i];
+  }
+  log.debug("Leaving derItemSize(). Long form.");
+  return 2 + n + len;
+}
+
+// The parts of a DER certificate a signer link is judged by, read with
+// node-forge's ASN.1 — no Web Crypto: the TBS bytes (sliced from the input,
+// never re-encoded), the signature algorithm and value, the issuer and
+// subject names as DER, and the extended key usages.
+function certParts(der) {
+  log.debug("Entering certParts().");
+  var b = bytes.asBytes(der);
+  var asn = forge.asn1.fromDer(forge.util.binary.raw.encode(b),
+                               { decodeBitStrings: false });
+  var tbs = asn.value[0];
+  var v = tbs.value[0].tagClass === forge.asn1.Class.CONTEXT_SPECIFIC ? 1 : 0;
+  var tbsAt = (b[1] < 0x80 ? 2 : 2 + (b[1] & 0x7f));
+  var ekus = [];
+  tbs.value.forEach(function (part) {
+    if (part.tagClass !== forge.asn1.Class.CONTEXT_SPECIFIC ||
+        part.type !== 3) {
+      return;
+    }
+    (part.value[0].value || []).forEach(function (ext) {
+      if (forge.asn1.derToOid(ext.value[0].value) !== "2.5.29.37") {
+        return;
+      }
+      var octets = ext.value[ext.value.length - 1].value;
+      forge.asn1.fromDer(octets).value.forEach(function (purpose) {
+        ekus.push(forge.asn1.derToOid(purpose.value));
+      });
+    });
+  });
+  var sigBits = asn.value[2].value;
+  log.debug("Leaving certParts().");
+  return {
+    der: b,
+    tbs: b.slice(tbsAt, tbsAt + derItemSize(b, tbsAt)),
+    sigAlg: forge.asn1.derToOid(asn.value[1].value[0].value),
+    signature: forge.util.binary.raw.decode(sigBits.slice(1)),
+    issuer: forge.asn1.toDer(tbs.value[v + 2]).getBytes(),
+    subject: forge.asn1.toDer(tbs.value[v + 4]).getBytes(),
+    subjectText: tbs.value[v + 4].value.map(function (rdn) {
+      return rdn.value.map(function (atv) {
+        var oid = forge.asn1.derToOid(atv.value[0].value);
+        return (forge.pki.oids[oid] || oid) +
+          "=" + atv.value[1].value;
+      }).join("+");
+    }).join(", "),
+    ekus: ekus
+  };
+}
+
+// Every certificate of a JOSE header's x5c, parsed; [] when it has none or
+// one will not parse.
+function x5cParts(header) {
+  log.debug("Entering x5cParts().");
+  var chain = header && isArray(header.x5c) ? header.x5c : [];
+  try {
+    var out = chain.map(function (b64) {
+      return certParts(bytes.b64ToBytes(b64));
+    });
+    log.debug("Leaving x5cParts(). " + out.length);
+    return out;
+  } catch (e) {
+    log.debug("Leaving x5cParts(). Unreadable: " + e.message);
+    return [];
+  }
+}
+
+// Did `parent`'s key sign `child`? Pure JavaScript, through jws.js's rows.
+// For the Status List Token's certificates (certParts() objects); the
+// issuer-trust report has its own certSignedBy() over readCertificate().
+function statusCertSignedBy(child, parent) {
+  log.debug("Entering statusCertSignedBy().");
+  var row = STATUS_CERT_SIG_ALGS[child.sigAlg];
+  if (!row) {
+    log.debug("Leaving statusCertSignedBy(). Unsupported " + child.sigAlg);
+    return false;
+  }
+  try {
+    var spec = jws.algSpec(row.alg);
+    var key = jws.resolveKey(spec, bytes.derToPem(parent.der, "CERTIFICATE"),
+                             "verify").key;
+    var sig = row.len ? x509.ecdsaDerToRaw(child.signature, row.len) :
+      child.signature;
+    var ok = !!jws.verifyOctets(spec, key, child.tbs, sig);
+    log.debug("Leaving statusCertSignedBy(). " + ok);
+    return ok;
+  } catch (e) {
+    log.debug("Leaving statusCertSignedBy(). " + e.message);
+    return false;
+  }
+}
+
+// Section 11.3's "same key" references: does the Status List Token name
+// the key the credential was signed with — "the same x5c value or an x5t,
+// x5t#S256 or kid parameter referencing to the same key as used in the
+// Referenced Token"? The reference, or "".
+function sameKeyReference(h, ih) {
+  log.debug("Entering sameKeyReference().");
+  var leaf = isArray(ih.x5c) && ih.x5c.length ? ih.x5c[0] : "";
+  if (leaf && isArray(h.x5c) && h.x5c[0] === leaf) {
+    log.debug("Leaving sameKeyReference(). x5c.");
+    return "the same x5c";
+  }
+  if (leaf && !isArray(h.x5c)) {
+    var der = bytes.b64ToBytes(leaf);
+    if (h["x5t#S256"] && h["x5t#S256"] === bytes.bytesToB64u(
+      nobleSha256(der))) {
+      log.debug("Leaving sameKeyReference(). x5t#S256.");
+      return "an x5t#S256 that is the credential's leaf certificate";
+    }
+    if (h.x5t && h.x5t === bytes.bytesToB64u(nobleSha1(der))) {
+      log.debug("Leaving sameKeyReference(). x5t.");
+      return "an x5t that is the credential's leaf certificate";
+    }
+  }
+  if (h.kid && ih.kid && h.kid === ih.kid && !isArray(h.x5c)) {
+    log.debug("Leaving sameKeyReference(). kid.");
+    return "the credential's kid " + JSON.stringify(h.kid);
+  }
+  log.debug("Leaving sameKeyReference(). None.");
+  return "";
+}
+
+// The credential issuer's key, found as the issuer signature finds it, once
+// per credential.
+function credentialIssuerKey(issuer) {
+  log.debug("Entering credentialIssuerKey().");
+  if (!issuer.keyPromise) {
+    issuer.keyPromise = issuerKey(issuer.header || {}, issuer.payload || {},
+                                  issuer.ctx.fetchJson);
+    issuer.keyPromise.catch(function () {
+      // Reported by each caller that awaits it.
+    });
+  }
+  log.debug("Leaving credentialIssuerKey().");
+  return issuer.keyPromise;
+}
+
+// The signature on a Status List Token. draft-ietf-oauth-status-list-21
+// section 11.3 has a token signed with the credential's own key name it by
+// "the same x5c value or an x5t, x5t#S256 or kid parameter", and a Status
+// Issuer with its own key name that key (x5c, a DID, an https iss's
+// metadata). So the keys tried, in order, until one verifies:
+//   1. the credential issuer's key, when the token references it;
+//   2. the token's own key, when it names one;
+//   3. the credential issuer's key otherwise — when the token names no key
+//      of its own, and as the fallback when its own could not be had or did
+//      not verify (an https iss with no jwt-vc-issuer metadata), unless the
+//      token carries an x5c, which names exactly one key.
+// `how` says which verified: "credential" or "own".
 async function statusListSignature(compact, h, p, issuer) {
   log.debug("Entering statusListSignature().");
   var ctx = issuer.ctx;
@@ -1905,27 +2225,180 @@ async function statusListSignature(compact, h, p, issuer) {
       didLib.isDid(String(h.kid || "")) ||
       didLib.isDid(String(p.iss || "")) ||
       /^https:\/\//.test(String(p.iss || ""));
-  var keyHeader = h;
-  var keyPayload = p;
+  var ref = sameKeyReference(h, issuer.header || {});
+  var order = ref ? ["credential", "own"] : ["own", "credential"];
   if (!own) {
-    keyHeader = Object.assign({}, h);
-    var ih = issuer.header || {};
-    if (isArray(ih.x5c)) keyHeader.x5c = ih.x5c;
-    if (!keyHeader.kid && ih.kid) keyHeader.kid = ih.kid;
-    keyPayload = Object.assign({}, p, { iss: (issuer.payload || {}).iss });
+    order = ["credential"];
+  } else if (!ref && isArray(h.x5c) && h.x5c.length) {
+    order = ["own"];
   }
-  var found;
+  var failures = [];
+  for (var i = 0; i < order.length; i++) {
+    var how = order[i];
+    var whose = how === "own" ? "its own key" :
+      "the credential issuer's key";
+    var found;
+    try {
+      found = how === "own" ? await issuerKey(h, p, ctx.fetchJson) :
+        await credentialIssuerKey(issuer);
+    } catch (e) {
+      failures.push(whose + ": " + e.message);
+      continue;
+    }
+    // The credential's key is the ONE it was signed with (section 11.3:
+    // "the same key ... as used in the Referenced Token"), not any member
+    // of its issuer's set; the set only when that is ambiguous.
+    var v = verifyCompact(compact, how === "own" ? found.key :
+      credentialSigningKey(found.key, issuer.header || {}) || found.key);
+    if (v.valid) {
+      var why = how === "own" ? "" : ref ? ", which the list references " +
+        "by " + ref : !own ? " (the list names no key of its own)" :
+        " (its own key: " + failures.join("; ") + ")";
+      log.debug("Leaving statusListSignature(). " + how);
+      return { valid: true, how: how, ref: ref, from: (how === "own" ?
+        found.from : "the credential issuer's key, from " + found.from) +
+        why };
+    }
+    failures.push(whose + " from " + found.from + (v.reason ?
+      " (" + v.reason + ")" : ""));
+  }
+  log.debug("Leaving statusListSignature(). Nothing verifies.");
+  return { valid: false, how: "", ref: ref, from: failures.join("; "),
+           reason: "" };
+}
+
+// The one key the credential was signed with, out of what issuerKey()
+// found: a certificate, a single JWK, or the member of a set its kid names
+// (or the only member). Null when a set leaves it ambiguous.
+function credentialSigningKey(key, ih) {
+  log.debug("Entering credentialSigningKey().");
+  if (typeof key === "string") {
+    log.debug("Leaving credentialSigningKey(). PEM.");
+    return key;
+  }
+  if (key && key.jwk) {
+    log.debug("Leaving credentialSigningKey(). One JWK.");
+    return { jwk: key.jwk };
+  }
+  var keys = key && isArray(key.keys) ? key.keys : [];
+  var named = ih.kid ? keys.filter(function (k) {
+    return k && k.kid === ih.kid;
+  }) : keys;
+  if (named.length === 1) {
+    log.debug("Leaving credentialSigningKey(). From the set.");
+    return { jwk: named[0] };
+  }
+  log.debug("Leaving credentialSigningKey(). Ambiguous.");
+  return null;
+}
+
+// Is the Status List Token's signer the credential issuer, or authorised by
+// it? draft-ietf-oauth-status-list-21 section 1: the Status Issuer is the
+// Issuer or an entity it authorised; section 11.3 names the ways a verifier
+// can tell — the same key, the same web-based key resolution, or a
+// different key "cryptographically linked ... by a Certificate Authority
+// through an x.509 PKI", both certificates "issued by the same Certificate
+// Authority and the Status Issuer's certificate should utilize extended key
+// usage" (section 10's id-kp-oauthStatusSigning). Anything else is NOT
+// linked, and says so as a SKIP: a signature that verifies with a key
+// nobody tied to the issuer is not a PASS.
+async function statusSignerLink(compact, h, p, issuer, sig) {
+  log.debug("Entering statusSignerLink().");
+  if (!sig.valid) {
+    log.debug("Leaving statusSignerLink(). No signature.");
+    return { status: SKIP, detail: "the Status List Token's signature did " +
+      "not verify, so there is no signer to link to the credential's " +
+      "issuer." };
+  }
+  var credKey = null;
   try {
-    found = await issuerKey(keyHeader, keyPayload, ctx.fetchJson);
+    credKey = await credentialIssuerKey(issuer);
   } catch (e) {
-    log.debug("Leaving statusListSignature(). No key.");
-    return { valid: false, from: "nowhere", reason: e.message };
+    log.debug("statusSignerLink(): no credential key: " + e.message);
   }
-  var v = verifyCompact(compact, found.key);
-  log.debug("Leaving statusListSignature(). " + v.valid);
-  return { valid: v.valid, reason: v.reason, from: found.from +
-           (own ? "" : " (the credential issuer's: the list names no key " +
-            "of its own)") };
+  var single = credKey ? credentialSigningKey(credKey.key,
+                                              issuer.header || {}) : null;
+  if (single && verifyCompact(compact, single).valid) {
+    log.debug("Leaving statusSignerLink(). Same key.");
+    return { status: PASS, detail: "the same key: the list is signed with " +
+      "the key the credential was signed with" + (sig.ref ?
+      ", which the list references by " + sig.ref : "") + " (section " +
+      "11.3)." };
+  }
+  if (sig.how === "credential") {
+    log.debug("Leaving statusSignerLink(). Same key set.");
+    return { status: PASS, detail: "the same key resolution: the list " +
+      "verifies with " + sig.from + ", a key the credential's issuer " +
+      "publishes, though not the one the credential was signed with " +
+      "(section 11.3)." };
+  }
+  var mine = x5cParts(h);
+  var theirs = x5cParts(issuer.header || {});
+  var oids = [].concat(issuer.ctx.statusSigningEku || []).map(String);
+  var notes = [];
+  if (mine.length && theirs.length) {
+    var cas = mine.slice(1).concat(theirs.slice(1));
+    var ca = cas.filter(function (c) {
+      return statusCertSignedBy(mine[0], c) &&
+        statusCertSignedBy(theirs[0], c);
+    })[0];
+    if (ca) {
+      var eku = mine[0].ekus.filter(function (o) {
+        return oids.indexOf(o) !== -1;
+      })[0];
+      if (eku) {
+        log.debug("Leaving statusSignerLink(). Same CA and EKU.");
+        return { status: PASS, detail: "the same chain: the list's " +
+          "certificate and the credential's were both issued by " +
+          ca.subjectText + ", and the list's carries " +
+          STATUS_SIGNING_EKU_NAME + " (" + eku + ") in its extended key " +
+          "usage (sections 10 and 11.3)." };
+      }
+      log.debug("Leaving statusSignerLink(). Same CA, no EKU.");
+      return { status: SKIP, detail: "NOT linked: the list's certificate " +
+        "and the credential's were both issued by " + ca.subjectText +
+        ", but the list's does not carry " + STATUS_SIGNING_EKU_NAME +
+        ", so that CA has not delegated status signing to it (section " +
+        "10)" + (oids.length ? "; its extended key usages are [" +
+        mine[0].ekus.join(", ") + "]" : "; that EKU has no OID yet " +
+        "(section 14.9 asks IANA for 1.3.6.1.5.5.7.3.TBD), so give " +
+        "verifyResponse() statusSigningEku to name the one this PKI " +
+        "uses") + "." };
+    }
+    if (mine[0].issuer === theirs[0].issuer) {
+      notes.push("both certificates name the same issuing CA, but no CA " +
+        "certificate in either x5c verifies both, so that is unchecked");
+    }
+  }
+  var credIss = String((issuer.payload || {}).iss || issuer.id || "");
+  var ownIss = String(p.iss || "") || (didLib.isDid(String(h.kid || "")) ?
+    String(h.kid).split("#")[0] : "");
+  if (credIss && ownIss === credIss && !mine.length) {
+    log.debug("Leaving statusSignerLink(). Same resolution.");
+    return { status: PASS, detail: "the same web-based key resolution: " +
+      "the list's issuer is the credential's (" + credIss + ") and its " +
+      "key came from " + sig.from + " (section 11.3)." };
+  }
+  log.debug("Leaving statusSignerLink(). None.");
+  return { status: SKIP, detail: "NOT linked: the list verifies with " +
+    sig.from + ", which is not the credential issuer's key, not issued " +
+    "by the same CA with " + STATUS_SIGNING_EKU_NAME + ", and not found " +
+    "through the credential issuer's own key resolution" + (notes.length ?
+    "; " + notes.join("; ") : "") + ". draft-ietf-oauth-status-list-21 " +
+    "section 1: the Status Issuer is the Issuer or an entity it " +
+    "authorised; nothing here shows that this one is." };
+}
+
+// draft-ietf-oauth-status-list-21 section 7.1, by value.
+function tokenStatusName(value) {
+  log.debug("Entering tokenStatusName().");
+  var hex = "0x" + (value < 16 ? "0" : "") + value.toString(16)
+    .toUpperCase();
+  var name = TOKEN_STATUS_NAMES[value] ? TOKEN_STATUS_NAMES[value] :
+    TOKEN_STATUS_APPLICATION.indexOf(value) !== -1 ? hex + ", reserved as " +
+    "application-specific" : hex + ", reserved for future registration";
+  log.debug("Leaving tokenStatusName().");
+  return name;
 }
 
 async function checkTokenStatus(s, key, ref, issuer) {
@@ -1933,6 +2406,8 @@ async function checkTokenStatus(s, key, ref, issuer) {
   var ctx = issuer.ctx;
   var label = "The credential is VALID in its Token Status List";
   var listLabel = "The Status List Token verifies";
+  var signerLabel = "The Status List Token's signer is the credential's " +
+      "issuer, or authorised by it";
   var idx = ref.idx;
   var uri = ref.uri;
   if (typeof idx !== "number" || idx < 0 || Math.floor(idx) !== idx ||
@@ -1942,9 +2417,9 @@ async function checkTokenStatus(s, key, ref, issuer) {
     log.debug("Leaving checkTokenStatus(). Malformed reference.");
     return;
   }
-  var text;
+  var fetched;
   try {
-    text = await fetchStatusText(ctx, uri, STATUS_LIST_ACCEPT);
+    fetched = await fetchStatusText(ctx, uri, STATUS_LIST_ACCEPT);
   } catch (e) {
     s.add(key + ".list", listLabel, FAIL, "fetching " + uri + " failed: " +
           e.message);
@@ -1953,15 +2428,25 @@ async function checkTokenStatus(s, key, ref, issuer) {
     log.debug("Leaving checkTokenStatus(). Fetch failed.");
     return;
   }
-  var compact = typeof text === "string" ? text.trim() : "";
+  var body = statusBody(fetched);
+  var compact = body.text !== null ? body.text.trim() : "";
   if (!COMPACT_JWS.test(compact)) {
-    s.add(key + ".list", listLabel, SKIP, uri + " did not answer with a " +
-          "compact JWT. The CWT form (application/statuslist+cwt, a " +
-          "COSE_Sign1) is recognised but not verified by this debugger; " +
-          "the issuer can serve application/statuslist+jwt instead.");
+    var what = describeStatusBody(body);
+    if (what.kind === "cose") {
+      s.add(key + ".list", listLabel, SKIP, uri + " answered " +
+            what.detail + ": a Status List Token in CWT form " +
+            "(draft-ietf-oauth-status-list-21 section 5.2), which this " +
+            "debugger recognises but does not verify. It asked for " +
+            STATUS_LIST_ACCEPT + " only.");
+    } else {
+      s.add(key + ".list", listLabel, FAIL, uri + " did not answer with " +
+            "a Status List Token: it answered " + what.detail + ". " +
+            "draft-ietf-oauth-status-list-21 section 8.2: the body is the " +
+            "JWS Compact Serialization of the token (or a CWT).");
+    }
     s.add(key, label, SKIP, "the status list was not read (idx " + idx +
           ").");
-    log.debug("Leaving checkTokenStatus(). Not a JWT.");
+    log.debug("Leaving checkTokenStatus(). Not a JWT: " + what.kind);
     return;
   }
   var list;
@@ -1977,9 +2462,13 @@ async function checkTokenStatus(s, key, ref, issuer) {
   var p = list.payload || {};
   var problems = [];
   var notes = [];
-  if (h.typ !== STATUS_LIST_TYP) {
+  if (mediaTypeOfTyp(h.typ) !== mediaTypeOfTyp(STATUS_LIST_TYP)) {
     problems.push("typ is " + JSON.stringify(h.typ) + ', not "' +
-                  STATUS_LIST_TYP + '"');
+                  STATUS_LIST_TYP + '" (or "application/' +
+                  STATUS_LIST_TYP + '", RFC 7515 section 4.1.9)');
+  } else if (h.typ !== STATUS_LIST_TYP) {
+    notes.push("typ " + JSON.stringify(h.typ) + " is " + STATUS_LIST_TYP +
+               " by RFC 7515 section 4.1.9's comparison");
   }
   if (p.sub !== uri) {
     problems.push("sub is " + JSON.stringify(p.sub) + ", not the uri the " +
@@ -2006,8 +2495,7 @@ async function checkTokenStatus(s, key, ref, issuer) {
   }
   var sig = await statusListSignature(compact, h, p, issuer);
   if (!sig.valid) {
-    problems.push("the signature does NOT verify with the key from " +
-                  sig.from + (sig.reason ? " (" + sig.reason + ")" : ""));
+    problems.push("the signature does NOT verify with " + sig.from);
   }
   var credIss = (issuer.payload || {}).iss;
   if (p.iss && credIss && p.iss !== credIss) {
@@ -2017,8 +2505,10 @@ async function checkTokenStatus(s, key, ref, issuer) {
   s.add(key + ".list", listLabel, problems.length ? FAIL : PASS,
         problems.length ? problems.join("; ") + "." : "typ " +
         STATUS_LIST_TYP + ", sub is the credential's uri, signed (" + h.alg +
-        ") with the key from " + sig.from +
+        ") with " + sig.from +
         (notes.length ? "; " + notes.join("; ") : "") + ".");
+  var link = await statusSignerLink(compact, h, p, issuer, sig);
+  s.add(key + ".signer", signerLabel, link.status, link.detail);
   if (!readable) {
     s.add(key, label, SKIP, "the list itself could not be read.");
     log.debug("Leaving checkTokenStatus(). Unreadable list.");
@@ -2041,8 +2531,7 @@ async function checkTokenStatus(s, key, ref, issuer) {
     return;
   }
   var value = tokenStatusAt(raw, idx, sl.bits);
-  var name = TOKEN_STATUS_NAMES[value] || ("0x" + value.toString(16) +
-             ", application-specific");
+  var name = tokenStatusName(value);
   var where = "idx " + idx + " of " + uri + " is " + value + " (" + name +
       ")";
   if (problems.length) {
@@ -2051,11 +2540,23 @@ async function checkTokenStatus(s, key, ref, issuer) {
     log.debug("Leaving checkTokenStatus(). List not trusted.");
     return;
   }
-  s.add(key, label, value === 0 ? PASS : FAIL, value === 0 ? where + "." :
-        value === 1 ? where + ": the credential is revoked." :
-        value === 2 ? where + ": the credential is suspended." :
-        where + ": this Verifier does not know what that value means, so " +
-        "it does not accept the credential.");
+  var unlinked = link.status === PASS ? "" : "; the list's signer is not " +
+      "shown to be the credential's issuer (" + key + ".signer)";
+  if (value > 2) {
+    // Section 7.1: 0x03 and 0x0C-0x0F are "application specific" and their
+    // processing "is application specific"; the rest are unregistered. A
+    // debugger that does not know the application cannot call either
+    // valid or invalid, so it reports the value and decides nothing.
+    s.add(key, label, SKIP, where + ": draft-ietf-oauth-status-list-21 " +
+          "section 7.1 leaves its meaning to the application, so this " +
+          "Verifier reports it and does not judge it" + unlinked + ".");
+    log.debug("Leaving checkTokenStatus(). " + name);
+    return;
+  }
+  s.add(key, label, value === 0 ? PASS : FAIL, value === 0 ? where +
+        unlinked + "." : value === 1 ? where + ": the credential is " +
+        "revoked" + unlinked + "." : where + ": the credential is " +
+        "suspended" + unlinked + ".");
   log.debug("Leaving checkTokenStatus(). " + name);
 }
 
@@ -2070,7 +2571,13 @@ function issuerIdOf(credential) {
 // JSON-LD credential with a Data Integrity proof this debugger verifies.
 async function readStatusListCredential(text, ctx) {
   log.debug("Entering readStatusListCredential().");
-  var t = String(text || "").trim();
+  var body = statusBody(text);
+  var t = body.text === null ? "" : body.text.trim();
+  if (!COMPACT_JWS.test(t) && !/^\{/.test(t)) {
+    log.debug("Leaving readStatusListCredential(). Neither.");
+    throw new Error("it is " + describeStatusBody(body).detail + ", not a " +
+                    "VC JWT or a JSON credential.");
+  }
   var problems = [];
   var credential;
   var secured;
@@ -2097,6 +2604,14 @@ async function readStatusListCredential(text, ctx) {
     var win = sdJwtVc.validityWindowOf({ payload: d.payload });
     var verdict = validityVerdict(win, d.payload.iat, ctx.now);
     if (verdict.status === FAIL) problems.push(verdict.detail);
+    // A VC-JWT carries the credential's own validity too: Bitstring Status
+    // List v1.0 section 2.2 names validFrom and validUntil on the status
+    // list credential, and a JWT's nbf and exp do not replace them.
+    var vcWin = ldpWindow(credential);
+    if (vcWin.notBefore !== null || vcWin.expires !== null) {
+      var vcVerdict = validityVerdict(vcWin, null, ctx.now);
+      if (vcVerdict.status === FAIL) problems.push(vcVerdict.detail);
+    }
     if (!credential.issuer && d.payload.iss) {
       credential = Object.assign({ issuer: d.payload.iss }, credential);
     }
@@ -2178,10 +2693,26 @@ async function checkBitstringEntry(s, key, entry, issuer) {
     log.debug("Leaving checkBitstringEntry(). Malformed.");
     return;
   }
+  var messages = entry.statusMessage;
+  var wantMessages = Math.pow(2, size);
+  if (size > 1 && !isArray(messages)) {
+    s.add(key + ".entry", "The status entry is well formed", FAIL,
+          "statusSize is " + size + " and there is no statusMessage. " +
+          "Bitstring Status List v1.0 section 2.1: \"If statusSize is " +
+          "provided and is greater than 1, then the property " +
+          "credentialStatus.statusMessage MUST be present\" (a " +
+          "MALFORMED_VALUE_ERROR, section 3).");
+  } else if (messages !== undefined && (!isArray(messages) ||
+             (size <= 16 && messages.length !== wantMessages))) {
+    s.add(key + ".entry", "The status entry is well formed", FAIL,
+          "statusMessage must be an array of " + wantMessages + " " +
+          "element(s) for a statusSize of " + size + " (section 2.1); it " +
+          "is " + (isArray(messages) ? "an array of " + messages.length :
+          JSON.stringify(messages)) + ".");
+  }
   var read;
   try {
-    var text = await fetchStatusText(ctx, url, "application/vc+jwt, " +
-      "application/vc+ld+json, application/ld+json, application/json");
+    var text = await fetchStatusText(ctx, url, BITSTRING_ACCEPT);
     read = await readStatusListCredential(text, ctx);
   } catch (e) {
     s.add(key + ".list", listLabel, FAIL, "reading " + url + " failed: " +
@@ -2206,17 +2737,25 @@ async function checkBitstringEntry(s, key, entry, issuer) {
       subject.statusPurpose) + " is not the entry's " +
       JSON.stringify(purpose));
   }
+  var notes = [];
   var listIssuer = issuerIdOf(cred);
   if (issuer.id && listIssuer && listIssuer !== issuer.id) {
-    problems.push("its issuer " + listIssuer + " is not the credential's " +
-                  "issuer " + issuer.id);
+    // Section 2.2: "the issuer value of a verifiable credential containing
+    // a BitstringStatusListEntry MAY be different from the issuer value of
+    // a BitstringStatusListCredential." Reported, not refused; whether to
+    // trust that issuer is the Verifier's call (section 3.2's note).
+    notes.push("its issuer " + listIssuer + " is not the credential's " +
+               "issuer " + issuer.id + ", which section 2.2 allows; " +
+               "whether that issuer is trusted to say this is the " +
+               "Verifier's decision");
   }
   var encoded = typeof subject.encodedList === "string" ?
       subject.encodedList : "";
   if (!encoded) problems.push("credentialSubject.encodedList is missing");
   s.add(key + ".list", listLabel, problems.length ? FAIL : PASS,
         problems.length ? problems.join("; ") + "." : url + ": " +
-        read.secured + "; purpose " + purpose + ".");
+        read.secured + "; purpose " + purpose +
+        (notes.length ? "; " + notes.join("; ") : "") + ".");
   if (!encoded) {
     s.add(key, label, SKIP, "there is no encodedList to read.");
     log.debug("Leaving checkBitstringEntry(). No list.");
@@ -2254,18 +2793,35 @@ async function checkBitstringEntry(s, key, entry, issuer) {
     var word = purpose === "revocation" ? "revoked" : "suspended";
     s.add(key, label, value === 0 ? PASS : FAIL, where + (value === 0 ?
           ": not " + word + "." : ": the credential is " + word + "."));
+  } else if (purpose === "refresh") {
+    // Section 2.1: "an updated verifiable credential is available via the
+    // credential's refresh service ... This status does not invalidate the
+    // verifiable credential and is not reversible."
+    s.add(key, label, PASS, where + (value === 0 ? ": no refresh is " +
+          "pending." : ": an updated credential is available from its " +
+          "refreshService. That does not invalidate this one (section " +
+          "2.1)."));
   } else if (purpose === "message") {
     var hex = "0x" + value.toString(16);
-    var said = [].concat(entry.statusMessage || []).filter(function (m) {
-      return m && String(m.status).toLowerCase() === hex;
-    })[0];
+    // Section 2.1: each status is "a string representing the hexadecimal
+    // value of the status prefixed with 0x", so "0x01" and "0x1" are the
+    // same status and are compared as numbers. With no statusMessage, 1
+    // and 0 are "set" and "unset".
+    var said = [].concat(isArray(messages) ? messages : []).filter(
+      function (m) {
+        return m && /^0x[0-9a-f]+$/i.test(String(m.status)) &&
+          parseInt(String(m.status).slice(2), 16) === value;
+      })[0];
+    var fallback = !isArray(messages) && size === 1 ?
+      (value ? "set" : "unset") : "";
     s.add(key, label, PASS, where + " (" + hex + ")" + (said ?
-          ': "' + said.message + '".' : "; the entry's statusMessage " +
-          "names no message for it."));
+          ': "' + said.message + '".' : fallback ? ': "' + fallback +
+          '" (no statusMessage, section 2.1).' : "; the entry's " +
+          "statusMessage names no message for it."));
   } else {
     s.add(key, label, SKIP, where + "; statusPurpose " +
           JSON.stringify(purpose) + " is not one Bitstring Status List " +
-          "v1.0 defines (revocation, suspension, message).");
+          "v1.0 defines (" + BITSTRING_PURPOSES.join(", ") + ").");
   }
   log.debug("Leaving checkBitstringEntry(). " + value);
 }
@@ -2277,6 +2833,21 @@ async function checkCredentialStatus(s, key, refs, issuer, ctx) {
   log.debug("Entering checkCredentialStatus(). " + key);
   var label = "The credential's status";
   var who = Object.assign({ ctx: ctx }, issuer);
+  var other = refs.other || [];
+  other.forEach(function (name) {
+    s.add(key + "." + (slug(name) || "mechanism"), "Status mechanism " +
+          name, SKIP, name === "identifier_list" ? "the credential's " +
+          "status is an identifier_list (ISO/IEC 18013-5's Identifier " +
+          "List), a status mechanism this debugger does not read, so its " +
+          "status there is unchecked." : "status." + name + " is a status " +
+          "mechanism this debugger does not read (only status_list, " +
+          "draft-ietf-oauth-status-list-21 section 6), so its status " +
+          "there is unchecked.");
+  });
+  if (!refs.token && !refs.w3c.length && other.length) {
+    log.debug("Leaving checkCredentialStatus(). Unsupported mechanisms.");
+    return;
+  }
   if (!refs.token && !refs.w3c.length) {
     s.add(key, label, SKIP, "the credential names no status (no " +
           "status.status_list, no credentialStatus), so there is no list " +
@@ -2947,7 +3518,8 @@ async function verifyJwtVcJson(s, query, presentation, ctx) {
     var tokenRefs = statusRefsOf(vc.payload);
     var w3cRefs = statusRefsOf(vcBody);
     await checkCredentialStatus(s, tag + "status", { token: tokenRefs.token,
-      w3c: w3cRefs.w3c.length ? w3cRefs.w3c : tokenRefs.w3c },
+      w3c: w3cRefs.w3c.length ? w3cRefs.w3c : tokenRefs.w3c,
+      other: tokenRefs.other },
       { header: vc.header, payload: vc.payload,
         id: vc.payload.iss || issuerIdOf(vcBody) }, ctx);
     if (i === 0) {
@@ -3561,8 +4133,13 @@ function finish(report, presentations) {
 //              (Appendix A.4); trustAnchors (PEM or base64 DER) are what
 //              an issuer's x5c chain may be anchored at
 //   fetchJson  optional: issuer metadata, DID documents, key documents
-//   fetchText  optional: (url, { accept }) => text, for status lists; with
-//              none, every status check is a skip that says so
+//   fetchText  optional: (url, { accept }) => the body, for status lists:
+//              a string, bytes (ArrayBuffer or Uint8Array, so a binary CWT
+//              survives), or { body, contentType }; with none, every
+//              status check is a skip that says so
+//   statusSigningEku  optional: the OID (or OIDs) this PKI uses for
+//              draft-ietf-oauth-status-list's id-kp-oauthStatusSigning,
+//              which has no assigned number yet (section 14.9)
 //   now        optional: the time to judge validity at
 async function verifyResponse(opts) {
   log.debug("Entering verifyResponse().");
@@ -3638,6 +4215,7 @@ async function verifyResponse(opts) {
   checkQueries(report, vpToken, session.dcql);
   var ctx = { session: session, fetchJson: o.fetchJson,
               fetchText: o.fetchText, audience: audience,
+              statusSigningEku: [].concat(o.statusSigningEku || []),
               now: nowSeconds(o.now) };
   var presentations = await verifyPresentations(report, vpToken, ctx);
   var summary = statusSummary(report);

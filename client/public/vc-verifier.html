@@ -143,12 +143,24 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                 <option value="value">by value: the signed Request Object in the link</option>
               </select>
               <span class="vc-note">Under request_uri_method=post the wallet may send a wallet_nonce; this page
-              signs a fresh Request Object holding it while the wallet waits (the api holds its request open).</span></td>
+              signs a fresh Request Object holding it while the wallet waits (the api holds its request open).
+              If it cannot in time, the wallet is answered HTTP 503 (section 5.10.2), never an object without
+              its nonce.</span></td>
         </tr>
         <tr>
           <td><label for="vpv_scheme">Wallet invocation scheme</label></td>
           <td><input type="text" id="vpv_scheme" size="30" value="openid4vp://"
                      onchange="return vcverifier.settingsChanged();" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_trust_anchors">Trust anchors for issuers (PEM, optional)</label></td>
+          <td><textarea id="vpv_trust_anchors" class="vc-mono" rows="4" cols="80"
+                        placeholder="-----BEGIN CERTIFICATE-----"
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">The roots (an IACA for mdoc) an issuer's x5c must chain to. With none, an
+              x5c-signed credential's issuer trust is reported as not performed, and the verdict is
+              incomplete rather than a pass: a certificate is not trusted just because it is in x5c
+              (SD-JWT VC section 2.5).</span></td>
         </tr>
         <tr>
           <td><label for="vpv_redirect_uri">Send the wallet's browser to (optional)</label></td>
