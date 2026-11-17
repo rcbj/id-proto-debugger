@@ -360,6 +360,14 @@ COPY client/src/contexts ./contexts
 # directly — they are what these two require at load time, and a missing one is
 # a MODULE_NOT_FOUND at require, i.e. a hard failure rather than a silent skip.
 COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
+# sd_jwt_vc.js reads the fourth format, ISO mdoc, through mdoc.js, which
+# requires vp_protocols.js for the certificate's key. Both go beside it: a
+# module this flat directory lacks is a MODULE_NOT_FOUND at require, and it
+# took sd_jwt_vc_engine.js, ldp_vc_issuance.js and ldp_vc_refresh.js down in
+# 0.1s on the first containerized run (2026-11-17). Everything else either
+# requires (cbor, cose, crypto_bytes, dpop, jws, jose_jwe, did,
+# metadata_client) is already copied flat elsewhere in this file.
+COPY client/src/mdoc.js client/src/vp_protocols.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would

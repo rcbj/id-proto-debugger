@@ -15,11 +15,20 @@
 // wallet_nonce the object must echo), and an encrypted direct_post.jwt
 // answer. It checks an SD-JWT VC signed ES256 with holder key binding.
 //
-// The credential is iya-sts's, issued in this run. iya-sts signs RS256
-// unless an offer chooses otherwise, so the offer is made on iya-sts's
-// portal with ES256 chosen, and redeemed in node. Polaris is told to trust
-// iya-sts's issuer key (--issuer-jwks), to ask for that credential's vct and
-// for given_name and family_name.
+// The debugger is the wallet throughout, as the specifications intend:
+//
+//   * the credential is iya-sts's, issued in this run and COLLECTED BY THE
+//     WALLET. iya-sts signs RS256 unless an offer chooses otherwise, so the
+//     offer is made on iya-sts's portal with ES256 chosen, and the
+//     debugger's own issuance pages redeem it, with the holder key they
+//     generate. (The credential's x5c is switched off for that issuance;
+//     see es256Credential() for why.)
+//   * the presentation starts the way a wallet on another device starts one:
+//     Polaris's haip-vp:// launch link pasted into step 1, with HAIP and
+//     Polaris's trust anchor set on step 0.
+//
+// Polaris is told to trust iya-sts's issuer key (--issuer-jwks), to ask for
+// that credential's vct and for given_name and family_name.
 //
 // Two cases:
 //   accepted  everything asked for, through the pages; Polaris's --result
@@ -154,6 +163,12 @@ async function es256Credential(driver) {
   }
 }
 
+// The ES256 credential, collected BY THE WALLET: the debugger's own issuance
+// pages take the portal's offer (vc-issuance-1's Receive pane), redeem the
+// pre-authorized code with the Transaction Code (step 2), and send the
+// Credential Request with a proof by the holder key the wallet generated.
+// What reaches the presentation pages is what the wallet stored, not
+// anything this job wrote.
 async function mintEs256(driver) {
   log.debug("Entering mintEs256().");
   await common.provisionWallet(issuerBase,
@@ -163,15 +178,53 @@ async function mintEs256(driver) {
     username: usernameFor("polaris"), mode: "cross-device",
     configuration: SD_JWT_CONFIG_ID, signingAlg: "ES256", wait: stepWait,
     consentScreen: consentScreen });
-  const token = await common.redeemPreAuthorizedOffer(issuerBase,
-      screen.offerUri, screen.txCode);
-  const held = await common.mintJwtVcJson(issuerBase, SD_JWT_CONFIG_ID,
-                                          token);
+  await loadUrl(driver, baseUrl + "/vc-issuance-1.html");
+  await pageBundleReady(driver);
+  await driver.executeScript("localStorage.clear();");
+  await driver.navigate().refresh();
+  await pageBundleReady(driver);
+  await driver.wait(until.elementLocated(By.id("scan_offer_input")),
+                    stepWait);
+  await driver.executeScript(
+    "document.getElementById('scan_offer_input').value = arguments[0];",
+    screen.offerUri);
+  await clickId(driver, "scan_offer_button");
+  await driver.wait(until.elementLocated(By.id("start_issuance_button")),
+    stepWait, "taking the offer should offer Start Issuance");
+  await driver.sleep(1000);
+  await clickId(driver, "start_issuance_button");
+  await driver.wait(until.urlContains("vc-issuance-2.html"), stepWait,
+    "a pre-authorized offer goes straight to the Token Request");
+  await pageBundleReady(driver);
+  await driver.wait(until.elementLocated(By.id("vc_tx_code")), stepWait);
+  await driver.executeScript(
+    "document.getElementById('vc_tx_code').value = arguments[0];" +
+    "vcissuance2.onTxCodeChange();", screen.txCode);
+  await clickId(driver, "vc_token_request_button");
+  await driver.wait(async function () {
+    return !!(await driver.executeScript(
+      "var e = document.getElementById('vc_access_token');" +
+      "return e ? (e.value || e.textContent || '').trim() : '';"));
+  }, stepWait, "the Transaction Code should redeem the pre-authorized code");
+  await clickId(driver, "vc_approve_button");
+  await driver.wait(until.urlContains("vc-issuance-3.html"), stepWait,
+    "approving should issue the credential and open step 3");
+  const stored = await driver.wait(async function () {
+    return await driver.executeScript(
+      "var c = localStorage.getItem('sdjwtvc_credential');" +
+      "var k = localStorage.getItem('sdjwtvc_holder_private_jwk');" +
+      "return c && k ? { credential: c, holder: k } : null;");
+  }, stepWait, "the wallet should store the credential and its holder key");
+  const held = { credential: stored.credential };
   const parts = String(held.credential).split("~");
   held.header = common.jsonFromB64u(parts[0].split(".")[0]);
   held.payload = common.jsonFromB64u(parts[0].split(".")[1]);
   assert.strictEqual(held.header.alg, "ES256", "the offer chose ES256 and " +
     "the credential is signed " + held.header.alg + "; Polaris checks ES256");
+  const holderPublic = JSON.parse(stored.holder);
+  assert.ok(held.payload.cnf && held.payload.cnf.jwk &&
+            held.payload.cnf.jwk.x === holderPublic.x,
+    "the credential must be bound to the holder key the WALLET generated");
   const carried = parts.slice(1).filter(Boolean).map(function (d) {
     return JSON.parse(common.b64uDecode(d).toString("utf8"))[1];
   });
@@ -181,6 +234,8 @@ async function mintEs256(driver) {
   });
   assert.ok(!held.header.x5c, "the credential still carries x5c, so " +
             oid4vciHeaderNote());
+  log.info("[issuance] the wallet collected an ES256 " + held.payload.vct +
+           " through its own issuance pages.");
   log.debug("Leaving mintEs256().");
   return held;
 }
@@ -240,7 +295,11 @@ async function freshRequest(serveArgs, issuers) {
           .exec(line);
       if (m) got[m[1]] = m[2];
     });
-    return got.client_id && got.request_uri ? got : null;
+    // The link a wallet is launched with: HAIP 1.0's own scheme
+    // (section 5.1), which Polaris prints beside openid4vp://.
+    const link = /^\s+(haip-vp:\/\/\?\S+)/m.exec(text);
+    got.launch = link ? link[1] : "";
+    return got.client_id && got.request_uri && got.launch ? got : null;
   }, stepWait);
   log.info("Polaris asks as " + params.client_id + " at " +
            params.request_uri);
@@ -258,24 +317,42 @@ async function outcome() {
   return result;
 }
 
-async function presentTo(driver, held, params, anchor, withhold) {
-  log.debug("Entering presentTo(). withhold=" + (withhold || ""));
+// Step 0 as a person sets it up: HAIP chosen, and the Verifier's trust
+// anchor (Polaris's keygen anchor) pasted into the configuration and saved.
+async function chooseHaip(driver, anchor) {
+  log.debug("Entering chooseHaip().");
   await loadUrl(driver, baseUrl + "/vc-presentation-0.html");
   await pageBundleReady(driver);
+  await clickId(driver, "vp_protocol_haip");
+  await driver.wait(until.elementLocated(By.id("vp_x509_trust_anchor")),
+                    stepWait);
   await driver.executeScript(
-    "localStorage.clear();" +
-    "localStorage.setItem('sdjwtvc_credential', arguments[0]);" +
-    "localStorage.setItem('sdjwtvc_credentials'," +
-    "  JSON.stringify([arguments[0]]));" +
-    "localStorage.setItem('sdjwtvc_holder_jwk', arguments[1]);" +
-    "localStorage.setItem('sdjwtvc_holder_private_jwk', arguments[2]);" +
-    "localStorage.setItem('sdjwtvp_protocol', 'haip');" +
-    "localStorage.setItem('sdjwtvp_x509_trust_anchor', arguments[3]);",
-    held.credential, JSON.stringify(held.publicJwk),
-    JSON.stringify(held.privateJwk), anchor);
-  await loadUrl(driver, baseUrl + "/vc-presentation-1.html?" +
-    new URLSearchParams(params).toString());
+    "document.getElementById('vp_x509_trust_anchor').value = arguments[0];",
+    anchor);
+  await clickId(driver, "config_save_button");
+  const chosen = await driver.executeScript(
+    "return [localStorage.getItem('sdjwtvp_protocol')," +
+    "  localStorage.getItem('sdjwtvp_x509_trust_anchor')];");
+  assert.strictEqual(chosen[0], "haip", "choosing HAIP on step 0 should " +
+                     "stick");
+  assert.ok(/BEGIN CERTIFICATE/.test(chosen[1] || ""), "saving step 0's " +
+            "configuration should keep the trust anchor");
+  log.debug("Leaving chooseHaip().");
+}
+
+// One presentation: the launch link Polaris printed pasted into step 1, the
+// way a wallet on another device reads it from a QR code, then step 2 and
+// Present.
+async function presentTo(driver, launchLink, withhold) {
+  log.debug("Entering presentTo(). withhold=" + (withhold || ""));
+  await loadUrl(driver, baseUrl + "/vc-presentation-1.html");
   await pageBundleReady(driver);
+  await driver.wait(until.elementLocated(By.id("vp_paste_request")),
+                    stepWait);
+  await driver.executeScript(
+    "document.getElementById('vp_paste_request').value = arguments[0];",
+    launchLink);
+  await clickId(driver, "vp_use_pasted_button");
   const said = await waitForStatus(driver, "vp_request_status", function (s) {
     return /Request read|cannot be answered|Could not/.test(s);
   }, "step 1 should read Polaris's request", stepWait);
@@ -351,8 +428,9 @@ async function test() {
         })));
 
     log.info("=== Polaris accepts a complete HAIP presentation ===");
+    await chooseHaip(driver, anchor);
     let params = await freshRequest(args, issuers);
-    let answer = await presentTo(driver, held, params, anchor, "");
+    let answer = await presentTo(driver, params.launch, "");
     let result = await outcome();
     assert.strictEqual(result.outcome, "accepted", "Polaris should accept " +
       "the presentation: " + JSON.stringify(result));
@@ -368,7 +446,7 @@ async function test() {
 
     log.info("=== Polaris refuses a presentation that withholds a claim ===");
     params = await freshRequest(args, issuers);
-    answer = await presentTo(driver, held, params, anchor, "family_name");
+    answer = await presentTo(driver, params.launch, "family_name");
     result = await outcome();
     assert.strictEqual(result.outcome, "refused", "withholding family_name " +
       "must be refused: " + JSON.stringify(result));
