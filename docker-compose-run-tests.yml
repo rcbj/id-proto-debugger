@@ -320,10 +320,11 @@ services:
       # THE REASON THE LEVEL DID NOT REACH IT is the trap the mock's own
       # launcher documents at length: `STS_LOG_LEVEL` reaches the loggers
       # `config.js` registers, and NOT the modules that build a bunyan logger
-      # at load from `require(process.env.CONFIG_FILE).logLevel` — the mock's
-      # six vendored ones, and this project's own `common/` crypto modules.
-      # `xmldsig` alone was 208,966 lines, which is every canonicalization of
-      # every signed document.
+      # at load from `require(process.env.CONFIG_FILE).logLevel`. In
+      # 2026-08 those were iya-sts's copies of this project's `common/` modules
+      # (it carries no copies now; its own modules still read the level that
+      # way). `xmldsig` alone was 208,966 lines, which is every
+      # canonicalization of every signed document.
       #
       # `sts/env/test.js` is `env/local.js` with one key changed, so this
       # swaps the level and nothing else. A debug run is

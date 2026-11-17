@@ -182,9 +182,11 @@ Every one of those produces a workflow that works perfectly against itself.
 
 ## The subject grammar is written twice on purpose
 
-`common/krb5` is vendored into the mock because **one wire codec must not exist
-twice**. RFC 9493 is the opposite case and the two look alike, so the reasoning
-is worth stating.
+Nothing in this tree is shared with iya-sts as source — `common/krb5` was
+copied there until 2026-11-12 and is iya-sts's own now, and the two codecs are
+held to agree **on the wire** by `tests/krb5_codec_sync.js`. For RFC 9493 that
+separation is not merely the arrangement but the point, so the reasoning is
+worth stating.
 
 A subject identifier is JSON, and the defect that matters in it is a READING —
 an accepted extra member, a missing required one, a format name spelt from
@@ -192,12 +194,12 @@ memory. If both ends read one implementation, a misunderstanding they SHARE is
 one neither can see: the round trip passes and the workflow interoperates with
 nothing.
 
-So `client/src/ssf_client.js` has this side's grammar, `sts/ssf/ssf_subjects.js`
-has the mock's, they were written independently, and **`tests/ssf_protocol.js`
-drives one against the other over the wire** — all eight formats, the complex
-subject, and three refusals. That is the argument `common/pq_jose.js` makes in
-the mock about the composite construction, applied to a grammar instead of to a
-signature.
+So `client/src/ssf_client.js` has this side's grammar, iya-sts's
+`ssf/ssf_subjects.js` has that service's, they were written independently, and
+**`tests/ssf_protocol.js` drives one against the other over the wire** — all
+eight formats, the complex subject, and three refusals. That is the argument
+`common/pq_jose.js` makes in iya-sts about the composite construction, applied
+to a grammar instead of to a signature.
 
 ### The eleven formats, and the rule that catches people
 

@@ -169,8 +169,8 @@ function rsaSigAlgRefusal(sigAlg, who) {
 // forge's private-key operation is JavaScript: its blinding factor comes from
 // forge.random (a Fortuna DRBG on the heap, not the platform's), and its
 // BigInteger modPow has no side-channel hardening. Under node — api/server.js
-// signing the SAML bindings, and every consumer of the copy iya-sts vendors —
-// the same octets are signed by OpenSSL instead, straight from the PEM.
+// signing the SAML bindings, and the tests that load this file in node — the
+// same octets are signed by OpenSSL instead, straight from the PEM.
 //
 // THIS FILE IS ALSO BROWSERIFIED, into ten bundles, which is why the require
 // below is written the way it is. A literal require of the crypto module is

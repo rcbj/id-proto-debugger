@@ -82,7 +82,7 @@
 // when this file was written. The mock KDC did not advertise PA-ENC-TIMESTAMP
 // in its KDC_ERR_PREAUTH_REQUIRED, so no MIT-derived client could obtain a
 // ticket from it at all and Chrome's Negotiate had nothing to send; that is
-// fixed in `sts/kerberos/krb5_kdc.js`, and `kinit`, `kvno` and `curl
+// fixed in iya-sts's `kerberos/krb5_kdc.js`, and `kinit`, `kvno` and `curl
 // --negotiate` now complete against it end to end. A second job driving a real
 // GSSAPI browser is therefore possible and is deliberately NOT this file: it
 // needs `krb5-user` in `tests/Dockerfile` and a per-run `krb5.conf`, so it
