@@ -285,6 +285,18 @@ async function present(driver, c) {
   await waitForStatus(driver, "vp_request_status", function (s) {
     return /Request read/.test(s);
   }, c.label + ": step 1 should read the request", stepWait);
+  // Every claim asked for is one the held credential carries, so none may be
+  // marked missing. For an mdoc this is the [namespace, element] path, whose
+  // namespace has dots of its own: read as "first segment off", every
+  // requested element was reported as not in the credential.
+  if (c.format) {
+    const requested = await driver.executeScript(
+      "var t = document.getElementById('vp_requested_table');" +
+      "return t ? t.textContent : '';");
+    assert.ok(requested.indexOf("not in the credential you hold") === -1,
+      c.label + ": step 1 marks a requested claim missing that the " +
+      "credential carries:\n" + requested);
+  }
   await clickId(driver, "vp_continue_button");
   await driver.wait(until.urlContains("vc-presentation-2.html"), stepWait,
     c.label + ": Continue should open step 2");
@@ -306,6 +318,23 @@ async function present(driver, c) {
   const call = await waitForValue(driver, "vp_assembled_call", function (v) {
     return c.form ? /BROWSER submits/.test(v) : /^POST /.test(v);
   }, c.label + ": step 2 should assemble the answer", stepWait);
+  // A holder-bound ldp_vc must disclose the statement naming its holder
+  // (the credential's credentialSubject): without it the holder's proof is
+  // by a key the credential never mentions, and iya-sts refuses on
+  // "Holder binding". The selection used to leave it out.
+  if (c.ldp && c.idToken) {
+    const subjectChecked = await driver.executeScript(
+      "var rows = document.querySelectorAll(" +
+      "  '#vp_disclosures_table tbody tr');" +
+      "return Array.prototype.some.call(rows, function (r) {" +
+      "  var b = r.querySelector('input[type=checkbox]');" +
+      "  return b && b.checked &&" +
+      "    /[#\\/]credentialSubject>/.test(r.textContent);" +
+      "});");
+    assert.strictEqual(subjectChecked, true, c.label + ": step 2 must " +
+      "select the credentialSubject statement by default for a " +
+      "holder-bound ldp_vc");
+  }
   if (c.encrypted) {
     assert.ok(/(^|\n)response=/.test(call) && !/vp_token=/.test(call),
       c.label + ": direct_post.jwt must post ONE field, response:\n" + call);
@@ -487,7 +516,7 @@ async function withFormats(held) {
       // iya-sts 1.0.0 verifies an mdoc's device signature with the MSO's
       // device key but does not return that key as the presentation's
       // holder key (oid4vc/vc_mdoc.ts sets no holderJwk), so its SIOPv2
-      // "same holder" check cannot pass for ANY mdoc (rcbj/iya-sts#1862).
+      // "same holder" check cannot pass for ANY mdoc (rcbj/iya-sts#1864).
       // The wallet's own step 3 re-check of the same thing ("Same holder")
       // has passed by this point; everything else iya-sts checks must pass.
       verifierGap: format === "mso_mdoc" ?

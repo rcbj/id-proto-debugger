@@ -408,7 +408,11 @@ function dcqlClaimPaths(credentialQuery) {
 function claimNameForPath(path, format) {
   log.debug("Entering claimNameForPath().");
   var parts = String(path || "").split(".");
-  if (format === sdJwtVc.FORMAT_JWT_VC_JSON && parts.length > 1 &&
+  // Both W3C formats keep their claims under credentialSubject. ldp_vc was
+  // missing here, so step 1 reported every requested ldp_vc claim as "not in
+  // the credential you hold" while the presentation itself was fine.
+  if ((format === sdJwtVc.FORMAT_JWT_VC_JSON ||
+       format === sdJwtVc.FORMAT_LDP_VC) && parts.length > 1 &&
       parts[0] === "credentialSubject") {
     parts = parts.slice(1);
   }

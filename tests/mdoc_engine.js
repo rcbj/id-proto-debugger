@@ -123,6 +123,13 @@ async function main() {
   assert.strictEqual(sdJwtVp.claimNameForPath(issuer.NS + ".given_name",
     "mso_mdoc"), "given_name", "a [namespace, element] path names the " +
     "element");
+  // The two W3C formats address claims under credentialSubject, and the
+  // wallet's claim map is flat in both.
+  ["jwt_vc_json", "ldp_vc"].forEach(function (format) {
+    assert.strictEqual(sdJwtVp.claimNameForPath(
+      "credentialSubject.given_name", format), "given_name",
+      format + ": a credentialSubject path names the claim");
+  });
   log.info("PASS reading an mdoc an independent issuer made.");
 
   // --- the wallet's own checks ----------------------------------------------
