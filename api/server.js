@@ -2664,9 +2664,8 @@ function escapeHtml(text) {
 }
 
 // A page listing every operation, written from the document. Self-contained
-// on purpose — no script, no stylesheet from anywhere — because the
-// explorers that would render it interactively are either another
-// dependency tree or a CDN this api would then send its callers to.
+// on purpose — no script, no stylesheet from anywhere — for a reader who
+// wants the list rather than the explorer.
 function apiDocumentIndex(doc) {
   log.debug("Entering apiDocumentIndex().");
   const rows = [];
@@ -2695,7 +2694,8 @@ function apiDocumentIndex(doc) {
     'color:#e8e8e8}td,th{border-color:#333}}</style></head><body>' +
     '<h1>' + escapeHtml(doc.info.title) + ' <small>' +
     escapeHtml(doc.info.version) + '</small></h1><p>The OpenAPI 3.1 ' +
-    'document is <a href="api-docs.json">api-docs.json</a>. Every route ' +
+    'document is <a href="../api-docs.json">api-docs.json</a>, and the ' +
+    '<a href="../api-docs">explorer</a> can try it. Every route ' +
     'below is validated against it.</p><table><thead><tr><th>Family</th>' +
     '<th>Operation</th><th>operationId</th><th>What it does</th></tr>' +
     '</thead><tbody>' + rows.join('') + '</tbody></table></body></html>';
@@ -2711,13 +2711,60 @@ app.get('/api-docs.json', model.route('apiDocument'), function (req, res) {
 });
 
 /**
- * Every operation in the API document, as a page.
+ * Every operation in the API document, as a page with no script at all.
+ */
+app.get('/api-docs/operations', model.route('apiOperations'),
+        function (req, res) {
+  log.debug("Entering GET /api-docs/operations.");
+  log.debug("Leaving GET /api-docs/operations.");
+  return res.status(STATUS_200).type('html')
+    .send(apiDocumentIndex(API_DOCUMENT));
+});
+
+// THE EXPLORER. Swagger UI, from swagger-ui-dist, served from this api's own
+// node_modules rather than a CDN, so a page that shows a caller what this
+// service accepts does not also send that caller to somebody else's server.
+// swagger-ui-dist depends on @scarf/scarf, an install-time analytics hook;
+// api/package.json sets scarfSettings.enabled false, which scarf honours,
+// and api/Dockerfile sets SCARF_ANALYTICS=false as well. Every path below is
+// RELATIVE, so the page works embedded behind the mock STS under /api.
+const SWAGGER_UI_DIR = require('swagger-ui-dist').absolutePath();
+app.use('/api-docs/assets', express.static(SWAGGER_UI_DIR, {
+  index: false, fallthrough: false }));
+
+const API_DOCS_PAGE = '<!doctype html><html lang="en"><head>' +
+  '<meta charset="utf-8"><meta name="viewport" ' +
+  'content="width=device-width, initial-scale=1">' +
+  '<title>id-proto-debugger API</title>' +
+  '<link rel="stylesheet" href="api-docs/assets/swagger-ui.css">' +
+  '</head><body><div id="swagger-ui"></div>' +
+  '<script src="api-docs/assets/swagger-ui-bundle.js"></script>' +
+  '<script src="api-docs/init.js"></script></body></html>';
+
+// JavaScript in a string, served to the browser: not this file's control
+// flow, so the logging convention does not reach inside it.
+const API_DOCS_INIT = 'window.addEventListener("load", function () {' +
+  ' window.ui = SwaggerUIBundle({ url: "api-docs.json",' +
+  ' dom_id: "#swagger-ui", deepLinking: true }); });\n';
+
+/**
+ * The API document in Swagger UI, which can also try an operation.
  */
 app.get('/api-docs', model.route('apiDocumentIndex'), function (req, res) {
   log.debug("Entering GET /api-docs.");
   log.debug("Leaving GET /api-docs.");
-  return res.status(STATUS_200).type('html')
-    .send(apiDocumentIndex(API_DOCUMENT));
+  return res.status(STATUS_200).type('html').send(API_DOCS_PAGE);
+});
+
+/**
+ * The explorer's initializer: where the document is and where to draw it.
+ */
+app.get('/api-docs/init.js', model.route('apiDocumentInit'),
+        function (req, res) {
+  log.debug("Entering GET /api-docs/init.js.");
+  log.debug("Leaving GET /api-docs/init.js.");
+  return res.status(STATUS_200).type('application/javascript')
+    .send(API_DOCS_INIT);
 });
 
 /**

@@ -68,12 +68,38 @@ op modelGaps(): Ok<ModelGaps> | {
 @operationId("apiDocument")
 op apiDocument(): Ok<Record<unknown>>;
 
-/** Every operation in the API document, as a self-contained HTML page. */
+/**
+ * The API document in Swagger UI (swagger-ui-dist, served from this api's
+ * own node_modules under /api-docs/assets/, which is static and outside this
+ * document).
+ */
 @tag("Service")
 @route("/api-docs")
 @get
 @operationId("apiDocumentIndex")
 op apiDocumentIndex(): {
+  @statusCode statusCode: 200;
+  @header contentType: "text/html";
+  @body body: string;
+};
+
+/** The explorer's initializer script. */
+@tag("Service")
+@route("/api-docs/init.js")
+@get
+@operationId("apiDocumentInit")
+op apiDocumentInit(): {
+  @statusCode statusCode: 200;
+  @header contentType: "application/javascript";
+  @body body: string;
+};
+
+/** Every operation in the API document, as a page with no script. */
+@tag("Service")
+@route("/api-docs/operations")
+@get
+@operationId("apiOperations")
+op apiOperations(): {
   @statusCode statusCode: 200;
   @header contentType: "text/html";
   @body body: string;

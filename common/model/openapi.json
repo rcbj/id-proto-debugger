@@ -53,7 +53,7 @@
     "/api-docs": {
       "get": {
         "operationId": "apiDocumentIndex",
-        "description": "Every operation in the API document, as a self-contained HTML page.",
+        "description": "The API document in Swagger UI (swagger-ui-dist, served from this api's\nown node_modules under /api-docs/assets/, which is static and outside this\ndocument).",
         "parameters": [],
         "responses": {
           "200": {
@@ -85,6 +85,50 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": {}
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/api-docs/init.js": {
+      "get": {
+        "operationId": "apiDocumentInit",
+        "description": "The explorer's initializer script.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/javascript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/api-docs/operations": {
+      "get": {
+        "operationId": "apiOperations",
+        "description": "Every operation in the API document, as a page with no script.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }

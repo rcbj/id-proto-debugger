@@ -1,6 +1,6 @@
 {
   "family": "service",
-  "about": "GET /healthcheck, GET /model/gaps, and the API document at GET /api-docs.json and GET /api-docs. The document changes whenever a model does, so only its OpenAPI version is compared; the page, likewise, only by status. GET /model/gaps depends on validateResponses, which api/env/docker-tests.js turns on.",
+  "about": "GET /healthcheck, GET /model/gaps, and the API document at GET /api-docs.json GET /api-docs (the explorer), /api-docs/init.js and /api-docs/operations. The document changes whenever a model does, so only its OpenAPI version is compared; the page, likewise, only by status. GET /model/gaps depends on validateResponses, which api/env/docker-tests.js turns on.",
   "cases": [
     {
       "name": "healthcheck",
@@ -47,9 +47,31 @@
       }
     },
     {
-      "name": "the API document as a page",
+      "name": "the explorer page",
       "method": "GET",
       "path": "/api-docs",
+      "expect": {
+        "status": 200,
+        "body": {
+          "(not JSON)": "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>id-proto-debugger API</title><link rel=\"stylesheet\" href=\"api-docs/assets/swagger-ui.css\"></head><body><div id=\"swagger-ui\"></div><script src=\"api-docs/assets/swagger-ui-bundle.js\"></script><script src=\"api-docs/init.js\"></script></body></html>"
+        }
+      }
+    },
+    {
+      "name": "the explorer initializer",
+      "method": "GET",
+      "path": "/api-docs/init.js",
+      "expect": {
+        "status": 200,
+        "body": {
+          "(not JSON)": "window.addEventListener(\"load\", function () { window.ui = SwaggerUIBundle({ url: \"api-docs.json\", dom_id: \"#swagger-ui\", deepLinking: true }); });\n"
+        }
+      }
+    },
+    {
+      "name": "the operations page",
+      "method": "GET",
+      "path": "/api-docs/operations",
       "volatile": [
         "(not JSON)"
       ],

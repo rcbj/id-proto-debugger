@@ -21,6 +21,7 @@
     "ldapjs": "file:node-ldapjs",
     "logops": "latest",
     "node-forge": "^1.4.3",
+    "swagger-ui-dist": "5.34.1",
     "xpath": "^0.0.34"
   },
   "overrides": {
@@ -30,5 +31,8 @@
   "optionalDependencies": {
     "node-hid": "3.4.0",
     "pcsclite": "1.0.1"
+  },
+  "scarfSettings": {
+    "enabled": false
   }
 }
