@@ -204,6 +204,9 @@ function parameterSchema(parameters, where) {
   const mine = (parameters || []).filter(function (p) {
     return p.in === where;
   });
+  // A parameter's `x-refusal` is on the parameter object, where the emitter
+  // writes a property's extensions; read it from there as well as from its
+  // schema.
   if (!mine.length) {
     log.debug('Leaving parameterSchema(). None.');
     return null;
@@ -225,6 +228,7 @@ function parameterSchema(parameters, where) {
  * (compiled on first use).
  */
 function indexOperations(doc, ajv, coercing) {
+  // `doc` is read by the parameter resolution inside the loop.
   log.debug('Entering indexOperations().');
   const operations = {};
   Object.keys(doc.paths || {}).forEach(function (route) {
@@ -245,13 +249,24 @@ function indexOperations(doc, ajv, coercing) {
         responses: {},
         compiled: {}
       };
+      // A parameter spread from a named model is emitted as a reference to
+      // components.parameters; resolve it, or the parameter is never seen.
+      const opParameters = (op.parameters || []).map(function (p) {
+        if (p && typeof p.$ref === 'string' &&
+            p.$ref.indexOf('#/components/parameters/') === 0) {
+          const name = p.$ref.slice('#/components/parameters/'.length);
+          return ((doc.components || {}).parameters || {})[name] || p;
+        }
+        return p;
+      });
       ['query', 'path'].forEach(function (where) {
-        const schema = parameterSchema(op.parameters, where);
+        const schema = parameterSchema(opParameters, where);
         if (schema) {
           const refusals = {};
-          (op.parameters || []).forEach(function (p) {
-            if (p.in === where && p.schema && p.schema['x-refusal']) {
-              refusals[p.name] = p.schema['x-refusal'];
+          opParameters.forEach(function (p) {
+            const own = p['x-refusal'] || (p.schema && p.schema['x-refusal']);
+            if (p.in === where && own) {
+              refusals[p.name] = own;
             }
           });
           entry.parameters[where] = {
@@ -431,11 +446,17 @@ function createModel(options) {
    */
   function answerProblems(op, status, payload) {
     log.debug('Entering answerProblems(). ' + op.operationId + ' ' + status);
-    const code = String(status);
-    if (!Object.prototype.hasOwnProperty.call(op.responses, code)) {
+    // An exact status, then its range (4XX), then `default`: OpenAPI's own
+    // order. A passed-through upstream status is documented as a range.
+    const exact = String(status);
+    const range = exact.charAt(0) + 'XX';
+    const code = [exact, range, 'default'].find(function (c) {
+      return Object.prototype.hasOwnProperty.call(op.responses, c);
+    });
+    if (!code) {
       log.debug('Leaving answerProblems(). Undocumented status.');
       return [{ instancePath: '', keyword: 'status',
-                message: 'the document has no ' + code +
+                message: 'the document has no ' + exact +
                   ' answer for this operation' }];
     }
     const schema = op.responses[code];
@@ -513,9 +534,11 @@ function createModel(options) {
     return function modelRoute(req, res, next) {
       log.debug('Entering modelRoute(). ' + operationId);
       if (validateResponses) {
+        let checked = false;
         const send = res.json.bind(res);
         res.json = function modelJson(payload) {
           log.debug('Entering modelJson(). ' + operationId);
+          checked = true;
           try {
             checkAnswer(op, res.statusCode, payload);
           } catch (e) {
@@ -525,6 +548,22 @@ function createModel(options) {
           log.debug('Leaving modelJson().');
           return send(payload);
         };
+        // An answer that is not JSON (a redirect, a page, XML) has no body
+        // schema to meet, but its STATUS is still one the document lists.
+        res.on('finish', function modelFinish() {
+          log.debug('Entering modelFinish(). ' + operationId);
+          if (!checked) {
+            const problems = answerProblems(op, res.statusCode, undefined)
+              .filter(function (p) {
+                return p.keyword === 'status';
+              });
+            problems.forEach(function (p) {
+              recordGap(op, res.statusCode, p.instancePath, p.keyword,
+                        p.message);
+            });
+          }
+          log.debug('Leaving modelFinish().');
+        });
       }
       const parts = [['path', req.params], ['query', req.query]];
       for (const [where, values] of parts) {
