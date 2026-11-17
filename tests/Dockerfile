@@ -667,6 +667,9 @@ COPY infra/edge/edge_common.js ./
 # not — so it is useful here without the whole api tree being staged.
 COPY api/ssrf_guard.js ./
 COPY api/connect_timeout.js ./
+# #434: the one reading of a request's sslValidate, unit-tested by the same
+# job.
+COPY api/ssl_validate.js ./
 # The debugger embedded in the mock STS (embedded/CLAUDE.md). The test reads
 # the socket listener and the two embedded configurations; the two env files
 # arrive RENAMED, because this directory is flat and both are `embedded.js`.
