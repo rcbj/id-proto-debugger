@@ -143,7 +143,9 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                 <option value="value">by value: the signed Request Object in the link</option>
               </select>
               <span class="vc-note">Under request_uri_method=post the wallet may send a wallet_nonce; this page
-              signs a fresh Request Object holding it while the wallet waits (the api holds its request open).</span></td>
+              signs a fresh Request Object holding it while the wallet waits (the api holds its request open).
+              If it cannot in time, the wallet is answered HTTP 503 (section 5.10.2), never an object without
+              its nonce.</span></td>
         </tr>
         <tr>
           <td><label for="vpv_scheme">Wallet invocation scheme</label></td>

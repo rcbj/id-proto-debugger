@@ -96,16 +96,55 @@ answered. Per format:
 them:
 
 * **dc+sd-jwt and mso_mdoc: the IETF Token Status List**
-  (draft-ietf-oauth-status-list).
-  * The Status List Token (`typ` `statuslist+jwt`) is fetched and its
-    signature checked with the issuer's keys.
+  (draft-ietf-oauth-status-list-21).
+  * The Status List Token is fetched with `Accept:
+    application/statuslist+jwt`. The CWT form is not asked for, because it
+    is not verified. `typ` is compared as a media type (RFC 7515 section
+    4.1.9), so `application/statuslist+jwt` and any letter case pass.
+  * Its signature is checked with **the first key that verifies**, in this
+    order: the credential issuer's own key when the token references it
+    (the same `x5c`, an `x5t` or `x5t#S256` of the credential's leaf, or the
+    credential's `kid`); then the token's own key (its `x5c`, a DID, or an
+    https `iss`'s `jwt-vc-issuer` metadata); then the credential issuer's key
+    as a fallback, for example for an https `iss` with no metadata (section
+    11.3). A token with an `x5c` of its own is held to that key alone.
+  * A separate `.signer` row says whether that signer **is the credential's
+    issuer, or authorised by it** (sections 1, 10 and 11.3). It is PASS for
+    the same key, for a key from the credential issuer's own key resolution,
+    and for a certificate issued by the same CA as the credential's that
+    carries `id-kp-oauthStatusSigning`. That EKU has no OID yet (the draft
+    says `1.3.6.1.5.5.7.3.TBD`), so `verifyResponse()` takes the OID a PKI
+    uses as `statusSigningEku`; without it, a same-CA certificate is SKIP.
+    Anything else is **SKIP, "NOT linked"**, never PASS, and the value row
+    names it too.
   * `lst` is decompressed (zlib, with the browser's `DecompressionStream`).
-  * The entry's value is reported: VALID, INVALID, SUSPENDED or
-    application-specific. Entry 0 is in the least significant bits of
-    byte 0.
-  * A CWT status list is recognised and reported as SKIP.
+    Entry 0 is in the least significant bits of byte 0. The tests read the
+    draft's own vectors (sections 4.1 and 4.2, Appendix C.1 and C.3).
+  * VALID is PASS, INVALID and SUSPENDED are FAIL. Any other value is SKIP
+    and shown: 0x03 and 0x0C to 0x0F are application-specific (section
+    7.1), and the rest are reserved for future registration.
+  * A body that is not a compact JWS is reported as what it is. A
+    COSE_Sign1 (detected by decoding the CBOR) is SKIP: recognised, not
+    verified. An HTML page, other binary data or other text is FAIL. The
+    page hands the body over as bytes, so a binary CWT is not mangled into
+    text.
+  * Status mechanisms other than `status_list`, such as an mdoc's
+    `identifier_list`, are reported as SKIP by name, never as "no status".
 * **jwt_vc_json and ldp_vc: the W3C Bitstring Status List**, one row per
   `statusPurpose`. The list is GZIP and read most significant bit first.
+  * It is asked for as `application/vc`, `application/vc+jwt` and the JSON
+    types (section 4).
+  * `revocation` and `suspension` FAIL when set. `refresh` is PASS either
+    way, and says when an updated credential is available. `message`
+    reports the message, matching `statusMessage` by number, so `0x01` is
+    `0x1`. With no `statusMessage` on a one-bit entry, the messages are
+    "set" and "unset".
+  * A `statusSize` above 1 with no `statusMessage`, or a `statusMessage`
+    that is not 2^`statusSize` long, is a FAIL `.entry` row (section 2.1).
+  * A list credential whose issuer is not the credential's is reported in
+    the detail and not failed, because section 2.2 says it MAY differ.
+  * A VC-JWT list credential's `validFrom` and `validUntil` are checked as
+    well as the JWT's `nbf` and `exp`.
 
 A credential with no status is SKIP, not PASS.
 
@@ -131,9 +170,10 @@ so by name.
 
 ## `wallet_nonce`: signing while the wallet waits
 
-Under `request_uri_method=post` a wallet may send a `wallet_nonce`. The Request
-Object should then contain it (section 5.10). The api cannot sign, so a
-request delivered that way is created with live signing on:
+Under `request_uri_method=post` a wallet may send a `wallet_nonce`. The
+Request Object must then contain it: "the Verifier MUST use it" (section
+5.10). The api cannot sign, so a request delivered that way is created with
+live signing on:
 
 1. The api holds the wallet's POST open for `oid4vpVerifierLiveSignWaitMs`
    (15 seconds by default).
@@ -141,8 +181,11 @@ request delivered that way is created with live signing on:
    nonce and sends it with `PUT …/request/<signingId>`.
 3. The api answers the wallet with that object.
 
-If the page misses the window, the wallet gets the object signed in advance.
-The events say which happened. `docs/vc-verifier-api.md` has the routes.
+If the page misses the window, a wallet that sent a `wallet_nonce` is
+answered 503 rather than given the object signed in advance, which cannot
+carry the nonce (section 5.10.2: any HTTP error makes the wallet stop). A
+wallet that sent none gets the object signed in advance. The events say
+which happened. `docs/vc-verifier-api.md` has the routes.
 
 ## Tests
 

@@ -727,13 +727,17 @@ function eventLine(event) {
       (event.walletNonce ? ", sending wallet_nonce " + event.walletNonce
                          : "") +
       (event.signingId ? "; the api is holding it open for a Request " +
-        "Object signed with that nonce" : "") + ".";
+        "Object signed with that nonce" : "") + "." +
+      (event.problem ? " " + event.problem : "");
   } else if (event.kind === "request-signed") {
     text = at + (event.liveSigned
       ? "This page signed a fresh Request Object for that wallet, " +
         "echoing its wallet_nonce."
-      : "The wallet was given the Request Object signed in advance (" +
-        (event.reason || "no reason given") + ").");
+      : event.httpStatus
+        ? "The wallet was answered HTTP " + event.httpStatus + " (" +
+          (event.reason || "no reason given") + ")."
+        : "The wallet was not given a Request Object signed for it (" +
+          (event.reason || "no reason given") + ").");
   } else if (event.kind === "ca-fetched") {
     text = at + "The wallet fetched the Verifier's root certificate from " +
       "the leaf's Authority Information Access URL.";
@@ -836,8 +840,10 @@ async function fetchJson(url) {
   return json;
 }
 
-// The status lists' fetcher: a Status List Token is a JWT and a Bitstring
-// Status List credential may be one, so these are read as text.
+// The status lists' fetcher. The body is handed over as BYTES with its
+// Content-Type, not as text: a Status List Token may be a binary CWT, and
+// response.text() would turn it into replacement characters before the
+// engine could say what it was. vp_verifier.js decodes UTF-8 itself.
 async function fetchText(url, opts) {
   log.debug("Entering fetchText(). " + url);
   var accept = (opts && opts.accept) || "*/*";
@@ -846,9 +852,10 @@ async function fetchText(url, opts) {
     log.debug("Leaving fetchText(). " + response.status);
     throw new Error("GET " + url + " answered " + response.status);
   }
-  var text = await response.text();
-  log.debug("Leaving fetchText().");
-  return text;
+  var body = new Uint8Array(await response.arrayBuffer());
+  log.debug("Leaving fetchText(). " + body.length + " bytes.");
+  return { body: body, contentType: response.headers.get("content-type") ||
+    "" };
 }
 
 function clearVerdict() {

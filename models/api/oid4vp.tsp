@@ -244,9 +244,14 @@ model VerifierEvent {
   /** request-signed: true when the Wallet got the page's live object. */
   liveSigned?: boolean;
 
-  /** request-signed with liveSigned false: why the pre-signed object was
-   *  served. */
+  /** request-signed with liveSigned false: why the page's object was not
+   *  served, and what the Wallet got instead. */
   reason?: string;
+
+  /** request-signed: the HTTP error the Wallet was answered with — 503
+   *  when it sent a wallet_nonce no Request Object could be signed with in
+   *  time (OpenID4VP section 5.10.2). Absent when it got an object. */
+  httpStatus?: int32;
 }
 
 /** What Wallets did since the cursor. */
@@ -304,6 +309,15 @@ model Unauthorized {
   @statusCode statusCode: 401;
   @header("WWW-Authenticate") challenge: string;
   @body body: PageError;
+}
+
+/** request_uri_method=post: the Wallet sent a wallet_nonce, which section
+ *  5.10 says the Verifier MUST put in the Request Object, and the page did
+ *  not sign one carrying it in time (or too many Wallets already wait).
+ *  Section 5.10.2: any HTTP error makes the Wallet terminate. */
+model LiveSignUnavailable {
+  @statusCode statusCode: 503;
+  @body body: WalletError;
 }
 
 /** No session has that id: never created, deleted, or expired. */
@@ -380,7 +394,8 @@ op verifierRequestGet(@path id: string): {
 /** A Wallet fetches the Request Object by POST, request_uri_method=post
  *  (section 5.10), carrying wallet_metadata and wallet_nonce. Under live
  *  signing the answer waits for the page, up to
- *  oid4vpVerifierLiveSignWaitMs, then falls back to the pre-signed one. */
+ *  oid4vpVerifierLiveSignWaitMs; a Wallet that sent a wallet_nonce is then
+ *  answered 503, and one that sent none gets the pre-signed object. */
 @tag("OpenID4VP")
 @route("/oid4vp/verifier/{id}/request")
 @post
@@ -394,7 +409,7 @@ op verifierRequestPost(
   @statusCode statusCode: 200;
   @header contentType: "application/oauth-authz-req+jwt";
   @body body: string;
-} | NoSession<WalletError>;
+} | NoSession<WalletError> | LiveSignUnavailable;
 
 /** The Verifier's root CA certificate, at the leaf's AIA caIssuers URL. */
 @tag("OpenID4VP")

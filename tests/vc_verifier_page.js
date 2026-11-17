@@ -345,11 +345,13 @@ async function liveSigningRound(driver) {
   const claims = jwsPart(body, 1);
   check("the wallet's POST is answered with a Request Object signed LIVE " +
       "that echoes its wallet_nonce", function () {
-        assert.strictEqual(got.status, 200, body.slice(0, 200));
+        // A 503 is the page missing the api's wait: a wallet that sent a
+        // wallet_nonce is never given the object signed in advance
+        // (OpenID4VP section 5.10.2).
+        assert.strictEqual(got.status, 200, "HTTP " + got.status + " " +
+            body.slice(0, 200));
         assert.strictEqual(claims.wallet_nonce, walletNonce,
-            "wallet_nonce is " + JSON.stringify(claims.wallet_nonce) +
-            ": the page did not sign within the api's wait, so the wallet " +
-            "got the object signed in advance.");
+            "wallet_nonce is " + JSON.stringify(claims.wallet_nonce) + ".");
       });
   check("a decentralized_identifier request names the DID's key in kid " +
       "and carries no x5c", function () {

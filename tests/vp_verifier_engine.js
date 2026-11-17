@@ -35,6 +35,12 @@
 //   * Token Status Lists (node's zlib, entries packed LSB first) and
 //     Bitstring Status Lists (node's gzip, MSB first), with the bit orders
 //     chosen so that reading either one the wrong way gives a wrong answer;
+//     draft-ietf-oauth-status-list-21's own vectors (sections 4.1/4.2 and
+//     Appendix C.1 and C.3) and Bitstring Status List v1.0's Examples 1-3;
+//     a CWT as bytes, an HTML page and binary in the list's place; and the
+//     Status List Token's signer linked to the credential's issuer by each
+//     of section 11.3's routes (certificates from x509.js, keys and
+//     thumbprints from node), and the ways it is NOT;
 //   * Data Integrity: the W3C's own eddsa-jcs-2022 vector, and credentials,
 //     VPs and status list credentials signed here in five suite/curve
 //     combinations (JCS written here, RDFC by jsonld).
@@ -450,7 +456,8 @@ function issueSdJwt(issuer, holderJwk, opts) {
     nationalities: [{ "...": sha256b64u(d.nat) }],
     cnf: { jwk: holderJwk }
   }, o.payload || {});
-  const header = { alg: "ES256", typ: o.typ || "dc+sd-jwt", kid: "iss-1" };
+  const header = Object.assign({ alg: "ES256", typ: o.typ || "dc+sd-jwt",
+    kid: "iss-1" }, o.header || {});
   const jwt = nodeJws(header, payload, o.signer || issuer.key);
   log.debug("Leaving issueSdJwt().");
   return { jwt: jwt, d: d };
@@ -1171,7 +1178,7 @@ function issueMdocHere(auth, devicePublicJwk, elements, status) {
     validityInfo: { signed: tdate(now), validFrom: tdate(now),
       validUntil: tdate(new Date(now.getTime() + 30 * 86400000)) }
   };
-  if (status) mso.status = { status_list: status };
+  if (status) mso.status = status.raw || { status_list: status };
   const payload = cbor(new Tag(24, cbor(mso)));
   const protectedBytes = cbor(new Map([[1, -7]]));
   const signature = nodeCrypto.sign("sha256",
@@ -1490,7 +1497,23 @@ async function tokenStatusLists(env) {
                                    payload: { sub: URI + "/typ" } });
   docs[URI + "/expired"] = listToken({ payload: { sub: URI + "/expired",
     iat: now - 7200, exp: now - 3600 } });
-  docs[URI + "/cwt"] = "d2845843a1012618";
+  // A COSE_Sign1 in CWT tag 61 (RFC 8392 section 6), as BYTES: the CWT
+  // form of section 5.2, recognised and not verified.
+  docs[URI + "/cwt"] = new Uint8Array(mdocIssuer.cbor(new mdocIssuer.Tag(61,
+    new mdocIssuer.Tag(18, [mdocIssuer.cbor(new Map([[1, -7]])), new Map(),
+      mdocIssuer.cbor(new Map([[2, URI + "/cwt"]])),
+      Buffer.alloc(64, 1)]))));
+  // The same CWT read as hex TEXT is not a CWT: no "CWT recognised" for
+  // what is merely text.
+  docs[URI + "/hex"] = Buffer.from(docs[URI + "/cwt"]).toString("hex");
+  docs[URI + "/html"] = { body: Buffer.from("<!DOCTYPE html><html><body>" +
+    "<h1>Sign in</h1></body></html>"), contentType: "text/html" };
+  docs[URI + "/binary"] = { body: Buffer.from([0xff, 0xfe, 0x00, 0x9c]),
+    contentType: "application/octet-stream" };
+  docs[URI + "/apptyp"] = listToken({ header: { typ:
+    "application/statuslist+jwt" }, payload: { sub: URI + "/apptyp" } });
+  docs[URI + "/uptyp"] = listToken({ header: { typ: "StatusList+JWT" },
+    payload: { sub: URI + "/uptyp" } });
   const seen = [];
   const fetchText = textFetcher(docs, seen);
   const holder = ecPair();
@@ -1521,8 +1544,13 @@ async function tokenStatusLists(env) {
   ok(/VALID/.test(checkById(r, "pid[0].status").detail));
   ok(/ttl 300s/.test(checkById(r, "pid[0].status.list").detail),
      "the ttl is reported: " + checkById(r, "pid[0].status.list").detail);
-  ok(seen.length && /statuslist\+jwt/.test(seen[0].accept),
-     "the list is asked for as application/statuslist+jwt");
+  eq(seen.length && seen[0].accept, "application/statuslist+jwt",
+     "the list is asked for as application/statuslist+jwt, and NOT as the " +
+     "CWT form this Verifier does not verify");
+  eq(checkById(r, "pid[0].status.signer").status, "pass");
+  ok(/the same key.*kid "iss-1"/.test(
+    checkById(r, "pid[0].status.signer").detail),
+     checkById(r, "pid[0].status.signer").detail);
   r = await at({ idx: 5, uri: URI });
   failsOnly(r, ["pid[0].status", "status"], "Token Status List, INVALID");
   ok(/INVALID.*revoked/.test(checkById(r, "pid[0].status").detail));
@@ -1530,8 +1558,11 @@ async function tokenStatusLists(env) {
   failsOnly(r, ["pid[0].status", "status"], "Token Status List, SUSPENDED");
   ok(/SUSPENDED.*suspended/.test(checkById(r, "pid[0].status").detail));
   r = await at({ idx: 7, uri: URI });
-  failsOnly(r, ["pid[0].status", "status"], "an application-specific value");
-  ok(/application-specific/.test(checkById(r, "pid[0].status").detail));
+  allPass(r, "an application-specific value is reported, not judged");
+  eq(checkById(r, "pid[0].status").status, "skip");
+  ok(/0x03, reserved as application-specific/.test(
+    checkById(r, "pid[0].status").detail),
+     checkById(r, "pid[0].status").detail);
   r = await at({ idx: 40, uri: URI });
   failsOnly(r, ["pid[0].status", "status"], "idx past the end of the list");
   r = await at({ idx: 3, uri: URI + "/forged" });
@@ -1539,6 +1570,8 @@ async function tokenStatusLists(env) {
             "a Status List Token signed by somebody else");
   eq(checkById(r, "pid[0].status").status, "skip",
      "a value from an unverified list is not relied on");
+  eq(checkById(r, "pid[0].status.signer").status, "skip",
+     "an unverified list's signer is linked to nothing");
   ok(/does NOT verify/.test(checkById(r, "pid[0].status.list").detail));
   r = await at({ idx: 3, uri: URI + "/wrongsub" });
   failsOnly(r, ["pid[0].status.list", "status"], "sub is not the uri");
@@ -1551,7 +1584,31 @@ async function tokenStatusLists(env) {
   r = await at({ idx: 3, uri: URI + "/cwt" });
   allPass(r, "a CWT Status List Token");
   eq(checkById(r, "pid[0].status.list").status, "skip");
-  ok(/CWT/.test(checkById(r, "pid[0].status.list").detail));
+  ok(/COSE_Sign1 \(CBOR, in CWT tag 61\).*CWT form/.test(
+    checkById(r, "pid[0].status.list").detail),
+     checkById(r, "pid[0].status.list").detail);
+  r = await at({ idx: 3, uri: URI + "/hex" });
+  failsOnly(r, ["pid[0].status.list", "status"], "hex text is not a CWT");
+  ok(/text that is not a compact JWS/.test(
+    checkById(r, "pid[0].status.list").detail));
+  ok(!/CWT form/.test(checkById(r, "pid[0].status.list").detail));
+  r = await at({ idx: 3, uri: URI + "/html" });
+  failsOnly(r, ["pid[0].status.list", "status"], "an HTML error page");
+  ok(/an HTML page \(served as text\/html\)/.test(
+    checkById(r, "pid[0].status.list").detail),
+     checkById(r, "pid[0].status.list").detail);
+  r = await at({ idx: 3, uri: URI + "/binary" });
+  failsOnly(r, ["pid[0].status.list", "status"], "binary, not CBOR");
+  ok(/4 bytes of binary data, and not a COSE_Sign1/.test(
+    checkById(r, "pid[0].status.list").detail),
+     checkById(r, "pid[0].status.list").detail);
+  // RFC 7515 section 4.1.9: typ compares as a media type.
+  r = await at({ idx: 3, uri: URI + "/apptyp" });
+  allPass(r, "typ application/statuslist+jwt");
+  r = await at({ idx: 3, uri: URI + "/uptyp" });
+  allPass(r, "typ StatusList+JWT");
+  ok(/RFC 7515 section 4\.1\.9/.test(
+    checkById(r, "pid[0].status.list").detail));
   r = await at({ idx: 3, uri: URI }, { noFetch: true });
   allPass(r, "no fetchText");
   eq([checkById(r, "pid[0].status").status, checkById(r, "status").status],
@@ -1601,6 +1658,10 @@ async function tokenStatusLists(env) {
   r = await mdocAt({ idx: 0, uri: mdocUri });
   allPass(r, "mdoc, VALID (bit 0 of 0x02)");
   eq(checkById(r, "mdl[0].status").status, "pass");
+  eq(checkById(r, "mdl[0].status.signer").status, "pass");
+  ok(/the same key.*the same x5c/.test(
+    checkById(r, "mdl[0].status.signer").detail),
+     checkById(r, "mdl[0].status.signer").detail);
   r = await mdocAt({ idx: 1, uri: mdocUri });
   failsOnly(r, ["mdl[0].status", "status"], "mdoc, INVALID (bit 1 of 0x02)");
   r = await mdocAt({ idx: 0, uri: mdocUri + "/forged" });
@@ -1608,9 +1669,330 @@ async function tokenStatusLists(env) {
             "mdoc, a list not signed by the x5c's key");
   r = await mdocAt(null);
   eq(checkById(r, "mdl[0].status").status, "skip", "mdoc, no status");
+  ok(/names no status/.test(checkById(r, "mdl[0].status").detail));
+  // ISO/IEC 18013-5's identifier_list is a status mechanism, not the
+  // absence of one.
+  r = await mdocAt({ raw: { identifier_list: { id: Buffer.from([1, 2]),
+    uri: "https://issuer.example/identifiers/1" } } });
+  allPass(r, "mdoc, an identifier_list");
+  eq(checkById(r, "mdl[0].status.identifier-list").status, "skip");
+  ok(/identifier_list.*does not read/.test(
+    checkById(r, "mdl[0].status.identifier-list").detail));
+  ok(!checkById(r, "mdl[0].status") ||
+     !/names no status/.test(checkById(r, "mdl[0].status").detail),
+     "an identifier_list is not reported as no status");
   log.info("PASS the IETF Token Status List: VALID, INVALID, SUSPENDED, " +
            "and every defect of the list, for dc+sd-jwt and mso_mdoc.");
   log.debug("Leaving tokenStatusLists().");
+}
+
+// ---------------------------------------------------------------------------
+// draft-ietf-oauth-status-list-21's own vectors: the two worked examples of
+// sections 4.1 and 4.2 (16 one-bit and 12 two-bit entries) and Appendix C's
+// one-bit and four-bit lists of 2^20 entries, each lst copied from the
+// draft. node's zlib checks the draft's own claims about them first, so a
+// transcription error says so; then each is served in a Status List Token
+// signed here and read through the Verifier, entry by entry.
+// ---------------------------------------------------------------------------
+const TSL_C1_LST =
+    "eNrt3AENwCAMAEGogklACtKQPg9LugC9k_ACvreiogEAAKkeCQAAAAAAAAAA" +
+    "AAAAAAAAAIBylgQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAXG9IAAAAAAAAAPwsJAAAAAAAAAAAAAAAvhsSAAAAAAAAAAAA7KpL" +
+    "AAAAAAAAAAAAAAAAAAAAAJsLCQAAAAAAAAAAADjelAAAAAAAAAAAKjDMAQAA" +
+    "AACAZC8L2AEb";
+const TSL_C3_LST =
+    "eNrt0EENgDAQADAIHwImkIIEJEwCUpCEBBQRHOy35Li1EjoOQGabAgAAAAAA" +
+    "AAAAAAAAAAAAACC1SQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABADrsCAAAA" +
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAAAAAAAAAAAAAAADoxaEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAAIIoCgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAAAAAACArpwKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAGhqVkAzlwIAAAAAiGVRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" +
+    "AAAAAABx3AoAgLpVAQAAAAAAAAAAAAAAwM89rwMAAAAAAAAAAAjsA9xMBMA";
+
+async function tokenStatusSpecVectors(env) {
+  log.debug("Entering tokenStatusSpecVectors().");
+  const inflated = function inflated(lst) {
+    log.debug("Entering inflated().");
+    log.debug("Leaving inflated().");
+    return zlib.inflateSync(Buffer.from(lst, "base64url"));
+  };
+  // Section 4.1: "compressed array (hex): 78dadbb918000217015d", the bytes
+  // 0xB9 0xA3; section 4.2 encodes them as "eNrbuRgAAhcBXQ".
+  eq(Buffer.from("eNrbuRgAAhcBXQ", "base64url").toString("hex"),
+     "78dadbb918000217015d", "section 4.1's compressed bytes");
+  eq(Array.from(inflated("eNrbuRgAAhcBXQ")), [0xb9, 0xa3],
+     "section 4.1's byte array");
+  eq(Buffer.from("eNo76fITAAPfAgc", "base64url").toString("hex"),
+     "78da3be9f2130003df0207", "section 4.1's two-bit compressed bytes");
+  eq(Array.from(inflated("eNo76fITAAPfAgc")), [0xc9, 0x44, 0xf9],
+     "section 4.1's two-bit byte array");
+  eq(inflated(TSL_C1_LST).length, 131072, "Appendix C.1: 2^20 one-bit");
+  eq(inflated(TSL_C3_LST).length, 524288, "Appendix C.3: 2^20 four-bit");
+
+  const issuer = makeIssuer();
+  const fetchJson = function fetchJson(url) {
+    log.debug("Entering fetchJson(). " + url);
+    log.debug("Leaving fetchJson().");
+    return issuer.docs[url] ? Promise.resolve(issuer.docs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const BASE = "https://issuer.example/statuslists/draft/";
+  const docs = {};
+  const lists = { s41: [1, "eNrbuRgAAhcBXQ"], s42: [2, "eNo76fITAAPfAgc"],
+                  c1: [1, TSL_C1_LST], c3: [4, TSL_C3_LST] };
+  Object.keys(lists).forEach(function (name) {
+    docs[BASE + name] = nodeJws({ alg: "ES256", typ: "statuslist+jwt",
+      kid: "iss-1" }, { sub: BASE + name, iat: now - 60, exp: now + 3600,
+      status_list: { bits: lists[name][0], lst: lists[name][1] } },
+      issuer.key);
+  });
+  const holder = ecPair();
+  const clientId = verifier.clientIdFor("x509_hash", env.identity);
+  const session = { clientId: clientId, nonce: verifier.randomToken(),
+    responseMode: "direct_post", responseUri: "https://verifier.example/r",
+    dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+      claims: [["given_name"]] }] }) };
+  async function entry(name, idx) {
+    log.debug("Entering entry(). " + name + " " + idx);
+    const cred = issueSdJwt(issuer, holder.publicJwk, { payload: { status:
+      { status_list: { idx: idx, uri: BASE + name } } } });
+    const r = await run({ fields: { vp_token: { pid: [presentSdJwt(cred.jwt,
+      [cred.d.given_name], { aud: clientId, nonce: session.nonce,
+        key: holder })] } }, session: session, fetchJson: fetchJson,
+      fetchText: textFetcher(docs) });
+    log.debug("Leaving entry().");
+    return checkById(r, "pid[0].status");
+  }
+  // [list, idx, the draft's value, the row status, what the row says]
+  const cases = [
+    ["s41", 0, 1, "fail", /INVALID/], ["s41", 1, 0, "pass", /VALID/],
+    ["s41", 3, 1, "fail", /INVALID/], ["s41", 6, 0, "pass", /VALID/],
+    ["s41", 13, 1, "fail", /INVALID/], ["s41", 14, 0, "pass", /VALID/],
+    ["s41", 15, 1, "fail", /INVALID/], ["s41", 16, null, "fail", /beyond/],
+    ["s42", 0, 1, "fail", /INVALID/], ["s42", 1, 2, "fail", /SUSPENDED/],
+    ["s42", 2, 0, "pass", /VALID/],
+    ["s42", 3, 3, "skip", /0x03, reserved as application-specific/],
+    ["s42", 9, 2, "fail", /SUSPENDED/],
+    ["s42", 11, 3, "skip", /application-specific/],
+    ["c1", 0, 1, "fail", /INVALID/], ["c1", 1993, 1, "fail", /INVALID/],
+    ["c1", 1994, 0, "pass", /VALID/], ["c1", 1000345, 1, "fail", /INVALID/],
+    ["c1", 1048575, 0, "pass", /VALID/],
+    ["c1", 1048576, null, "fail", /beyond/],
+    ["c3", 0, 1, "fail", /INVALID/], ["c3", 1993, 2, "fail", /SUSPENDED/],
+    ["c3", 35460, 3, "skip", /0x03, reserved as application-specific/],
+    ["c3", 459495, 4, "skip", /0x04, reserved for future registration/],
+    ["c3", 923232, 8, "skip", /0x08, reserved for future registration/],
+    ["c3", 1000345, 12, "skip", /0x0C, reserved as application-specific/],
+    ["c3", 1030203, 13, "skip", /0x0D, reserved as application-specific/],
+    ["c3", 1030205, 15, "skip", /0x0F, reserved as application-specific/],
+    ["c3", 25460, 0, "pass", /VALID/]
+  ];
+  for (const c of cases) {
+    const row = await entry(c[0], c[1]);
+    const what = c[0] + "[" + c[1] + "]";
+    eq(row.status, c[3], what + ": " + row.detail);
+    ok(c[4].test(row.detail), what + ": " + row.detail);
+    if (c[2] !== null) {
+      ok(row.detail.indexOf(" is " + c[2] + " (") !== -1,
+         what + " is " + c[2] + " in the draft: " + row.detail);
+    }
+  }
+  log.info("PASS draft-ietf-oauth-status-list-21's own vectors: sections " +
+           "4.1/4.2 and Appendix C.1 and C.3, " + cases.length + " entries.");
+  log.debug("Leaving tokenStatusSpecVectors().");
+}
+
+// ---------------------------------------------------------------------------
+// Who signed the Status List Token, and is that the credential's issuer?
+// draft-ietf-oauth-status-list-21 section 11.3's cases, each built here:
+// the same key (the same x5c, an x5t or x5t#S256 naming the credential's
+// leaf, the credential's kid), the same web-based key resolution, a
+// different key under the same CA with id-kp-oauthStatusSigning (section
+// 10), and the cases that are NOT a link. Certificates are issued by
+// x509.js; keys, signatures and thumbprints are node's.
+// ---------------------------------------------------------------------------
+// id-kp-oauthStatusSigning is "1.3.6.1.5.5.7.3.TBD" in the draft (section
+// 14.9), so the test names an OID of its own, the way a PKI would.
+const STATUS_EKU = "1.3.6.1.4.1.55555.7.3.1";
+
+function pemB64(pem) {
+  log.debug("Entering pemB64().");
+  log.debug("Leaving pemB64().");
+  return pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
+}
+
+async function testPki() {
+  log.debug("Entering testPki().");
+  const pair = function pair() {
+    log.debug("Entering pair().");
+    const k = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+    log.debug("Leaving pair().");
+    return { privateKey: k.privateKey,
+      publicPem: k.publicKey.export({ type: "spki", format: "pem" }),
+      privatePem: k.privateKey.export({ type: "pkcs8", format: "pem" }) };
+  };
+  const root = async function root(cn) {
+    log.debug("Entering root(). " + cn);
+    const key = pair();
+    const cert = await x509.issueCertificate({ subject: "CN=" + cn,
+      subjectPublicKey: key.publicPem, issuerPrivateKey: key.privatePem,
+      signatureAlg: "sha256-ecdsa",
+      extensions: x509.defaultExtensions("root-ca") });
+    log.debug("Leaving root().");
+    return { key: key, b64: pemB64(cert.pem), pem: cert.pem };
+  };
+  const leaf = async function leaf(ca, cn, ekus) {
+    log.debug("Entering leaf(). " + cn);
+    const key = pair();
+    const ext = x509.defaultExtensions("tls-server");
+    ext.keyUsage.usages = ["digitalSignature"];
+    ext.extKeyUsage = { present: !!ekus, usages: ekus || [],
+                        critical: false };
+    const cert = await x509.issueCertificate({ subject: "CN=" + cn,
+      subjectPublicKey: key.publicPem,
+      issuer: { certificatePem: ca.pem, privateKeyPem: ca.key.privatePem,
+                keyAlg: "ec-p256" },
+      signatureAlg: "sha256-ecdsa", extensions: ext });
+    log.debug("Leaving leaf().");
+    return { key: key, b64: pemB64(cert.pem) };
+  };
+  const ca = await root("Status Test CA");
+  const otherCa = await root("Somebody Else's CA");
+  const out = { ca: ca, otherCa: otherCa,
+    issuer: await leaf(ca, "Credential Issuer"),
+    statusEku: await leaf(ca, "Status Issuer", [STATUS_EKU]),
+    statusPlain: await leaf(ca, "Status Issuer Without EKU"),
+    other: await leaf(otherCa, "Unrelated Status Issuer", [STATUS_EKU]) };
+  log.debug("Leaving testPki().");
+  return out;
+}
+
+async function statusSignerLinks(env) {
+  log.debug("Entering statusSignerLinks().");
+  const pki = await testPki();
+  const issuer = makeIssuer();
+  const second = ecPair();
+  const statusKey = ecPair();
+  issuer.docs["https://issuer.example/jwks"].keys.push(Object.assign(
+    { kid: "iss-2", alg: "ES256", use: "sig" }, second.publicJwk));
+  issuer.docs["https://status.example/.well-known/jwt-vc-issuer"] = {
+    issuer: "https://status.example", jwks: { keys: [Object.assign(
+      { kid: "st-1", alg: "ES256", use: "sig" }, statusKey.publicJwk)] } };
+  const fetchJson = function fetchJson(url) {
+    log.debug("Entering fetchJson(). " + url);
+    log.debug("Leaving fetchJson().");
+    return issuer.docs[url] ? Promise.resolve(issuer.docs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const BASE = "https://issuer.example/statuslists/link/";
+  const leafDer = Buffer.from(pki.issuer.b64, "base64");
+  const docs = {};
+  const list = function list(name, header, signer, payload) {
+    log.debug("Entering list(). " + name);
+    docs[BASE + name] = nodeJws(Object.assign({ alg: "ES256",
+      typ: "statuslist+jwt" }, header), Object.assign({ sub: BASE + name,
+      iat: now - 60, exp: now + 3600,
+      status_list: { bits: 1, lst: b64u(zlib.deflateSync(Buffer.from(
+        [0x00]))) } }, payload || {}), signer);
+    log.debug("Leaving list().");
+  };
+  const x5c = [pki.issuer.b64, pki.ca.b64];
+  list("eku", { x5c: [pki.statusEku.b64, pki.ca.b64] }, pki.statusEku.key);
+  list("noeku", { x5c: [pki.statusPlain.b64, pki.ca.b64] },
+       pki.statusPlain.key);
+  list("other", { x5c: [pki.other.b64, pki.otherCa.b64] }, pki.other.key);
+  list("samex5c", { x5c: x5c }, pki.issuer.key);
+  list("x5ts256", { "x5t#S256": b64u(nodeCrypto.createHash("sha256")
+    .update(leafDer).digest()) }, pki.issuer.key);
+  list("x5t", { x5t: b64u(nodeCrypto.createHash("sha1").update(leafDer)
+    .digest()) }, pki.issuer.key);
+  list("x5tforged", { "x5t#S256": b64u(nodeCrypto.createHash("sha256")
+    .update(leafDer).digest()) }, ecPair());
+  // C10: an https iss whose metadata does not answer, signed with the
+  // credential's own key — section 11.3's same-key case.
+  list("fallback", {}, issuer.key, { iss: "https://nowhere.example" });
+  list("samekid", { kid: "iss-1" }, issuer.key, { iss: ISSUER });
+  list("samejwks", { kid: "iss-2" }, second, { iss: ISSUER });
+  list("stranger", { kid: "st-1" }, statusKey,
+       { iss: "https://status.example" });
+
+  const holder = ecPair();
+  const clientId = verifier.clientIdFor("x509_hash", env.identity);
+  const session = { clientId: clientId, nonce: verifier.randomToken(),
+    responseMode: "direct_post", responseUri: "https://verifier.example/r",
+    dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+      claims: [["given_name"]] }] }) };
+  async function at(name, opts) {
+    log.debug("Entering at(). " + name);
+    const o = opts || {};
+    const cred = issueSdJwt(issuer, holder.publicJwk, Object.assign({
+      payload: { status: { status_list: { idx: 0, uri: BASE + name } } } },
+      o.certified ? { header: { x5c: x5c }, signer: pki.issuer.key } : {}));
+    const r = await run({ fields: { vp_token: { pid: [presentSdJwt(cred.jwt,
+      [cred.d.given_name], { aud: clientId, nonce: session.nonce,
+        key: holder })] } }, session: session, fetchJson: fetchJson,
+      fetchText: textFetcher(docs), statusSigningEku: o.eku });
+    log.debug("Leaving at().");
+    return r;
+  }
+  const signer = function signer(r) {
+    log.debug("Entering signer().");
+    log.debug("Leaving signer().");
+    return checkById(r, "pid[0].status.signer");
+  };
+  // [list, options, the signer row's status, what it says]
+  const linked = [
+    ["eku", { certified: true, eku: STATUS_EKU }, "pass",
+     /the same chain.*Status Test CA.*1\.3\.6\.1\.4\.1\.55555\.7\.3\.1/],
+    ["eku", { certified: true, eku: [STATUS_EKU, "1.2.3"] }, "pass",
+     /the same chain/],
+    ["eku", { certified: true }, "skip",
+     /NOT linked.*does not carry id-kp-oauthStatusSigning.*TBD/],
+    ["noeku", { certified: true, eku: STATUS_EKU }, "skip",
+     /NOT linked.*Status Test CA.*does not carry/],
+    ["other", { certified: true, eku: STATUS_EKU }, "skip",
+     /NOT linked: the list verifies with the x5c leaf/],
+    ["samex5c", { certified: true }, "pass", /the same key.*same x5c/],
+    ["x5ts256", { certified: true }, "pass", /the same key.*x5t#S256/],
+    ["x5t", { certified: true }, "pass", /the same key.*an x5t that/],
+    ["fallback", {}, "pass", /the same key/],
+    ["samekid", {}, "pass", /the same key.*kid "iss-1"/],
+    ["samejwks", {}, "pass", /the same web-based key resolution/],
+    ["stranger", {}, "skip", /NOT linked.*status\.example/]
+  ];
+  for (const c of linked) {
+    const r = await at(c[0], c[1]);
+    allPass(r, "signer link, " + c[0]);
+    eq(checkById(r, "pid[0].status").status, "pass", c[0]);
+    eq(signer(r).status, c[2], c[0] + ": " + signer(r).detail);
+    ok(c[3].test(signer(r).detail), c[0] + ": " + signer(r).detail);
+    if (c[2] !== "pass") {
+      ok(/not shown to be the credential's issuer/.test(
+        checkById(r, "pid[0].status").detail),
+         "an unlinked signer is named on the value row too");
+    }
+  }
+  let r = await at("fallback");
+  ok(/the credential issuer's key.*its own key: .*nowhere\.example/.test(
+    checkById(r, "pid[0].status.list").detail),
+     "the fallback says why: " + checkById(r, "pid[0].status.list").detail);
+  r = await at("x5tforged", { certified: true });
+  failsOnly(r, ["pid[0].status.list", "status"],
+            "an x5t#S256 naming the issuer's leaf, signed by another key");
+  eq(signer(r).status, "skip");
+  log.info("PASS the Status List Token's signer: the same key (x5c, x5t, " +
+           "x5t#S256, kid), the same key resolution, the same CA with " +
+           "id-kp-oauthStatusSigning, and the three ways of NOT being " +
+           "linked.");
+  log.debug("Leaving statusSignerLinks().");
 }
 
 async function bitstringStatusLists(env) {
@@ -1621,17 +2003,20 @@ async function bitstringStatusLists(env) {
   const holderDid = didJwk(holder.publicJwk);
   const now = Math.floor(Date.now() / 1000);
   const LIST = "https://issuer.example/bsl/";
-  const listVc = function listVc(name, purpose, encodedList, signer) {
+  const listVc = function listVc(name, purpose, encodedList, signer,
+                                  extra) {
     log.debug("Entering listVc().");
+    const x = extra || {};
+    const did = x.did || issuerDid;
     log.debug("Leaving listVc().");
-    return nodeJws({ alg: "ES256", typ: "vc+jwt", kid: issuerDid + "#0" }, {
-      iss: issuerDid, iat: now - 60, exp: now + 3600,
-      vc: { "@context": ["https://www.w3.org/ns/credentials/v2"],
+    return nodeJws({ alg: "ES256", typ: "vc+jwt", kid: did + "#0" }, {
+      iss: did, iat: now - 60, exp: now + 3600,
+      vc: Object.assign({ "@context": ["https://www.w3.org/ns/credentials/v2"],
         id: LIST + name, type: ["VerifiableCredential",
-          "BitstringStatusListCredential"], issuer: issuerDid,
+          "BitstringStatusListCredential"], issuer: did,
         credentialSubject: { id: LIST + name + "#list",
           type: "BitstringStatusList", statusPurpose: purpose,
-          encodedList: encodedList } } }, signer || issuer);
+          encodedList: encodedList } }, x.vc || {}) }, signer || issuer);
   };
   const docs = {};
   // Revoked: 0 and 42. Index 7 is NOT revoked, read MSB first.
@@ -1643,6 +2028,36 @@ async function bitstringStatusLists(env) {
                               bitstringEncodedList([], 2, { 3: 2 }));
   docs[LIST + "forged"] = listVc("forged", "revocation",
                                  bitstringEncodedList([]), ecPair());
+  docs[LIST + "ref"] = listVc("ref", "refresh", bitstringEncodedList([4]));
+  docs[LIST + "msg1"] = listVc("msg1", "message", bitstringEncodedList([5]));
+  // Bitstring Status List v1.0 section 2.2: the list's issuer "MAY be
+  // different" from the credential's.
+  const otherIssuer = ecPair();
+  docs[LIST + "elsewhere"] = listVc("elsewhere", "revocation",
+    bitstringEncodedList([]), otherIssuer,
+    { did: didJwk(otherIssuer.publicJwk) });
+  // A VC-JWT whose JWT exp is in the future and whose credential's own
+  // validUntil is past.
+  docs[LIST + "lapsed"] = listVc("lapsed", "revocation",
+    bitstringEncodedList([]), null, { vc: { validFrom:
+      "2020-01-01T00:00:00Z", validUntil: "2021-01-01T00:00:00Z" } });
+  docs[LIST + "notyet"] = listVc("notyet", "revocation",
+    bitstringEncodedList([]), null, { vc: { validFrom:
+      "2999-01-01T00:00:00Z" } });
+  // The specification's own Example 3 encodedList: GZIP of 16 KiB of
+  // zeros, the minimum list, 131,072 entries none of them set.
+  const SPEC_ENCODED =
+    "uH4sIAAAAAAAAA-3BMQEAAADCoPVPbQwfoAAAAAAAAAAAAAAAAAAAAIC3" +
+    "AYbSVKsAQAAA";
+  const specBits = zlib.gunzipSync(Buffer.from(SPEC_ENCODED.slice(1),
+                                               "base64url"));
+  eq(specBits.length, 16384, "Example 3's list is 16 KiB");
+  ok(specBits.every(function (b) {
+    return b === 0;
+  }), "and no entry of it is set");
+  docs[LIST + "spec"] = listVc("spec", "revocation", SPEC_ENCODED);
+  docs[LIST + "html"] = { body: Buffer.from("<html><body>502 Bad Gateway" +
+    "</body></html>"), contentType: "text/html; charset=utf-8" };
   const entry = function entry(name, purpose, index, extra) {
     log.debug("Entering entry().");
     log.debug("Leaving entry().");
@@ -1656,6 +2071,7 @@ async function bitstringStatusLists(env) {
     format: "jwt_vc_json", claims: [["credentialSubject", "given_name"]] }] });
   const session = { clientId: clientId, nonce: verifier.randomToken(),
     responseMode: "direct_post", dcql: dcql };
+  const seen = [];
   async function at(status) {
     log.debug("Entering at().");
     const vc = nodeJws({ alg: "ES256", typ: "JWT", kid: issuerDid + "#0" }, {
@@ -1669,7 +2085,7 @@ async function bitstringStatusLists(env) {
       holderPrivateJwk: holder.privateJwk, holderId: holderDid,
       aud: clientId, nonce: session.nonce });
     const res = await run({ fields: { vp_token: { w3c: [signed.jwt] } },
-      session: session, fetchText: textFetcher(docs) });
+      session: session, fetchText: textFetcher(docs, seen) });
     log.debug("Leaving at().");
     return res;
   }
@@ -1691,12 +2107,74 @@ async function bitstringStatusLists(env) {
   r = await at([entry("rev", "revocation", 7),
                 entry("sus", "suspension", 9)]);
   failsOnly(r, ["w3c[0].vc.status.suspension", "status"], "suspended");
+  ok(/(^|, )application\/vc(, |;|$)/.test(seen[0].accept),
+     "section 4: application/vc is asked for: " + seen[0].accept);
+  // Section 2.1's Example 2, whose four messages are "0x0".."0x3"; the
+  // entry here writes 0x2 as "0x02", the same status as a number.
+  const fourMessages = [{ status: "0x0", message: "pending_review" },
+    { status: "0x1", message: "accepted" },
+    { status: "0x02", message: "rejected" },
+    { status: "0x3", message: "undefined" }];
   r = await at(entry("msg", "message", 3, { statusSize: 2,
-    statusMessage: [{ status: "0x0", message: "pending" },
-                    { status: "0x2", message: "under review" }] }));
+    statusMessage: fourMessages }));
   allPass(r, "a message entry");
-  ok(/under review/.test(checkById(r, "w3c[0].vc.status.message").detail),
+  ok(/\(0x2\): "rejected"/.test(
+    checkById(r, "w3c[0].vc.status.message").detail),
      checkById(r, "w3c[0].vc.status.message").detail);
+  r = await at(entry("msg", "message", 3, { statusSize: 2,
+    statusMessage: fourMessages.slice(0, 2) }));
+  failsOnly(r, ["w3c[0].vc.status.message.entry", "status"],
+            "statusMessage shorter than 2^statusSize");
+  ok(/array of 4 element\(s\).*array of 2/.test(
+    checkById(r, "w3c[0].vc.status.message.entry").detail));
+  r = await at(entry("msg", "message", 3, { statusSize: 2 }));
+  failsOnly(r, ["w3c[0].vc.status.message.entry", "status"],
+            "statusSize 2 and no statusMessage");
+  ok(/statusSize is 2 and there is no statusMessage.*MUST be present/.test(
+    checkById(r, "w3c[0].vc.status.message.entry").detail));
+  eq(checkById(r, "w3c[0].vc.status.message").status, "pass",
+     "the value is still read and reported");
+  r = await at(entry("msg1", "message", 5));
+  allPass(r, "a one-bit message entry with no statusMessage");
+  ok(/: "set" \(no statusMessage/.test(
+    checkById(r, "w3c[0].vc.status.message").detail),
+     checkById(r, "w3c[0].vc.status.message").detail);
+  r = await at(entry("msg1", "message", 4));
+  ok(/: "unset"/.test(checkById(r, "w3c[0].vc.status.message").detail));
+  r = await at(entry("ref", "refresh", 4));
+  allPass(r, "refresh set");
+  eq(checkById(r, "w3c[0].vc.status.refresh").status, "pass");
+  ok(/updated credential is available.*does not invalidate/.test(
+    checkById(r, "w3c[0].vc.status.refresh").detail),
+     checkById(r, "w3c[0].vc.status.refresh").detail);
+  r = await at(entry("ref", "refresh", 3));
+  ok(/no refresh is pending/.test(
+    checkById(r, "w3c[0].vc.status.refresh").detail));
+  r = await at(entry("elsewhere", "revocation", 7));
+  allPass(r, "a list issued by somebody else (section 2.2: MAY)");
+  ok(/is not the credential's issuer .*section 2\.2 allows/.test(
+    checkById(r, "w3c[0].vc.status.revocation.list").detail),
+     checkById(r, "w3c[0].vc.status.revocation.list").detail);
+  r = await at(entry("lapsed", "revocation", 7));
+  failsOnly(r, ["w3c[0].vc.status.revocation.list", "status"],
+            "a VC-JWT list past its validUntil");
+  ok(/validUntil/.test(
+    checkById(r, "w3c[0].vc.status.revocation.list").detail),
+     checkById(r, "w3c[0].vc.status.revocation.list").detail);
+  r = await at(entry("notyet", "revocation", 7));
+  failsOnly(r, ["w3c[0].vc.status.revocation.list", "status"],
+            "a VC-JWT list before its validFrom");
+  r = await at(entry("spec", "revocation", 94567));
+  allPass(r, "Example 1's index 94567 in Example 3's list");
+  ok(/entry 94567 of .* is 0: not revoked/.test(
+    checkById(r, "w3c[0].vc.status.revocation").detail),
+     checkById(r, "w3c[0].vc.status.revocation").detail);
+  r = await at(entry("html", "revocation", 7));
+  failsOnly(r, ["w3c[0].vc.status.revocation.list", "status"],
+            "an HTML page in the list's place");
+  ok(/an HTML page \(served as text\/html\)/.test(
+    checkById(r, "w3c[0].vc.status.revocation.list").detail),
+     checkById(r, "w3c[0].vc.status.revocation.list").detail);
   r = await at(entry("forged", "revocation", 7));
   failsOnly(r, ["w3c[0].vc.status.revocation.list", "status"],
             "a list signed by another key");
@@ -1928,16 +2406,18 @@ async function main() {
   await prefixesAndWalletNonce(env);
   await dcApi(env);
   await tokenStatusLists(env);
+  await tokenStatusSpecVectors(env);
+  await statusSignerLinks(env);
   await bitstringStatusLists(env);
   await cryptosuites(env);
   log.info("vp_verifier_engine: " + assertions + " assertions, " +
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 450, "only " + assertions + " assertions ran; " +
-            "expected at least 450");
-  assert.ok(checksSeen >= 1600, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 1600");
+  assert.ok(assertions >= 700, "only " + assertions + " assertions ran; " +
+            "expected at least 700");
+  assert.ok(checksSeen >= 2900, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 2900");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }

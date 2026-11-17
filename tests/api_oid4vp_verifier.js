@@ -14,8 +14,10 @@
 //      per-caller caps, the event ring, the switch, and both expiries on a
 //      clock this file moves. And LIVE SIGNING (request_uri_method=post,
 //      section 5.10) on timers this file fires: a held Wallet answered with
-//      the page's object, the fallback on a timeout, the cap, and no wait
-//      left behind by a delete, an expiry or a shutdown.
+//      the page's object; a Wallet that sent a wallet_nonce answered 503 on
+//      a timeout or at the cap (section 5.10.2), never the pre-signed
+//      object that cannot carry it; the fallback for one that sent none;
+//      and no wait left behind by a delete, an expiry or a shutdown.
 //   2. THE ROUTES, over HTTP, when run-report.js hands this job an API_URL
 //      (every target with an api; a static site has none). That half is the
 //      wiring no module test can see: the statuses, the two media types a
@@ -560,55 +562,91 @@ async function moduleLiveSigning() {
         { method: "GET" }).body, preSigned);
     });
     const late = verifier.fetchRequest(cfg, made.id, walletPost("wn-late"));
-    check("a timeout falls back to the pre-signed object", function () {
+    check("a timeout with a wallet_nonce does not fall back", function () {
       assert.ok(late.pending);
       assert.strictEqual(timers.fireAll(), 1);
       assert.strictEqual(verifier.pendingCount(), 0);
     });
-    const fellBack = await late.pending;
-    check("the fallback is a 200, and request-signed says why", function () {
-      assert.strictEqual(fellBack.status, 200);
-      assert.strictEqual(fellBack.body, preSigned);
+    const timedOut = await late.pending;
+    check("OpenID4VP 5.10/5.10.2: the Wallet that sent a wallet_nonce is " +
+      "answered 503, never the object that cannot carry it", function () {
+      assert.strictEqual(timedOut.ok, false);
+      assert.strictEqual(timedOut.status, 503);
+      assert.strictEqual(timedOut.error, "temporarily_unavailable");
+      assert.match(timedOut.error_description, /wallet_nonce/);
+      assert.ok(!("body" in timedOut));
       const out = verifier.events(cfg, made.id, bearer, 0);
       const last = out.events[out.events.length - 1];
       assert.strictEqual(last.kind, "request-signed");
       assert.strictEqual(last.signingId, late.signingId);
       assert.strictEqual(last.liveSigned, false);
+      assert.strictEqual(last.httpStatus, 503);
       assert.match(last.reason, /oid4vpVerifierLiveSignWaitMs \(5000 ms\)/);
+      assert.match(last.reason, /5\.10\.2/);
       assert.strictEqual(verifier.publishFor(cfg, made.id, late.signingId,
         bearer, { requestObject: liveJws }).status, 404);
     });
-    const noNonce = verifier.fetchRequest(cfg, made.id, walletPost(""));
-    check("a POST without wallet_nonce still waits; a Wallet that goes " +
-      "away releases it", function () {
+    const bare = verifier.fetchRequest(cfg, made.id, walletPost(""));
+    check("a POST without wallet_nonce still waits", function () {
+      assert.ok(bare.pending);
+      assert.strictEqual(timers.fireAll(), 1);
+    });
+    const fellBack = await bare.pending;
+    check("and on a timeout falls back to the pre-signed object, which " +
+      "has no nonce to carry", function () {
+      assert.strictEqual(fellBack.status, 200);
+      assert.strictEqual(fellBack.body, preSigned);
+      const out = verifier.events(cfg, made.id, bearer, 0);
+      const last = out.events[out.events.length - 1];
+      assert.strictEqual(last.liveSigned, false);
+      assert.ok(!("httpStatus" in last));
+      assert.match(last.reason, /sent no wallet_nonce/);
+    });
+    const noNonce = verifier.fetchRequest(cfg, made.id, walletPost("gone"));
+    check("a Wallet that goes away releases its wait", function () {
       assert.ok(noNonce.pending);
       noNonce.cancel();
       assert.strictEqual(verifier.pendingCount(), 0);
       assert.strictEqual(timers.live.size, 0);
     });
     const cancelled = await noNonce.pending;
-    check("the cancelled wait records why", function () {
-      assert.strictEqual(cancelled.body, preSigned);
+    check("the cancelled wait records why, and serves nothing", function () {
+      assert.strictEqual(cancelled.ok, false);
+      assert.ok(!("body" in cancelled));
       const out = verifier.events(cfg, made.id, bearer, 0);
-      assert.match(out.events[out.events.length - 1].reason, /closed/);
+      const last = out.events[out.events.length - 1];
+      assert.match(last.reason, /closed/);
+      assert.ok(!("httpStatus" in last));
     });
     const one = verifier.fetchRequest(cfg, made.id, walletPost("a"));
     const two = verifier.fetchRequest(cfg, made.id, walletPost("b"));
     const three = verifier.fetchRequest(cfg, made.id, walletPost("c"));
-    check("oid4vpVerifierMaxPendingSignings: one more is served at once",
-      function () {
+    const four = verifier.fetchRequest(cfg, made.id, walletPost(""));
+    check("oid4vpVerifierMaxPendingSignings: one more with a wallet_nonce " +
+      "is answered 503 at once (section 5.10.2)", function () {
         assert.ok(one.pending && two.pending);
         assert.ok(!three.pending);
-        assert.strictEqual(three.body, preSigned);
+        assert.strictEqual(three.status, 503);
+        assert.strictEqual(three.error, "temporarily_unavailable");
+        assert.ok(!("body" in three));
         assert.strictEqual(verifier.pendingCount(made.id), 2);
         const out = verifier.events(cfg, made.id, bearer, 0);
-        const tail = out.events.slice(-2);
+        const tail = out.events.slice(-4);
         assert.strictEqual(tail[0].kind, "request-fetched");
         assert.ok(!("signingId" in tail[0]));
         assert.strictEqual(tail[0].walletNonce, "c");
         assert.strictEqual(tail[1].kind, "request-signed");
         assert.strictEqual(tail[1].liveSigned, false);
+        assert.strictEqual(tail[1].httpStatus, 503);
         assert.match(tail[1].reason, /oid4vpVerifierMaxPendingSignings is 2/);
+        assert.ok(!("walletNonce" in tail[2]));
+        assert.ok(!("httpStatus" in tail[3]));
+      });
+    check("and one more without a wallet_nonce gets the pre-signed object",
+      function () {
+        assert.ok(!four.pending);
+        assert.strictEqual(four.status, 200);
+        assert.strictEqual(four.body, preSigned);
       });
     check("DELETE releases every held Wallet and clears every timer",
       function () {
@@ -674,6 +712,11 @@ async function moduleLiveSigning() {
         }), ["request-fetched"]);
         assert.ok(!("signingId" in ev[0]));
         assert.strictEqual(ev[0].walletNonce, "z");
+        assert.match(ev[0].problem, /wallet_nonce.*5\.10/);
+        verifier.fetchRequest(cfg, off.id, walletPost(""));
+        const plain = verifier.events(cfg, off.id, "Bearer " + off.secret,
+                                      1).events[0];
+        assert.ok(!("problem" in plain), "no nonce, nothing to report");
       });
   } finally {
     verifier.setClock(null);
@@ -978,6 +1021,44 @@ async function liveRoutes() {
         assert.strictEqual(again.status, 404);
         assert.strictEqual(got.text, preSigned);
       });
+    // Fill the session's waits with Wallets that each sent a wallet_nonce;
+    // the next one cannot be signed for, and section 5.10.2 has it answered
+    // with an HTTP error at once rather than the pre-signed object.
+    const held = [];
+    for (let i = 0; i < limits.body.maxPendingSignings; i++) {
+      held.push(call("POST", base + "/request", { form:
+        "wallet_nonce=wn-hold-" + i }));
+    }
+    let allHeld = false;
+    const holdUntil = Date.now() + limits.body.liveSignWaitMs;
+    while (!allHeld && Date.now() < holdUntil) {
+      const seen = await call("GET", base + "/events?after=0",
+                              { headers: auth });
+      allHeld = (seen.body.events || []).filter(function (e) {
+        return e.signingId && /^wn-hold-/.test(String(e.walletNonce));
+      }).length === limits.body.maxPendingSignings;
+      if (!allHeld) {
+        await new Promise(function (resolve) {
+          setTimeout(resolve, 100);
+        });
+      }
+    }
+    const refused = await call("POST", base + "/request", { form:
+      "wallet_nonce=wn-one-too-many" });
+    check("at oid4vpVerifierMaxPendingSignings, a Wallet with a " +
+      "wallet_nonce is answered 503 temporarily_unavailable", function () {
+      assert.ok(allHeld, "the held Wallets were never recorded");
+      assert.strictEqual(refused.status, 503, refused.text);
+      assert.strictEqual(refused.body.error, "temporarily_unavailable");
+      assert.match(refused.body.error_description, /wallet_nonce/);
+    });
+    await call("DELETE", base, { headers: auth });
+    const releasedAll = await Promise.all(held);
+    check("a DELETE releases the held Wallets with a 404", function () {
+      releasedAll.forEach(function (r) {
+        assert.strictEqual(r.status, 404);
+      });
+    });
   } finally {
     await call("DELETE", base, { headers: auth }).catch(function () {
       return null;
@@ -1009,7 +1090,7 @@ async function main() {
     log.info("[routes] not run: no API_URL. run-report.js passes one on " +
       "every target with an api; a static site has none.");
   }
-  const floor = API_URL ? 75 : 50;
+  const floor = API_URL ? 80 : 53;
   assert.ok(checks >= floor, "Only " + checks + " checks ran and this file " +
     "defines at least " + floor + ". A section has stopped being called.");
   log.info(checks + " checks passed.");
