@@ -31,7 +31,7 @@ const log = {
 
 const KEYS = {
   storageKey: Symbol.for("IdProtoDebugger.Lib.storageKey"),
-  storagePages: Symbol.for("IdProtoDebugger.Lib.storagePages"),
+  storageGroup: Symbol.for("IdProtoDebugger.Lib.storageGroup"),
   contractVariable: Symbol.for("IdProtoDebugger.Lib.contractVariable"),
   contractPath: Symbol.for("IdProtoDebugger.Lib.contractPath"),
   outboundPolicy: Symbol.for("IdProtoDebugger.Lib.outboundPolicy")
@@ -68,10 +68,10 @@ function storageKey(context, target, facts) {
   log.debug("Leaving storageKey().");
 }
 
-function storagePages(context, target, pages) {
-  log.debug("Entering storagePages(). " + target.name);
-  context.program.stateMap(KEYS.storagePages).set(target, pages);
-  log.debug("Leaving storagePages().");
+function storageGroup(context, target, module) {
+  log.debug("Entering storageGroup(). " + target.name);
+  context.program.stateMap(KEYS.storageGroup).set(target, module);
+  log.debug("Leaving storageGroup().");
 }
 
 function contractVariable(context, target, facts) {
@@ -93,7 +93,7 @@ export const $decorators = {
     checkedInCode: checkedInCode,
     outboundPolicy: outboundPolicy,
     storageKey: storageKey,
-    storagePages: storagePages,
+    storageGroup: storageGroup,
     contractVariable: contractVariable,
     contractPath: contractPath
   }
@@ -107,7 +107,7 @@ export function readFacts(program) {
   log.debug("Entering readFacts().");
   const facts = {
     storageKeys: program.stateMap(KEYS.storageKey),
-    storagePages: program.stateMap(KEYS.storagePages),
+    storageGroups: program.stateMap(KEYS.storageGroup),
     contractVariables: program.stateMap(KEYS.contractVariable),
     contractPaths: program.stateMap(KEYS.contractPath),
     outboundPolicy: program.stateSet(KEYS.outboundPolicy)

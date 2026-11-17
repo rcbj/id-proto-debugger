@@ -1,0 +1,32 @@
+{
+  "family": "service",
+  "about": "GET /healthcheck and GET /model/gaps. The second depends on validateResponses, which api/env/docker-tests.js turns on; its gaps are whatever the run so far produced, so they are volatile.",
+  "cases": [
+    {
+      "name": "healthcheck",
+      "method": "GET",
+      "path": "/healthcheck",
+      "expect": {
+        "status": 200,
+        "body": {
+          "message": "Success"
+        }
+      }
+    },
+    {
+      "name": "model gaps: the record is kept on a test configuration",
+      "method": "GET",
+      "path": "/model/gaps",
+      "volatile": [
+        "gaps"
+      ],
+      "expect": {
+        "status": 200,
+        "body": {
+          "validateResponses": true,
+          "gaps": []
+        }
+      }
+    }
+  ]
+}

@@ -20,7 +20,9 @@
 //
 //   openapi.json        the api, OpenAPI 3.1 (@typespec/openapi3)
 //   config.schema.json  ApiConfig and ClientConfig (@typespec/json-schema)
-//   storage.json        every declared browser storage key, by page
+//   storage.json        every declared browser storage key
+//   storage_classes.json  the secret, bearer, secret-member and keypair
+//                       lists client/src/secret_storage.js enforces
 //   embedded_contract.json  the embedded tree's variables and paths
 //
 // Every file is JSON written with two-space indentation and a final newline,
@@ -136,9 +138,9 @@ function checkFacts(facts) {
     const want = STORAGE_CLASS_AREA[f.class];
     if (want && f.area !== want) {
       errors.push(where + ": a " + f.class + " key's area is " + want +
-        ", not " + f.area);
+        ", not " + (f.area || "unstated"));
     }
-    if (!want && f.area !== "local" && f.area !== "session") {
+    if (!want && f.area === "none") {
       errors.push(where + ": a " + f.class + " key is stored somewhere");
     }
     if (f.class === "keypair" && !f.optOut) {
@@ -151,8 +153,11 @@ function checkFacts(facts) {
     if (f.member && f.class !== "secret") {
       errors.push(where + ": a secret member is class secret");
     }
+    if (!facts.storageGroups.has(property.model)) {
+      errors.push(where + ": its model has no @storageGroup");
+    }
   }
-  for (const [model] of facts.storagePages) {
+  for (const [model] of facts.storageGroups) {
     if (!model.properties.size) {
       errors.push(model.name + ": a storage model with no keys");
     }
@@ -163,11 +168,10 @@ function checkFacts(facts) {
 
 function storageDocument(facts) {
   log.debug("Entering storageDocument().");
-  const pages = [];
+  const keys = [];
   const seen = new Map();
   const errors = [];
-  for (const [model, pageList] of facts.storagePages) {
-    const keys = [];
+  for (const [model, module] of facts.storageGroups) {
     for (const property of model.properties.values()) {
       const f = facts.storageKeys.get(property);
       if (!f) {
@@ -177,30 +181,61 @@ function storageDocument(facts) {
       const key = propertyKey(property);
       const id = (f.prefix ? "prefix:" : "") + (f.member ? "member:" : "") +
         key;
-      if (seen.has(id) && seen.get(id) !== model.name) {
+      if (seen.has(id)) {
         errors.push(key + " is declared by both " + seen.get(id) + " and " +
           model.name);
       }
       seen.set(id, model.name);
-      const entry = { key: key, area: f.area, class: f.class };
-      if (f.optOut) {
-        entry.optOut = f.optOut;
-      }
-      if (f.prefix) {
-        entry.prefix = true;
-      }
-      if (f.member) {
-        entry.member = true;
-      }
+      const entry = { key: key, class: f.class, group: module };
+      ["area", "optOut", "prefix", "member"].forEach(function (name) {
+        if (f[name] !== undefined) {
+          entry[name] = f[name];
+        }
+      });
       keys.push(entry);
     }
-    pages.push({ model: model.name, pages: pageList.slice(), keys: keys });
   }
-  pages.sort(function (a, b) {
-    return a.model < b.model ? -1 : (a.model > b.model ? 1 : 0);
+  keys.sort(function (a, b) {
+    return a.key < b.key ? -1 : (a.key > b.key ? 1 : 0);
   });
   log.debug("Leaving storageDocument().");
-  return { errors: errors, document: { pages: pages } };
+  return { errors: errors, document: { keys: keys } };
+}
+
+// The four lists the client enforces with, and nothing else: they are
+// bundled into every page that includes secret_storage.js, so the full
+// inventory would cost every bundle the size of every key.
+function storageClasses(document) {
+  log.debug("Entering storageClasses().");
+  const plainKeys = document.keys.filter(function (k) {
+    return !k.prefix && !k.member;
+  });
+  const names = function (predicate) {
+    return plainKeys.filter(predicate).map(function (k) {
+      return k.key;
+    });
+  };
+  const optOuts = {};
+  plainKeys.forEach(function (k) {
+    if (k.class === "keypair") {
+      (optOuts[k.optOut] = optOuts[k.optOut] || []).push(k.key);
+    }
+  });
+  log.debug("Leaving storageClasses().");
+  return {
+    secretKeys: names(function (k) {
+      return k.class === "secret";
+    }),
+    sessionKeys: names(function (k) {
+      return k.class === "bearer";
+    }),
+    secretMembers: document.keys.filter(function (k) {
+      return k.member;
+    }).map(function (k) {
+      return k.key;
+    }),
+    keypairs: optOuts
+  };
 }
 
 function contractDocument(facts) {
@@ -287,6 +322,7 @@ async function generate() {
     files["openapi.json"] = json(openApiDocument(scratch));
     files["config.schema.json"] = json(configSchema(scratch, outbound));
     files["storage.json"] = json(storage.document);
+    files["storage_classes.json"] = json(storageClasses(storage.document));
     files["embedded_contract.json"] = json(contractDocument(facts));
     log.debug("Leaving generate().");
     return files;

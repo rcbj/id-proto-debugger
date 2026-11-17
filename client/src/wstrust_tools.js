@@ -157,7 +157,10 @@ function persistedEls() {
 // not an opt-out. wst_enc_cert is deliberately NOT in this list: it is the
 // STS's certificate, someone else's public credential, not part of this key
 // pair.
-var KEYPAIR_FIELDS = ['wst_sp_private_key', 'wst_sp_cert'];
+// The model's (models/storage/, class `keypair`), not a list typed here:
+// the fields this page's save checkbox gates, as field ids.
+var KEYPAIR_FIELDS = require("./secret_storage")
+  .keyPairKeys(STORE_PREFIX + 'wst_save_keypair', STORE_PREFIX);
 
 function keyPairMayBeStored() {
   log.debug("Entering keyPairMayBeStored().");

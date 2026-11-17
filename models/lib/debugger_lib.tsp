@@ -75,29 +75,39 @@ extern dec outboundPolicy(target: ModelProperty);
 /**
  * What a storage key is.
  *
- * * `secret`   — a client secret or a password. NEVER stored, anywhere.
+ * * `secret`   — a client secret or a password. NEVER stored, anywhere:
+ *                declared so the purge on every page load knows its name.
  *                `area` must be "none".
  * * `bearer`   — a bearer token the user typed as an INPUT. sessionStorage
  *                only. `area` must be "session".
  * * `keypair`  — key material kept so a later page can use it, behind a
  *                save checkbox. `optOut` names that checkbox's key.
- * * `output`   — something the workflow obtained: a token, a response.
- * * `ordinary` — configuration the user typed: an endpoint, a client id.
+ * * `output`   — something the workflow obtained: a token, a response, a
+ *                history.
+ * * `ordinary` — configuration the user typed or chose.
+ *
+ * `area` is required for `secret` and `bearer`, where it is the rule. For
+ * every other class it is stated only where the code fixes it: several
+ * modules choose the area at run time (the Kerberos ticket cache follows a
+ * preference; a history helper takes one), and a declaration that guessed
+ * would be worse than none. tests/data_model.js holds every area the source
+ * shows to the declared one.
  */
 model StorageFacts {
-  area: "local" | "session" | "none";
+  area?: "local" | "session" | "either" | "none";
   class: "secret" | "bearer" | "keypair" | "output" | "ordinary";
   optOut?: string;
 
   /**
    * The property name is a prefix and the key is built at run time: a
-   * history row, a per-pane id.
+   * custom parameter row, a `.stored` field under its page's STORE_PREFIX.
    */
   prefix?: boolean;
 
   /**
    * The member of a stored JSON document that is a secret, where the
-   * document itself is ordinary (secret_storage.js's SECRET_MEMBERS).
+   * document itself is ordinary (secret_storage.js's SECRET_MEMBERS). Not a
+   * storage key of its own.
    */
   member?: boolean;
 }
@@ -105,8 +115,12 @@ model StorageFacts {
 /** Declares the storage key named by this property. */
 extern dec storageKey(target: ModelProperty, facts: valueof StorageFacts);
 
-/** The page, or pages, whose script reads and writes this model's keys. */
-extern dec storagePages(target: Model, pages: valueof string[]);
+/**
+ * The client module these keys are filed under: the first, alphabetically,
+ * that names them. Which modules name a key is read from the source by
+ * tests/storage_inventory.js, not declared, so it cannot go stale.
+ */
+extern dec storageGroup(target: Model, module: valueof string);
 
 // ---------------------------------------------------------------------------
 // The embedded deployment's contract.

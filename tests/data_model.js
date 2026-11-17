@@ -23,7 +23,11 @@
 //     client/src/env/*.js passes ClientConfig; a misspelt key and a missing
 //     one are each refused by name; and the outbound-policy list is the one
 //     api/CLAUDE.md describes.
-//  5. THE STORAGE MODEL. See storageModel() below.
+//  5. THE STORAGE MODEL. Every key tests/storage_inventory.js reads out of
+//     client/src is declared in models/storage/, every declared key is still
+//     named, every area the source shows agrees with the declaration, and
+//     the generated class lists are the ones secret_storage.js held as
+//     literals before them.
 //
 // Node only — no browser, no services — so it never skips. In the tests image
 // the source is /usr/src/source-tree (tests/Dockerfile), with models/'s own
@@ -240,12 +244,153 @@ function configurations() {
   log.debug("Leaving configurations().");
 }
 
+// What secret_storage.js held as literals until the storage model replaced
+// them (2026-11-16). Written out here so that a change to a class list is a
+// decision made twice, in the model and here, rather than a declaration
+// filed under the wrong class by accident.
+const REPLACED = {
+  secretKeys: ["client_secret", "token_client_secret",
+    "refresh_client_secret", "revocation_client_secret",
+    "tokenexchange_client_secret", "introspection_client_secret",
+    "userinfo_client_secret", "token_password", "password"],
+  sessionKeys: ["registration_access_token", "dcr_initial_access_token",
+    "introspection_bearer_token"],
+  secretMembers: ["client_secret", "registration_access_token"],
+  keypairs: {
+    samltools_saml_save_keypair: ["samltools_saml_sp_private_key",
+      "samltools_saml_sp_public_key"],
+    wstrust_wst_save_keypair: ["wstrust_wst_sp_private_key",
+      "wstrust_wst_sp_cert"],
+    wsfedtools_wsfed_save_keypair: ["wsfedtools_wsfed_rp_private_key",
+      "wsfedtools_wsfed_rp_cert"],
+    sdjwtvc_save_holder_key: ["sdjwtvc_holder_private_jwk",
+      "sdjwtvc_refreshed_holder_private_jwk",
+      "sdjwtvc_previous_holder_private_jwk", "sdjwtvc_dpop_private_jwk"]
+  }
+};
+
+function sorted(list) {
+  log.debug("Entering sorted().");
+  log.debug("Leaving sorted().");
+  return list.slice().sort();
+}
+
+// sd_jwt_vc.js keeps its holder-key list as a literal: the tests image
+// copies that module FLAT and loads it in node, where a require of
+// ../../common/model would not resolve. So the literal is held to the model
+// here instead of being read from it.
+function holderKeysLiteral() {
+  log.debug("Entering holderKeysLiteral().");
+  const source = fs.readFileSync(path.join(ROOT, "client", "src",
+                                           "sd_jwt_vc.js"), "utf8");
+  const m = /var HOLDER_PRIVATE_KEYS = \[([\s\S]*?)\];/.exec(source);
+  assert.ok(m, "client/src/sd_jwt_vc.js no longer declares " +
+            "HOLDER_PRIVATE_KEYS; hold its replacement to the model here.");
+  const keys = (m[1].replace(/\/\/.*$/gm, "").match(/"[^"]+"/g) || [])
+    .map(function (q) {
+      return q.slice(1, -1);
+    });
+  log.debug("Leaving holderKeysLiteral().");
+  return keys;
+}
+
+function storageModel() {
+  log.debug("Entering storageModel().");
+  log.info("=== 5. every storage key the client names is declared ===");
+  const inventoryModule = require("./storage_inventory.js");
+  const found = inventoryModule.inventory(path.join(ROOT, "client"));
+  const doc = JSON.parse(fs.readFileSync(path.join(ROOT, "common", "model",
+    "storage.json"), "utf8"));
+  const classes = JSON.parse(fs.readFileSync(path.join(ROOT, "common",
+    "model", "storage_classes.json"), "utf8"));
+  const declared = new Map();
+  const prefixes = [];
+  doc.keys.forEach(function (k) {
+    if (k.member) {
+      return;
+    }
+    if (k.prefix) {
+      prefixes.push(k);
+    } else {
+      declared.set(k.key, k);
+    }
+  });
+  const problems = [];
+  // Every key the source names is declared, or sits under a declared
+  // prefix.
+  for (const [key, entry] of found.keys) {
+    const covered = declared.has(key) || prefixes.some(function (p) {
+      return key.indexOf(p.key) === 0;
+    });
+    if (!covered) {
+      problems.push("`" + key + "` (" + Array.from(entry.modules).join(", ") +
+        ") is named by the client and declared by no models/storage file");
+    }
+    const d = declared.get(key);
+    if (d && d.area && d.area !== "either" && d.class !== "secret" &&
+        d.class !== "bearer") {
+      entry.areas.forEach(function (area) {
+        if (area !== d.area) {
+          problems.push("`" + key + "` is declared " + d.area + " and " +
+            Array.from(entry.modules).join(", ") + " uses " + area);
+        }
+      });
+    }
+  }
+  // Every declared key is still named, apart from the secret and bearer
+  // keys, which are declared precisely so that nothing writes them.
+  for (const [key, d] of declared) {
+    if (d.class === "secret" || d.class === "bearer") {
+      continue;
+    }
+    if (!found.keys.has(key)) {
+      problems.push("`" + key + "` is declared in " + d.group + "'s file " +
+        "and no client module names it any more");
+    }
+  }
+  prefixes.forEach(function (p) {
+    if (!found.prefixes.has(p.key)) {
+      problems.push("prefix `" + p.key + "` is declared and no client " +
+        "module builds a key from it");
+    }
+  });
+  assert.deepStrictEqual(problems, [], "the storage model and the client " +
+    "disagree:\n  " + problems.join("\n  "));
+
+  // The class lists are the ones they replaced.
+  ["secretKeys", "sessionKeys", "secretMembers"].forEach(function (name) {
+    assert.deepStrictEqual(sorted(classes[name]), sorted(REPLACED[name]),
+      name + " in storage_classes.json is not the list it replaced. A " +
+      "change to it is deliberate: make it in models/storage/ and here.");
+  });
+  assert.deepStrictEqual(Object.keys(classes.keypairs).sort(),
+    Object.keys(REPLACED.keypairs).sort(), "the key-pair checkboxes changed");
+  Object.keys(REPLACED.keypairs).forEach(function (optOut) {
+    assert.deepStrictEqual(sorted(classes.keypairs[optOut]),
+      sorted(REPLACED.keypairs[optOut]), optOut + " gates other keys now");
+    assert.ok(declared.has(optOut), "the checkbox key `" + optOut +
+      "` is not itself declared");
+  });
+  assert.deepStrictEqual(sorted(holderKeysLiteral()),
+    sorted(classes.keypairs.sdjwtvc_save_holder_key),
+    "client/src/sd_jwt_vc.js's HOLDER_PRIVATE_KEYS is not the model's " +
+    "sdjwtvc_save_holder_key list.");
+  log.info("[storage] OK — " + found.keys.size + " keys and " +
+    found.prefixes.size + " prefixes named by the client, every one " +
+    "declared, none declared and unnamed; the class lists are the ones " +
+    "they replaced. " + found.dynamic.length + " call sites build their " +
+    "key in a way the inventory cannot read (a helper's parameter, a key " +
+    "from another module) and are not checked here.");
+  log.debug("Leaving storageModel().");
+}
+
 function main() {
   log.debug("Entering main().");
   current();
   live();
   strict();
   configurations();
+  storageModel();
   log.info("The abstract data model is current, live, strict and obeyed.");
   log.debug("Leaving main().");
 }

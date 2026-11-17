@@ -1,3 +1,3131 @@
 {
-  "pages": []
+  "keys": [
+    {
+      "key": "PKCE_code_challenge",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "PKCE_code_challenge_method",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "PKCE_code_verifier",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "authorization_endpoint",
+      "class": "ordinary",
+      "group": "client/src/jwks.js",
+      "area": "local"
+    },
+    {
+      "key": "authorization_grant_type",
+      "class": "ordinary",
+      "group": "client/src/jwks.js",
+      "area": "local"
+    },
+    {
+      "key": "authzNumberCustomParameters",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "authzcustomParametersCheck-no",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "authzcustomParametersCheck-yes",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "client_has_secret",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "client_id",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "client_secret",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "client_secret",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none",
+      "member": true
+    },
+    {
+      "key": "customParameterName-",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "customParameterValue-",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "customTokenParameterName-",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "customTokenParameterValue-",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "customTokenParametersCheck-no",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "customTokenParametersCheck-yes",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "dcr_client_metadata",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "dcr_initial_access_token",
+      "class": "bearer",
+      "group": "client/src/secret_storage.js",
+      "area": "session"
+    },
+    {
+      "key": "debugger_initialized",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "device_authorization_endpoint",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "device_code",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "device_expires_in",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "device_interval",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "did_identifier",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "didcfg_url",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "discovery_info",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js",
+      "area": "local"
+    },
+    {
+      "key": "discovery_info_source",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "end_session_endpoint",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "gnap_access_token",
+      "class": "output",
+      "group": "client/src/gnap.js",
+      "area": "local"
+    },
+    {
+      "key": "gnap_mtls_key",
+      "class": "ordinary",
+      "group": "client/src/gnap.js",
+      "area": "local"
+    },
+    {
+      "key": "gnap_private_jwk",
+      "class": "ordinary",
+      "group": "client/src/gnap.js",
+      "area": "local"
+    },
+    {
+      "key": "gnap_state",
+      "class": "ordinary",
+      "group": "client/src/gnap.js",
+      "area": "local"
+    },
+    {
+      "key": "initialized",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "introspection_bearer_token",
+      "class": "bearer",
+      "group": "client/src/secret_storage.js",
+      "area": "session"
+    },
+    {
+      "key": "introspection_client_id",
+      "class": "ordinary",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "introspection_client_secret",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "introspection_endpoint",
+      "class": "ordinary",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "introspection_initiateFromBackEnd",
+      "class": "ordinary",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "introspection_initiateFromFrontEnd",
+      "class": "ordinary",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "issuer",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "jwks_endpoint",
+      "class": "ordinary",
+      "group": "client/src/jwks.js",
+      "area": "local"
+    },
+    {
+      "key": "jwt_claims_client_id",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "jwt_clock_skew",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "jwt_expected_aud",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "jwt_expected_iss",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "jwt_expected_scope",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "jwt_purpose",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "jwt_verification_key",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "jwt_verification_type",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "krb_ccache",
+      "class": "output",
+      "group": "client/src/kerberos_panes.js",
+      "area": "local"
+    },
+    {
+      "key": "krb_deleg_target",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_deleg_user",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_etypes",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_kdc_host",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_kdc_port",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_principal",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_realm",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_return_to",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js",
+      "area": "session"
+    },
+    {
+      "key": "krb_s4u_evidence",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js",
+      "area": "local"
+    },
+    {
+      "key": "krb_save_ccache",
+      "class": "output",
+      "group": "client/src/kerberos_panes.js",
+      "area": "local"
+    },
+    {
+      "key": "krb_service_host",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_service_port",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_service_spn",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_service_tickets",
+      "class": "output",
+      "group": "client/src/kerberos_panes.js",
+      "area": "local"
+    },
+    {
+      "key": "krb_spnego_spn",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_spnego_url",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_ticket_history",
+      "class": "output",
+      "group": "client/src/kerberos_panes.js",
+      "area": "local"
+    },
+    {
+      "key": "krb_transport",
+      "class": "ordinary",
+      "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "last_authz_signature",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "logout_client_id",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "metadata_source",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "noCheck",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "noCheckOIDCArtifacts",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "noResourceCheck",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "noResourceCheckToken",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "nonce_field",
+      "class": "ordinary",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "oauth_dpop_alg",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oauth_dpop_enabled",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oauth_dpop_jkt",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oauth_dpop_jkt_sent",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oauth_dpop_nonce",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oauth_dpop_private_jwk",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oauth_dpop_public_jwk",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oauth_dpop_token_jkt",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oauth_dpop_token_type",
+      "class": "ordinary",
+      "group": "client/src/oauth_dpop.js"
+    },
+    {
+      "key": "oidc_discovery_endpoint",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "oidc_userinfo_endpoint",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "operation_history",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "password",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "pkitools_",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "pkitools_pki_aia",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_akid_issuer_serial",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_alt_key_alg",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_alt_private_key",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_alt_public_key",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_bc_ca",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_bc_critical",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_bc_pathlen",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_cdp",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_cdp_critical",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_csr",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_custom_extensions",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_c",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_cn",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_dc",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_email",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_extra",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_l",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_o",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_ou",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_serialnumber",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_st",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_dn_uid",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_anyExtendedKeyUsage",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_clientAuth",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_codeSigning",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_critical",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_emailProtection",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_extra",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_ipsecEndSystem",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_ipsecIKE",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_ipsecTunnel",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_ipsecUser",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_kdcAuthentication",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_msDocumentSigning",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_msEncryptingFileSystem",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_msSmartcardLogon",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_ocspSigning",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_pkinitClientAuth",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_serverAuth",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_eku_timeStamping",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_aia",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_akid",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_bc",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_cdp",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_eku",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_freshest",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_ian",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_inhibit_any",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_ku",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_name_constraints",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_ns_cert_type",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_ns_comment",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_ocsp_nocheck",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_pkup",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_policies",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_policy_constraints",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_policy_mappings",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_san",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_sia",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_skid",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ext_tls_feature",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_freshest",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_gen_csr",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ian",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ian_critical",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_inhibit_any_skip",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_inhibit_policy_mapping",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_issuer",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_key_alg",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ks_format",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ks_include_chain",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_cRLSign",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_critical",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_dataEncipherment",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_decipherOnly",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_digitalSignature",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_encipherOnly",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_keyAgreement",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_keyCertSign",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_keyEncipherment",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ku_nonRepudiation",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_name_constraints",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_nc_critical",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_not_after",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_not_before",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ns_comment",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ns_emailCA",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ns_objectSigningCA",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ns_sslCA",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ns_sslClient",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_ns_sslServer",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_pkup_not_after",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_pkup_not_before",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_policies",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_policies_critical",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_policy_mappings",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_pq_mode",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_private_key",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_profile",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_public_key",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_require_explicit_policy",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_san",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_san_critical",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_save_keys",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_selected",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_serial",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_sia",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_sig_alg",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_alpn",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_ciphers",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_feature",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_groups",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_host",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_http_path",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_http_probe",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_max_version",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_min_version",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_port",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_probe_mutual",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_servername",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_sigalgs",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_system_roots",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_tls_trust_pem",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "pkitools_pki_validity_years",
+      "class": "ordinary",
+      "group": "client/src/pki.js",
+      "area": "local"
+    },
+    {
+      "key": "redirect_uri",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_access_token",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_client_id",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_client_secret",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "refresh_id_token",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_initiateFromBackEnd",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_initiateFromFrontEnd",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_iteration",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_post_auth_style",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_refresh_token",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_scope",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_scope_edited",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "refresh_token_used",
+      "class": "output",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "registration_access_token",
+      "class": "bearer",
+      "group": "client/src/secret_storage.js",
+      "area": "session"
+    },
+    {
+      "key": "registration_access_token",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none",
+      "member": true
+    },
+    {
+      "key": "registration_client_uri",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "registration_endpoint",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "resource",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "revocation_client_secret",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "revocation_endpoint",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "revocation_initiateFromBackEnd",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "revocation_initiateFromFrontEnd",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "revocation_post_auth_style",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "rfc9700_mode",
+      "class": "ordinary",
+      "group": "client/src/rfc9700.js"
+    },
+    {
+      "key": "rfc9700_spent",
+      "class": "ordinary",
+      "group": "client/src/rfc9700.js"
+    },
+    {
+      "key": "rfc9700_transaction",
+      "class": "ordinary",
+      "group": "client/src/rfc9700.js"
+    },
+    {
+      "key": "saml_cert_view",
+      "class": "ordinary",
+      "group": "client/src/digital_signature.js",
+      "area": "local"
+    },
+    {
+      "key": "saml_last_nameid",
+      "class": "ordinary",
+      "group": "client/src/saml_response.js",
+      "area": "local"
+    },
+    {
+      "key": "saml_last_nameid_format",
+      "class": "ordinary",
+      "group": "client/src/saml_response.js",
+      "area": "local"
+    },
+    {
+      "key": "saml_last_response",
+      "class": "output",
+      "group": "client/src/saml_response.js",
+      "area": "local"
+    },
+    {
+      "key": "saml_last_session_index",
+      "class": "ordinary",
+      "group": "client/src/saml_response.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "samlassert_sa_advice_ref",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_audience",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_authn_context",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_authn_method",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_authz_action",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_authz_action_ns",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_authz_decision",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_authz_resource",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_confirm_address",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_confirm_inresponseto",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_confirm_method",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_confirm_recipient",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_c14n",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_cert",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_data_alg",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_digest",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_key_alg",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_key_bits",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_mgf",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_private_key",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_type",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_enc_wrap",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_issuer",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_key_bits",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_locality_address",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_locality_dns",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_nameid_format",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_nameid_qualifier",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_nameid_spqualifier",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_nameid_value",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_advice",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_attrs",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_audience",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_authn",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_authz",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_conditions",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_locality",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_onetimeuse",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_proxy",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_subjconf",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_opt_subject",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_private_key",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_proxy_count",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_public_key",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_session_index",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_sig_alg",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_sig_c14n",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_skew_seconds",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_validity_minutes",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samlassert_sa_version",
+      "class": "ordinary",
+      "group": "client/src/saml_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "samltools_saml11_artifact_acs_url",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_acs_url",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_ars",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_binding",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_enc_c14n",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_enc_cert",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_enc_data_alg",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_enc_digest",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_enc_key_alg",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_enc_mgf",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_enc_type",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_encrypt_request",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_idp_entity_id",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_key_bits",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_metadata_doc",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_metadata_url",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_nameid_format",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_response_binding",
+      "class": "output",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_save_keypair",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_sig_alg",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_sign_request",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_signer_cert",
+      "class": "ordinary",
+      "group": "client/src/saml_cert.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_slo_artifact",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_slo_post",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_slo_redirect",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_sp_entity_id",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_sp_private_key",
+      "class": "keypair",
+      "group": "client/src/saml_authnrequest.js",
+      "area": "local",
+      "optOut": "samltools_saml_save_keypair"
+    },
+    {
+      "key": "samltools_saml_sp_public_key",
+      "class": "keypair",
+      "group": "client/src/saml_authnrequest.js",
+      "area": "local",
+      "optOut": "samltools_saml_save_keypair"
+    },
+    {
+      "key": "samltools_saml_sso_artifact",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_sso_post",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_sso_redirect",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_username_hint",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_version",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_wsa_action",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_wsa_from",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_wsa_messageid",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_wsa_replyto",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_wsa_support",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "samltools_saml_wsa_to",
+      "class": "ordinary",
+      "group": "client/src/saml_request.js",
+      "area": "local"
+    },
+    {
+      "key": "scim_auth_token",
+      "class": "output",
+      "group": "client/src/scim.js",
+      "area": "local"
+    },
+    {
+      "key": "scim_config",
+      "class": "ordinary",
+      "group": "client/src/scim.js",
+      "area": "local"
+    },
+    {
+      "key": "scim_config_groups",
+      "class": "ordinary",
+      "group": "client/src/scim.js",
+      "area": "local"
+    },
+    {
+      "key": "scim_discovered",
+      "class": "ordinary",
+      "group": "client/src/scim.js",
+      "area": "local"
+    },
+    {
+      "key": "scim_save_token",
+      "class": "output",
+      "group": "client/src/scim.js",
+      "area": "local"
+    },
+    {
+      "key": "scope",
+      "class": "ordinary",
+      "group": "client/src/jwks.js",
+      "area": "local"
+    },
+    {
+      "key": "sdjwtvc_credential",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_credential_history",
+      "class": "output",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_credential_history_dropped",
+      "class": "output",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_credential_history_index",
+      "class": "output",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_credential_meta",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_credential_offer",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_credentials",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_dpop_alg",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_dpop_binding",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_dpop_enabled",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_dpop_jkt",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_dpop_nonce",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_dpop_private_jwk",
+      "class": "keypair",
+      "group": "client/src/sd_jwt_vc.js",
+      "optOut": "sdjwtvc_save_holder_key"
+    },
+    {
+      "key": "sdjwtvc_dpop_public_jwk",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_dpop_token_jkt",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_dpop_token_type",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_flow",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_holder_jwk",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_holder_private_jwk",
+      "class": "keypair",
+      "group": "client/src/sd_jwt_vc.js",
+      "optOut": "sdjwtvc_save_holder_key"
+    },
+    {
+      "key": "sdjwtvc_issuer_site_url",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_previous_credential",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_previous_credential_meta",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_previous_holder_jwk",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_previous_holder_private_jwk",
+      "class": "keypair",
+      "group": "client/src/sd_jwt_vc.js",
+      "optOut": "sdjwtvc_save_holder_key"
+    },
+    {
+      "key": "sdjwtvc_refreshed_credential",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_refreshed_credential_meta",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_refreshed_credentials",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_refreshed_holder_jwk",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_refreshed_holder_private_jwk",
+      "class": "keypair",
+      "group": "client/src/sd_jwt_vc.js",
+      "optOut": "sdjwtvc_save_holder_key"
+    },
+    {
+      "key": "sdjwtvc_request_mechanism",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "sdjwtvc_return",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_save_holder_key",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_use_case",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvp_presentation",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_request",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_result",
+      "class": "output",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_selected_disclosures",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_use_case",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_verifier_base_url",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_verifier_jwks_url",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "sdjwtvp_verifier_site_url",
+      "class": "ordinary",
+      "group": "client/src/sd_jwt_vp.js"
+    },
+    {
+      "key": "session_handoff_active",
+      "class": "ordinary",
+      "group": "client/src/session_handoff.js"
+    },
+    {
+      "key": "session_handoff_label",
+      "class": "ordinary",
+      "group": "client/src/session_handoff.js"
+    },
+    {
+      "key": "session_handoff_meta",
+      "class": "ordinary",
+      "group": "client/src/session_handoff.js"
+    },
+    {
+      "key": "session_handoff_return",
+      "class": "ordinary",
+      "group": "client/src/session_handoff.js"
+    },
+    {
+      "key": "session_handoff_session",
+      "class": "ordinary",
+      "group": "client/src/session_handoff.js"
+    },
+    {
+      "key": "session_handoff_wanted",
+      "class": "ordinary",
+      "group": "client/src/session_handoff.js"
+    },
+    {
+      "key": "smartcard_transport",
+      "class": "ordinary",
+      "group": "client/src/smartcard.js"
+    },
+    {
+      "key": "spiffe_identity_bundle",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js",
+      "area": "local"
+    },
+    {
+      "key": "spiffe_identity_cert",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js",
+      "area": "local"
+    },
+    {
+      "key": "spiffe_identity_id",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js",
+      "area": "local"
+    },
+    {
+      "key": "spiffe_identity_key",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js",
+      "area": "local"
+    },
+    {
+      "key": "spiffe_save_identity",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js",
+      "area": "local"
+    },
+    {
+      "key": "ssf_call_path",
+      "class": "ordinary",
+      "group": "client/src/ssf.js",
+      "area": "local"
+    },
+    {
+      "key": "ssf_message_history",
+      "class": "output",
+      "group": "client/src/ssf_history.js"
+    },
+    {
+      "key": "ssf_profile",
+      "class": "ordinary",
+      "group": "client/src/ssf.js",
+      "area": "local"
+    },
+    {
+      "key": "ssf_ssl_validate",
+      "class": "ordinary",
+      "group": "client/src/ssf.js",
+      "area": "local"
+    },
+    {
+      "key": "ssf_token_history",
+      "class": "output",
+      "group": "client/src/ssf_history.js"
+    },
+    {
+      "key": "state",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "tokenNumberCustomParameters",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_access_token",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "token_access_token_type",
+      "class": "output",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_authorization_details",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_client_id",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_client_secret",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "token_endpoint",
+      "class": "ordinary",
+      "group": "client/src/jwks.js",
+      "area": "local"
+    },
+    {
+      "key": "token_handoff_active",
+      "class": "ordinary",
+      "group": "client/src/token_handoff.js"
+    },
+    {
+      "key": "token_handoff_label",
+      "class": "ordinary",
+      "group": "client/src/token_handoff.js"
+    },
+    {
+      "key": "token_handoff_meta",
+      "class": "ordinary",
+      "group": "client/src/token_handoff.js"
+    },
+    {
+      "key": "token_handoff_return",
+      "class": "ordinary",
+      "group": "client/src/token_handoff.js"
+    },
+    {
+      "key": "token_handoff_scope",
+      "class": "ordinary",
+      "group": "client/src/token_handoff.js"
+    },
+    {
+      "key": "token_handoff_set",
+      "class": "ordinary",
+      "group": "client/src/token_handoff.js"
+    },
+    {
+      "key": "token_handoff_token",
+      "class": "output",
+      "group": "client/src/token_handoff.js"
+    },
+    {
+      "key": "token_history",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "token_history_active_index",
+      "class": "output",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_id_token",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "token_initialize",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_initiateFromBackEnd",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_initiateFromFrontEnd",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_password",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "token_post_auth_style",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_redirect_uri",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "token_refresh_token",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "token_resource",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "token_scope",
+      "class": "ordinary",
+      "group": "client/src/jwks.js",
+      "area": "local"
+    },
+    {
+      "key": "token_scope_edited",
+      "class": "ordinary",
+      "group": "client/src/jwks.js",
+      "area": "local"
+    },
+    {
+      "key": "token_username",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "tokenexchange_access_token",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "tokenexchange_client_secret",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "tokenexchange_id_token",
+      "class": "output",
+      "group": "client/src/token_detail.js",
+      "area": "local"
+    },
+    {
+      "key": "tokenexchange_initiateFromBackEnd",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "tokenexchange_initiateFromFrontEnd",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "tokenexchange_post_auth_style",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_2.js",
+      "area": "local"
+    },
+    {
+      "key": "tokenexchange_refresh_token",
+      "class": "output",
+      "group": "client/src/introspection.js",
+      "area": "local"
+    },
+    {
+      "key": "usePKCE-no",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "usePKCE-yes",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "usePKCE_no",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "usePKCE_yes",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "useRefreshToken_no",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "useRefreshToken_yes",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "user_code",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "userinfo_claims",
+      "class": "ordinary",
+      "group": "client/src/userinfo.js",
+      "area": "local"
+    },
+    {
+      "key": "userinfo_client_secret",
+      "class": "secret",
+      "group": "client/src/secret_storage.js",
+      "area": "none"
+    },
+    {
+      "key": "userinfo_endpoint",
+      "class": "ordinary",
+      "group": "client/src/userinfo.js",
+      "area": "local"
+    },
+    {
+      "key": "userinfo_method",
+      "class": "ordinary",
+      "group": "client/src/userinfo.js",
+      "area": "local"
+    },
+    {
+      "key": "userinfo_scope",
+      "class": "ordinary",
+      "group": "client/src/userinfo.js",
+      "area": "local"
+    },
+    {
+      "key": "vc_jsonld_contexts",
+      "class": "ordinary",
+      "group": "client/src/bbs2023.js"
+    },
+    {
+      "key": "vci_metadata_endpoint",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "verification_uri",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "verification_uri_complete",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "webauthn_analyzer_input",
+      "class": "ordinary",
+      "group": "client/src/webauthn_analyzer.js",
+      "area": "local"
+    },
+    {
+      "key": "webauthn_analyzer_keys",
+      "class": "ordinary",
+      "group": "client/src/webauthn_analyzer.js",
+      "area": "local"
+    },
+    {
+      "key": "webauthn_lab_credentials",
+      "class": "ordinary",
+      "group": "client/src/webauthn_lab.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "wsfedtools_wsfed_auth_type",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_context",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_freshness",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_home_realm",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_idp_entity_id",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_include_wct",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_include_wreq",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_key_bits",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_metadata_doc",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_metadata_url",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_policy",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_realm",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_reply",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_rp_cert",
+      "class": "keypair",
+      "group": "client/src/wsfed_request.js",
+      "area": "local",
+      "optOut": "wsfedtools_wsfed_save_keypair"
+    },
+    {
+      "key": "wsfedtools_wsfed_rp_private_key",
+      "class": "keypair",
+      "group": "client/src/wsfed_request.js",
+      "area": "local",
+      "optOut": "wsfedtools_wsfed_save_keypair"
+    },
+    {
+      "key": "wsfedtools_wsfed_save_keypair",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_sig_alg",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_sig_binding",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_sign_request",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_signer_cert",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_signin_endpoint",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_signout_endpoint",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_sts_endpoint",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wsfedtools_wsfed_wreq",
+      "class": "ordinary",
+      "group": "client/src/wsfed_request.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local",
+      "prefix": true
+    },
+    {
+      "key": "wstrust_last_exchange",
+      "class": "ordinary",
+      "group": "client/src/wstrust_response.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_actas",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_add_timestamp",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_applies_to",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_claims",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_cred_mode",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_enc_c14n",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_enc_cert",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_enc_data_alg",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_enc_digest",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_enc_key_alg",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_enc_mgf",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_enc_type",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_encrypt_request",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_key_bits",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_key_size",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_key_type",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_lifetime_minutes",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_onbehalfof",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_operation",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_password_type",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_saml_token",
+      "class": "output",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_save_keypair",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_sig_alg",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_sign_request",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_sign_timestamp",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_soap_version",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_sp_cert",
+      "class": "keypair",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local",
+      "optOut": "wstrust_wst_save_keypair"
+    },
+    {
+      "key": "wstrust_wst_sp_private_key",
+      "class": "keypair",
+      "group": "client/src/wstrust_response.js",
+      "area": "local",
+      "optOut": "wstrust_wst_save_keypair"
+    },
+    {
+      "key": "wstrust_wst_ssl_validate",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_sts_url",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_target_token",
+      "class": "output",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_token_type",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_trust_version",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_use_actas",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_use_onbehalfof",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_username",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_wsa_action",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_wsa_from",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_wsa_messageid",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_wsa_replyto",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_wsa_support",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "wstrust_wst_wsa_to",
+      "class": "ordinary",
+      "group": "client/src/wstrust_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "xacml_repository",
+      "class": "ordinary",
+      "group": "client/src/xacml.js",
+      "area": "local"
+    },
+    {
+      "key": "yesCheck",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "yesCheckOIDCArtifacts",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js",
+      "area": "local"
+    },
+    {
+      "key": "yesResourceCheck",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js",
+      "area": "local"
+    },
+    {
+      "key": "yesResourceCheckToken",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js",
+      "area": "local"
+    }
+  ]
 }

@@ -34,5 +34,8 @@ using OpenAPI;
  */
 @service(#{ title: "id-proto-debugger API" })
 @info(#{ version: "model" })
-@server("/", "The api's own origin. Embedded, it is the debugger's origin + /api.")
+@server(
+  "/",
+  "The api's own origin. Embedded, it is the debugger's origin + /api."
+)
 namespace IdProtoDebugger.Api;
