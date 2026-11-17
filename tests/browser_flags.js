@@ -625,9 +625,9 @@ function addPageLoadTimeout(options) {
 // development service records the score and refuses nothing, and every other
 // browser here is left saying what it is — a job asserting about the
 // automated-client decision would otherwise be testing this line. The string
-// is a desktop Chrome on Linux, as iya-sts's preload sends.
-var DESKTOP_USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) " +
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+// is desktop_user_agent.js's, which sts_applications.js's HTTP sign-in sends
+// too (#356).
+var DESKTOP_USER_AGENT = require("./desktop_user_agent").DESKTOP_USER_AGENT;
 
 function addDesktopUserAgent(options) {
   log.debug("Entering addDesktopUserAgent().");

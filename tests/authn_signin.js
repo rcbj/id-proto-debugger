@@ -466,7 +466,7 @@ async function signIn(base, where, fields, options) {
   log.debug("Entering signIn().");
   const opts = options || {};
   const answer = await submit(base, where, fields, opts);
-  const out = await ignoreOffer(base, answer);
+  const out = await ignoreOffer(base, answer, { headers: opts.headers });
   log.debug("Leaving signIn(). " + out.next);
   return out;
 }
@@ -608,23 +608,27 @@ async function passkeyStep(opened, make, options) {
  * @param {string} base - the service's base (unused since #572: the
  *   answer's address names it)
  * @param {object} answer - an act's answer
+ * @param {object} [options] - `headers`, sent on both requests (a
+ *   User-Agent, #356)
  * @returns {Promise<object>} the Ignore's answer, `ignored: true`
  */
-async function ignoreOffer(base, answer) {
+async function ignoreOffer(base, answer, options) {
   log.debug("Entering ignoreOffer().");
   void base;
+  const headers = (options || {}).headers;
   if (!(answer.next === "mfa" && answer.step === "enrol")) {
     log.debug("Leaving ignoreOffer(). " + answer.next);
     return answer;
   }
-  const opened = await step(answer.location, { cookie: answer.cookie });
+  const opened = await step(answer.location, { cookie: answer.cookie,
+                                              headers: headers });
   if (!(opened.view && opened.view.setup && opened.view.setup.optional)) {
     log.debug("Leaving ignoreOffer(). A required set-up step.");
     answer.opened = opened;
     answer.text = opened.text;
     return answer;
   }
-  const ignored = await stepAct(opened, "skip", {});
+  const ignored = await stepAct(opened, "skip", {}, { headers: headers });
   ignored.setCookies = (answer.setCookies || []).concat(
     ignored.setCookies || []);
   ignored.ignored = true;

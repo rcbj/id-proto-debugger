@@ -146,6 +146,10 @@ COPY tests/sts_applications.js ./
 # require it. A shared module, with the same MODULE_NOT_FOUND failure as the
 # rest when this line is missing.
 COPY tests/authn_signin.js ./
+# desktop_user_agent.js is the User-Agent browser_flags.js gives Chrome and
+# sts_applications.js's authorizationCode() sends (#356). A shared module:
+# the same MODULE_NOT_FOUND failure as the rest when this line is missing.
+COPY tests/desktop_user_agent.js ./
 # kerberos_principals.js rebuilds what the Kerberos jobs read off iya-sts's
 # deleted /krb5/principals, from /admin-api (#595). A shared module: the
 # same MODULE_NOT_FOUND failure as the rest when this line is missing.
