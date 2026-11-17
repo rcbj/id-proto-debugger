@@ -232,10 +232,17 @@ function parseAlgorithmAttributes(value) {
   return out;
 }
 
+// C5, C6 and CD hold one entry per key slot, in this order. A card with
+// an attestation key (a YubiKey since 5.2) has a fourth: C5 and C6 are 80
+// bytes rather than 60 and CD is 16 rather than 12, which yubikit reads
+// as KEY_REF.ATT. A real key's answer is where that was found (#410).
+var SLOT_LABELS = ["signature", "decryption", "authentication",
+                   "attestation"];
+
 function fingerprintText(value) {
   log.debug("Entering fingerprintText().");
   var bytes = Buffer.from(value);
-  if (bytes.length !== 60 && bytes.length !== 0) {
+  if (bytes.length % 20 !== 0 || bytes.length > 20 * SLOT_LABELS.length) {
     log.debug("Leaving fingerprintText(). Length.");
     return bytes.toString("hex");
   }
@@ -250,23 +257,24 @@ function fingerprintText(value) {
         blank = false;
       }
     }
-    parts.push(blank ? "(not set)" : one.toString("hex"));
+    parts.push(SLOT_LABELS[i / 20] + " " +
+        (blank ? "(not set)" : one.toString("hex")));
   }
   log.debug("Leaving fingerprintText().");
-  return parts.join(", ");
+  return parts.join("; ");
 }
 
 function generationText(value) {
   log.debug("Entering generationText().");
   var bytes = Buffer.from(value);
-  var labels = ["signature", "decryption", "authentication"];
   var parts = [];
   var i = 0;
-  for (i = 0; i + 4 <= bytes.length && i / 4 < 3; i += 4) {
+  for (i = 0; i + 4 <= bytes.length && i / 4 < SLOT_LABELS.length;
+      i += 4) {
     var stamp = bytes.readUInt32BE(i);
     var text = stamp === 0 ? "(not set)" :
         new Date(stamp * 1000).toISOString();
-    parts.push(labels[i / 4] + " " + text);
+    parts.push(SLOT_LABELS[i / 4] + " " + text);
   }
   log.debug("Leaving generationText().");
   return parts.join("; ");
@@ -336,16 +344,27 @@ function collect(nodes, found, rows) {
   log.debug("Leaving collect().");
 }
 
-function describeData(input) {
+// A 7F49 answer to READ PUBLIC KEY holds the point and nothing that names
+// its curve, and a 32-byte point is Ed25519 or X25519 alike. The curve is
+// in the application related data's algorithm attributes (C1-C3), so a
+// caller that has read those passes it as `curve` (keyCurves() below).
+function describeData(input, curve) {
   log.debug("Entering describeData().");
   var bytes = iso.asBytes(input);
   var nodes = iso.parseElements(bytes);
   var found = { modulus: null, exponent: null, point: null, curve: null };
   var rows = [];
   collect(nodes, found, rows);
+  if (found.point && !found.curve && curve) {
+    found.curve = curve;
+  }
   var pem = publicKeyPem(found);
   if (pem) {
     rows.push({ label: "Public key", value: pem });
+  } else if (found.point && found.point.length === 32 && !found.curve) {
+    rows.push({ label: "Public key", value: "not built: a 32-byte point " +
+        "is Ed25519 or X25519 and this answer does not say which. The " +
+        "application related data's algorithm attributes (C1-C3) do." });
   }
   var summary = rows.length ? rows[0].value : "OpenPGP data";
   log.debug("Leaving describeData().");
@@ -407,7 +426,7 @@ function describeCommand(input) {
   return { summary: summary, rows: rows };
 }
 
-function describeResponse(input) {
+function describeResponse(input, curve) {
   log.debug("Entering describeResponse().");
   var response = iso.parseResponse(input);
   var summary = statusLabel(response);
@@ -419,7 +438,7 @@ function describeResponse(input) {
     return described;
   }
   try {
-    var data = describeData(response.data);
+    var data = describeData(response.data, curve);
     described.rows = described.rows.concat(data.rows);
     described.pem = data.pem;
     described.summary = data.summary + ", " + described.summary;
@@ -429,6 +448,36 @@ function describeResponse(input) {
   }
   log.debug("Leaving describeResponse().");
   return described;
+}
+
+var CURVE_SLOTS = { c1: "b6", c2: "b8", c3: "a4" };
+
+function collectCurves(nodes, out) {
+  log.debug("Entering collectCurves().");
+  nodes.forEach(function (node) {
+    var hex = node.tagHex.toLowerCase();
+    if (CURVE_SLOTS[hex]) {
+      var attr = parseAlgorithmAttributes(node.value);
+      if (attr.curve) {
+        out[CURVE_SLOTS[hex]] = attr.curve;
+      }
+    } else if (CONTAINERS[hex]) {
+      collectCurves(iso.parseElements(node.value), out);
+    }
+  });
+  log.debug("Leaving collectCurves().");
+}
+
+// The curve of each key slot, from the application related data (6E) or
+// any container holding C1-C3, keyed by the slot's control reference
+// template as READ PUBLIC KEY names it: b6, b8 and a4. A slot whose
+// attributes are RSA, or absent, is not in the result.
+function keyCurves(input) {
+  log.debug("Entering keyCurves().");
+  var out = {};
+  collectCurves(iso.parseElements(iso.asBytes(input)), out);
+  log.debug("Leaving keyCurves(). " + Object.keys(out).length + " slot(s).");
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -727,6 +776,7 @@ module.exports = {
   parseAlgorithmAttributes: parseAlgorithmAttributes,
   publicKeyPem: publicKeyPem,
   describeData: describeData,
+  keyCurves: keyCurves,
   describeCommand: describeCommand,
   describeResponse: describeResponse
 };

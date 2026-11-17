@@ -13,7 +13,9 @@
 // The vectors are the cases the encoding defines (1, 2S, 3S, 4S, 2E, 3E,
 // 4E), Yubico's published OTP vectors, the RFC 4226 and RFC 6238
 // appendices, and APDU containers this code built for PIV, YKOATH, the
-// OpenPGP card and YubiHSM Auth. Those containers are not captures.
+// OpenPGP card and YubiHSM Auth. Those containers are not captures; a
+// real key's answers are, in tests/smartcard_card_vectors.json, held to
+// what yubikit read from the same key (realCardVectors()).
 //
 // NOTE ON OPTIONS: run-report.js spawns every job as
 // `node <script>.js --url <BASE_URL>`, and commander exits on an option it
@@ -1932,6 +1934,178 @@ function pivWriteCommands() {
   log.debug("Leaving pivWriteCommands().");
 }
 
+// A REAL KEY'S ANSWERS (#410, item 6). tests/smartcard_card_vectors.json
+// holds what a YubiKey answered to the page's own read plans for PIV, the
+// OpenPGP card and YubiHSM Auth, beside what Yubico's yubikit read from the
+// same key in the same session; tests/tools/smartcard_capture.py wrote it.
+// So the bytes are the card's and the expected values are yubikit's, and
+// this tree supplies only the decoding being tested. It found three
+// defects a container built here could not: C5/C6/CD have a fourth
+// (attestation) slot, and a 32-byte Ed25519 or X25519 point does not name
+// its curve, so the page built no public key for either.
+var CARD = JSON.parse(fs.readFileSync(
+    path.join(__dirname, "smartcard_card_vectors.json"), "utf8"));
+
+function cardStep(app, label) {
+  log.debug("Entering cardStep(). " + app + " " + label);
+  var found = CARD[app].steps.filter(function (s) {
+    return s.label === label;
+  })[0];
+  assert.ok(found, app + ": no captured step named " + label);
+  log.debug("Leaving cardStep().");
+  return found;
+}
+
+function cardAnswer(step) {
+  log.debug("Entering cardAnswer().");
+  var out = Buffer.from(step.data + step.status, "hex");
+  log.debug("Leaving cardAnswer().");
+  return out;
+}
+
+function spkiHex(pem) {
+  log.debug("Entering spkiHex().");
+  var hex = Buffer.from(bytes.pemToDer(pem)).toString("hex");
+  log.debug("Leaving spkiHex().");
+  return hex;
+}
+
+async function realCardVectors() {
+  log.debug("Entering realCardVectors().");
+  var page = paths.requireSharedModule([path.join(SRC, "smartcard.js")],
+      "client/src/smartcard.js");
+  // Every captured command is one the page sends, so these answers are
+  // answers to the page's reads and not to something like them.
+  ["piv", "pgp", "hsm"].forEach(function (app) {
+    var sent = [];
+    page.readPlan(app).forEach(function (step) {
+      sent = sent.concat(step[1]);
+    });
+    CARD[app].steps.forEach(function (s) {
+      assert.ok(sent.indexOf(s.command) >= 0, app + ": " + s.label +
+          " (" + s.command + ") is not in the page's read plan");
+    });
+  });
+
+  // PIV.
+  var pv = CARD.piv.yubikit;
+  assert.ok(rowText(piv.describeResponse(cardAnswer(cardStep("piv",
+      "Version (GET VERSION)"))).rows).indexOf("Version=" + pv.version) >= 0,
+      "PIV version differs from yubikit's");
+  assert.ok(rowText(piv.describeResponse(cardAnswer(cardStep("piv",
+      "Serial (GET SERIAL)"))).rows).indexOf("Serial=12345678") >= 0,
+      "PIV serial is not the scrubbed 12345678");
+  ["CHUID", "Certificate, slot 9C (signature)"].forEach(function (label) {
+    assert.ok(piv.describeResponse(cardAnswer(cardStep("piv", label)))
+        .summary.indexOf("6A82") === 0, label + " is not 6A82 on the card");
+  });
+  var held = piv.describeResponse(cardAnswer(cardStep("piv",
+      "Certificate, slot 9A (authentication)"))).certificate;
+  var want = pv.certificate9a;
+  assert.ok(held && held.der, "slot 9A's certificate was not unwrapped");
+  assert.strictEqual(Buffer.from(held.der).toString("hex"), want.der,
+      "slot 9A's certificate differs from yubikit's");
+  var desc = await x509.describeCertificate(
+      bytes.derToPem(held.der, "CERTIFICATE"));
+  assert.strictEqual(desc.subject, want.subject);
+  assert.strictEqual(desc.serialHex.replace(/^0+/, ""),
+      want.serialNumber.replace(/^0+/, ""));
+  assert.strictEqual(new Date(desc.notBefore).getTime(),
+      new Date(want.notBefore).getTime());
+  assert.strictEqual(new Date(desc.notAfter).getTime(),
+      new Date(want.notAfter).getTime());
+
+  // OpenPGP.
+  var gv = CARD.pgp.yubikit;
+  var CURVE = { SECP256R1: "P-256", X25519: "X25519", Ed25519: "Ed25519" };
+  var SLOTS = { sig: "b6", dec: "b8", aut: "a4" };
+  var LABEL = { sig: "Signature", dec: "Decryption",
+                aut: "Authentication" };
+  var STEP = { sig: "Signature key", dec: "Decryption key",
+               aut: "Authentication key" };
+  var ard = cardStep("pgp", "Application related data");
+  var ardText = rowText(pgp.describeResponse(cardAnswer(ard)).rows);
+  var curves = pgp.keyCurves(Buffer.from(ard.data, "hex"));
+  Object.keys(SLOTS).forEach(function (k) {
+    var key = gv.keys[k];
+    var curve = CURVE[key.algorithm];
+    assert.ok(curve, "no name for yubikit's " + key.algorithm);
+    assert.strictEqual(curves[SLOTS[k]], curve, k + ": keyCurves()");
+    assert.ok(ardText.indexOf(LABEL[k] + " algorithm=") >= 0 &&
+        ardText.indexOf(curve) >= 0, k + ": attributes not shown as " +
+        curve);
+    var when = new Date(key.generated * 1000).toISOString();
+    assert.ok(ardText.indexOf(LABEL[k].toLowerCase() + " " + when) >= 0,
+        k + ": generation time is not yubikit's " + when);
+    var fpr = /^0+$/.test(key.fingerprint) ? "(not set)" : key.fingerprint;
+    assert.ok(new RegExp("Fingerprints=[^\n]*" + LABEL[k].toLowerCase() +
+        " " + fpr.replace(/[()]/g, "\\$&")).test(ardText),
+        k + ": fingerprint is not yubikit's " + fpr);
+
+    var answer = cardAnswer(cardStep("pgp", STEP[k]));
+    var built = pgp.describeResponse(answer, curve);
+    assert.ok(built.pem, k + ": no public key built with its curve");
+    assert.strictEqual(spkiHex(built.pem), key.spki,
+        k + ": public key differs from yubikit's");
+    var bare = pgp.describeResponse(answer);
+    if (curve === "X25519" || curve === "Ed25519") {
+      assert.strictEqual(bare.pem, null, k + ": a curve was guessed");
+      assert.ok(/not built: a 32-byte point/.test(rowText(bare.rows)),
+          k + ": no reason given for the missing public key");
+    }
+  });
+  ["Fingerprints", "CA fingerprints", "Generation"].forEach(function (row) {
+    assert.ok(new RegExp("^" + row + "=[^\n]*attestation ", "m")
+        .test(ardText), row + ": the fourth (attestation) slot is not named");
+  });
+
+  // The page's own read path carries the curve from step 1 to the keys.
+  var context = {};
+  var described = [];
+  CARD.pgp.steps.forEach(function (s) {
+    var selected = { status: "9000", data: "" };
+    var got = page.readRows("pgp", s.label, ["00a4", s.command],
+        { results: [selected, { status: s.status.toUpperCase(),
+                                data: s.data }] }, context);
+    described.push({ step: s, got: got });
+  });
+  for (var i = 0; i < described.length; i++) {
+    var d = described[i];
+    var slot = Object.keys(STEP).filter(function (k) {
+      return STEP[k] === d.step.label;
+    })[0];
+    if (!slot) {
+      continue;
+    }
+    assert.ok(d.got.extra, slot + ": the page describes no key");
+    var more = rowText(await d.got.extra);
+    assert.ok(/Key=/.test(more) && !/unrecognised/.test(more),
+        slot + ": the page's key row is " + more);
+  }
+
+  // YubiHSM Auth.
+  var hv = CARD.hsm.yubikit;
+  assert.ok(rowText(hsm.describeResponse(cardAnswer(cardStep("hsm",
+      "Version"))).rows).indexOf(hv.version) >= 0, "YubiHSM Auth version");
+  var ALG = { AES128_YUBICO_AUTHENTICATION: hsm.AES128,
+              EC_P256_YUBICO_AUTHENTICATION: hsm.EC_P256 };
+  var listed = hsm.parseList(Buffer.from(
+      cardStep("hsm", "Credentials (LIST)").data, "hex"));
+  listed.sort(function (a, b) {
+    return a.label < b.label ? -1 : 1;
+  });
+  assert.deepStrictEqual(listed.map(function (c) {
+    return [c.label, c.algorithm, c.touch, c.counter];
+  }), hv.credentials.map(function (c) {
+    return [c.label, ALG[c.algorithm], c.touchRequired, c.counter];
+  }), "YubiHSM Auth LIST differs from yubikit's");
+
+  log.info("OK — a real YubiKey's PIV, OpenPGP and YubiHSM Auth answers " +
+      "decode to what yubikit read from it (captured " + CARD.captured +
+      ").");
+  log.debug("Leaving realCardVectors().");
+}
+
 // OPENPGP CARD WRITING: the v4 fingerprints written after GENERATE, held to
 // GnuPG 2.2.27's own for three keys it generated (each rebuilt as the
 // card's 7F49 answer), and the command shapes of the 3.4 specification.
@@ -2102,6 +2276,7 @@ async function test() {
   pgpWriteCommands();
   handlersAreExported();
   await resetLoops();
+  await realCardVectors();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }
