@@ -754,7 +754,7 @@ async function runFlow(driver, flowKey, stsUrl, landing) {
     "Requirement 8.1: the STS in RFC 9700 mode published a plain-http " +
     "issuer (" + issuer + "). A trust realm cannot bind a scheme of its own, " +
     "so this is a property of the PROCESS: the mock has to have been started " +
-    "with STS_HTTPS=true (it is set on the `sts` service in local-tests.yml, " +
+    "with STS_HTTPS=true (it is set on the `sts` service in " +
     "docker-compose-run-tests.yml and keycloak-tests.yml). Without it the " +
     "realm enforces every check and still publishes http, which is a real " +
     "configuration of that service and is not the pairing this job claims.");

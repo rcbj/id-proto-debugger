@@ -17,8 +17,8 @@
 // against it. The pair therefore has to come from that one place: a test that
 // generated its own would sign with a key Keycloak has never seen.
 //
-// Run the tests through ./local-run-tests.sh, ./docker-run-tests.sh or
-// ./remote-run-tests.sh and this is set for you. Running a single test script
+// Run the tests through ./docker-run-tests.sh or ./remote-run-tests.sh and
+// this is set for you. Running a single test script
 // by hand needs the two variables in the environment — export them from a run
 // of generateSpKeyPair, or the script says so and stops.
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ function readSpKeyPair() {
           "repository, and its certificate " +
       "is what Keycloak validates the request signature against — so run " +
           "this through " +
-      "./local-run-tests.sh, ./docker-run-tests.sh or ./remote-run-tests.sh, " +
+      "./docker-run-tests.sh or ./remote-run-tests.sh, " +
           "or export the two " +
       "variables yourself.");
   }

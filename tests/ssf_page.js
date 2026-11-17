@@ -66,7 +66,7 @@ var apiUrl = process.env.API_URL || "https://localhost:4000";
 // PASS each time, because a skip is a pass here. That variable is a WS-Trust
 // ENDPOINT and carries a path: the launchers set it to
 // `https://localhost:8081/sts` (`https://sts:8081/sts` containerized), and its
-// own comment in local-run-tests.sh says it may be pointed at a real Apache
+// launchers have said it may be pointed at a real Apache
 // CXF STS that answers nothing else at all. The mock serves SSF at the ROOT,
 // so `/sts/.well-known/ssf-configuration` is a 404 and preconditions() read
 // that as "the sts/ gitlink predates SSF".

@@ -749,10 +749,7 @@ because a status-code contract is true of any instance of the same mock.
 A probe cannot settle it — it cannot tell our listener from somebody else's —
 so the fact is taken from the service, which publishes `listening` and the bind
 error for every listener at `GET /spiffe?format=json`.
-`tests/spiffe_listeners.js` reads that in each of the three gates, and
-`requireStsSpiffeListeners()` in `common/common.sh` reads it once in the
-launcher, fatally, so a run stops in one line instead of forty-five minutes
-later in three places. A listener the mock says it did **not** bind fails the
+`tests/spiffe_listeners.js` reads that in each of the three gates. A listener the mock says it did **not** bind fails the
 job rather than skipping it: something is answering there, and a skip would
 leave a green run in which the workflow was never exercised.
 
