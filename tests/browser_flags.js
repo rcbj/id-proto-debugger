@@ -51,9 +51,10 @@
 //    half a second on the same run, which is the shape to look for: a failure
 //    that splits along the headless mode and nothing else.
 //
-//    It does NOT reproduce on ./local-run-tests.sh, and that is the second
-//    half of why it went unseen: there Keycloak is http://localhost:8080,
-//    which Chrome already counts as potentially trustworthy, so nothing about
+//    It did NOT reproduce on the host-run launcher (since removed), and that
+//    is the second half of why it went unseen: there Keycloak was
+//    http://localhost:8080, which Chrome already counts as potentially
+//    trustworthy, so nothing about
 //    the request is mixed content and the old implementation has nothing to
 //    block. Only the containerized stack gives Keycloak a name that is not
 //    loopback.
@@ -254,8 +255,7 @@ function addBrowserAccessFlags(options, baseUrl, extraOrigins) {
 // (4) THE MOCK STS'S CERTIFICATE, AS AN EXACT KEY PIN.
 //
 // That service serves its main port over TLS in every stack here
-// (STS_HTTPS=true in local-tests.yml, docker-compose-run-tests.yml and
-// keycloak-tests.yml), because the RFC 9700 pass is a TRUST REALM on the one
+// (STS_HTTPS=true in docker-compose-run-tests.yml and keycloak-tests.yml), because the RFC 9700 pass is a TRUST REALM on the one
 // instance now rather than a second container — a realm binds no socket of its
 // own — and that pass is only honest over https, since requirement 8.1 is that
 // every configured endpoint is https and the client under test enforces it.
@@ -466,9 +466,9 @@ function addWebCryptoEd25519Flags(options) {
 //
 // A test that clicks a Download button is a test that writes a file, and the
 // place Chrome writes it to when nobody says otherwise is the DEVELOPER'S HOME
-// DIRECTORY — ~/Downloads on a host run of ./local-run-tests.sh or
-// ./remote-run-tests.sh, where the browser is the real Chrome on the real
-// machine rather than one inside a container. Nothing fails when that happens.
+// DIRECTORY — ~/Downloads on a host run of ./remote-run-tests.sh, where the
+// browser is the real Chrome on the real machine rather than one inside a
+// container. Nothing fails when that happens.
 // The status line the test asserts on says "Downloaded ..." either way, so the
 // run is green and the only evidence is a home directory that fills up: on
 // 2026-09-03 this one held 71 copies each of `ml-kem-keys (N).pem` and

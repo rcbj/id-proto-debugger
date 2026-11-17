@@ -470,7 +470,8 @@ function test() {
              "with client/node_modules, so common/generate_tls_cert.js " +
              "would die on `Cannot find module 'pkijs'` — the same " +
              "condition generateStackTlsCertificate() checks by name. The " +
-             "source checks above ran. Use ./local-run-tests.sh for the " +
+             "source checks above ran. Run it from a checkout with " +
+             "client/node_modules (./remote-run-tests.sh does) for the " +
              "other two sections.");
     log.info("Test completed successfully.");
     log.debug("Leaving test(). Source checks only.");

@@ -287,7 +287,7 @@ having both stacks is for: the mock exercises what real deployments leave out.
 The issuer's signing key is generated fresh per run (`generateWaltidIssuerKey`
 in `common/common.sh`) and passed in through the environment, so no private key
 is committed here — the same rule the SAML SP key pair follows. The container is
-part of `docker-compose-run-tests.yml` and `local-tests.yml`; the job is skipped
+part of `docker-compose-run-tests.yml` and `keycloak-tests.yml`; the job is skipped
 when `WALTID_ISSUER_URL` is unset, so a run without that container still passes.
 
 ### Mock Credential Issuer for testing

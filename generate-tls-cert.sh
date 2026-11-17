@@ -8,8 +8,8 @@
 # ---------------------------------------------------------------------------
 # WHO NEEDS THIS AND WHO DOES NOT.
 #
-# The four test launchers (./local-run-tests.sh, ./docker-run-tests.sh,
-# ./run-coverage.sh, ./remote-run-tests.sh) call
+# The three test launchers (./docker-run-tests.sh, ./run-coverage.sh,
+# ./remote-run-tests.sh) call
 # generateStackTlsCertificate() themselves and need nothing from here. This
 # script is for the one documented path that has no launcher in front of it —
 # the repo-root CLAUDE.md's

@@ -123,8 +123,8 @@
 // them; the mock verifies none, so signing here would prove nothing and would
 // make this job depend on the per-run SP key pair that `common/common.sh`
 // generates. This file needs `WSTRUST_STS_URL` and nothing else, which is what
-// lets `./local-run-tests.sh --delegation-only` bring up three containers and
-// run it.
+// lets `./docker-run-tests.sh --delegation-only` bring up three containers
+// and run it.
 //
 // **THE MOCK STS, AND ITS PERMISSIVE (default) REALM.** A service provider
 // nobody registered, a user with no password, and an STS that will issue a
@@ -385,8 +385,8 @@ function artifactDir() {
 // way Okta and Ping do — and the path segment is the service provider's own
 // entityID where that is safe in a URL path and `app-` plus twelve hex
 // characters of its SHA-256 where it is not. Ours is a URL, so it is the
-// digest, and this is the same expression `local-run-tests.sh` computes for
-// `tests/saml_sso.js`.
+// digest, and this is the same expression `tests/saml11_sso.js` computes
+// for its own service provider.
 //
 // It does NOT have to exist first. That service accepts any entityID and mints
 // the document on the ask, which is why the provisioning below is about the

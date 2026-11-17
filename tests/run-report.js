@@ -3639,12 +3639,11 @@ function buildJobs() {
   // the reason spelled out on the AS job above: that address is TYPED INTO THE
   // PAGE and resolved by the relay inside the api container, where localhost is
   // the api itself and port 88 is nothing. It stayed invisible because the two
-  // stacks disagree about localhost — under local-tests.yml every service is on
-  // host networking, so the api's loopback IS the host the mock KDC listens on
-  // and the default worked; on the bridge stack it is not, and the page
-  // reported `Could not talk to ::1:88` from a KDC that was up. The compose
-  // name is right on both, since local-tests.yml gives the api an
-  // `extra_hosts` entry mapping sts to 127.0.0.1.
+  // stacks disagreed about localhost — under the host-networked stack every
+  // service was on host networking, so the api's loopback WAS the host the
+  // mock KDC listens on and the default worked; on the bridge stack it is not,
+  // and the page reported `Could not talk to ::1:88` from a KDC that was up.
+  // The compose name is right on the bridge stack.
   const delegationPageJob = {
     name: "Kerberos delegation page (S4U2Self, S4U2Proxy, RBCD, forwarding, renewal)",
     script: "kerberos_delegation_page.js",
@@ -5892,9 +5891,10 @@ function fetchTestingBrowser() {
 // image pins — and Chromium both allow it.
 //
 // It used to answer with the FIRST browser it found and let the job skip when
-// that one was branded Chrome, which is what `./local-run-tests.sh` reported on
-// every host whose `google-chrome` is the real thing — a permanent skip on the
-// launcher most people run. Two things changed on 2026-08-18:
+// that one was branded Chrome, which is what the host-run launcher (since
+// removed) reported on every host whose `google-chrome` is the real thing — a
+// permanent skip on the launcher most people ran. Two things changed on
+// 2026-08-18:
 //
 //   * every candidate is probed and a CAPABLE one wins, so a host carrying
 //     both Chromium and branded Chrome uses the Chromium rather than reporting
@@ -6243,7 +6243,7 @@ function reportJobsThatDidNotRun(results) {
 //
 // This is what ./docker-run-tests.sh's focused modes (--saml-only,
 // --wsfed-only, --delegation-only, --federation-only) are built on. They used
-// to be loops in ./local-run-tests.sh that called the scripts by hand with an
+// to be loops in a host-run launcher that called the scripts by hand with an
 // environment of their own, which was a second copy of what each job here
 // already knows about its identity provider. Selecting the jobs instead means
 // a focused run drives exactly the jobs the full suite does, with the same

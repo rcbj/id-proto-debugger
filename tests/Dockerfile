@@ -249,7 +249,6 @@ COPY docker-compose-run-tests-external-sts.yml ./
 COPY docker-compose-run-tests-no-host-ports.yml ./
 COPY docker-compose-coverage.yml ./
 COPY docker-compose.yml ./
-COPY local-tests.yml ./
 COPY keycloak-tests.yml ./
 
 COPY tests/Dockerfile ./tests_Dockerfile
@@ -686,8 +685,8 @@ COPY tests/schemas ./schemas
 # (Moved here from files1 on 2026-11-13, when that stage reached 105 layer
 # instructions against the budget of 100.)
 # Where the stacks' images come from: tests/image_mirror_coverage.js checks
-# that every image the four stack compose files (docker-compose-run-tests.yml,
-# docker-compose.yml, local-tests.yml, keycloak-tests.yml, all copied above)
+# that every image the three stack compose files (docker-compose-run-tests.yml,
+# docker-compose.yml, keycloak-tests.yml, all copied above)
 # pull, and every FROM in the six Dockerfiles they build, is covered by the
 # ghcr.io mirror — iya-sts's release image included. It needs the list and
 # those Dockerfiles, renamed flat because this directory is flat.
