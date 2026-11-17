@@ -63,8 +63,9 @@ var KEYS = {
   // The presentation that was built and sent: { presentation, kbJwt, sdHash,
   // sentAt, responseUri, vpToken, response }.
   PRESENTATION: "sdjwtvp_presentation",
-  // What the Verifier said: its verdict document, fetched from its result
-  // endpoint, plus the wallet's own re-check.
+  // What the Verifier answered: the HTTP answer to the response (a real
+  // Verifier reports its decision to its operator, not to the wallet), plus
+  // the wallet's own re-check.
   RESULT: "sdjwtvp_result",
   // Where this wallet looks for the Verifier's keys when a request is signed.
   // A pre-registered client's key is known out of band; for this workflow that

@@ -726,6 +726,25 @@ function samplesAreWhatTheySay() {
   log.debug("Leaving samplesAreWhatTheySay().");
 }
 
+// A signed request with no key is refused with the page's own sentence,
+// whichever JWK proof is chosen, and an unsigned one (Discover) still needs
+// none. Until 2026-11-17 only Send grant request checked, and the other
+// signed buttons died with a raw script error about null (#445).
+async function aMissingKeyIsNamed() {
+  log.debug("Entering aMissingKeyIsNamed().");
+  for (const proof of ["httpsig", "jwsd", "jws"]) {
+    await assert.rejects(gnap.prepare(null, "POST",
+      "https://as.example/continue", { proof: proof, json: {} }),
+      /Generate or paste a client key first/, proof);
+  }
+  var unsigned = await gnap.prepare(null, "OPTIONS",
+    "https://as.example/gnap", { sign: false });
+  assert.strictEqual(unsigned.method, "OPTIONS");
+  log.info("OK — a signed request with no key is refused by name, and an " +
+           "unsigned one needs none.");
+  log.debug("Leaving aMissingKeyIsNamed().");
+}
+
 async function main() {
   log.debug("Entering main().");
   await signatureAgreesWithNode();
@@ -735,6 +754,7 @@ async function main() {
   await targetUriIsTheUriAsSent();
   theProxyRefusesWhatItShould();
   await mtlsIsACertificateAndNoSignature();
+  await aMissingKeyIsNamed();
   samplesAreWhatTheySay();
   pageWiring();
   try {

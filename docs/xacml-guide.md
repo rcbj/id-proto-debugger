@@ -150,11 +150,11 @@ at the bottom of the Editor pane and copy it from there.
 | **Make decision root** | Makes the open policy the root. The old root stays in the repository. |
 | **Remove** | Deletes the open policy from this browser. There is no confirmation. |
 
-The page says that only an enabled policy takes part in a decision. What
-the code does is narrower. **Enabled** decides whether another policy's
-PolicyIdReference or PolicySetIdReference can find this one. **Try a
-decision** still asks a disabled policy when you name it, or when it is the
-root.
+Only an enabled policy takes part in a decision. **Try a decision**
+refuses a disabled policy, by name, whether you named it or it is the
+root, and a PolicyIdReference or PolicySetIdReference cannot find it.
+When no policy is named and there is no root, the first enabled policy is
+used.
 
 When the open policy is the root and is enabled, a warning says so. It
 appears for the sample, because the sample is the first policy stored.
@@ -279,14 +279,17 @@ describe the one selected.
 | only-one-applicable | no | yes | Two applicable children is Indeterminate. |
 | ordered-deny-overrides | yes | yes | Identical here, because this PDP always evaluates in document order. |
 | ordered-permit-overrides | yes | yes | permit-overrides with the order fixed. |
+| deny-overrides (legacy 1.0) | yes | yes | The XACML 1.0 algorithm, which predates extended Indeterminate. |
+| permit-overrides (legacy 1.0) | yes | yes | The XACML 1.0 algorithm, which predates extended Indeterminate. |
+| ordered-deny-overrides (legacy 1.1) | yes | yes | The XACML 1.1 algorithm. |
+| ordered-permit-overrides (legacy 1.1) | yes | yes | The XACML 1.1 algorithm. |
 
-The legacy XACML 1.0 and 1.1 identifiers (for example
-`urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:deny-overrides`) are
-not in the menu. A document that uses one imports and is decided with it.
-Its policy row cannot show it, though: the menu has no matching entry, so
-the browser shows the first entry, deny-unless-permit. Pressing **Update**
-on that row writes what the menu shows. Leave that form alone, or edit the
-algorithm in the XML and import it again.
+The legacy entries are there for documents that name the 1.0 or 1.1
+identifiers (for example
+`urn:oasis:names:tc:xacml:1.0:rule-combining-algorithm:deny-overrides`).
+Such a document's row shows its own algorithm, and **Update** keeps it.
+The legacy deny-overrides and permit-overrides are different functions from
+the 3.0 ones, not aliases.
 
 ### As ALFA and As stored XML
 
@@ -465,7 +468,8 @@ API.
 | *"x" is not a valid integer.* (or another type) | A value that is not valid for its data type. Nothing was saved. |
 | *That edit would leave the policy invalid, so it was not saved.* | The edit was refused. The rest of the message says why. |
 | *A variable name may not contain a dot in this editor.* | See [The edit forms](#the-edit-forms). |
-| *There is no policy to decide with.* | The repository is empty. |
+| *There is no policy to decide with.* | The repository is empty, or every policy is disabled. |
+| *x is disabled, and only an enabled policy takes part in a decision. Enable it, or choose another policy.* | **Try a decision** with a disabled policy, named or as the root. |
 | *There is no policy open to export.* | **Download** or **Copy** with nothing open. |
 | *Choose a file to upload first.* | **Upload** with no file chosen. |
 | *Open a policy first.* | **Make decision root** or **Remove** with nothing open. |

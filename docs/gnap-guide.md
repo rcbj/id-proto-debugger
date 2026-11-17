@@ -290,8 +290,7 @@ does not exist there.
 
 | Message | What it means |
 |---|---|
-| Generate or paste a client key first. | **Send grant request** with no key. |
-| A script error about `null` | Another signed button pressed with no key. Generate or paste one. |
+| Generate or paste a client key first. | A signed button (**Send grant request**, **Continue**, **Revoke grant**, a rotation, **Revoke the access token**, or the Signed call's **Send**) with no key. **Discover** needs none. |
 | The grant request is empty. / The grant request is not JSON. | **Request JSON** is blank or not JSON. |
 | The request URL is not an absolute URL: | A URL field is not absolute. |
 | The grant URL is not a URL. | A fill button could not read **Grant endpoint**. |

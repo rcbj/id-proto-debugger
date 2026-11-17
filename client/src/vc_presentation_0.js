@@ -67,10 +67,11 @@ function status(text, cls) {
 
 // Where the verifier's own start pages live.
 //
-// Those pages — /oid4vp/verifier and /oid4vp/start — are THIS debugger's mock
-// verifier's invention (sts/server.js). A real verifier has no such thing,
-// which is why walt.id's does not answer them. So the base is taken from
-// explicit configuration first, and only guessed as a last resort.
+// Those pages are a demonstration Verifier's invention: iya-sts's now live on
+// its companion site (/verifier), and its old /oid4vp/start door is gone
+// (iya-sts #591/#594). A real verifier has no such thing, which is why
+// walt.id's does not answer them. So the base is taken from explicit
+// configuration first, and only guessed as a last resort.
 //
 // The guess used to be the credential issuer URL, whole, on the reasoning that
 // the mock verifier shares an origin with the mock issuer. True for the mock,

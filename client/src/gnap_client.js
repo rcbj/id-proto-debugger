@@ -720,6 +720,15 @@ async function prepare(record, method, rawUrl, opts) {
         "rotation for mtls. Rotate the certificate by deployment.");
     }
   }
+  // A signed request on a JWK proof needs the key. Without this, a page
+  // button pressed before Generate or Use pasted key failed with a raw
+  // script error about null inside the signer (#445); Send grant request was
+  // the only one that checked. Unsigned calls (Discover) pass null and
+  // sign: false, and mtls is checked above.
+  if (proof !== "mtls" && options.sign !== false && !record) {
+    log.debug("Leaving prepare(). No key.");
+    throw new Error("Generate or paste a client key first.");
+  }
   var headers = {};
   Object.keys(options.headers || {}).forEach(function (name) {
     headers[name] = options.headers[name];

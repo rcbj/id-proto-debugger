@@ -180,6 +180,52 @@ function referenceResolvesFromTheRepository() {
   log.debug("Leaving referenceResolvesFromTheRepository().");
 }
 
+// The other half of Enabled: a disabled policy is not decided WITH either,
+// whether it is named or is the root, and enabling it again restores the
+// decision. Until 2026-11-17 only the reference half held.
+function aDisabledPolicyIsNotDecidedWith() {
+  log.debug("Entering aDisabledPolicyIsNotDecidedWith().");
+  var bench = fresh();
+  assert.strictEqual(bench.loadSample().ok, true);
+  assert.strictEqual(ask(bench, "alice", "sample").decision, "Permit");
+  assert.strictEqual(bench.setEnabled("sample", false).ok, true);
+  [ask(bench, "alice", "sample"), ask(bench, "alice")].forEach(function (a) {
+    assert.strictEqual(a.decision, undefined,
+      "a disabled policy was decided with: " + JSON.stringify(a));
+    assert.ok(/sample is disabled/.test(a.problem || ""), a.problem);
+  });
+  assert.strictEqual(bench.setEnabled("sample", true).ok, true);
+  assert.strictEqual(ask(bench, "alice", "sample").decision, "Permit");
+  log.info("OK — a disabled policy is refused by name, named or as the " +
+           "root, and decides again once enabled.");
+  log.debug("Leaving aDisabledPolicyIsNotDecidedWith().");
+}
+
+// A document naming a LEGACY 1.0 combining algorithm keeps it through an
+// edit. Until 2026-11-17 the menu offered only the 3.0 identifiers, so the
+// form selected nothing and an Update wrote deny-unless-permit over it.
+function legacyCombiningAlgorithmSurvivesAnEdit() {
+  log.debug("Entering legacyCombiningAlgorithmSurvivesAnEdit().");
+  var legacy = model.RULE_ALG.LEGACY_DENY_OVERRIDES;
+  var bench = fresh();
+  var imported = bench.importText("legacy",
+    '<Policy xmlns="urn:oasis:names:tc:xacml:3.0:core:schema:wd-17" ' +
+    'PolicyId="legacy" Version="1.0" RuleCombiningAlgId="' + legacy + '">' +
+    '<Target/><Rule RuleId="permit" Effect="Permit"/></Policy>');
+  assert.strictEqual(imported.ok, true, imported.why);
+  var text = JSON.stringify(bench.editorView("legacy"));
+  assert.ok(text.indexOf(legacy) !== -1,
+    "the editor does not offer the document's own legacy algorithm");
+  var kept = bench.edit({ policy: "legacy", path: "", action: "edit-policy",
+                          combiningAlgId: legacy });
+  assert.strictEqual(kept.ok, true, kept.why);
+  assert.ok(bench.documentOf("legacy").xml.indexOf(legacy) !== -1,
+    "the legacy algorithm did not survive an edit");
+  log.info("OK — a legacy 1.0 combining algorithm is offered and survives " +
+           "an edit.");
+  log.debug("Leaving legacyCombiningAlgorithmSurvivesAnEdit().");
+}
+
 function obligationPath(bench) {
   log.debug("Entering obligationPath().");
   var found = "";
@@ -585,6 +631,8 @@ function main() {
   policySetRefusesARule();
   variableNameMayNotContainADot();
   referenceResolvesFromTheRepository();
+  aDisabledPolicyIsNotDecidedWith();
+  legacyCombiningAlgorithmSurvivesAnEdit();
   anUndischargeableObligationRefuses();
   alfaAndRequestsAgree();
   alfaKeepsEveryComparison();
