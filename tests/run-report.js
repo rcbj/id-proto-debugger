@@ -1753,6 +1753,18 @@ function buildJobs() {
     env: {},
   });
 
+  // ML-KEM (draft-ietf-jose-pqc-kem-05) and HPKE (draft-ietf-jose-hpke-
+  // encrypt-22, draft-reddy-cose-jose-pqc-hybrid-hpke-11, X-Wing among
+  // them) in JWE, #312: client/src/hpke.js and jwe_kem.js against the
+  // drafts' own published vectors (committed beside the test), the
+  // pqc-kem-05 KMAC256 KDF against `openssl mac KMAC256`, X-Wing against
+  // pqc.js, and every alg x enc through jose_jwe.js. No services.
+  jobs.push({
+    name: "Post-quantum and HPKE JWE (ML-KEM, HPKE-0..16, X-Wing; in node)",
+    script: "hpke_jwe_engine.js",
+    env: {},
+  });
+
   // Every algorithm menu on every page offers exactly what the engine behind it
   // can do — read out of the HTML and compared with jws.js / jose_jwe.js /
   // dpop.js. No browser, so it costs milliseconds. It exists because the

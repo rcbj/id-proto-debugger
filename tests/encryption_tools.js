@@ -1083,11 +1083,15 @@ async function elgamalSpecifics(driver) {
 // ===========================================================================
 async function jwePane(driver) {
   log.debug("Entering jwePane().");
-  log.info("[jwe] Compact serialization, RSA and ECDH-ES.");
+  log.info("[jwe] Compact serialization, RSA, ECDH-ES, ML-KEM and HPKE.");
   await expand(driver, 'pane_jwe');
 
+  // The last five are #312's: ML-KEM direct and key wrap
+  // (draft-ietf-jose-pqc-kem-05), and HPKE over P-256 and over X-Wing in both
+  // Key Encryption and Integrated forms.
   const algs = ['RSA-OAEP-256', 'RSA-OAEP', 'ECDH-ES', 'ECDH-ES+A128KW',
-                'ECDH-ES+A256KW'];
+                'ECDH-ES+A256KW', 'ML-KEM-768', 'ML-KEM-1024+A256KW',
+                'HPKE-0-KE', 'HPKE-10-KE', 'HPKE-10'];
   const offered = await optionsOf(driver, 'enc_jwe_alg');
   algs.forEach(function (alg) {
     assert.ok(offered.indexOf(alg) !== -1,
@@ -1121,7 +1125,20 @@ async function jwePane(driver) {
     assert.strictEqual(header.alg, alg,
       "the JWE's protected header says alg=" + header.alg + " for a token " +
       "encrypted with " + alg);
-    assert.strictEqual(header.enc, 'A256GCM');
+    if (/^HPKE-[0-9]+$/.test(alg)) {
+      // Integrated Encryption: no enc, no ek, empty IV and tag segments.
+      assert.strictEqual(header.enc, undefined,
+        alg + " is HPKE Integrated Encryption and must write no enc");
+      assert.strictEqual(compact.split(".")[2], "", alg + ": empty IV");
+      assert.strictEqual(compact.split(".")[4], "", alg + ": empty tag");
+    } else {
+      assert.strictEqual(header.enc, 'A256GCM');
+    }
+    if (alg.indexOf('ML-KEM') === 0 || /-KE$/.test(alg)) {
+      assert.ok(typeof header.ek === 'string' && header.ek.length > 0,
+        alg + " produced no ek header, so the recipient has no KEM " +
+        "ciphertext to decapsulate");
+    }
     if (alg.indexOf('ECDH-ES') === 0) {
       assert.ok(header.epk && header.epk.kty === 'EC',
         alg + " produced no epk in the header, so the recipient has nothing " +
@@ -1158,8 +1175,9 @@ async function jwePane(driver) {
     JSON.stringify(refused));
   assert.strictEqual(await getField(driver, 'jwe', 'plaintext'), "",
     "a modified JWE was decrypted anyway");
-  log.info("[jwe] OK — five algs round-trip, the header names what was " +
-           "used, ECDH-ES carries an epk, and a modified token is refused.");
+  log.info("[jwe] OK — " + algs.length + " algs round-trip, the header " +
+           "names what was used, ECDH-ES carries an epk, ML-KEM and HPKE an " +
+           "ek, and a modified token is refused.");
   log.debug("Leaving jwePane().");
 }
 
