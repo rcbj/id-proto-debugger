@@ -121,8 +121,12 @@ var log = {
 // sts.example.com), so its certificate answers to exactly the names its
 // callers already use; `sts` is the compose service name and the other two are
 // what a host run and its documentation reach it by.
+//
+// `polaris` is the TLS CORS proxy in front of the Polaris OpenID4VP verifier
+// (#423, docker-compose-run-tests.yml): HAIP has a verifier hand the wallet
+// https URLs, and the browser in the tests container reaches it by that name.
 const DNS_NAMES = ['localhost', 'client', 'api',
-                   'sts', 'sts-mock', 'sts.example.com'];
+                   'sts', 'sts-mock', 'sts.example.com', 'polaris'];
 const IP_NAMES = ['127.0.0.1', '::1'];
 
 // ---------------------------------------------------------------------------

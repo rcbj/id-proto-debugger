@@ -8,6 +8,91 @@ The **SD-JWT VC presentation workflow** (`vc-presentation-{0,1,2,3}.html`, bundl
 
 Three things that are easy to get wrong here, and are therefore tested: `sd_hash` is computed over `<Issuer-signed JWT>~<Disclosure>*~` **including the trailing tilde**, so it commits to the exact byte string; the KB-JWT must verify against the credential's own `cnf.jwk` and not a key the presenter nominates; and the `vp_token` is a JSON object **keyed by the DCQL credential query id**, each value an array of presentations (OID4VP section 8.1), not a bare string.
 
+## Three protocols: OpenID4VP 1.0, OpenID4VC HAIP 1.0 and SIOPv2
+
+**Step 0 chooses the protocol before the flow, and the choice decides what the wallet REFUSES, not only what it shows.** `client/src/vp_protocols.js` holds all of it and has no DOM; `tests/vp_protocols_engine.js` drives it in node and `tests/vc_presentation_protocols.js` drives the pages against iya-sts's Verifier. The wallet is written from the specifications and knows nothing about iya-sts. Nothing in it is shaped by that service, and the job asserts only that an independent Verifier accepts what was sent.
+
+| Protocol | What the wallet requires of the request | What it sends |
+|---|---|---|
+| **OpenID4VP 1.0** | `response_type=vp_token`, a nonce, a DCQL query, a Client Identifier it can check (`redirect_uri`, `x509_hash`, `x509_san_dns`, pre-registered) | the presentation, by whichever `response_mode` was asked for |
+| **OpenID4VC HAIP 1.0** | a **signed** Request Object fetched by `request_uri`, the `x509_hash` Client Identifier, `response_mode=direct_post.jwt` with an ECDH-ES P-256 key in `client_metadata.jwks`. Each is a REFUSED row on step 1 and Continue is off, because HAIP exists so that wallets do not negotiate these. ES256 for the request is a warning | the same presentation, **encrypted** to the Verifier's key |
+| **SIOPv2** | `id_token` in `response_type`, `scope=openid`, a subject syntax both sides speak | a **self-issued ID Token** (`iss` equal to `sub`, `aud` the Client Identifier, the request's nonce), alone or beside the presentation (`vp_token id_token`) |
+
+HAIP is not an alternative to SIOPv2. HAIP is a profile of a credential presentation, and SIOPv2 is an authentication protocol that can carry one. HAIP has no request by value, so that flow is greyed out while HAIP is chosen.
+
+**HAIP 1.0 profiles two formats, SD-JWT VC and ISO mdoc, and this wallet presents both, plus two more.** `jwt_vc_json` and `ldp_vc` are sent under the HAIP *transport*: the signed `x509_hash` request and the encrypted answer. The `HAIP: format` row then reports a departure from the profile, as a warning. It is not silently waived: the transport rules apply to any format, and the format rule is HAIP's own.
+
+**The rules are one table on step 1, "What the protocol demands of this request".** Every rule is listed whether it passed or not. Each is REFUSED (blocks), WARNING (shown, answered anyway) or OK. That is where to look when Continue is off.
+
+### Who is asking: the x509 Client Identifiers
+
+`x509_hash:<b64url SHA-256 of the leaf DER>` and `x509_san_dns:<name>` carry the Verifier's chain in the Request Object's `x5c`, leaf first. The wallet:
+
+* hashes the leaf, or finds the DNS name in its subjectAltName, which is the identity;
+* verifies the request with the **leaf's** key, not a JWKS URL;
+* for `x509_san_dns`, also checks that the answer goes to that host (OpenID4VP 1.0 section 5.9.3);
+* follows the chain to the **trust anchor** configured on step 0.
+
+With no anchor configured, the chain is still checked link by link, and the result is reported as UNTRUSTED, never as valid. The certificate reading is a small positional DER walk in `vp_protocols.js`, so the response-building pages do not carry pkijs. Chain verification is `x509.js`'s `verifyChain()`, injected by step 1.
+
+`request_uri_method=post` is supported. The wallet POSTs `wallet_metadata` and a `wallet_nonce` (OpenID4VP 1.0 section 5.10), and refuses a Request Object that does not echo that nonce.
+
+### How the answer travels
+
+`deliveryFor()` works out the delivery once, so step 2's "The call this will make" pane is exactly what Present does:
+
+| `response_mode` | Who sends it | To |
+|---|---|---|
+| `direct_post` | the wallet (`fetch`) | `response_uri` |
+| `direct_post.jwt` | the wallet: **one form field, `response`**, a compact JWE (ECDH-ES on P-256, `enc` from `encrypted_response_enc_values_supported`, A128GCM when it says nothing) whose plaintext is the JSON of the response parameters and whose `kid` is the Verifier key's | `response_uri` |
+| `post` (SIOPv2 cross-device) | the wallet | `redirect_uri` |
+| `form_post` | the **browser**, as an auto-submitting form | `redirect_uri` |
+| `fragment` (the default for a token response) / `query` | the browser, redirected | `redirect_uri` |
+
+The last three go through the browser, so the wallet never sees the Verifier's reply. Step 3 says so rather than reporting a refusal. Everything step 3 shows is written to storage **before** sending, because a page that redirects does not come back to write it.
+
+Declining is a real answer. OpenID4VP's `access_denied` covers a presentation. SIOPv2's `user_cancelled` covers an ID Token alone, and `subject_syntax_types_not_supported` covers a Verifier whose syntaxes the wallet cannot make. A refusal is encrypted too, under `direct_post.jwt`.
+
+### The self-issued ID Token
+
+* **Subject syntax:** a JWK Thumbprint (`sub` is the RFC 7638 thumbprint, the public key in `sub_jwk`), `did:jwk` or `did:key` (`sub` is the DID, the header's `kid` its verification method). Only the syntaxes the Verifier lists in `subject_syntax_types_supported` are offered. When it lists none, SIOPv2's default is the JWK Thumbprint.
+* **Beside a presentation**, it is signed by the **key the credential is bound to**: `cnf.jwk` for `dc+sd-jwt` and `jwt_vc_json`, the `credentialSubject.id` DID for `ldp_vc`. A self-issued identity and an issued credential about two different keys would be about two different people. Step 3 re-checks this from the bytes that went, under "Same holder".
+* **Alone**, it may use a **pairwise** key: one per Verifier, so two Verifiers cannot correlate the person by `sub`. Pairwise keys are key material. They are kept in `sdjwtvp_siop_pairwise_keys` only while the "keep pairwise keys" box is ticked, and are removed the moment it is cleared, the rule every key-pair pane here follows. A wallet with no holder key at all falls back to a pairwise key.
+* **A valid signature proves control of a key and nothing else.** Every claim in a self-issued ID Token is the person's own say-so, and step 2 says so beside the token. Evidence somebody else vouches for is what a credential presented beside it is for.
+
+### ldp_vc and holder binding
+
+A `bbs-2023` derived proof proves the issuer signed the disclosed statements. It does not prove the presenter is the holder. When the DCQL query requires cryptographic holder binding (DCQL's default) or an ID Token goes with the presentation, the derived credential travels inside a W3C `VerifiablePresentation`. That VP carries an **`ecdsa-jcs-2019`** Data Integrity proof by the holder's DID, with `challenge` set to the nonce and `domain` to the Client Identifier (OpenID4VP 1.0 Appendix B.1.3.2). JCS (RFC 8785) is implemented in `vp_protocols.js` and held to the RFC's own examples.
+
+**The statement linking the credential to its `credentialSubject` is selected by default in that case.** That statement is what names the holder's DID. Without it the holder proof is a signature by a key the credential never mentions, and a Verifier refuses it for "Holder binding". This was found against iya-sts: the default selection had left it out.
+
+An `ldp_vc` element of `vp_token` is now a JSON **object**, as OpenID4VP specifies, rather than a JSON string of one.
+
+## ISO mdoc (`mso_mdoc`)
+
+`client/src/mdoc.js` is the wallet's ISO/IEC 18013-5 mdoc, with no DOM. It reads an issued `IssuerSigned` (base64url CBOR, as OpenID4VCI 1.0 Appendix A.2 delivers it) into the same shape as the other formats. Each element is a row keyed `namespace/element`. The Mobile Security Object's device key is the credential's `cnf.jwk`, which is where the rest of the wallet looks for the key a credential is bound to. `sd_jwt_vc.js` recognises the format; `sd_jwt_vp.js` builds and reads the presentation.
+
+* **Selective disclosure is leaving items out, byte for byte.** The DeviceResponse carries the chosen `#6.24` IssuerSignedItems **exactly as issued**, because the MSO's digests cover those bytes, and an item re-encoded "equivalently" no longer matches. The `issuerAuth` goes unchanged.
+* **The holder proof is the device signature.** It is a detached COSE_Sign1 (ES256) by the device key, over `DeviceAuthenticationBytes`. That structure includes OpenID4VP 1.0's session transcript (Appendix B.2.6.1): `["OpenID4VPHandover", SHA-256(cbor([client_id, nonce, jwkThumbprint, response_uri]))]`. The `jwkThumbprint` is the RFC 7638 thumbprint of the key a `direct_post.jwt` answer is encrypted to, and null otherwise. So step 2 picks the encryption key once (`responseEncryptionKey()`) and uses it for both the transcript and the JWE. Picking twice would produce a signature over one key and a ciphertext to another.
+* **A DCQL mdoc path is `[namespace, element]`, and the namespace has dots of its own** (`org.iso.18013.5.1`). The dotted form cannot be split on its first dot; the element is the last segment. The engine test found this, and before the fix every requested mdoc element read as missing.
+* The CBOR **decoder** is `cbor.js`, from the WebAuthn work. `mdoc.js` carries its own deterministic **encoder** (RFC 8949 section 4.2.1), because `cbor.js` only decodes.
+* Step 3 re-checks the bytes that went: every element's digest, `issuerAuth` against its document signer certificate, and the device signature over the transcript rebuilt from what was recorded.
+
+**No issuer in this stack mints `mso_mdoc`.** iya-sts 1.0.0 verifies mdocs from issuers it trusts (`oid4vp.mdocTrustAnchors`) and mints none. The issuance pages parse an mdoc Credential Response like any other format, but nothing drives that path end to end yet. The presentation tests therefore get their mdoc from `tests/mdoc_test_issuer.js`, an issuer written apart from the wallet: its own CBOR encoder, node's ECDSA, and an IACA and document signer of its own (EKU `1.0.18013.5.1.2`). For the length of the run, iya-sts is told to trust that IACA and to require a status reference only of its own credentials (`own-only`, since a test issuer publishes no status list). Both settings are then put back. `tests/mdoc_engine.js` holds the wallet to that issuer's encoder; `vc_presentation_protocols.js` presents the result to iya-sts.
+
+**iya-sts 1.0.0 cannot pass SIOPv2's "same holder" check for an mdoc.** Its `oid4vc/vc_mdoc.ts` verifies the device signature with the MSO's device key but never returns that key as the presentation's `holderJwk`. Its `id_token subject is the holder` check therefore fails for every mdoc, whoever sent it. The SIOPv2 mdoc case asserts exactly that: every other iya-sts check passes, the wallet's own "Same holder" re-check passes, and that one check fails. When iya-sts is fixed, the assertion will fail and say so.
+
+## Interoperability: HAIP against Polaris (#423)
+
+[polaris-oid4vp](https://github.com/EgorKhaklin/polaris-id/tree/main/packages/polaris-oid4vp) is an OpenID4VP 1.0 + HAIP 1.0 Verifier, OpenID Certified to that profile and written by somebody else. `tests/vc_presentation_polaris.js` presents to it from its published image (`v1.1.0`, by the mirror's copy), **unmodified**. A complete presentation is accepted. One withholding `family_name` is refused on Polaris's `claims` check, and step 3 says so. The credential is an ES256 SD-JWT VC that iya-sts issues in the same run, through its portal offer with ES256 chosen.
+
+Wiring, all in `docker-compose-run-tests.yml`:
+
+* `polaris-verifier` runs the image with its entrypoint replaced by `tests/polaris/serve-loop.sh`. The package serves one request per process (`serve --once`), and a tests container has no Docker to start one per case. The loop restarts `serve` when the job drops a file in the `polaris-data` volume they share. The job reads the launch parameters from `serve.log` and the verdict from `result.json`.
+* `polaris` is `waltid/cors-proxy.js` in its TLS mode. Polaris sends no CORS headers, and HAIP's `request_uri` and `response_uri` are https. Polaris runs `--no-local-tls --public-base-url https://polaris:7010`, and the stack certificate carries a `polaris` SAN for it.
+* **Polaris verifies an issuer's `x5c` chain links with ECDSA only, and iya-sts's CA tiers are RSA-signed.** A credential carrying iya-sts's chain is refused as "does not chain to any configured trust anchor", whatever anchor is configured. The job therefore mints with `oid4vci.credentialCertificateHeader=none` for the length of one issuance, then restores it under `sts-vc`, and gives Polaris iya-sts's ES256 key through `--issuer-jwks`.
+* The job is scheduled only where `POLARIS_DATA_DIR` is set, which is the containerized stack.
+
 ## The VC Presentation workflow, step by step
 
 Issuance puts a credential in a wallet; **presentation** is what it is for. This workflow plays the wallet's part

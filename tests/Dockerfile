@@ -360,12 +360,28 @@ COPY client/src/contexts ./contexts
 # directly — they are what these two require at load time, and a missing one is
 # a MODULE_NOT_FOUND at require, i.e. a hard failure rather than a silent skip.
 COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
+# sd_jwt_vc.js reads the fourth format, ISO mdoc, through mdoc.js, which
+# requires vp_protocols.js for the certificate's key. Both go beside it: a
+# module this flat directory lacks is a MODULE_NOT_FOUND at require, and it
+# took sd_jwt_vc_engine.js, ldp_vc_issuance.js and ldp_vc_refresh.js down in
+# 0.1s on the first containerized run (2026-11-17). Everything else either
+# requires (cbor, cose, crypto_bytes, dpop, jws, jose_jwe, did,
+# metadata_client) is already copied flat elsewhere in this file.
+COPY client/src/mdoc.js client/src/vp_protocols.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
 # silently replace the module it drives. It needs its own line because the
 # `tests/sd_jwt_vc_*` files above are named individually rather than globbed.
 COPY tests/sd_jwt_vc_engine.js ./
+# The presentation PROTOCOLS: HAIP 1.0 and SIOPv2 through the pages against
+# iya-sts, and their engine (client/src/vp_protocols.js, read from
+# /usr/src/source-tree) in node.
+COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
+COPY tests/vc_presentation_polaris.js ./
+# ISO mdoc: the engine test and the test issuer it and
+# vc_presentation_protocols.js require (a shared module, scheduled by nothing).
+COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires

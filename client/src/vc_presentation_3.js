@@ -28,6 +28,10 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
+var vpProtocols = require("./vp_protocols");
+var didLib = require("./did");
+var dpop = require("./dpop");
+var mdoc = require("./mdoc");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_3',
                                 level: appconfig.logLevel });
@@ -85,6 +89,19 @@ function esc(v) {
 // --- what the wallet sent ---------------------------------------------------
 function renderWhatWasSent() {
   log.debug("Entering renderWhatWasSent().");
+  if (sent && !sent.presentation && sent.idToken) {
+    // A self-issued ID Token on its own: there is no credential to show.
+    setText("vp_sent_to", (sent.clientId || "—") + " at " +
+            (sent.responseUri || "—"));
+    setText("vp_sent_at", sent.sentAt || "—");
+    status("vp_sent_status", "Sent a self-issued ID Token and no " +
+           "credential: nothing anybody else vouched for left this wallet.",
+           "vc-ok");
+    status("vp_answered", "Answered: the request asked for an ID Token " +
+           "alone.", "vc-ok");
+    log.debug("Leaving renderWhatWasSent(). ID Token only.");
+    return true;
+  }
   if (!sent) {
     status("vp_sent_status",
       "Nothing has been presented yet. Step 2 is where a presentation is " +
@@ -102,7 +119,8 @@ function renderWhatWasSent() {
   // The parts, called out — the same treatment step 3 of the issuance workflow
   // gives a credential, except that here the last element is a KB-JWT rather
   // than nothing.
-  var parts = String(sent.presentation || "").split("~");
+  var parts = mdoc.looksLikeDeviceResponse(sent.presentation) ?
+      [sent.presentation] : String(sent.presentation || "").split("~");
   setHtml("vp_sent_serialized", parts.map(function (part, i) {
     if (part === "") return "";
     var cls = i === 0 ? "vc-part-jwt" : (i === parts.length - 1 ?
@@ -125,11 +143,13 @@ function renderWhatWasSent() {
   // everything. Its unit is the claim.
   var jwtVcJson = presented && presented.parsed &&
                   presented.parsed.format === sdJwtVc.FORMAT_JWT_VC_JSON;
+  // An mdoc's unit is the element, and its names are the claim map's.
+  var isMdoc = !!(presented && presented.mdoc);
   var disclosed = presented
-    ? (jwtVcJson ? Object.keys(presented.claims ||
+    ? ((jwtVcJson || isMdoc) ? Object.keys(presented.claims ||
         {}).length : (presented.parsed.disclosures || []).length)
     : 0;
-  var unit = jwtVcJson ? "claim" : "Disclosure";
+  var unit = jwtVcJson ? "claim" : isMdoc ? "mdoc element" : "Disclosure";
 
   // Asked-for against actually-sent, compared by NAME rather than by count.
   // Counting was wrong in both directions: withholding one requested claim
@@ -141,7 +161,7 @@ function renderWhatWasSent() {
   // A requested DCQL path names a claim at some depth; the Disclosure that has
   // to be sent for it is the one at the head of that path.
   var disclosedNames = presented
-    ? (jwtVcJson
+    ? ((jwtVcJson || isMdoc)
         ? Object.keys(presented.claims || {})
         : (presented.parsed.disclosures ||
            []).map(function (d) { return d.name; }).filter(Boolean))
@@ -217,6 +237,14 @@ function recheckOwnPresentation() {
     } catch (e) {
       envelope = {};
     }
+    // Inside a holder-signed VerifiablePresentation when the request needed
+    // holder binding: the derived credential is its verifiableCredential.
+    var vpProof = null;
+    if ([].concat(envelope.type || []).indexOf("VerifiablePresentation") !==
+        -1) {
+      vpProof = envelope.proof || null;
+      envelope = [].concat(envelope.verifiableCredential || [])[0] || {};
+    }
     var statements = [].concat(envelope.disclosedStatements || []);
     checks.push({
       name: "Derived proof present", ok: !!envelope.proof,
@@ -231,6 +259,17 @@ function recheckOwnPresentation() {
           " canonical statement(s) went. The rest of the credential was " +
               "withheld — not hidden behind a digest, simply never proved."
     });
+    if (vpProof) {
+      checks.push({
+        name: "Holder proof", ok: vpProof.challenge === sent.nonce &&
+            vpProof.domain === sent.clientId,
+        detail: "a " + vpProof.cryptosuite + " proof by " +
+            vpProof.verificationMethod + " over the whole presentation, " +
+            "challenge " + vpProof.challenge + " (the request's nonce is " +
+            sent.nonce + "), domain " + vpProof.domain + " (the Verifier " +
+            "is " + sent.clientId + ")."
+      });
+    }
     checks.push({
       name: "Freshness", ok: true,
       detail: "the verifier's nonce is the presentation header, so it is " +
@@ -252,6 +291,10 @@ function recheckOwnPresentation() {
     return Promise.resolve(true);
   }
 
+  if (mdoc.looksLikeDeviceResponse(sent.presentation)) {
+    log.debug("Leaving recheckOwnPresentation(). mso_mdoc.");
+    return recheckMdoc();
+  }
   var parsed;
   try {
     parsed = sdJwtVc.parseCredential(sent.presentation);
@@ -385,6 +428,43 @@ function recheckOwnPresentation() {
     });
 }
 
+// An mdoc re-checked from the DeviceResponse that went: the issuer's
+// signature and every element's digest, then the device signature over the
+// transcript rebuilt from what the wallet recorded about the request.
+function recheckMdoc() {
+  log.debug("Entering recheckMdoc().");
+  var read;
+  try {
+    read = mdoc.readDeviceResponse(sent.presentation);
+  } catch (e) {
+    status("vp_recheck_status", "The DeviceResponse cannot be read: " +
+           e.message, "vc-bad");
+    log.debug("Leaving recheckMdoc(). Unreadable.");
+    return Promise.resolve(false);
+  }
+  log.debug("Leaving recheckMdoc().");
+  return mdoc.checkIssuerSigned(read.parsed).then(function (checks) {
+    return mdoc.checkDeviceSignature(read, {
+      clientId: sent.clientId, nonce: sent.nonce,
+      responseUri: sent.responseUri,
+      encryptionJwk: sent.encryptionJwk || null
+    }).then(function (ok) {
+      checks.push({ name: "Device signature", ok: ok, detail: ok ?
+        "verifies with the MSO's device key over the session transcript " +
+        "for this client_id, nonce and response URI" +
+        (sent.encryptionJwk ? ", and the key the answer was encrypted to." :
+         ".") : "does NOT verify over the transcript for this request." });
+      checks.push({ name: "Selective disclosure", ok: true, detail:
+        read.parsed.items.length + " element(s) went; the rest of the mdoc " +
+        "was withheld and is represented only by digests in the MSO." });
+      renderRecheck(checks);
+      return checks.every(function (c) {
+        return c.ok;
+      });
+    });
+  });
+}
+
 // The wallet's own verdict table. Shared by both formats: the checks differ,
 // how they are shown does not.
 function renderRecheck(checks) {
@@ -407,6 +487,173 @@ function renderRecheck(checks) {
   log.debug("Leaving renderRecheck().");
 }
 
+// ---------------------------------------------------------------------------
+// How it was answered: the protocol, the delivery, and — re-checked from the
+// bytes that went — the self-issued ID Token and the encryption around it.
+// ---------------------------------------------------------------------------
+
+// The key an ID Token's subject names (SIOPv2 section 11.1): sub_jwk whose
+// thumbprint is sub, or the key a did:jwk / did:key subject IS.
+function idTokenSubjectKey(header, payload) {
+  log.debug("Entering idTokenSubjectKey().");
+  var sub = String(payload.sub || "");
+  if (/^did:jwk:/.test(sub)) {
+    log.debug("Leaving idTokenSubjectKey(). did:jwk");
+    return Promise.resolve({ jwk: didLib.didJwkToJwk(sub), how: "did:jwk" });
+  }
+  if (/^did:key:/.test(sub)) {
+    log.debug("Leaving idTokenSubjectKey(). did:key");
+    return Promise.resolve({ jwk: didLib.didKeyToJwk(sub), how: "did:key" });
+  }
+  if (!payload.sub_jwk) {
+    log.debug("Leaving idTokenSubjectKey(). No key.");
+    return Promise.resolve({ jwk: null, how: "none" });
+  }
+  log.debug("Leaving idTokenSubjectKey().");
+  return dpop.thumbprint(payload.sub_jwk).then(function (tp) {
+    return { jwk: payload.sub_jwk, how: "sub_jwk", thumbprintOk: tp === sub };
+  });
+}
+
+// The key the presentation beside it is bound to, for the "same holder"
+// check.
+function presentationHolderKey() {
+  log.debug("Entering presentationHolderKey().");
+  if (mdoc.looksLikeDeviceResponse(sent.presentation)) {
+    log.debug("Leaving presentationHolderKey(). mso_mdoc.");
+    return mdoc.readDeviceResponse(sent.presentation).parsed.deviceJwk;
+  }
+  try {
+    var p = JSON.parse(sent.presentation);
+    var vm = ((p && p.proof) || {}).verificationMethod || "";
+    var did = vm.split("#")[0];
+    log.debug("Leaving presentationHolderKey(). ldp_vc.");
+    return /^did:jwk:/.test(did) ? didLib.didJwkToJwk(did) :
+           /^did:key:/.test(did) ? didLib.didKeyToJwk(did) : null;
+  } catch (e) {
+    // Not JSON: a JWT-shaped presentation.
+  }
+  try {
+    var parsed = sdJwtVc.parseCredential(sent.presentation);
+    var payload = parsed.payload || {};
+    if (parsed.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
+      var inner = sdJwtVc.parseCredential([].concat((payload.vp || {})
+          .verifiableCredential || [])[0] || "");
+      payload = inner.payload || {};
+    }
+    log.debug("Leaving presentationHolderKey().");
+    return (payload.cnf && payload.cnf.jwk) || null;
+  } catch (e) {
+    log.debug("Leaving presentationHolderKey(). Unreadable.");
+    return null;
+  }
+}
+
+function renderAnswer() {
+  log.debug("Entering renderAnswer().");
+  if (!sent) {
+    log.debug("Leaving renderAnswer(). Nothing sent.");
+    return Promise.resolve(false);
+  }
+  var protocol = vpProtocols.protocolById(sent.protocol) ||
+      vpProtocols.protocolById(vpProtocols.DEFAULT_PROTOCOL);
+  setText("vp_answer_protocol", protocol.label);
+  setText("vp_answer_mode", (sent.responseType || "vp_token") + " / " +
+          (sent.responseMode || "direct_post") + (sent.delivery ? " (" +
+          sent.delivery + ")" : ""));
+  setText("vp_answer_binding", sent.holderBinding || (sent.kbJwt ?
+          "Key Binding JWT" : sent.format === sdJwtVc.FORMAT_JWT_VC_JSON ?
+          "Verifiable Presentation JWT" : "—"));
+  setJson("vp_answer_id_token", sent.idToken ? { header: sent.idTokenHeader,
+          payload: sent.idTokenPayload } : null);
+  setJson("vp_answer_jwe_header", sent.encryption ?
+          sent.encryption.header : null);
+  var plaintext = null;
+  if (sent.encryption) {
+    try {
+      plaintext = JSON.parse(sent.encryption.plaintext);
+    } catch (e) {
+      plaintext = sent.encryption.plaintext;
+    }
+  }
+  setJson("vp_answer_plaintext", plaintext);
+  var checks = [];
+  if (sent.encryption) {
+    checks.push({ name: "Encrypted", ok: true, detail: sent.encryption
+      .header.alg + " / " + sent.encryption.enc + " to the Verifier's key " +
+      (sent.encryption.kid || "(no kid)") + "; the form carried one field, " +
+      "response." });
+  } else if (sent.protocol === vpProtocols.PROTOCOL_HAIP) {
+    checks.push({ name: "Encrypted", ok: false, detail: "HAIP 1.0 has the " +
+      "answer encrypted, and this one went in the clear." });
+  }
+  var p = sent.idTokenPayload;
+  if (!p) {
+    renderAnswerChecks(checks);
+    log.debug("Leaving renderAnswer(). No ID Token.");
+    return Promise.resolve(true);
+  }
+  checks.push({ name: "iss equals sub", ok: p.iss === p.sub, detail:
+    "iss " + p.iss + ", sub " + p.sub + " (SIOPv2 section 11)." });
+  checks.push({ name: "ID Token aud", ok: p.aud === sent.clientId, detail:
+    "aud " + p.aud + "; the Verifier is " + sent.clientId + "." });
+  checks.push({ name: "ID Token nonce", ok: p.nonce === sent.nonce, detail:
+    "nonce " + p.nonce + "; the request's was " + sent.nonce + "." });
+  log.debug("Leaving renderAnswer().");
+  return idTokenSubjectKey(sent.idTokenHeader || {}, p).then(function (key) {
+    if (key.how === "sub_jwk") {
+      checks.push({ name: "Subject is the key", ok: !!key.thumbprintOk,
+        detail: "sub is " + (key.thumbprintOk ? "" : "NOT ") + "the RFC " +
+        "7638 thumbprint of sub_jwk." });
+    }
+    if (!key.jwk) {
+      checks.push({ name: "ID Token signature", ok: false, detail: "the " +
+        "subject names no key to verify it with." });
+      return null;
+    }
+    var holder = presentationHolderKey();
+    if (sent.presentation) {
+      checks.push({ name: "Same holder", ok: !!holder &&
+        sdJwtVc.samePublicKey(holder, key.jwk), detail: holder ?
+        "the ID Token's subject key " + (sdJwtVc.samePublicKey(holder,
+        key.jwk) ? "IS" : "is NOT") + " the key the presentation is bound " +
+        "to." : "the presentation names no holder key to compare with." });
+    }
+    return metadataClient.verifyJwsWithJwks(sent.idToken, { keys: [key.jwk] },
+                                            "the ID Token");
+  }).then(function (v) {
+    if (v) {
+      checks.push({ name: "ID Token signature", ok: !!v.valid, detail:
+        v.valid ? "verifies with the key its subject names." :
+        "does NOT verify with the key its subject names." });
+    }
+    renderAnswerChecks(checks);
+    return true;
+  }).catch(function (e) {
+    checks.push({ name: "ID Token", ok: false, detail: e.message });
+    renderAnswerChecks(checks);
+    return false;
+  });
+}
+
+function renderAnswerChecks(checks) {
+  log.debug("Entering renderAnswerChecks().");
+  setHtml("vp_answer_checks",
+    "<thead><tr><th style='width:22%'>Check</th><th " +
+        "style='width:10%'>Result</th><th>Detail</th></tr></thead>" +
+    "<tbody>" + checks.map(function (c) {
+      return "<tr><td>" + esc(c.name) + '</td><td class="' + (c.ok ?
+          "vc-ok" : "vc-bad") + '">' + (c.ok ? "OK" : "FAILED") + "</td><td>" +
+          esc(c.detail) + "</td></tr>";
+    }).join("") + "</tbody>");
+  var failed = checks.filter(function (c) { return !c.ok; }).length;
+  status("vp_answer_status", !checks.length ? "Answered in the clear, with " +
+    "no ID Token: there is nothing more to check here." : failed === 0 ?
+    "Every check on the answer around the presentation passes." :
+    failed + " check(s) on the answer FAIL.", failed ? "vc-bad" : "vc-ok");
+  log.debug("Leaving renderAnswerChecks().");
+}
+
 // --- what the verifier said -------------------------------------------------
 // OpenID4VP 1.0 section 8.2: the Response Endpoint answers the wallet's
 // direct_post with 200 and, optionally, a `redirect_uri` the wallet sends the
@@ -427,6 +674,17 @@ function showVerifierAnswer() {
     ? String(answer.redirect_uri) : "";
   var code = sent.statusCode ? "HTTP " + sent.statusCode : "an answer";
   var said;
+  if (sent.accepted === null || sent.accepted === undefined) {
+    // A fragment, query or form_post answer goes back through the BROWSER,
+    // so the wallet never sees what the Verifier said to it.
+    status("vp_verifier_status", "The answer was handed to the browser (" +
+           (sent.responseMode || "") + "), so whatever the Verifier said, " +
+           "it said to the page it sent the browser to, not to this wallet.",
+           "vc-pending");
+    setJson("vp_verifier_raw", answer === undefined ? null : answer);
+    log.debug("Leaving showVerifierAnswer(). Through the browser.");
+    return false;
+  }
   if (sent.accepted) {
     said = "The Verifier answered " + code + ": it accepted the response." +
       (redirect ? " It sends the browser on to " + redirect + "." :
@@ -499,7 +757,13 @@ function onload() {
     log.debug("Leaving onload(). Nothing presented.");
     return;
   }
-  recheckOwnPresentation();
+  if (sent.presentation) {
+    recheckOwnPresentation();
+  } else {
+    status("vp_recheck_status", "No credential was presented, so there is " +
+           "no presentation to re-check.", "vc-ok");
+  }
+  renderAnswer();
   showVerifierAnswer();
   log.debug("SD-JWT VC presentation step 3 ready.");
   log.debug("Leaving onload().");

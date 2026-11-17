@@ -20,6 +20,7 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
+var vpProtocols = require("./vp_protocols");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_0',
                                 level: appconfig.logLevel });
@@ -154,7 +155,8 @@ function verifierBaseUrl() {
 var CONFIG_FIELDS = [
   { id: "vp_verifier_site_url", key: "VERIFIER_SITE_URL" },
   { id: "vp_verifier_base_url", key: "VERIFIER_BASE_URL" },
-  { id: "vp_verifier_jwks_url", key: "VERIFIER_JWKS_URL" }
+  { id: "vp_verifier_jwks_url", key: "VERIFIER_JWKS_URL" },
+  { id: "vp_x509_trust_anchor", key: "X509_TRUST_ANCHOR" }
 ];
 
 function configStatus(text, cls) {
@@ -296,12 +298,16 @@ function buttonHtml(uc, current) {
   log.debug("Entering buttonHtml(). id=" + uc.id);
   var start = STARTS[uc.id] || {};
   var classes = ["vc-usecase"];
-  if (!uc.available) classes.push("vc-usecase-soon");
+  // HAIP 1.0 has no request by value: under it that flow is shown, and why it
+  // cannot be used, rather than hidden.
+  var allowed = sdJwtVp.useCaseAllowed(uc, sdJwtVp.currentProtocol());
+  var available = uc.available && allowed;
+  if (!available) classes.push("vc-usecase-soon");
   if (uc.id === current.id) classes.push("vc-usecase-current");
   var html =
     '<button type="button" class="' + classes.join(" ") + '" id="vp_usecase_' +
         esc(uc.id) + '"' +
-    (uc.available ? ' onclick="return vcpresentation0.choose(\'' + esc(uc.id) +
+    (available ? ' onclick="return vcpresentation0.choose(\'' + esc(uc.id) +
      '\');"' : ' disabled="disabled"') +
     '>' +
       '<span class="vc-usecase-head">' +
@@ -313,6 +319,9 @@ function buttonHtml(uc, current) {
       '<span class="vc-usecase-summary">' + esc(uc.summary) + '</span>' +
       '<span class="vc-usecase-detail">' + esc(uc.detail) + '</span>' +
       '<span class="vc-usecase-mechanics">' + esc(uc.mechanics) + '</span>' +
+      (allowed ? '' : '<span class="vc-usecase-detail">Not under HAIP ' +
+       '1.0, which passes every request by reference as a signed Request ' +
+       'Object.</span>') +
       '<span class="vc-usecase-cta">' + esc(start.cta || "Choose this") +
           ' &rarr;</span>' +
     '</button>';
@@ -379,8 +388,77 @@ function renderCredentialState() {
   return hasKey;
 }
 
+// The protocol chooser, drawn the way the flows are.
+function protocolButtonHtml(p, current) {
+  log.debug("Entering protocolButtonHtml(). id=" + p.id);
+  var classes = ["vc-usecase"];
+  if (p.id === current.id) classes.push("vc-usecase-current");
+  var html =
+    '<button type="button" class="' + classes.join(" ") +
+        '" id="vp_protocol_' + esc(p.id) + '"' +
+    ' onclick="return vcpresentation0.chooseProtocol(\'' + esc(p.id) +
+        '\');">' +
+      '<span class="vc-usecase-head">' +
+        '<span class="vc-usecase-spec">' + esc(p.label) + '</span>' +
+        '<span class="vc-usecase-title">' + esc(p.title) + '</span>' +
+        (p.id === current.id ?
+         '<span class="vc-usecase-flag">currently selected</span>' : '') +
+      '</span>' +
+      '<span class="vc-usecase-summary">' + esc(p.summary) + '</span>' +
+      '<span class="vc-usecase-mechanics">response_type ' +
+          esc(p.responseTypes.join(" | ")) + '</span>' +
+    '</button>';
+  log.debug("Leaving protocolButtonHtml().");
+  return html;
+}
+
+function renderProtocols() {
+  log.debug("Entering renderProtocols().");
+  var current = sdJwtVp.currentProtocol();
+  var host = el("vp_protocols");
+  if (host) {
+    host.innerHTML = vpProtocols.protocols().map(function (p) {
+      return protocolButtonHtml(p, current);
+    }).join("");
+  }
+  var note = el("vp_protocol_status");
+  if (note) {
+    note.textContent = "Answering under " + current.label + ". " +
+      (current.id === vpProtocols.PROTOCOL_HAIP ?
+        "HAIP 1.0 profiles " + vpProtocols.HAIP_FORMATS.join(" and ") +
+        "; a jwt_vc_json or ldp_vc credential is presented under the HAIP " +
+        "transport and reported as a departure from the profile." :
+       current.id === vpProtocols.PROTOCOL_SIOPV2 ?
+        "A self-issued ID Token proves the person controls a key. It does " +
+        "not prove anything the token says about them is true — that is " +
+        "what a credential presented beside it is for." :
+        "The request is checked against OpenID4VP 1.0 and nothing more.");
+  }
+  log.debug("Leaving renderProtocols().");
+  return current;
+}
+
+// Choosing a protocol records it and redraws the flows, which depend on it.
+// It sends nobody anywhere: the flow is still to be chosen.
+function chooseProtocol(id) {
+  log.debug("Entering chooseProtocol(). id=" + id);
+  var p = sdJwtVp.setProtocol(id);
+  if (!p) {
+    status("That protocol is not one this workflow knows about.", "vc-bad");
+    log.debug("Leaving chooseProtocol().");
+    return false;
+  }
+  // A request read under another protocol was checked against other rules.
+  sdJwtVp.forgetRequest();
+  sdJwtVp.renderUseCaseBadge();
+  render();
+  log.debug("Leaving chooseProtocol().");
+  return false;
+}
+
 function render() {
   log.debug("Entering render().");
+  renderProtocols();
   var current = sdJwtVp.currentUseCase();
   var host = el("vp_usecases");
   if (host) {
@@ -455,6 +533,7 @@ if (typeof window !== "undefined") {
 
 module.exports = {
   choose: choose,
+  chooseProtocol: chooseProtocol,
   render: render,
   verifierBaseUrl: verifierBaseUrl,
   verifierSiteUrl: verifierSiteUrl,

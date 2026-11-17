@@ -81,6 +81,15 @@ defines. It presents whatever credential the
             <td><input type="text" class="stored" id="vp_verifier_jwks_url" name="vp_verifier_jwks_url" size="60"
                        placeholder="http://localhost:8081/oauth2/jwks" /></td>
           </tr>
+          <tr>
+            <td>
+              <div class="tooltip"><label for="vp_x509_trust_anchor">x509 trust anchor (PEM)</label>
+                <span class="tooltiptext">The root certificate this wallet trusts for a Verifier named by an x509_hash or x509_san_dns Client Identifier (HAIP 1.0 uses x509_hash). The request carries the Verifier's chain in x5c, normally without its root; the chain is finished here. Leave it empty and the chain is still checked link by link, and its top is reported as UNTRUSTED rather than trusted.</span>
+              </div>
+            </td>
+            <td><textarea class="stored" id="vp_x509_trust_anchor" name="vp_x509_trust_anchor" rows="4" cols="60"
+                       placeholder="-----BEGIN CERTIFICATE-----"></textarea></td>
+          </tr>
         </tbody>
       </table>
     </form>
@@ -93,14 +102,21 @@ defines. It presents whatever credential the
   </fieldset>
 </div>
 
+<h4 class="vc-subtitle">Which protocol is the answer given under?</h4>
+<div class="vc-usecases" id="vp_protocols"></div>
+<p class="vc-note" id="vp_protocol_status">&nbsp;</p>
+
+<h4 class="vc-subtitle">How does the request reach the wallet?</h4>
 <div class="vc-usecases" id="vp_usecases"></div>
 
 <p class="vc-note" id="vp_usecase_status">&nbsp;</p>
 
-<p class="vc-note">All three end the same way: your wallet builds an <strong>SD-JWT+KB</strong> &mdash; the
-issuer-signed JWT, the Disclosures you chose, and a <strong>Key Binding JWT</strong> signed by the key the
-credential is bound to &mdash; and the verifier checks every part of it. What differs is how the request reaches
-the wallet and how much the wallet can prove about who sent it.</p>
+<p class="vc-note">Every protocol and every flow ends the same way for a presentation: your wallet builds it in the
+format of the credential it holds &mdash; an <strong>SD-JWT+KB</strong> for <code>dc+sd-jwt</code>, a Verifiable
+Presentation JWT for <code>jwt_vc_json</code>, a <code>bbs-2023</code> derived proof for <code>ldp_vc</code>, a device-signed DeviceResponse for an ISO mdoc (<code>mso_mdoc</code>) &mdash;
+bound to this request and this verifier by the holder key. Under <strong>SIOPv2</strong> a self-issued ID Token
+goes with it, signed by that same key. What differs is how the request reaches the wallet, how much the wallet can
+prove about who sent it, and whether the answer travels encrypted.</p>
 <!--#include file="/partials/vc_tools.html"-->
 
 <link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">

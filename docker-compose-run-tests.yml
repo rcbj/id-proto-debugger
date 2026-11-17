@@ -738,6 +738,64 @@ services:
     networks:
       - keycloak
 
+  # POLARIS (#423): polaris-oid4vp, an OpenID4VP 1.0 + HAIP 1.0 verifier
+  # somebody else wrote, from its own published image, UNMODIFIED. Its
+  # entrypoint is replaced by tests/polaris/serve-loop.sh, which runs the
+  # image's own `polaris-oid4vp` command and restarts `serve --once` for each
+  # case on a file tests/vc_presentation_polaris.js drops in the shared
+  # volume: one request per process is the package's design, and a tests
+  # container has no Docker to start one per case. Plain HTTP inside; the
+  # https URLs HAIP hands the wallet are the proxy's below.
+  polaris-verifier:
+    container_name: polaris-verifier
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/polaris-oid4vp:v1.1.0
+    user: "10001:10001"
+    entrypoint: ["sh", "/serve-loop.sh"]
+    environment:
+      - POLARIS_PORT=9080
+      - POLARIS_PUBLIC_BASE_URL=https://polaris:7010
+    volumes:
+      - polaris-data:/data
+      - ./tests/polaris/serve-loop.sh:/serve-loop.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /data/pki/client.pem"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    networks:
+      - keycloak
+
+  # TLS and CORS in front of Polaris, which sends no CORS headers and whose
+  # URLs HAIP has be https: waltid/cors-proxy.js in its TLS mode, under the
+  # stack's own certificate (whose SANs carry `polaris` for this). Healthy
+  # once it ANSWERS: a 502 while no request is being served still says the
+  # proxy is up.
+  polaris:
+    container_name: polaris
+    image: ${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-alpine
+    user: "node"
+    command: ["node", "/waltid/cors-proxy.js"]
+    environment:
+      - WALTID_UPSTREAM=polaris-verifier:9080
+      - WALTID_PROXY_PORT=7010
+      - CORS_PROXY_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
+      - CORS_PROXY_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+    volumes:
+      - ./waltid/cors-proxy.js:/waltid/cors-proxy.js:ro
+      - ${STACK_TLS_DIR:-./generated-tls}:/etc/idptools/tls:ro
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('https').get({host:'localhost',port:7010,path:'/',rejectUnauthorized:false},function(){process.exit(0)}).on('error',function(){process.exit(1)})\""]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    depends_on:
+      polaris-verifier:
+        condition: service_healthy
+    networks:
+      - keycloak
+
   tests:
     container_name: tests
     image: ${IMAGE_REGISTRY:-ghcr.io/rcbj/id-proto-debugger}/test:${IMAGE_TAG:-latest}
@@ -816,6 +874,9 @@ services:
       # container. It is the `local` entity and the only route to a method
       # SPIRE's own table marks local-only.
       SPIFFE_SERVER_SOCKET: unix:///spire-sock/server.sock
+      # The volume shared with polaris-verifier; its presence schedules
+      # tests/vc_presentation_polaris.js.
+      POLARIS_DATA_DIR: /polaris-data
     # Chrome crashes tabs on heavy pages when limited to Docker's default 64MB
     # /dev/shm. The tests also pass --disable-dev-shm-usage; this raises the cap
     # as a belt-and-suspenders mitigation.
@@ -841,6 +902,8 @@ services:
       # variable that test SKIPS its local-socket section with a reason rather
       # than passing vacuously.
       - spire-server-socket:/spire-sock
+      # Shared with polaris-verifier (tests/polaris/serve-loop.sh).
+      - polaris-data:/polaris-data
       # Where saml11_sso.js and saml11_peers.js register the debugger with the
       # Shibboleth side-car: its SP metadata, written as <SHA-1 of the
       # entityID>.xml (#425). See the shibboleth-idp service and the volume.
@@ -875,6 +938,8 @@ services:
         condition: service_healthy
       companion:
         condition: service_healthy
+      polaris:
+        condition: service_healthy
     networks:
      - keycloak
 
@@ -886,6 +951,14 @@ volumes:
   # creates a plain one root:root 0755 and the mock, running as 10001, could
   # not bind a socket in it. 0700 is what the mock itself would make the
   # directory, so it has nothing to warn about.
+  # Shared by polaris-verifier and the tests container, both uid 10001 (a
+  # plain named volume is root:root, which neither could write).
+  polaris-data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "uid=10001,gid=10001,mode=0700"
   spire-server-socket:
     driver: local
     driver_opts:

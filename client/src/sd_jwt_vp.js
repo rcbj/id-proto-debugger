@@ -48,6 +48,8 @@ var log = bunyan.createLogger({
 var metadataClient = require("./metadata_client");
 var jws = require("./jws");
 var sdJwtVc = require("./sd_jwt_vc");
+var vpProtocols = require("./vp_protocols");
+var mdoc = require("./mdoc");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -76,7 +78,17 @@ var KEYS = {
   // The Verifier's WEBSITE: the page where a person starts a verification,
   // which the three flows on step 0 link to. Any Verifier's, not only this
   // suite's; set on step 0.
-  VERIFIER_SITE_URL: "sdjwtvp_verifier_site_url"
+  VERIFIER_SITE_URL: "sdjwtvp_verifier_site_url",
+  // The protocol (OpenID4VP, HAIP, SIOPv2) and the trust anchor for x509
+  // Client Identifiers. Named in vp_protocols.js, which owns them.
+  PROTOCOL: vpProtocols.KEYS.PROTOCOL,
+  X509_TRUST_ANCHOR: vpProtocols.KEYS.X509_TRUST_ANCHOR,
+  SIOP_SUBJECT_SYNTAX: vpProtocols.KEYS.SUBJECT_SYNTAX,
+  // Pairwise self-issued subjects: { client_id: private JWK }. KEY MATERIAL,
+  // so it is kept only while SIOP_SAVE_PAIRWISE is not "0", and removed the
+  // moment it is (the rule every key-pair pane in this tree follows).
+  SIOP_PAIRWISE_KEYS: "sdjwtvp_siop_pairwise_keys",
+  SIOP_SAVE_PAIRWISE: "sdjwtvp_siop_save_pairwise"
 };
 
 var STEP1_URL = "/vc-presentation-1.html";
@@ -194,6 +206,43 @@ function setUseCase(id) {
   return uc;
 }
 
+// ---------------------------------------------------------------------------
+// The PROTOCOL the request is answered under (vp_protocols.js), orthogonal to
+// the flow above except in one place: HAIP 1.0 has no request by value, so
+// that flow is unavailable while HAIP is chosen.
+// ---------------------------------------------------------------------------
+function currentProtocol() {
+  log.debug("Entering currentProtocol().");
+  log.debug("Leaving currentProtocol().");
+  return vpProtocols.protocolById(sdJwtVc.get(vpProtocols.KEYS.PROTOCOL)) ||
+         vpProtocols.protocolById(vpProtocols.DEFAULT_PROTOCOL);
+}
+
+function setProtocol(id) {
+  log.debug("Entering setProtocol(). id=" + id);
+  var p = vpProtocols.protocolById(id);
+  if (!p) {
+    log.debug("Leaving setProtocol(). Unknown.");
+    return null;
+  }
+  sdJwtVc.set(vpProtocols.KEYS.PROTOCOL, p.id);
+  if (p.id === vpProtocols.PROTOCOL_HAIP &&
+      !useCaseAllowed(currentUseCase(), p)) {
+    sdJwtVc.set(KEYS.USE_CASE, "same-device-signed");
+  }
+  log.debug("Leaving setProtocol().");
+  return p;
+}
+
+// Whether a flow can be used under a protocol, and if not why.
+function useCaseAllowed(uc, protocol) {
+  log.debug("Entering useCaseAllowed(). " + (uc && uc.id));
+  var ok = !(protocol && protocol.id === vpProtocols.PROTOCOL_HAIP &&
+             uc && uc.id === "same-device");
+  log.debug("Leaving useCaseAllowed(). " + ok);
+  return ok;
+}
+
 // Which way this presentation is being made, in the step indicator every page
 // includes.
 function renderUseCaseBadge() {
@@ -205,13 +254,16 @@ function renderUseCaseBadge() {
     return null;
   }
   var uc = currentUseCase();
+  var protocol = currentProtocol();
   var existing = document.getElementById("vp_use_case_badge");
   if (existing) existing.parentNode.removeChild(existing);
   var badge = document.createElement("p");
   badge.id = "vp_use_case_badge";
   badge.className = "vc-use-case-badge";
-  badge.innerHTML = 'Flow: <strong>' + metadataClient.escapeHtmlText(uc.spec) +
-      ' &middot; ' +
+  badge.innerHTML = 'Protocol: <strong>' +
+                    metadataClient.escapeHtmlText(protocol.label) +
+                    '</strong> &middot; Flow: <strong>' +
+                    metadataClient.escapeHtmlText(uc.spec) + ' &middot; ' +
                     metadataClient.escapeHtmlText(uc.label) + '</strong> — ' +
                     metadataClient.escapeHtmlText(uc.mechanics) +
                     ' <a href="/vc-presentation-0.html">change</a>';
@@ -248,7 +300,7 @@ var REQUEST_PARAMS = ["client_id", "response_type", "response_mode",
                       "nonce", "state", "dcql_query", "client_metadata",
                           "request_uri",
                       "request_uri_method", "request", "scope",
-                          "transaction_data"];
+                          "transaction_data", "id_token_type"];
 
 function parseRequestQuery(search) {
   log.debug("Entering parseRequestQuery().");
@@ -359,6 +411,13 @@ function claimNameForPath(path, format) {
   if (format === sdJwtVc.FORMAT_JWT_VC_JSON && parts.length > 1 &&
       parts[0] === "credentialSubject") {
     parts = parts.slice(1);
+  }
+  // An mdoc claim is [namespace, element], and the namespace has dots of
+  // its own (org.iso.18013.5.1), so the dotted form cannot be split on its
+  // first one: the element is the LAST segment. ISO/IEC 18013-5 element
+  // identifiers are snake_case and carry no dot.
+  if (format === sdJwtVc.FORMAT_MSO_MDOC && parts.length > 1) {
+    parts = parts.slice(-1);
   }
   log.debug("Leaving claimNameForPath().");
   return parts.join(".");
@@ -551,8 +610,36 @@ function signVpJwt(opts) {
 // return the same shape so the pages that display and submit it do not branch:
 // `selected` and `sdHash` are simply absent for a VP JWT, because that format
 // has nothing to select and nothing to commit to beyond its own signature.
+// An mdoc presentation: a DeviceResponse disclosing the selected elements,
+// device-signed over OpenID4VP's session transcript (mdoc.js). Its holder
+// proof is that device signature, so the shape returned has no KB-JWT.
+function buildMdocPresentation(opts) {
+  log.debug("Entering buildMdocPresentation().");
+  var parsed = opts.parsed && opts.parsed.mdoc ? opts.parsed.mdoc :
+      mdoc.parseIssuerSigned(opts.credential);
+  log.debug("Leaving buildMdocPresentation().");
+  return mdoc.deviceResponse({
+    parsed: parsed,
+    selected: opts.selected || [],
+    devicePrivateJwk: opts.holderPrivateJwk,
+    clientId: opts.aud,
+    nonce: opts.nonce,
+    responseUri: opts.responseUri || "",
+    encryptionJwk: opts.encryptionJwk || null
+  }).then(function (r) {
+    log.debug("Leaving buildMdocPresentation(). " + r.disclosed.length +
+              " element(s).");
+    return { presentation: r.deviceResponse, prefix: "", sdHash: "",
+             kb: null, format: sdJwtVc.FORMAT_MSO_MDOC, mdoc: r };
+  });
+}
+
 function buildPresentationFor(opts) {
   var format = sdJwtVc.credentialFormat(opts.credential);
+  if (format === sdJwtVc.FORMAT_MSO_MDOC) {
+    log.debug("Leaving buildPresentationFor(). mso_mdoc.");
+    return buildMdocPresentation(opts);
+  }
   if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) {
     log.debug("Leaving buildPresentationFor().");
     return buildPresentation(opts);
@@ -587,6 +674,12 @@ function vpToken(credentialQueryId, presentation) {
 // rather than from what the wallet believes it sent.
 function presentedClaims(presentation) {
   log.debug("Entering presentedClaims().");
+  if (mdoc.looksLikeDeviceResponse(presentation)) {
+    var read = mdoc.readDeviceResponse(presentation);
+    log.debug("Leaving presentedClaims(). mso_mdoc.");
+    return { parsed: read.parsed, claims: mdoc.claimsOf(read.parsed),
+             mdoc: read };
+  }
   // A VP JWT carries the credential inside its vp claim, so what reached the
   // Verifier is read from the EMBEDDED credential — reading the outer JWT would
   // report the presentation's own claims (nonce, aud) as if they were the
@@ -621,6 +714,9 @@ module.exports = {
   useCaseById: useCaseById,
   currentUseCase: currentUseCase,
   setUseCase: setUseCase,
+  currentProtocol: currentProtocol,
+  setProtocol: setProtocol,
+  useCaseAllowed: useCaseAllowed,
   renderUseCaseBadge: renderUseCaseBadge,
   storeRequest: storeRequest,
   storedRequest: storedRequest,
@@ -641,6 +737,7 @@ module.exports = {
   signKbJwt: signKbJwt,
   buildPresentation: buildPresentation,
   buildPresentationFor: buildPresentationFor,
+  buildMdocPresentation: buildMdocPresentation,
   signVpJwt: signVpJwt,
   vpToken: vpToken,
   presentedClaims: presentedClaims
