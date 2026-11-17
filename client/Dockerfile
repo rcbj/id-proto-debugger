@@ -82,6 +82,14 @@ COPY common/data.js /usr/src/app/src
 # same reason: it is in common/ because api/server.js signs with it too, and
 # the ten bundles that require('./xmldsig') resolve it from src/.
 COPY common/xmldsig.js /usr/src/app/src
+# The configuration this image bakes in, held to its model BEFORE anything is
+# bundled (models/config/client_config.tsp). A misspelt key would otherwise
+# reach every page as an `undefined` nobody sees. client/build.js runs the
+# same check for the static and embedded builds; BOTH have to be kept in step.
+COPY common/model/ /usr/src/common/model/
+COPY common/model_config.js /usr/src/common/model_config.js
+COPY client/check_config.js /usr/src/app/check_config.js
+RUN CONFIG_FILE=${CONFIG_FILE} node check_config.js
 # The Kerberos codec, staged into src/ the same way and for the same reason:
 # kerberos_decoder.js requires('./krb5_describe.js'), which requires its siblings,
 # so browserify has to find them beside the bundle entry point. They live in

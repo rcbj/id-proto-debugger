@@ -263,6 +263,14 @@ function gaSnippet(id) {
 // script runs outside the suite (deploy/Dockerfile, `npm run build`), so no
 // test would have reported it.
 
+// 0. The configuration this build bakes in, held to its model
+//    (models/config/client_config.tsp) BEFORE anything is cleaned or bundled:
+//    a misspelt key in client/src/env/*.js would otherwise reach every page
+//    as an `undefined` nobody sees. check_config.js names every problem.
+//    client/Dockerfile runs the same check for the image build.
+log.info('checking ' + CONFIG_FILE + ' against ClientConfig');
+require('./check_config.js').check(CONFIG_FILE);
+
 // 1. Clean output
 log.info('cleaning ' + path.relative(CLIENT_DIR, DIST));
 fs.rmSync(DIST, { recursive: true, force: true });

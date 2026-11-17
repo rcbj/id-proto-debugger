@@ -1,0 +1,348 @@
+#!/usr/bin/env node
+// SPDX-FileCopyrightText: 2026 Iya CyberSecurity Solutions, LLC
+// SPDX-License-Identifier: MIT
+//
+// File: models/tools/generate.mjs
+//
+// COMPILES THE ABSTRACT DATA MODEL AND WRITES common/model/.
+//
+//   node models/tools/generate.mjs           write every generated file
+//   node models/tools/generate.mjs --check   write nothing; exit 1 and name
+//                                            each file that would change
+//
+// Needs `npm install` in models/ once; nothing else in the tree does, and
+// nothing that ships does. The output is COMMITTED, because api/native.js,
+// client/build.js and embedded/build.sh all run from a checkout where no
+// TypeSpec compiler may be installed (models/CLAUDE.md, "Why the output is
+// committed").
+//
+// What it writes:
+//
+//   openapi.json        the api, OpenAPI 3.1 (@typespec/openapi3)
+//   config.schema.json  ApiConfig and ClientConfig (@typespec/json-schema)
+//   storage.json        every declared browser storage key, by page
+//   embedded_contract.json  the embedded tree's variables and paths
+//
+// Every file is JSON written with two-space indentation and a final newline,
+// so a diff of one is readable and --check compares bytes.
+
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { compile, NodeHost } from "@typespec/compiler";
+import { readFacts } from "../lib/debugger_lib.mjs";
+
+// A build script that runs before or outside an install: console-backed, of
+// the usual shape (CLAUDE.md, "Five places cannot reach bunyan").
+const DEBUG = process.env.MODEL_DEBUG === "1";
+const log = {
+  debug: function (message) {
+    if (DEBUG) {
+      console.error("[generate] " + message);
+    }
+  },
+  info: function (message) {
+    console.error("[generate] " + message);
+  },
+  error: function (message) {
+    console.error("[generate] ERROR " + message);
+  }
+};
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const MODELS = path.join(HERE, "..");
+const ROOT = path.join(MODELS, "..");
+const OUT = path.join(ROOT, "common", "model");
+
+const STORAGE_CLASS_AREA = {
+  secret: "none",
+  bearer: "session"
+};
+
+function json(value) {
+  log.debug("Entering json().");
+  log.debug("Leaving json().");
+  return JSON.stringify(value, null, 2) + "\n";
+}
+
+function readTree(dir) {
+  log.debug("Entering readTree(). " + dir);
+  const out = {};
+  if (!fs.existsSync(dir)) {
+    log.debug("Leaving readTree(). No such directory.");
+    return out;
+  }
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      Object.assign(out, readTree(full));
+    } else {
+      out[full] = fs.readFileSync(full, "utf8");
+    }
+  }
+  log.debug("Leaving readTree().");
+  return out;
+}
+
+async function compileModel(scratch) {
+  log.debug("Entering compileModel().");
+  const program = await compile(NodeHost, path.join(MODELS, "main.tsp"), {
+    outputDir: scratch,
+    emit: ["@typespec/openapi3", "@typespec/json-schema"],
+    options: {
+      "@typespec/openapi3": {
+        "emitter-output-dir": path.join(scratch, "openapi3"),
+        "file-type": "json",
+        "openapi-versions": ["3.1.0"]
+      },
+      "@typespec/json-schema": {
+        "emitter-output-dir": path.join(scratch, "json-schema"),
+        "file-type": "json",
+        "bundleId": "config.schema.json"
+      }
+    }
+  });
+  const problems = program.diagnostics.map(function (d) {
+    const where = d.target && d.target.file ? d.target.file.path : "";
+    return d.severity + " " + d.code + ": " + d.message +
+      (where ? " (" + path.relative(ROOT, where) + ")" : "");
+  });
+  if (program.hasError()) {
+    log.debug("Leaving compileModel(). The compile failed.");
+    throw new Error("the model did not compile:\n  " +
+      problems.join("\n  "));
+  }
+  problems.forEach(function (p) {
+    log.info(p);
+  });
+  log.debug("Leaving compileModel().");
+  return program;
+}
+
+function propertyKey(property) {
+  log.debug("Entering propertyKey().");
+  log.debug("Leaving propertyKey().");
+  return property.name;
+}
+
+// The facts the decorators recorded, checked as a whole. Each refusal is a
+// rule the code already follows and that a decorator cannot see on its own.
+function checkFacts(facts) {
+  log.debug("Entering checkFacts().");
+  const errors = [];
+  for (const [property, f] of facts.storageKeys) {
+    const where = property.model.name + "." + property.name;
+    const want = STORAGE_CLASS_AREA[f.class];
+    if (want && f.area !== want) {
+      errors.push(where + ": a " + f.class + " key's area is " + want +
+        ", not " + f.area);
+    }
+    if (!want && f.area !== "local" && f.area !== "session") {
+      errors.push(where + ": a " + f.class + " key is stored somewhere");
+    }
+    if (f.class === "keypair" && !f.optOut) {
+      errors.push(where + ": a keypair key names the checkbox that gates " +
+        "it (optOut)");
+    }
+    if (f.class !== "keypair" && f.optOut) {
+      errors.push(where + ": only a keypair key has an optOut");
+    }
+    if (f.member && f.class !== "secret") {
+      errors.push(where + ": a secret member is class secret");
+    }
+  }
+  for (const [model] of facts.storagePages) {
+    if (!model.properties.size) {
+      errors.push(model.name + ": a storage model with no keys");
+    }
+  }
+  log.debug("Leaving checkFacts(). " + errors.length + " errors.");
+  return errors;
+}
+
+function storageDocument(facts) {
+  log.debug("Entering storageDocument().");
+  const pages = [];
+  const seen = new Map();
+  const errors = [];
+  for (const [model, pageList] of facts.storagePages) {
+    const keys = [];
+    for (const property of model.properties.values()) {
+      const f = facts.storageKeys.get(property);
+      if (!f) {
+        errors.push(model.name + "." + property.name + " has no @storageKey");
+        continue;
+      }
+      const key = propertyKey(property);
+      const id = (f.prefix ? "prefix:" : "") + (f.member ? "member:" : "") +
+        key;
+      if (seen.has(id) && seen.get(id) !== model.name) {
+        errors.push(key + " is declared by both " + seen.get(id) + " and " +
+          model.name);
+      }
+      seen.set(id, model.name);
+      const entry = { key: key, area: f.area, class: f.class };
+      if (f.optOut) {
+        entry.optOut = f.optOut;
+      }
+      if (f.prefix) {
+        entry.prefix = true;
+      }
+      if (f.member) {
+        entry.member = true;
+      }
+      keys.push(entry);
+    }
+    pages.push({ model: model.name, pages: pageList.slice(), keys: keys });
+  }
+  pages.sort(function (a, b) {
+    return a.model < b.model ? -1 : (a.model > b.model ? 1 : 0);
+  });
+  log.debug("Leaving storageDocument().");
+  return { errors: errors, document: { pages: pages } };
+}
+
+function contractDocument(facts) {
+  log.debug("Entering contractDocument().");
+  const variables = [];
+  for (const [property, f] of facts.contractVariables) {
+    const entry = { name: property.name, readBy: f.readBy.slice() };
+    if (f.consumer) {
+      entry.consumer = f.consumer;
+    }
+    if (f.defaultValue !== undefined) {
+      entry.defaultValue = f.defaultValue;
+    }
+    const doc = property.decorators.find(function (d) {
+      return d.decorator.name === "$docFromComment" ||
+        d.decorator.name === "$doc";
+    });
+    if (doc && doc.args && doc.args[1]) {
+      entry.doc = String(doc.args[1].jsValue || "");
+    }
+    variables.push(entry);
+  }
+  const paths = [];
+  for (const [property, f] of facts.contractPaths) {
+    paths.push({ name: property.name, path: f.path, kind: f.kind });
+  }
+  log.debug("Leaving contractDocument().");
+  return { variables: variables, paths: paths };
+}
+
+function outboundPolicyList(facts) {
+  log.debug("Entering outboundPolicyList().");
+  const names = [];
+  for (const property of facts.outboundPolicy) {
+    names.push(property.name);
+  }
+  log.debug("Leaving outboundPolicyList().");
+  return names;
+}
+
+// The emitted OpenAPI document, with the one thing a model should not hold:
+// nothing. It is read back exactly as emitted, re-serialized so the bytes do
+// not depend on the emitter's own formatting.
+function openApiDocument(scratch) {
+  log.debug("Entering openApiDocument().");
+  const file = path.join(scratch, "openapi3", "openapi.json");
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  log.debug("Leaving openApiDocument().");
+  return doc;
+}
+
+function configSchema(scratch, outbound) {
+  log.debug("Entering configSchema().");
+  const file = path.join(scratch, "json-schema", "config.schema.json");
+  const doc = JSON.parse(fs.readFileSync(file, "utf8"));
+  // Close both top-level objects. The emitter leaves a model open, and an
+  // open config schema would accept the misspelt key it exists to catch.
+  for (const name of Object.keys(doc.$defs || {})) {
+    const def = doc.$defs[name];
+    if (/Config$/.test(name) && def.type === "object") {
+      def.additionalProperties = false;
+    }
+  }
+  doc["x-outbound-policy"] = outbound;
+  log.debug("Leaving configSchema().");
+  return doc;
+}
+
+async function generate() {
+  log.debug("Entering generate().");
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "ipd-model-"));
+  try {
+    const program = await compileModel(scratch);
+    const facts = readFacts(program);
+    const errors = checkFacts(facts);
+    const storage = storageDocument(facts);
+    errors.push.apply(errors, storage.errors);
+    if (errors.length) {
+      throw new Error("the model's facts disagree with each other:\n  " +
+        errors.join("\n  "));
+    }
+    const outbound = outboundPolicyList(facts);
+    const files = {};
+    files["openapi.json"] = json(openApiDocument(scratch));
+    files["config.schema.json"] = json(configSchema(scratch, outbound));
+    files["storage.json"] = json(storage.document);
+    files["embedded_contract.json"] = json(contractDocument(facts));
+    log.debug("Leaving generate().");
+    return files;
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+async function main() {
+  log.debug("Entering main().");
+  const check = process.argv.indexOf("--check") !== -1;
+  const files = await generate();
+  const existing = readTree(OUT);
+  const stale = [];
+  for (const name of Object.keys(files)) {
+    const target = path.join(OUT, name);
+    if (existing[target] !== files[name]) {
+      stale.push(path.relative(ROOT, target));
+    }
+    delete existing[target];
+  }
+  const extra = Object.keys(existing).map(function (f) {
+    return path.relative(ROOT, f);
+  });
+  if (check) {
+    if (stale.length || extra.length) {
+      log.error("common/model/ is not what models/ generates.");
+      stale.forEach(function (f) {
+        log.error("  would change: " + f);
+      });
+      extra.forEach(function (f) {
+        log.error("  is not generated: " + f);
+      });
+      log.error("Run `node models/tools/generate.mjs` and commit the result.");
+      log.debug("Leaving main(). Stale.");
+      process.exitCode = 1;
+      return;
+    }
+    log.info("common/model/ is current (" + Object.keys(files).length +
+      " files).");
+    log.debug("Leaving main(). Current.");
+    return;
+  }
+  fs.mkdirSync(OUT, { recursive: true });
+  for (const name of Object.keys(files)) {
+    fs.writeFileSync(path.join(OUT, name), files[name]);
+  }
+  extra.forEach(function (f) {
+    fs.rmSync(path.join(ROOT, f));
+  });
+  log.info("wrote " + Object.keys(files).length + " files to common/model/" +
+    (stale.length ? " (" + stale.length + " changed)" : " (none changed)"));
+  log.debug("Leaving main().");
+}
+
+main().catch(function (e) {
+  log.error(e && e.message ? e.message : String(e));
+  process.exitCode = 1;
+});

@@ -58,6 +58,35 @@ var log = bunyan.createLogger({
                                 level: LOG_LEVEL });
 log.info("Log initialized. logLevel=" + log.level());
 
+// THE CONFIGURATION IS HELD TO ITS MODEL BEFORE ANYTHING READS IT.
+// common/model/config.schema.json's ApiConfig is generated from
+// models/config/api_config.tsp and closes the object, so a misspelt key in an
+// env file is refused here, by name, instead of silently leaving the setting
+// at its default. Refusing to start is the same choice tls_listener.js makes
+// for a missing certificate: a service that came up on a configuration other
+// than the one written down is worse than one that did not come up.
+const modelValidate = require('./model_validate.js');
+(function checkApiConfig() {
+  log.debug("Entering checkApiConfig().");
+  const problems = modelValidate.checkConfig(appconfig, 'ApiConfig');
+  if (problems.length) {
+    problems.forEach(function (problem) {
+      log.fatal('Configuration ' + process.env.CONFIG_FILE + ': ' + problem +
+                '.');
+    });
+    log.fatal('Refusing to start: the configuration does not match ' +
+              'models/config/api_config.tsp.');
+    log.debug("Leaving checkApiConfig(). Refused.");
+    process.exit(1);
+  }
+  log.debug("Leaving checkApiConfig().");
+})();
+
+// The API document, enforced: every route that names an operation is held to
+// it (see model_validate.js). `validateResponses` is a test setting.
+const model = modelValidate.createModel({
+  validateResponses: appconfig.validateResponses === true });
+
 // ---------------------------------------------------------------------------
 // Outbound call timeout, in milliseconds, applied to every axios call this
 // service makes (appconfig.callTimeout, set in api/env/*.js).
@@ -959,11 +988,27 @@ app.use(cors(corsOptions));
  * @returns {Error.model} 400 - Syntax error
  * @returns {Error.model} 500 - Unexpected error
  */
-app.get('/healthcheck', function (req, res) {
+app.get('/healthcheck', model.route('healthcheck'), function (req, res) {
+  log.debug("Entering GET /healthcheck.");
+  log.debug("Leaving GET /healthcheck.");
   res
   .status(STATUS_200)
   .json({
     message: 'Success' });
+});
+
+/**
+ * The answers this process sent that its API document does not describe.
+ * 404 unless validateResponses is on, which only a test configuration sets.
+ * @route GET /model/gaps
+ * @group System - Support operations
+ * @returns {object} 200 - every recorded gap
+ * @returns {object} 404 - the record is not kept
+ */
+app.get('/model/gaps', model.route('modelGaps'), function (req, res) {
+  log.debug("Entering GET /model/gaps.");
+  log.debug("Leaving GET /model/gaps.");
+  return model.gapsHandler(req, res);
 });
 
 // The IANA JWT claim registry: the one outbound call in this service whose URL
@@ -3029,13 +3074,10 @@ const LDAP_REFUSED_BY_POLICY = [
  */
 function runLdapOperation(name, operation, req, res) {
   log.debug('Entering runLdapOperation(). operation=' + name);
+  // The body's shape — `url` present, every member the JSON type it must
+  // be — was held to models/api/ldap.tsp by model.route() before this ran.
+  // What is left is about values, and those are ldap_client.js's.
   const body = req.body || {};
-  if (!body.url) {
-    log.debug('Leaving runLdapOperation(). No url.');
-    return res.status(STATUS_400).json({
-      error: 'url is required, and must be an ldap:// or ldaps:// URL naming ' +
-             'the directory server.' });
-  }
   operation(body).then(function (result) {
     log.info('POST /ldap/' + name + ' ' + result.target.url + ' -> ' +
              (result.ok ? 'success' : (result.result &&
@@ -3072,7 +3114,7 @@ function runLdapOperation(name, operation, req, res) {
  * @returns {object} 400 - this service refused the request (see the reason)
  * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/bind', function (req, res) {
+app.post('/ldap/bind', model.route('ldapBind'), function (req, res) {
   log.debug('Entering POST /ldap/bind.');
   runLdapOperation('bind', ldap.bind, req, res);
   log.debug('Leaving POST /ldap/bind.');
@@ -3093,7 +3135,7 @@ app.post('/ldap/bind', function (req, res) {
  * @returns {object} 400 - this service refused the request
  * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/search', function (req, res) {
+app.post('/ldap/search', model.route('ldapSearch'), function (req, res) {
   log.debug('Entering POST /ldap/search.');
   runLdapOperation('search', ldap.search, req, res);
   log.debug('Leaving POST /ldap/search.');
@@ -3111,7 +3153,7 @@ app.post('/ldap/search', function (req, res) {
  * @returns {object} 400 - this service refused the request
  * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/add', function (req, res) {
+app.post('/ldap/add', model.route('ldapAdd'), function (req, res) {
   log.debug('Entering POST /ldap/add.');
   runLdapOperation('add', ldap.add, req, res);
   log.debug('Leaving POST /ldap/add.');
@@ -3128,7 +3170,7 @@ app.post('/ldap/add', function (req, res) {
  * @returns {object} 400 - this service refused the request
  * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/delete', function (req, res) {
+app.post('/ldap/delete', model.route('ldapDelete'), function (req, res) {
   log.debug('Entering POST /ldap/delete.');
   runLdapOperation('delete', ldap.del, req, res);
   log.debug('Leaving POST /ldap/delete.');
@@ -3146,7 +3188,7 @@ app.post('/ldap/delete', function (req, res) {
  * @returns {object} 400 - this service refused the request
  * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/modify', function (req, res) {
+app.post('/ldap/modify', model.route('ldapModify'), function (req, res) {
   log.debug('Entering POST /ldap/modify.');
   runLdapOperation('modify', ldap.modify, req, res);
   log.debug('Leaving POST /ldap/modify.');
@@ -3165,7 +3207,8 @@ app.post('/ldap/modify', function (req, res) {
  * @returns {object} 400 - this service refused the request
  * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/modifydn', function (req, res) {
+app.post('/ldap/modifydn', model.route('ldapModifyDn'),
+         function (req, res) {
   log.debug('Entering POST /ldap/modifydn.');
   runLdapOperation('modifyDN', ldap.modifyDn, req, res);
   log.debug('Leaving POST /ldap/modifydn.');
@@ -3184,7 +3227,7 @@ app.post('/ldap/modifydn', function (req, res) {
  * @returns {object} 400 - this service refused the request
  * @returns {object} 502 - the directory could not be reached
  */
-app.post('/ldap/compare', function (req, res) {
+app.post('/ldap/compare', model.route('ldapCompare'), function (req, res) {
   log.debug('Entering POST /ldap/compare.');
   runLdapOperation('compare', ldap.compare, req, res);
   log.debug('Leaving POST /ldap/compare.');
@@ -3198,7 +3241,8 @@ app.post('/ldap/compare', function (req, res) {
  * @route GET /ldap/limits
  * @returns {object} 200 - the ports, timeouts, caps and vocabulary in force
  */
-app.get('/ldap/limits', function (req, res) {
+app.get('/ldap/limits', model.route('ldapLimits'),
+        function (req, res) {
   log.debug('Entering GET /ldap/limits.');
   log.debug('Leaving GET /ldap/limits.');
   return res.status(STATUS_200).json({

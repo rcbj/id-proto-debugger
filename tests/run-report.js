@@ -462,6 +462,46 @@ function buildJobs() {
     env: {},
   });
 
+  // THE ABSTRACT DATA MODEL (models/CLAUDE.md). common/model/ is generated
+  // from models/ and committed, so nothing else stops a .tsp edit landing
+  // without its regeneration, or a generated file being edited by hand. This
+  // runs `generate.mjs --check`, proves an edit to a copy reaches the output,
+  // holds every api and client env file to its schema, and holds the
+  // validator to refusing what it does not understand. Node only.
+  jobs.push({
+    name: "Abstract data model (common/model is what models/ generates; " +
+        "every env file matches its schema)",
+    script: "data_model.js",
+    env: {},
+  });
+
+  // THE API ANSWERS WHAT IT ANSWERED BEFORE ITS MODEL. Each family's
+  // requests were recorded against the api as it was, into
+  // fixtures/api_model/, before its hand-written checks gave way to the
+  // model's validator; this replays every one against the running api and
+  // holds each answer to the API document too. Needs the api only.
+  jobs.push({
+    name: "API answers match their recordings and the API document " +
+        "(fixtures/api_model)",
+    script: "api_model_wire.js",
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+    },
+  });
+
+  // NO ANSWER THIS RUN IS ONE THE API DOCUMENT DOES NOT DESCRIBE. LAST, so
+  // the api's record (GET /model/gaps, kept because docker-tests.js sets
+  // validateResponses) covers every answer every other job provoked.
+  jobs.push({
+    name: "No API answer this run is missing from the API document " +
+        "(GET /model/gaps, after every other job)",
+    script: "api_model_gaps.js",
+    last: true,
+    env: {
+      API_URL: env.API_URL || "https://localhost:4000",
+    },
+  });
+
   // WHERE THE STACK'S IMAGES COME FROM. docker-compose-run-tests.yml takes
   // every third-party image, and every base image it builds FROM, from a
   // private mirror on ghcr.io — and a FROM the mirror does not cover is not
@@ -5631,7 +5671,26 @@ async function runAllJobs(jobs, results) {
     reportOne(results[i], i, total);
   }
 
+  // LAST jobs wait for the pool to drain: each reads what every other job
+  // left behind (api_model_gaps.js reads the api's record of every answer
+  // the run provoked), so starting one early would read half a run. Marked
+  // started here so the pool never picks them, then run in order.
+  const last = [];
+  for (const [i, job] of jobs.entries()) {
+    if (!started[i] && job.last) {
+      started[i] = true;
+      last.push(i);
+    }
+  }
+
   await runPool(jobs, results, started, total);
+
+  for (const i of last) {
+    log.info(`===== [${i + 1}/${total}] ${jobs[i].name} — last =====`);
+    results[i] = await runJobAllowingOneRendererWedge(jobs[i], i,
+                                                      CONCURRENCY === 1);
+    reportOne(results[i], i, total);
+  }
   log.debug("Leaving runAllJobs().");
 }
 

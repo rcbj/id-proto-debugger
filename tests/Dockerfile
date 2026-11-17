@@ -969,6 +969,20 @@ COPY common/tests.js /usr/src/common/tests.js
 COPY common/sp_keypair.js /usr/src/common/sp_keypair.js
 # Centralized test config (waitTime, etc.); selected via CONFIG_FILE.
 COPY tests/env ./env
+# THE ABSTRACT DATA MODEL (models/CLAUDE.md). data_model.js holds
+# common/model/ to models/ (`generate.mjs --check`, plus a mutation of a copy),
+# every api and client env file to its schema, and the validator's
+# strictness; api_model_wire.js replays every recorded api answer against the
+# running api and holds each to the API document. Both load
+# api/model_validate.js, copied flat like ssf_proxy.js, which reads the
+# generated files from ../common/model — /usr/src/common/model here. The
+# model's sources, with api/env, go into /usr/src/source-tree (below), and
+# models/'s own TypeSpec install is made there in the final stage.
+COPY tests/data_model.js tests/api_model_wire.js tests/api_model_gaps.js ./
+COPY api/model_validate.js ./
+COPY tests/fixtures/api_model ./fixtures/api_model
+COPY common/model/ /usr/src/common/model/
+COPY common/model_config.js /usr/src/common/model_config.js
 # ---------------------------------------------------------------------------
 # tests/tools — NOT test scripts, and a DIRECTORY rather than a flat copy.
 #
@@ -1009,6 +1023,11 @@ COPY common /usr/src/source-tree/common
 # rfc9068_engine.js and rp_metadata_choices_engine.js also read the pages
 # their modules are wired into, so the HTML is staged beside client/src.
 COPY client/public/*.html /usr/src/source-tree/client/public/
+# The abstract data model's sources and the api's configurations, for
+# data_model.js: it compiles models/ (its node_modules are installed in the
+# final stage, beside the test modules) and holds api/env/*.js to ApiConfig.
+COPY models /usr/src/source-tree/models
+COPY api/env /usr/src/source-tree/api/env
 
 # ---------------------------------------------------------------------------
 # The image itself. Keep this stage SHORT — it is the only one whose layers
@@ -1181,8 +1200,12 @@ COPY --from=files3 /usr/src /usr/src
 RUN ls
 RUN . $NVM_DIR/nvm.sh && npm install chromedriver
 
-# Install modules needed for the test scripts
-RUN . $NVM_DIR/nvm.sh && npm install
+# Install modules needed for the test scripts, and the abstract data model's
+# TypeSpec compiler, which data_model.js runs from /usr/src/source-tree/models.
+# One RUN for both: this stage's layers count against the 125 the header
+# describes.
+RUN . $NVM_DIR/nvm.sh && npm install \
+    && cd /usr/src/source-tree/models && npm ci --no-audit --no-fund
 
 # EVERY SCHEDULED SCRIPT IS IN THE IMAGE, or the build stops here naming the
 # ones that are not. A job added to run-report.js without a COPY above used to

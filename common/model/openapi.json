@@ -1,0 +1,1596 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "id-proto-debugger API",
+    "version": "model",
+    "description": "The id-proto-debugger api: a guarded proxy and relay for the protocol\nworkflows a browser cannot complete on its own. Every endpoint that\nconnects anywhere does so to a target its caller names, under the address\npolicy, timeouts and caps of the api's configuration."
+  },
+  "tags": [
+    {
+      "name": "Service"
+    },
+    {
+      "name": "LDAP"
+    }
+  ],
+  "paths": {
+    "/healthcheck": {
+      "get": {
+        "operationId": "healthcheck",
+        "description": "Whether the api is up. Touches nothing beyond the process.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Service.Health"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Service"
+        ]
+      }
+    },
+    "/ldap/add": {
+      "post": {
+        "operationId": "ldapAdd",
+        "description": "Add an entry: a user, a group, a container.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Answer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Ldap.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LDAP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ldap.AddRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ldap/bind": {
+      "post": {
+        "operationId": "ldapBind",
+        "description": "Bind to a directory: the authentication exchange, on its own.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Answer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Ldap.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LDAP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ldap.Connection"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ldap/compare": {
+      "post": {
+        "operationId": "ldapCompare",
+        "description": "Compare an attribute value without reading the entry. compareTrue (6)\nand compareFalse (5) are both answers.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Answer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Ldap.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LDAP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ldap.CompareRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ldap/delete": {
+      "post": {
+        "operationId": "ldapDelete",
+        "description": "Delete an entry.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Answer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Ldap.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LDAP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ldap.DeleteRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ldap/limits": {
+      "get": {
+        "operationId": "ldapLimits",
+        "description": "What the LDAP client will and will not do, so the page can say so before\na call fails. A build without LDAP answers 404 here.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Limits"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LDAP"
+        ]
+      }
+    },
+    "/ldap/modify": {
+      "post": {
+        "operationId": "ldapModify",
+        "description": "Modify an entry's attributes.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Answer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Ldap.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LDAP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ldap.ModifyRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ldap/modifydn": {
+      "post": {
+        "operationId": "ldapModifyDn",
+        "description": "Rename or move an entry.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Answer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Ldap.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LDAP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ldap.ModifyDnRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ldap/search": {
+      "post": {
+        "operationId": "ldapSearch",
+        "description": "Search a directory.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Answer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Ldap.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ldap.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "LDAP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Ldap.SearchRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/model/gaps": {
+      "get": {
+        "operationId": "modelGaps",
+        "description": "The answers this process sent that its API document does not describe.\nAnswers 404 where `validateResponses` is off — the record is not kept.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Service.ModelGaps"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Service"
+        ]
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Ldap.AddRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ldap:// or ldaps:// URL of the directory server.",
+            "x-checked-in-code": "api/ldap_client.js: the scheme is ldap or ldaps (ELDAPBADURL), the port is in ldapAllowedPorts (ELDAPPORTNOTALLOWED), the address passes the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+            }
+          },
+          "bindDn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bind DN. Absent, null or empty is an anonymous bind.",
+            "x-passthrough": true
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The simple-bind password. Never echoed; its length is.",
+            "x-passthrough": true
+          },
+          "rejectUnauthorized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit false turns off certificate verification on ldaps."
+          },
+          "dn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The DN of the entry to create.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: an empty DN is refused (ELDAPNODN)"
+          },
+          "attributes": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Attribute name to a value or an array of values, each sent as text.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: at least one attribute (ELDAPNOATTRIBUTES)"
+          }
+        },
+        "description": "An add (RFC 4511 section 4.7)."
+      },
+      "Ldap.Answer": {
+        "type": "object",
+        "required": [
+          "operation",
+          "ok",
+          "result",
+          "diagnosticMessage",
+          "target",
+          "bind",
+          "timing"
+        ],
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "bind",
+              "search",
+              "add",
+              "delete",
+              "modify",
+              "modifyDN",
+              "compare"
+            ]
+          },
+          "ok": {
+            "type": "boolean"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ldap.ResultCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagnosticMessage": {
+            "type": "string"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Ldap.Target"
+          },
+          "bind": {
+            "$ref": "#/components/schemas/Ldap.BindReport"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/Ldap.Timing"
+          },
+          "request": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "What was sent, as this service understood it."
+          },
+          "stoppedAt": {
+            "type": "string",
+            "enum": [
+              "bind"
+            ]
+          },
+          "operationMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Ldap.Entry"
+            }
+          },
+          "entryCount": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "truncated": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "matched": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "What the directory said. `ok` is false for every result code but success\n(and, for a compare, compareTrue and compareFalse, which are both answers);\n`stoppedAt: \"bind\"` says the bind was refused and nothing followed it."
+      },
+      "Ldap.BindReport": {
+        "type": "object",
+        "required": [
+          "dn",
+          "anonymous",
+          "passwordChars",
+          "result"
+        ],
+        "properties": {
+          "dn": {
+            "type": "string"
+          },
+          "anonymous": {
+            "type": "boolean"
+          },
+          "passwordChars": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Ldap.ResultCode"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "The bind that preceded the operation. The password is never echoed."
+      },
+      "Ldap.Change": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "add, delete or replace, any case.",
+            "x-checked-in-code": "api/ldap_client.js: add, delete or replace (ELDAPBADCHANGE)"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The attribute changed.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: required (ELDAPBADCHANGE)"
+          },
+          "values": {
+            "description": "A value or an array of values, each sent as text.",
+            "x-passthrough": true
+          }
+        },
+        "description": "One change of a modify."
+      },
+      "Ldap.CompareRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ldap:// or ldaps:// URL of the directory server.",
+            "x-checked-in-code": "api/ldap_client.js: the scheme is ldap or ldaps (ELDAPBADURL), the port is in ldapAllowedPorts (ELDAPPORTNOTALLOWED), the address passes the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+            }
+          },
+          "bindDn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bind DN. Absent, null or empty is an anonymous bind.",
+            "x-passthrough": true
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The simple-bind password. Never echoed; its length is.",
+            "x-passthrough": true
+          },
+          "rejectUnauthorized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit false turns off certificate verification on ldaps."
+          },
+          "dn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The DN of the entry.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: dn and attribute are both required (ELDAPNODN)"
+          },
+          "attribute": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The attribute compared.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: dn and attribute are both required (ELDAPNODN)"
+          },
+          "value": {
+            "description": "The value it is compared against.",
+            "x-passthrough": true
+          }
+        },
+        "description": "A compare (RFC 4511 section 4.10)."
+      },
+      "Ldap.Connection": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ldap:// or ldaps:// URL of the directory server.",
+            "x-checked-in-code": "api/ldap_client.js: the scheme is ldap or ldaps (ELDAPBADURL), the port is in ldapAllowedPorts (ELDAPPORTNOTALLOWED), the address passes the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+            }
+          },
+          "bindDn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bind DN. Absent, null or empty is an anonymous bind.",
+            "x-passthrough": true
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The simple-bind password. Never echoed; its length is.",
+            "x-passthrough": true
+          },
+          "rejectUnauthorized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit false turns off certificate verification on ldaps."
+          }
+        },
+        "description": "The connection and the simple bind every operation starts with."
+      },
+      "Ldap.DeleteRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ldap:// or ldaps:// URL of the directory server.",
+            "x-checked-in-code": "api/ldap_client.js: the scheme is ldap or ldaps (ELDAPBADURL), the port is in ldapAllowedPorts (ELDAPPORTNOTALLOWED), the address passes the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+            }
+          },
+          "bindDn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bind DN. Absent, null or empty is an anonymous bind.",
+            "x-passthrough": true
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The simple-bind password. Never echoed; its length is.",
+            "x-passthrough": true
+          },
+          "rejectUnauthorized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit false turns off certificate verification on ldaps."
+          },
+          "dn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The DN of the entry to remove.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: an empty DN is refused (ELDAPNODN)"
+          }
+        },
+        "description": "A delete (RFC 4511 section 4.8)."
+      },
+      "Ldap.Entry": {
+        "type": "object",
+        "required": [
+          "dn",
+          "attributes"
+        ],
+        "properties": {
+          "dn": {
+            "type": "string"
+          },
+          "attributes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "One entry of a search, flattened: each attribute's values as text."
+      },
+      "Ldap.Failure": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "A refusal or a network failure. `code` names which (ELDAP...)."
+      },
+      "Ldap.Limits": {
+        "type": "object",
+        "required": [
+          "allowedPorts",
+          "addressPolicyEnabled",
+          "schemes",
+          "scopes",
+          "modifyOperations",
+          "followsReferrals",
+          "startTls",
+          "saslMechanisms",
+          "limits"
+        ],
+        "properties": {
+          "allowedPorts": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "any"
+                ]
+              }
+            ],
+            "description": "The ports a URL may name, or \"any\"."
+          },
+          "addressPolicyEnabled": {
+            "type": "boolean"
+          },
+          "schemes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "modifyOperations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "followsReferrals": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "A referral is recorded, never followed."
+          },
+          "startTls": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "saslMechanisms": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "connectTimeout": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "callTimeout": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "maxResultBytes": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "maxEntries": {
+                "type": "integer",
+                "format": "int64"
+              }
+            },
+            "required": [
+              "connectTimeout",
+              "callTimeout",
+              "maxResultBytes",
+              "maxEntries"
+            ]
+          }
+        },
+        "description": "What the LDAP client will and will not do."
+      },
+      "Ldap.ModifyDnRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ldap:// or ldaps:// URL of the directory server.",
+            "x-checked-in-code": "api/ldap_client.js: the scheme is ldap or ldaps (ELDAPBADURL), the port is in ldapAllowedPorts (ELDAPPORTNOTALLOWED), the address passes the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+            }
+          },
+          "bindDn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bind DN. Absent, null or empty is an anonymous bind.",
+            "x-passthrough": true
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The simple-bind password. Never echoed; its length is.",
+            "x-passthrough": true
+          },
+          "rejectUnauthorized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit false turns off certificate verification on ldaps."
+          },
+          "dn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The DN of the entry to rename.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: dn and newRdn are both required (ELDAPNODN)"
+          },
+          "newRdn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its new relative DN.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: dn and newRdn are both required (ELDAPNODN)"
+          },
+          "newSuperior": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A new parent DN, to move the entry as well.",
+            "x-passthrough": true
+          }
+        },
+        "description": "A modifyDN (RFC 4511 section 4.9): a rename, or a move as well."
+      },
+      "Ldap.ModifyRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ldap:// or ldaps:// URL of the directory server.",
+            "x-checked-in-code": "api/ldap_client.js: the scheme is ldap or ldaps (ELDAPBADURL), the port is in ldapAllowedPorts (ELDAPPORTNOTALLOWED), the address passes the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+            }
+          },
+          "bindDn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bind DN. Absent, null or empty is an anonymous bind.",
+            "x-passthrough": true
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The simple-bind password. Never echoed; its length is.",
+            "x-passthrough": true
+          },
+          "rejectUnauthorized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit false turns off certificate verification on ldaps."
+          },
+          "dn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The DN of the entry to change.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: an empty DN is refused (ELDAPNODN)"
+          },
+          "changes": {
+            "description": "The changes, applied in order.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/ldap_client.js: at least one (ELDAPNOCHANGES); each is checked as Change says"
+          }
+        },
+        "description": "A modify (RFC 4511 section 4.6), which is also how membership changes."
+      },
+      "Ldap.ResultCode": {
+        "type": "object",
+        "required": [
+          "code",
+          "name"
+        ],
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int32"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "description": "An LDAP result code, with ldapjs's name for it."
+      },
+      "Ldap.SearchRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "ldap:// or ldaps:// URL of the directory server.",
+            "x-checked-in-code": "api/ldap_client.js: the scheme is ldap or ldaps (ELDAPBADURL), the port is in ldapAllowedPorts (ELDAPPORTNOTALLOWED), the address passes the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "url is required, and must be an ldap:// or ldaps:// URL naming the directory server."
+            }
+          },
+          "bindDn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The bind DN. Absent, null or empty is an anonymous bind.",
+            "x-passthrough": true
+          },
+          "password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The simple-bind password. Never echoed; its length is.",
+            "x-passthrough": true
+          },
+          "rejectUnauthorized": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only an explicit false turns off certificate verification on ldaps."
+          },
+          "baseDn": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The search base. Empty is the root DSE.",
+            "x-passthrough": true
+          },
+          "scope": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "base, one or sub, any case. Absent is sub.",
+            "x-checked-in-code": "api/ldap_client.js: base, one or sub, compared case-insensitively (ELDAPBADSCOPE)"
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An RFC 4515 filter, sent as written. Absent is (objectClass=*).",
+            "x-passthrough": true
+          },
+          "attributes": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The attributes to return. Empty is all user attributes.",
+            "x-passthrough": true
+          },
+          "sizeLimit": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The client's own cap on entries, below ldapMaxEntries.",
+            "x-checked-in-code": "api/ldap_client.js: parsed as an integer; anything not a positive integer means ldapMaxEntries"
+          }
+        },
+        "description": "A search (RFC 4511 section 4.5)."
+      },
+      "Ldap.Target": {
+        "type": "object",
+        "required": [
+          "url",
+          "host",
+          "address",
+          "port",
+          "secure",
+          "resolved"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "secure": {
+            "type": "boolean"
+          },
+          "resolved": {
+            "type": "boolean"
+          }
+        },
+        "description": "Where the connection went."
+      },
+      "Ldap.Timing": {
+        "type": "object",
+        "required": [
+          "totalMs",
+          "connectMs",
+          "bindMs"
+        ],
+        "properties": {
+          "totalMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "connectMs": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "bindMs": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "Split rather than summed: a slow connect is the network, a slow bind is\nthe directory deciding."
+      },
+      "ModelRefusal": {
+        "type": "object",
+        "required": [
+          "error",
+          "code"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "EMODELREQUEST"
+            ]
+          }
+        },
+        "description": "The validator's own refusal: the body was not the JSON shape this\noperation takes. `code` is always EMODELREQUEST, and `error` names the\nmember and what was wrong with it."
+      },
+      "Refusal": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "A request this service refused, or a call it could not complete. `error`\nis a sentence for a person; `code`, where the endpoint has one, is the\nstable name a caller branches on."
+      },
+      "Service.Health": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "enum": [
+              "Success"
+            ]
+          }
+        },
+        "description": "The liveness answer."
+      },
+      "Service.ModelGap": {
+        "type": "object",
+        "required": [
+          "operationId",
+          "status",
+          "instancePath",
+          "keyword",
+          "message",
+          "count"
+        ],
+        "properties": {
+          "operationId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "instancePath": {
+            "type": "string"
+          },
+          "keyword": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "description": "One answer that did not match its operation's response schema. Recorded\nonly where `validateResponses` is on, which is a test configuration; the\nanswer itself was sent unchanged. No member value is recorded, only where\nthe schema and the answer disagreed, because an answer can carry a token."
+      },
+      "Service.ModelGaps": {
+        "type": "object",
+        "required": [
+          "validateResponses",
+          "gaps"
+        ],
+        "properties": {
+          "validateResponses": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "gaps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Service.ModelGap"
+            }
+          }
+        },
+        "description": "Every recorded gap since the process started."
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "The api's own origin. Embedded, it is the debugger's origin + /api.",
+      "variables": {}
+    }
+  ]
+}
