@@ -188,6 +188,9 @@
               }
             }
           },
+          "304": {
+            "description": "The client has made a conditional request and the resource has not been modified."
+          },
           "307": {
             "description": "What the far end answered, relayed with its own status.",
             "content": {
