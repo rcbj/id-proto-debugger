@@ -31,6 +31,9 @@
 //  6. THE EMBEDDED CONTRACT. Every variable models/contract/ declares is
 //     read in the file it names, and every process.env.DEBUGGER_* the tree
 //     reads is declared.
+//  7. THE OAUTH CATALOGUE. The tables client/src/op_metadata.js and
+//     client/src/rp_metadata_choices.js export are exactly the rows
+//     models/catalog/oauth.tsp generates into client/src/catalog/.
 //
 // Node only — no browser, no services — so it never skips. In the tests image
 // the source is /usr/src/source-tree (tests/Dockerfile), with models/'s own
@@ -453,6 +456,53 @@ function embeddedContract() {
   log.debug("Leaving embeddedContract().");
 }
 
+// The JSON a catalogue generates, read from the tree rather than required,
+// so the comparison is against the file on disk and not a cached module.
+function catalogJson(name) {
+  log.debug("Entering catalogJson(). " + name);
+  const file = path.join(ROOT, "client", "src", "catalog", name + ".json");
+  const rows = JSON.parse(fs.readFileSync(file, "utf8"));
+  log.debug("Leaving catalogJson().");
+  return rows;
+}
+
+function oauthCatalogue() {
+  log.debug("Entering oauthCatalogue().");
+  log.info("=== 7. the OAuth metadata tables are the generated catalogue ===");
+  const src = path.join(ROOT, "client", "src");
+  // Through module_paths, so bunyan and jws.js's dependencies resolve from
+  // tests/node_modules in the tests image, where source-tree has none.
+  const op = paths.requireSharedModule([path.join(src, "op_metadata.js")],
+    "client/src/op_metadata.js");
+  const rp = paths.requireSharedModule(
+    [path.join(src, "rp_metadata_choices.js")],
+    "client/src/rp_metadata_choices.js");
+  const pairs = [
+    ["op_metadata.js OP_METADATA", op.OP_METADATA, "op_metadata"],
+    ["op_metadata.js AS_ONLY_METADATA", op.AS_ONLY_METADATA,
+     "as_only_metadata"],
+    ["rp_metadata_choices.js CHOICES", rp.CHOICES, "rp_metadata_choices"],
+    ["rp_metadata_choices.js NOT_CLIENT_CHOICES", rp.NOT_CLIENT_CHOICES,
+     "rp_not_client_choices"]
+  ];
+  pairs.forEach(function (pair) {
+    assert.deepStrictEqual(pair[1], catalogJson(pair[2]), pair[0] +
+      " is not client/src/catalog/" + pair[2] + ".json. Edit " +
+      "models/catalog/oauth.tsp and regenerate, never the module.");
+  });
+  assert.deepStrictEqual(op.ALL_METADATA,
+    op.OP_METADATA.concat(op.AS_ONLY_METADATA),
+    "op_metadata.js ALL_METADATA is not OP_METADATA then AS_ONLY_METADATA.");
+  assert.strictEqual(rp.CHOICES.length, 19,
+    "RP Metadata Choices 1.0 section 2 has nineteen members, not " +
+    rp.CHOICES.length + ".");
+  log.info("[oauth] OK — " + pairs.length + " tables, " +
+           (op.ALL_METADATA.length + rp.CHOICES.length +
+            rp.NOT_CLIENT_CHOICES.length) + " rows, each the generated " +
+           "catalogue.");
+  log.debug("Leaving oauthCatalogue().");
+}
+
 function main() {
   log.debug("Entering main().");
   current();
@@ -461,6 +511,7 @@ function main() {
   configurations();
   storageModel();
   embeddedContract();
+  oauthCatalogue();
   log.info("The abstract data model is current, live, strict and obeyed.");
   log.debug("Leaving main().");
 }

@@ -50,75 +50,12 @@ var log = bunyan.createLogger({
 // and checks against those URIs. This client cannot publish one, so it
 // stops offering pairwise rather than naming a document nobody serves.
 
-// Section 3. These names are discovery metadata, not client metadata.
-var NOT_CLIENT_CHOICES = [
-  "revocation_endpoint_auth_methods_supported",
-  "introspection_endpoint_auth_methods_supported"
-];
-
-// The nineteen members in section 2, in the order that section lists the
-// families. `from` is the specification that defines the partner.
-var CHOICES = [
-  { choice: "subject_types_supported",
-    partner: "subject_type",
-    from: "OpenID Connect Core 1.0" },
-  { choice: "id_token_signing_alg_values_supported",
-    partner: "id_token_signed_response_alg",
-    from: "OpenID Connect Dynamic Client Registration 1.0" },
-  { choice: "id_token_encryption_alg_values_supported",
-    partner: "id_token_encrypted_response_alg",
-    from: "OpenID Connect Dynamic Client Registration 1.0" },
-  { choice: "id_token_encryption_enc_values_supported",
-    partner: "id_token_encrypted_response_enc",
-    from: "OpenID Connect Dynamic Client Registration 1.0" },
-  { choice: "userinfo_signing_alg_values_supported",
-    partner: "userinfo_signed_response_alg",
-    from: "OpenID Connect Core 1.0 section 5.3.2" },
-  { choice: "userinfo_encryption_alg_values_supported",
-    partner: "userinfo_encrypted_response_alg",
-    from: "OpenID Connect Core 1.0 section 5.3.2" },
-  { choice: "userinfo_encryption_enc_values_supported",
-    partner: "userinfo_encrypted_response_enc",
-    from: "OpenID Connect Core 1.0 section 5.3.2" },
-  { choice: "request_object_signing_alg_values_supported",
-    partner: "request_object_signing_alg",
-    from: "OpenID Connect Dynamic Client Registration 1.0" },
-  { choice: "request_object_encryption_alg_values_supported",
-    partner: "request_object_encryption_alg",
-    from: "OpenID Connect Dynamic Client Registration 1.0" },
-  { choice: "request_object_encryption_enc_values_supported",
-    partner: "request_object_encryption_enc",
-    from: "OpenID Connect Dynamic Client Registration 1.0" },
-  { choice: "token_endpoint_auth_methods_supported",
-    partner: "token_endpoint_auth_method",
-    from: "OpenID Connect Dynamic Client Registration 1.0" },
-  { choice: "token_endpoint_auth_signing_alg_values_supported",
-    partner: "token_endpoint_auth_signing_alg",
-    from: "OpenID Connect Dynamic Client Registration 1.0" },
-  { choice: "backchannel_authentication_request_signing_alg_" +
-        "values_supported",
-    partner: "backchannel_authentication_request_signing_alg",
-    from: "OpenID Connect Client-Initiated Backchannel " +
-        "Authentication" },
-  { choice: "authorization_signing_alg_values_supported",
-    partner: "authorization_signed_response_alg",
-    from: "JWT Secured Authorization Response Mode" },
-  { choice: "authorization_encryption_alg_values_supported",
-    partner: "authorization_encrypted_response_alg",
-    from: "JWT Secured Authorization Response Mode" },
-  { choice: "authorization_encryption_enc_values_supported",
-    partner: "authorization_encrypted_response_enc",
-    from: "JWT Secured Authorization Response Mode" },
-  { choice: "introspection_signing_alg_values_supported",
-    partner: "introspection_signed_response_alg",
-    from: "RFC 9701" },
-  { choice: "introspection_encryption_alg_values_supported",
-    partner: "introspection_encrypted_response_alg",
-    from: "RFC 9701" },
-  { choice: "introspection_encryption_enc_values_supported",
-    partner: "introspection_encrypted_response_enc",
-    from: "RFC 9701" }
-];
+// The rows are models/catalog/oauth.tsp, generated into ./catalog/.
+// NOT_CLIENT_CHOICES: section 3, discovery metadata, not client metadata.
+// CHOICES: the nineteen members of section 2, each with its partner and the
+// specification that defines the partner.
+var NOT_CLIENT_CHOICES = require("./catalog/rp_not_client_choices.json");
+var CHOICES = require("./catalog/rp_metadata_choices.json");
 
 // Header `alg` values jws.js can verify, except `none`. algIds() returns
 // table keys, and EdDSA is two keys with one header value, so the wire
