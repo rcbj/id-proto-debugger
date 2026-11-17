@@ -378,6 +378,13 @@ COPY tests/sd_jwt_vc_engine.js ./
 # iya-sts, and their engine (client/src/vp_protocols.js, read from
 # /usr/src/source-tree) in node.
 COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
+# The debugger as an OpenID4VP Verifier (client/src/vp_verifier.js, read
+# from /usr/src/source-tree); it also requires mdoc_test_issuer.js, copied
+# below.
+COPY tests/vp_verifier_engine.js ./
+# The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
+# browser, with node playing the wallet.
+COPY tests/vc_verifier_page.js ./
 COPY tests/vc_presentation_polaris.js ./
 # ISO mdoc: the engine test and the test issuer it and
 # vc_presentation_protocols.js require (a shared module, scheduled by nothing).
@@ -942,6 +949,9 @@ COPY api/ssf_proxy.js api/ssf_receiver.js ./
 # The OpenID4VP relay (POST /oid4vp/call) and its engine test. The module
 # requires ssf_proxy.js, copied flat on the line above.
 COPY api/oid4vp_proxy.js tests/api_oid4vp_proxy.js ./
+# The Verifier role's sessions (#364): the module, decision-only like the
+# two above, and its test, which drives it flat and the routes over HTTP.
+COPY api/oid4vp_verifier.js tests/api_oid4vp_verifier.js ./
 # api/server.js, as TEXT for api_oid4vp_proxy.js's route checks (that the
 # handler sets every outbound cap and uses both guarded agents), so they run
 # in the image and in CI and not only in a checkout. Renamed off .js so

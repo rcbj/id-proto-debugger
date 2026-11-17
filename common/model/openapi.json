@@ -1847,6 +1847,565 @@
         ]
       }
     },
+    "/oid4vp/verifier": {
+      "post": {
+        "operationId": "oid4vpVerifierCreate",
+        "description": "Create a Verifier session.",
+        "parameters": [],
+        "responses": {
+          "201": {
+            "description": "The request has succeeded and a new resource has been created as a result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.VerifierCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Oid4vp.PageError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Access is forbidden.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Oid4vp.VerifierCreateRequest"
+              }
+            }
+          }
+        },
+        "x-checked-in-code": "api/oid4vp_verifier.js: oid4vpVerifierEnabled (403), oid4vpVerifierMaxSessions and oid4vpVerifierMaxSessionsPerCaller, counted by the caller's address (400)"
+      }
+    },
+    "/oid4vp/verifier/limits": {
+      "get": {
+        "operationId": "oid4vpVerifierLimits",
+        "description": "What the Verifier role will hold. A static deployment has no api and\ngets no answer, which is how the page knows.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.VerifierLimits"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ]
+      }
+    },
+    "/oid4vp/verifier/{id}": {
+      "delete": {
+        "operationId": "oid4vpVerifierDelete",
+        "description": "Delete a session.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "deleted": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "ok",
+                    "deleted"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A page call without the session's secret.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ]
+      }
+    },
+    "/oid4vp/verifier/{id}/ca": {
+      "get": {
+        "operationId": "oid4vpVerifierCa",
+        "description": "The Verifier's root CA certificate, at the leaf's AIA caIssuers URL.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/pkix-cert": {
+                "schema": {
+                  "contentMediaType": "application/pkix-cert"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.WalletError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ]
+      }
+    },
+    "/oid4vp/verifier/{id}/events": {
+      "get": {
+        "operationId": "oid4vpVerifierEvents",
+        "description": "What Wallets did since `after`. A cursor, not a destructive read.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "description": "The `next` of the previous call. Not a number, or negative, is 0.",
+            "schema": {
+              "type": "string"
+            },
+            "x-checked-in-code": "api/oid4vp_verifier.js: read with Number(); anything not a finite non-negative number is 0",
+            "explode": false
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.VerifierEvents"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A page call without the session's secret.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ]
+      }
+    },
+    "/oid4vp/verifier/{id}/request": {
+      "put": {
+        "operationId": "oid4vpVerifierPublish",
+        "description": "Publish the signed Request Object and the CA certificate.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Oid4vp.PageError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A page call without the session's secret.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Oid4vp.VerifierPublishRequest"
+              }
+            }
+          }
+        },
+        "x-checked-in-code": "api/oid4vp_verifier.js: the session exists (404), the Bearer secret is its own (401)"
+      },
+      "get": {
+        "operationId": "oid4vpVerifierRequestGet",
+        "description": "A Wallet fetches the Request Object (section 5.7).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/oauth-authz-req+jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.WalletError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ]
+      },
+      "post": {
+        "operationId": "oid4vpVerifierRequestPost",
+        "description": "A Wallet fetches the Request Object by POST, request_uri_method=post\n(section 5.10), carrying wallet_metadata and wallet_nonce.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/oauth-authz-req+jwt": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.WalletError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oid4vp/verifier/{id}/response": {
+      "post": {
+        "operationId": "oid4vpVerifierResponse",
+        "description": "A Wallet's answer (section 8.2), kept field by field as it arrived.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "redirect_uri": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Oid4vp.WalletError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.WalletError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {}
+              }
+            }
+          }
+        },
+        "x-checked-in-code": "api/oid4vp_verifier.js: the session exists (404); the body is a form or a JSON object, at most oid4vpVerifierMaxResponseBytes (400)"
+      }
+    },
     "/otp/limits": {
       "get": {
         "operationId": "otpLimits",
@@ -8747,6 +9306,18 @@
         },
         "description": "What the OpenID4VP proxy will and will not do."
       },
+      "Oid4vp.PageError": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "description": "A refusal to the PAGE."
+      },
       "Oid4vp.Refused": {
         "type": "object",
         "required": [
@@ -8790,6 +9361,314 @@
           }
         },
         "description": "The Verifier could not be reached. `code` is the network error's."
+      },
+      "Oid4vp.VerifierCreateRequest": {
+        "type": "object",
+        "properties": {
+          "redirectUri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The redirect_uri answered to a Wallet's post (section 8.2).",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/oid4vp_verifier.js: at most 4096 characters, no line break"
+          },
+          "ttlMs": {
+            "anyOf": [
+              {
+                "type": "number",
+                "format": "double"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The session's absolute lifetime, ms.",
+            "x-checked-in-code": "api/oid4vp_verifier.js: a positive whole number, at most oid4vpVerifierTtlMs"
+          },
+          "idleTtlMs": {
+            "anyOf": [
+              {
+                "type": "number",
+                "format": "double"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The session's lifetime untouched, ms.",
+            "x-checked-in-code": "api/oid4vp_verifier.js: a positive whole number, at most oid4vpVerifierIdleTtlMs"
+          }
+        },
+        "description": "A Verifier session, as the page asks for one."
+      },
+      "Oid4vp.VerifierCreated": {
+        "type": "object",
+        "required": [
+          "id",
+          "secret",
+          "requestUri",
+          "responseUri",
+          "caIssuersUrl",
+          "expiresAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "32 hex digits."
+          },
+          "secret": {
+            "type": "string",
+            "description": "32 hex digits: `Authorization: Bearer <secret>` on every page call."
+          },
+          "requestUri": {
+            "type": "string"
+          },
+          "responseUri": {
+            "type": "string"
+          },
+          "caIssuersUrl": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string",
+            "description": "The sooner of the two expiries."
+          }
+        },
+        "description": "A new session and the three URLs a Wallet reaches it at."
+      },
+      "Oid4vp.VerifierEvent": {
+        "type": "object",
+        "required": [
+          "seq",
+          "at",
+          "kind"
+        ],
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "format": "int32",
+            "description": "From 0, never reused; what `after` counts."
+          },
+          "at": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "description": "request-fetched, ca-fetched, response or response-refused."
+          },
+          "method": {
+            "type": "string"
+          },
+          "contentType": {
+            "type": "string",
+            "description": "The Content-Type header as the Wallet sent it."
+          },
+          "fields": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The answer's fields, each the text that arrived."
+          },
+          "walletMetadata": {
+            "description": "request_uri_method=post: wallet_metadata, parsed when it is JSON."
+          },
+          "walletNonce": {},
+          "remoteAddress": {
+            "type": "string"
+          },
+          "problem": {
+            "type": "string",
+            "description": "Why something that arrived was not kept."
+          }
+        },
+        "description": "One thing a Wallet did."
+      },
+      "Oid4vp.VerifierEvents": {
+        "type": "object",
+        "required": [
+          "events",
+          "next",
+          "dropped",
+          "expiresAt"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Oid4vp.VerifierEvent"
+            }
+          },
+          "next": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The cursor for the next call: how many events were ever recorded."
+          },
+          "dropped": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many were dropped by the caps."
+          },
+          "expiresAt": {
+            "type": "string"
+          }
+        },
+        "description": "What Wallets did since the cursor."
+      },
+      "Oid4vp.VerifierLimits": {
+        "type": "object",
+        "required": [
+          "enabled",
+          "ttlMs",
+          "idleTtlMs",
+          "maxSessions",
+          "maxSessionsPerCaller",
+          "maxEvents",
+          "maxResponseBytes",
+          "maxRequestObjectBytes",
+          "maxSessionBytes",
+          "held",
+          "requestObjectMediaType",
+          "caMediaType",
+          "verifies",
+          "note"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "ttlMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "idleTtlMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxSessions": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxSessionsPerCaller": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxEvents": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxResponseBytes": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxRequestObjectBytes": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxSessionBytes": {
+            "type": "number",
+            "format": "double"
+          },
+          "held": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many sessions this process holds now."
+          },
+          "requestObjectMediaType": {
+            "type": "string",
+            "enum": [
+              "application/oauth-authz-req+jwt"
+            ]
+          },
+          "caMediaType": {
+            "type": "string",
+            "enum": [
+              "application/pkix-cert"
+            ]
+          },
+          "verifies": {
+            "type": "boolean",
+            "enum": [
+              false
+            ],
+            "description": "This service verifies nothing a Wallet sends."
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "description": "The Verifier role's bounds, and whether this service hosts it."
+      },
+      "Oid4vp.VerifierPublishRequest": {
+        "type": "object",
+        "properties": {
+          "requestObject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The signed Request Object, a compact JWS.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/oid4vp_verifier.js: required, three base64url segments, at most oid4vpVerifierMaxRequestObjectBytes"
+          },
+          "caCertificate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The root CA certificate served at caIssuersUrl: base64 DER, or PEM.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/oid4vp_verifier.js: base64 that decodes to a DER SEQUENCE, at most oid4vpVerifierMaxRequestObjectBytes"
+          },
+          "redirectUri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Replaces the redirect_uri the session was created with.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/oid4vp_verifier.js: at most 4096 characters, no line break"
+          }
+        },
+        "description": "What the page signed, to be served at request_uri."
+      },
+      "Oid4vp.WalletError": {
+        "type": "object",
+        "required": [
+          "error",
+          "error_description"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_description": {
+            "type": "string"
+          }
+        },
+        "description": "A refusal to a WALLET, in OAuth's shape."
       },
       "Otp.Limits": {
         "type": "object",

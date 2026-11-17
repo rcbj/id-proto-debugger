@@ -200,6 +200,7 @@ const BUNDLES = [
   ['vc_presentation_1', 'vcpresentation1'],
   ['vc_presentation_2', 'vcpresentation2'],
   ['vc_presentation_3', 'vcpresentation3'],
+  ['vc_verifier', 'vcverifier'],
   ['did_tools', 'didtools'],
   ['webauthn_lab', 'webauthnlab'],
   ['webauthn_analyzer', 'webauthnanalyzer'],

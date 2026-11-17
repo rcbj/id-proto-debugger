@@ -130,6 +130,35 @@ model ApiConfig {
   ssfReceiverMaxEventBytes?: int32;
   ssfReceiverMaxInboxBytes?: int32;
 
+  // --- The OpenID4VP Verifier role (api/oid4vp_verifier.js) ---------------
+
+  /** Host Verifier sessions (request_uri, response_uri). Only false is off. */
+  oid4vpVerifierEnabled?: boolean;
+
+  /** A session's absolute lifetime, ms: the default and the ceiling. */
+  oid4vpVerifierTtlMs?: int32;
+
+  /** A session's lifetime untouched, ms: the default and the ceiling. */
+  oid4vpVerifierIdleTtlMs?: int32;
+
+  /** Sessions held in all. */
+  oid4vpVerifierMaxSessions?: int32;
+
+  /** Sessions one caller's address may hold. */
+  oid4vpVerifierMaxSessionsPerCaller?: int32;
+
+  /** Events kept per session, oldest dropped. */
+  oid4vpVerifierMaxEvents?: int32;
+
+  /** The largest Wallet answer (or request_uri POST body) kept, bytes. */
+  oid4vpVerifierMaxResponseBytes?: int32;
+
+  /** Bytes of Wallet answers one session holds, oldest dropped first. */
+  oid4vpVerifierMaxSessionBytes?: int32;
+
+  /** The largest Request Object or CA certificate a page may publish. */
+  oid4vpVerifierMaxRequestObjectBytes?: int32;
+
   // --- Hardware -----------------------------------------------------------
 
   /** Open the PC/SC reader (docker-compose-smartcard.yml). */

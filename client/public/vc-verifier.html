@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>OAuth2 &amp; OpenID Connect Debugger — VC Presentation (the Verifier)</title>
+    <link href="/css/bootstrap.css" rel="stylesheet">
+    <link href="/css/header.css" rel="stylesheet">
+    <link href="/css/bottom.css" rel="stylesheet">
+    <link href="/css/footer.css" rel="stylesheet">
+    <link href="/css/common.css" rel="stylesheet">
+    <link href="/css/bootstrap-responsive.css" rel="stylesheet">
+    <link href="/css/debugger.css" rel="stylesheet">
+    <link href="/css/sd_jwt_vc.css" rel="stylesheet">
+  </head>
+
+  <body>
+
+<div class="header_debugger">
+<!--#include file="/partials/header.html"-->
+</div>
+
+    <div class="container">
+
+<script type="text/javascript" src="/js/vc_verifier.js">
+</script>
+
+<p class="vc-return"><a id="return_link" href="/vc-presentation-0.html">&larr; The VC presentation workflow</a></p>
+
+<h3 class="vc-title">VC Presentation &mdash; the debugger as the Verifier</h3>
+
+<p class="vc-intro">Here the debugger is the <strong>Verifier</strong> of
+<a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html" target="_blank" rel="noopener noreferrer">OpenID for Verifiable Presentations 1.0</a>:
+it asks a wallet for claims and checks what comes back. You compose a
+<a href="https://openid.net/specs/openid-4-verifiable-presentations-1_0.html#name-digital-credentials-query-l" target="_blank" rel="noopener noreferrer">DCQL</a>
+query, the page signs the Authorization Request with a certificate it makes for this run, and you hand the request
+to a wallet. The wallet posts its answer to a <code>response_uri</code> this debugger's api hosts on the page's
+behalf, because a page cannot receive a POST. Every check on the answer is reported on its own line. The other
+side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-0.html">the presentation workflow</a>.</p>
+
+<p class="vc-note vc-status" id="vpv_api_status">&nbsp;</p>
+
+<!-- ============ 1. What to ask for ============ -->
+<div class="dbg-pane" id="pane_query">
+  <legend class="dbg-legend" onclick="return vcverifier.togglePane('query_fieldset');">1. What to ask for</legend>
+  <fieldset id="query_fieldset" style="display: block;">
+    <p class="vc-note">One credential query. The DCQL below is generated from these fields and stays editable, so
+    a second query or <code>credential_sets</code> can be written by hand.</p>
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><label for="vpv_query_id">Credential query id</label></td>
+          <td><input type="text" id="vpv_query_id" size="30" value="credential"
+                     onchange="return vcverifier.regenerateDcql();" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_format">Format</label></td>
+          <td><select id="vpv_format" onchange="return vcverifier.formatChanged();">
+                <option value="dc+sd-jwt">dc+sd-jwt (SD-JWT VC)</option>
+                <option value="jwt_vc_json">jwt_vc_json (W3C VC as a JWT)</option>
+                <option value="mso_mdoc">mso_mdoc (ISO mdoc)</option>
+                <option value="ldp_vc">ldp_vc (W3C VC with a Data Integrity proof)</option>
+              </select></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_type" id="vpv_type_label">vct</label></td>
+          <td><input type="text" id="vpv_type" size="60"
+                     placeholder="urn:eudi:pid:1  (several, separated by spaces)"
+                     onchange="return vcverifier.regenerateDcql();" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_claims">Claims (one path per line)</label></td>
+          <td><textarea id="vpv_claims" rows="4" cols="60"
+                        placeholder="given_name&#10;address.country"
+                        onchange="return vcverifier.regenerateDcql();"></textarea>
+              <span class="vc-note">Segments separated by dots; a number is an array index and * is every
+              element. For an mdoc, the first segment is the namespace.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_binding">Holder binding</label></td>
+          <td><label><input type="checkbox" id="vpv_binding" checked="checked"
+                            onchange="return vcverifier.regenerateDcql();" />
+              require cryptographic holder binding (a Key Binding JWT, a signed VP, a device signature)</label></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_dcql">DCQL query</label></td>
+          <td><textarea id="vpv_dcql" class="vc-mono" rows="10" cols="80"></textarea>
+              <span class="vc-status" id="vpv_dcql_status">&nbsp;</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ 2. How to ask ============ -->
+<div class="dbg-pane" id="pane_request">
+  <legend class="dbg-legend" onclick="return vcverifier.togglePane('request_fieldset');">2. How to ask</legend>
+  <fieldset id="request_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><label for="vpv_client_prefix">Client Identifier prefix</label></td>
+          <td><select id="vpv_client_prefix" onchange="return vcverifier.settingsChanged();">
+                <option value="x509_hash">x509_hash (the hash of the request's certificate)</option>
+                <option value="x509_san_dns">x509_san_dns (a DNS name in the certificate)</option>
+                <option value="redirect_uri">redirect_uri (an unsigned request)</option>
+              </select>
+              <span class="vc-note">The certificate is made for this run: a root, and a leaf whose
+              subjectAltName is the api's host name and whose Authority Information Access points at the root,
+              which the api serves.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_response_mode">Response mode</label></td>
+          <td><select id="vpv_response_mode" onchange="return vcverifier.settingsChanged();">
+                <option value="direct_post">direct_post (a form POST to response_uri)</option>
+                <option value="direct_post.jwt">direct_post.jwt (the same, encrypted to a key made for this run)</option>
+              </select></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_delivery">Request delivery</label></td>
+          <td><select id="vpv_delivery" onchange="return vcverifier.settingsChanged();">
+                <option value="reference-get">by reference: request_uri, fetched with GET</option>
+                <option value="reference-post">by reference: request_uri_method=post</option>
+                <option value="value">by value: the signed Request Object in the link</option>
+              </select></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_scheme">Wallet invocation scheme</label></td>
+          <td><input type="text" id="vpv_scheme" size="30" value="openid4vp://"
+                     onchange="return vcverifier.settingsChanged();" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_redirect_uri">Send the wallet's browser to (optional)</label></td>
+          <td><input type="text" id="vpv_redirect_uri" size="60"
+                     placeholder="https://verifier.example/done"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Returned as <code>redirect_uri</code> in the answer to the wallet&rsquo;s
+              POST (section 8.2). Empty: none.</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      <input class="btn2" id="btn_vpv_create" type="button" value="Create the request"
+             onclick="return vcverifier.createRequest();" />
+      <input class="btn2" id="btn_vpv_reset" type="button" value="Start over"
+             onclick="return vcverifier.reset();" />
+      <span class="vc-status" id="vpv_create_status">&nbsp;</span>
+    </p>
+  </fieldset>
+</div>
+
+<!-- ============ 3. Hand it to a wallet ============ -->
+<div class="dbg-pane" id="pane_handoff">
+  <legend class="dbg-legend" onclick="return vcverifier.togglePane('handoff_fieldset');">3. Hand it to a wallet</legend>
+  <fieldset id="handoff_fieldset" style="display: block;">
+    <table border="0">
+      <tbody>
+        <tr>
+          <td><label for="vpv_invocation">Authorization Request</label></td>
+          <td><textarea id="vpv_invocation" class="vc-mono" rows="4" cols="80" readonly="readonly"></textarea>
+              <br/><a id="vpv_invocation_link" href="#" style="display: none;">Open it on this device</a></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_client_id">client_id</label></td>
+          <td><input type="text" id="vpv_client_id" size="80" readonly="readonly" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_request_uri">request_uri</label></td>
+          <td><input type="text" id="vpv_request_uri" size="80" readonly="readonly" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_response_uri">response_uri</label></td>
+          <td><input type="text" id="vpv_response_uri" size="80" readonly="readonly" /></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_request_object">Request Object (decoded)</label></td>
+          <td><textarea id="vpv_request_object" class="vc-mono" rows="12" cols="80" readonly="readonly"></textarea></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_root_pem">The Verifier's root certificate</label></td>
+          <td><textarea id="vpv_root_pem" class="vc-mono" rows="4" cols="80" readonly="readonly"></textarea>
+              <span class="vc-note">A wallet that does not follow Authority Information Access can be given
+              this as a trust anchor.</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ 4. What the wallet sent ============ -->
+<div class="dbg-pane" id="pane_response">
+  <legend class="dbg-legend" onclick="return vcverifier.togglePane('response_fieldset');">4. What the wallet sent, and every check on it</legend>
+  <fieldset id="response_fieldset" style="display: block;">
+    <p class="vc-note vc-status" id="vpv_wait_status">No request yet.</p>
+    <ol class="vc-mono" id="vpv_events"></ol>
+    <p class="vc-note">Or paste an answer the wallet produced (a form body, or its JSON) and check it against the
+    request above. This works without the api.</p>
+    <textarea id="vpv_pasted" class="vc-mono" rows="4" cols="80"
+              placeholder="vp_token=...&amp;state=...   or   response=eyJ..."></textarea>
+    <p><input class="btn2" id="btn_vpv_check" type="button" value="Check this answer"
+              onclick="return vcverifier.checkPasted();" /></p>
+    <div id="vpv_verdict" class="vc-note vc-status">&nbsp;</div>
+    <table class="vc-checks" id="vpv_checks"></table>
+    <h4 class="vc-subtitle">Disclosed claims</h4>
+    <pre class="vc-mono" id="vpv_claims_out"></pre>
+  </fieldset>
+</div>
+
+<link rel="apple-touch-icon" sizes="57x57" href="/apple-icon-57x57.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#ffffff">
+    </div>
+<div class="footer_debugger">
+<!--#include file="/partials/footer.html"-->
+</div>
+</body>
+</html>

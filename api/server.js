@@ -925,17 +925,41 @@ function publicBaseUrl(req) {
   return base;
 }
 
+/**
+ * body-parser's `verify` hook: keep the raw text of a body sent to
+ * /oid4vp/verifier/<id>/..., as req.oid4vpRawBody, for the Verifier
+ * session's Wallet-facing routes. Every other path is untouched.
+ *
+ * @param {object} req - the Express request.
+ * @param {object} res - unused.
+ * @param {Buffer} buf - the body as it arrived.
+ */
+function keepOid4vpVerifierBody(req, res, buf) {
+  log.debug("Entering keepOid4vpVerifierBody().");
+  if (/^\/oid4vp\/verifier\/[^/]+\/(request|response)(\?|$)/
+      .test(req.url || '')) {
+    req.oid4vpRawBody = buf.toString('utf8');
+  }
+  log.debug("Leaving keepOid4vpVerifierBody().");
+}
+
 // The JSON limit is an OUTER bound only. The caps that mean something are
 // scimMaxRequestBytes (1 MiB), ssfMaxRequestBytes and gnapMaxRequestBytes
 // (256 KiB each), enforced in their proxies where the answer can name the
 // setting. At body-parser's default of 100 KB none of them was reachable:
 // a body between 100 KB and the configured cap got body-parser's bare 413
 // instead of the documented refusal. Keep this above the largest of them.
-app.use(bodyParser.json({ limit: '5mb' }));
+//
+// The `verify` hook keeps the RAW text of a body sent to an OpenID4VP
+// Verifier session (api/oid4vp_verifier.js), and only there. A Wallet's
+// answer is stored field by field EXACTLY as it arrived, and the extended
+// urlencoded parser reshapes a form — `a[0]=x` becomes an array, a
+// repeated field collapses — before anybody could see what was sent.
+app.use(bodyParser.json({ limit: '5mb', verify: keepOid4vpVerifierBody }));
 // SAML ACS receives application/x-www-form-urlencoded POSTs (SAMLResponse,
 // RelayState, SAMLart) from the IdP; enable urlencoded parsing for those.
 app.use(bodyParser.urlencoded({
-  extended: true, limit: '5mb' }));
+  extended: true, limit: '5mb', verify: keepOid4vpVerifierBody }));
 // ---------------------------------------------------------------------------
 // A Security Event Token arrives as `application/secevent+jwt` (RFC 8417
 // section 2.3) — a compact JWS in the body, with no form encoding and no JSON
@@ -3100,6 +3124,9 @@ const ssfProxy = require('./ssf_proxy.js');
 // no CORS headers. See oid4vp_proxy.js.
 const oid4vpProxy = require('./oid4vp_proxy.js');
 const ssfReceiver = require('./ssf_receiver.js');
+// The Verifier role's request_uri and response_uri, hosted on a page's
+// behalf because a page is not an HTTP server. See oid4vp_verifier.js.
+const oid4vpVerifier = require('./oid4vp_verifier.js');
 // GNAP signs in the browser. This module only decides what may be
 // forwarded. The private key never arrives here. See api/gnap_proxy.js.
 const gnapProxy = require('./gnap_proxy.js');
@@ -4107,6 +4134,189 @@ app.delete('/ssf/receiver/:id', model.route('ssfReceiverDelete'),
   }
   log.debug('Leaving DELETE /ssf/receiver/:id. Deleted.');
   return res.status(STATUS_200).json({ ok: true, deleted: req.params.id });
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * THE VERIFIER ROLE'S request_uri AND response_uri (issue #364). When the VC
+ * Presentation workflow plays the Verifier, OpenID4VP 1.0 needs a URL the
+ * Wallet fetches the Request Object from and a URL it posts its answer to,
+ * and a page can be neither — the SSF push receiver's reason exactly.
+ *
+ * `api/oid4vp_verifier.js` holds every decision and every bound; these
+ * handlers are wiring. Five routes are the PAGE's (create, publish, events,
+ * delete, limits; the last three after create carry `Authorization: Bearer
+ * <secret>`), and three are a WALLET's (the Request Object by GET or POST,
+ * the CA certificate, the answer), which present no credential and are
+ * bounded structurally. The page signs the Request Object; this service
+ * only stores and serves it, and verifies nothing a Wallet sends.
+ *
+ * The limits route is registered first, so that `limits` is never read as
+ * a session id by a route added later under /oid4vp/verifier/:id.
+ * ---------------------------------------------------------------------------
+ */
+app.get('/oid4vp/verifier/limits', model.route('oid4vpVerifierLimits'),
+        function (req, res) {
+  log.debug('Entering GET /oid4vp/verifier/limits.');
+  log.debug('Leaving GET /oid4vp/verifier/limits.');
+  return res.status(STATUS_200).json(oid4vpVerifier.limits(appconfig));
+});
+
+app.post('/oid4vp/verifier', model.route('oid4vpVerifierCreate'),
+        function (req, res) {
+  log.debug('Entering POST /oid4vp/verifier.');
+  var made = oid4vpVerifier.create(appconfig, req.body || {}, req.ip);
+  if (!made.ok) {
+    log.debug('Leaving POST /oid4vp/verifier. Refused: ' + made.error);
+    return res.status(made.status).json({ error: made.error });
+  }
+  // This api's address AS THE CALLER REACHED IT, for the SSF receiver's
+  // reason: the Wallet has to reach these URLs, and behind the embedding
+  // proxy they carry the prefix it stripped. See publicBaseUrl().
+  var urls = oid4vpVerifier.urlsFor(publicBaseUrl(req), made.id);
+  log.debug('Leaving POST /oid4vp/verifier. ' + made.id);
+  return res.status(201).json({
+    id: made.id,
+    secret: made.secret,
+    requestUri: urls.requestUri,
+    responseUri: urls.responseUri,
+    caIssuersUrl: urls.caIssuersUrl,
+    expiresAt: made.expiresAt
+  });
+});
+
+/**
+ * Send a page-facing refusal: `{ error }`, with RFC 6750's challenge on a
+ * 401.
+ *
+ * @param {object} res - the Express response.
+ * @param {object} out - the module's `{ status, error }`.
+ * @returns {object} the response.
+ */
+function oid4vpVerifierRefusal(res, out) {
+  log.debug('Entering oid4vpVerifierRefusal(). ' + out.status);
+  if (out.status === STATUS_401) {
+    res.set('WWW-Authenticate', 'Bearer realm="oid4vp-verifier"');
+  }
+  log.debug('Leaving oid4vpVerifierRefusal().');
+  return res.status(out.status).json({ error: out.error });
+}
+
+app.put('/oid4vp/verifier/:id/request',
+        model.route('oid4vpVerifierPublish'), function (req, res) {
+  log.debug('Entering PUT /oid4vp/verifier/:id/request.');
+  var out = oid4vpVerifier.publish(appconfig, req.params.id,
+    req.get('authorization') || '', req.body || {});
+  if (!out.ok) {
+    log.debug('Leaving PUT /oid4vp/verifier/:id/request. ' + out.status);
+    return oid4vpVerifierRefusal(res, out);
+  }
+  log.debug('Leaving PUT /oid4vp/verifier/:id/request. Published.');
+  return res.status(STATUS_200).json({ ok: true });
+});
+
+/**
+ * The Request Object, to a Wallet: by GET (section 5.7), or by POST with
+ * wallet_metadata and wallet_nonce under request_uri_method=post (section
+ * 5.10). Both answer the compact JWS the page published.
+ *
+ * @param {object} req - the Express request.
+ * @param {object} res - the Express response.
+ * @returns {object} the response.
+ */
+function oid4vpVerifierServeRequest(req, res) {
+  log.debug('Entering oid4vpVerifierServeRequest(). ' + req.method);
+  var out = oid4vpVerifier.fetchRequest(appconfig, req.params.id, {
+    method: req.method,
+    contentType: req.get('content-type') || '',
+    rawBody: req.oid4vpRawBody,
+    parsed: req.body,
+    remoteAddress: req.ip
+  });
+  if (!out.ok) {
+    log.debug('Leaving oid4vpVerifierServeRequest(). ' + out.status);
+    return res.status(out.status).json({ error: out.error,
+      error_description: out.error_description });
+  }
+  log.debug('Leaving oid4vpVerifierServeRequest(). Served.');
+  // As a Buffer, so express adds no `; charset=utf-8` to a media type
+  // (RFC 9101 section 10.2) that a Wallet may compare exactly.
+  res.set('Cache-Control', 'no-store');
+  return res.status(STATUS_200).type(out.contentType)
+    .send(Buffer.from(out.body, 'utf8'));
+}
+
+app.get('/oid4vp/verifier/:id/request',
+        model.route('oid4vpVerifierRequestGet'), oid4vpVerifierServeRequest);
+app.post('/oid4vp/verifier/:id/request',
+         model.route('oid4vpVerifierRequestPost'),
+         oid4vpVerifierServeRequest);
+
+app.get('/oid4vp/verifier/:id/ca', model.route('oid4vpVerifierCa'),
+        function (req, res) {
+  log.debug('Entering GET /oid4vp/verifier/:id/ca.');
+  var out = oid4vpVerifier.fetchCa(appconfig, req.params.id, req.ip);
+  if (!out.ok) {
+    log.debug('Leaving GET /oid4vp/verifier/:id/ca. ' + out.status);
+    return res.status(out.status).json({ error: out.error,
+      error_description: out.error_description });
+  }
+  log.debug('Leaving GET /oid4vp/verifier/:id/ca. Served.');
+  return res.status(STATUS_200).type(out.contentType).send(out.body);
+});
+
+/**
+ * A Wallet's answer (direct_post or direct_post.jwt, section 8.2). Every
+ * field is kept as it arrived; the answer is 200 with `{}` or `{
+ * redirect_uri }`, and a session that does not exist is a 404, so a Wallet
+ * is never told an answer was received that nobody will read.
+ */
+app.post('/oid4vp/verifier/:id/response',
+         model.route('oid4vpVerifierResponse'), function (req, res) {
+  log.debug('Entering POST /oid4vp/verifier/:id/response.');
+  var out = oid4vpVerifier.respond(appconfig, req.params.id, {
+    contentType: req.get('content-type') || '',
+    rawBody: req.oid4vpRawBody,
+    parsed: req.body,
+    remoteAddress: req.ip
+  });
+  if (!out.ok) {
+    log.debug('Leaving POST /oid4vp/verifier/:id/response. ' + out.status);
+    return res.status(out.status).json({ error: out.error,
+      error_description: out.error_description });
+  }
+  log.debug('Leaving POST /oid4vp/verifier/:id/response. Recorded.');
+  // Section 8.2: a Verifier's answer to the Wallet is never cached.
+  res.set('Cache-Control', 'no-store');
+  return res.status(STATUS_200).json(out.body);
+});
+
+app.get('/oid4vp/verifier/:id/events', model.route('oid4vpVerifierEvents'),
+        function (req, res) {
+  log.debug('Entering GET /oid4vp/verifier/:id/events.');
+  var out = oid4vpVerifier.events(appconfig, req.params.id,
+    req.get('authorization') || '', req.query.after);
+  if (!out.ok) {
+    log.debug('Leaving GET /oid4vp/verifier/:id/events. ' + out.status);
+    return oid4vpVerifierRefusal(res, out);
+  }
+  log.debug('Leaving GET /oid4vp/verifier/:id/events. ' + out.events.length +
+      ' event(s).');
+  return res.status(STATUS_200).json({ events: out.events, next: out.next,
+    dropped: out.dropped, expiresAt: out.expiresAt });
+});
+
+app.delete('/oid4vp/verifier/:id', model.route('oid4vpVerifierDelete'),
+           function (req, res) {
+  log.debug('Entering DELETE /oid4vp/verifier/:id.');
+  var out = oid4vpVerifier.remove(appconfig, req.params.id,
+    req.get('authorization') || '');
+  if (!out.ok) {
+    log.debug('Leaving DELETE /oid4vp/verifier/:id. ' + out.status);
+    return oid4vpVerifierRefusal(res, out);
+  }
+  log.debug('Leaving DELETE /oid4vp/verifier/:id. Deleted.');
+  return res.status(STATUS_200).json({ ok: true, deleted: out.deleted });
 });
 
 // ---------------------------------------------------------------------------
