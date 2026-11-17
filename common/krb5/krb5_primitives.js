@@ -46,6 +46,9 @@ var bunyan = require("bunyan");
 // outside the browser bundles (a node-based test loading this module directly,
 // or the mock KDC) may not have one, so fall back to info rather than failing
 // to load.
+// Why CONFIG_FILE gave no log level, kept until the logger below exists to
+// report it (#322).
+var logLevelProblem = null;
 var log = bunyan.createLogger({
   name: "krb5_primitives",
   level: (function () {
@@ -54,10 +57,16 @@ var log = bunyan.createLogger({
     } catch (e) {
       // No CONFIG_FILE resolvable here — a node caller rather than a bundle.
       // A missing log level must not stop the module loading.
+      // The logger does not exist yet, so the error is kept for it.
+      logLevelProblem = e;
       return "info";
     }
   })()
 });
+if (logLevelProblem) {
+  log.debug("No log level from CONFIG_FILE, using info: " +
+      ((logLevelProblem && logLevelProblem.message) || logLevelProblem));
+}
 
 
 // ---------------------------------------------------------------------------
