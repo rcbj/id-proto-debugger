@@ -2035,7 +2035,9 @@ function errorInternalTokenAPICall(request, status, error) {
   log.error("request: " + JSON.stringify(request));
   log.error("status: " + JSON.stringify(status));
   log.error("error: " + JSON.stringify(error));
-  recalculateTokenErrorDescription(tokenErrorWithoutTrace(request));
+  var tokenErrorView = tokenErrorWithoutTrace(request);
+  recalculateTokenErrorDescription(tokenErrorView);
+  noteHandoffScopeRefusal(tokenErrorCode(tokenErrorView));
   saveOperationToHistory('Token Endpoint', {
     client_id: $("#token_client_id").val(),
     detail: 'error'
@@ -3825,6 +3827,9 @@ $(document).ready(function() {
                                    errorDescriptionParam + '</P>' +
                                '</fieldset>';
     $('#authz-error-report').html(DOMPurify.sanitize(authzErrorReportHTML));
+    // A hand-off waiting on this response is told why it got nothing back
+    // when the reason is the scope it asked for (#311).
+    noteHandoffScopeRefusal(errorParam);
     log.debug('errorDescriptionParam=' + errorDescriptionParam +
               ', errorParam=' + errorParam); 
     return;
@@ -4419,6 +4424,53 @@ function maybeShowTokenHandoffBanner() {
   log.debug("Leaving maybeShowTokenHandoffBanner(). " +
       tokenHandoff.label());
   return true;
+}
+
+// THE AUTHORIZATION SERVER REFUSED THE SCOPE THE HAND-OFF ASKED FOR (#311).
+//
+// Called with the `error` of a failed authorization response or token
+// response. When a hand-off is waiting, asked for scopes of its own and the
+// answer is `invalid_scope`, the banner says why: the client this page used
+// is not allowed those scopes, which is a registration to change rather than
+// anything wrong with either workflow. The sentence is token_handoff.js's,
+// so the two OAuth2 / OIDC pages cannot word it two ways.
+//
+// TEXT rather than markup, for the banner's own reason: the requested scope
+// crossed a page load in session storage.
+function noteHandoffScopeRefusal(error) {
+  log.debug("Entering noteHandoffScopeRefusal().");
+  if (!maybeShowTokenHandoffBanner()) {
+    log.debug("Leaving noteHandoffScopeRefusal(). No hand-off.");
+    return false;
+  }
+  var note = tokenHandoff.scopeRefusalNote(error,
+      tokenHandoff.requestedScope());
+  if (!note) {
+    log.debug("Leaving noteHandoffScopeRefusal(). Not a scope refusal.");
+    return false;
+  }
+  if (!$("#token_handoff_scope_refusal").length) {
+    $("#token_handoff_banner").append(" <strong " +
+        "id='token_handoff_scope_refusal'></strong>");
+  }
+  $("#token_handoff_scope_refusal").text(note);
+  log.debug("Leaving noteHandoffScopeRefusal(). Shown.");
+  return true;
+}
+
+// The `error` member of a token endpoint's JSON error response, or "" when
+// the body is not one.
+function tokenErrorCode(view) {
+  log.debug("Entering tokenErrorCode().");
+  try {
+    var parsed = JSON.parse((view && view.responseText) || "");
+    var code = parsed && typeof parsed.error === "string" ? parsed.error : "";
+    log.debug("Leaving tokenErrorCode(). " + (code || "(none)"));
+    return code;
+  } catch (e) {
+    log.debug("Leaving tokenErrorCode(). Not JSON.");
+    return "";
+  }
 }
 
 // Called from the token endpoint's success handler, once the tokens are in
@@ -7275,5 +7327,8 @@ module.exports = {
   // tests/scim_page.js drives the delivery half without an identity provider,
   // which is the only way to assert the whole route from the SCIM page's
   // button to the SCIM page's field.
-  offerTokenToHandoff
+  offerTokenToHandoff,
+  // Exported for tests/ssf_page.js, which drives the refusal note without an
+  // authorization server that refuses anything.
+  noteHandoffScopeRefusal
 };

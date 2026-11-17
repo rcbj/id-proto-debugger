@@ -102,6 +102,11 @@ model SsfKeys {
   @storageKey(#{ class: "ordinary" })
   ssf_basic_user: unknown;
 
+  // The scopes the token hand-off asks for (#311). A list of permission
+  // NAMES, not a credential.
+  @storageKey(#{ class: "ordinary" })
+  ssf_handoff_scope: unknown;
+
   @storageKey(#{ class: "ordinary" })
   ssf_inbox_idle_minutes: unknown;
 

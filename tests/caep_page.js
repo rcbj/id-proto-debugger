@@ -48,6 +48,8 @@ const { Command, Option } = require("commander");
 const browserFlags = require("./browser_flags.js");
 const { mustBeReady } = require("./expectation.js");
 const { loadUrl } = require("./page_load.js");
+// The applications registry, for the one client this job declares (#311).
+const registry = require("./sts_applications.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
 var bunyan = require("bunyan");
@@ -544,26 +546,139 @@ async function eachGrantShapeSeedsTheSession(driver) {
 // failing for their reasons and reported as a CAEP defect.
 // ---------------------------------------------------------------------------
 //
-// NEITHER ASKS FOR AN SSF SCOPE, and they did until the 2026-09 bump. Since
-// iya-sts #110 `ssf.read` and `ssf.manage` are that service's own PROTECTED
-// scopes, issued only to a client whose `oauthAllowedScope` declares them —
-// and `webapp1` declares neither, so asking for one was an invalid_scope 400
-// from the token endpoint, which reached this page's console as a failed
-// resource load. What this section is about is the SHAPE of the token set
-// the hand-off carries back, which the scope does not change.
+// BOTH ASK FOR THE PAGE'S OWN DEFAULT SCOPE (#311), read off the page's
+// `ssf_handoff_scope` field rather than typed here, so the suite fails when
+// that default stops working against this stack. Since iya-sts #110
+// `ssf.read` and `ssf.manage` are that service's PROTECTED scopes, issued
+// only to a client whose `oauthAllowedScope` declares them, and the seeded
+// `webapp1` declares neither — so from 2026-09 until #311 these two grants
+// asked for `openid` and `profile` instead, and the page's own default went
+// untested. The grants now run as a client this job DECLARES with those
+// scopes, which is the fix the page tells a reader to make when an
+// authorization server answers invalid_scope.
+//
+// Client credentials asks for the default LESS `openid`: it is about the
+// client and no person, and this section asserts that it brings back no ID
+// Token.
 const DRIVEN = [
   { label: 'OAuth2 Resource Owner Password Credential Grant', idToken: true,
-    scope: 'openid',
+    withOpenid: true,
     what: 'a person, authenticated at the TOKEN endpoint, with openid asked ' +
           'for — so an ID Token comes back and this page can name them' },
   { label: 'OAuth2 Client Credential', idToken: false,
-    scope: 'profile',
+    withOpenid: false,
     what: 'NO USER AT ALL — the client is the subject — so there is no ID ' +
           'Token, and the session below is entirely this page\'s invention' }
 ];
 
+// THE CLIENT THE TWO DRIVEN GRANTS RUN AS. Declared in iya-sts's registry
+// with the SSF scopes on `oauthAllowedScope`, and both grants this section
+// drives on `oauthGrantType`. A target with no registry that knows the
+// attribute (an sts from before #110, or an authorization server that is not
+// iya-sts) keeps CLIENT_ID and the pre-#311 scopes, and says so.
+//
+// DECLARING THE SCOPE IS ONLY ONE OF THE HALVES iya-sts ASKS FOR. Since its
+// #309 `ssf.read` and `ssf.manage` are authorized by the native roles
+// SSF_READ and SSF_MANAGE: an application's own token (client credentials)
+// carries one only while the application is a MEMBER of the role, and a
+// person's (the password grant) only while that person is also in the role's
+// group (`ssf-read`, `ssf-manage`). Without them the scopes are taken off
+// (STS-ADMIN-0821), and a request that asked for nothing else — client
+// credentials, here — is refused invalid_scope (STS-ADMIN-0822). So the
+// client joins both roles and the person both groups, through the
+// management API, before either grant runs.
+const SSF_CLIENT_ID = 'caep-page-ssf-client';
+const SSF_CLIENT_SCOPES = ['openid', 'profile', 'email', 'ssf.read',
+  'ssf.manage'];
+const SSF_ROLES = [
+  { role: 'SSF_READ', group: 'ssf-read' },
+  { role: 'SSF_MANAGE', group: 'ssf-manage' }
+];
+const GRANT_USER = 'caep-page-user';
+let grantClientId = clientId;
+let grantPassword = 'anything';
+let ssfScopesDeclared = false;
+
+// Make the application a member of each SSF role, and the person a member of
+// each role's group. "Already a member" is the state wanted, so a second run
+// against a kept stack passes; any other refusal fails here, naming it.
+async function grantTheSsfRoles(base) {
+  log.debug("Entering grantTheSsfRoles().");
+  grantPassword = require("crypto").randomBytes(18).toString("base64url") +
+      "-Aa1!";
+  await registry.ensurePerson(base, GRANT_USER, grantPassword);
+  let one;
+  for (one of SSF_ROLES) {
+    const member = await registry.adminPost(base, "/roles/add-member",
+        { role: one.role, kind: 'application', member: SSF_CLIENT_ID });
+    const already = !member.ok && (member.errors || []).some(function (e) {
+      return /already/i.test(String(e));
+    });
+    assert.ok(member.ok || already,
+        'POST /admin-api/roles/add-member could not make ' + SSF_CLIENT_ID +
+        ' a member of ' + one.role + ': ' + JSON.stringify(member) + '. ' +
+        'Without it iya-sts issues ' + one.role.toLowerCase()
+          .replace('_', '.') + ' to nobody through this client.');
+    const grouped = await registry.adminPost(base, "/groups/add-member",
+        { group: one.group, member: GRANT_USER });
+    assert.ok(grouped.ok,
+        'POST /admin-api/groups/add-member could not put ' + GRANT_USER +
+        ' in ' + one.group + ': ' + JSON.stringify(grouped) + '.');
+    log.info("[registry] " + SSF_CLIENT_ID + " is a member of " + one.role +
+        ", and " + GRANT_USER + " is in " + one.group + ".");
+  }
+  log.debug("Leaving grantTheSsfRoles().");
+}
+
+async function declareTheHandoffClient() {
+  log.debug("Entering declareTheHandoffClient().");
+  const base = registry.baseOf(stsUrl);
+  if (!(await registry.registryEditable(base, 'oauthAllowedScope'))) {
+    log.warn("[registry] " + base + " has no applications registry that " +
+        "takes oauthAllowedScope, so the driven grants run as " + clientId +
+        " and do NOT ask for the SSF scopes the page asks for by default.");
+    log.debug("Leaving declareTheHandoffClient(). Not declared.");
+    return false;
+  }
+  await registry.provision(base, {
+    identifier: SSF_CLIENT_ID,
+    name: 'CAEP page hand-off client',
+    protocols: ['oauth2'],
+    fields: {
+      oauthClientId: [SSF_CLIENT_ID],
+      oauthGrantType: ['client_credentials', 'password'],
+      oauthAllowedScope: SSF_CLIENT_SCOPES
+    },
+    why: 'the client the SSF page\'s token hand-off is driven through, ' +
+        'declaring the scopes that page asks for'
+  });
+  await grantTheSsfRoles(base);
+  grantClientId = SSF_CLIENT_ID;
+  ssfScopesDeclared = true;
+  log.debug("Leaving declareTheHandoffClient(). " + SSF_CLIENT_ID);
+  return true;
+}
+
+// The scope one driven grant asks for: the page's default, less `openid` for
+// a grant about no person. Without a declared client, the pre-#311 scopes.
+function scopeFor(grant, pageScope) {
+  log.debug("Entering scopeFor(). " + grant.label);
+  if (!ssfScopesDeclared) {
+    const fallback = grant.withOpenid ? 'openid' : 'profile';
+    log.debug("Leaving scopeFor(). Fallback " + fallback);
+    return fallback;
+  }
+  const scope = pageScope.split(/\s+/).filter(function (token) {
+    return token && (grant.withOpenid || token !== 'openid');
+  }).join(' ');
+  log.debug("Leaving scopeFor(). " + scope);
+  return scope;
+}
+
 async function twoGrantsReachTheCaepPaneForReal(driver, helpers) {
   log.info("=== Two grants, driven through the real hand-off ===");
+  await declareTheHandoffClient();
+  const undriven = [];
   let grant;
   for (grant of DRIVEN) {
     log.info("--- " + grant.label + " — " + grant.what);
@@ -576,7 +691,10 @@ async function twoGrantsReachTheCaepPaneForReal(driver, helpers) {
       // than either exchange: the OAuth2 / OIDC jobs own whether a grant
       // works, and a failure here that took the other with it would hide the
       // thing this file is for.
+      // It is still a FAILURE, after both have run (#311): a warning here
+      // is how an invalid_scope for the page's own default went unnoticed.
       log.warn("  " + grant.label + " could not be driven: " + e.message);
+      undriven.push(grant.label + ": " + e.message.split("\n")[0]);
       continue;
     }
     check(grant.label + ' delivered a token set to the CAEP pane',
@@ -602,12 +720,22 @@ async function twoGrantsReachTheCaepPaneForReal(driver, helpers) {
       }
     });
   }
+  check('both driven grants delivered through the hand-off', function () {
+    assert.deepStrictEqual(undriven, [],
+        'A grant could not be driven: ' + undriven.join('; ') + '. When ' +
+        'the token endpoint answered invalid_scope, the client it ran as ' +
+        'is not allowed the scope the SSF page asks for by default.');
+  });
 }
 
 async function oneGrant(driver, helpers, grant) {
   log.debug("Entering oneGrant(). " + grant.label);
   await openPage(driver);
   await chooseProfile(driver, 'caep');
+  // THE PAGE'S OWN SCOPE, read before the button sends the browser away.
+  const pageScope = await valueOf(driver, "ssf_handoff_scope");
+  const scope = scopeFor(grant, pageScope);
+  log.info("  as " + grantClientId + ", asking for \"" + scope + "\"");
   // **THE STORED GRANT TYPE IS CLEARED FIRST, AND WITHOUT THIS THE SECOND
   // ROUND TRIP CANNOT WORK.** `oauth2_oidc_1.html` remembers the last grant
   // in localStorage, and its `onload()` sends a TOKEN-ENDPOINT-ONLY grant
@@ -641,11 +769,11 @@ async function oneGrant(driver, helpers, grant) {
   await helpers.populateMetadata(driver, discoveryEndpoint);
 
   if (/Client Credential/.test(grant.label)) {
-    await helpers.getAccessTokenClientCredentials(driver, clientId, 'secret',
-        grant.scope);
+    await helpers.getAccessTokenClientCredentials(driver, grantClientId,
+        'secret', scope);
   } else {
-    await helpers.getAccessTokenPassword(driver, clientId, 'secret',
-        grant.scope, 'caep-page-user', 'anything');
+    await helpers.getAccessTokenPassword(driver, grantClientId, 'secret',
+        scope, GRANT_USER, grantPassword);
   }
 
   // THE HAND-OFF'S RETURN LINK, which is what takes the token set back. It is

@@ -769,6 +769,30 @@ iya-sts #110 the mock issues either only to a client that DECLARES it**
 client that does not — the seeded `webapp1` included — comes back as
 `invalid_scope` from the token endpoint, naming the attribute to set.
 
+**So the scope is a field, and a refusal of it says why (#311).** The token
+pane's **Scopes to ask for** (`ssf_handoff_scope`, remembered in
+`localStorage` — a list of permission names, not a credential) defaults to
+`openid ssf.read ssf.manage` and is what both hand-offs ask for; empty means
+the default. When the hand-off is waiting and the authorization or token
+response is `invalid_scope`, `oauth2_oidc_2.html` adds a sentence to the
+hand-off banner naming the scope asked for and the three ways out: allow it
+on the client's registration, use a client that has it, or ask for less. The
+sentence is `scopeRefusalNote()` in `token_handoff.js`.
+
+**On iya-sts, declaring the scope is half of it.** Since its #309 `ssf.read`
+and `ssf.manage` are authorized by the native roles `SSF_READ` and
+`SSF_MANAGE`: an application's own token carries one only while the
+application is a member of the role, and a person's only while the person is
+also in the role's group (`ssf-read`, `ssf-manage`). Missing either half, the
+scope is taken off the token (STS-ADMIN-0821), and a request that asked for
+nothing else is refused `invalid_scope` (STS-ADMIN-0822). Nothing on this
+stack seeds a client that way, so `tests/caep_page.js` provisions one,
+`caep-page-ssf-client`: it declares the scopes, joins both roles, and puts
+its grant user in both groups through the management API. Then it drives
+both of its real grants through that client with the page's own default
+(client credentials leaves out `openid`). It FAILS when either grant does
+not come back; before #311 it logged a warning and passed.
+
 **Two fields on two pages, and both are needed.** `#scope` on
 `oauth2_oidc_1.html` is the authorization request's, which the code grant and
 the three OIDC flows send; `#token_scope` on `oauth2_oidc_2.html` is the token

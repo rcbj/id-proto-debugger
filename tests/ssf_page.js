@@ -1242,6 +1242,97 @@ async function theHandoffAsksForTheScopesTheEndpointsNeed(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 14. THE SCOPE IS EDITABLE, AND A REFUSAL OF IT SAYS WHY (#311).
+//
+// An authorization server may issue a scope only to a client allowed to
+// request it — iya-sts does since its #110, and its seeded `webapp1` is
+// allowed neither SSF scope — so the page's default can be the wrong thing to
+// ask for, and when it is the answer is `invalid_scope` on the OAuth2 / OIDC
+// page, which names neither the workflow that asked nor the fix. Asserted:
+//
+//   * the field holds the default, and what is typed there is what the
+//     hand-off asks for (here, `ssf.manage` dropped);
+//   * on the results page, an `invalid_scope` while that hand-off is waiting
+//     puts a sentence in the banner naming the scope asked for and the
+//     registration to change — and any other error puts nothing there.
+//
+// The refusal is driven by calling the page's own function rather than by an
+// authorization server that refuses: the grant half is caep_page.js's, which
+// runs the page's default through a client declared to be allowed it.
+// ---------------------------------------------------------------------------
+async function theScopeIsEditableAndARefusalSaysWhy(driver) {
+  log.debug("Entering theScopeIsEditableAndARefusalSaysWhy().");
+  log.info("=== The hand-off's scope field and an invalid_scope ===");
+  await loadUrl(driver, baseUrl + "/ssf.html");
+  await driver.wait(until.elementLocated(By.id("ssf_handoff_scope")), WAIT,
+      "ssf.html has no ssf_handoff_scope field");
+  await driver.executeScript(
+      "localStorage.removeItem('ssf_handoff_scope');");
+  await loadUrl(driver, baseUrl + "/ssf.html");
+  await driver.wait(until.elementLocated(By.id("ssf_handoff_scope")), WAIT,
+      "ssf.html did not come back");
+  const initial = await valueOf(driver, "ssf_handoff_scope");
+  assert.strictEqual(initial, "openid ssf.read ssf.manage",
+      "the hand-off scope field reads \"" + initial + "\" with nothing " +
+      "stored; its default is the CAEP Interoperability Profile's two names " +
+      "and the openid this pane names the user from.");
+
+  await driver.executeScript(
+      "localStorage.setItem('scope', '');" +
+      "localStorage.setItem('token_scope', '');" +
+      "document.getElementById('ssf_handoff_scope').value = " +
+      "  'openid ssf.read';");
+  await click(driver, "btn_ssf_get_token");
+  await driver.wait(async function () {
+    return /oauth2_oidc_1\.html/.test(await driver.getCurrentUrl());
+  }, WAIT, "the button did not go to the OAuth2 / OIDC workflow");
+  await driver.wait(async function () {
+    return await driver.executeScript(
+        "return !!document.getElementById('token_handoff_banner');");
+  }, WAIT, "no hand-off banner appeared on the OAuth2 / OIDC page");
+  const asked = (await valueOf(driver, "scope")).split(/\s+/)
+      .filter(Boolean);
+  assert.ok(asked.indexOf("ssf.read") >= 0 &&
+      asked.indexOf("ssf.manage") < 0,
+      "the hand-off was started with \"openid ssf.read\" typed in its " +
+      "scope field and the authorization request's Scope field reads \"" +
+      asked.join(" ") + "\". What the reader typed is what has to be " +
+      "asked for, or a client allowed only ssf.read can never get a token.");
+
+  await loadUrl(driver, baseUrl + "/oauth2_oidc_2.html");
+  await driver.wait(async function () {
+    return await driver.executeScript(
+        "return !!document.getElementById('token_handoff_banner');");
+  }, WAIT, "no hand-off banner on the results page");
+  const other = await driver.executeScript(
+      "return window.oauth2_oidc_2.noteHandoffScopeRefusal('access_denied');");
+  assert.strictEqual(other, false,
+      "an access_denied was explained as a scope refusal.");
+  const shown = await driver.executeScript(
+      "return window.oauth2_oidc_2.noteHandoffScopeRefusal('invalid_scope');");
+  const note = await driver.executeScript(
+      "var e = document.getElementById('token_handoff_scope_refusal');" +
+      "return e ? String(e.textContent || '') : '';");
+  assert.ok(shown === true && /invalid_scope/.test(note) &&
+      /openid ssf\.read/.test(note) && /oauthAllowedScope/.test(note),
+      "an invalid_scope while the Shared Signals hand-off is waiting should " +
+      "put a sentence in its banner naming the scope asked for and the " +
+      "registration to change. The banner says: " + JSON.stringify(note));
+
+  await driver.executeScript(
+      "['token_handoff_active','token_handoff_return','token_handoff_label'," +
+      " 'token_handoff_token','token_handoff_meta','token_handoff_set'," +
+      " 'token_handoff_scope'].forEach(function (k) {" +
+      "  sessionStorage.removeItem(k); });" +
+      "localStorage.removeItem('scope');" +
+      "localStorage.removeItem('token_scope');" +
+      "localStorage.removeItem('ssf_handoff_scope');");
+  log.info("[scope] OK — the typed scope is the one asked for, and an " +
+      "invalid_scope says which scope and what to change.");
+  log.debug("Leaving theScopeIsEditableAndARefusalSaysWhy().");
+}
+
+// ---------------------------------------------------------------------------
 async function preconditions() {
   log.debug("Entering preconditions().");
   try {
@@ -1375,6 +1466,7 @@ async function test() {
     // those two pages log would otherwise fail the check above with a
     // message about a page this file does not test.
     await theHandoffAsksForTheScopesTheEndpointsNeed(driver);
+    await theScopeIsEditableAndARefusalSaysWhy(driver);
     log.info("Test completed successfully.");
   } finally {
     // driver.quit() in a FINALLY and never after a process.exit(): the

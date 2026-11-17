@@ -118,11 +118,26 @@ var BACKEND_AVAILABLE = appconfig.backendAvailable !== false;
 // ---------------------------------------------------------------------------
 var HANDOFF_SCOPES = 'openid ssf.read ssf.manage';
 
+// THE SCOPES THE HAND-OFF ACTUALLY ASKS FOR (#311): the `ssf_handoff_scope`
+// field, or HANDOFF_SCOPES when it is empty. Editable because a client may
+// be allowed only some of these names, and an authorization server that
+// issues a scope only to a client that declares it answers `invalid_scope`
+// for the whole request — iya-sts does, since its #110, and its seeded
+// `webapp1` declares neither SSF scope. Remembered like the base URL: a list
+// of permission names is not a credential.
+function handoffScope() {
+  log.debug("Entering handoffScope().");
+  var typed = handoff.normalizeScope(val('ssf_handoff_scope'));
+  var scope = typed || HANDOFF_SCOPES;
+  log.debug("Leaving handoffScope(). " + scope);
+  return scope;
+}
+
 // Fields written to localStorage. THE CREDENTIALS ARE NOT HERE — see the
 // header. `ssf_access_token`, `ssf_id_token`, `ssf_basic_password`,
 // `ssf_tx_private_key` and `ssf_stream_auth_header` are deliberately absent.
 var REMEMBERED = [
-  'ssf_base_url', 'ssf_stream_aud', 'ssf_stream_delivery',
+  'ssf_handoff_scope', 'ssf_base_url', 'ssf_stream_aud', 'ssf_stream_delivery',
   'ssf_stream_format', 'ssf_stream_description', 'ssf_stream_endpoint',
   'ssf_stream_id', 'ssf_subject_format', 'ssf_subject_json',
   'ssf_status_value', 'ssf_status_reason', 'ssf_verify_state',
@@ -896,10 +911,11 @@ function clearOperations() {
 function startTokenHandoff() {
   log.debug("Entering startTokenHandoff().");
   saveState();
+  var scope = handoffScope();
   var started = handoff.start({
     returnUrl: '/ssf.html',
     label: 'the Shared Signals workflow',
-    scope: HANDOFF_SCOPES
+    scope: scope
   });
   if (!started) {
     setText('ssf_token_handoff_note',
@@ -914,10 +930,11 @@ function startTokenHandoff() {
   // reader is looking at when the navigation happens and the OAuth2 page's
   // banner is one they have not seen yet.
   setText('ssf_token_handoff_note', 'Going to the OAuth2 / OIDC workflow, ' +
-    'asking for "' + HANDOFF_SCOPES + '". Those scopes are added to the ' +
+    'asking for "' + scope + '". Those scopes are added to the ' +
     'scope field there rather than replacing what is in it, and they are ' +
     'editable — SSF 1.0 defines no scope names, so a transmitter may ' +
-    'name them differently.');
+    'name them differently. The client you use there must be allowed ' +
+    'every one of them, or the authorization server answers invalid_scope.');
   window.location.href = '/oauth2_oidc_1.html';
   log.debug("Leaving startTokenHandoff().");
   return false;
@@ -3464,7 +3481,7 @@ function startSessionHandoff() {
   // this page wants both. The other four have no token to carry.
   if (wanted === 'oidc') {
     handoff.start({ returnUrl: '/ssf.html',
-      label: 'the Shared Signals workflow', scope: HANDOFF_SCOPES });
+      label: 'the Shared Signals workflow', scope: handoffScope() });
   }
   setText('caep_protocol_note', 'Going to the ' + label + ' workflow. ' +
     'Complete the sign-in there and this page will collect the session — ' +

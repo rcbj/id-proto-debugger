@@ -138,6 +138,17 @@ Who you are, and the tokens this session has used</legend>
     a
     stream outlives the token that created it.</p>
   </details>
+  <!-- THE SCOPES THE HAND-OFF ASKS FOR (#311), editable because SSF 1.0
+       defines no scope names and an authorization server issues a scope
+       only to a client allowed to request it. Empty means the default,
+       which ssf.js fills in on load. -->
+  <div class="ssf-row">
+    <label class="ssf-label" for="ssf_handoff_scope">Scopes to ask
+      for</label>
+    <input class="ssf-field ssf-grow" type="text" id="ssf_handoff_scope"
+           value="openid ssf.read ssf.manage"
+           title="Merged into the OAuth2 / OIDC workflow's scope field by the button below. openid gets the ID Token this pane names you from; ssf.read and ssf.manage are the CAEP Interoperability Profile's names. The client you use there must be allowed every one of them, or the authorization server answers invalid_scope.">
+  </div>
   <div class="ssf-row">
     <input type="button" class="ssf-btn" id="btn_ssf_get_token"
            value="Get tokens from the OAuth2 / OIDC workflow"
