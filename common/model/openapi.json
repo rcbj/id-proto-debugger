@@ -11,6 +11,15 @@
     },
     {
       "name": "LDAP"
+    },
+    {
+      "name": "Kerberos"
+    },
+    {
+      "name": "TLS"
+    },
+    {
+      "name": "SPIFFE"
     }
   ],
   "paths": {
@@ -34,6 +43,205 @@
         "tags": [
           "Service"
         ]
+      }
+    },
+    "/krb5/kdc": {
+      "post": {
+        "operationId": "krb5Kdc",
+        "description": "Relay a Kerberos request to a KDC and return its reply.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Krb5.KdcAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Krb5.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Krb5.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Kerberos"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Krb5.KdcRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/krb5/limits": {
+      "get": {
+        "operationId": "krb5Limits",
+        "description": "What the Kerberos relay will and will not do.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Krb5.Limits"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Kerberos"
+        ]
+      }
+    },
+    "/krb5/service": {
+      "post": {
+        "operationId": "krb5Service",
+        "description": "Present an AP-REQ to a Kerberos service and return its answer.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Krb5.ServiceAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Krb5.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Krb5.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Kerberos"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Krb5.ServiceRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/krb5/spnego": {
+      "post": {
+        "operationId": "krb5Spnego",
+        "description": "Perform one step of a SPNEGO HTTP handshake and report both sides.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Krb5.SpnegoAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Krb5.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Krb5.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "Kerberos"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Krb5.SpnegoRequest"
+              }
+            }
+          }
+        }
       }
     },
     "/ldap/add": {
@@ -502,10 +710,781 @@
           "Service"
         ]
       }
+    },
+    "/spiffe/bundle": {
+      "post": {
+        "operationId": "spiffeBundle",
+        "description": "Fetch a bundle endpoint and say what is wrong with what came back.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Spiffe.BundleAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Spiffe.HandlerRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Spiffe.BundleFailure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SPIFFE"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Spiffe.BundleRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/spiffe/call": {
+      "post": {
+        "operationId": "spiffeCall",
+        "description": "One call on the Workload API or the SPIRE Server API.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Spiffe.CallAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Spiffe.CallFailure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/Spiffe.HandlerRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Spiffe.CallFailure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SPIFFE"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Spiffe.CallRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/spiffe/limits": {
+      "get": {
+        "operationId": "spiffeLimits",
+        "description": "What the SPIFFE client will do, with the catalogue of every method.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Spiffe.Limits"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "SPIFFE"
+        ]
+      }
+    },
+    "/tls/connect": {
+      "post": {
+        "operationId": "tlsConnect",
+        "description": "Open a TLS connection and report both sides of the handshake.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tls.ConnectAnswer"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Tls.Failure"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "502: the far end could not be reached, or did not answer.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tls.Failure"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "TLS"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Tls.ConnectRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tls/limits": {
+      "get": {
+        "operationId": "tlsLimits",
+        "description": "What the TLS probe will and will not do.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tls.Limits"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "TLS"
+        ]
+      }
+    },
+    "/tls/server-certificate": {
+      "get": {
+        "operationId": "tlsServerCertificate",
+        "description": "The certificate this api serves, PEM, so a caller can trust it before it\nverifies anything. 404 on a plain listener: \"not serving TLS\" and \"will\nnot say with what\" are different answers.",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "The request has succeeded.",
+            "content": {
+              "application/x-pem-file": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The server cannot find the requested resource.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string",
+                      "enum": [
+                        "ENOTLS"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "code"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "TLS"
+        ]
+      }
     }
   },
   "components": {
     "schemas": {
+      "Krb5.Failure": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "A refusal or a network failure; `code` names which (EKRB5...)."
+      },
+      "Krb5.KdcAnswer": {
+        "type": "object",
+        "required": [
+          "reply",
+          "replyMessage",
+          "request",
+          "target",
+          "timing"
+        ],
+        "properties": {
+          "reply": {
+            "type": "string",
+            "description": "The reply, base64."
+          },
+          "replyMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "AS-REP, TGS-REP, KRB-ERROR, or what the first byte was."
+          },
+          "request": {
+            "$ref": "#/components/schemas/Krb5.RelayedRequest"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Krb5.RelayTarget"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/Krb5.RelayTiming"
+          }
+        },
+        "description": "The KDC's reply."
+      },
+      "Krb5.KdcRequest": {
+        "type": "object",
+        "required": [
+          "host",
+          "message"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The KDC's host name or address.",
+            "x-checked-in-code": "api/krb5_relay.js: trimmed and refused when blank (EKRB5NOHOST); resolved, and every address held to the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "host and message are required. message is the Kerberos request, base64-encoded."
+            }
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The request, base64 or base64url.",
+            "x-checked-in-code": "api/server.js: the base64 alphabet, before decoding, and a message that decodes to nothing; api/krb5_frame.js: an AS-REQ or TGS-REQ whose outer length accounts for every byte (EKRB5NOTKERBEROS)",
+            "x-refusal": {
+              "message": "host and message are required. message is the Kerberos request, base64-encoded."
+            }
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The KDC's port. Absent, null or empty is 88.",
+            "x-checked-in-code": "api/krb5_relay.js: parsed as an integer (EKRB5NOPORT), and in krb5AllowedPorts (EKRB5PORTNOTALLOWED)"
+          },
+          "transport": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"udp\" is UDP; anything else, or nothing, is TCP."
+          }
+        },
+        "description": "A KDC request to relay: an AS-REQ or a TGS-REQ."
+      },
+      "Krb5.Limits": {
+        "type": "object",
+        "required": [
+          "allowedPorts",
+          "servicePorts",
+          "serviceEnabled",
+          "addressPolicyEnabled",
+          "spnegoEnabled",
+          "spnegoBodyChars",
+          "limits"
+        ],
+        "properties": {
+          "allowedPorts": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32"
+            }
+          },
+          "servicePorts": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "any"
+                ]
+              }
+            ],
+            "description": "The service ports, or \"any\". Empty is POST /krb5/service off."
+          },
+          "serviceEnabled": {
+            "type": "boolean"
+          },
+          "addressPolicyEnabled": {
+            "type": "boolean"
+          },
+          "spnegoEnabled": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "spnegoBodyChars": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "limits": {
+            "type": "object",
+            "properties": {
+              "connectTimeout": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "callTimeout": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "maxReplyBytes": {
+                "type": "integer",
+                "format": "int64"
+              }
+            },
+            "required": [
+              "connectTimeout",
+              "callTimeout",
+              "maxReplyBytes"
+            ]
+          }
+        },
+        "description": "What the relay will and will not do."
+      },
+      "Krb5.RelayTarget": {
+        "type": "object",
+        "required": [
+          "host",
+          "address",
+          "port",
+          "transport",
+          "resolved"
+        ],
+        "properties": {
+          "host": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "transport": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "udp"
+            ]
+          },
+          "resolved": {
+            "type": "boolean",
+            "description": "False when the host was an address literal."
+          }
+        },
+        "description": "Where the relay connected."
+      },
+      "Krb5.RelayTiming": {
+        "type": "object",
+        "required": [
+          "totalMs",
+          "connectMs"
+        ],
+        "properties": {
+          "totalMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "connectMs": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Null over UDP, which has no connection."
+          }
+        }
+      },
+      "Krb5.RelayedRequest": {
+        "type": "object",
+        "required": [
+          "message",
+          "bytes"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "AS-REQ, TGS-REQ, AP-REQ or GSS-wrapped AP-REQ."
+          },
+          "bytes": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "description": "What was relayed, as the pre-flight named it."
+      },
+      "Krb5.ServiceAnswer": {
+        "type": "object",
+        "required": [
+          "reply",
+          "replyMessage"
+        ],
+        "properties": {
+          "reply": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The answer, base64, or null when the service sent none."
+          },
+          "replyMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/Krb5.RelayedRequest"
+          },
+          "target": {
+            "$ref": "#/components/schemas/Krb5.RelayTarget"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/Krb5.RelayTiming"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "description": "The service's answer. A service that closed without answering is not a\nfailure — a client that did not ask for mutual authentication is not\nowed a reply — and answers `reply: null` with a `note` and nothing else."
+      },
+      "Krb5.ServiceRequest": {
+        "type": "object",
+        "required": [
+          "host",
+          "message"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The service's host name or address.",
+            "x-checked-in-code": "api/krb5_relay.js: trimmed and refused when blank (EKRB5NOHOST); resolved, and every address held to the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "host, port and message are required. Unlike the KDC there is no default port: a Kerberos service can be on any port, so it has to be named."
+            }
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The service's port. There is no default: a Kerberos service can be on\nany port. Required, but not by the schema — 0 is refused with the same\nsentence as a missing port, and 0 is a value.",
+            "x-checked-in-code": "api/server.js: absent, null, empty or 0 is refused as missing; api/krb5_relay.js: parsed as an integer (EKRB5NOPORT), POST /krb5/service enabled at all (EKRB5SERVICENOTENABLED) and the port in krb5ServicePorts (EKRB5PORTNOTALLOWED)",
+            "x-refusal": {
+              "message": "host, port and message are required. Unlike the KDC there is no default port: a Kerberos service can be on any port, so it has to be named."
+            }
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A GSS-wrapped AP-REQ, or a bare one, base64 or base64url.",
+            "x-checked-in-code": "api/server.js: the base64 alphabet, and a message that decodes to nothing; api/krb5_frame.js: a bare AP-REQ, or an InitialContextToken naming Kerberos v5 and wrapping one, every length accounted for (EKRB5NOTKERBEROS)",
+            "x-refusal": {
+              "message": "host, port and message are required. Unlike the KDC there is no default port: a Kerberos service can be on any port, so it has to be named."
+            }
+          },
+          "transport": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "\"udp\" is UDP; anything else, or nothing, is TCP."
+          }
+        },
+        "description": "An AP-REQ to present to a Kerberos service."
+      },
+      "Krb5.SpnegoAnswer": {
+        "type": "object",
+        "required": [
+          "request",
+          "response",
+          "timing"
+        ],
+        "properties": {
+          "request": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": [
+                  "GET"
+                ]
+              },
+              "url": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "What was sent, the User-Agent this service adds included."
+              }
+            },
+            "required": [
+              "method",
+              "url",
+              "headers"
+            ]
+          },
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The far end's status. 401 is the protocol, not a failure."
+              },
+              "statusText": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              "body": {
+                "type": "string",
+                "description": "Capped for display at spnegoBodyChars."
+              },
+              "bodyTruncated": {
+                "type": "boolean"
+              },
+              "bodyLength": {
+                "type": "integer",
+                "format": "int64"
+              }
+            },
+            "required": [
+              "status",
+              "statusText",
+              "headers",
+              "body",
+              "bodyTruncated",
+              "bodyLength"
+            ]
+          },
+          "timing": {
+            "type": "object",
+            "properties": {
+              "totalMs": {
+                "type": "integer",
+                "format": "int64"
+              }
+            },
+            "required": [
+              "totalMs"
+            ]
+          }
+        },
+        "description": "Both sides of one SPNEGO step, headers included."
+      },
+      "Krb5.SpnegoRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The protected resource.",
+            "x-checked-in-code": "api/server.js: an absolute http(s) URL; the outbound address policy and limits, as on every caller-named fetch",
+            "x-refusal": {
+              "message": "url is required. It is the SPNEGO-protected resource to fetch."
+            }
+          },
+          "token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The SPNEGO token, base64, exactly as it follows \"Negotiate \" in the\nAuthorization header. Absent or empty is the unauthenticated first\nrequest, which carries no Authorization header at all.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/server.js: the base64 alphabet"
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false, or the string \"false\", turns off certificate checks."
+          }
+        },
+        "description": "One step of a SPNEGO handshake: a GET of a protected resource."
+      },
       "Ldap.AddRequest": {
         "type": "object",
         "required": [
@@ -1583,6 +2562,1444 @@
           }
         },
         "description": "Every recorded gap since the process started."
+      },
+      "Spiffe.BundleAnswer": {
+        "type": "object",
+        "required": [
+          "ok",
+          "url",
+          "httpStatus",
+          "headers",
+          "body",
+          "report",
+          "timing"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "description": "A 2xx and a usable bundle."
+          },
+          "url": {
+            "type": "string"
+          },
+          "httpStatus": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "body": {
+            "type": "string"
+          },
+          "report": {
+            "type": "object",
+            "properties": {
+              "ok": {
+                "type": "boolean"
+              },
+              "errors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "warnings": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "keys": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": {}
+                }
+              },
+              "ignored": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": {}
+                }
+              },
+              "counts": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              "sequence": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int64"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "refreshHint": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "ok",
+              "errors",
+              "warnings",
+              "keys",
+              "ignored",
+              "counts",
+              "sequence",
+              "refreshHint"
+            ],
+            "description": "common/spiffe/spiffe_bundle.js's reading of the body."
+          },
+          "timing": {
+            "$ref": "#/components/schemas/Spiffe.Timing"
+          }
+        },
+        "description": "What came back from the bundle endpoint, and what is wrong with it."
+      },
+      "Spiffe.BundleFailure": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "timing"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "timing": {
+            "$ref": "#/components/schemas/Spiffe.Timing"
+          }
+        }
+      },
+      "Spiffe.BundleRequest": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The bundle endpoint, http(s).",
+            "x-checked-in-code": "api/server.js: an absolute http(s) URL, once trimmed, answered with this same sentence; the outbound address policy and limits, as on every caller-named fetch",
+            "x-refusal": {
+              "message": "url is required and must be an http:// or https:// URL. A SPIFFE bundle endpoint is plain HTTPS — it is the ONE surface of SPIFFE that is, which is why this endpoint is an ordinary fetch and the other one is gRPC."
+            }
+          },
+          "sslValidate": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false turns off certificate verification."
+          }
+        },
+        "description": "A fetch of a SPIFFE bundle endpoint."
+      },
+      "Spiffe.CallAnswer": {
+        "type": "object",
+        "required": [
+          "ok",
+          "surface",
+          "service",
+          "serviceLabel",
+          "method",
+          "path",
+          "streaming",
+          "target",
+          "resolvedAddress",
+          "transport",
+          "tls",
+          "peer",
+          "status",
+          "messages",
+          "sent",
+          "timing"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "surface": {
+            "type": "string",
+            "enum": [
+              "workload",
+              "server"
+            ]
+          },
+          "service": {
+            "type": "string"
+          },
+          "serviceLabel": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "The gRPC path, /package.Service/Method."
+          },
+          "streaming": {
+            "type": "object",
+            "properties": {
+              "request": {
+                "type": "boolean"
+              },
+              "response": {
+                "type": "boolean"
+              },
+              "stopped": {
+                "type": "string",
+                "description": "What ended the read: end, messages, size or timeout."
+              },
+              "wanted": {
+                "type": "integer",
+                "format": "int32"
+              }
+            },
+            "required": [
+              "request",
+              "response",
+              "stopped",
+              "wanted"
+            ]
+          },
+          "target": {
+            "type": "string"
+          },
+          "resolvedAddress": {
+            "type": "string"
+          },
+          "transport": {
+            "type": "string",
+            "enum": [
+              "tcp",
+              "unix"
+            ]
+          },
+          "tls": {
+            "type": "boolean",
+            "description": "Whether the channel was TLS."
+          },
+          "peer": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "What the server's certificate said, when there was one."
+          },
+          "status": {
+            "$ref": "#/components/schemas/Spiffe.GrpcStatus"
+          },
+          "messages": {
+            "type": "array",
+            "items": {},
+            "description": "The response messages, as JSON."
+          },
+          "sent": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The request message as it was sent."
+          },
+          "timing": {
+            "$ref": "#/components/schemas/Spiffe.Timing"
+          }
+        },
+        "description": "What SPIFFE said. `ok` is false for every status but OK, and that is\nstill an answer."
+      },
+      "Spiffe.CallFailure": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "identityMismatch",
+          "peer",
+          "timing"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "identityMismatch": {
+            "type": "boolean",
+            "description": "A server answered, with a certificate a trusted authority signed,\nand was somebody else."
+          },
+          "peer": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timing": {
+            "$ref": "#/components/schemas/Spiffe.Timing"
+          }
+        },
+        "description": "A refusal or a failure from the client."
+      },
+      "Spiffe.CallRequest": {
+        "type": "object",
+        "required": [
+          "address"
+        ],
+        "properties": {
+          "address": {
+            "type": "string",
+            "minLength": 1,
+            "description": "host:port, tcp://host:port, unix:///path or unix:/path.",
+            "x-checked-in-code": "api/spiffe_client.js: the address grammar (ESPIFFEBADADDRESS); a port in spiffeAllowedPorts (ESPIFFEPORTNOTALLOWED) and the address policy (EBLOCKEDADDRESS); a socket path under spiffeAllowedSocketPaths, within sun_path, present and a socket (ESPIFFESOCKET...)",
+            "x-refusal": {
+              "message": "address is required: host:port, tcp://host:port or unix:///path/to/api.sock. Note that a unix: path is resolved on the machine running this api, which is not the machine running your browser."
+            }
+          },
+          "service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "workload, entry, agent, bundle, svid, trustdomain or debug.",
+            "x-checked-in-code": "api/spiffe_client.js: one of the services the protos define (ESPIFFENOSERVICE)"
+          },
+          "method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The method, as the .proto writes it. GET /spiffe/limits lists them.",
+            "x-checked-in-code": "api/spiffe_client.js: a method of that service (ESPIFFENOMETHOD)"
+          },
+          "request": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The request message. Bytes fields take base64. Absent is empty.",
+            "x-passthrough": true
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "type": "object",
+                "additionalProperties": {}
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "gRPC metadata to send, name to value.",
+            "x-checked-in-code": "api/spiffe_client.js: a token name, not grpc- reserved, a value with no CR or LF (ESPIFFEBADMETADATA)"
+          },
+          "maxMessages": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "How many messages of a stream to read, capped at\nspiffeMaxStreamMessages.",
+            "x-checked-in-code": "api/spiffe_client.js: parsed as an integer, at least 1 and at most spiffeMaxStreamMessages"
+          },
+          "securityHeader": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Only false leaves out the workload.spiffe.io header the Workload API\nrequires — which is how a caller sees a server refuse a client that\nforgot it."
+          },
+          "plaintext": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The SPIRE Server API without TLS, for a deployment that has mutual\nTLS off. Only true."
+          },
+          "serverIdentityMode": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "spiffe-id (the default), trust-domain or none.",
+            "x-checked-in-code": "api/spiffe_client.js: one of the three (ESPIFFEBADMODE)"
+          },
+          "serverId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The SPIFFE ID the server must present.",
+            "x-checked-in-code": "api/spiffe_client.js: needed in spiffe-id mode unless trustDomain derives it (ESPIFFENOSERVERID)"
+          },
+          "trustDomain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The trust domain, which derives the server's SPIFFE ID.",
+            "x-checked-in-code": "common/spiffe/spiffe_id.js: a trust domain that can name a server (ESPIFFEBADTRUSTDOMAIN); needed in trust-domain mode (ESPIFFENOTRUSTDOMAIN)"
+          },
+          "trustBundle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The x509-svid authorities, PEM or base64 concatenated DER.",
+            "x-checked-in-code": "api/spiffe_client.js: needed unless serverIdentityMode is none (ESPIFFENOTRUSTBUNDLE), and holding a certificate (ESPIFFEBADTRUSTBUNDLE)"
+          },
+          "identity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Spiffe.Identity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "One call on either gRPC surface."
+      },
+      "Spiffe.CatalogueMethod": {
+        "type": "object",
+        "required": [
+          "service",
+          "serviceLabel",
+          "name",
+          "path",
+          "requestStream",
+          "responseStream",
+          "what",
+          "example",
+          "described"
+        ],
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "serviceLabel": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "requestStream": {
+            "type": "boolean"
+          },
+          "responseStream": {
+            "type": "boolean"
+          },
+          "what": {
+            "type": "string"
+          },
+          "example": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "described": {
+            "type": "boolean"
+          }
+        },
+        "description": "One method of the catalogue."
+      },
+      "Spiffe.CatalogueService": {
+        "type": "object",
+        "required": [
+          "service",
+          "label",
+          "methods"
+        ],
+        "properties": {
+          "service": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "methods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Spiffe.CatalogueMethod"
+            }
+          }
+        }
+      },
+      "Spiffe.GrpcStatus": {
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "details"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "name": {
+            "type": "string"
+          },
+          "details": {
+            "type": "string"
+          }
+        },
+        "description": "A gRPC status."
+      },
+      "Spiffe.HandlerRefusal": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        },
+        "description": "The handler's own refusal: no address."
+      },
+      "Spiffe.Identity": {
+        "type": "object",
+        "properties": {
+          "certPem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The certificate chain, PEM or base64 DER.",
+            "x-checked-in-code": "api/spiffe_client.js: both halves or neither, and readable as PEM or base64 DER (ESPIFFEBADIDENTITY)"
+          },
+          "keyPem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its private key, PEM or base64 PKCS#8 DER.",
+            "x-checked-in-code": "api/spiffe_client.js: both halves or neither (ESPIFFEBADIDENTITY)"
+          }
+        },
+        "description": "The X509-SVID to present to the SPIRE Server API."
+      },
+      "Spiffe.Limits": {
+        "type": "object",
+        "required": [
+          "ports",
+          "socketPaths",
+          "maxSocketPathBytes",
+          "connectionTimeoutMs",
+          "callTimeoutMs",
+          "maxResultBytes",
+          "maxStreamMessages",
+          "streamTimeoutMs",
+          "addressPolicy",
+          "serverIdentityModes",
+          "securityHeader",
+          "surfaces",
+          "notes"
+        ],
+        "properties": {
+          "ports": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "any"
+                ]
+              }
+            ]
+          },
+          "socketPaths": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "any"
+                ]
+              }
+            ]
+          },
+          "maxSocketPathBytes": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "connectionTimeoutMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "callTimeoutMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxResultBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxStreamMessages": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "streamTimeoutMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "addressPolicy": {
+            "type": "boolean"
+          },
+          "serverIdentityModes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "securityHeader": {
+            "type": "string"
+          },
+          "surfaces": {
+            "type": "object",
+            "properties": {
+              "workload": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Spiffe.CatalogueService"
+                }
+              },
+              "server": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Spiffe.CatalogueService"
+                }
+              }
+            },
+            "required": [
+              "workload",
+              "server"
+            ]
+          },
+          "notes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "What the SPIFFE client will and will not do, and every method."
+      },
+      "Spiffe.Timing": {
+        "type": "object",
+        "required": [
+          "totalMs"
+        ],
+        "properties": {
+          "totalMs": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "Tls.ConnectAnswer": {
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "properties": {
+          "result": {
+            "$ref": "#/components/schemas/Tls.Handshake"
+          },
+          "withoutClientCertificate": {
+            "$ref": "#/components/schemas/Tls.Handshake",
+            "description": "The second handshake, when mutualAuthProbe was asked for."
+          },
+          "mutualAuth": {
+            "type": "object",
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "required",
+                  "not-required",
+                  "certificate-rejected",
+                  "required-and-rejected",
+                  "unknown"
+                ]
+              },
+              "detail": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "verdict",
+              "detail"
+            ],
+            "description": "What the two handshakes, read together, say."
+          }
+        },
+        "description": "The handshake report. A failed handshake is reported, not thrown."
+      },
+      "Tls.ConnectRequest": {
+        "type": "object",
+        "required": [
+          "host",
+          "port"
+        ],
+        "properties": {
+          "host": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The server's host name or address.",
+            "x-checked-in-code": "api/tls_probe.js: trimmed and refused when blank (ETLSNOHOST); resolved, and every address held to the address policy (EBLOCKEDADDRESS)",
+            "x-refusal": {
+              "message": "host and port are required."
+            }
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "format": "int64"
+              },
+              {
+                "$ref": "#/components/schemas/Tls.PortText"
+              }
+            ],
+            "description": "The server's port, a number or its text.",
+            "x-checked-in-code": "api/tls_probe.js: an integer from 1 to 65535 (ETLSBADPORT) in tlsAllowedPorts (ETLSPORTNOTALLOWED)",
+            "x-refusal": {
+              "message": "host and port are required."
+            }
+          },
+          "servername": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SNI and the name verified. Absent is the host; null sends none.",
+            "x-passthrough": true
+          },
+          "minVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "TLSv1, TLSv1.1, TLSv1.2 or TLSv1.3.",
+            "x-checked-in-code": "api/tls_probe.js: one of the four, and not above maxVersion (ETLSBADVERSION)"
+          },
+          "maxVersion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "TLSv1, TLSv1.1, TLSv1.2 or TLSv1.3.",
+            "x-checked-in-code": "api/tls_probe.js: one of the four (ETLSBADVERSION)"
+          },
+          "ciphers": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An OpenSSL cipher list, handed to OpenSSL as written.",
+            "x-passthrough": true
+          },
+          "groups": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An OpenSSL supported-groups list: where ML-KEM is chosen.",
+            "x-checked-in-code": "api/tls_probe.js: colon-separated OpenSSL names of a conservative alphabet (ETLSBADNAMELIST); OpenSSL itself refuses a name it does not know (ETLSGROUPS)"
+          },
+          "sigalgs": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An OpenSSL signature-algorithms list.",
+            "x-checked-in-code": "api/tls_probe.js: colon-separated OpenSSL names of a conservative alphabet (ETLSBADNAMELIST); OpenSSL itself refuses a name it does not know (ETLSSIGALGS)"
+          },
+          "alpnProtocols": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The ALPN protocols to offer.",
+            "x-passthrough": true
+          },
+          "trustCertificates": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The truststore, PEM: one bundle, or a list of them.",
+            "x-checked-in-code": "api/tls_probe.js: at most maxTrustAnchors certificates in all (ETLSTRUSTTOOLARGE)"
+          },
+          "includeSystemRoots": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Add the platform roots. Absent is: only when no anchors were given."
+          },
+          "clientCertificatePem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The client certificate chain, PEM, leaf first.",
+            "x-checked-in-code": "api/tls_probe.js: refused without clientKeyPem (ETLSNOCLIENTKEY); OpenSSL refuses material it cannot use (ETLSCLIENTMATERIAL)"
+          },
+          "clientKeyPem": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Its private key, PEM."
+          },
+          "clientKeyPassphrase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The private key's passphrase. Never echoed."
+          },
+          "mutualAuthProbe": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Connect a second time without the client certificate, to find out\nwhether the server requires one."
+          },
+          "httpRequest": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "$ref": "#/components/schemas/Tls.HttpRequest"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "One GET over the connection: a path, or `{ path }`. Absent, null,\nfalse or empty asks for none."
+          }
+        },
+        "description": "One TLS connection, and optionally a second without the client\ncertificate."
+      },
+      "Tls.Failure": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "A refusal or a network failure; `code` names which (ETLS...)."
+      },
+      "Tls.Handshake": {
+        "type": "object",
+        "required": [
+          "connected",
+          "host",
+          "address",
+          "port",
+          "servername",
+          "elapsedMs",
+          "clientCertificateOffered",
+          "trustStore",
+          "authorized",
+          "authorizationError",
+          "peerChain"
+        ],
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "host": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "servername": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "elapsedMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "clientCertificateOffered": {
+            "type": "boolean"
+          },
+          "trustStore": {
+            "type": "object",
+            "properties": {
+              "pastedAnchors": {
+                "type": "integer",
+                "format": "int32"
+              },
+              "systemRoots": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "pastedAnchors",
+              "systemRoots"
+            ]
+          },
+          "authorized": {
+            "type": "boolean"
+          },
+          "authorizationError": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "peerChain": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": {}
+            },
+            "description": "Each certificate the server sent, leaf first, described."
+          },
+          "error": {
+            "$ref": "#/components/schemas/Tls.TlsError",
+            "description": "Set when the connection failed before a session existed."
+          },
+          "usable": {
+            "type": "boolean"
+          },
+          "postHandshakeError": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Tls.TlsError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "closedByPeer": {
+            "type": "boolean"
+          },
+          "peerData": {
+            "type": "boolean"
+          },
+          "protocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "cipher": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "standardName": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "standardName",
+              "version"
+            ]
+          },
+          "alpnProtocol": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "postQuantum": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "sessionReused": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "peerChainTruncated": {
+            "type": "boolean"
+          },
+          "peerChainBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "httpRequest": {
+            "type": "object",
+            "properties": {
+              "method": {
+                "type": "string",
+                "enum": [
+                  "GET"
+                ]
+              },
+              "path": {
+                "type": "string"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "method",
+              "path",
+              "headers"
+            ]
+          },
+          "httpResponse": {
+            "type": "object",
+            "properties": {
+              "parsed": {
+                "type": "boolean"
+              },
+              "statusLine": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "statusCode": {
+                "anyOf": [
+                  {
+                    "type": "integer",
+                    "format": "int32"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "bytes": {
+                "type": "integer",
+                "format": "int64"
+              },
+              "truncated": {
+                "type": "boolean"
+              },
+              "endedBy": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "parsed",
+              "statusLine",
+              "bytes",
+              "truncated",
+              "endedBy"
+            ]
+          }
+        },
+        "description": "One handshake. `connected` says whether the TLS session was established;\n`usable` whether it was still good once the peer had had its say — a TLS\n1.3 server refuses a client certificate AFTER the handshake completes."
+      },
+      "Tls.HttpRequest": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "An origin-form path. The method is GET and is not negotiable.",
+            "x-checked-in-code": "api/tls_probe.js: present, starting with \"/\", at most maxHttpPathLength characters, no whitespace (ETLSBADHTTPPATH)"
+          }
+        },
+        "description": "The one GET to make over the connection once it is up."
+      },
+      "Tls.Limits": {
+        "type": "object",
+        "required": [
+          "allowedPorts",
+          "connectionTimeoutMs",
+          "callTimeoutMs",
+          "maxChainBytes",
+          "maxTrustAnchors",
+          "postHandshakeGraceMs",
+          "tlsVersions",
+          "addressPolicyEnabled",
+          "mutualAuthProbeAvailable",
+          "httpRequestAvailable",
+          "httpRequestMethod",
+          "httpResponseGraceMs",
+          "maxHttpPathLength",
+          "nodeVersion",
+          "systemRootCount"
+        ],
+        "properties": {
+          "allowedPorts": {
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "format": "int32"
+                }
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "any"
+                ]
+              }
+            ]
+          },
+          "connectionTimeoutMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "callTimeoutMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxChainBytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxTrustAnchors": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "postHandshakeGraceMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "tlsVersions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "addressPolicyEnabled": {
+            "type": "boolean"
+          },
+          "mutualAuthProbeAvailable": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "httpRequestAvailable": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "httpRequestMethod": {
+            "type": "string",
+            "enum": [
+              "GET"
+            ]
+          },
+          "httpResponseGraceMs": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "maxHttpPathLength": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "nodeVersion": {
+            "type": "string"
+          },
+          "systemRootCount": {
+            "type": "integer",
+            "format": "int32"
+          }
+        },
+        "description": "What the probe will and will not do."
+      },
+      "Tls.PortText": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Text with at least one character: how a port arrives from a form."
+      },
+      "Tls.TlsError": {
+        "type": "object",
+        "required": [
+          "code",
+          "message",
+          "library",
+          "reason"
+        ],
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "library": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "An error as node and OpenSSL reported it."
       }
     }
   },
