@@ -62,6 +62,8 @@
 - section: Verifiable credentials
   items:
     - { title: SD-JWT VC issuance, url: /docs/sd-jwt-vc-issuance.html }
+    - { title: Using the VC presentation workflow,
+        url: /docs/vc-presentation-guide.html }
     - { title: SD-JWT VC presentation,
         url: /docs/sd-jwt-vc-presentation.html }
     - { title: DIDs, url: /docs/dids.html }
@@ -81,7 +83,9 @@
 
 - section: Authorization
   items:
+    - { title: Using the XACML editor, url: /docs/xacml-guide.html }
     - { title: "XACML 3.0: editor and decisions", url: /docs/xacml.html }
+    - { title: Using the GNAP workflow, url: /docs/gnap-guide.html }
     - { title: "GNAP (RFC 9635): a client", url: /docs/gnap.html }
 
 - section: Shared Signals

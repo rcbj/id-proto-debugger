@@ -20,8 +20,8 @@ those jobs were not re-run for this pass.
 
 ## Before you start
 
-From a checkout, follow *Getting Started* in the repository's
-[README](../README.md#getting-started). Then open `https://localhost:3000`
+From a checkout, follow [Getting started](getting-started.md). Then open
+`https://localhost:3000`
 and pick **WS-Trust Protocol**.
 
 **Initiate STS Call From** defaults to **Backend (proxy)**, which is

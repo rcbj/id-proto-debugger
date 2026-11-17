@@ -22,9 +22,8 @@ those jobs were not re-run for this pass.
 
 ## Before you start
 
-From a checkout, follow *Getting Started* in the repository's
-[README](../README.md#getting-started). Then open `https://localhost:3000`
-and pick **SAML Protocol**.
+From a checkout, follow [Getting started](getting-started.md). Then open
+`https://localhost:3000` and pick **SAML Protocol**.
 
 The assertion consumer and the single logout endpoint are on the API service
 (`https://localhost:4000`). A deployed static site has no API, so **Call
