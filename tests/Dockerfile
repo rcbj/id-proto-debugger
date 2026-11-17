@@ -352,6 +352,10 @@ COPY tests/bbs_vectors.json ./
 # client/src/bbs2023.js does require("./contexts/..."), so the vendored JSON-LD
 # contexts come too: canonicalization must never depend on fetching one.
 COPY client/src/bbs2023.js ./
+# bbs2023.js takes its contexts and offline loader from jsonld_contexts.js
+# (#475), which every Data Integrity cryptosuite shares; without it beside
+# the flat copy, bbs2023.js is a MODULE_NOT_FOUND at require.
+COPY client/src/jsonld_contexts.js ./
 # (iya-sts's copy is NOT flattened here any more. It was, as ./sts_bbs2023.js,
 # on the grounds that it had no relative requires; since iya-sts v1.0.0 it
 # reads its JSON-LD contexts from ./contexts beside itself, which a flat copy
@@ -389,6 +393,10 @@ COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
 # from /usr/src/source-tree); it also requires mdoc_test_issuer.js, copied
 # below.
 COPY tests/vp_verifier_engine.js ./
+# The Data Integrity and Linked Data proof engine (client/src/
+# data_integrity.js, read from /usr/src/source-tree), held to Digital
+# Bazaar's, Gaia-X's and Blockcerts' released implementations (#475).
+COPY tests/data_integrity_engine.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./

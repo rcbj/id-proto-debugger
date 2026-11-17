@@ -3893,6 +3893,17 @@ function buildJobs() {
     env: {},
   });
 
+  // Every Data Integrity cryptosuite and legacy Linked Data proof type an
+  // ldp_vc arrives with (client/src/data_integrity.js, #475), in both
+  // directions against Digital Bazaar's, Gaia-X's and Blockcerts' released
+  // implementations, with two byte-for-byte vectors. Needs nothing.
+  jobs.push({
+    name: "Data Integrity proofs (eddsa/ecdsa rdfc and jcs, Ed25519 " +
+        "2018/2020, JWS 2020, secp256k1 2019; cross-implementation, in node)",
+    script: "data_integrity_engine.js",
+    env: {},
+  });
+
   // The debugger as an OpenID4VP 1.0 VERIFIER (#364): the DCQL builder, the
   // Verifier's x509 identity (read back by node and by the wallet's own
   // verifyX509Request), and verifyResponse() over dc+sd-jwt, mso_mdoc,
