@@ -18,6 +18,7 @@
 
 import "./oauth.tsp";
 import "./scim.tsp";
+import "./ssf_events.tsp";
 
 namespace IdProtoDebugger.Catalog;
 

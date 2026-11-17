@@ -1,0 +1,12 @@
+{
+  "name": "initiating_entity",
+  "required": false,
+  "type": "enum",
+  "values": [
+    "admin",
+    "user",
+    "policy",
+    "system"
+  ],
+  "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+}

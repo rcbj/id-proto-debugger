@@ -1,0 +1,516 @@
+[
+  {
+    "uri": "https://schemas.openid.net/secevent/caep/event-type/session-revoked",
+    "family": "caep",
+    "name": "Session Revoked",
+    "subject": "required",
+    "what": "THE EVENT THE WHOLE PROFILE EXISTS FOR. The session named by the subject is no longer good, whatever its token says its lifetime is. It carries NO event-specific member at all, and that is not an oversight: everything it has to say is in the subject and in the four common claims, and there is nothing to qualify.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when a session ends — an administrator signing somebody out, a policy engine, the person themselves. Where the subject is a COMPLEX one the revocation applies to any session matching every part of it at once, which is how \"that person, on that device\" is said.",
+    "members": [
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+      },
+      {
+        "name": "initiating_entity",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "admin",
+          "user",
+          "policy",
+          "system"
+        ],
+        "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/caep/event-type/session-established",
+    "family": "caep",
+    "name": "Session Established",
+    "subject": "required",
+    "what": "A session was created. It is what CLOSES THE LOOP: without it a receiver only ever hears about sessions ENDING, so it can never hold an inventory of what is open and cannot notice a sign-in it did not expect.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it at the moment somebody signs in.",
+    "members": [
+      {
+        "name": "fp_ua",
+        "required": false,
+        "type": "string",
+        "what": "A fingerprint of the user agent, computed by the transmitter. Its whole value is comparing two of them, so what it is made of is the transmitter's business and no receiver should parse one."
+      },
+      {
+        "name": "acr",
+        "required": false,
+        "type": "string",
+        "what": "The authentication context class, with OpenID Connect's own meaning."
+      },
+      {
+        "name": "amr",
+        "required": false,
+        "type": "strings",
+        "what": "The authentication methods, as an ARRAY — OpenID Connect's `amr`. A bare string is refused here rather than wrapped: a session authenticated by a password AND a security key has two values, and wrapping would hide a sender that can only ever say one."
+      },
+      {
+        "name": "ext_id",
+        "required": false,
+        "type": "string",
+        "what": "The transmitter's own identifier for this session, for a receiver correlating with something it already holds."
+      },
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+      },
+      {
+        "name": "initiating_entity",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "admin",
+          "user",
+          "policy",
+          "system"
+        ],
+        "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/caep/event-type/session-presented",
+    "family": "caep",
+    "name": "Session Presented",
+    "subject": "required",
+    "what": "The session was USED — presented at the transmitter and honoured. It is the one CAEP event about something entirely ordinary, and it is there so a receiver can see a live session it is not itself being asked about, and can spot the same session in two places at once.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when an existing session answers a request — which is single sign-on. A transmitter that sent one for the sign-in's own return trip would emit it milliseconds after session-established every time, and the event would stop meaning anything.",
+    "members": [
+      {
+        "name": "fp_ua",
+        "required": false,
+        "type": "string",
+        "what": "The user agent fingerprint observed THIS time. Comparing it with the one on the session-established event is the whole point of the member: the same session presented from a different agent is the abnormality this event exists to make visible."
+      },
+      {
+        "name": "ext_id",
+        "required": false,
+        "type": "string",
+        "what": "The transmitter's own identifier for the session."
+      },
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+      },
+      {
+        "name": "initiating_entity",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "admin",
+          "user",
+          "policy",
+          "system"
+        ],
+        "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/caep/event-type/token-claims-change",
+    "family": "caep",
+    "name": "Token Claims Change",
+    "subject": "required",
+    "what": "A claim behind the token changed while the token is still valid — a role, a group, a tenant. It is the event that makes the access-token-lifetime argument go away: a receiver does not have to wait for a refresh to find out that somebody left the group that authorises them.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it when the underlying claim moves — a directory write, a role assignment withdrawn.",
+    "members": [
+      {
+        "name": "claims",
+        "required": true,
+        "type": "object",
+        "what": "The claims that changed, with their NEW values. It is not a whole token and it is not a diff: a receiver applies what is here over what it holds. So a group taken away is the new LIST rather than the group that went, which catches everybody once."
+      },
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+      },
+      {
+        "name": "initiating_entity",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "admin",
+          "user",
+          "policy",
+          "system"
+        ],
+        "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/caep/event-type/credential-change",
+    "family": "caep",
+    "name": "Credential Change",
+    "subject": "required",
+    "what": "A credential was enrolled, renewed, revoked or deleted. It is the CAEP event a receiver acts on WITHOUT ending anything: a second factor being deleted does not invalidate the session it was used to establish, and it does change what that session should be allowed to do next.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it from wherever credentials are managed — an enrolment page, an administrator revoking a key.",
+    "members": [
+      {
+        "name": "credential_type",
+        "required": true,
+        "type": "openenum",
+        "values": [
+          "password",
+          "pin",
+          "x509",
+          "fido2-platform",
+          "fido2-roaming",
+          "fido-u2f",
+          "verifiable-credential",
+          "phone-voice",
+          "phone-sms",
+          "app"
+        ],
+        "what": "Which kind. The list is CAEP's own and it is OPEN — the specification allows types two parties agree between themselves — so a value not on it is CARRIED with a warning rather than refused. Refusing would make this workflow unable to build a vendor's own type, which is exactly what a debugger is for."
+      },
+      {
+        "name": "change_type",
+        "required": true,
+        "type": "enum",
+        "values": [
+          "create",
+          "revoke",
+          "update",
+          "delete"
+        ],
+        "what": "What happened to it. CLOSED, unlike the type above: these four are the whole lifecycle and a fifth would be a receiver guessing."
+      },
+      {
+        "name": "friendly_name",
+        "required": false,
+        "type": "string",
+        "what": "What the person calls it — \"my work phone\". For a screen, not for a decision."
+      },
+      {
+        "name": "x509_issuer",
+        "required": false,
+        "type": "string",
+        "what": "The certificate's issuer (RFC 5280), where the credential is an X.509 one."
+      },
+      {
+        "name": "x509_serial",
+        "required": false,
+        "type": "string",
+        "what": "The certificate's serial number (RFC 5280). Serial numbers are unique per ISSUER and not globally, which is what makes this member useless without the one above it."
+      },
+      {
+        "name": "fido2_aaguid",
+        "required": false,
+        "type": "string",
+        "what": "The authenticator's AAGUID, where the credential is a FIDO2 one. It names a MODEL of authenticator rather than the individual one, which is what makes it publishable at all."
+      },
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+      },
+      {
+        "name": "initiating_entity",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "admin",
+          "user",
+          "policy",
+          "system"
+        ],
+        "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/caep/event-type/assurance-level-change",
+    "family": "caep",
+    "name": "Assurance Level Change",
+    "subject": "required",
+    "what": "The strength of the authentication behind this session moved. A DECREASE is the interesting one and it is easy to forget it can happen at all: a second factor that has expired, or a session carried past the window its step-up was good for, both lower assurance without anybody signing in again.",
+    "howItIsAsked": "Nobody asks. A transmitter sends it after a step-up, after a step-down, or when the window a factor was good for closes.",
+    "members": [
+      {
+        "name": "namespace",
+        "required": true,
+        "type": "openenum",
+        "values": [
+          "RFC8176",
+          "RFC6711",
+          "ISO-IEC-29115",
+          "NIST-IAL",
+          "NIST-AAL",
+          "NIST-FAL"
+        ],
+        "what": "WHICH SCALE THE TWO LEVELS ARE ON, and it is required because the event is useless without it: \"aal2\" means nothing until you know it is NIST's. The list is open — two parties may agree an alias — so an unlisted namespace is carried with a warning."
+      },
+      {
+        "name": "current_level",
+        "required": true,
+        "type": "string",
+        "what": "The level the session is at NOW, spelt the way the namespace above spells it. A free string precisely because the namespace decides its shape."
+      },
+      {
+        "name": "previous_level",
+        "required": false,
+        "type": "string",
+        "what": "Where it was before. Optional and worth sending: without it a receiver can see that assurance changed and not whether it went UP."
+      },
+      {
+        "name": "change_direction",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "increase",
+          "decrease"
+        ],
+        "what": "Which way, said outright rather than inferred. It exists because a receiver cannot order two levels in a namespace it does not understand — which is the ordinary case across two organisations."
+      },
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+      },
+      {
+        "name": "initiating_entity",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "admin",
+          "user",
+          "policy",
+          "system"
+        ],
+        "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/caep/event-type/device-compliance-change",
+    "family": "caep",
+    "name": "Device Compliance Change",
+    "subject": "required",
+    "what": "The device the session runs on fell out of, or back into, compliance with whatever the estate's policy is. The subject is normally a COMPLEX one naming the device as well as the person, because the same person on a second device is unaffected and a receiver cannot tell that from a subject naming only them.",
+    "howItIsAsked": "Nobody asks. A device management service tells the transmitter and the transmitter tells the receivers.",
+    "members": [
+      {
+        "name": "previous_status",
+        "required": true,
+        "type": "enum",
+        "values": [
+          "compliant",
+          "not-compliant"
+        ],
+        "what": "What the device WAS. Required, and that is what makes this event safe to act on out of order: a receiver holding \"compliant\" that gets an event whose previous status is \"not-compliant\" knows it has missed one, and that gap is invisible from either event on its own."
+      },
+      {
+        "name": "current_status",
+        "required": true,
+        "type": "enum",
+        "values": [
+          "compliant",
+          "not-compliant"
+        ],
+        "what": "What it is now. The hyphen in \"not-compliant\" is the specification's and is worth checking against — \"noncompliant\" is silently ignored by a conforming receiver."
+      },
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+      },
+      {
+        "name": "initiating_entity",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "admin",
+          "user",
+          "policy",
+          "system"
+        ],
+        "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+      }
+    ]
+  },
+  {
+    "uri": "https://schemas.openid.net/secevent/caep/event-type/risk-level-change",
+    "family": "caep",
+    "name": "Risk Level Change",
+    "subject": "required",
+    "what": "A risk engine changed its mind about somebody. It is the only CAEP event that is a JUDGEMENT rather than a fact — the other seven report something that happened — which is why it carries a reason and why a receiver is expected to weigh it rather than act on it.",
+    "howItIsAsked": "Nobody asks. A risk engine tells the transmitter when a signal moves.",
+    "members": [
+      {
+        "name": "principal",
+        "required": true,
+        "type": "openenum",
+        "values": [
+          "USER",
+          "DEVICE",
+          "SESSION",
+          "TENANT",
+          "ORG_UNIT",
+          "GROUP"
+        ],
+        "what": "WHAT the level is about, and it is required because the subject alone cannot say: a complex subject names a person AND a device AND a session, and \"risk went to HIGH\" about the device is a different fact from the same sentence about the person. THE VALUES ARE UPPER CASE HERE and lower case in a complex subject's member names, which catches everybody once."
+      },
+      {
+        "name": "current_level",
+        "required": true,
+        "type": "enum",
+        "values": [
+          "LOW",
+          "MEDIUM",
+          "HIGH"
+        ],
+        "what": "The level now. Three values, upper case, closed."
+      },
+      {
+        "name": "previous_level",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "LOW",
+          "MEDIUM",
+          "HIGH"
+        ],
+        "what": "The level before, which is what lets a receiver notice a missed event."
+      },
+      {
+        "name": "risk_reason",
+        "required": false,
+        "type": "string",
+        "what": "What contributed. RECOMMENDED rather than required, and it decides whether a receiver can do anything but step up: \"impossible travel\" and \"credential seen in a breach corpus\" call for different answers."
+      },
+      {
+        "name": "event_timestamp",
+        "required": false,
+        "type": "number",
+        "what": "When the thing described actually happened, in seconds since the epoch. OPTIONAL in CAEP section 2, which surprises people — a receiver deciding whether to end a session wants it more than it wants anything else in the payload, and a conforming transmitter need not send one. A receiver that assumes it is there is one this page can catch, by leaving it out."
+      },
+      {
+        "name": "initiating_entity",
+        "required": false,
+        "type": "enum",
+        "values": [
+          "admin",
+          "user",
+          "policy",
+          "system"
+        ],
+        "what": "Who invoked it. It is the member that lets a receiver tell \"an administrator revoked this\" from \"a risk engine did\" — two facts that call for two different responses and are indistinguishable without it."
+      },
+      {
+        "name": "reason_admin",
+        "required": false,
+        "type": "langmap",
+        "what": "Why, for a log and for an auditor. IT IS AN OBJECT KEYED BY A LANGUAGE TAG — {\"en\": \"Policy 4.2 was violated\"} — and not a string. That is the commonest mistake in the whole profile and it has no symptom: a receiver indexing by language reads nothing from a string and reports no error."
+      },
+      {
+        "name": "reason_user",
+        "required": false,
+        "type": "langmap",
+        "what": "The same, in words meant for the person it happened to. Two members rather than one because what an auditor needs to read and what may be shown on a screen are rarely the same sentence."
+      }
+    ]
+  }
+]

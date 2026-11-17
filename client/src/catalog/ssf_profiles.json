@@ -1,0 +1,23 @@
+[
+  {
+    "id": "ssf",
+    "family": "ssf",
+    "label": "Pure SSF",
+    "implemented": true,
+    "what": "The framework itself. Two event types, both about the PIPE rather than about a person: is this stream alive, and has its status changed. Everything else on this page is the machinery both vocabularies run on."
+  },
+  {
+    "id": "caep",
+    "family": "caep",
+    "label": "CAEP",
+    "implemented": true,
+    "what": "Continuous Access Evaluation Profile 1.0. Eight event types about a SESSION — it says \"this session is no longer trustworthy\". The CAEP Session pane appears, and every event list on this page narrows to these eight."
+  },
+  {
+    "id": "risc",
+    "family": "risc",
+    "label": "RISC",
+    "implemented": true,
+    "what": "RISC Profile Specification 1.0, published 29 August 2025 and final on 2 September 2025. Fourteen event types about an ACCOUNT — it says \"this account is no longer trustworthy\", which is a larger sentence than CAEP's by orders of magnitude: a revoked session is one sign-in at one relying party, and a purged account is every session that person has anywhere, for ever. The RISC Account pane appears, and every event list on this page narrows to these fourteen."
+  }
+]

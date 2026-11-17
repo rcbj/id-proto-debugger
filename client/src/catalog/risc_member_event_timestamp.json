@@ -1,0 +1,6 @@
+{
+  "name": "event_timestamp",
+  "required": false,
+  "type": "number",
+  "what": "When the transmitter DISCOVERED the compromise, in seconds since the epoch. RISC section 2.7 words it as discovery rather than as occurrence, and that is not pedantry: a credential found in a breach corpus was compromised long before anybody noticed, so a receiver reading this as \"when it happened\" dates the incident from the wrong end."
+}
