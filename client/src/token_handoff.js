@@ -318,7 +318,8 @@ function requestedScope() {
 // Returns "" unless that is the case: the error is `invalid_scope` and the
 // waiting workflow asked for scopes of its own. It says what was asked for
 // and the three ways out, and it names no product's attribute as THE answer
-// — iya-sts's `oauthAllowedScope` is given as one example among others.
+// — iya-sts's `oauthAllowedScope`, and the SSF_READ / SSF_MANAGE role
+// membership its #309 added, are given as one example among others.
 function scopeRefusalNote(error, requested) {
   log.debug("Entering scopeRefusalNote().");
   var wanted = normalizeScope(requested);
@@ -329,11 +330,14 @@ function scopeRefusalNote(error, requested) {
   var note = "The authorization server refused the scope (invalid_scope). " +
       "The workflow waiting for this token asked for \u201c" + wanted +
       "\u201d, and an authorization server issues a scope only to a client " +
-      "that is allowed to request it. Declare those scopes on this " +
+      "that is allowed to request it. Allow those scopes on this " +
       "client's registration (on iya-sts, oauthAllowedScope on the " +
-      "application's entry; elsewhere, the client's scope or client-scope " +
-      "assignment), use a client that already has them, or change the " +
-      "scopes on the page that asked and start the hand-off again.";
+      "application's entry, and for that service's own scopes such as " +
+      "ssf.read and ssf.manage, the application in the role that " +
+      "authorizes each and the person in that role's group; elsewhere, " +
+      "the client's scope or client-scope assignment), use a client that " +
+      "already has them, or change the scopes on the page that asked and " +
+      "start the hand-off again.";
   log.debug("Leaving scopeRefusalNote(). " + wanted);
   return note;
 }

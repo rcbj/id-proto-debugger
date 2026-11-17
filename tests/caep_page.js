@@ -576,11 +576,59 @@ const DRIVEN = [
 // drives on `oauthGrantType`. A target with no registry that knows the
 // attribute (an sts from before #110, or an authorization server that is not
 // iya-sts) keeps CLIENT_ID and the pre-#311 scopes, and says so.
+//
+// DECLARING THE SCOPE IS ONLY ONE OF THE HALVES iya-sts ASKS FOR. Since its
+// #309 `ssf.read` and `ssf.manage` are authorized by the native roles
+// SSF_READ and SSF_MANAGE: an application's own token (client credentials)
+// carries one only while the application is a MEMBER of the role, and a
+// person's (the password grant) only while that person is also in the role's
+// group (`ssf-read`, `ssf-manage`). Without them the scopes are taken off
+// (STS-ADMIN-0821), and a request that asked for nothing else — client
+// credentials, here — is refused invalid_scope (STS-ADMIN-0822). So the
+// client joins both roles and the person both groups, through the
+// management API, before either grant runs.
 const SSF_CLIENT_ID = 'caep-page-ssf-client';
 const SSF_CLIENT_SCOPES = ['openid', 'profile', 'email', 'ssf.read',
   'ssf.manage'];
+const SSF_ROLES = [
+  { role: 'SSF_READ', group: 'ssf-read' },
+  { role: 'SSF_MANAGE', group: 'ssf-manage' }
+];
+const GRANT_USER = 'caep-page-user';
 let grantClientId = clientId;
+let grantPassword = 'anything';
 let ssfScopesDeclared = false;
+
+// Make the application a member of each SSF role, and the person a member of
+// each role's group. "Already a member" is the state wanted, so a second run
+// against a kept stack passes; any other refusal fails here, naming it.
+async function grantTheSsfRoles(base) {
+  log.debug("Entering grantTheSsfRoles().");
+  grantPassword = require("crypto").randomBytes(18).toString("base64url") +
+      "-Aa1!";
+  await registry.ensurePerson(base, GRANT_USER, grantPassword);
+  let one;
+  for (one of SSF_ROLES) {
+    const member = await registry.adminPost(base, "/roles/add-member",
+        { role: one.role, kind: 'application', member: SSF_CLIENT_ID });
+    const already = !member.ok && (member.errors || []).some(function (e) {
+      return /already/i.test(String(e));
+    });
+    assert.ok(member.ok || already,
+        'POST /admin-api/roles/add-member could not make ' + SSF_CLIENT_ID +
+        ' a member of ' + one.role + ': ' + JSON.stringify(member) + '. ' +
+        'Without it iya-sts issues ' + one.role.toLowerCase()
+          .replace('_', '.') + ' to nobody through this client.');
+    const grouped = await registry.adminPost(base, "/groups/add-member",
+        { group: one.group, member: GRANT_USER });
+    assert.ok(grouped.ok,
+        'POST /admin-api/groups/add-member could not put ' + GRANT_USER +
+        ' in ' + one.group + ': ' + JSON.stringify(grouped) + '.');
+    log.info("[registry] " + SSF_CLIENT_ID + " is a member of " + one.role +
+        ", and " + GRANT_USER + " is in " + one.group + ".");
+  }
+  log.debug("Leaving grantTheSsfRoles().");
+}
 
 async function declareTheHandoffClient() {
   log.debug("Entering declareTheHandoffClient().");
@@ -604,6 +652,7 @@ async function declareTheHandoffClient() {
     why: 'the client the SSF page\'s token hand-off is driven through, ' +
         'declaring the scopes that page asks for'
   });
+  await grantTheSsfRoles(base);
   grantClientId = SSF_CLIENT_ID;
   ssfScopesDeclared = true;
   log.debug("Leaving declareTheHandoffClient(). " + SSF_CLIENT_ID);
@@ -724,7 +773,7 @@ async function oneGrant(driver, helpers, grant) {
         'secret', scope);
   } else {
     await helpers.getAccessTokenPassword(driver, grantClientId, 'secret',
-        scope, 'caep-page-user', 'anything');
+        scope, GRANT_USER, grantPassword);
   }
 
   // THE HAND-OFF'S RETURN LINK, which is what takes the token set back. It is

@@ -108,7 +108,9 @@ than this one's: four sign-ins driven through the mock's consent screen here
 would be a second copy of what those jobs already own, failing for their
 reasons and reported as a CAEP defect.
 Both run as `caep-page-ssf-client`, which the job declares in iya-sts's
-registry with `ssf.read` and `ssf.manage` on `oauthAllowedScope`, and both ask
+registry with `ssf.read` and `ssf.manage` on `oauthAllowedScope` and makes a
+member of the `SSF_READ` and `SSF_MANAGE` roles (its grant user joins the
+`ssf-read` and `ssf-manage` groups, the person's half), and both ask
 for the scope the page's own `ssf_handoff_scope` field holds (client
 credentials less `openid`) — so a default the stack's clients cannot be issued
 fails this job (#311). A grant that cannot be driven no longer only warns.
