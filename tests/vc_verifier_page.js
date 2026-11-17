@@ -190,8 +190,9 @@ async function openPage(driver) {
 }
 
 // Fill pane 1 and 2, press Create, and read back what the page made.
-async function createRequest(driver, mode) {
+async function createRequest(driver, mode, opts) {
   log.debug("Entering createRequest(). " + mode);
+  const o = opts || {};
   await setField(driver, "vpv_query_id", "credential");
   await setField(driver, "vpv_format", "dc+sd-jwt");
   await setField(driver, "vpv_type", VCT);
@@ -199,9 +200,9 @@ async function createRequest(driver, mode) {
   await setField(driver, "vpv_binding", true);
   await setField(driver, "vpv_dcql", "");
   await driver.executeScript("window.vcverifier.regenerateDcql();");
-  await setField(driver, "vpv_client_prefix", "x509_hash");
+  await setField(driver, "vpv_client_prefix", o.prefix || "x509_hash");
   await setField(driver, "vpv_response_mode", mode);
-  await setField(driver, "vpv_delivery", "reference-get");
+  await setField(driver, "vpv_delivery", o.delivery || "reference-get");
   await setField(driver, "vpv_redirect_uri", "");
   await driver.executeScript("window.vcverifier.settingsChanged();");
   await driver.findElement(By.id("btn_vpv_create")).click();
@@ -311,6 +312,107 @@ async function walletAnswers(claims, holder, credential, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// LIVE SIGNING (#364, PR 3): a decentralized_identifier request under
+// request_uri_method=post. The wallet (node) POSTs a wallet_nonce to the
+// request_uri; the api holds that POST while the page signs a fresh Request
+// Object echoing it (OpenID4VP 1.0 section 5.10), and the wallet's answer
+// to THAT object must pass.
+// ---------------------------------------------------------------------------
+async function liveSigningRound(driver) {
+  log.debug("Entering liveSigningRound().");
+  log.info("=== decentralized_identifier, request_uri_method=post, live " +
+           "wallet_nonce ===");
+  await driver.executeScript("return window.vcverifier.reset();");
+  const request = await createRequest(driver, "direct_post", {
+    prefix: "decentralized_identifier", delivery: "reference-post" });
+  check("the invocation says request_uri_method=post and a DID client_id",
+      function () {
+        assert.ok(/request_uri_method=post/.test(request.invocation),
+                  request.invocation);
+        assert.ok(/^did:jwk:/.test(request.session.clientId),
+                  request.session.clientId);
+      });
+  const walletNonce = nodeCrypto.randomBytes(12).toString("base64url");
+  const got = await fetch(request.hosted.requestUri, { method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ wallet_nonce: walletNonce,
+      wallet_metadata: JSON.stringify({
+        vp_formats_supported: { "dc+sd-jwt": {} } }) }).toString() });
+  const body = await got.text();
+  const header = jwsPart(body, 0);
+  const claims = jwsPart(body, 1);
+  check("the wallet's POST is answered with a Request Object signed LIVE " +
+      "that echoes its wallet_nonce", function () {
+        assert.strictEqual(got.status, 200, body.slice(0, 200));
+        assert.strictEqual(claims.wallet_nonce, walletNonce,
+            "wallet_nonce is " + JSON.stringify(claims.wallet_nonce) +
+            ": the page did not sign within the api's wait, so the wallet " +
+            "got the object signed in advance.");
+      });
+  check("a decentralized_identifier request names the DID's key in kid " +
+      "and carries no x5c", function () {
+        assert.ok(String(header.kid || "").indexOf(claims.client_id + "#")
+                  === 0, JSON.stringify(header));
+        assert.ok(!header.x5c, JSON.stringify(header));
+      });
+  const holder = ecPair();
+  const credential = issueCredential(holder);
+  await walletAnswers(claims, holder, credential);
+  const seen = await waitForVerdict(driver);
+  check("every check on the answer to the live-signed request passes",
+      function () {
+        assert.ok(/every check passed/i.test(seen.verdict),
+            seen.verdict + "\n" + seen.rows.filter(function (r) {
+              return /fail/.test(r.cls);
+            }).map(function (r) {
+              return r.text;
+            }).join("\n"));
+      });
+  const events = await driver.executeScript(
+      "return Array.prototype.slice.call(" +
+      "  document.querySelectorAll('#vpv_events li')).map(function (li) {" +
+      "  return li.textContent; });");
+  check("the page reports that it signed a fresh Request Object", function () {
+    assert.ok(/signed a fresh Request Object/.test(events.join("\n")),
+              events.join("\n"));
+  });
+  log.debug("Leaving liveSigningRound().");
+}
+
+// The QR code a wallet on another device scans, and the Digital Credentials
+// API button in a browser that has no such API (headless Chrome has no
+// platform wallet), which must say so rather than fail silently.
+async function qrAndDcApi(driver) {
+  log.debug("Entering qrAndDcApi().");
+  log.info("=== QR code and the Digital Credentials API ===");
+  await driver.executeScript("return window.vcverifier.reset();");
+  await createRequest(driver, "direct_post");
+  const qr = await driver.executeScript(
+      "var e = document.querySelector('#vpv_qr svg');" +
+      "return e ? e.querySelectorAll('rect,path').length : 0;");
+  check("the invocation is drawn as a QR code", function () {
+    assert.ok(qr > 0, "no SVG in #vpv_qr");
+  });
+  await driver.executeScript("return window.vcverifier.reset();");
+  await setField(driver, "vpv_response_mode", "dc_api");
+  await driver.executeScript("window.vcverifier.settingsChanged();");
+  await driver.findElement(By.id("btn_vpv_dc_api")).click();
+  await driver.wait(async function () {
+    return /Digital Credentials API|Asking the browser|answered/i.test(
+        await textOf(driver, "vpv_create_status"));
+  }, WAIT, "the Digital Credentials API button said nothing");
+  const said = await textOf(driver, "vpv_create_status");
+  check("without a Digital Credentials API the page says so by name",
+      function () {
+        assert.ok(/no Digital Credentials API|Asking the browser/i.test(said),
+                  said);
+      });
+  await setField(driver, "vpv_response_mode", "direct_post");
+  await driver.executeScript("window.vcverifier.settingsChanged();");
+  log.debug("Leaving qrAndDcApi().");
+}
+
+// ---------------------------------------------------------------------------
 // THE ROUNDS.
 // ---------------------------------------------------------------------------
 async function oneRound(driver, mode, opts) {
@@ -378,8 +480,8 @@ async function test() {
               JSON.stringify(nonceRow));
           const status = rowFor(seen, "status");
           assert.ok(status && /skip/.test(status.cls),
-              "status lists are a SKIP until #364 PR 3: " +
-              JSON.stringify(status));
+              "this credential carries no status, so the status summary " +
+              "is a SKIP: " + JSON.stringify(status));
         });
 
     seen = await oneRound(driver, "direct_post.jwt");
@@ -403,9 +505,12 @@ async function test() {
               "Failed rows: " + failed.join(", "));
         });
 
+    await liveSigningRound(driver);
+    await qrAndDcApi(driver);
+
     await driver.executeScript("return window.vcverifier.reset();");
     log.info(checks + " checks passed.");
-    assert.ok(checks >= 14, "Only " + checks + " checks ran.");
+    assert.ok(checks >= 20, "Only " + checks + " checks ran.");
     log.info("Test completed successfully.");
   } finally {
     await driver.quit();

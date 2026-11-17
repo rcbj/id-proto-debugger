@@ -29,6 +29,7 @@
 var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 var verifier = require("./vp_verifier");
+var qrcode = require("qrcode-generator");
 
 var log = bunyan.createLogger({ name: "vc_verifier",
                                 level: appconfig.logLevel });
@@ -36,13 +37,15 @@ var log = bunyan.createLogger({ name: "vc_verifier",
 var API_URL = appconfig.apiUrl || "";
 var BACKEND_AVAILABLE = appconfig.backendAvailable !== false;
 var POLL_MS = 2000;
+// While a wallet waits on a live signature (request_uri_method=post).
+var LIVE_POLL_MS = 500;
 
 // The fields remembered across page loads (localStorage, under their ids).
 // Configuration only: see the header.
 var VERIFIER_KEYS = [
   "vpv_query_id", "vpv_format", "vpv_type", "vpv_claims", "vpv_binding",
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
-  "vpv_scheme", "vpv_redirect_uri"
+  "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed"
 ];
 
 // The label of the type field, per format: what DCQL's `meta` calls it.
@@ -237,6 +240,19 @@ function settingsChanged() {
   if (val("vpv_client_prefix") === "redirect_uri") {
     setVal("vpv_delivery", "value");
   }
+  var row = el("vpv_client_id_row");
+  if (row) {
+    row.style.display = val("vpv_client_prefix") === "pre-registered"
+      ? "" : "none";
+  }
+  var mode = val("vpv_response_mode");
+  var dcNote = el("vpv_dc_api_note");
+  if (dcNote) {
+    dcNote.textContent = mode === "dc_api" || mode === "dc_api.jwt"
+      ? "Nothing is hosted: the browser hands the request to a wallet " +
+        "and the answer comes back to this page."
+      : "";
+  }
   saveState();
   log.debug("Leaving settingsChanged().");
   return false;
@@ -363,47 +379,141 @@ function decodeJws(compact) {
   }
 }
 
+// THE PREFIXES THAT NEED A CERTIFICATE. The others sign with a bare key
+// (decentralized_identifier, verifier_attestation, pre-registered).
+var X509_PREFIXES = ["x509_hash", "x509_san_dns", "redirect_uri"];
+
+// The key a request is signed with, and what a wallet must be given to
+// trust it, for one Client Identifier prefix. `dnsName` is the host the
+// certificate names; `caIssuersUrl` the api URL serving its root (absent
+// under the DC API, where nothing is hosted).
+async function makeSigner(prefix, dnsName, caIssuersUrl) {
+  log.debug("Entering makeSigner(). " + prefix);
+  var signer = { prefix: prefix, attester: null, trust: "" };
+  if (X509_PREFIXES.indexOf(prefix) >= 0) {
+    // THE CERTIFICATE NEEDS WEB CRYPTO until #463 moves x509.js and
+    // key_material.js onto the pure-JS module. Said here by name rather
+    // than left to fail as "Cannot read properties of undefined".
+    if (typeof crypto === "undefined" || !crypto.subtle) {
+      log.debug("Leaving makeSigner(). No secure context.");
+      throw new Error("This page is not in a secure context (https or " +
+        "localhost), so the browser offers no Web Crypto, and the " +
+        "certificate an x509 Client Identifier is signed with cannot be " +
+        "made (#463). The decentralized_identifier, verifier_attestation " +
+        "and pre-registered prefixes need no certificate.");
+    }
+    signer.identity = await verifier.makeVerifierIdentity({
+      dnsName: dnsName, caIssuersUrl: caIssuersUrl });
+    signer.trust = signer.identity.rootPem || "";
+  } else {
+    signer.identity = await verifier.makeRequestKey();
+    if (prefix === "verifier_attestation") {
+      signer.attester = await verifier.makeAttester();
+      signer.trust = "The attester's keys (trust these):\n" +
+        JSON.stringify(signer.attester.jwks, null, 2);
+    } else if (prefix === "pre-registered") {
+      signer.trust = "The JWKS the wallet must hold for this client_id:\n" +
+        JSON.stringify(verifier.preRegisteredJwks(signer.identity), null, 2);
+    }
+  }
+  signer.dnsName = dnsName;
+  log.debug("Leaving makeSigner().");
+  return signer;
+}
+
+function clientIdOf(signer, redirectUri) {
+  log.debug("Entering clientIdOf(). " + signer.prefix);
+  var id = verifier.clientIdFor(signer.prefix, signer.identity, {
+    dnsName: signer.dnsName, redirectUri: redirectUri,
+    clientId: val("vpv_client_id_typed").trim() || undefined,
+    didMethod: "jwk" });
+  if (signer.prefix === "decentralized_identifier") {
+    signer.trust = "The Verifier's DID; it resolves with no network:\n" + id;
+  }
+  log.debug("Leaving clientIdOf(). " + id);
+  return id;
+}
+
+async function signWith(signer, claims) {
+  log.debug("Entering signWith(). " + signer.prefix);
+  var jws = await verifier.signRequestObject({
+    claims: claims, identity: signer.identity,
+    attester: signer.attester || undefined });
+  log.debug("Leaving signWith().");
+  return jws;
+}
+
+// The invocation as a QR code, for a wallet on another device. A request by
+// value can be too long for one; the page says so rather than drawing a
+// code no camera can read.
+function showQr(invocation) {
+  log.debug("Entering showQr().");
+  var host = el("vpv_qr");
+  if (!host) {
+    log.debug("Leaving showQr(). No element.");
+    return;
+  }
+  host.innerHTML = "";
+  if (!invocation) {
+    setText("vpv_qr_note", "");
+    log.debug("Leaving showQr(). Nothing to draw.");
+    return;
+  }
+  try {
+    var code = qrcode(0, "L");
+    code.addData(invocation);
+    code.make();
+    // createSvgTag() draws rectangles from the bits alone; nothing of the
+    // invocation's text reaches the markup.
+    host.innerHTML = code.createSvgTag({ cellSize: 4, margin: 4,
+                                         scalable: true });
+    setText("vpv_qr_note", "Scan with a wallet on another device (" +
+      invocation.length + " characters).", "vc-ok");
+  } catch (e) {
+    setText("vpv_qr_note", "Too long for a QR code (" + invocation.length +
+      " characters): hand it over by reference instead.", "vc-pending");
+  }
+  log.debug("Leaving showQr().");
+}
+
 async function createRequest() {
   log.debug("Entering createRequest().");
   saveState();
   stopPolling();
+  var mode = val("vpv_response_mode") || "direct_post";
+  if (mode === "dc_api" || mode === "dc_api.jwt") {
+    log.debug("Leaving createRequest(). The Digital Credentials API.");
+    return askThroughDcApi();
+  }
   setText("vpv_create_status", "Working …", "vc-pending");
   try {
-    // THE CERTIFICATE NEEDS WEB CRYPTO. x509.js and key_material.js make and
-    // sign it with crypto.subtle, which a browser offers only in a secure
-    // context (https, or localhost). Said here by name rather than left to
-    // fail as "Cannot read properties of undefined".
-    if (typeof crypto === "undefined" || !crypto.subtle) {
-      throw new Error("This page is not in a secure context (https or " +
-        "localhost), so the browser offers no Web Crypto, and the " +
-        "certificate the Request Object is signed with cannot be made.");
-    }
     var dcql = dcqlFromPage();
     if (!(await probeApi())) {
       throw new Error("There is no api to host the request and the answer.");
     }
     var prefix = val("vpv_client_prefix") || "x509_hash";
-    var mode = val("vpv_response_mode") || "direct_post";
     var delivery = prefix === "redirect_uri" ? "value"
       : (val("vpv_delivery") || "reference-get");
+    var live = delivery === "reference-post";
     var redirectUri = val("vpv_redirect_uri").trim();
-    var hosted = await apiJson("POST", "/oid4vp/verifier",
-                               redirectUri ? { redirectUri: redirectUri }
-                                           : {});
-    var dnsName = new URL(hosted.responseUri).hostname;
-    var identity = await verifier.makeVerifierIdentity({
-      dnsName: dnsName, caIssuersUrl: hosted.caIssuersUrl });
+    var create = { liveSigning: live };
+    if (redirectUri) {
+      create.redirectUri = redirectUri;
+    }
+    var hosted = await apiJson("POST", "/oid4vp/verifier", create);
+    var signer = await makeSigner(prefix,
+      new URL(hosted.responseUri).hostname, hosted.caIssuersUrl);
     var encryption = mode === "direct_post.jwt"
       ? await verifier.responseEncryptionKey() : null;
-    var clientId = verifier.clientIdFor(prefix, identity, {
-      dnsName: dnsName, redirectUri: hosted.responseUri });
+    var clientId = clientIdOf(signer, hosted.responseUri);
     var nonce = verifier.randomToken(16);
     var state = verifier.randomToken(16);
-    var claims = verifier.requestObjectClaims({
+    var claimsInput = {
       clientId: clientId, responseUri: hosted.responseUri,
       responseMode: mode, nonce: nonce, state: state, dcql: dcql,
       encryptionJwk: encryption ? encryption.publicJwk : undefined
-    });
+    };
+    var claims = verifier.requestObjectClaims(claimsInput);
     var requestObject = "";
     var invocation;
     if (prefix === "redirect_uri") {
@@ -420,13 +530,14 @@ async function createRequest() {
       invocation = verifier.authorizationRequestUri({
         scheme: val("vpv_scheme"), clientId: clientId, params: params });
     } else {
-      requestObject = await verifier.signRequestObject({
-        claims: claims, identity: identity });
-      await apiJson("PUT", "/oid4vp/verifier/" + hosted.id + "/request", {
-        requestObject: requestObject,
-        caCertificate: base64OfBytes(identity.rootDer),
-        redirectUri: redirectUri || undefined
-      }, hosted.secret);
+      requestObject = await signWith(signer, claims);
+      var published = { requestObject: requestObject,
+                        redirectUri: redirectUri || undefined };
+      if (signer.identity.rootDer) {
+        published.caCertificate = base64OfBytes(signer.identity.rootDer);
+      }
+      await apiJson("PUT", "/oid4vp/verifier/" + hosted.id + "/request",
+                    published, hosted.secret);
       invocation = delivery === "value"
         ? verifier.authorizationRequestUri({
           scheme: val("vpv_scheme"), clientId: clientId,
@@ -434,12 +545,14 @@ async function createRequest() {
         : verifier.authorizationRequestUri({
           scheme: val("vpv_scheme"), clientId: clientId,
           requestUri: hosted.requestUri,
-          requestUriMethod: delivery === "reference-post" ? "post"
-                                                          : undefined });
+          requestUriMethod: live ? "post" : undefined });
     }
     current = {
       hosted: hosted,
-      identity: identity,
+      identity: signer.identity,
+      signer: signer,
+      claimsInput: claimsInput,
+      live: live,
       session: {
         clientId: clientId, nonce: nonce, state: state,
         responseUri: hosted.responseUri, responseMode: mode, dcql: dcql,
@@ -460,6 +573,98 @@ async function createRequest() {
   return false;
 }
 
+// THE DIGITAL CREDENTIALS API (OpenID4VP 1.0 Appendix A): the browser hands
+// the request to a wallet the platform knows, and the answer comes back to
+// this page, so nothing is hosted. Unsigned, the Client Identifier is this
+// page's origin; signed, the request names its Client Identifier and lists
+// this origin in expected_origins.
+async function askThroughDcApi() {
+  log.debug("Entering askThroughDcApi().");
+  saveState();
+  stopPolling();
+  setText("vpv_create_status", "Working …", "vc-pending");
+  try {
+    if (typeof navigator === "undefined" || !navigator.credentials ||
+        typeof DigitalCredential === "undefined") {
+      throw new Error("This browser has no Digital Credentials API " +
+        "(navigator.credentials.get with `digital`). It is in recent " +
+        "Chromium-based browsers, on a secure origin, with a wallet the " +
+        "platform knows.");
+    }
+    var mode = val("vpv_response_mode");
+    if (mode !== "dc_api" && mode !== "dc_api.jwt") {
+      mode = "dc_api";
+    }
+    var signed = !!val("vpv_dc_signed");
+    var origin = window.location.origin;
+    var dcql = dcqlFromPage();
+    var encryption = mode === "dc_api.jwt"
+      ? await verifier.responseEncryptionKey() : null;
+    var nonce = verifier.randomToken(16);
+    var signer = null;
+    var clientId;
+    if (signed) {
+      var prefix = val("vpv_client_prefix") || "x509_hash";
+      if (prefix === "redirect_uri") {
+        throw new Error("A signed Digital Credentials API request needs a " +
+          "Client Identifier a signature can stand for; redirect_uri " +
+          "requests are unsigned. Untick \"signed\" to ask as this origin.");
+      }
+      signer = await makeSigner(prefix, window.location.hostname, undefined);
+      clientId = clientIdOf(signer, undefined);
+    } else {
+      clientId = verifier.clientIdFor("origin", null, { origin: origin });
+    }
+    var claims = verifier.requestObjectClaims({
+      clientId: signed ? clientId : undefined, responseMode: mode,
+      nonce: nonce, dcql: dcql,
+      encryptionJwk: encryption ? encryption.publicJwk : undefined,
+      expectedOrigins: signed ? [origin] : undefined });
+    var request = await verifier.dcApiRequest({
+      signed: signed, claims: claims,
+      identity: signer ? signer.identity : undefined, origin: origin,
+      attester: signer && signer.attester ? signer.attester : undefined });
+    current = {
+      hosted: null, identity: signer ? signer.identity : {}, signer: signer,
+      live: false,
+      session: { clientId: clientId, nonce: nonce, responseMode: mode,
+                 dcql: dcql, origin: origin,
+                 decryptionJwk: encryption ? encryption.privateJwk
+                                           : undefined },
+      after: 0, answered: false
+    };
+    setVal("vpv_invocation", JSON.stringify(request, null, 2));
+    setVal("vpv_client_id", clientId);
+    setVal("vpv_request_uri", "");
+    setVal("vpv_response_uri", "");
+    setVal("vpv_request_object", request.data && request.data.request
+      ? decodeJws(request.data.request)
+      : JSON.stringify(request.data, null, 2));
+    setVal("vpv_root_pem", signer && signer.identity.rootPem || "");
+    setVal("vpv_trust_out", signer ? signer.trust : "");
+    showQr("");
+    clearVerdict();
+    setText("vpv_create_status", "Asking the browser for a credential " +
+      "(" + request.protocol + ") …", "vc-pending");
+    var credential = await navigator.credentials.get({
+      digital: { requests: [request] } });
+    var data = credential && credential.data;
+    if (typeof data === "string") {
+      data = JSON.parse(data);
+    }
+    current.answered = true;
+    setText("vpv_create_status", "The wallet answered through the " +
+      "browser (" + (credential && credential.protocol || "?") + ").",
+      "vc-ok");
+    await checkFields(data || {});
+  } catch (e) {
+    log.warn("askThroughDcApi(): " + e.message);
+    setText("vpv_create_status", e.message, "vc-bad");
+  }
+  log.debug("Leaving askThroughDcApi().");
+  return false;
+}
+
 function showRequest(invocation, clientId, requestObject, claims) {
   log.debug("Entering showRequest().");
   setVal("vpv_invocation", invocation);
@@ -468,12 +673,14 @@ function showRequest(invocation, clientId, requestObject, claims) {
     link.href = invocation;
     link.style.display = "inline";
   }
+  showQr(invocation);
   setVal("vpv_client_id", clientId);
   setVal("vpv_request_uri", requestObject ? current.hosted.requestUri : "");
   setVal("vpv_response_uri", current.hosted.responseUri);
   setVal("vpv_request_object", requestObject ? decodeJws(requestObject)
     : JSON.stringify(claims, null, 2) + "\n(unsigned: sent as parameters)");
   setVal("vpv_root_pem", current.identity.rootPem || "");
+  setVal("vpv_trust_out", current.signer ? current.signer.trust : "");
   var list = el("vpv_events");
   if (list) {
     list.innerHTML = "";
@@ -495,10 +702,18 @@ function stopPolling() {
   log.debug("Leaving stopPolling().");
 }
 
+// While the api holds a wallet's POST open for a live signature it waits
+// waitMs (15 s by default), so the page polls fast enough to answer in it.
+function pollInterval() {
+  log.debug("Entering pollInterval().");
+  log.debug("Leaving pollInterval().");
+  return current && current.live ? LIVE_POLL_MS : POLL_MS;
+}
+
 function startPolling() {
   log.debug("Entering startPolling().");
   stopPolling();
-  pollTimer = window.setTimeout(poll, POLL_MS);
+  pollTimer = window.setTimeout(poll, pollInterval());
   log.debug("Leaving startPolling().");
 }
 
@@ -509,8 +724,16 @@ function eventLine(event) {
   if (event.kind === "request-fetched") {
     text = at + "The wallet fetched the Request Object (" +
       (event.method || "GET") + ")" +
-      (event.walletNonce ? ", sending wallet_nonce " + event.walletNonce +
-        ", which a Request Object signed in advance cannot echo" : "") + ".";
+      (event.walletNonce ? ", sending wallet_nonce " + event.walletNonce
+                         : "") +
+      (event.signingId ? "; the api is holding it open for a Request " +
+        "Object signed with that nonce" : "") + ".";
+  } else if (event.kind === "request-signed") {
+    text = at + (event.liveSigned
+      ? "This page signed a fresh Request Object for that wallet, " +
+        "echoing its wallet_nonce."
+      : "The wallet was given the Request Object signed in advance (" +
+        (event.reason || "no reason given") + ").");
   } else if (event.kind === "ca-fetched") {
     text = at + "The wallet fetched the Verifier's root certificate from " +
       "the leaf's Authority Information Access URL.";
@@ -528,10 +751,33 @@ function eventLine(event) {
   return text;
 }
 
+// A wallet POSTed to request_uri and the api is holding it open: sign a
+// Request Object carrying its wallet_nonce (section 5.10) and hand it over.
+// A 404 means the wait ran out and the wallet already has the one signed in
+// advance, which the event that follows will say.
+async function signLive(event) {
+  log.debug("Entering signLive(). " + event.signingId);
+  try {
+    var input = Object.assign({}, current.claimsInput, {
+      walletNonce: event.walletNonce || undefined });
+    var claims = verifier.requestObjectClaims(input);
+    var jws = await signWith(current.signer, claims);
+    await apiJson("PUT", "/oid4vp/verifier/" + current.hosted.id +
+                  "/request/" + encodeURIComponent(event.signingId),
+                  { requestObject: jws }, current.hosted.secret);
+    setVal("vpv_request_object", decodeJws(jws) + "\n(signed live, for " +
+           "wallet_nonce " + (event.walletNonce || "none") + ")");
+  } catch (e) {
+    setText("vpv_wait_status", "Could not sign a live Request Object: " +
+            e.message, "vc-bad");
+  }
+  log.debug("Leaving signLive().");
+}
+
 async function poll() {
   log.debug("Entering poll().");
   pollTimer = null;
-  if (!current || current.answered) {
+  if (!current || current.answered || !current.hosted) {
     log.debug("Leaving poll(). Nothing to wait for.");
     return;
   }
@@ -545,16 +791,24 @@ async function poll() {
     }
     var list = el("vpv_events");
     var answer = null;
+    var toSign = [];
     events.forEach(function (event) {
       if (list) {
         var li = document.createElement("li");
         li.textContent = eventLine(event);
         list.appendChild(li);
       }
+      if (event.kind === "request-fetched" && event.signingId) {
+        toSign.push(event);
+      }
       if (event.kind === "response" && !answer) {
         answer = event;
       }
     });
+    var i;
+    for (i = 0; i < toSign.length; i++) {
+      await signLive(toSign[i]);
+    }
     if (answer) {
       current.answered = true;
       setText("vpv_wait_status", "The wallet answered.", "vc-ok");
@@ -566,7 +820,7 @@ async function poll() {
     setText("vpv_wait_status", "Waiting for the wallet; the last poll " +
       "failed: " + e.message, "vc-bad");
   }
-  pollTimer = window.setTimeout(poll, POLL_MS);
+  pollTimer = window.setTimeout(poll, pollInterval());
   log.debug("Leaving poll(). Still waiting.");
 }
 
@@ -580,6 +834,21 @@ async function fetchJson(url) {
   var json = await response.json();
   log.debug("Leaving fetchJson().");
   return json;
+}
+
+// The status lists' fetcher: a Status List Token is a JWT and a Bitstring
+// Status List credential may be one, so these are read as text.
+async function fetchText(url, opts) {
+  log.debug("Entering fetchText(). " + url);
+  var accept = (opts && opts.accept) || "*/*";
+  var response = await fetch(url, { headers: { Accept: accept } });
+  if (!response.ok) {
+    log.debug("Leaving fetchText(). " + response.status);
+    throw new Error("GET " + url + " answered " + response.status);
+  }
+  var text = await response.text();
+  log.debug("Leaving fetchText().");
+  return text;
 }
 
 function clearVerdict() {
@@ -641,6 +910,7 @@ async function checkFields(fields) {
   try {
     var result = await verifier.verifyResponse({
       fields: fields, session: current.session, fetchJson: fetchJson,
+      fetchText: fetchText,
       now: Math.floor(Date.now() / 1000) });
     renderChecks(result);
     log.debug("Leaving checkFields(). ok=" + result.ok);
@@ -684,13 +954,15 @@ async function reset() {
   }
   current = null;
   ["vpv_invocation", "vpv_client_id", "vpv_request_uri", "vpv_response_uri",
-   "vpv_request_object", "vpv_root_pem"].forEach(function (id) {
+   "vpv_request_object", "vpv_root_pem", "vpv_trust_out"
+  ].forEach(function (id) {
     setVal(id, "");
   });
   var link = el("vpv_invocation_link");
   if (link) {
     link.style.display = "none";
   }
+  showQr("");
   var list = el("vpv_events");
   if (list) {
     list.innerHTML = "";
@@ -712,9 +984,11 @@ function currentRequest() {
   }
   var copy = JSON.parse(JSON.stringify({
     session: Object.assign({}, current.session, { decryptionJwk: undefined }),
-    hosted: { id: current.hosted.id, requestUri: current.hosted.requestUri,
-              responseUri: current.hosted.responseUri,
-              caIssuersUrl: current.hosted.caIssuersUrl },
+    hosted: current.hosted ? {
+      id: current.hosted.id, requestUri: current.hosted.requestUri,
+      responseUri: current.hosted.responseUri,
+      caIssuersUrl: current.hosted.caIssuersUrl } : null,
+    trust: current.signer ? current.signer.trust : "",
     invocation: val("vpv_invocation")
   }));
   log.debug("Leaving currentRequest().");
@@ -746,6 +1020,7 @@ module.exports = {
   settingsChanged: settingsChanged,
   createRequest: createRequest,
   checkPasted: checkPasted,
+  askThroughDcApi: askThroughDcApi,
   reset: reset,
   currentRequest: currentRequest,
   onload: onload

@@ -16,14 +16,27 @@ selector at the top of `vc-presentation-0.html` links the two.
    DCQL query (OpenID4VP 1.0 section 6). The DCQL textarea stays editable, so
    a second query or `credential_sets` can be written by hand; a hand-edited
    query is kept across page loads.
-2. **How to ask.** The Client Identifier prefix (`x509_hash`,
-   `x509_san_dns`, or `redirect_uri` for an unsigned request), the response
-   mode (`direct_post`, or `direct_post.jwt` encrypted to a P-256 key made for
-   the run), and the delivery: by reference with `request_uri` (GET, or
-   `request_uri_method=post`) or by value.
+2. **How to ask.** The settings:
+   * **Client Identifier prefix** (section 5.9.3):
+     * `x509_hash`, `x509_san_dns`;
+     * `redirect_uri` (an unsigned request);
+     * `decentralized_identifier` (a `did:jwk` of a key made for the run);
+     * `verifier_attestation` (a Verifier Attestation JWT from an attester
+       made for the run);
+     * a pre-registered `client_id` with no prefix.
+
+     `openid_federation` is refused by name: it needs a trust chain this
+     debugger does not build.
+   * **Response mode:** `direct_post`, `direct_post.jwt` (encrypted to a P-256
+     key made for the run), and the Digital Credentials API's `dc_api` and
+     `dc_api.jwt`.
+   * **Delivery:** by reference with `request_uri` (GET, or
+     `request_uri_method=post`), or by value.
 3. **Hand it to a wallet.** The `openid4vp://` Authorization Request, a link
-   that opens it on this device, the decoded Request Object, and the
-   Verifier's root certificate.
+   that opens it on this device, a QR code for a wallet on another device,
+   the decoded Request Object, and what a wallet must trust. That depends on
+   the prefix: the Verifier's root certificate, the attester's keys, the
+   JWKS of a pre-registered client, or the DID.
 4. **What the wallet sent.** The api's log of the wallet's calls, then every
    check on the answer as its own row: PASS, FAIL or SKIP. An answer can
    also be pasted and checked; that half needs no api.
@@ -70,19 +83,66 @@ answered. Per format:
   validity.
 * **mso_mdoc**: the issuer-signed checks `mdoc.js` makes, the device
   signature over the OpenID4VP session transcript, and the doctype.
-* **ldp_vc**: a `bbs-2023` derived proof, and the proof's challenge and
-  domain. Other cryptosuites are reported as SKIP.
+* **ldp_vc**: Data Integrity proofs:
+  * `bbs-2023` derived proofs;
+  * `eddsa-rdfc-2022`, `ecdsa-rdfc-2019` (P-256 and P-384), `eddsa-jcs-2022`
+    and `ecdsa-jcs-2019`, on the presentation and on each credential;
+  * the proof's challenge and domain.
 
-Status lists are reported as SKIP. They, the Digital Credentials API, QR
-codes and the remaining Client Identifier prefixes are PR 3 of #364.
+  `ecdsa-sd-2023` is reported as SKIP; its derived proofs are not
+  implemented.
 
-## A pre-signed Request Object and `wallet_nonce`
+**Status lists** are checked per credential, and the `status` row summarises
+them:
 
-Under `request_uri_method=post` a wallet may send a `wallet_nonce` that the
-Request Object should then contain (section 5.10). The page signs the Request
-Object before any wallet asks for it, and the api cannot sign for it, so the
-object cannot echo a `wallet_nonce`. The page shows the nonce the wallet sent
-and says that it was not echoed.
+* **dc+sd-jwt and mso_mdoc: the IETF Token Status List**
+  (draft-ietf-oauth-status-list).
+  * The Status List Token (`typ` `statuslist+jwt`) is fetched and its
+    signature checked with the issuer's keys.
+  * `lst` is decompressed (zlib, with the browser's `DecompressionStream`).
+  * The entry's value is reported: VALID, INVALID, SUSPENDED or
+    application-specific. Entry 0 is in the least significant bits of
+    byte 0.
+  * A CWT status list is recognised and reported as SKIP.
+* **jwt_vc_json and ldp_vc: the W3C Bitstring Status List**, one row per
+  `statusPurpose`. The list is GZIP and read most significant bit first.
+
+A credential with no status is SKIP, not PASS.
+
+## The Digital Credentials API
+
+Under `dc_api` or `dc_api.jwt` (OpenID4VP 1.0 Appendix A), nothing is hosted.
+**Ask through the Digital Credentials API** hands the request to
+`navigator.credentials.get({ digital: ... })`, and the wallet's answer comes
+back to the page.
+
+* **Unsigned** (`openid4vp-v1-unsigned`): the request names no Client
+  Identifier, and the page's origin stands for it.
+* **Signed** (`openid4vp-v1-signed`): the request is signed with the chosen
+  prefix and lists the page's origin in `expected_origins`.
+* `openid4vp-v1-multisigned` is refused, because this debugger is one
+  Verifier.
+* **Audience:** under the DC API a KB-JWT, a VP and an `ldp_vc` proof are
+  held to `origin:<origin>`. An mdoc device signature is checked against the
+  DC API handover (B.2.6.2).
+
+A browser without the API, or without a wallet the platform knows, is told
+so by name.
+
+## `wallet_nonce`: signing while the wallet waits
+
+Under `request_uri_method=post` a wallet may send a `wallet_nonce`. The Request
+Object should then contain it (section 5.10). The api cannot sign, so a
+request delivered that way is created with live signing on:
+
+1. The api holds the wallet's POST open for `oid4vpVerifierLiveSignWaitMs`
+   (15 seconds by default).
+2. The page, polling every 500 ms, signs a fresh Request Object carrying the
+   nonce and sends it with `PUT …/request/<signingId>`.
+3. The api answers the wallet with that object.
+
+If the page misses the window, the wallet gets the object signed in advance.
+The events say which happened. `docs/vc-verifier-api.md` has the routes.
 
 ## Tests
 
@@ -90,6 +150,6 @@ and says that it was not echoed.
 |---|---|---|
 | `tests/vp_verifier_engine.js` | node | the DCQL builder, the certificate, the Request Object read back by the Wallet's own `verifyX509Request()`, and a round trip per format, with a negative case for each check |
 | `tests/api_oid4vp_verifier.js` | node | the api's routes, limits and expiry |
-| `tests/vc_verifier_page.js` | browser | the page creates a request through the api; node plays the wallet and posts an answer; every check on the page passes, and a tampered answer fails the check it targets |
+| `tests/vc_verifier_page.js` | browser | the page creates a request through the api; node plays the wallet and posts an answer; every check on the page passes, and a tampered answer fails the check it targets. Then a `decentralized_identifier` request under `request_uri_method=post`, where the wallet's `wallet_nonce` must come back in a Request Object signed live; the QR code; and the DC API button naming its absence in headless Chrome |
 
 The independent wallet in the suite, `rcbj/oid4vc-wallet`, is PR 2 of #364.

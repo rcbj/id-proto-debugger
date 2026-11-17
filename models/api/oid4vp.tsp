@@ -151,6 +151,18 @@ model VerifierCreateRequest {
   /** The session's lifetime untouched, ms. */
   @checkedInCode("api/oid4vp_verifier.js: a positive whole number, at most oid4vpVerifierIdleTtlMs")
   idleTtlMs?: float64 | string | null;
+
+  /** Hold a Wallet's request_uri POST (section 5.10) for the page to sign
+   *  a Request Object carrying its wallet_nonce. */
+  liveSigning?: boolean | null;
+}
+
+/** The Request Object the page signed for ONE held Wallet. */
+model VerifierPublishForRequest {
+  /** The signed Request Object, a compact JWS. */
+  @checkedInCode("api/oid4vp_verifier.js: required, three base64url segments, at most oid4vpVerifierMaxRequestObjectBytes")
+  @passthrough
+  requestObject?: string | null;
 }
 
 /** What the page signed, to be served at request_uri. */
@@ -183,6 +195,9 @@ model VerifierCreated {
   responseUri: string;
   caIssuersUrl: string;
 
+  /** Whether a Wallet's request_uri POST is held for the page to sign. */
+  liveSigning: boolean;
+
   /** The sooner of the two expiries. */
   expiresAt: string;
 }
@@ -194,7 +209,8 @@ model VerifierEvent {
 
   at: string;
 
-  /** request-fetched, ca-fetched, response or response-refused. */
+  /** request-fetched, request-signed, ca-fetched, response or
+   *  response-refused. */
   kind: string;
 
   method?: string;
@@ -213,6 +229,24 @@ model VerifierEvent {
 
   /** Why something that arrived was not kept. */
   problem?: string;
+
+  /** Live signing: on a request-fetched event, the Wallet is held and the
+   *  page signs for it at /request/{signingId}; on request-signed, which
+   *  wait it closes (absent when the cap meant no wait at all). */
+  signingId?: string;
+
+  /** request-fetched under live signing: how long the Wallet is held. */
+  waitMs?: float64;
+
+  /** request-fetched under live signing: when the wait runs out. */
+  signBy?: string;
+
+  /** request-signed: true when the Wallet got the page's live object. */
+  liveSigned?: boolean;
+
+  /** request-signed with liveSigned false: why the pre-signed object was
+   *  served. */
+  reason?: string;
 }
 
 /** What Wallets did since the cursor. */
@@ -239,6 +273,8 @@ model VerifierLimits {
   maxResponseBytes: float64;
   maxRequestObjectBytes: float64;
   maxSessionBytes: float64;
+  liveSignWaitMs: float64;
+  maxPendingSignings: float64;
 
   /** How many sessions this process holds now. */
   held: int32;
@@ -313,6 +349,23 @@ op verifierPublish(
 }> | BadRequest<PageError | IdProtoDebugger.Api.ModelRefusal> |
   Unauthorized | NoSession<PageError>;
 
+/** Answer ONE Wallet held under live signing with the Request Object the
+ *  page signed for its wallet_nonce (section 5.10). */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}/request/{signingId}")
+@put
+@operationId("oid4vpVerifierPublishFor")
+@checkedInCode("api/oid4vp_verifier.js: the session exists (404), the Bearer secret is its own (401), a Wallet is waiting on signingId (404)")
+op verifierPublishFor(
+  @path id: string,
+  @path signingId: string,
+  @header("Authorization") authorization?: string,
+  @body body: VerifierPublishForRequest,
+): Ok<{
+  ok: true;
+}> | BadRequest<PageError | IdProtoDebugger.Api.ModelRefusal> |
+  Unauthorized | NoSession<PageError>;
+
 /** A Wallet fetches the Request Object (section 5.7). */
 @tag("OpenID4VP")
 @route("/oid4vp/verifier/{id}/request")
@@ -325,7 +378,9 @@ op verifierRequestGet(@path id: string): {
 } | NoSession<WalletError>;
 
 /** A Wallet fetches the Request Object by POST, request_uri_method=post
- *  (section 5.10), carrying wallet_metadata and wallet_nonce. */
+ *  (section 5.10), carrying wallet_metadata and wallet_nonce. Under live
+ *  signing the answer waits for the page, up to
+ *  oid4vpVerifierLiveSignWaitMs, then falls back to the pre-signed one. */
 @tag("OpenID4VP")
 @route("/oid4vp/verifier/{id}/request")
 @post
