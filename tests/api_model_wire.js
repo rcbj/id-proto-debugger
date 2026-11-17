@@ -45,7 +45,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
-const { Command } = require("commander");
+const { Command, Option } = require("commander");
 const paths = require("./module_paths.js");
 var appconfig = require(process.env.CONFIG_FILE);
 
@@ -59,6 +59,9 @@ program
   .option("--record", "write each case's answer into its fixture")
   .option("--missing", "with --record, only cases with no answer yet")
   .option("--family <name>", "one fixture family only")
+  // Accepted and ignored: run-report.js passes --url to every job.
+  .addOption(new Option("-u, --url <url>",
+      "base url (unused: this test needs no browser)"))
   .parse(process.argv);
 const options = program.opts();
 

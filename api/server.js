@@ -981,11 +981,6 @@ app.use(cors(corsOptions));
  */
 /**
  * System healthcheck
- * @route GET /healthcheck
- * @group System - Support operations
- * @returns {HealthcheckResponse.model} 200 - Health Check Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.get('/healthcheck', model.route('healthcheck'), function (req, res) {
   log.debug("Entering GET /healthcheck.");
@@ -999,10 +994,6 @@ app.get('/healthcheck', model.route('healthcheck'), function (req, res) {
 /**
  * The answers this process sent that its API document does not describe.
  * 404 unless validateResponses is on, which only a test configuration sets.
- * @route GET /model/gaps
- * @group System - Support operations
- * @returns {object} 200 - every recorded gap
- * @returns {object} 404 - the record is not kept
  */
 app.get('/model/gaps', model.route('modelGaps'), function (req, res) {
   log.debug("Entering GET /model/gaps.");
@@ -1019,11 +1010,6 @@ const IANA_JWT_CLAIMS_URL = 'https://www.iana.org/assignments/jwt/jwt.xml';
 
 /**
  * Retrieve Claims Description.
- * @route GET /claimdescription
- * @group Metadata - Support operations
- * @returns {HealthcheckResponse.model} 200 - Claim Description Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.get('/claimdescription', model.route('claimDescription'),
         function(req, res) {
@@ -1117,11 +1103,6 @@ app.get('/claimdescription', model.route('claimDescription'),
  * it is a dev/debugger-only tool (SSRF by design); do not expose publicly.
  *
  * The target URL is passed base64-encoded in ?url= to survive query escaping.
- * @route GET /samlmetadata
- * @group SAML - SAML support operations
- * @returns {string} 200 - The metadata XML document
- * @returns {Error.model} 400 - Missing/invalid url parameter
- * @returns {Error.model} 500 - Fetch error
  */
 // `url` is a single string by the time this runs: models/api/saml.tsp holds
 // the query to that, so a repeated ?url= is refused there rather than joined
@@ -1235,8 +1216,6 @@ function signXmlEnveloped(xml, privateKeyPem, certPem, sigAlg) {
 
 /**
  * Sign a SAML AuthnRequest for the chosen binding.
- * @route POST /samlsign
- * @group SAML - SAML support operations
  */
 app.post('/samlsign', model.route('samlSign'), function (req, res) {
   log.debug('Entering POST /samlsign.');
@@ -1334,8 +1313,6 @@ app.post('/samlsign', model.route('samlSign'), function (req, res) {
  * SOAP back-channel that needs the SP signing key + the IdP's ARS URL. The
  * browser registers them here and gets back the RelayState (art:<id>) to carry
  * in its (browser-signed) redirect request.
- * @route POST /samlartifactctx
- * @group SAML - SAML support operations
  */
 app.post('/samlartifactctx', model.route('samlArtifactContext'),
          function (req, res) {
@@ -1577,9 +1554,6 @@ function resolveArtifact(artifact, relayState) {
  * SAML Assertion Consumer Service (ACS). Receives the IdP's SAMLResponse
  * (POST form field or GET query) or a SAMLart artifact, stashes the response,
  * and redirects the browser to the client results page with the stash id.
- * @route POST /samlacs
- * @route GET /samlacs
- * @group SAML - SAML support operations
  */
 function handleSamlAcs(req, res) {
   log.debug("Entering handleSamlAcs().");
@@ -1661,8 +1635,6 @@ app.get('/samlslo', model.route('samlSloGet'), handleSamlAcs);
 
 /**
  * Fetch a stashed SAMLResponse by id (set by the ACS redirect).
- * @route GET /samlresponse
- * @group SAML - SAML support operations
  */
 app.get('/samlresponse', model.route('samlResponse'), function (req, res) {
   log.debug('Entering GET /samlresponse.');
@@ -1695,9 +1667,6 @@ app.get('/samlresponse', model.route('samlResponse'), function (req, res) {
 // ---------------------------------------------------------------------------
 /**
  * WS-Federation passive sign-in landing (captures wresult).
- * @route POST /wsfed
- * @route GET /wsfed
- * @group WS-Federation - WS-Federation support operations
  */
 function handleWsFedLanding(req, res) {
   log.debug("Entering handleWsFedLanding().");
@@ -1734,8 +1703,6 @@ app.get('/wsfed', model.route('wsfedLandingGet'), handleWsFedLanding);
 
 /**
  * Fetch a stashed wresult by id (alias of GET /samlresponse; shared stash).
- * @route GET /wsfedresponse
- * @group WS-Federation - WS-Federation support operations
  */
 app.get('/wsfedresponse', model.route('wsfedResponse'),
         function (req, res) {
@@ -1772,11 +1739,6 @@ app.get('/wsfedresponse', model.route('wsfedResponse'),
 // ---------------------------------------------------------------------------
 /**
  * Proxy a WS-Trust RequestSecurityToken to an STS (dodges CORS).
- * @route POST /wstrust
- * @group WS-Trust - WS-Trust support operations
- * @returns {object} 200 - { status, body } from the STS
- * @returns {Error.model} 400 - Missing url/soap
- * @returns {Error.model} 500 - STS call error
  */
 app.post('/wstrust', model.route('wstrustProxy'), function (req, res) {
   log.debug('Entering POST /wstrust.');
@@ -1896,12 +1858,6 @@ app.post('/wstrust', model.route('wstrustProxy'), function (req, res) {
 
 /**
  * Wrapper around OAuth2 Token Endpoint
- * @route POST /token
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {TokenRequest.model} req.body.required - Token Endpoint Request
- * @returns {TokenResponse.model} 200 - Token Endpoint Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.post('/token', model.route('oauthToken'), (req, res) => {
   try {
@@ -2038,12 +1994,6 @@ app.post('/token', model.route('oauthToken'), (req, res) => {
 
 /**
  * Wrapper around OAuth2 Introspection Endpoint
- * @route POST /introspection
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {IntrospectionRequest.model} req.body.required - Token Endpoint Request
- * @returns {IntrospectionResponse.model} 200 - Token Endpoint Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.post('/introspection', model.route('oauthIntrospection'), (req, res) => {
 try {
@@ -2136,12 +2086,6 @@ try {
 
 /**
  * Wrapper around the OAuth2 Token Revocation Endpoint (RFC 7009)
- * @route POST /revoke
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {RevocationRequest.model} req.body.required - Token Revocation Request
- * @returns {object} 200 - Token Revocation Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.post('/revoke', model.route('oauthRevoke'), (req, res) => {
   try {
@@ -2256,12 +2200,6 @@ app.post('/revoke', model.route('oauthRevoke'), (req, res) => {
 
 /**
  * Wrapper around the OAuth2 Token Endpoint for Token Exchange (RFC 8693)
- * @route POST /tokenexchange
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {TokenExchangeRequest.model} req.body.required - Token Exchange Request
- * @returns {object} 200 - Token Exchange Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.post('/tokenexchange', model.route('oauthTokenExchange'), (req, res) => {
   try {
@@ -2403,12 +2341,6 @@ app.post('/tokenexchange', model.route('oauthTokenExchange'), (req, res) => {
 
 /**
  * Wrapper around the OAuth2 Device Authorization Endpoint (RFC 8628)
- * @route POST /deviceauthorization
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {DeviceAuthorizationRequest.model} req.body.required - Device Authorization Request
- * @returns {object} 200 - Device Authorization Response (device_code, user_code, verification_uri, ...)
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.post('/deviceauthorization', model.route('oauthDeviceAuthorization'),
          (req, res) => {
@@ -2510,12 +2442,6 @@ app.post('/deviceauthorization', model.route('oauthDeviceAuthorization'),
  * Proxies create (POST registration_endpoint), read (GET), update (PUT) and
  * delete (DELETE) against the client configuration endpoint so the browser is
  * not blocked by CORS.
- * @route POST /register
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {RegistrationRequest.model} req.body.required - Dynamic Client Registration Request
- * @returns {object} 200 - Registration Endpoint Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.post('/register', model.route('oauthRegister'), (req, res) => {
   try {
@@ -2609,12 +2535,6 @@ app.post('/userinfo', model.route('oauthUserInfoPost'), (req, res) => {
 
 /**
  * Wrapper around OIDC UserInfo Endpoint
- * @route POST /userinfo
- * @group Debugger - Operations for OAuth2/OIDC Debugger
- * @param {UserInfoRequest.model} req.body.required - UserInfo Endpoint Request
- * @returns {UserInfoResponse.model} 200 - UserInfo Endpoint Response
- * @returns {Error.model} 400 - Syntax error
- * @returns {Error.model} 500 - Unexpected error
  */
 app.get('/userinfo', model.route('oauthUserInfo'), (req, res) => {
   log.info("Entering app.get for /userinfo.");
@@ -2783,7 +2703,6 @@ function apiDocumentIndex(doc) {
 
 /**
  * The API document, OpenAPI 3.1.
- * @route GET /api-docs.json
  */
 app.get('/api-docs.json', model.route('apiDocument'), function (req, res) {
   log.debug("Entering GET /api-docs.json.");
@@ -2793,7 +2712,6 @@ app.get('/api-docs.json', model.route('apiDocument'), function (req, res) {
 
 /**
  * Every operation in the API document, as a page.
- * @route GET /api-docs
  */
 app.get('/api-docs', model.route('apiDocumentIndex'), function (req, res) {
   log.debug("Entering GET /api-docs.");
@@ -2804,14 +2722,6 @@ app.get('/api-docs', model.route('apiDocumentIndex'), function (req, res) {
 
 /**
  * Relay a Kerberos v5 message to a KDC and return its reply.
- * @route POST /krb5/kdc
- * @param {string} host.body.required - the KDC's host name or address
- * @param {integer} port.body - the KDC's port; defaults to 88
- * @param {string} transport.body - "tcp" (default) or "udp"
- * @param {string} message.body.required - the request, base64
- * @returns {object} 200 - the KDC's reply, base64, with timings
- * @returns {object} 400 - the request was refused (see the reason)
- * @returns {object} 502 - the KDC could not be reached or did not answer
  */
 app.post('/krb5/kdc', model.route('krb5Kdc'), function (req, res) {
   log.debug('Entering POST /krb5/kdc.');
@@ -2879,13 +2789,6 @@ app.post('/krb5/kdc', model.route('krb5Kdc'), function (req, res) {
 
 /**
  * Present a Kerberos AP-REQ to a service and return its answer.
- * @route POST /krb5/service
- * @param {string} host.body.required - the service's host name or address
- * @param {integer} port.body.required - the service's port
- * @param {string} message.body.required - a GSS-wrapped AP-REQ (or a bare one), base64
- * @returns {object} 200 - the service's answer, base64 (or null when it sent none)
- * @returns {object} 400 - the request was refused (see the reason)
- * @returns {object} 502 - the service could not be reached or did not answer
  */
 app.post('/krb5/service', model.route('krb5Service'),
     function (req, res) {
@@ -2975,14 +2878,6 @@ app.post('/krb5/service', model.route('krb5Service'),
 // the four limits and the User-Agent apply unchanged and automatically.
 /**
  * Perform one step of a SPNEGO (RFC 4178) HTTP handshake and report both sides.
- * @route POST /krb5/spnego
- * @param {string} url.body.required - the protected resource, an http(s) URL
- * @param {string} token.body - the SPNEGO token, base64; omitted for the
- *                              unauthenticated first request
- * @param {boolean} sslValidate.body - verify the TLS certificate (default true)
- * @returns {object} 200 - what was sent and what came back, headers included
- * @returns {object} 400 - the request was refused (see the reason)
- * @returns {object} 502 - the resource could not be reached
  */
 app.post('/krb5/spnego', model.route('krb5Spnego'),
     function (req, res) {
@@ -3080,8 +2975,6 @@ app.post('/krb5/spnego', model.route('krb5Spnego'),
  * What the Kerberos relay will and will not do, so the page can say so before a
  * call fails. A debugger that discovers its own limits by hitting them is a
  * debugger that reports them as somebody else's fault.
- * @route GET /krb5/limits
- * @returns {object} 200 - the ports, timeouts and caps in force
  */
 app.get('/krb5/limits', model.route('krb5Limits'), function (req, res) {
   log.debug('Entering GET /krb5/limits.');
@@ -3207,13 +3100,6 @@ function runLdapOperation(name, operation, req, res) {
 
 /**
  * Bind to a directory — the LDAP authentication exchange, on its own.
- * @route POST /ldap/bind
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN; omit or empty for an anonymous bind
- * @param {string} password.body - the simple-bind password
- * @returns {object} 200 - the result, including a REFUSED bind with its code
- * @returns {object} 400 - this service refused the request (see the reason)
- * @returns {object} 502 - the directory could not be reached
  */
 app.post('/ldap/bind', model.route('ldapBind'), function (req, res) {
   log.debug('Entering POST /ldap/bind.');
@@ -3223,18 +3109,6 @@ app.post('/ldap/bind', model.route('ldapBind'), function (req, res) {
 
 /**
  * Search a directory.
- * @route POST /ldap/search
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} baseDn.body.required - the search base
- * @param {string} scope.body - base, one or sub (default sub)
- * @param {string} filter.body - an RFC 4515 filter (default (objectClass=*))
- * @param {array} attributes.body - the attributes to return; empty means all
- * @param {integer} sizeLimit.body - the client's own cap on entries returned
- * @returns {object} 200 - the entries, with the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
 app.post('/ldap/search', model.route('ldapSearch'), function (req, res) {
   log.debug('Entering POST /ldap/search.');
@@ -3244,15 +3118,6 @@ app.post('/ldap/search', model.route('ldapSearch'), function (req, res) {
 
 /**
  * Add an entry — a user, a group, a container.
- * @route POST /ldap/add
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry to create
- * @param {object} attributes.body.required - name to value or array of values
- * @returns {object} 200 - the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
 app.post('/ldap/add', model.route('ldapAdd'), function (req, res) {
   log.debug('Entering POST /ldap/add.');
@@ -3262,14 +3127,6 @@ app.post('/ldap/add', model.route('ldapAdd'), function (req, res) {
 
 /**
  * Delete an entry.
- * @route POST /ldap/delete
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry to remove
- * @returns {object} 200 - the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
 app.post('/ldap/delete', model.route('ldapDelete'), function (req, res) {
   log.debug('Entering POST /ldap/delete.');
@@ -3279,15 +3136,6 @@ app.post('/ldap/delete', model.route('ldapDelete'), function (req, res) {
 
 /**
  * Modify an entry's attributes — which is also how group membership changes.
- * @route POST /ldap/modify
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry to change
- * @param {array} changes.body.required - {operation, type, values} per change
- * @returns {object} 200 - the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
 app.post('/ldap/modify', model.route('ldapModify'), function (req, res) {
   log.debug('Entering POST /ldap/modify.');
@@ -3297,16 +3145,6 @@ app.post('/ldap/modify', model.route('ldapModify'), function (req, res) {
 
 /**
  * Rename or move an entry.
- * @route POST /ldap/modifydn
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry to rename
- * @param {string} newRdn.body.required - its new relative DN
- * @param {string} newSuperior.body - a new parent DN, to move it as well
- * @returns {object} 200 - the result code
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
 app.post('/ldap/modifydn', model.route('ldapModifyDn'),
          function (req, res) {
@@ -3317,16 +3155,6 @@ app.post('/ldap/modifydn', model.route('ldapModifyDn'),
 
 /**
  * Compare an attribute value without reading the entry.
- * @route POST /ldap/compare
- * @param {string} url.body.required - ldap:// or ldaps:// URL of the directory
- * @param {string} bindDn.body - the bind DN
- * @param {string} password.body - the simple-bind password
- * @param {string} dn.body.required - the DN of the entry
- * @param {string} attribute.body.required - the attribute to compare
- * @param {string} value.body - the value to compare it against
- * @returns {object} 200 - compareTrue (6) or compareFalse (5), neither an error
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the directory could not be reached
  */
 app.post('/ldap/compare', model.route('ldapCompare'), function (req, res) {
   log.debug('Entering POST /ldap/compare.');
@@ -3339,8 +3167,6 @@ app.post('/ldap/compare', model.route('ldapCompare'), function (req, res) {
  * call fails — the same reason GET /krb5/limits exists. It is also how the page
  * tells an older api from a broken one: a build without LDAP answers 404 here,
  * which is a different thing from a directory that will not answer.
- * @route GET /ldap/limits
- * @returns {object} 200 - the ports, timeouts, caps and vocabulary in force
  */
 app.get('/ldap/limits', model.route('ldapLimits'),
         function (req, res) {
@@ -3380,32 +3206,6 @@ app.get('/ldap/limits', model.route('ldapLimits'),
 
 /**
  * Open a TLS connection and report both sides of the handshake.
- * @route POST /tls/connect
- * @param {string} host.body.required - the server's host name or address
- * @param {integer} port.body.required - the server's port
- * @param {string} servername.body - SNI / hostname to verify; defaults to host
- * @param {string} minVersion.body - TLSv1 | TLSv1.1 | TLSv1.2 | TLSv1.3
- * @param {string} maxVersion.body - TLSv1 | TLSv1.1 | TLSv1.2 | TLSv1.3
- * @param {string} ciphers.body - an OpenSSL cipher list
- * @param {string} groups.body - an OpenSSL supported-groups list, which is
- *     where the post-quantum key exchange is chosen: "X25519MLKEM768" is the
- *     hybrid OpenSSL 3.5 offers by default, and naming it here is how a
- *     caller proves it was used rather than assuming it
- * @param {string} sigalgs.body - an OpenSSL signature-algorithms list, e.g.
- *     "mldsa65" to ask whether the peer can authenticate post-quantum at all
- * @param {array} alpnProtocols.body - ALPN protocols to offer
- * @param {array} trustCertificates.body - the truststore, PEM
- * @param {boolean} includeSystemRoots.body - add the platform roots as well
- * @param {string} clientCertificatePem.body - client certificate, PEM
- * @param {string} clientKeyPem.body - its private key, PEM
- * @param {boolean} mutualAuthProbe.body - also connect without the client
- *     certificate, to find out whether the server requires one
- * @param {object} httpRequest.body - {path} to GET over the connection once it
- *     is made, so the SERVER's account of it comes back too. GET only, and the
- *     path is the only part of the request a caller contributes
- * @returns {object} 200 - the handshake report (including a failed handshake)
- * @returns {object} 400 - the request was refused (see the reason)
- * @returns {object} 502 - the server could not be reached
  */
 app.post('/tls/connect', model.route('tlsConnect'), function (req, res) {
   log.debug('Entering POST /tls/connect.');
@@ -3477,8 +3277,6 @@ app.post('/tls/connect', model.route('tlsConnect'), function (req, res) {
 /**
  * What the TLS probe will and will not do, so the page can say so before a call
  * fails rather than reporting its own limits as somebody else's fault.
- * @route GET /tls/limits
- * @returns {object} 200 - the ports, timeouts and caps in force
  */
 app.get('/tls/limits', model.route('tlsLimits'), function (req, res) {
   log.debug('Entering GET /tls/limits.');
@@ -3515,14 +3313,6 @@ app.get('/tls/limits', model.route('tlsLimits'), function (req, res) {
 // ---------------------------------------------------------------------------
 /**
  * Perform one SCIM request on the caller's behalf.
- * @route POST /scim
- * @group SCIM - SCIM 2.0 provisioning support
- * @param {object} request.body.required - {url, method, headers, body,
- *     sslValidate, http_trace}
- * @returns {object} 200 - {ok, status, headers, body, rawBody, scimType,
- *     detail, http_exchange} — including a SCIM error, which is an answer
- * @returns {object} 400 - this service refused to send it (see the reason)
- * @returns {object} 502 - the SCIM server could not be reached
  */
 app.post('/scim', model.route('scimCall'), function (req, res) {
   log.debug('Entering POST /scim.');
@@ -3587,8 +3377,6 @@ app.post('/scim', model.route('scimCall'), function (req, res) {
  * What the SCIM proxy will and will not do, so the page can say so before a
  * call fails rather than reporting its own limits as somebody else's fault.
  * It is also how the page knows there is an api at all.
- * @route GET /scim/limits
- * @returns {object} 200 - the methods, refused headers, caps and status rule
  */
 app.get('/scim/limits', model.route('scimLimits'),
         function (req, res) {
@@ -3849,12 +3637,6 @@ app.post('/smartcard/transmit', model.route('smartcardTransmit'),
  * the transmitter explaining exactly what is wrong, and it is the most useful
  * thing this workflow can put on the screen.
  * ---------------------------------------------------------------------------
- * @route POST /ssf/call
- * @param {object} request.body - url, method, headers, body, sslValidate,
- *     and for the mtls proof clientCertificatePem and clientKeyPem
- * @returns {object} 200 - the transmitter's answer, whatever its status
- * @returns {object} 400 - this service refused to send it
- * @returns {object} 502 - the transmitter could not be reached
  */
 app.post('/ssf/call', model.route('ssfCall'), function (req, res) {
   log.debug('Entering POST /ssf/call.');
@@ -3921,9 +3703,6 @@ app.post('/ssf/call', model.route('ssfCall'), function (req, res) {
  * path at all, and whether push delivery is available — a static deployment
  * gets no answer here, which is a stronger signal than a configuration flag
  * because it is the api itself saying so.
- * @route GET /ssf/limits
- * @returns {object} 200 - the methods, refused headers, caps, status rule and
- *                         the receiver's own limits
  */
 app.get('/ssf/limits', model.route('ssfLimits'), function (req, res) {
   log.debug('Entering GET /ssf/limits.');
@@ -3939,11 +3718,6 @@ app.get('/ssf/limits', model.route('ssfLimits'), function (req, res) {
  * and that body string. A GNAP error is a 200 carrying the status,
  * because the error code is the thing the page is here to show. A
  * refusal by this service is a 400. A network failure is a 502.
- * @route POST /gnap/call
- * @param {object} request.body - url, method, headers, body, sslValidate
- * @returns {object} 200 - the authorization server's answer
- * @returns {object} 400 - this service refused to send it
- * @returns {object} 502 - the authorization server could not be reached
  */
 /**
  * The https agent for one mtls-proved GNAP call. It is the guard's
@@ -4043,8 +3817,6 @@ app.post('/gnap/call', model.route('gnapCall'), function (req, res) {
 /**
  * What the GNAP relay will forward. A static deployment gets no answer
  * here, and the page then calls the authorization server itself.
- * @route GET /gnap/limits
- * @returns {object} 200 - methods, refused headers and caps
  */
 app.get('/gnap/limits', model.route('gnapLimits'),
         function (req, res) {
@@ -4068,9 +3840,6 @@ app.get('/gnap/limits', model.route('gnapLimits'),
  * expiries, the caps and a configuration switch). The caller's address is
  * what `ssfReceiverMaxInboxesPerCaller` counts.
  * ---------------------------------------------------------------------------
- * @route POST /ssf/receiver
- * @returns {object} 200 - the inbox and the URL to put in a stream
- * @returns {object} 400 - refused: disabled, or at the inbox limit
  */
 app.post('/ssf/receiver', model.route('ssfReceiverCreate'),
         function (req, res) {
@@ -4108,10 +3877,6 @@ app.post('/ssf/receiver', model.route('ssfReceiverCreate'),
  * A Security Event Token arrives. The answer here goes back to the
  * TRANSMITTER, so it is RFC 8935's: 202 with an empty body on success, 400
  * with `{err, description}` on a refusal.
- * @route POST /ssf/receiver/:id
- * @returns 202 - accepted, no body
- * @returns {object} 400 - refused, with the SET Error Code and why
- * @returns {object} 404 - no such receiver
  */
 app.post('/ssf/receiver/:id', model.route('ssfReceiverPush'),
         function (req, res) {
@@ -4143,9 +3908,6 @@ app.post('/ssf/receiver/:id', model.route('ssfReceiverPush'),
  * What has arrived. `after` is a CURSOR and not a destructive read: the page
  * keeps its own history and a drain that emptied the inbox would make a second
  * tab useless.
- * @route GET /ssf/receiver/:id/events
- * @returns {object} 200 - the inbox and everything since `after`
- * @returns {object} 404 - no such receiver
  */
 app.get('/ssf/receiver/:id/events', model.route('ssfReceiverEvents'),
         function (req, res) {
@@ -4162,9 +3924,6 @@ app.get('/ssf/receiver/:id/events', model.route('ssfReceiverEvents'),
 
 /**
  * Empty an inbox (POST with `action=clear`) or delete it outright.
- * @route DELETE /ssf/receiver/:id
- * @returns {object} 200 - what happened
- * @returns {object} 404 - no such receiver
  */
 app.delete('/ssf/receiver/:id', model.route('ssfReceiverDelete'),
         function (req, res) {
@@ -4257,17 +4016,6 @@ const SPIFFE_REFUSED_BY_POLICY = [
 
 /**
  * One call on either gRPC surface: the Workload API or the SPIRE Server API.
- * @route POST /spiffe/call
- * @param {string} address.body.required - host:port, tcp://host:port or unix:///path
- * @param {string} service.body.required - workload, entry, agent, bundle, svid, trustdomain or debug
- * @param {string} method.body.required - the method name as the .proto writes it
- * @param {object} request.body - the request message; bytes fields take base64
- * @param {object} identity.body - {certPem, keyPem}: the X509-SVID to present
- * @param {string} trustBundle.body - PEM or base64 DER to verify the server against
- * @param {string} serverIdentityMode.body - spiffe-id, trust-domain or none
- * @returns {object} 200 - the answer, INCLUDING a gRPC status that is not OK
- * @returns {object} 400 - this service refused the request (see the reason)
- * @returns {object} 502 - the server could not be reached, or was not who it had to be
  */
 app.post('/spiffe/call', model.route('spiffeCall'), function (req, res) {
   log.debug('Entering POST /spiffe/call.');
@@ -4313,12 +4061,6 @@ app.post('/spiffe/call', model.route('spiffeCall'), function (req, res) {
 
 /**
  * Fetch a SPIFFE bundle endpoint and say what is wrong with what came back.
- * @route POST /spiffe/bundle
- * @param {string} url.body.required - the bundle endpoint URL
- * @param {boolean} sslValidate.body - verify the endpoint's TLS certificate
- * @returns {object} 200 - the document and the report, INCLUDING a bad one
- * @returns {object} 400 - this service refused the request
- * @returns {object} 502 - the endpoint could not be reached
  */
 app.post('/spiffe/bundle', model.route('spiffeBundle'),
     function (req, res) {
@@ -4389,8 +4131,6 @@ app.post('/spiffe/bundle', model.route('spiffeBundle'),
  * also how the page tells an older api from a broken one: a build without
  * SPIFFE answers 404 here, which is a different thing from a SPIRE server that
  * will not answer.
- * @route GET /spiffe/limits
- * @returns {object} 200 - the ports, socket paths, timeouts, caps and catalogue
  */
 app.get('/spiffe/limits', model.route('spiffeLimits'),
     function (req, res) {
@@ -4413,10 +4153,6 @@ app.get('/spiffe/limits', model.route('spiffeLimits'),
  * 404 on a plain listener rather than an empty 200: "this service is not
  * serving TLS" and "this service is serving TLS and will not say with what"
  * are different answers and a caller acts differently on them.
- *
- * @route GET /tls/server-certificate
- * @returns {string} 200 - the PEM
- * @returns {object} 404 - this service is not serving TLS
  */
 app.get('/tls/server-certificate',
     model.route('tlsServerCertificate'), function (req, res) {
