@@ -19,6 +19,11 @@
       "area": "local"
     },
     {
+      "key": "acr_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "authorization_endpoint",
       "class": "ordinary",
       "group": "client/src/jwks.js",
@@ -49,6 +54,86 @@
       "area": "local"
     },
     {
+      "key": "caep_acr",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_amr",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_device",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_initiating",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_iss",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_language",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_reason_admin",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_reason_user",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_sid",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_sub",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_tenant",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "caep_timestamp",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "claim_types_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "claims_locales_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "claims_parameter_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "claims_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "client_has_secret",
       "class": "ordinary",
       "group": "client/src/oauth2_oidc_1.js",
@@ -72,6 +157,11 @@
       "group": "client/src/secret_storage.js",
       "area": "none",
       "member": true
+    },
+    {
+      "key": "code_challenge_methods_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
     },
     {
       "key": "customParameterName-",
@@ -156,7 +246,23 @@
       "area": "local"
     },
     {
+      "key": "did_",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js",
+      "prefix": true
+    },
+    {
+      "key": "did_enabled",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
       "key": "did_identifier",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "did_resolution_url",
       "class": "ordinary",
       "group": "client/src/vc_issuance_1.js"
     },
@@ -164,6 +270,27 @@
       "key": "didcfg_url",
       "class": "ordinary",
       "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "didtools_did_",
+      "class": "ordinary",
+      "group": "client/src/did_tools.js",
+      "prefix": true
+    },
+    {
+      "key": "didtools_did_identifier",
+      "class": "ordinary",
+      "group": "client/src/did_tools.js"
+    },
+    {
+      "key": "didtools_did_resolution_url",
+      "class": "ordinary",
+      "group": "client/src/did_tools.js"
+    },
+    {
+      "key": "didtools_origin",
+      "class": "ordinary",
+      "group": "client/src/did_tools.js"
     },
     {
       "key": "discovery_info",
@@ -176,6 +303,21 @@
       "class": "ordinary",
       "group": "client/src/oauth2_oidc_1.js",
       "area": "local"
+    },
+    {
+      "key": "display_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "dpop_jkt_sent",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js"
+    },
+    {
+      "key": "dpop_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
     },
     {
       "key": "end_session_endpoint",
@@ -208,6 +350,26 @@
       "area": "local"
     },
     {
+      "key": "grant_types_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "id_token_encryption_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "id_token_encryption_enc_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "id_token_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "initialized",
       "class": "ordinary",
       "group": "client/src/oauth2_oidc_1.js",
@@ -236,6 +398,16 @@
       "class": "ordinary",
       "group": "client/src/introspection.js",
       "area": "local"
+    },
+    {
+      "key": "introspection_endpoint_auth_methods_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "introspection_endpoint_auth_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
     },
     {
       "key": "introspection_initiateFromBackEnd",
@@ -298,6 +470,31 @@
       "area": "local"
     },
     {
+      "key": "jwt_rfc9068_auth_context",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js"
+    },
+    {
+      "key": "jwt_rfc9068_authz_claims",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js"
+    },
+    {
+      "key": "jwt_rfc9068_decrypt",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js"
+    },
+    {
+      "key": "jwt_rfc9068_verify",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js"
+    },
+    {
+      "key": "jwt_rfc9068_workflow",
+      "class": "ordinary",
+      "group": "client/src/jwt_tools.js"
+    },
+    {
       "key": "jwt_verification_key",
       "class": "ordinary",
       "group": "client/src/token_detail.js",
@@ -339,6 +536,11 @@
       "key": "krb_kdc_port",
       "class": "ordinary",
       "group": "client/src/kerberos_panes.js"
+    },
+    {
+      "key": "krb_operation_history",
+      "class": "output",
+      "group": "client/src/kerberos_history.js"
     },
     {
       "key": "krb_principal",
@@ -415,6 +617,126 @@
       "class": "ordinary",
       "group": "client/src/oauth2_oidc_2.js",
       "area": "local"
+    },
+    {
+      "key": "ldap_base_dn",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_bind_dn",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_entry_attribute",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_entry_attributes",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_entry_changes",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_entry_dn",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_entry_new_rdn",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_entry_value",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_group_cn",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_group_description",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_operation_history",
+      "class": "output",
+      "group": "client/src/ldap_history.js"
+    },
+    {
+      "key": "ldap_search_attributes",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_search_base",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_search_filter",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_search_page_size",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_search_scope",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_search_size_limit",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_url",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_user_cn",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_user_given_name",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_user_mail",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_user_sn",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_user_title",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
+    },
+    {
+      "key": "ldap_user_uid",
+      "class": "ordinary",
+      "group": "client/src/ldap.js"
     },
     {
       "key": "logout_client_id",
@@ -516,6 +838,16 @@
       "area": "local"
     },
     {
+      "key": "op_policy_uri",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "op_tos_uri",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "operation_history",
       "class": "output",
       "group": "client/src/introspection.js",
@@ -526,6 +858,11 @@
       "class": "secret",
       "group": "client/src/secret_storage.js",
       "area": "none"
+    },
+    {
+      "key": "pki_operation_history",
+      "class": "output",
+      "group": "client/src/pki_history.js"
     },
     {
       "key": "pkitools_",
@@ -1388,10 +1725,50 @@
       "area": "local"
     },
     {
+      "key": "request_object_encryption_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "request_object_encryption_enc_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "request_object_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "request_parameter_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "request_uri_parameter_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "require_request_uri_registration",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "resource",
       "class": "ordinary",
       "group": "client/src/jwt_tools.js",
       "area": "local"
+    },
+    {
+      "key": "response_modes_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "response_types_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
     },
     {
       "key": "revocation_client_secret",
@@ -1404,6 +1781,16 @@
       "class": "ordinary",
       "group": "client/src/oauth2_oidc_1.js",
       "area": "local"
+    },
+    {
+      "key": "revocation_endpoint_auth_methods_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "revocation_endpoint_auth_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
     },
     {
       "key": "revocation_initiateFromBackEnd",
@@ -1424,6 +1811,36 @@
       "area": "local"
     },
     {
+      "key": "rfc9068_auth_context",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js"
+    },
+    {
+      "key": "rfc9068_authz_claims",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js"
+    },
+    {
+      "key": "rfc9068_decrypt",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js"
+    },
+    {
+      "key": "rfc9068_select_on_access",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js"
+    },
+    {
+      "key": "rfc9068_verify",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js"
+    },
+    {
+      "key": "rfc9068_workflow",
+      "class": "ordinary",
+      "group": "client/src/token_detail.js"
+    },
+    {
       "key": "rfc9700_mode",
       "class": "ordinary",
       "group": "client/src/rfc9700.js"
@@ -1437,6 +1854,61 @@
       "key": "rfc9700_transaction",
       "class": "ordinary",
       "group": "client/src/rfc9700.js"
+    },
+    {
+      "key": "risc_credential_type",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_email",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_iss",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_language",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_new_value",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_phone",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_reason_admin",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_reason_user",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_sub",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_subject_format",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "risc_timestamp",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
     },
     {
       "key": "saml_cert_view",
@@ -2019,10 +2491,63 @@
       "area": "local"
     },
     {
+      "key": "sc_oath_secret",
+      "class": "keypair",
+      "group": "client/src/smartcard.js",
+      "optOut": "sc_save_oath_secret"
+    },
+    {
+      "key": "sc_otp_aes_key",
+      "class": "keypair",
+      "group": "client/src/smartcard.js",
+      "optOut": "sc_save_otp_key"
+    },
+    {
+      "key": "sc_otp_api_key",
+      "class": "keypair",
+      "group": "client/src/smartcard.js",
+      "optOut": "sc_save_api_key"
+    },
+    {
+      "key": "sc_save_api_key",
+      "class": "ordinary",
+      "group": "client/src/smartcard.js"
+    },
+    {
+      "key": "sc_save_oath_secret",
+      "class": "ordinary",
+      "group": "client/src/smartcard.js"
+    },
+    {
+      "key": "sc_save_otp_key",
+      "class": "ordinary",
+      "group": "client/src/smartcard.js"
+    },
+    {
+      "key": "scim_auth_realm",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_auth_scheme",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
       "key": "scim_auth_token",
       "class": "output",
       "group": "client/src/scim.js",
       "area": "local"
+    },
+    {
+      "key": "scim_auth_username",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_base_url",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
     },
     {
       "key": "scim_config",
@@ -2043,16 +2568,141 @@
       "area": "local"
     },
     {
+      "key": "scim_gen_count",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_gen_domain",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_gen_prefix",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_gen_seed",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_hoba_username",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_last_group_id",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_last_user_id",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_op",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_op_body",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_op_id",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_operation_history",
+      "class": "output",
+      "group": "client/src/scim_history.js"
+    },
+    {
+      "key": "scim_query_attributes",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_query_count",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_query_excluded_attributes",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_query_filter",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_query_sort_by",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_query_sort_order",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_query_start_index",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
       "key": "scim_save_token",
       "class": "output",
       "group": "client/src/scim.js",
       "area": "local"
     },
     {
+      "key": "scim_scenario",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_scenario_count",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_scenario_prefix",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_scenario_seed",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
+      "key": "scim_ssl_validate",
+      "class": "ordinary",
+      "group": "client/src/scim.js"
+    },
+    {
       "key": "scope",
       "class": "ordinary",
       "group": "client/src/jwks.js",
       "area": "local"
+    },
+    {
+      "key": "scopes_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "sdjwtvc_authorization_details",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js"
     },
     {
       "key": "sdjwtvc_credential",
@@ -2155,6 +2805,11 @@
       "key": "sdjwtvc_issuer_site_url",
       "class": "ordinary",
       "group": "client/src/sd_jwt_vc.js"
+    },
+    {
+      "key": "sdjwtvc_issuer_state",
+      "class": "ordinary",
+      "group": "client/src/oauth2_oidc_1.js"
     },
     {
       "key": "sdjwtvc_previous_credential",
@@ -2300,6 +2955,11 @@
       "group": "client/src/vp_protocols.js"
     },
     {
+      "key": "service_documentation",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "session_handoff_active",
       "class": "ordinary",
       "group": "client/src/session_handoff.js"
@@ -2330,9 +2990,39 @@
       "group": "client/src/session_handoff.js"
     },
     {
+      "key": "signed_metadata",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "smartcard_transport",
       "class": "ordinary",
       "group": "client/src/smartcard.js"
+    },
+    {
+      "key": "spiffe_bundle_url",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_csr_key_alg",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_csr_subject",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_csr_uri",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_id_input",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
     },
     {
       "key": "spiffe_identity_bundle",
@@ -2359,10 +3049,100 @@
       "area": "local"
     },
     {
+      "key": "spiffe_operation_history",
+      "class": "output",
+      "group": "client/src/spiffe_history.js"
+    },
+    {
       "key": "spiffe_save_identity",
       "class": "ordinary",
       "group": "client/src/spiffe.js",
       "area": "local"
+    },
+    {
+      "key": "spiffe_server_address",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_server_id",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_server_identity_mode",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_server_messages",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_server_metadata",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_server_method",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_server_request",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_server_service",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_trust_domain",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_workload_address",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_workload_messages",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_workload_metadata",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_workload_method",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "spiffe_workload_request",
+      "class": "ordinary",
+      "group": "client/src/spiffe.js"
+    },
+    {
+      "key": "ssf_auth_scheme",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_base_url",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_basic_user",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
     },
     {
       "key": "ssf_call_path",
@@ -2371,9 +3151,34 @@
       "area": "local"
     },
     {
+      "key": "ssf_inbox_idle_minutes",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_inbox_max_kib",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_inbox_ttl_minutes",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
       "key": "ssf_message_history",
       "class": "output",
       "group": "client/src/ssf_history.js"
+    },
+    {
+      "key": "ssf_operation_history",
+      "class": "output",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_poll_max",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
     },
     {
       "key": "ssf_profile",
@@ -2388,15 +3193,120 @@
       "area": "local"
     },
     {
+      "key": "ssf_status_reason",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_status_value",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_stream_aud",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_stream_delivery",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_stream_description",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_stream_endpoint",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_stream_format",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_stream_id",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_subject_format",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_subject_json",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
       "key": "ssf_token_history",
       "class": "output",
       "group": "client/src/ssf_history.js"
+    },
+    {
+      "key": "ssf_tx_alg",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_tx_aud",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_tx_endpoint",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_tx_iss",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_tx_media",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_tx_payload",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_tx_subject",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_tx_txn",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_tx_type",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
+      "key": "ssf_verify_state",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
     },
     {
       "key": "state",
       "class": "ordinary",
       "group": "client/src/oauth2_oidc_1.js",
       "area": "local"
+    },
+    {
+      "key": "subject_types_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
     },
     {
       "key": "tokenNumberCustomParameters",
@@ -2439,6 +3349,16 @@
       "class": "ordinary",
       "group": "client/src/jwks.js",
       "area": "local"
+    },
+    {
+      "key": "token_endpoint_auth_methods_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "token_endpoint_auth_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
     },
     {
       "key": "token_handoff_active",
@@ -2602,6 +3522,11 @@
       "area": "local"
     },
     {
+      "key": "ui_locales_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "usePKCE-no",
       "class": "ordinary",
       "group": "client/src/oauth2_oidc_1.js",
@@ -2656,10 +3581,40 @@
       "area": "none"
     },
     {
+      "key": "userinfo_encryption_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
+      "key": "userinfo_encryption_enc_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "userinfo_endpoint",
       "class": "ordinary",
       "group": "client/src/userinfo.js",
       "area": "local"
+    },
+    {
+      "key": "userinfo_expected_audience",
+      "class": "ordinary",
+      "group": "client/src/userinfo.js"
+    },
+    {
+      "key": "userinfo_expected_issuer",
+      "class": "ordinary",
+      "group": "client/src/userinfo.js"
+    },
+    {
+      "key": "userinfo_jwks",
+      "class": "ordinary",
+      "group": "client/src/userinfo.js"
+    },
+    {
+      "key": "userinfo_jwks_source",
+      "class": "ordinary",
+      "group": "client/src/userinfo.js"
     },
     {
       "key": "userinfo_method",
@@ -2674,9 +3629,54 @@
       "area": "local"
     },
     {
+      "key": "userinfo_signing_alg_values_supported",
+      "class": "ordinary",
+      "group": "client/src/op_metadata.js"
+    },
+    {
       "key": "vc_jsonld_contexts",
       "class": "ordinary",
       "group": "client/src/bbs2023.js"
+    },
+    {
+      "key": "vci_batch_credential_issuance",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_2.js"
+    },
+    {
+      "key": "vci_credential_configuration_id",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "vci_credential_issuer",
+      "class": "ordinary",
+      "group": "client/src/did_tools.js"
+    },
+    {
+      "key": "vci_credential_request_encryption",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_2.js"
+    },
+    {
+      "key": "vci_credential_response_encryption",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_2.js"
+    },
+    {
+      "key": "vci_deferred_credential_endpoint",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_2.js"
+    },
+    {
+      "key": "vci_format",
+      "class": "ordinary",
+      "group": "client/src/vc_issuance_1.js"
+    },
+    {
+      "key": "vci_info",
+      "class": "output",
+      "group": "client/src/vc_issuance_2.js"
     },
     {
       "key": "vci_metadata_endpoint",
@@ -2712,6 +3712,11 @@
       "class": "ordinary",
       "group": "client/src/webauthn_lab.js",
       "area": "local"
+    },
+    {
+      "key": "wsfed_operation_history",
+      "class": "output",
+      "group": "client/src/wsfed_history.js"
     },
     {
       "key": "wsfedtools_",

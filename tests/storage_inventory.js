@@ -52,8 +52,53 @@ var log = bunyan.createLogger({
 
 const METHODS = ["setItem", "getItem", "removeItem"];
 
+// The module wrappers whose first argument is a storage key, and the
+// functions that BUILD a key from their argument (a prefix plus a name).
+// Each was found by storage_keys_recorded.js on 2026-11-16, writing keys the
+// static half could not follow. sd_jwt_vc.js's set/get/remove/setJson/getJson
+// store under the key exactly as given; userinfo.js's storeField(id) stores a
+// field under its id; did.js's idFor() prefixes "did_", vci_metadata.js's
+// "vci_", and did_tools.js's storeKey() "didtools_".
+const WRAPPERS = { sdJwtVc: ["set", "get", "remove", "setJson", "getJson"] };
+const KEY_FUNCTIONS = ["storeField"];
+const KEY_BUILDERS = { "didLib.idFor": "did_", "vciMetadata.idFor": "vci_",
+                       "storeKey": "didtools_" };
+
+// Tables of field descriptors ({ name, ... }) a module stores each `name` of
+// under that name (vc_issuance_1.js's plainFields()).
+const FIELD_TABLES = { "vc_issuance_1.js": ["CLIENT_FIELDS", "ENDPOINT_FIELDS"] };
+
+function calleeName(callee) {
+  log.debug("Entering calleeName().");
+  let name = "";
+  if (callee.type === "Identifier") {
+    name = callee.name;
+  } else if (callee.type === "MemberExpression" && !callee.computed &&
+             callee.object.type === "Identifier" && callee.property) {
+    name = callee.object.name + "." + callee.property.name;
+  }
+  log.debug("Leaving calleeName(). " + name);
+  return name;
+}
+
 // What a storage key looks like, for the constants scanned by name.
 const KEY_SHAPE = /^[A-Za-z_][A-Za-z0-9_.:-]*$/;
+
+// The names of the constants whose strings are storage keys. *KEYS and
+// *_KEY are the helpers' tables. REMEMBERED is the list of field ids the
+// SSF, SCIM, LDAP and SPIFFE pages persist under their own ids, *_BOXES the
+// checkboxes token_detail.js saves the same way, and SAVE smartcard.js's
+// {area: [checkbox, secret]} table. The last three were found by
+// storage_keys_recorded.js on 2026-11-16: the static half missed them.
+const STORAGE_TABLE_NAME = /KEYS$|_KEY$|^REMEMBERED$|_BOXES$|^SAVE$/;
+
+// Modules that store every member of a generated catalog under the member's
+// own name (op_metadata.js: initOpMetadataDefaults() and
+// writeOpMetadataToLocalStorage() write each discovery member's field).
+const CATALOG_PAGES = {
+  "op_metadata.js": ["catalog/op_metadata.json",
+                     "catalog/as_only_metadata.json"]
+};
 
 // The pages whose script persists every `.stored` field, and the prefix it
 // writes them under (each module's STORE_PREFIX).
@@ -124,11 +169,22 @@ function constantsOf(ast) {
           if (key && p.value && p.value.type === "Literal" &&
               typeof p.value.value === "string") {
             members[key] = p.value.value;
+          } else if (key && p.value && p.value.type === "ArrayExpression") {
+            // smartcard.js's SAVE: { otp: [checkbox, secret], ... }.
+            stringsOf(p.value).forEach(function (v, i) {
+              members[key + "." + i] = v;
+            });
           }
         });
         constants[node.id.name] = { members: members };
       } else if (init.type === "ArrayExpression") {
         constants[node.id.name] = { items: stringsOf(init) };
+      } else if (init.type === "CallExpression") {
+        // did_tools.js: var DID_ID_KEY = storeKey(DID_ID_FIELD);
+        const built = resolveKey(init, constants);
+        if (built.key !== undefined) {
+          constants[node.id.name] = { value: built.key };
+        }
       }
     }
   });
@@ -190,6 +246,16 @@ function resolveKey(node, constants) {
       log.debug("Leaving resolveKey(). Prefix of a prefix.");
       return { prefix: left.prefix };
     }
+  }
+  if (node.type === "CallExpression" &&
+      KEY_BUILDERS[calleeName(node.callee)] !== undefined) {
+    const prefix = KEY_BUILDERS[calleeName(node.callee)];
+    const inner = resolveKey(node.arguments[0], constants);
+    log.debug("Leaving resolveKey(). Built by " + calleeName(node.callee));
+    if (inner.key !== undefined) {
+      return { key: prefix + inner.key };
+    }
+    return { prefix: prefix + (inner.prefix || "") };
   }
   if (node.type === "TemplateLiteral" && node.quasis.length &&
       node.quasis[0].value.cooked) {
@@ -253,7 +319,7 @@ function inventory(clientDir) {
     }
     const constants = constantsOf(ast);
     Object.keys(constants).forEach(function (name) {
-      if (!/KEYS$|_KEY$/.test(name)) {
+      if (!STORAGE_TABLE_NAME.test(name)) {
         return;
       }
       const c = constants[name];
@@ -268,8 +334,29 @@ function inventory(clientDir) {
       });
     });
     walk.simple(ast, {
+      Property: function (node) {
+        // A history's config: createHistory({ storeKey: "x_history", ... }).
+        const key = node.key && (node.key.name || node.key.value);
+        if (key === "storeKey" && node.value.type === "Literal" &&
+            typeof node.value.value === "string") {
+          note(keys, node.value.value, f, "local", "storeKey");
+        }
+      },
       CallExpression: function (node) {
         const callee = node.callee;
+        const name = calleeName(callee);
+        const dot = name.indexOf(".");
+        const wrapped = dot > 0 && WRAPPERS[name.slice(0, dot)] &&
+          WRAPPERS[name.slice(0, dot)].indexOf(name.slice(dot + 1)) !== -1;
+        if (wrapped || KEY_FUNCTIONS.indexOf(name) !== -1) {
+          const found = resolveKey(node.arguments[0], constants);
+          if (found.key !== undefined) {
+            note(keys, found.key, f, "unknown", name);
+          } else if (found.prefix !== undefined) {
+            note(prefixes, found.prefix, f, "unknown", name);
+          }
+          return;
+        }
         if (callee.type !== "MemberExpression" || callee.computed ||
             METHODS.indexOf(callee.property.name) === -1) {
           return;
@@ -285,6 +372,39 @@ function inventory(clientDir) {
                          area: area, argument: found.dynamic });
         }
       }
+    });
+    (FIELD_TABLES[f] || []).forEach(function (table) {
+      walk.simple(ast, {
+        VariableDeclarator: function (node) {
+          if (!node.id || node.id.name !== table || !node.init ||
+              node.init.type !== "ArrayExpression") {
+            return;
+          }
+          node.init.elements.forEach(function (el) {
+            if (!el || el.type !== "ObjectExpression") {
+              return;
+            }
+            el.properties.forEach(function (p) {
+              const k = p.key && (p.key.name || p.key.value);
+              if (k === "name" && p.value.type === "Literal" &&
+                  typeof p.value.value === "string") {
+                note(keys, p.value.value, f, "unknown", table);
+              }
+            });
+          });
+        }
+      });
+    });
+    (CATALOG_PAGES[f] || []).forEach(function (catalog) {
+      const file = path.join(src, catalog);
+      if (!fs.existsSync(file)) {
+        return;
+      }
+      JSON.parse(fs.readFileSync(file, "utf8")).forEach(function (m) {
+        if (m && typeof m.name === "string") {
+          note(keys, m.name, f, "local", "member of " + catalog);
+        }
+      });
     });
     if (STORED_PAGES[f]) {
       const prefix = constants.STORE_PREFIX && constants.STORE_PREFIX.value;

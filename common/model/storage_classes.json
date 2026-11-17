@@ -24,6 +24,15 @@
       "samltools_saml_sp_private_key",
       "samltools_saml_sp_public_key"
     ],
+    "sc_save_oath_secret": [
+      "sc_oath_secret"
+    ],
+    "sc_save_otp_key": [
+      "sc_otp_aes_key"
+    ],
+    "sc_save_api_key": [
+      "sc_otp_api_key"
+    ],
     "sdjwtvc_save_holder_key": [
       "sdjwtvc_dpop_private_jwk",
       "sdjwtvc_holder_private_jwk",

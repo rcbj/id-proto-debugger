@@ -136,10 +136,11 @@ async function paneBeforeAnythingIsSent(driver) {
     "vc-issuance-2.html has no DPoP pane");
   await driver.executeScript(
     "localStorage.clear();" +
-    "localStorage.setItem('credential_issuer', arguments[0]);" +
-    "localStorage.setItem('credential_endpoint', arguments[0] + " +
+    "localStorage.setItem('vci_credential_issuer', arguments[0]);" +
+    "localStorage.setItem('vci_credential_endpoint', arguments[0] + " +
         "'/oid4vci/credential');" +
-    "localStorage.setItem('nonce_endpoint', arguments[0] + '/oid4vci/nonce');" +
+    "localStorage.setItem('vci_nonce_endpoint', arguments[0] + " +
+        "'/oid4vci/nonce');" +
     "localStorage.setItem('token_endpoint', arguments[0] + '/oauth2/token');" +
     "localStorage.setItem('vci_credential_configuration_id', " +
         "'IdentityCredential');" +

@@ -32,4 +32,19 @@ model JwtToolsKeys {
 
   @storageKey(#{ area: "local", class: "ordinary" })
   yesResourceCheckToken: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  jwt_rfc9068_auth_context: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  jwt_rfc9068_authz_claims: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  jwt_rfc9068_decrypt: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  jwt_rfc9068_verify: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  jwt_rfc9068_workflow: unknown;
 }

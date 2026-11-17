@@ -59,13 +59,15 @@ Each catalogue is this project's reading of its specification. None is shared wi
 
 ## Storage keys at run time
 
-The static inventory reads 509 keys and 9 prefixes out of `client/src`. 133 call sites build their key in ways it cannot follow, so the suite also records what the browsers actually held:
+The static inventory reads 718 keys and 11 prefixes out of `client/src`. 134 call sites build their key in ways it cannot follow, so the suite also records what the browsers actually held:
 
 - `tests/tools/record-storage-on-quit.js` is preloaded into every job. Just before each browser closes, it reads the key names (never the values) on the debugger's origin.
 - `tests/storage_keys_recorded.js` runs last. It fails on any of these:
   - a key no model declares;
   - a secret found in any storage;
   - a bearer token found in localStorage.
+
+The first full run with both halves (2026-11-16) found 169 keys the static half had missed, all real: the `REMEMBERED` field lists of the SSF, SCIM, LDAP and SPIFFE pages, `token_detail.js`'s `RFC9068_BOXES`, `smartcard.js`'s `SAVE` table (three opt-in secrets, now `keypair`), every member of the OP metadata catalogs that `op_metadata.js` stores under its own name, the operation histories' `storeKey`s, keys written through `sdJwtVc.set()` and `storeField()`, and the DID members under `did_` / `didtools_did_`. `tests/storage_inventory.js` now reads each of those shapes, so the static half names them too. Three more were a test seeding keys the app no longer reads (`dpop_workflow.js`), fixed in the test.
 
 ## Bodies that are not JSON
 

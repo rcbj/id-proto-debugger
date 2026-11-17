@@ -41,4 +41,22 @@ model TokenDetailKeys {
 
   @storageKey(#{ area: "local", class: "output" })
   tokenexchange_id_token: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  rfc9068_auth_context: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  rfc9068_authz_claims: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  rfc9068_decrypt: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  rfc9068_select_on_access: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  rfc9068_verify: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  rfc9068_workflow: unknown;
 }
