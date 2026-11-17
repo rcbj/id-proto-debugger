@@ -2,7 +2,7 @@
 
 Covers the pane `pane_hbs_signature` on `client/public/digital_signature.html`,
 its handlers in `client/src/digital_signature.js`, the engine
-`client/src/hbs.js`, and `tests/hbs_signatures.js` with
+`common/crypto/hbs.js`, and `tests/hbs_signatures.js` with
 `tests/hbs_vectors.json`.
 
 Four documents, and the page cites all four because they are not

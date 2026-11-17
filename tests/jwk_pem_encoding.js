@@ -470,8 +470,12 @@ function ellipticStaysOutOfTheBundles() {
   // that only reads client/src would have gone on reporting a pass over a
   // module it no longer looks at — while that module is still browserified
   // into nine bundles.
+  //
+  // common/crypto (#463) is the third staged directory, and the one with the
+  // most to lose: it is in nearly every bundle.
   const extraDirs = [path.join(__dirname, "..", "common", "krb5"),
-                     path.join(__dirname, "..", "common", "spiffe")]
+                     path.join(__dirname, "..", "common", "spiffe"),
+                     path.join(__dirname, "..", "common", "crypto")]
     .filter(function (d) { return fs.existsSync(d); });
   const extraFiles = [path.join(__dirname, "..", "common", "xmldsig.js")]
     .filter(function (f) { return fs.existsSync(f); });
@@ -630,6 +634,17 @@ function bigIntLiteralsStayOutOfTheBundles() {
     });
   })(srcDir);
   assert.ok(files.length > 0, "found no .js files in client/src");
+  // common/crypto (#463) is staged flat into client/src before browserify
+  // runs, so its modules are bundle source and are held to the same rule.
+  // Their relative names start with `../` and are reported that way below.
+  const cryptoDir = path.join(__dirname, "..", "common", "crypto");
+  if (fs.existsSync(cryptoDir)) {
+    fs.readdirSync(cryptoDir).filter(function (f) {
+      return /\.js$/.test(f);
+    }).forEach(function (f) {
+      files.push(path.relative(srcDir, path.join(cryptoDir, f)));
+    });
+  }
   const offences = [];
   files.forEach(function (file) {
     const text = fs.readFileSync(path.join(srcDir, file), "utf8");
@@ -638,7 +653,8 @@ function bigIntLiteralsStayOutOfTheBundles() {
       // naming `0n` while telling you not to write it is not writing it.
       if (/^\s*(\/\/|\*|\/\*)/.test(line)) return;
       if (BIGINT.test(line)) {
-        offences.push("client/src/" + file + ":" + (index + 1) + "  " +
+        offences.push(path.join("client", "src", file) + ":" +
+                      (index + 1) + "  " +
                       line.trim().slice(0, 90));
       }
     });
@@ -650,7 +666,7 @@ function bigIntLiteralsStayOutOfTheBundles() {
         "instead:\n  " +
     offences.join("\n  "));
   log.info("[bigint] OK — " + files.length +
-           " files in client/src, no BigInt literals.");
+           " files in client/src and common/crypto, no BigInt literals.");
   log.debug("Leaving bigIntLiteralsStayOutOfTheBundles().");
 }
 
@@ -1764,6 +1780,26 @@ function stagedSharedModuleListsAreComplete() {
     });
     checked += direct.length;
   });
+  // common/crypto (#463) is staged WHOLE rather than per bundle, so there is
+  // no list of consumers to hold — but client/.gitignore names each staged
+  // file, so a build killed before its `finally` cannot leave a copy in
+  // client/src that `git add` picks up as source. A module added to
+  // common/crypto/ needs its line there.
+  const cryptoDir = path.join(__dirname, "..", "common", "crypto");
+  const clientIgnore = path.join(__dirname, "..", "client", ".gitignore");
+  if (fs.existsSync(cryptoDir) && fs.existsSync(clientIgnore)) {
+    const ignored = fs.readFileSync(clientIgnore, "utf8").split(/\r?\n/);
+    fs.readdirSync(cryptoDir).filter(function (f) {
+      return /\.js$/.test(f);
+    }).forEach(function (f) {
+      assert.ok(ignored.indexOf("src/" + f) >= 0,
+        "common/crypto/" + f + " is staged into client/src by " +
+        "client/build.js " +
+        "but client/.gitignore has no `src/" + f + "` line, so a build " +
+        "interrupted before it cleans up leaves a copy that looks like " +
+        "source. Add the line.");
+    });
+  }
   log.info("[staged lists] OK — " + checked + " bundle(s) that require a " +
            "module staged out of common/ are named by the list that stages " +
            "it, and no list names a bundle that does not.");

@@ -60,6 +60,16 @@ function loadOtp() {
   var candidates = [path.join(__dirname, "yubico_otp.js"),
                     path.join(__dirname, "..", "client", "src",
                               "yubico_otp.js")];
+  // yubico_otp.js requires ./crypto_bytes.js, which lives in common/crypto/
+  // since #463 and is staged beside it only for the browser build. The
+  // checkout's resolver for that gap is common/crypto_resolve.js; where it is
+  // absent (the api image) the client tree is absent too and nothing is lost.
+  try {
+    require(path.join(__dirname, "..", "common", "crypto_resolve.js"))
+      .install();
+  } catch (e) {
+    log.debug("loadOtp(): no common/crypto_resolve.js: " + e.message);
+  }
   var i = 0;
   for (i = 0; i < candidates.length; i++) {
     try {

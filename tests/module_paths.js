@@ -58,6 +58,50 @@ function addTestsModulesToResolutionPath() {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// common/crypto/ — the central crypto module of #463.
+//
+// The pure-JS engines (crypto_bytes, hash_tools, symmetric_crypto,
+// pk_encryption, pqc, hbs, ...) moved out of client/src into common/crypto/,
+// and roughly twenty client/src modules still `require("./pqc")` and
+// friends, because the browser build STAGES common/crypto/*.js flat into
+// client/src. In node, from a checkout, nothing is staged — so loading
+// client/src/jws.js would fail on `./pqc`. common/crypto_resolve.js wraps
+// node's resolver to send such a failed sibling request to common/crypto/,
+// and the engines' own package requires to tests/node_modules (and the
+// client's). It only acts after ordinary resolution has failed, so in the
+// tests image, where tests/Dockerfile lays the engines flat beside the
+// scripts, nothing changes. Installed at load: every test that loads a
+// client/src module requires this file first.
+//
+// The image copies crypto_resolve.js and common/crypto/ to /usr/src/common,
+// which is where `..` from /usr/src/app points, exactly as in a checkout.
+// ---------------------------------------------------------------------------
+const cryptoResolve = require("../common/crypto_resolve.js");
+const COMMON_CRYPTO_DIR = cryptoResolve.install(
+  [path.join(__dirname, "node_modules")]);
+
+// Candidates for one of common/crypto/'s modules, in the order the other
+// shared modules use: flat beside the tests (the image), then common/crypto/.
+function cryptoModuleCandidates(name) {
+  log.debug("Entering cryptoModuleCandidates(). name=" + name);
+  const candidates = [path.join(__dirname, name)];
+  if (COMMON_CRYPTO_DIR) {
+    candidates.push(path.join(COMMON_CRYPTO_DIR, name));
+  }
+  log.debug("Leaving cryptoModuleCandidates().");
+  return candidates;
+}
+
+// Load one of common/crypto/'s modules by file name ("pqc.js").
+function requireCryptoModule(name) {
+  log.debug("Entering requireCryptoModule(). name=" + name);
+  const found = requireSharedModule(cryptoModuleCandidates(name),
+    "common/crypto/" + name);
+  log.debug("Leaving requireCryptoModule().");
+  return found;
+}
+
 // Load a module that may live next to the tests (container) or in client/src (a
 // checkout), with the resolution fallback applied and a pointed error when a
 // dependency of that module is what is actually missing.
@@ -475,6 +519,11 @@ function mockStsModule(name, warn) {
 module.exports = {
   addTestsModulesToResolutionPath: addTestsModulesToResolutionPath,
   requireSharedModule: requireSharedModule,
+  // common/crypto/ (#463): its directory, a module's candidate paths, and
+  // the module itself.
+  COMMON_CRYPTO_DIR: COMMON_CRYPTO_DIR,
+  cryptoModuleCandidates: cryptoModuleCandidates,
+  requireCryptoModule: requireCryptoModule,
   mockStsModule: mockStsModule,
   // Where iya-sts's tree is, for a test that needs a whole DIRECTORY rather
   // than one file (tests/krb5_codec_sync.js, tests/spiffe_engine.js), and

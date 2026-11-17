@@ -77,8 +77,7 @@ const kem = paths.requireSharedModule([path.join(SRC, "jwe_kem.js")],
                                       "client/src/jwe_kem.js");
 const jose = paths.requireSharedModule([path.join(SRC, "jose_jwe.js")],
                                        "client/src/jose_jwe.js");
-const pqc = paths.requireSharedModule([path.join(SRC, "pqc.js")],
-                                      "client/src/pqc.js");
+const pqc = paths.requireCryptoModule("pqc.js");
 const mlkem = require("@noble/post-quantum/ml-kem.js");
 
 const VECTORS = {

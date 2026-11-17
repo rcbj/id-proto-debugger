@@ -59,15 +59,20 @@ var log = bunyan.createLogger({ name: 'pqc_engines',
 log.info("Log initialized. logLevel=" + log.level());
 
 // The modules under test live next to this script in the tests image and in
-// client/src in a checkout — see the note in tests/module_paths.js, and the
+// client/src or common/crypto in a checkout — see the note in
+// tests/module_paths.js, and the
 // tests/Dockerfile COPY that puts them here.
 const paths = require("./module_paths.js");
 const SRC = path.resolve(__dirname, "..", "client", "src");
+// pqc.js and crypto_bytes.js are in common/crypto/ since #463; jws.js is
+// still in client/src. Both directories are candidates for every name.
+const CRYPTO = path.resolve(__dirname, "..", "common", "crypto");
 
 function shared(name) {
   log.debug("Entering shared(). name=" + name);
   const found = paths.requireSharedModule(
-    [path.join(__dirname, name), path.join(SRC, name)], "client/src/" + name);
+    [path.join(__dirname, name), path.join(SRC, name),
+     path.join(CRYPTO, name)], name);
   log.debug("Leaving shared().");
   return found;
 }
@@ -96,7 +101,8 @@ function checkNoDom() {
   // Same shape and the same reasoning as tests/crypto_engines.js: comments
   // are where the reasoning lives, so only real code counts.
   const forbidden = /\b(document|window|localStorage|sessionStorage)\s*\./;
-  const candidates = [path.join(__dirname, "pqc.js"), path.join(SRC, "pqc.js")];
+  const candidates = [path.join(__dirname, "pqc.js"),
+                      path.join(CRYPTO, "pqc.js")];
   const file = candidates.filter(function (one) {
     return fs.existsSync(one);
   })[0];

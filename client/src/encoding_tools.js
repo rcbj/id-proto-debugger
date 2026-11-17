@@ -23,7 +23,7 @@
 // never have been built on it; and it does not exist outside a secure
 // context, which the containerized test origin (http://client:3000) is not,
 // so the SHA-2 pane silently had no cryptography there. Both panes now go
-// through client/src/hash_tools.js, which is pure JavaScript, synchronous,
+// through common/crypto/hash_tools.js, which is pure JavaScript, synchronous,
 // and DOM-free — see the header of that file for what the panes are FOR, and
 // tests/hash_engine.js for the vectors that hold it to the specifications.
 //

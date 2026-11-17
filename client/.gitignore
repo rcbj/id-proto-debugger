@@ -11,3 +11,15 @@ public/version.json
 # too, which is how 38 generated files come to be sitting in a working tree.
 # Committing one would pin a bundle built from some other revision of src/.
 public/js/
+# Transient copies of common/crypto/*.js (#463) staged flat into src/ by
+# build.js and removed in its `finally`. Listed by name rather than as a glob
+# because src/ is otherwise all tracked source; a module added to
+# common/crypto/ gets a line here as well.
+src/crypto_bytes.js
+src/hash_tools.js
+src/symmetric_crypto.js
+src/pk_encryption.js
+src/pqc.js
+src/hbs.js
+src/crypto_keys.js
+src/crypto_provider.js
