@@ -21,7 +21,8 @@ key.
 | `IdProtoDebugger.Api` | `api/*.tsp`, one file per endpoint family | `common/model/openapi.json` (OpenAPI 3.1) | `api/model_validate.js` (every opted-in route's request validator; with `validateResponses`, every answer); the api serves it at `GET /api-docs` |
 | `IdProtoDebugger.Config` | `config/api_config.tsp`, `config/client_config.tsp` | `common/model/config.schema.json` (JSON Schema 2020-12, both objects closed) | `common/model_config.js`, called by `api/server.js` at startup and by `client/check_config.js` before bundling |
 | `IdProtoDebugger.Storage` | `storage/*.tsp`, one file per workflow | `common/model/storage.json` | `client/src/secret_storage.js` and the three key-pair panes (`storage_classes.json`); `tests/data_model.js` (both) |
-| `IdProtoDebugger.Contract` | `contract/embedded.tsp` | `common/model/embedded_contract.json` | `embedded/build.sh` copies it into the tree; `tests/embedded_deployment.js` |
+| `IdProtoDebugger.Catalog` | `catalog/*.tsp`, one file per protocol | `client/src/catalog/<const name>.json`, one per typed `const` | the client module the table came from, as `require("./catalog/<name>.json")`; `tests/data_model.js` |
+| `IdProtoDebugger.Contract` | `contract/main.tsp` | `common/model/embedded_contract.json` | `embedded/build.sh` copies it into the tree; `tests/embedded_deployment.js` |
 
 `lib/debugger_lib.tsp` declares this project's decorators and the closed
 value types they take; `lib/debugger_lib.mjs` implements them. An object
@@ -187,6 +188,14 @@ range (`4XX`), then `default` — so a proxy that relays the far end's
 status can document a range. A non-JSON answer (a redirect, a page, XML)
 has its status checked and nothing else. A body that is neither JSON nor a
 form (`application/secevent+jwt`) is documented and not validated.
+
+## Catalogues
+
+A catalogue is data, not a type: the rows a client module reads. It is written as a **typed `const`** under `catalog/` (`const SCIM_OPERATIONS: ScimOperation[] = #[ #{ ... } ];`), and `generate.mjs` writes each one to `client/src/catalog/<const name, lower case>.json`. The row model is closed, so an unknown member is a compile error, the same as a decorator argument. TypeSpec has no string concatenation, so a long string in a row stays on one line.
+
+The JSON goes beside the modules rather than in `common/model/`, because the tests image copies several of them flat. `require("./catalog/<name>.json")` resolves in a checkout, in a bundle and in a flat copy alike, and `tests/Dockerfile` copies the directory once.
+
+A table moves only after the generated JSON is shown to deep-equal the literal it replaces. The module then keeps its code and loses its rows. `tests/data_model.js` gets a section that holds the module's exported table to the file on disk.
 
 ## Style
 

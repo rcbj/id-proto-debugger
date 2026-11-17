@@ -793,5 +793,7 @@ app.post('/ldap/bind', model.route('ldapBind'), function (req, res) { ... });
 
 **`validateResponses`** (on in `env/docker-tests.js` only) checks every answer against its operation's documented response, logs a mismatch as `MODEL GAP`, and keeps the record at `GET /model/gaps`, which `tests/api_model_gaps.js` reads LAST in the suite. A non-JSON answer has its status checked. The answer itself is never changed.
 
-**`GET /api-docs.json`** is the document, with this build's version and the server this api is reached at (embedded: `uiUrl` + `/api`). **`GET /api-docs`** is a self-contained page listing every operation. The interactive explorer `express-swagger-generator` bundled went with it: the candidates were `swagger-ui-dist`, which carries an install-time telemetry dependency, or a CDN this api would send its callers to.
+**`GET /api-docs.json`** is the document, with this build's version and the server this api is reached at (embedded: `uiUrl` + `/api`). **`GET /api-docs`** is Swagger UI over it, which can try an operation, served with its assets from this api's own `node_modules` (`/api-docs/assets/`, static and outside the document) and never from a CDN; every path in it is relative, so it works embedded under `/api`. `swagger-ui-dist` depends on **`@scarf/scarf`, an install-time analytics hook**, which `scarfSettings.enabled: false` in `package.json` and `SCARF_ANALYTICS=false` in the Dockerfile both turn off; keep both. **`GET /api-docs/operations`** is the same document as a page with no script at all.
+
+**A request body that is neither JSON nor a form** (a Security Event Token pushed to the SSF receiver as `application/secevent+jwt`) is validated against the string schema the document gives its media type.
 

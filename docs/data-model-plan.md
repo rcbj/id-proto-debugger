@@ -8,8 +8,9 @@
 - **The validator owns less than "remove the hand-written check" suggests.** Most checks live in modules that are libraries with callers of their own (`ldap_client.js`, `krb5_relay.js`, the `*_proxy.js` decision halves). They stay where they are and are named with `@checkedInCode`. Only checks a ROUTE made were moved into the schema, and each keeps its sentence through `@refusal`.
 - **The secret lists are read from `storage_classes.json`**, a four-list file generated beside `storage.json`, so the bundles do not carry the whole inventory. `sd_jwt_vc.js`'s holder-key list stays a literal held to the model, because the tests image copies that module flat.
 - **The storage check lives in `tests/data_model.js`**, not in `secret_storage_engine.js`, and reads the keys out of the source with acorn (`tests/storage_inventory.js`).
-- **The run-time storage recorder was not built.** Every browser test builds its own WebDriver, so there is no one place to read storage before `quit()`. The 133 call sites whose key the static inventory cannot read are reported and not checked.
-- **The interactive API explorer is gone.** `GET /api-docs` is a self-contained page listing the operations. `swagger-ui-dist` would have brought an install-time telemetry dependency.
+- **The run-time storage recorder** wraps `WebDriver.quit()` from a preload (`tests/tools/record-storage-on-quit.js`), the way the coverage flush already did, rather than adding a hook to each browser test.
+- **The API explorer** is Swagger UI from `swagger-ui-dist`, with its `@scarf/scarf` install analytics switched off in `api/package.json` and `api/Dockerfile`; the script-free list is at `/api-docs/operations`.
+- **Phase 5 was done after all**, for the OAuth discovery and RP-metadata tables, SCIM's operations, error types, scenarios and vocabularies, and the Shared Signals event vocabulary, as typed `const`s written to `client/src/catalog/`. The IANA claim registry stays IANA's.
 - **The api's families were switched in parallel**, each on its own branch from the pilot's commit, and merged.
 
 ## What this adds

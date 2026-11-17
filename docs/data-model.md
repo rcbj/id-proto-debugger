@@ -47,8 +47,37 @@ Each family — LDAP first, as the pilot, then service, Kerberos, TLS, SPIFFE, S
 
 Edit the `.tsp` file, run `node models/tools/generate.mjs` (once `npm install` has been run in `models/`), and commit both. `tests/data_model.js` fails until the generated files match the models. It also edits a copy of a model to prove that check would notice. `models/CLAUDE.md` has the rules a model follows and the procedure for a new api family.
 
-## Not done, and why
+## The protocol catalogues
 
-- **Keys built at run time.** The static storage inventory reads 509 keys and 9 prefixes out of `client/src`, but 133 call sites build their key in ways it cannot follow: a helper's parameter, or a key passed in from another module. The plan's run-time recorder would cover those. It needs a hook in every browser test, because each one builds its own WebDriver and there is no shared place to read storage before `quit()`. So it is a separate piece of work.
-- **The protocol catalogues** (`ssf_events.js`, the SCIM schemas, the OAuth parameter sets, the IANA claim registry). These were deliberately not scheduled. They are already DOM-free data tables tested against the specifications, so moving one into TypeSpec would mostly change how it is written. One moves only when that buys something concrete.
-- **Request bodies that are not JSON or a form** — a Security Event Token pushed as `application/secevent+jwt` — are documented but not validated.
+Some client modules hold specification data as tables: discovery metadata members, SCIM error types and operations, and the Shared Signals event vocabulary. Each of those tables is now a typed `const` in `models/catalog/*.tsp`. The generator writes it to `client/src/catalog/<name>.json`, and the module requires it as `./catalog/<name>.json`. That is a sibling path because the tests image copies several of these modules flat.
+
+A catalogue row model is closed, so a row with a member its model does not declare is a compile error. Each table moved only after the generated JSON deep-equalled the literal it replaced. `tests/data_model.js` then holds every module's exported table to its JSON on disk.
+
+Each catalogue is this project's reading of its specification. None is shared with iya-sts.
+
+**The IANA JWT claim registry is not one of them.** The api fetches it from IANA at run time (`GET /claimdescription`) and ships a copy as `api/jwt.xml`. A TypeSpec copy would be a second source for a document whose owner already publishes it machine-readable.
+
+## Storage keys at run time
+
+The static inventory reads 509 keys and 9 prefixes out of `client/src`. 133 call sites build their key in ways it cannot follow, so the suite also records what the browsers actually held:
+
+- `tests/tools/record-storage-on-quit.js` is preloaded into every job. Just before each browser closes, it reads the key names (never the values) on the debugger's origin.
+- `tests/storage_keys_recorded.js` runs last. It fails on any of these:
+  - a key no model declares;
+  - a secret found in any storage;
+  - a bearer token found in localStorage.
+
+## Bodies that are not JSON
+
+A Security Event Token pushed to the SSF receiver arrives as `application/secevent+jwt` text. It is validated as the string schema the document gives it, and the wire harness can send one (`text` with a `contentType`).
+
+## The explorer
+
+`GET /api-docs` is Swagger UI again, rendering the model's document, and it can try an operation. It is served from the api's own `node_modules` (`swagger-ui-dist`), never a CDN.
+
+`swagger-ui-dist` depends on `@scarf/scarf`, an install-time analytics hook. That hook is switched off twice:
+
+- by `scarfSettings.enabled: false` in `api/package.json`, which scarf honours;
+- by `SCARF_ANALYTICS=false` in `api/Dockerfile`.
+
+The script-free list of operations is at `GET /api-docs/operations`.
