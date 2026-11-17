@@ -117,16 +117,16 @@ function readModelFile(name) {
   return JSON.parse(text);
 }
 
-function newAjv() {
+function newAjv(extra) {
   log.debug('Entering newAjv().');
-  const ajv = new Ajv2020({
+  const ajv = new Ajv2020(Object.assign({
     allErrors: true,
     strict: true,
     // anyOf over primitive types is how the emitter writes `string | null`,
     // which strictTypes would warn about on every compile.
     strictTypes: false,
     strictTuples: false
-  });
+  }, extra || {}));
   ANNOTATIONS.forEach(function (keyword) {
     ajv.addKeyword(keyword);
   });
@@ -180,11 +180,43 @@ function resolveComponent(doc, schema) {
   return schema;
 }
 
+// The media types whose body arrives in `req.body` as an object: JSON, and
+// the form an identity provider POSTs (body-parser's urlencoded, which
+// server.js installs for the SAML and WS-Federation endpoints).
+const BODY_TYPES = ['application/json', 'application/x-www-form-urlencoded'];
+
 function jsonSchemaOf(content) {
   log.debug('Entering jsonSchemaOf().');
-  const json = content && content['application/json'];
-  log.debug('Leaving jsonSchemaOf().');
-  return json ? json.schema : null;
+  const type = BODY_TYPES.find(function (t) {
+    return content && content[t];
+  });
+  log.debug('Leaving jsonSchemaOf(). ' + (type || 'none'));
+  return type ? content[type].schema : null;
+}
+
+/**
+ * One object schema for the parameters an operation takes `in` the query or
+ * the path, or null when it takes none there. A query parameter is text
+ * however it is typed, so these are compiled with type coercion, on a copy.
+ */
+function parameterSchema(parameters, where) {
+  log.debug('Entering parameterSchema(). ' + where);
+  const mine = (parameters || []).filter(function (p) {
+    return p.in === where;
+  });
+  if (!mine.length) {
+    log.debug('Leaving parameterSchema(). None.');
+    return null;
+  }
+  const schema = { type: 'object', properties: {}, required: [] };
+  mine.forEach(function (p) {
+    schema.properties[p.name] = p.schema || {};
+    if (p.required) {
+      schema.required.push(p.name);
+    }
+  });
+  log.debug('Leaving parameterSchema(). ' + mine.length);
+  return schema;
 }
 
 /**
@@ -192,7 +224,7 @@ function jsonSchemaOf(content) {
  * the order and refusals of its top-level members, and its response schemas
  * (compiled on first use).
  */
-function indexOperations(doc, ajv) {
+function indexOperations(doc, ajv, coercing) {
   log.debug('Entering indexOperations().');
   const operations = {};
   Object.keys(doc.paths || {}).forEach(function (route) {
@@ -207,11 +239,30 @@ function indexOperations(doc, ajv) {
         method: method.toUpperCase(),
         path: route,
         request: null,
+        parameters: {},
         order: [],
         refusals: {},
         responses: {},
         compiled: {}
       };
+      ['query', 'path'].forEach(function (where) {
+        const schema = parameterSchema(op.parameters, where);
+        if (schema) {
+          const refusals = {};
+          (op.parameters || []).forEach(function (p) {
+            if (p.in === where && p.schema && p.schema['x-refusal']) {
+              refusals[p.name] = p.schema['x-refusal'];
+            }
+          });
+          entry.parameters[where] = {
+            validate: coercing.compile(retarget(schema)),
+            operationId: op.operationId,
+            order: Object.keys(schema.properties),
+            required: schema.required,
+            refusals: refusals
+          };
+        }
+      });
       const body = op.requestBody && jsonSchemaOf(op.requestBody.content);
       if (body) {
         entry.request = ajv.compile(retarget(body));
@@ -246,7 +297,7 @@ function memberOf(error) {
   return { member: segments[0] || '', path: segments.join('.') };
 }
 
-function describe(errors) {
+function describe(errors, where) {
   log.debug('Entering describe().');
   const required = errors.find(function (e) {
     return e.keyword === 'required';
@@ -274,8 +325,11 @@ function describe(errors) {
   }
   if (types.length) {
     log.debug('Leaving describe(). type');
+    // A parameter is text on the wire; only a body member has a JSON type.
+    const article = where ? 'an ' : 'a JSON ';
     return 'must be ' + types.map(function (t) {
-      return t === 'null' ? 'null' : 'a JSON ' + t;
+      return t === 'null' ? 'null' : (where && /^[aeiou]/.test(t) ?
+        article : (where ? 'a ' : article)) + t;
     }).join(' or ');
   }
   log.debug('Leaving describe(). Fallback.');
@@ -286,7 +340,7 @@ function describe(errors) {
  * The one answer for a body that failed its schema: the first failing
  * member in the document's order, with its own refusal if it declares one.
  */
-function chooseRefusal(op, errors) {
+function chooseRefusal(op, errors, where) {
   log.debug('Entering chooseRefusal(). ' + op.operationId);
   const byMember = {};
   errors.forEach(function (error) {
@@ -319,10 +373,12 @@ function chooseRefusal(op, errors) {
     return e.path.length > a.length ? e.path : a;
   }, member);
   log.debug('Leaving chooseRefusal(). The model\'s refusal.');
+  const kind = where === 'query' ? 'query parameter ' :
+    (where === 'path' ? 'path parameter ' : '');
   return {
-    error: 'Refusing the request: `' + (deepest || 'the body') + '` ' +
-      describe(found) + '. GET /api-docs describes what ' + op.operationId +
-      ' takes.',
+    error: 'Refusing the request: ' + kind + '`' +
+      (deepest || 'the body') + '` ' + describe(found, where) +
+      '. GET /api-docs describes what ' + op.operationId + ' takes.',
     code: 'EMODELREQUEST'
   };
 }
@@ -340,7 +396,12 @@ function createModel(options) {
   const ajv = newAjv();
   ajv.addSchema({ $id: COMPONENTS_ID,
                   $defs: retarget((doc.components || {}).schemas || {}) });
-  const operations = indexOperations(doc, ajv);
+  // Query and path parameters are text on the wire, so their validator
+  // coerces "10" to 10 where the document says integer. Never the body's.
+  const coercing = newAjv({ coerceTypes: true });
+  coercing.addSchema({ $id: COMPONENTS_ID,
+                       $defs: retarget((doc.components || {}).schemas || {}) });
+  const operations = indexOperations(doc, ajv, coercing);
   const validateResponses = settings.validateResponses === true;
   const gaps = new Map();
 
@@ -464,6 +525,22 @@ function createModel(options) {
           log.debug('Leaving modelJson().');
           return send(payload);
         };
+      }
+      const parts = [['path', req.params], ['query', req.query]];
+      for (const [where, values] of parts) {
+        const parameters = op.parameters[where];
+        if (!parameters) {
+          continue;
+        }
+        const copy = Object.assign({}, values || {});
+        if (!parameters.validate(copy)) {
+          const answer = chooseRefusal(parameters,
+                                       parameters.validate.errors, where);
+          log.info(op.method + ' ' + op.path + ' refused by the model (' +
+                   where + '): ' + answer.error);
+          log.debug('Leaving modelRoute(). Refused.');
+          return res.status(400).json(answer);
+        }
       }
       if (op.request) {
         const body = req.body === undefined ? {} : req.body;
