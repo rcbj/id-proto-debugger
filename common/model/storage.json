@@ -3161,6 +3161,11 @@
       "area": "local"
     },
     {
+      "key": "ssf_handoff_scope",
+      "class": "ordinary",
+      "group": "client/src/ssf.js"
+    },
+    {
       "key": "ssf_inbox_idle_minutes",
       "class": "ordinary",
       "group": "client/src/ssf.js"

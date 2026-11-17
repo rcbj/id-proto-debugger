@@ -107,6 +107,11 @@ them redeems correctly is `oauth2_*.js` and `oidc_flows.js`'s subject rather
 than this one's: four sign-ins driven through the mock's consent screen here
 would be a second copy of what those jobs already own, failing for their
 reasons and reported as a CAEP defect.
+Both run as `caep-page-ssf-client`, which the job declares in iya-sts's
+registry with `ssf.read` and `ssf.manage` on `oauthAllowedScope`, and both ask
+for the scope the page's own `ssf_handoff_scope` field holds (client
+credentials less `openid`) — so a default the stack's clients cannot be issued
+fails this job (#311). A grant that cannot be driven no longer only warns.
 
 Two hazards in that file are recorded here because both cost a run while it was
 being written. **`oauth2_oidc_1.html` remembers the last grant** and its

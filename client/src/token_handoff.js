@@ -303,6 +303,41 @@ function requestedScope() {
   return scope;
 }
 
+// WHAT TO SAY WHEN THE AUTHORIZATION SERVER REFUSES THE SCOPE (#311).
+//
+// `invalid_scope` is RFC 6749's answer at both endpoints (sections 4.1.2.1
+// and 5.2) when a request names a scope this client may not have, and an
+// authorization server is entitled to decide that per client: RFC 7591
+// section 2 makes a client's registered `scope` "the list that the client
+// can use when requesting access tokens". So a hand-off that asks for a
+// waiting workflow's scopes through a client that was never given them
+// fails HERE, on the OAuth2 / OIDC page, with a message that names no
+// workflow and no client — which reads as a broken hand-off and is a
+// registration that lacks two words.
+//
+// Returns "" unless that is the case: the error is `invalid_scope` and the
+// waiting workflow asked for scopes of its own. It says what was asked for
+// and the three ways out, and it names no product's attribute as THE answer
+// — iya-sts's `oauthAllowedScope` is given as one example among others.
+function scopeRefusalNote(error, requested) {
+  log.debug("Entering scopeRefusalNote().");
+  var wanted = normalizeScope(requested);
+  if (String(error || "").trim() !== "invalid_scope" || !wanted) {
+    log.debug("Leaving scopeRefusalNote(). Not a hand-off scope refusal.");
+    return "";
+  }
+  var note = "The authorization server refused the scope (invalid_scope). " +
+      "The workflow waiting for this token asked for \u201c" + wanted +
+      "\u201d, and an authorization server issues a scope only to a client " +
+      "that is allowed to request it. Declare those scopes on this " +
+      "client's registration (on iya-sts, oauthAllowedScope on the " +
+      "application's entry; elsewhere, the client's scope or client-scope " +
+      "assignment), use a client that already has them, or change the " +
+      "scopes on the page that asked and start the hand-off again.";
+  log.debug("Leaving scopeRefusalNote(). " + wanted);
+  return note;
+}
+
 // Give the whole thing up: no token is waiting for anybody. Called when the
 // reader dismisses the banner, and when the consuming page has collected.
 function cancel() {
@@ -437,6 +472,7 @@ module.exports = {
   requestedScope: requestedScope,
   normalizeScope: normalizeScope,
   mergeScope: mergeScope,
+  scopeRefusalNote: scopeRefusalNote,
   deliver: deliver,
   isDelivered: isDelivered,
   take: take

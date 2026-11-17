@@ -767,6 +767,21 @@ iya-sts #110 the mock issues either only to a client that DECLARES it**
 client that does not — the seeded `webapp1` included — comes back as
 `invalid_scope` from the token endpoint, naming the attribute to set.
 
+**So the scope is a field, and a refusal of it says why (#311).** The token
+pane's **Scopes to ask for** (`ssf_handoff_scope`, remembered in
+`localStorage` — a list of permission names, not a credential) defaults to
+`openid ssf.read ssf.manage` and is what both hand-offs ask for; empty means
+the default. When the hand-off is waiting and the authorization or token
+response is `invalid_scope`, `oauth2_oidc_2.html` adds a sentence to the
+hand-off banner naming the scope asked for and the three ways out: declare it
+on the client's registration (`oauthAllowedScope` on iya-sts; the client's
+scope assignment elsewhere), use a client that has it, or ask for less. The
+sentence is `scopeRefusalNote()` in `token_handoff.js`. On this stack nobody
+seeds a client with the SSF scopes, so `tests/caep_page.js` declares one,
+`caep-page-ssf-client`, and drives both of its real grants through it with
+the page's own default — client credentials less `openid` — and FAILS when
+either grant does not come back, where it used to log a warning and pass.
+
 **Two fields on two pages, and both are needed.** `#scope` on
 `oauth2_oidc_1.html` is the authorization request's, which the code grant and
 the three OIDC flows send; `#token_scope` on `oauth2_oidc_2.html` is the token
