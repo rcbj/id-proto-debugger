@@ -443,6 +443,118 @@ async function identityAndRequest() {
   return { identity: id, enc: enc };
 }
 
+// THE IDENTITY ACROSS RUNS (#470, B4): one root, two requests. Each request
+// gets a new leaf and both chain to the same root, which node's own
+// X509Certificate checks, and a wallet CONFIGURED with that root as its
+// anchor (vp_protocols.verifyX509Request with trustAnchorPem, no AIA) takes
+// both. Then the identity file round-trips, and a tampered one is refused.
+async function persistentIdentity() {
+  log.debug("Entering persistentIdentity().");
+  const root = await verifier.makeVerifierRoot();
+  const rootCert = new nodeCrypto.X509Certificate(root.certificatePem);
+  ok(rootCert.ca && rootCert.verify(rootCert.publicKey),
+     "the root is a self-signed CA");
+  const fromCert = rootCert.publicKey.export({ format: "jwk" });
+  eq([fromCert.x, fromCert.y], [root.privateJwk.x, root.privateJwk.y],
+     "the root's private JWK is the key node reads out of its certificate");
+  eq(Buffer.from(verifier.p256PointOfCertificate(rootCert.raw))
+     .toString("base64url"), Buffer.concat([Buffer.from([4]),
+       Buffer.from(fromCert.x, "base64url"),
+       Buffer.from(fromCert.y, "base64url")]).toString("base64url"),
+     "p256PointOfCertificate() finds the point node finds");
+  const a = await verifier.makeVerifierIdentity({ dnsName: "a.example",
+    caIssuersUrl: "https://a.example/ca", root: root });
+  const b = await verifier.makeVerifierIdentity({ dnsName: "b.example",
+    root: root });
+  eq(a.rootPem, root.certificatePem, "request 1 names the kept root");
+  eq(b.rootPem, root.certificatePem, "request 2 names the same root");
+  ok(Buffer.from(a.rootDer).equals(rootCert.raw) &&
+     Buffer.from(b.rootDer).equals(rootCert.raw), "rootDer is that root");
+  ok(!Buffer.from(a.leafDer).equals(Buffer.from(b.leafDer)),
+     "each request has a new leaf");
+  ok(a.x509Hash !== b.x509Hash, "so a new x509_hash");
+  for (const one of [a, b]) {
+    const leaf = new nodeCrypto.X509Certificate(one.leafPem);
+    ok(leaf.verify(rootCert.publicKey) && leaf.checkIssued(rootCert),
+       one.dnsName + "'s leaf chains to the kept root (node)");
+    const clientId = verifier.clientIdFor("x509_hash", one);
+    const claims = verifier.requestObjectClaims({ clientId: clientId,
+      responseUri: "https://" + one.dnsName + "/response",
+      responseMode: "direct_post", nonce: "n", state: "s",
+      dcql: verifier.buildDcql({ queries: [{ id: "pid",
+        format: "dc+sd-jwt", vct: VCT }] }) });
+    const compact = await verifier.signRequestObject({ claims: claims,
+      identity: one });
+    const r = await vp.verifyX509Request({ compact: compact,
+      clientId: clientId, trustAnchorPem: root.certificatePem,
+      verifyChain: x509.verifyChain,
+      responseTarget: claims.response_uri });
+    r.checks.forEach(function (c) {
+      ok(c.ok, one.dnsName + ": a wallet anchored on the kept root: '" +
+         c.name + "' failed: " + c.detail);
+    });
+  }
+
+  const requestKey = verifier.makeRequestKey();
+  const attester = verifier.makeAttester();
+  const file = JSON.stringify(verifier.verifierIdentityFile({ root: root,
+    attester: attester, requestKey: requestKey }));
+  ok(file.indexOf("BEGIN PRIVATE KEY") === -1 && file.indexOf("privatePem")
+     === -1, "the file holds the root's key as a JWK only");
+  const back = verifier.readVerifierIdentityFile(file);
+  eq(back.root.certificatePem.trim(), root.certificatePem.trim(),
+     "the root certificate round-trips");
+  eq(back.root.privateJwk, root.privateJwk, "the root key round-trips");
+  eq(back.attester.iss, attester.iss, "the attester keeps its iss");
+  eq(back.attester.jwks, attester.jwks, "and the JWKS a wallet trusts");
+  eq(verifier.clientIdFor("decentralized_identifier", back.requestKey,
+       { didMethod: "jwk" }),
+     verifier.clientIdFor("decentralized_identifier", requestKey,
+       { didMethod: "jwk" }), "the request key keeps its DID");
+  eq(verifier.preRegisteredJwks(back.requestKey),
+     verifier.preRegisteredJwks(requestKey),
+     "and the JWKS a pre-registered client_id was registered with");
+  const c = await verifier.makeVerifierIdentity({ dnsName: "c.example",
+    root: back.root });
+  ok(new nodeCrypto.X509Certificate(c.leafPem).verify(rootCert.publicKey),
+     "a leaf issued under the IMPORTED root chains to the same root");
+  const attestation = await verifier.verifierAttestation({
+    attester: back.attester, sub: "c.example", identity: back.requestKey });
+  ok(nodeVerifyJws(attestation, attester.jwks.keys[0]),
+     "the imported attester signs what the original's JWKS verifies (node)");
+
+  const doc = JSON.parse(file);
+  throws(function () {
+    verifier.readVerifierIdentityFile("{");
+  }, /is JSON/, "a file that is not JSON");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc,
+      { type: "something-else" }));
+  }, /not a Verifier identity file/, "the wrong type");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc,
+      { version: 2 }));
+  }, /version 2/, "an unknown version");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc, { root: {
+      certificatePem: doc.root.certificatePem,
+      privateJwk: requestKey.privateJwk } }));
+  }, /is not the key in root\.certificatePem/,
+  "a root key that is not the certificate's");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc, { requestKey: {
+      privateJwk: Object.assign({}, requestKey.privateJwk,
+        { x: attester.privateJwk.x }) } }));
+  }, /not the public key of its d/, "a JWK whose x is not its d's");
+  throws(function () {
+    verifier.readVerifierIdentityFile(Object.assign({}, doc,
+      { attester: { privateJwk: { kty: "OKP", crv: "Ed25519", d: "AA" } } }));
+  }, /P-256 private JWK/, "an attester key that is not P-256");
+  log.info("PASS the Verifier's identity outlives a request: one root, a " +
+           "new leaf each time, the file round-trips and is checked.");
+  log.debug("Leaving persistentIdentity().");
+}
+
 function requestUris() {
   log.debug("Entering requestUris().");
   const byRef = verifier.authorizationRequestUri({
@@ -3952,6 +4064,7 @@ async function main() {
   randomTokens();
   dcqlBuilder();
   const env = await identityAndRequest();
+  await persistentIdentity();
   requestUris();
   oneDeclarationPerName();
   await sdJwtRoundTrip(env);

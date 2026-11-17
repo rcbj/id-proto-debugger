@@ -3830,6 +3830,13 @@
       "area": "local"
     },
     {
+      "key": "vpv_identity",
+      "class": "keypair",
+      "group": "client/src/vc_verifier.js",
+      "area": "local",
+      "optOut": "vpv_save_identity"
+    },
+    {
       "key": "vpv_query_id",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
@@ -3843,6 +3850,12 @@
     },
     {
       "key": "vpv_response_mode",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_save_identity",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"

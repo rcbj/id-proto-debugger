@@ -472,13 +472,128 @@ function buildDcql(spec) {
 // x509_hash names, and its AIA caIssuers URL is where a wallet that anchors
 // by fetching (rcbj/oid4vc-wallet does) finds the root. x5c carries the LEAF
 // ONLY, so such a wallet has to fetch it.
+//
+// THE ROOT OUTLIVES THE REQUEST (#470, B4). A wallet that is CONFIGURED with
+// trust anchors, rather than fetching one from AIA, can only trust a root it
+// was given before the request arrived, so a root made per request is one
+// no such wallet ever trusts. makeVerifierRoot() makes it once; the page
+// keeps it (behind its save checkbox) and hands it to makeVerifierIdentity()
+// for every request. The LEAF stays per request: its SAN and its AIA URL
+// name the api host and the session, which change.
 // ---------------------------------------------------------------------------
+var ROOT_SUBJECT = "CN=Debugger Verifier Root,O=idptools";
+
+// The DER a P-256 SubjectPublicKeyInfo begins with (RFC 5480: the
+// id-ecPublicKey and secp256r1 OIDs, then a 66-byte BIT STRING header), so
+// the uncompressed point is the 65 bytes after it. The encoding is fixed,
+// which is what lets a certificate's key be compared with a JWK in pure JS.
+var P256_SPKI_PREFIX = "3059301306072a8648ce3d020106082a8648ce3d03010703" +
+    "4200";
+
 function x509HashOf(der) {
   log.debug("Entering x509HashOf().");
   log.debug("Leaving x509HashOf().");
   return bytes.bytesToB64u(nobleSha256(bytes.asBytes(der)));
 }
 
+// The uncompressed P-256 point in a certificate's SubjectPublicKeyInfo, or
+// null when the certificate's key is not P-256.
+function p256PointOfCertificate(der) {
+  log.debug("Entering p256PointOfCertificate().");
+  var hex = bytes.bytesToHex(bytes.asBytes(der));
+  var at = hex.indexOf(P256_SPKI_PREFIX);
+  if (at < 0 || at % 2 !== 0) {
+    log.debug("Leaving p256PointOfCertificate(). Not P-256.");
+    return null;
+  }
+  var from = at + P256_SPKI_PREFIX.length;
+  var point = bytes.hexToBytes(hex.slice(from, from + 130));
+  log.debug("Leaving p256PointOfCertificate().");
+  return point.length === 65 && point[0] === 4 ? point : null;
+}
+
+// A P-256 private JWK, checked (its x and y ARE its d's public key) and
+// returned with its public half, a kid (the RFC 7638 thumbprint), use sig
+// and alg ES256 — the shape makeRequestKey() returns.
+function p256KeyFromJwk(jwk, what) {
+  log.debug("Entering p256KeyFromJwk(). " + what);
+  if (!isPlainObject(jwk) || jwk.kty !== "EC" || jwk.crv !== "P-256" ||
+      !isNonEmptyString(jwk.d)) {
+    log.debug("Leaving p256KeyFromJwk(). Not a P-256 private JWK.");
+    throw new Error(what + " must be a P-256 private JWK (kty EC, crv " +
+                    "P-256, with d).");
+  }
+  var d = bytes.b64uToBytes(jwk.d);
+  var point;
+  try {
+    point = p256.getPublicKey(d, false);
+  } catch (e) {
+    log.debug("Leaving p256KeyFromJwk(). Bad d.");
+    throw new Error(what + "'s d is not a P-256 private key: " + e.message);
+  }
+  var x = bytes.bytesToB64u(point.slice(1, 33));
+  var y = bytes.bytesToB64u(point.slice(33, 65));
+  if ((jwk.x !== undefined && jwk.x !== x) ||
+      (jwk.y !== undefined && jwk.y !== y)) {
+    log.debug("Leaving p256KeyFromJwk(). x/y disagree with d.");
+    throw new Error(what + "'s x and y are not the public key of its d.");
+  }
+  var publicJwk = { kty: "EC", crv: "P-256", x: x, y: y };
+  publicJwk.kid = jwkThumbprint(publicJwk);
+  publicJwk.use = "sig";
+  publicJwk.alg = "ES256";
+  var privateJwk = Object.assign({}, publicJwk, { d: jwk.d });
+  log.debug("Leaving p256KeyFromJwk(). kid=" + publicJwk.kid);
+  return { privateJwk: privateJwk, publicJwk: publicJwk };
+}
+
+// The Verifier's root CA: a self-signed P-256 certificate and its key, the
+// key as a JWK (which pure JS can check against the certificate) and as the
+// PEM x509.issueCertificate() signs with. Web Crypto, like the leaf.
+async function makeVerifierRoot(opts) {
+  log.debug("Entering makeVerifierRoot().");
+  var o = opts || {};
+  var nowMs = nowSeconds(o.now) * 1000;
+  var desc = keyMaterial.keyAlg("ec-p256");
+  var rootKey = await keyMaterial.generateKeyPair("ec-p256");
+  var root = await x509.issueCertificate({
+    profile: "root-ca", subject: ROOT_SUBJECT,
+    subjectPublicKey: rootKey.publicPem,
+    issuerPrivateKey: rootKey.privatePem,
+    signatureAlg: "sha256-ecdsa",
+    notBefore: new Date(nowMs - 5 * 60 * 1000),
+    extensions: x509.defaultExtensions("root-ca", desc)
+  });
+  var jwk = await keyMaterial.privToJwk(rootKey.privatePem, desc, "ES256");
+  var key = p256KeyFromJwk(jwk, "the root's key");
+  log.debug("Leaving makeVerifierRoot().");
+  return { certificatePem: root.pem, certificateDer: bytes.asBytes(root.der),
+           privateJwk: key.privateJwk, privatePem: rootKey.privatePem };
+}
+
+// A root as makeVerifierRoot() or readVerifierIdentityFile() gives it, with
+// its signing PEM (made from the JWK when it is not there yet).
+async function rootForSigning(root) {
+  log.debug("Entering rootForSigning().");
+  if (!root || !isNonEmptyString(root.certificatePem) || !root.privateJwk) {
+    log.debug("Leaving rootForSigning(). Incomplete.");
+    throw new Error("a Verifier root needs certificatePem and privateJwk " +
+                    "(makeVerifierRoot()).");
+  }
+  if (!root.privatePem) {
+    root.privatePem = await keyMaterial.privToPem(
+      JSON.stringify(root.privateJwk), keyMaterial.keyAlg("ec-p256"));
+  }
+  if (!root.certificateDer) {
+    root.certificateDer = bytes.pemToDer(root.certificatePem);
+  }
+  log.debug("Leaving rootForSigning().");
+  return root;
+}
+
+// `opts.root` is the persistent root (makeVerifierRoot()); without one a
+// root is made for this identity alone, as before #470. The leaf is always
+// new.
 async function makeVerifierIdentity(opts) {
   log.debug("Entering makeVerifierIdentity().");
   var o = opts || {};
@@ -489,15 +604,9 @@ async function makeVerifierIdentity(opts) {
   var nowMs = nowSeconds(o.now) * 1000;
   var notBefore = new Date(nowMs - 5 * 60 * 1000);
   var desc = keyMaterial.keyAlg("ec-p256");
-  var rootKey = await keyMaterial.generateKeyPair("ec-p256");
+  var root = await rootForSigning(o.root ||
+                                  await makeVerifierRoot({ now: o.now }));
   var leafKey = await keyMaterial.generateKeyPair("ec-p256");
-  var root = await x509.issueCertificate({
-    profile: "root-ca", subject: "CN=Debugger Verifier Root,O=idptools",
-    subjectPublicKey: rootKey.publicPem,
-    issuerPrivateKey: rootKey.privatePem,
-    signatureAlg: "sha256-ecdsa", notBefore: notBefore,
-    extensions: x509.defaultExtensions("root-ca", desc)
-  });
   // The leaf's KeyUsage is read through its P-256 key (#468, M5). The
   // tls-server profile's list is RSA-shaped (digitalSignature,
   // keyEncipherment), and RFC 5480 section 3 permits an id-ecPublicKey
@@ -516,8 +625,8 @@ async function makeVerifierIdentity(opts) {
   var leaf = await x509.issueCertificate({
     profile: "tls-server", subject: "CN=" + o.dnsName + ",O=idptools",
     subjectPublicKey: leafKey.publicPem,
-    issuer: { certificatePem: root.pem, privateKeyPem: rootKey.privatePem,
-              keyAlg: "ec-p256" },
+    issuer: { certificatePem: root.certificatePem,
+              privateKeyPem: root.privatePem, keyAlg: "ec-p256" },
     signatureAlg: "sha256-ecdsa", notBefore: notBefore, extensions: ext
   });
   var privateJwk = await keyMaterial.privToJwk(leafKey.privatePem, desc,
@@ -527,13 +636,115 @@ async function makeVerifierIdentity(opts) {
   var leafDer = bytes.asBytes(leaf.der);
   log.debug("Leaving makeVerifierIdentity(). dns=" + o.dnsName);
   return {
-    rootPem: root.pem, rootDer: bytes.asBytes(root.der),
+    rootPem: root.certificatePem, rootDer: bytes.asBytes(root.certificateDer),
+    root: root,
     leafPem: leaf.pem, leafDer: leafDer,
     privateJwk: privateJwk, publicJwk: publicJwk,
     x5c: [bytes.bytesToB64(leafDer)],
     x509Hash: x509HashOf(leafDer),
     dnsName: String(o.dnsName), caIssuersUrl: o.caIssuersUrl || ""
   };
+}
+
+// ---------------------------------------------------------------------------
+// THE IDENTITY FILE (#470, B4): what the page keeps across runs, and what
+// its Download button writes and its import field reads. Every part is
+// optional, because each is made when a prefix first needs it:
+//
+//   root         { certificatePem, privateJwk }: x509_hash, x509_san_dns
+//   attester     { iss, privateJwk }: verifier_attestation
+//   requestKey   { privateJwk }: decentralized_identifier (its DID) and a
+//                pre-registered client_id (the JWKS a wallet registered),
+//                and the key a Verifier Attestation's cnf names
+//
+// THE RESPONSE ENCRYPTION KEY IS NOT IN IT, on purpose: nothing about it is
+// anchored anywhere (a request carries it in client_metadata), so keeping
+// it buys no trust and only lets one leaked key read every later answer.
+//
+// Private keys are JWKs, so a file can be checked in pure JS: each JWK's x
+// and y must be its d's public key, and the root's must be the key in its
+// certificate.
+// ---------------------------------------------------------------------------
+var IDENTITY_FILE_TYPE = "oid4vp-verifier-identity";
+
+function verifierIdentityFile(parts) {
+  log.debug("Entering verifierIdentityFile().");
+  var p = parts || {};
+  var out = { type: IDENTITY_FILE_TYPE, version: 1,
+              note: "The debugger's OpenID4VP Verifier identity. It holds " +
+                "PRIVATE KEYS: whoever has this file can sign as this " +
+                "Verifier." };
+  if (p.root) {
+    out.root = { certificatePem: p.root.certificatePem,
+                 privateJwk: p.root.privateJwk };
+  }
+  if (p.attester) {
+    out.attester = { iss: p.attester.iss,
+                     privateJwk: p.attester.privateJwk };
+  }
+  if (p.requestKey) {
+    out.requestKey = { privateJwk: p.requestKey.privateJwk };
+  }
+  log.debug("Leaving verifierIdentityFile().");
+  return out;
+}
+
+function readVerifierIdentityFile(input) {
+  log.debug("Entering readVerifierIdentityFile().");
+  var doc = input;
+  if (typeof input === "string") {
+    try {
+      doc = JSON.parse(input);
+    } catch (e) {
+      log.debug("Leaving readVerifierIdentityFile(). Not JSON.");
+      throw new Error("a Verifier identity file is JSON: " + e.message);
+    }
+  }
+  if (!isPlainObject(doc) || doc.type !== IDENTITY_FILE_TYPE) {
+    log.debug("Leaving readVerifierIdentityFile(). Wrong type.");
+    throw new Error('this is not a Verifier identity file (its "type" ' +
+                    'must be "' + IDENTITY_FILE_TYPE + '").');
+  }
+  if (doc.version !== 1) {
+    log.debug("Leaving readVerifierIdentityFile(). Version.");
+    throw new Error("this Verifier identity file is version " +
+                    JSON.stringify(doc.version) + "; this page reads 1.");
+  }
+  var out = {};
+  if (doc.root !== undefined) {
+    var r = doc.root;
+    if (!isPlainObject(r) || !/-----BEGIN CERTIFICATE-----/.test(
+        String(r.certificatePem || ""))) {
+      log.debug("Leaving readVerifierIdentityFile(). Bad root.");
+      throw new Error("root.certificatePem must be a PEM certificate.");
+    }
+    var rootKey = p256KeyFromJwk(r.privateJwk, "root.privateJwk");
+    var der = bytes.pemToDer(r.certificatePem);
+    var point = p256PointOfCertificate(der);
+    var mine = bytes.concatBytes(new Uint8Array([4]),
+      bytes.b64uToBytes(rootKey.publicJwk.x),
+      bytes.b64uToBytes(rootKey.publicJwk.y));
+    if (!point || !bytes.bytesEqual(point, mine)) {
+      log.debug("Leaving readVerifierIdentityFile(). Key mismatch.");
+      throw new Error("root.privateJwk is not the key in " +
+                      "root.certificatePem.");
+    }
+    out.root = { certificatePem: String(r.certificatePem).trim() + "\n",
+                 certificateDer: der, privateJwk: rootKey.privateJwk };
+  }
+  if (doc.attester !== undefined) {
+    var a = isPlainObject(doc.attester) ? doc.attester : {};
+    var attesterKey = p256KeyFromJwk(a.privateJwk, "attester.privateJwk");
+    out.attester = makeAttester({ key: attesterKey,
+      iss: isNonEmptyString(a.iss) ? a.iss : undefined });
+  }
+  if (doc.requestKey !== undefined) {
+    out.requestKey = p256KeyFromJwk(isPlainObject(doc.requestKey) ?
+      doc.requestKey.privateJwk : null, "requestKey.privateJwk");
+  }
+  log.debug("Leaving readVerifierIdentityFile(). " +
+            Object.keys(out).join(", "));
+  return out;
 }
 
 // A key pair a Request Object is signed with when no certificate is
@@ -712,10 +923,12 @@ function preRegisteredJwks(identity) {
 // The party that vouches for a Verifier under verifier_attestation (section
 // 12). Its iss is the did:jwk of its own key, so a wallet can be told to
 // trust exactly that key: `jwks` is what to give it.
+// `opts.key` is a key the attester already has (the identity file's), in
+// makeRequestKey()'s shape; without one it gets a new key.
 function makeAttester(opts) {
   log.debug("Entering makeAttester().");
   var o = opts || {};
-  var key = makeRequestKey();
+  var key = o.key || makeRequestKey();
   var iss = o.iss || didForKey(key.publicJwk, "jwk");
   log.debug("Leaving makeAttester(). iss=" + iss.slice(0, 40));
   return { iss: iss, privateJwk: key.privateJwk, publicJwk: key.publicJwk,
@@ -5201,6 +5414,10 @@ module.exports = {
   randomToken: randomToken,
   buildDcql: buildDcql,
   makeVerifierIdentity: makeVerifierIdentity,
+  makeVerifierRoot: makeVerifierRoot,
+  verifierIdentityFile: verifierIdentityFile,
+  readVerifierIdentityFile: readVerifierIdentityFile,
+  p256PointOfCertificate: p256PointOfCertificate,
   makeRequestKey: makeRequestKey,
   makeAttester: makeAttester,
   verifierAttestation: verifierAttestation,

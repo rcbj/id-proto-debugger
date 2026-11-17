@@ -49,8 +49,10 @@ HTTP server, so the api hosts both, as it hosts the Shared Signals push
 receiver. **The api is a store.** The page makes the key pair and the
 certificates and signs the Request Object in the browser; the api is given
 the compact JWS and the root certificate and serves them, and keeps what the
-wallet posts until the page polls for it. The private keys and the api
-session's secret are held for one page load and never stored. The routes,
+wallet posts until the page polls for it. Each request's leaf key, the
+response decryption key and the api session's secret are held for one page
+load and never stored. The Verifier's identity is the exception, behind an
+opt-out checkbox: see below. The routes,
 settings and limits are in `docs/vc-verifier-api.md`.
 
 On the static sites there is no api, so the page cannot host a request. It
@@ -81,13 +83,48 @@ makes the verdict incomplete, not a signature FAIL.
 
 ## The certificate
 
-Each request gets a new self-signed P-256 root and a leaf signed by it. The
-leaf's subjectAltName is the api's host name (the host of `response_uri`),
-which is what `x509_san_dns` names, and its Authority Information Access
-`caIssuers` URL is the api's `/oid4vp/verifier/<id>/ca`, which serves the
-root. The Request Object's `x5c` carries the leaf only. A wallet that
-completes a chain from AIA, as `rcbj/oid4vc-wallet` does, finds the root
-there; any other wallet can be given the root from pane 3 as a trust anchor.
+Each request gets a new P-256 leaf, issued under the Verifier's **root CA**,
+which is kept across runs (next section). The leaf's subjectAltName is the
+api's host name (the host of `response_uri`), which is what `x509_san_dns`
+names, and its Authority Information Access `caIssuers` URL is the api's
+`/oid4vp/verifier/<id>/ca`, which serves the root. The Request Object's
+`x5c` carries the leaf only. A wallet that completes a chain from AIA, as
+`rcbj/oid4vc-wallet` does, finds the root there; any other wallet is given
+the root once, as a trust anchor, and it stays valid for every later request.
+
+## The Verifier's identity across runs
+
+Until #470 every request made a new root, attester and request key, so only
+a wallet that fetches its anchor from AIA could trust the Verifier. A wallet
+configured with trust anchors, an attester's key or a registered JWKS
+refused every signed request. Three things now outlive a request:
+
+| Part | Used by | What a wallet is given |
+|---|---|---|
+| the root CA (certificate and key) | `x509_hash`, `x509_san_dns` | the root certificate, as a trust anchor |
+| the attester | `verifier_attestation` | the attester's JWKS (its `iss` is the `did:jwk` of that key) |
+| the request key | `decentralized_identifier`, a pre-registered `client_id`, and the key a Verifier Attestation's `cnf` names | the DID, or the JWKS registered for the `client_id` |
+
+Pane 2 shows all of them, under "The Verifier's identity". Each part is made
+the first time a prefix needs it. The response encryption key is not part of
+the identity: it is sent in each request's `client_metadata`, so nothing is
+anchored on it, and keeping it would only let one leaked key read later
+answers.
+
+**These are private keys**, so they follow the key-material rules every
+key-pair pane here follows. They are stored in `localStorage` under
+`vpv_identity` only while **Keep this identity** (`vpv_save_identity`) is
+ticked, which is the default. Unticking it removes the stored identity at
+once. `saveState()` removes it whenever the box is off, and so does every
+page load. A cached page without the box keeps saving; only an explicit `"0"`
+stops it. With saving off the identity lasts one page load. **Download the
+identity** writes it as one JSON file (`vp_verifier.js`
+`verifierIdentityFile()`: the root's certificate PEM and private JWK, the
+attester's `iss` and private JWK, the request key's private JWK), and **Use a
+saved identity** reads one back, checking that each JWK's `x` and `y` belong
+to its `d` and that the root's key is the one in its certificate. The import
+field is never stored. **Make a new identity** discards it, and every wallet
+must then be given the new one.
 
 ## What is checked
 

@@ -207,9 +207,10 @@ session, so the gate would answer it before this service did. Create returns
   rules are in `api/oid4vp_proxy.js`: GET or POST only, the address policy,
   the timeouts, and the size and redirect caps of every outbound call.
 * Sessions live in memory and are lost when the api restarts. When the api
-  returns 404 for a session, create a new one and sign again. The `client_id`
-  and certificates do not depend on the session, but `request_uri` and
-  `response_uri` do.
+  returns 404 for a session, create a new one and sign again. The root CA,
+  the attester and the request key do not depend on the session (the page
+  keeps them across runs), but `request_uri`, `response_uri` and each
+  request's leaf certificate do, and so does an `x509_hash` `client_id`.
 
 `tests/api_oid4vp_verifier.js` drives the module in node and, when it is
 given `API_URL`, the routes over HTTP. The model is in

@@ -21,9 +21,14 @@
 // Access names, and polls for what the wallet sent. Without an api (the static
 // sites) the page can still check an answer pasted into pane 4.
 //
-// NOTHING SECRET IS STORED. The request's private key, the response
-// decryption key and the api session's secret live in this page load only;
-// VERIFIER_KEYS below is the configuration a reader would otherwise retype.
+// NOTHING SECRET IS STORED, EXCEPT THE IDENTITY, AND THAT ONE IS AN
+// OPT-OUT. The response decryption key, each request's leaf key and the api
+// session's secret live in this page load only; VERIFIER_KEYS below is the
+// configuration a reader would otherwise retype. The Verifier's IDENTITY —
+// its root CA, its attester and its request key — is key material kept
+// across runs (#470, B4), because a wallet configured with trust anchors
+// can only trust what it was given before the request: see "THE
+// VERIFIER'S IDENTITY" below.
 // ---------------------------------------------------------------------------
 
 var appconfig = require(process.env.CONFIG_FILE);
@@ -46,7 +51,7 @@ var VERIFIER_KEYS = [
   "vpv_query_id", "vpv_format", "vpv_type", "vpv_claims", "vpv_binding",
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
-  "vpv_trust_anchors", "vpv_fetch_via_api"
+  "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity"
 ];
 
 // Whether issuer metadata, DID documents and status lists are fetched
@@ -136,6 +141,276 @@ function togglePane(id) {
 }
 
 // ---------------------------------------------------------------------------
+// THE VERIFIER'S IDENTITY (#470, B4).
+//
+// Until #470 every request made a new root CA, leaf, attester and request
+// key, so only a wallet that fetches its anchor from the leaf's Authority
+// Information Access could trust the Verifier: one CONFIGURED with anchors,
+// or with an attester's key, or with a registered JWKS, refused every
+// signed request, because what it had been given belonged to a run that was
+// over. So three things now outlive a request:
+//
+//   the root CA      what a wallet anchors for x509_hash and x509_san_dns
+//                    (the leaf stays per request: its SAN and its AIA name
+//                    the api host and the session, which change);
+//   the attester     whose key a wallet trusts for verifier_attestation;
+//   the request key  the DID of decentralized_identifier, and the JWKS a
+//                    wallet registered for a pre-registered client_id.
+//
+// They are KEY MATERIAL, under the rules every key-pair pane here follows
+// (CLAUDE.md, "Key Implementation Notes"): kept in localStorage under
+// vpv_identity only while "Keep this identity" (vpv_save_identity) is
+// ticked, which is the default; unticking it removes the stored identity on
+// the spot, saveState() removes it whenever the box is off, and so does
+// every page load, so no path leaves yesterday's private keys behind. A
+// page with no such box (an older cached copy) keeps saving: only an
+// explicit "0" stops it. With saving off the identity lasts this page load,
+// and the Download button and the import field carry it instead.
+// ---------------------------------------------------------------------------
+var IDENTITY_KEY = "vpv_identity";
+var SAVE_IDENTITY_KEY = "vpv_save_identity";
+
+// { root?, attester?, requestKey? }, as verifier.readVerifierIdentityFile()
+// returns it. Each part is made when a prefix first needs it.
+var identity = null;
+
+// Why the stored identity could not be read, shown until another is used.
+var identityProblem = "";
+
+function savingIdentity() {
+  log.debug("Entering savingIdentity().");
+  var box = el(SAVE_IDENTITY_KEY);
+  if (box) {
+    log.debug("Leaving savingIdentity(). " + box.checked);
+    return !!box.checked;
+  }
+  var stored = null;
+  try {
+    stored = localStorage.getItem(SAVE_IDENTITY_KEY);
+  } catch (e) {
+    stored = null;
+  }
+  log.debug("Leaving savingIdentity(). No box; stored " + stored);
+  return stored !== "0";
+}
+
+function hasIdentityParts(id) {
+  log.debug("Entering hasIdentityParts().");
+  var any = !!(id && (id.root || id.attester || id.requestKey));
+  log.debug("Leaving hasIdentityParts(). " + any);
+  return any;
+}
+
+// Remove the stored identity when saving is off. Called from saveState()
+// and on load, so it holds whichever way the box was cleared.
+function purgeIdentityIfOff() {
+  log.debug("Entering purgeIdentityIfOff().");
+  if (savingIdentity()) {
+    log.debug("Leaving purgeIdentityIfOff(). Saving.");
+    return;
+  }
+  try {
+    localStorage.removeItem(IDENTITY_KEY);
+  } catch (e) {
+    log.debug("purgeIdentityIfOff(): no storage — " + e.message);
+  }
+  log.debug("Leaving purgeIdentityIfOff(). Removed.");
+}
+
+function storeIdentity() {
+  log.debug("Entering storeIdentity().");
+  try {
+    if (savingIdentity() && hasIdentityParts(identity)) {
+      localStorage.setItem(IDENTITY_KEY, JSON.stringify(
+        verifier.verifierIdentityFile(identity)));
+    } else {
+      localStorage.removeItem(IDENTITY_KEY);
+    }
+  } catch (e) {
+    log.debug("storeIdentity(): no storage — " + e.message);
+  }
+  log.debug("Leaving storeIdentity().");
+}
+
+function loadIdentity() {
+  log.debug("Entering loadIdentity().");
+  purgeIdentityIfOff();
+  identity = {};
+  if (!savingIdentity()) {
+    log.debug("Leaving loadIdentity(). Not saving.");
+    return;
+  }
+  var text = null;
+  try {
+    text = localStorage.getItem(IDENTITY_KEY);
+  } catch (e) {
+    text = null;
+  }
+  if (!text) {
+    log.debug("Leaving loadIdentity(). None stored.");
+    return;
+  }
+  try {
+    identity = verifier.readVerifierIdentityFile(text);
+  } catch (e) {
+    // Unreadable is not silently replaced: the reader is told, and a new
+    // identity is made only when a request needs one.
+    log.warn("loadIdentity(): the stored identity is unreadable — " +
+             e.message);
+    identityProblem = "The stored identity could not be read (" +
+      e.message + "); a new one will be made.";
+    identity = {};
+  }
+  log.debug("Leaving loadIdentity().");
+}
+
+// The parts a request needs, made now if they are missing. The root needs
+// Web Crypto (makeSigner() says so first); the two keys are pure JS.
+async function ensureIdentity(needRoot) {
+  log.debug("Entering ensureIdentity(). root=" + !!needRoot);
+  identity = identity || {};
+  var made = false;
+  if (needRoot && !identity.root) {
+    identity.root = await verifier.makeVerifierRoot();
+    made = true;
+  }
+  if (!identity.requestKey) {
+    identity.requestKey = verifier.makeRequestKey();
+    made = true;
+  }
+  if (!identity.attester) {
+    identity.attester = verifier.makeAttester();
+    made = true;
+  }
+  if (made) {
+    storeIdentity();
+  }
+  showIdentity();
+  log.debug("Leaving ensureIdentity(). made=" + made);
+  return identity;
+}
+
+// What a wallet must be given to trust this Verifier, per prefix.
+function identityTrustText() {
+  log.debug("Entering identityTrustText().");
+  var id = identity || {};
+  var lines = [];
+  lines.push("x509_hash, x509_san_dns: give the wallet this ROOT CA as a " +
+             "trust anchor (each request's leaf is issued under it):");
+  lines.push(id.root ? id.root.certificatePem.trim()
+                     : "(not made yet: the first x509 request makes it)");
+  lines.push("");
+  lines.push("verifier_attestation: give the wallet the attester's JWKS " +
+             "(its iss is " + (id.attester ? id.attester.iss
+                                           : "not made yet") + "):");
+  lines.push(id.attester ? JSON.stringify(id.attester.jwks, null, 2)
+                         : "(not made yet)");
+  lines.push("");
+  lines.push("decentralized_identifier: the Verifier's DID, which " +
+             "resolves with no network:");
+  lines.push(id.requestKey ? verifier.clientIdFor("decentralized_identifier",
+    id.requestKey, { didMethod: "jwk" }).replace(/^[^:]*:/, "")
+                           : "(not made yet)");
+  lines.push("");
+  lines.push("pre-registered: the JWKS to register for the client_id:");
+  lines.push(id.requestKey ? JSON.stringify(
+    verifier.preRegisteredJwks(id.requestKey), null, 2) : "(not made yet)");
+  log.debug("Leaving identityTrustText().");
+  return lines.join("\n");
+}
+
+function showIdentity() {
+  log.debug("Entering showIdentity().");
+  setVal("vpv_identity_trust", identityTrustText());
+  var how = savingIdentity()
+    ? "Kept in this browser across runs (key material: untick \"Keep " +
+      "this identity\" to remove it)."
+    : "Not kept: this identity lasts this page load. Download it to " +
+      "carry it.";
+  setText("vpv_identity_status", (identityProblem ? identityProblem + " "
+    : "") + how, identityProblem ? "vc-bad"
+    : savingIdentity() ? "vc-ok" : "vc-pending");
+  log.debug("Leaving showIdentity().");
+}
+
+function saveIdentityChanged() {
+  log.debug("Entering saveIdentityChanged().");
+  saveState();
+  storeIdentity();
+  showIdentity();
+  log.debug("Leaving saveIdentityChanged().");
+  return false;
+}
+
+// One JSON file, PEM and JWK: verifier.verifierIdentityFile()'s shape.
+async function downloadIdentity() {
+  log.debug("Entering downloadIdentity().");
+  try {
+    var canRoot = typeof crypto !== "undefined" && !!crypto.subtle;
+    await ensureIdentity(canRoot);
+    var text = JSON.stringify(verifier.verifierIdentityFile(identity),
+                              null, 2) + "\n";
+    var blob = new Blob([text], { type: "application/json" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "oid4vp-verifier-identity.json";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.setTimeout(function () {
+      URL.revokeObjectURL(link.href);
+    }, 0);
+    setText("vpv_identity_status", "Downloaded. The file holds PRIVATE " +
+      "keys: whoever has it can sign as this Verifier." +
+      (canRoot ? "" : " It has no root CA: this page is not in a secure " +
+       "context, so none can be made here."), "vc-ok");
+  } catch (e) {
+    log.warn("downloadIdentity(): " + e.message);
+    setText("vpv_identity_status", "Could not download the identity: " +
+            e.message, "vc-bad");
+  }
+  log.debug("Leaving downloadIdentity().");
+  return false;
+}
+
+// The pasted file replaces the identity. The field itself is never stored.
+function importIdentity() {
+  log.debug("Entering importIdentity().");
+  try {
+    identity = verifier.readVerifierIdentityFile(
+      val("vpv_identity_import").trim());
+    identityProblem = "";
+    setVal("vpv_identity_import", "");
+    storeIdentity();
+    showIdentity();
+    setText("vpv_identity_status", "Imported (" +
+      Object.keys(identity).join(", ") + ")" + (savingIdentity()
+        ? ", and kept in this browser." : ", for this page load only."),
+      "vc-ok");
+  } catch (e) {
+    log.debug("importIdentity(): " + e.message);
+    setText("vpv_identity_status", "Not imported: " + e.message, "vc-bad");
+  }
+  log.debug("Leaving importIdentity().");
+  return false;
+}
+
+// Throw the identity away. Every wallet that trusted the old one must be
+// given the new one.
+function newIdentity() {
+  log.debug("Entering newIdentity().");
+  identity = {};
+  identityProblem = "";
+  storeIdentity();
+  showIdentity();
+  setText("vpv_identity_status", "Discarded. A new identity is made by the " +
+    "next request; a wallet that trusted the old one must be given the " +
+    "new one.", "vc-pending");
+  log.debug("Leaving newIdentity().");
+  return false;
+}
+
+// ---------------------------------------------------------------------------
 // STATE.
 // ---------------------------------------------------------------------------
 function saveState() {
@@ -155,6 +430,8 @@ function saveState() {
     // No storage for this origin. Every field still works; nothing is kept.
     log.debug("saveState(): no storage — " + e.message);
   }
+  // Key material behind its checkbox: off means removed, on every save.
+  purgeIdentityIfOff();
   log.debug("Leaving saveState().");
 }
 
@@ -173,6 +450,7 @@ function loadState() {
     log.debug("loadState(): no storage — " + e.message);
   }
   initFetchViaApi(viaApi);
+  loadIdentity();
   log.debug("Leaving loadState().");
 }
 
@@ -440,13 +718,20 @@ async function makeSigner(prefix, dnsName, caIssuersUrl) {
         "made (#463). The decentralized_identifier, verifier_attestation " +
         "and pre-registered prefixes need no certificate.");
     }
+    // The ROOT is the identity's, kept across runs; the leaf is this
+    // request's (#470, B4).
+    var held = await ensureIdentity(true);
     signer.identity = await verifier.makeVerifierIdentity({
-      dnsName: dnsName, caIssuersUrl: caIssuersUrl });
-    signer.trust = signer.identity.rootPem || "";
+      dnsName: dnsName, caIssuersUrl: caIssuersUrl, root: held.root });
+    signer.trust = "The Verifier's root CA, the same for every request " +
+      "while this identity is kept. A wallet that does not follow the " +
+      "leaf's Authority Information Access must be given it as a trust " +
+      "anchor:\n" + (signer.identity.rootPem || "");
   } else {
-    signer.identity = await verifier.makeRequestKey();
+    var keys = await ensureIdentity(false);
+    signer.identity = keys.requestKey;
     if (prefix === "verifier_attestation") {
-      signer.attester = await verifier.makeAttester();
+      signer.attester = keys.attester;
       signer.trust = "The attester's keys (trust these):\n" +
         JSON.stringify(signer.attester.jwks, null, 2);
     } else if (prefix === "pre-registered") {
@@ -461,8 +746,12 @@ async function makeSigner(prefix, dnsName, caIssuersUrl) {
 
 function clientIdOf(signer, redirectUri) {
   log.debug("Entering clientIdOf(). " + signer.prefix);
+  // verifier_attestation's value (the attestation's sub) is the api host:
+  // the request key it signs with names no host of its own.
   var id = verifier.clientIdFor(signer.prefix, signer.identity, {
     dnsName: signer.dnsName, redirectUri: redirectUri,
+    value: signer.prefix === "verifier_attestation" ? signer.dnsName
+                                                     : undefined,
     clientId: val("vpv_client_id_typed").trim() || undefined,
     didMethod: "jwk" });
   if (signer.prefix === "decentralized_identifier") {
@@ -1262,6 +1551,7 @@ function onload() {
     regenerateDcql();
   }
   settingsChanged();
+  showIdentity();
   probeApi();
   log.debug("Leaving onload().");
 }
@@ -1279,6 +1569,10 @@ module.exports = {
   checkPasted: checkPasted,
   askThroughDcApi: askThroughDcApi,
   reset: reset,
+  saveIdentityChanged: saveIdentityChanged,
+  downloadIdentity: downloadIdentity,
+  importIdentity: importIdentity,
+  newIdentity: newIdentity,
   currentRequest: currentRequest,
   onload: onload
 };
