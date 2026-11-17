@@ -26,4 +26,29 @@ model VcIssuance1Keys {
 
   @storageKey(#{ class: "ordinary" })
   vci_metadata_endpoint: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  did_enabled: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  did_resolution_url: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  vci_credential_configuration_id: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  vci_format: unknown;
+
+  // DID document members, under did.js's idFor() ("did_" + member).
+  @storageKey(#{ class: "ordinary", prefix: true })
+  did_: unknown;
+
+  @storageKey(#{ class: "output" })
+  didcfg_info: unknown;
+
+  @storageKey(#{ class: "output" })
+  didcfg_source: unknown;
+
+  @storageKey(#{ class: "output" })
+  vci_info_source: unknown;
 }

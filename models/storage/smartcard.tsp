@@ -17,4 +17,22 @@ namespace IdProtoDebugger.Storage;
 model SmartcardKeys {
   @storageKey(#{ class: "ordinary" })
   smartcard_transport: unknown;
+
+  @storageKey(#{ class: "keypair", optOut: "sc_save_oath_secret" })
+  sc_oath_secret: unknown;
+
+  @storageKey(#{ class: "keypair", optOut: "sc_save_otp_key" })
+  sc_otp_aes_key: unknown;
+
+  @storageKey(#{ class: "keypair", optOut: "sc_save_api_key" })
+  sc_otp_api_key: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  sc_save_api_key: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  sc_save_oath_secret: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  sc_save_otp_key: unknown;
 }

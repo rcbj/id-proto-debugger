@@ -29,4 +29,61 @@ model SpiffeKeys {
 
   @storageKey(#{ area: "local", class: "ordinary" })
   spiffe_save_identity: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_bundle_url: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_csr_key_alg: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_csr_subject: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_csr_uri: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_id_input: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_server_address: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_server_id: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_server_identity_mode: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_server_messages: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_server_metadata: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_server_method: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_server_request: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_server_service: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_trust_domain: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_workload_address: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_workload_messages: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_workload_metadata: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_workload_method: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  spiffe_workload_request: unknown;
 }

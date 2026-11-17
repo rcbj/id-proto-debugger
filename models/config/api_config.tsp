@@ -101,6 +101,12 @@ model ApiConfig {
   /** Directories a SPIFFE unix-socket path must be under. */
   @outboundPolicy spiffeAllowedSocketPaths?: string[];
 
+  /**
+   * Bytes of request a wallet may hand POST /oid4vp/call to carry. Positive;
+   * the route uses 262144 when it is absent or not positive.
+   */
+  @outboundPolicy @minValueExclusive(0) oid4vpMaxRequestBytes?: int32;
+
   /** Messages read from one SPIFFE server stream. */
   spiffeMaxStreamMessages?: int32;
 

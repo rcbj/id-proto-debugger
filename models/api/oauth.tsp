@@ -574,4 +574,9 @@ op claimDescription(): {
   @statusCode statusCode: 200;
   @header contentType: "application/xml";
   @body body: string;
+} | {
+  // Express's res.send() sets an ETag and answers a matching
+  // If-None-Match itself: a browser that already holds the registry gets
+  // 304 with no body (seen by GET /model/gaps on 2026-11-16).
+  @statusCode statusCode: 304;
 } | Relay<RelayedFailure, RegistryError> | NoAnswer;

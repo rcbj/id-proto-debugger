@@ -3791,7 +3791,7 @@ app.get('/ssf/limits', model.route('ssfLimits'), function (req, res) {
  * @returns {object} 400 - this service refused to send it
  * @returns {object} 502 - the Verifier could not be reached
  */
-app.post('/oid4vp/call', function (req, res) {
+app.post('/oid4vp/call', model.route('oid4vpCall'), function (req, res) {
   log.debug('Entering POST /oid4vp/call.');
   var described = oid4vpProxy.describeRequest(req.body || {}, appconfig);
   if (!described.ok) {
@@ -3864,7 +3864,8 @@ app.post('/oid4vp/call', function (req, res) {
  * @route GET /oid4vp/limits
  * @returns {object} 200 - the methods, refused headers, cap and status rule
  */
-app.get('/oid4vp/limits', function (req, res) {
+app.get('/oid4vp/limits', model.route('oid4vpLimits'),
+    function (req, res) {
   log.debug('Entering GET /oid4vp/limits.');
   log.debug('Leaving GET /oid4vp/limits.');
   return res.status(STATUS_200).json(oid4vpProxy.limits(appconfig));

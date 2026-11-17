@@ -26,4 +26,16 @@ model UserinfoKeys {
 
   @storageKey(#{ area: "local", class: "ordinary" })
   userinfo_scope: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  userinfo_expected_audience: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  userinfo_expected_issuer: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  userinfo_jwks: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  userinfo_jwks_source: unknown;
 }

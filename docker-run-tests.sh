@@ -927,6 +927,44 @@ then
   exit 0
 fi
 
+# ---------------------------------------------------------------------------
+# REQUIRE THAT THE SUITE ACTUALLY RAN, not only that compose exited 0.
+#
+# --exit-code-from tests reports the tests container's exit status, and a
+# container that never started has one: 0. When a service the tests container
+# waits on fails to start, compose aborts the stack, stops the tests container
+# it never started, and exits 0. On 2026-11-16 the api refused its
+# configuration ("oid4vpMaxRequestBytes is not a setting this service has"),
+# every other service reported "dependency failed to start", and this launcher
+# printed a passing banner for a run that had run nothing.
+#
+# A run that ran writes tests/report/<run>/report.xml (run-report.js). This
+# requires one newer than the marker made just before `up`, and when there is
+# none it says so and lists what compose left behind, so the service that did
+# not start is named.
+#
+# $1 the marker file.
+# ---------------------------------------------------------------------------
+requireSuiteReported()
+{
+  echo "Entering requireSuiteReported()."
+  local marker="$1"
+  local report
+  report="$(find tests/report -mindepth 2 -maxdepth 2 -name report.xml \
+              -newer "${marker}" 2>/dev/null | head -1)"
+  if [ -n "${report}" ];
+  then
+    echo "Leaving requireSuiteReported(). ${report}"
+    return 0
+  fi
+  echo "ERROR: compose exited 0 but the suite wrote no report: the tests" \
+       "container never ran." >&2
+  echo "       A service it waits on did not start. What compose left:" >&2
+  docker_compose "${COMPOSE_ARGS[@]}" ps -a 2>&1 | sed 's/^/         /' >&2
+  echo "Leaving requireSuiteReported(). No report."
+  return 1
+}
+
 # Start the WS-Federation side-car FIRST, on its own, and stop here if it does not
 # stay up.
 #
@@ -949,9 +987,13 @@ check_return_code $?
 # this script) exit with the tests container's status. The side-car started above
 # is left alone: compose does not recreate a service whose configuration is
 # unchanged.
+SUITE_MARKER="$(mktemp)"
 docker_compose "${COMPOSE_ARGS[@]}" up --build --abort-on-container-exit \
   --exit-code-from tests
 check_return_code $?
+requireSuiteReported "${SUITE_MARKER}"
+check_return_code $?
+rm -f "${SUITE_MARKER}"
 
 # The banner is printed by the EXIT trap, after the teardown, so it is the last
 # thing on the screen rather than the thing the teardown scrolls away.

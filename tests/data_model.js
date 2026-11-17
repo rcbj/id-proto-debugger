@@ -64,7 +64,7 @@ var log = bunyan.createLogger({ name: "data_model",
 log.info("Log initialized. logLevel=" + log.level());
 
 // The outbound-policy settings (api/CLAUDE.md, "the address policy and the
-// sixteen settings"). Written out here as well as in the model on purpose:
+// seventeen settings"). Written out here as well as in the model on purpose:
 // a setting dropped from the model's list would otherwise vanish from the
 // rule without anybody deciding it should.
 const OUTBOUND_POLICY = [
@@ -72,7 +72,7 @@ const OUTBOUND_POLICY = [
   "userAgent", "keepAlive", "blockPrivateNetworkCalls",
   "blockedAddressRanges", "allowedAddressRanges", "krb5AllowedPorts",
   "krb5ServicePorts", "ldapAllowedPorts", "ldapMaxEntries", "tlsAllowedPorts",
-  "spiffeAllowedPorts", "spiffeAllowedSocketPaths"
+  "spiffeAllowedPorts", "spiffeAllowedSocketPaths", "oid4vpMaxRequestBytes"
 ];
 
 function sourceRoot() {
@@ -288,7 +288,15 @@ const REPLACED = {
       "wsfedtools_wsfed_rp_cert"],
     sdjwtvc_save_holder_key: ["sdjwtvc_holder_private_jwk",
       "sdjwtvc_refreshed_holder_private_jwk",
-      "sdjwtvc_previous_holder_private_jwk", "sdjwtvc_dpop_private_jwk"]
+      "sdjwtvc_previous_holder_private_jwk", "sdjwtvc_dpop_private_jwk"],
+    // Added with SIOPv2 (#432/#436), after the lists above were replaced:
+    // the presentation workflow's pairwise subject keys and their checkbox.
+    sdjwtvp_siop_save_pairwise: ["sdjwtvp_siop_pairwise_keys"],
+    // smartcard.js's three opt-in secrets, found by storage_keys_recorded.js
+    // on 2026-11-16 (the static inventory did not read its SAVE table).
+    sc_save_otp_key: ["sc_otp_aes_key"],
+    sc_save_oath_secret: ["sc_oath_secret"],
+    sc_save_api_key: ["sc_otp_api_key"]
   }
 };
 

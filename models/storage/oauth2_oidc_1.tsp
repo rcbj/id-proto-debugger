@@ -140,4 +140,13 @@ model Oauth2Oidc1Keys {
 
   @storageKey(#{ area: "local", class: "ordinary" })
   yesCheckOIDCArtifacts: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  dpop_jkt_sent: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  sdjwtvc_authorization_details: unknown;
+
+  @storageKey(#{ class: "ordinary" })
+  sdjwtvc_issuer_state: unknown;
 }
