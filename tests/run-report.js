@@ -3486,6 +3486,23 @@ function buildJobs() {
     },
   });
 
+  // THE DEBUGGER AS THE OPENID4VP VERIFIER (#364): vc-verifier.html creates
+  // a request through the api's request_uri / response_uri, node answers it
+  // as the wallet, and every check the page draws is read. API_URL only
+  // where the target HAS an api: on a static site the job asserts the page
+  // says it cannot host a request.
+  jobs.push({
+    name: "VC Verifier page (the debugger as the OpenID4VP Verifier: a " +
+        "request created through the api, answered over direct_post and " +
+        "direct_post.jwt, every check one row, a wrong nonce failing only " +
+        "its own)",
+    script: "vc_verifier_page.js",
+    env: {
+      API_URL: env.LDAP_AVAILABLE === "false" ? "" :
+          (env.API_URL || "https://localhost:4000"),
+    },
+  });
+
   // ------------------------------------------------------------------------
   // RISC, THE SECOND VOCABULARY OVER THE SAME PIPE.
   //
@@ -3857,6 +3874,18 @@ function buildJobs() {
     env: {},
   });
 
+  // The debugger as an OpenID4VP 1.0 VERIFIER (#364): the DCQL builder, the
+  // Verifier's x509 identity (read back by node and by the wallet's own
+  // verifyX509Request), and verifyResponse() over dc+sd-jwt, mso_mdoc,
+  // jwt_vc_json and ldp_vc in both direct_post modes, each defect failing
+  // exactly its own check. Needs nothing.
+  jobs.push({
+    name: "OpenID4VP Verifier (DCQL, x509 Request Object, response " +
+        "verification per check, in node)",
+    script: "vp_verifier_engine.js",
+    env: {},
+  });
+
   // POST /oid4vp/call, the wallet's route to a Verifier that sends no CORS
   // headers: every refusal api/oid4vp_proxy.js makes, its defaults and its
   // status rule, with no Verifier and no api running.
@@ -3865,6 +3894,21 @@ function buildJobs() {
         "bodies, text answers, in node)",
     script: "api_oid4vp_proxy.js",
     env: {},
+  });
+
+  // The Verifier role's request_uri and response_uri, which the api hosts
+  // for a page because a page is not an HTTP server (#364). The module half
+  // needs nothing and always runs; the route half runs when the job is
+  // given an API_URL, which every target with an api gets and a static site
+  // (no api at all) does not.
+  jobs.push({
+    name: "OpenID4VP Verifier sessions (the request_uri and response_uri " +
+        "the api hosts for a page: lifecycle, secret, caps and expiry in " +
+        "node, and the routes, media types and CORS over HTTP)",
+    script: "api_oid4vp_verifier.js",
+    env: ldapOff ? {} : {
+      API_URL: env.API_URL || "https://localhost:4000",
+    },
   });
 
   // ISO mdoc in the wallet (client/src/mdoc.js), in node, against an issuer

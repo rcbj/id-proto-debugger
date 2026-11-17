@@ -293,6 +293,32 @@ var config = {
   // The most one inbox holds in total, oldest dropped first. Without it
   // the three caps above multiply out to a quarter of a gigabyte.
   ssfReceiverMaxInboxBytes: 1048576,
+  // ---------------------------------------------------------------------------
+  // THE OPENID4VP VERIFIER ROLE (issue #364, api/oid4vp_verifier.js). When
+  // the VC Presentation workflow plays the Verifier, a Wallet needs a
+  // request_uri to fetch the signed Request Object from and a response_uri
+  // to post its answer to — and a page is not an HTTP server, so this
+  // service hosts both on its behalf, exactly as it hosts the SSF push
+  // receiver above. The page signs; this service stores, serves and records.
+  // Only an explicit `false` turns it off.
+  oid4vpVerifierEnabled: true,
+  // A session's absolute lifetime and its lifetime with nothing touching it.
+  // Each is the default for a session and its CEILING: the page may ask for
+  // less (ttlMs / idleTtlMs on POST /oid4vp/verifier), never more.
+  oid4vpVerifierTtlMs: 1800000,
+  oid4vpVerifierIdleTtlMs: 600000,
+  // How many sessions in all, and one caller's share of them by address.
+  oid4vpVerifierMaxSessions: 100,
+  oid4vpVerifierMaxSessionsPerCaller: 10,
+  // Events kept per session (fetches and answers), oldest dropped.
+  oid4vpVerifierMaxEvents: 50,
+  // The largest Wallet answer kept, the most of them one session holds in
+  // total (oldest dropped first: without it the caps above multiply out to
+  // over a gigabyte), and the largest Request Object or CA certificate the
+  // page may publish.
+  oid4vpVerifierMaxResponseBytes: 262144,
+  oid4vpVerifierMaxSessionBytes: 1048576,
+  oid4vpVerifierMaxRequestObjectBytes: 65536,
   // The hosted SSF transmitter (#363, api/ssf_transmitter.js): a receiver
   // discovers it, creates its stream there and polls it; the page signs.
   // Each lifetime is the default AND the ceiling for one transmitter.

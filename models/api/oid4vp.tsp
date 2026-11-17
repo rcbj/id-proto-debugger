@@ -127,3 +127,272 @@ op call(@body body: CallRequest): Ok<Answer> |
 @get
 @operationId("oid4vpLimits")
 op limits(): Ok<Limits>;
+
+// ---------------------------------------------------------------------------
+// THE VERIFIER ROLE (issue #364): the request_uri and response_uri this api
+// hosts on a page's behalf, because a page is not an HTTP server. Five
+// routes are the PAGE's and three are a WALLET's; the Wallet's answers are
+// OAuth's `{error, error_description}` and the page's are `{error}`. Every
+// bound and every refusal is api/oid4vp_verifier.js's, which
+// tests/api_oid4vp_verifier.js drives with and without a listener.
+// ---------------------------------------------------------------------------
+
+/** A Verifier session, as the page asks for one. */
+model VerifierCreateRequest {
+  /** The redirect_uri answered to a Wallet's post (section 8.2). */
+  @checkedInCode("api/oid4vp_verifier.js: at most 4096 characters, no line break")
+  @passthrough
+  redirectUri?: string | null;
+
+  /** The session's absolute lifetime, ms. */
+  @checkedInCode("api/oid4vp_verifier.js: a positive whole number, at most oid4vpVerifierTtlMs")
+  ttlMs?: float64 | string | null;
+
+  /** The session's lifetime untouched, ms. */
+  @checkedInCode("api/oid4vp_verifier.js: a positive whole number, at most oid4vpVerifierIdleTtlMs")
+  idleTtlMs?: float64 | string | null;
+}
+
+/** What the page signed, to be served at request_uri. */
+model VerifierPublishRequest {
+  /** The signed Request Object, a compact JWS. */
+  @checkedInCode("api/oid4vp_verifier.js: required, three base64url segments, at most oid4vpVerifierMaxRequestObjectBytes")
+  @passthrough
+  requestObject?: string | null;
+
+  /** The root CA certificate served at caIssuersUrl: base64 DER, or PEM. */
+  @checkedInCode("api/oid4vp_verifier.js: base64 that decodes to a DER SEQUENCE, at most oid4vpVerifierMaxRequestObjectBytes")
+  @passthrough
+  caCertificate?: string | null;
+
+  /** Replaces the redirect_uri the session was created with. */
+  @checkedInCode("api/oid4vp_verifier.js: at most 4096 characters, no line break")
+  @passthrough
+  redirectUri?: string | null;
+}
+
+/** A new session and the three URLs a Wallet reaches it at. */
+model VerifierCreated {
+  /** 32 hex digits. */
+  id: string;
+
+  /** 32 hex digits: `Authorization: Bearer <secret>` on every page call. */
+  secret: string;
+
+  requestUri: string;
+  responseUri: string;
+  caIssuersUrl: string;
+
+  /** The sooner of the two expiries. */
+  expiresAt: string;
+}
+
+/** One thing a Wallet did. */
+model VerifierEvent {
+  /** From 0, never reused; what `after` counts. */
+  seq: int32;
+
+  at: string;
+
+  /** request-fetched, ca-fetched, response or response-refused. */
+  kind: string;
+
+  method?: string;
+
+  /** The Content-Type header as the Wallet sent it. */
+  contentType?: string;
+
+  /** The answer's fields, each the text that arrived. */
+  fields?: Record<unknown>;
+
+  /** request_uri_method=post: wallet_metadata, parsed when it is JSON. */
+  walletMetadata?: unknown;
+
+  walletNonce?: unknown;
+  remoteAddress?: string;
+
+  /** Why something that arrived was not kept. */
+  problem?: string;
+}
+
+/** What Wallets did since the cursor. */
+model VerifierEvents {
+  events: VerifierEvent[];
+
+  /** The cursor for the next call: how many events were ever recorded. */
+  next: int32;
+
+  /** How many were dropped by the caps. */
+  dropped: int32;
+
+  expiresAt: string;
+}
+
+/** The Verifier role's bounds, and whether this service hosts it. */
+model VerifierLimits {
+  enabled: boolean;
+  ttlMs: float64;
+  idleTtlMs: float64;
+  maxSessions: float64;
+  maxSessionsPerCaller: float64;
+  maxEvents: float64;
+  maxResponseBytes: float64;
+  maxRequestObjectBytes: float64;
+  maxSessionBytes: float64;
+
+  /** How many sessions this process holds now. */
+  held: int32;
+
+  requestObjectMediaType: "application/oauth-authz-req+jwt";
+  caMediaType: "application/pkix-cert";
+
+  /** This service verifies nothing a Wallet sends. */
+  verifies: false;
+
+  note: string;
+}
+
+/** A refusal to a WALLET, in OAuth's shape. */
+model WalletError {
+  error: string;
+  error_description: string;
+}
+
+/** A refusal to the PAGE. */
+model PageError {
+  error: string;
+}
+
+/** A page call without the session's secret. */
+model Unauthorized {
+  @statusCode statusCode: 401;
+  @header("WWW-Authenticate") challenge: string;
+  @body body: PageError;
+}
+
+/** No session has that id: never created, deleted, or expired. */
+model NoSession<T> {
+  @statusCode statusCode: 404;
+  @body body: T;
+}
+
+/** What the Verifier role will hold. A static deployment has no api and
+ *  gets no answer, which is how the page knows. */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/limits")
+@get
+@operationId("oid4vpVerifierLimits")
+op verifierLimits(): Ok<VerifierLimits>;
+
+/** Create a Verifier session. */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier")
+@post
+@operationId("oid4vpVerifierCreate")
+@checkedInCode("api/oid4vp_verifier.js: oid4vpVerifierEnabled (403), oid4vpVerifierMaxSessions and oid4vpVerifierMaxSessionsPerCaller, counted by the caller's address (400)")
+op verifierCreate(@body body: VerifierCreateRequest): {
+  @statusCode statusCode: 201;
+  @body body: VerifierCreated;
+} | BadRequest<PageError | IdProtoDebugger.Api.ModelRefusal> | {
+  @statusCode statusCode: 403;
+  @body body: PageError;
+};
+
+/** Publish the signed Request Object and the CA certificate. */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}/request")
+@put
+@operationId("oid4vpVerifierPublish")
+@checkedInCode("api/oid4vp_verifier.js: the session exists (404), the Bearer secret is its own (401)")
+op verifierPublish(
+  @path id: string,
+  @header("Authorization") authorization?: string,
+  @body body: VerifierPublishRequest,
+): Ok<{
+  ok: true;
+}> | BadRequest<PageError | IdProtoDebugger.Api.ModelRefusal> |
+  Unauthorized | NoSession<PageError>;
+
+/** A Wallet fetches the Request Object (section 5.7). */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}/request")
+@get
+@operationId("oid4vpVerifierRequestGet")
+op verifierRequestGet(@path id: string): {
+  @statusCode statusCode: 200;
+  @header contentType: "application/oauth-authz-req+jwt";
+  @body body: string;
+} | NoSession<WalletError>;
+
+/** A Wallet fetches the Request Object by POST, request_uri_method=post
+ *  (section 5.10), carrying wallet_metadata and wallet_nonce. */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}/request")
+@post
+@operationId("oid4vpVerifierRequestPost")
+op verifierRequestPost(
+  @path id: string,
+  @header contentType: "application/x-www-form-urlencoded",
+  @passthrough
+  @body body: Record<unknown>,
+): {
+  @statusCode statusCode: 200;
+  @header contentType: "application/oauth-authz-req+jwt";
+  @body body: string;
+} | NoSession<WalletError>;
+
+/** The Verifier's root CA certificate, at the leaf's AIA caIssuers URL. */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}/ca")
+@get
+@operationId("oid4vpVerifierCa")
+op verifierCa(@path id: string): {
+  @statusCode statusCode: 200;
+  @header contentType: "application/pkix-cert";
+  @body body: bytes;
+} | NoSession<WalletError>;
+
+/** A Wallet's answer (section 8.2), kept field by field as it arrived. */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}/response")
+@post
+@operationId("oid4vpVerifierResponse")
+@checkedInCode("api/oid4vp_verifier.js: the session exists (404); the body is a form or a JSON object, at most oid4vpVerifierMaxResponseBytes (400)")
+op verifierResponse(
+  @path id: string,
+  @header contentType: "application/x-www-form-urlencoded" |
+    "application/json",
+  @passthrough
+  @body body: Record<unknown>,
+): Ok<{
+  redirect_uri?: string;
+}> | BadRequest<WalletError | IdProtoDebugger.Api.ModelRefusal> |
+  NoSession<WalletError>;
+
+/** What Wallets did since `after`. A cursor, not a destructive read. */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}/events")
+@get
+@operationId("oid4vpVerifierEvents")
+op verifierEvents(
+  @path id: string,
+  @header("Authorization") authorization?: string,
+
+  /** The `next` of the previous call. Not a number, or negative, is 0. */
+  @checkedInCode("api/oid4vp_verifier.js: read with Number(); anything not a finite non-negative number is 0")
+  @query
+  after?: string,
+): Ok<VerifierEvents> | Unauthorized | NoSession<PageError>;
+
+/** Delete a session. */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}")
+@delete
+@operationId("oid4vpVerifierDelete")
+op verifierDelete(
+  @path id: string,
+  @header("Authorization") authorization?: string,
+): Ok<{
+  ok: true;
+  deleted: string;
+}> | Unauthorized | NoSession<PageError>;

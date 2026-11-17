@@ -39,6 +39,36 @@ with those claims and no others &mdash; over
 defines. It presents whatever credential the
 <a href="/vc-issuance-0.html">issuance workflow</a> left in this browser.</p>
 
+<!-- ============ Which side of the presentation (#364) ============
+     The debugger plays either end. The Wallet is this page and the three steps
+     after it; the Verifier is vc-verifier.html, which builds the request,
+     hosts its request_uri and response_uri through the api, and checks what a
+     wallet sends back. -->
+<h4 class="vc-subtitle">Which side of the presentation is the debugger?</h4>
+<div class="vc-usecases" id="vp_roles">
+  <button type="button" class="vc-usecase vc-usecase-current" id="vp_role_wallet"
+          onclick="return false;">
+    <span class="vc-usecase-head">
+      <span class="vc-usecase-spec">Wallet</span>
+      <span class="vc-usecase-title">The holder answers a Verifier</span>
+      <span class="vc-usecase-flag">this page</span>
+    </span>
+    <span class="vc-usecase-summary">A Verifier somewhere else asks for claims; the debugger
+    reads its request, lets you choose what to disclose and builds the presentation.</span>
+    <span class="vc-usecase-mechanics">continues below, steps 0&ndash;3</span>
+  </button>
+  <button type="button" class="vc-usecase" id="vp_role_verifier"
+          onclick="window.location.href = '/vc-verifier.html'; return false;">
+    <span class="vc-usecase-head">
+      <span class="vc-usecase-spec">Verifier</span>
+      <span class="vc-usecase-title">The debugger asks a wallet</span>
+    </span>
+    <span class="vc-usecase-summary">Compose a DCQL query, sign the Authorization Request,
+    hand it to a wallet, and check every part of what the wallet sends back.</span>
+    <span class="vc-usecase-mechanics">vc-verifier.html</span>
+  </button>
+</div>
+
 <div class="vc-note vc-status" id="vp_credential_state">&nbsp;</div>
 
 <!-- ============ Configuration ============

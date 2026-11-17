@@ -3776,6 +3776,72 @@
       "area": "local"
     },
     {
+      "key": "vpv_binding",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_claims",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_client_prefix",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_dcql",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_delivery",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_format",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_query_id",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_redirect_uri",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_response_mode",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_scheme",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_type",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "webauthn_analyzer_input",
       "class": "ordinary",
       "group": "client/src/webauthn_analyzer.js",

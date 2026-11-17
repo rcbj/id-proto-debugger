@@ -244,6 +244,58 @@
           "minimum": -2147483648,
           "maximum": 2147483647
         },
+        "oid4vpVerifierEnabled": {
+          "type": "boolean",
+          "description": "Host Verifier sessions (request_uri, response_uri). Only false is off."
+        },
+        "oid4vpVerifierTtlMs": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "A session's absolute lifetime, ms: the default and the ceiling."
+        },
+        "oid4vpVerifierIdleTtlMs": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "A session's lifetime untouched, ms: the default and the ceiling."
+        },
+        "oid4vpVerifierMaxSessions": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "Sessions held in all."
+        },
+        "oid4vpVerifierMaxSessionsPerCaller": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "Sessions one caller's address may hold."
+        },
+        "oid4vpVerifierMaxEvents": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "Events kept per session, oldest dropped."
+        },
+        "oid4vpVerifierMaxResponseBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "The largest Wallet answer (or request_uri POST body) kept, bytes."
+        },
+        "oid4vpVerifierMaxSessionBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "Bytes of Wallet answers one session holds, oldest dropped first."
+        },
+        "oid4vpVerifierMaxRequestObjectBytes": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "The largest Request Object or CA certificate a page may publish."
+        },
         "ssfTransmitterEnabled": {
           "type": "boolean",
           "description": "The hosted SSF transmitter (#363): api/ssf_transmitter.js."
