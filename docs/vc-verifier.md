@@ -95,14 +95,16 @@ and says that it was not echoed.
 
 ### The independent wallet
 
-`rcbj/oid4vc-wallet` reaches the tests image as one binary,
-`/usr/local/bin/oid4vc-wallet`. Its repository's `Dockerfile` builds it, and
-the image mirror builds that from the wallet's release tag
-(`.github/image-mirror-builds.txt`, `oid4vc-wallet:v0.1.0`). The tests image
-copies the binary from the `oid4vcwallet` build context in
-`docker-compose-run-tests.yml` and installs the libraries it links. The job
-gives the wallet a home of its own for each run, with `OID4VC_WALLET_KEY_FILE`
-in place of a desktop key ring and `SSL_CERT_FILE` pointed at the stack's CA
-bundle. A missing binary fails the job by name; it is never skipped. To run
-the job on a host, set `OID4VC_WALLET_BIN`. To move to a newer wallet, tag it
-there, then change the tag in both places here.
+`rcbj/oid4vc-wallet` is built inside the tests image, the way iya-sts's own
+tests image builds it (its #694). The `oid4vc-wallet` stage of
+`tests/Dockerfile` starts from `rust:1.97-bookworm`, which the image mirror
+carries. It downloads the wallet's source at a pinned commit, checks the
+archive's SHA-256, and runs `cargo build --release --locked`. The binary is
+copied to `/opt/oid4vc-wallet/` and named by `OID4VC_WALLET_BIN`. The archive
+URL is listed in `KNOWN_FETCHES` in `tests/image_mirror_coverage.js`. To move
+to a newer wallet, change the commit and the SHA-256 and nothing else.
+
+The job gives the wallet a home of its own for each run, with
+`OID4VC_WALLET_KEY_FILE` in place of a desktop key ring and `SSL_CERT_FILE`
+pointed at the stack's CA bundle. A missing binary fails the job by name; it
+is never skipped. To run the job on a host, set `OID4VC_WALLET_BIN`.

@@ -37,6 +37,7 @@
 x-mirror-contexts: &mirror-contexts
   ubuntu: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/ubuntu:latest
   "node:24.22.1-bookworm-slim": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/node:24.22.1-bookworm-slim
+  "rust:1.97-bookworm": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/rust:1.97-bookworm
   "eclipse-temurin:11-jdk": docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/eclipse-temurin:11-jdk
   # Not a copy of anything upstream: the Shibboleth side-car's two archives,
   # built into an image by .github/scripts/mirror-builds.sh
@@ -895,10 +896,6 @@ services:
         # tests image copies its whole /usr/src/sts tree in for the jobs that
         # load iya-sts's modules in process; see stage 2 of tests/Dockerfile.
         iyasts: docker-image://${IYA_STS_IMAGE:-${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/iya-sts:1.0.0}
-        # rcbj/oid4vc-wallet, built into the mirror from its release tag
-        # (.github/image-mirror-builds.txt). The tests image copies its one
-        # binary; see the end of tests/Dockerfile (#364).
-        oid4vcwallet: docker-image://${IMAGE_MIRROR:-ghcr.io/rcbj/id-proto-debugger/mirror}/oid4vc-wallet:v0.1.0
     # Persist the generated report/logs to the host (gitignored).
     volumes:
       - ./tests/report:/usr/src/app/report

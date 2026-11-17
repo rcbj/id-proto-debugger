@@ -37,8 +37,9 @@
 // host, and aud https://self-issued.me/v2.
 //
 // The binary is OID4VC_WALLET_BIN, or `oid4vc-wallet` on PATH; the tests
-// image carries it from the image mirror's build of the wallet's release
-// tag. Its TLS trust is SSL_CERT_FILE, pointed at the stack's CA bundle.
+// image builds it in its oid4vc-wallet stage, at a pinned commit, the way
+// iya-sts's tests image does. Its TLS trust is SSL_CERT_FILE, pointed at the
+// stack's CA bundle.
 // A missing binary FAILS this job, naming it: a suite that skipped here
 // would be green with the independent half switched off.
 // ---------------------------------------------------------------------------
@@ -118,8 +119,8 @@ function wallet(where, args) {
   if (run.error) {
     log.debug("Leaving wallet(). Could not run.");
     throw new Error("could not run " + WALLET_BIN + ": " + run.error.message +
-      ". The tests image carries it from the image mirror's oid4vc-wallet " +
-      "build; on a host, set OID4VC_WALLET_BIN.");
+      ". The tests image builds it in its oid4vc-wallet stage; on a host, " +
+      "set OID4VC_WALLET_BIN.");
   }
   let json = null;
   try {

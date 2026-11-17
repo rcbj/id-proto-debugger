@@ -27,7 +27,3 @@
 # mirror path                            source
 shibboleth-idp-dist:4.3.3                ./shibboleth-idp/dist
 iya-sts-companion:v1.0.0                 https://github.com/rcbj/iya-sts.git#v1.0.0:companion
-# rcbj/oid4vc-wallet's command line, from its release tag (#364): the
-# independent wallet tests/vc_verifier_oid4vc_wallet.js drives against the
-# Verifier page. Its Dockerfile is at that repository's root.
-oid4vc-wallet:v0.1.0                     https://github.com/rcbj/oid4vc-wallet.git#v0.1.0
