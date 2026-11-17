@@ -27,11 +27,19 @@
 //      value, and nothing is provisioned.
 //   3. A Shibboleth identity provider, when SHIBBOLETH_IDP_URL is
 //      set (the base that contains /idp). Unset skips that half.
-//      A configured peer that does not answer is a failure.
+//      A configured peer that does not answer is a failure. Its
+//      published metadata (<base>/shibboleth) must declare SAML 1.1;
+//      the Browser/POST Response is VERIFIED against the metadata's
+//      signing keys (#425); and a Browser/Artifact round trip resolves a
+//      real artifact over SOAP with a signed <samlp:Request>, registering
+//      a per-run service provider through SHIBBOLETH_SP_METADATA_DIR (the
+//      directory the side-car's dynamic metadata provider reads), which is
+//      therefore required with SHIBBOLETH_IDP_URL.
 //
 // Run from tests/:
 //
 //   SHIBBOLETH_IDP_URL=http://127.0.0.1:18080/idp \
+//   SHIBBOLETH_SP_METADATA_DIR=/path/the/side-car/mounts \
 //   WSTRUST_STS_URL=https://localhost:8081 \
 //   CONFIG_FILE=./env/test.js node saml11_peers.js
 //
@@ -58,6 +66,16 @@ const sm = paths.requireSharedModule(
   [path.join(__dirname, "saml_message.js"),
    path.join(__dirname, "..", "client", "src", "saml_message.js")],
   "client/src/saml_message.js");
+
+// The XML Signature implementation the debugger verifies and signs with
+// (#425): Shibboleth's Response signature is verified against the keys its
+// metadata publishes, and the artifact half signs its <samlp:Request>.
+const xd = paths.requireSharedModule(
+  [path.join(__dirname, "xmldsig.js"),
+   path.join(__dirname, "..", "common", "xmldsig.js")],
+  "common/xmldsig.js");
+const crypto = require("crypto");
+const fs = require("fs");
 
 const registry = require("./sts_applications.js");
 const authn = require("./authn_signin.js");
@@ -422,7 +440,11 @@ function pageHasProceed(html, pageUrl) {
 // proceed screen) until the Browser/POST form appears. creds null
 // means stop at a login screen instead of signing in. An iya-sts
 // sign-in screen is not an HTML form; the caller finishes that one.
-async function walk(start, jar, creds) {
+// A redirect to `stopAt` (a URL prefix) ends the walk unfollowed: that is
+// the Browser/Artifact profile handing the browser back to the service
+// provider's artifact consumer with SAMLart, at an address nothing here
+// serves.
+async function walk(start, jar, creds, stopAt) {
   log.debug("Entering walk().");
   let url = start;
   let method = "GET";
@@ -432,7 +454,13 @@ async function walk(start, jar, creds) {
     const res = await httpCall(method, url, { jar: jar, body: body });
     const location = res.headers.location;
     if (res.status >= 300 && res.status < 400 && location) {
-      url = new URL(location, url).toString();
+      const next = new URL(location, url).toString();
+      if (stopAt && next.indexOf(stopAt) === 0) {
+        log.debug("Leaving walk(). Redirected to the service provider.");
+        return { kind: "redirect", status: res.status, url: next,
+                 html: "" };
+      }
+      url = next;
       method = "GET";
       body = null;
       continue;
@@ -499,11 +527,11 @@ function rowValue(rows, key) {
   return "";
 }
 
-// What saml-profiles-1.1 section 4.2 requires of a Browser/POST
+// What sstc-saml-bindings-1.1 section 4.1.2 requires of a Browser/POST
 // response the service provider can read: a 1.1 Response, a QName
 // success, Recipient, an AssertionID, bearer confirmation, and an
 // AudienceRestrictionCondition for this relying party. The profile
-// signs the Response (saml-tech-overview-1.1 section 4.2.1). An
+// signs the Response (section 4.1.2.4). An
 // assertion signature is a different choice and is checked only when
 // the fixture asks for it.
 function assertBrowserPost(summary, expect) {
@@ -798,6 +826,249 @@ async function iyaHalf() {
   log.debug("Leaving iyaHalf().");
 }
 
+// THE DOCUMENT A SAML 1.1 RELYING PARTY IS CONFIGURED FROM (#425). A
+// Shibboleth IdP serves its metadata at <base>/shibboleth. What it must say
+// for SAML 1.1: the 1.1 protocol in protocolSupportEnumeration, the
+// Shibboleth AuthnRequest SingleSignOnService, and the SAML 1.1
+// (SOAP-binding) ArtifactResolutionService. Returns every signing
+// certificate (KeyDescriptor use="signing", or with no use) and the two
+// locations. A V4 IdP publishes TWO signing keys, back channel first and
+// front channel second, so the list is the point: verifying a Browser/POST
+// response against the first alone fails.
+async function shibbolethMetadata(base) {
+  log.debug("Entering shibbolethMetadata().");
+  const res = await httpCall("GET", base + "/shibboleth");
+  assert.strictEqual(res.status, 200,
+      "Shibboleth did not serve its metadata at " + base + "/shibboleth");
+  const doc = sm.parseXml(res.text);
+  assert.ok(doc && doc.documentElement, "the metadata is not XML");
+  const idp = sm.tags(doc, "IDPSSODescriptor")[0];
+  assert.ok(idp, "the metadata has no IDPSSODescriptor");
+  const pse = idp.getAttribute("protocolSupportEnumeration") || "";
+  assert.ok(pse.indexOf("urn:oasis:names:tc:SAML:1.1:protocol") >= 0,
+      "the IDPSSODescriptor does not declare SAML 1.1: " + pse);
+  function locationFor(name, binding) {
+    log.debug("Entering locationFor(). " + name);
+    const els = sm.tags(idp, name);
+    for (let i = 0; i < els.length; i++) {
+      if (els[i].getAttribute("Binding") === binding) {
+        log.debug("Leaving locationFor(). Found.");
+        return els[i].getAttribute("Location") || "";
+      }
+    }
+    log.debug("Leaving locationFor(). Absent.");
+    return "";
+  }
+  const sso = locationFor("SingleSignOnService",
+      "urn:mace:shibboleth:1.0:profiles:AuthnRequest");
+  const ars = locationFor("ArtifactResolutionService",
+      "urn:oasis:names:tc:SAML:1.0:bindings:SOAP-binding");
+  assert.ok(sso, "no Shibboleth AuthnRequest SingleSignOnService");
+  assert.ok(ars, "no SAML 1.1 ArtifactResolutionService");
+  const certs = [];
+  const kds = sm.tags(idp, "KeyDescriptor");
+  for (let k = 0; k < kds.length; k++) {
+    const use = kds[k].getAttribute("use");
+    if (use && use !== "signing") {
+      continue;
+    }
+    const x = sm.tags(kds[k], "X509Certificate");
+    for (let j = 0; j < x.length; j++) {
+      const b64 = (x[j].textContent || "").replace(/\s+/g, "");
+      if (b64 && certs.indexOf(b64) < 0) {
+        certs.push(b64);
+      }
+    }
+  }
+  assert.ok(certs.length > 0, "the metadata publishes no signing key");
+  log.info("Shibboleth metadata: SAML 1.1 SSO " + sso + ", ARS " + ars +
+      ", " + certs.length + " signing certificate(s)");
+  log.debug("Leaving shibbolethMetadata().");
+  return { certs: certs, sso: sso, ars: ars };
+}
+
+// A published location, reached the way this test reaches the IdP. The
+// metadata names the address the IdP knows itself by (its compose name);
+// SHIBBOLETH_IDP_URL is how THIS process gets there, which on a host is a
+// published port. Only the origin changes.
+function rebase(location, base) {
+  log.debug("Entering rebase().");
+  const to = new URL(base);
+  const from = new URL(location);
+  log.debug("Leaving rebase().");
+  return to.origin + from.pathname + from.search;
+}
+
+// The Response signature, against the keys the metadata publishes. The
+// Browser/POST profile (sstc-saml-bindings-1.1 section 4.1.2.4) requires
+// it, and a check that only reads its shape passes a forged one.
+function assertSignedByPublishedKey(xml, certs, what) {
+  log.debug("Entering assertSignedByPublishedKey(). " + what);
+  const res = xd.verifyXmlSignatureTrusted(xml, certs);
+  assert.ok(res.valid && res.trusted,
+      what + " is not signed by a key the metadata publishes: " +
+      (res.error || JSON.stringify(res).slice(0, 400)));
+  log.info(what + " signature verified with published certificate " +
+      (res.trustedIndex + 1) + " of " + certs.length + " (SHA-256 " +
+      res.trustedFingerprint + ")");
+  log.debug("Leaving assertSignedByPublishedKey().");
+  return res;
+}
+
+// THE BROWSER/ARTIFACT PROFILE AGAINST SHIBBOLETH (#425). The browser comes
+// back to the service provider's artifact consumer carrying SAMLart, and the
+// service provider resolves it over SOAP with a <samlp:Request> carrying an
+// <AssertionArtifact> — signed here with a per-run key, exactly as the
+// debugger's api signs one. A SAML 1.1 request has no <Issuer>, so Shibboleth
+// identifies the requester from the artifact (which records whom it was
+// issued to) and authenticates it with the signing key in THAT service
+// provider's metadata. That metadata is written per run into
+// SHIBBOLETH_SP_METADATA_DIR, the directory the side-car's LocalDynamic
+// provider reads, under the SHA-1 of the entityID.
+async function shibbolethArtifactHalf(base, published, user, password) {
+  log.debug("Entering shibbolethArtifactHalf().");
+  const dir = process.env.SHIBBOLETH_SP_METADATA_DIR || "";
+  assert.ok(dir, "SHIBBOLETH_SP_METADATA_DIR is not set. The artifact half " +
+      "registers a per-run service provider through the side-car's dynamic " +
+      "metadata directory, and needs it whenever SHIBBOLETH_IDP_URL is set.");
+  const stamp = Date.now() + "-" + process.pid;
+  const sp = "https://debugger.example.test/saml11/peers-" + stamp;
+  const acs = "https://debugger.example.test/samlacs";
+  const artifactAcs = "https://debugger.example.test/samlacs/artifact";
+  const relay = "https://debugger.example.test/home";
+  const spKey = xd.generateKeyPair(2048, "saml11-peers-sp");
+  const metadata =
+    '<md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" ' +
+        'xmlns:ds="http://www.w3.org/2000/09/xmldsig#" entityID="' + sp +
+        '">' +
+      '<md:SPSSODescriptor protocolSupportEnumeration="' +
+          'urn:oasis:names:tc:SAML:1.1:protocol">' +
+        '<md:KeyDescriptor use="signing"><ds:KeyInfo><ds:X509Data>' +
+          '<ds:X509Certificate>' + xd.certPemToB64(spKey.certPem) +
+          '</ds:X509Certificate></ds:X509Data></ds:KeyInfo>' +
+        '</md:KeyDescriptor>' +
+        '<md:AssertionConsumerService Binding="' +
+            'urn:oasis:names:tc:SAML:1.0:profiles:browser-post" ' +
+            'Location="' + acs + '" index="1"/>' +
+        '<md:AssertionConsumerService Binding="' +
+            'urn:oasis:names:tc:SAML:1.0:profiles:artifact-01" ' +
+            'Location="' + artifactAcs + '" index="2"/>' +
+      '</md:SPSSODescriptor></md:EntityDescriptor>';
+  const file = path.join(dir, crypto.createHash("sha1").update(sp)
+      .digest("hex") + ".xml");
+  fs.writeFileSync(file, metadata);
+  log.info("Registered " + sp + " with Shibboleth through " + file);
+  try {
+    const params = sm.saml11AuthnRequestParams({
+      target: relay, shire: artifactAcs, providerId: sp
+    });
+    const landed = await walk(
+        rebase(published.sso, base) + "?" + queryOf(params),
+        new CookieJar(), { user: user, password: password }, artifactAcs);
+    assert.strictEqual(landed.kind, "redirect",
+        "Shibboleth did not send the browser back with an artifact (" +
+        landed.kind + " " + landed.status + " " + landed.url + "): " +
+        headingOf(landed.html) + " " + snippet(landed.html));
+    const back = new URL(landed.url);
+    const artifact = back.searchParams.get("SAMLart") || "";
+    check("Browser/Artifact returns SAMLart and the relay as TARGET",
+        function () {
+      assert.ok(artifact, "no SAMLart on " + landed.url);
+      assert.strictEqual(back.searchParams.get("TARGET"), relay);
+      const parsed = sm.parseArtifact(artifact);
+      assert.ok(parsed && !parsed.error, JSON.stringify(parsed));
+      assert.strictEqual(parsed.typeCode, 1,
+          "a SAML 1.1 artifact is type 0x0001: " + JSON.stringify(parsed));
+    });
+    const requestId = "_" + crypto.randomBytes(16).toString("hex");
+    const request = xd.signEnveloped(
+      '<samlp:Request ' + NS + ' RequestID="' + requestId + '" ' +
+          'MajorVersion="1" MinorVersion="1" IssueInstant="' +
+          new Date().toISOString() + '">' +
+        '<samlp:AssertionArtifact>' + artifact + '</samlp:AssertionArtifact>' +
+      '</samlp:Request>', {
+        privateKeyPem: spKey.privateKeyPem, certPem: spKey.certPem,
+        sigAlg: "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256",
+        includeKeyInfo: true, refUri: "#" + requestId, placement: "first"
+      });
+    const soap = '<soap:Envelope ' +
+        'xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">' +
+        '<soap:Body>' + request + '</soap:Body></soap:Envelope>';
+    const ars = rebase(published.ars, base);
+    log.info("  POST " + ars + " (SAML 1.1 SOAP, signed)");
+    const answer = await httpCall("POST", ars, {
+      body: soap, contentType: "text/xml; charset=utf-8",
+      headers: { SOAPAction:
+          '"http://www.oasis-open.org/committees/security"' }
+    });
+    const doc = sm.parseXml(answer.text);
+    const responses = doc ? sm.tags(doc, "Response") : [];
+    assert.ok(responses.length,
+        "the artifact resolution service answered HTTP " + answer.status +
+        " with no <samlp:Response>: " + String(answer.text).slice(0, 800));
+    const responseXml11 = sm.serializeSubtree(responses[0]);
+    const summary = sm.summarizeResponse(responseXml11);
+    check("the resolved Response answers this request with the artifact " +
+        "profile's assertion", function () {
+      assert.ok(summary.status && summary.status.success,
+          "status was " + (summary.status && summary.status.top) + ": " +
+          responseXml11.slice(0, 800));
+      assert.strictEqual(summary.version, "1.1");
+      assert.strictEqual(rowValue(summary.rows, "In Response To"),
+          requestId, "InResponseTo must name the SOAP request's RequestID");
+      const one = summary.assertions[0] && summary.assertions[0].summary;
+      assert.ok(one, "no assertion in the resolved Response");
+      const methods = (one.confirmations || []).map(function (row) {
+        return row.method;
+      });
+      assert.ok(methods.indexOf(
+          "urn:oasis:names:tc:SAML:1.0:cm:artifact") >= 0,
+          "a Browser/Artifact assertion is confirmed cm:artifact (section " +
+          "4.1.1): " + methods.join(", "));
+      const need = sm.requiredResponseSignature(responseXml11);
+      assert.strictEqual(need.rule, "none", JSON.stringify(need));
+    });
+    // The artifact profile requires no signature on this Response (it came
+    // back over the authenticated channel), but one that is present must
+    // still be the identity provider's.
+    if (summary.signature) {
+      check("the resolved Response's signature is a published key's",
+          function () {
+        assertSignedByPublishedKey(responseXml11, published.certs,
+            "Shibboleth's resolved artifact Response");
+      });
+    } else {
+      log.info("Shibboleth's resolved artifact Response is unsigned, which " +
+          "the Browser/Artifact profile allows.");
+    }
+    // A SAML 1.1 artifact is one-shot (sstc-saml-bindings-1.1 section
+    // 3.2.3): resolving it again, in a fresh request, returns no assertion.
+    const replayId = requestId + "b";
+    const replay = soap.split(requestId).join(replayId);
+    const again = await httpCall("POST", ars, {
+      body: replay, contentType: "text/xml; charset=utf-8",
+      headers: { SOAPAction:
+          '"http://www.oasis-open.org/committees/security"' }
+    });
+    const againDoc = sm.parseXml(again.text);
+    const againResponse = againDoc ? sm.tags(againDoc, "Response")[0] : null;
+    check("the same artifact cannot be resolved twice", function () {
+      const againSummary = againResponse ?
+          sm.summarizeResponse(sm.serializeSubtree(againResponse)) : null;
+      assert.ok(!againSummary || !againSummary.assertions.length,
+          "a second resolution of one artifact returned an assertion again");
+    });
+    log.info("Shibboleth Browser/Artifact completed for " + sp);
+  } finally {
+    try {
+      fs.unlinkSync(file);
+    } catch (err) {
+      log.warn("Could not remove " + file + ": " + err.message);
+    }
+  }
+  log.debug("Leaving shibbolethArtifactHalf().");
+}
+
 async function shibbolethHalf() {
   log.debug("Entering shibbolethHalf().");
   const base = process.env.SHIBBOLETH_IDP_URL || "";
@@ -820,7 +1091,10 @@ async function shibbolethHalf() {
     target: relay, shire: acs, providerId: sp
   });
   const root = base.replace(/\/$/, "");
-  const url = root + "/profile/Shibboleth/SSO?" + queryOf(params);
+  // From the document a relying party is configured from, not from a path
+  // written into this test (#425).
+  const published = await shibbolethMetadata(root);
+  const url = rebase(published.sso, root) + "?" + queryOf(params);
   let landed;
   try {
     landed = await walk(url, new CookieJar(),
@@ -857,7 +1131,15 @@ async function shibbolethHalf() {
       })[0];
   assert.ok(uid, "uid was not released");
   assert.ok(uid.values.indexOf(user) >= 0, uid.values.join(", "));
+  check("the Browser/POST Response is signed by a key Shibboleth publishes",
+      function () {
+    assertSignedByPublishedKey(responseXml(landed.form), published.certs,
+        "Shibboleth's Browser/POST Response");
+    const need = sm.requiredResponseSignature(responseXml(landed.form));
+    assert.strictEqual(need.rule, "response", JSON.stringify(need));
+  });
   log.info("Shibboleth Browser/POST completed for " + sp);
+  await shibbolethArtifactHalf(root, published, user, password);
   log.debug("Leaving shibbolethHalf().");
 }
 

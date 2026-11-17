@@ -101,8 +101,19 @@ function samlSetAllPanes(expand) {
   <div id="tab_attrs" class="saml-tabcontent">
     <div id="saml_attrs_table">&nbsp;</div>
   </div>
-  <div class="saml-row" style="margin-top:8px;">
-    <input type="button" class="saml-btn" value="Validate Signatures" onclick="return saml_response.validateSignatures();" title="Verify every enveloped XML digital signature the response carries, each on its own: the one on the &lt;Response&gt; and the one on the assertion (reference digests + SignatureValue), using the certificate in each signature's KeyInfo. SAML 1.1 Browser/POST requires the Response to be signed." />
+  <div class="saml-field" style="margin-top:8px;">
+    <label for="saml_sig_trust" title="A relying party trusts the signing keys its identity provider published in metadata. The certificate in a signature's own KeyInfo was supplied by whoever made the document, so it proves the document was not altered and nothing about who signed it.">Verify with</label>
+    <select id="saml_sig_trust" name="saml_sig_trust">
+      <option value="trusted">The IdP's signing certificate(s) below (trusted)</option>
+      <option value="keyinfo">The certificate in each signature's KeyInfo (integrity only)</option>
+    </select>
+  </div>
+  <div class="saml-field">
+    <label class="saml-has-copy" for="saml_trusted_certs" title="Every KeyDescriptor use=&quot;signing&quot; certificate in the IdP metadata last loaded on the SAML request page, plus its Signer Certificate field. PEM blocks, or bare base64 separated by a blank line. A signature is valid when any of them verifies it. Nothing typed here is saved.">Trusted IdP signing certificate(s) <button type="button" class="saml-copy" onclick="return saml_response.copyField('saml_trusted_certs');">Copy</button></label>
+    <textarea rows="4" id="saml_trusted_certs" name="saml_trusted_certs" placeholder="-----BEGIN CERTIFICATE----- … (PEM, or bare base64 DER; separate several with a blank line). Filled from the IdP metadata loaded on the SAML request page."></textarea>
+  </div>
+  <div class="saml-row">
+    <input type="button" class="saml-btn" value="Validate Signatures" onclick="return saml_response.validateSignatures();" title="Verify every enveloped XML digital signature the response carries, each on its own: the one on the &lt;Response&gt; and the one on the assertion (reference digests + SignatureValue), against the trusted IdP certificate(s) or each signature's KeyInfo, as chosen above. SAML 1.1 Browser/POST requires the Response to be signed." />
     <input class="saml-status saml-grow" type="text" id="saml_sig_status" readonly />
   </div>
   <div id="saml_sig_details"></div>

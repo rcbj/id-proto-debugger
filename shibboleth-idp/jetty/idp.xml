@@ -15,4 +15,6 @@
   <Set name="copyWebDir">false</Set>
   <Set name="copyWebInf">true</Set>
   <Set name="persistTempDirectory">false</Set>
+  <!-- The session cookie over plain HTTP; see the file itself. -->
+  <Set name="overrideDescriptor">/opt/jetty-base/etc/idp-override-web.xml</Set>
 </Configure>

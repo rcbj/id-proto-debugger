@@ -81,6 +81,21 @@ COPY shibboleth-idp/credentials/demo.htpasswd \
 COPY shibboleth-idp/metadata/debugger-saml11-sp.xml \
     ${IDP_HOME}/metadata/debugger-saml11-sp.xml
 
+# The SAML 1.1 metadata a deployment serving that protocol publishes, made
+# from the installer's SAML 2.0-only example (see the script for each edit).
+COPY shibboleth-idp/publish-saml11-metadata.sh /tmp/publish-saml11-metadata.sh
+RUN sh /tmp/publish-saml11-metadata.sh "${IDP_HOME}/metadata/idp-metadata.xml" \
+    && rm /tmp/publish-saml11-metadata.sh
+
+# Where the debugger's own SP metadata arrives at run time (#425). The
+# compose file mounts a volume here that the tests container also mounts;
+# tests/saml11_sso.js writes the page's SP metadata into it as
+# <SHA-1 of the entityID>.xml, which is the name the LocalDynamic provider
+# in conf/metadata-providers.xml looks for. Created here, owned by uid
+# 10001 below, so the empty named volume takes that ownership when it is
+# first mounted.
+RUN mkdir -p "${IDP_HOME}/metadata/sp"
+
 # The Jetty base: the modules the V4 IdP needs, HTTP on 8080, and a
 # context descriptor that deploys the war where the installer left it.
 RUN mkdir -p "${JETTY_BASE}/webapps" \
@@ -92,6 +107,9 @@ RUN mkdir -p "${JETTY_BASE}/webapps" \
         start.d/http.ini \
     && grep -q '^jetty.http.port=8080' start.d/http.ini
 COPY shibboleth-idp/jetty/idp.xml ${JETTY_BASE}/webapps/idp.xml
+# NOT in webapps/: Jetty would deploy any .xml there as a context.
+COPY shibboleth-idp/jetty/idp-override-web.xml \
+    ${JETTY_BASE}/etc/idp-override-web.xml
 
 # ---------------------------------------------------------------------------
 # NON-ROOT FROM HERE ON, uid/gid 10001 like every image this repository

@@ -49,7 +49,7 @@
 //
 // It needs no server, no browser and no network, so it never skips.
 //
-// ELEVEN SECTIONS:
+// THIRTEEN SECTIONS:
 //
 //   1. classification — which binding, from the blob alone, in five shapes
 //   2. the artifact — 2.0 type 0x0004 and both 1.1 types
@@ -64,6 +64,8 @@
 //  10. summarizeResponse() — both versions, the envelope, and a bare assertion
 //  11. requiredResponseSignature() — which signature SAML 1.1 Browser/POST
 //      requires, and a real Response signature in Shibboleth's shape
+//  12. trust — verifying against the IdP's published keys, not KeyInfo
+//  13. metadataExpiry() — validUntil, earliest bound wins
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -881,8 +883,8 @@ function anAssertionsPartsAreReadInBothVersions() {
 
   check('SAML 1.1 puts it in CHILD ELEMENTS, and there may be several',
       function () {
-    // saml-profile-1.1 section 4.1.1.4 requires cm:artifact for
-    // Browser/Artifact and 4.2.1.4 requires cm:bearer for Browser/POST. A
+    // sstc-saml-bindings-1.1 section 4.1.1.6 requires cm:artifact for
+    // Browser/Artifact and 4.1.2.5 requires cm:bearer for Browser/POST. A
     // reader that looks only for @Method reports the profile as unstated on
     // every 1.1 assertion, which in the 1.1 browser profiles is the whole of
     // what distinguishes the two.
@@ -1655,10 +1657,129 @@ function theSaml11ProfileDecidesTheResponseSignature() {
   log.debug("Leaving theSaml11ProfileDecidesTheResponseSignature().");
 }
 
+// ---------------------------------------------------------------------------
+// 12. TRUST: THE IDENTITY PROVIDER'S PUBLISHED KEYS, NOT THE DOCUMENT'S OWN.
+//
+// A certificate in KeyInfo came with the document, so verifying with it shows
+// the document was not altered and nothing about who signed it: a forged
+// response carrying its own certificate verifies. xmldsig's
+// verifyXmlSignatureTrusted() verifies against the metadata's signing
+// certificates, ANY of several (Shibboleth publishes a back-channel key first
+// and signs Browser/POST with the second), and splitCertificates() reads the
+// field a reader pastes them into.
+// ---------------------------------------------------------------------------
+function signaturesAreCheckedAgainstTrustedKeys() {
+  log.debug("Entering signaturesAreCheckedAgainstTrustedKeys().");
+  const bearer = 'urn:oasis:names:tc:SAML:1.0:cm:bearer';
+  const RSA = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
+  const idp = xd.generateKeyPair(2048, "front-channel");
+  const backChannel = xd.generateKeyPair(2048, "back-channel");
+  const attacker = xd.generateKeyPair(2048, "attacker");
+  function signWith(keyPair, id) {
+    log.debug("Entering signWith().");
+    log.debug("Leaving signWith().");
+    return xd.signEnveloped(response11For(id, bearer), {
+      privateKeyPem: keyPair.privateKeyPem, certPem: keyPair.certPem,
+      sigAlg: RSA, placement: 'first', refUri: '#' + id });
+  }
+  const trusted = [xd.certPemToB64(backChannel.certPem),
+                   xd.certPemToB64(idp.certPem)];
+  check('splitCertificates reads PEM blocks, blank-line-separated base64, ' +
+      'and drops duplicates', function () {
+    const a = xd.certPemToB64(idp.certPem);
+    const b = xd.certPemToB64(attacker.certPem);
+    assert.deepStrictEqual(
+        sm.splitCertificates(idp.certPem + '\n' + attacker.certPem), [a, b]);
+    const wrapped = (a.match(/.{1,64}/g) || []).join('\n');
+    assert.deepStrictEqual(
+        sm.splitCertificates(wrapped + '\n\n' + b + '\n\n' + a), [a, b]);
+    assert.deepStrictEqual(sm.splitCertificates('  \n '), []);
+  });
+  check('a response signed with the SECOND trusted key verifies, naming it',
+      function () {
+    const res = xd.verifyXmlSignatureTrusted(signWith(idp, '_t1'), trusted);
+    assert.ok(res.valid, JSON.stringify(res));
+    assert.strictEqual(res.trusted, true);
+    assert.strictEqual(res.trustedIndex, 1);
+    assert.strictEqual(res.trustedFingerprint,
+        xd.certFingerprint(idp.certPem));
+    assert.ok(/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/.test(res.trustedFingerprint),
+        res.trustedFingerprint);
+  });
+  check('a forged response carrying its OWN certificate verifies against ' +
+      'KeyInfo and NOT against the trusted keys', function () {
+    const forged = signWith(attacker, '_t2');
+    assert.strictEqual(xd.verifyXmlSignature(forged).valid, true,
+        'KeyInfo alone cannot tell a forgery from the real thing');
+    const res = xd.verifyXmlSignatureTrusted(forged, trusted);
+    assert.strictEqual(res.valid, false);
+    assert.strictEqual(res.trusted, false);
+    assert.strictEqual(res.untrustedSigner, true);
+    assert.strictEqual(res.keyInfoValid, true);
+    assert.ok(res.error.indexOf('none of the 2 trusted') >= 0, res.error);
+  });
+  check('a trusted key does not rescue an altered document, and an empty ' +
+      'trust list is refused by name', function () {
+    const altered = signWith(idp, '_t3')
+        .replace('samlp:Success', 'samlp:Requester');
+    const res = xd.verifyXmlSignatureTrusted(altered, trusted);
+    assert.strictEqual(res.valid, false);
+    assert.ok(!res.untrustedSigner, 'an altered document is not an ' +
+        'untrusted signer');
+    const none = xd.verifyXmlSignatureTrusted(signWith(idp, '_t4'), []);
+    assert.strictEqual(none.valid, false);
+    assert.ok(none.error.indexOf('No trusted certificate') >= 0, none.error);
+  });
+  log.debug("Leaving signaturesAreCheckedAgainstTrustedKeys().");
+}
+
+// ---------------------------------------------------------------------------
+// 13. METADATA EXPIRY: validUntil bounds the element and everything in it
+// (saml-metadata-2.0-os section 2.2.1), so the IdP descriptor expires at the
+// earliest validUntil on it or on anything enclosing it. Shibboleth's stock
+// example metadata is stamped with the instant it was generated.
+// ---------------------------------------------------------------------------
+function metadataExpiryIsTheEarliestBound() {
+  log.debug("Entering metadataExpiryIsTheEarliestBound().");
+  const now = new Date('2026-11-17T00:00:00Z');
+  function md(outer, inner) {
+    log.debug("Entering md().");
+    log.debug("Leaving md().");
+    return '<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"' +
+        (outer ? ' validUntil="' + outer + '"' : '') + '>' +
+      '<EntityDescriptor entityID="https://idp.example.test">' +
+        '<IDPSSODescriptor protocolSupportEnumeration="' +
+            'urn:oasis:names:tc:SAML:1.1:protocol"' +
+            (inner ? ' validUntil="' + inner + '"' : '') + '/>' +
+      '</EntityDescriptor></EntitiesDescriptor>';
+  }
+  check('metadata with no validUntil never expires', function () {
+    assert.deepStrictEqual(sm.metadataExpiry(md('', ''), now),
+        { validUntil: '', expired: false });
+  });
+  check('an expired enclosing EntitiesDescriptor expires the IdP descriptor',
+      function () {
+    const out = sm.metadataExpiry(md('2026-11-16T00:00:00Z',
+        '2030-01-01T00:00:00Z'), now);
+    assert.strictEqual(out.validUntil, '2026-11-16T00:00:00Z');
+    assert.strictEqual(out.expired, true);
+  });
+  check('the earliest bound wins, and a future one is not expired',
+      function () {
+    const out = sm.metadataExpiry(md('2031-01-01T00:00:00Z',
+        '2030-01-01T00:00:00Z'), now);
+    assert.strictEqual(out.validUntil, '2030-01-01T00:00:00Z');
+    assert.strictEqual(out.expired, false);
+  });
+  log.debug("Leaving metadataExpiryIsTheEarliestBound().");
+}
+
 function test() {
   log.debug("Entering test().");
   shibbolethAttributeNamesAreWhole();
   theSaml11ProfileDecidesTheResponseSignature();
+  signaturesAreCheckedAgainstTrustedKeys();
+  metadataExpiryIsTheEarliestBound();
   everyPastedShapeIsClassified();
   theSaml11RequestIsTheShibbolethProfile();
   theArtifactIsBytesAndNotAMessage();
