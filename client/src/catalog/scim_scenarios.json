@@ -1,0 +1,122 @@
+[
+  {
+    "id": "discovery",
+    "label": "Discovery — what does this server support?",
+    "takes": [],
+    "writes": false,
+    "what": "Reads the three documents a client should read before it sends anything: the ServiceProviderConfig, the ResourceTypes and the Schemas. Needs no scope anywhere, which is what makes it the right first thing to run against a server you have not met."
+  },
+  {
+    "id": "user-lifecycle",
+    "label": "One user, all the way round",
+    "takes": [
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "Create a user carrying every optional attribute RFC 7643 section 4.1 defines, read it back, replace it with a PUT, modify it with three PATCH operations, then delete it and confirm the id is gone. The read-back is the interesting step: what comes back is what the server actually STORED, and the difference from what was sent is the answer to \"does this field work\"."
+  },
+  {
+    "id": "provision-team",
+    "label": "Provision a team",
+    "takes": [
+      "userCount",
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "Create N users, create a group, add all of them to it in one PATCH, read the group back, remove one member, then tear the whole thing down. This is what a provisioning integration does on its first run, and the membership PATCH is where most of them are wrong: membership is a fact about the GROUP and is never changed through a User resource."
+  },
+  {
+    "id": "deprovision",
+    "label": "Deprovision — create N, then delete N",
+    "takes": [
+      "userCount",
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "The single most common thing a SCIM client is built to do and the least often tested. Each delete is followed by a read that expects a 404, because a delete that answers 204 and leaves the resource behind is a deprovisioning path that has never actually worked."
+  },
+  {
+    "id": "modify-sweep",
+    "label": "Modify a population",
+    "takes": [
+      "userCount",
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "Create N users and then PATCH every one of them three ways: replace a simple attribute, add a value to a multi-valued one, and remove a sub-attribute through a value filter path — emails[type eq \"home\"], which is the section 3.5.2 path grammar that a server treating a path as a property name gets wrong."
+  },
+  {
+    "id": "bulk",
+    "label": "Bulk — many operations, one request",
+    "takes": [
+      "userCount",
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "One BulkRequest that creates N users and a group whose members are those users, referenced as bulkId:name — the feature that makes a bulk more than a loop, because the group is created in the same request as the users it contains. Then one more bulk that deletes the lot."
+  },
+  {
+    "id": "paging",
+    "label": "Paging and sorting",
+    "takes": [
+      "userCount",
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "Create N users, then walk the list a page at a time with count and startIndex, sorted both ways. SCIM paging is 1-INDEXED — startIndex 1 is the first resource, not the second — which is the off-by-one every client written against a 0-indexed API brings with it."
+  },
+  {
+    "id": "filter-tour",
+    "label": "Every filter operator",
+    "takes": [
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "Create one user, then send all fourteen forms of RFC 7644 section 3.4.2.2 filter against it: the ten comparison operators, the three grouping ones, and a complex value filter. A server advertises filtering as one boolean, so this is the only way to find out which of them it really evaluates."
+  },
+  {
+    "id": "search-post",
+    "label": "Query by POST (/.search)",
+    "takes": [
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "The same queries as a POST body — per resource type and then across both at once, which the per-type endpoint cannot do. Note that attributes and excludedAttributes are ARRAYS in a SearchRequest and a comma-separated string in a query string; that asymmetry is in the specification and is why a /.search often returns everything when the caller asked for two fields."
+  },
+  {
+    "id": "enterprise",
+    "label": "The enterprise extension",
+    "takes": [
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "Create two users, set the second as the first's manager, and PATCH the section 4.3 extension attributes through their full URN paths — which is what makes an extension attribute different from a core one and is the part a client that has only sent core attributes has never exercised."
+  },
+  {
+    "id": "negatives",
+    "label": "The refusals",
+    "takes": [
+      "seed",
+      "prefix"
+    ],
+    "writes": true,
+    "what": "Every error this server can be made to produce on purpose: a refused userName, a duplicate one, an id that names nothing, a filter that cannot be parsed, a PATCH path that is not path grammar, and /Me. A client's error handling is the half that is never exercised, because a permissive server is hard to make say no — so these steps expect the refusal and FAIL if the server allows it."
+  },
+  {
+    "id": "scope-refusal",
+    "label": "Read scope cannot write",
+    "takes": [],
+    "writes": true,
+    "needsAuth": true,
+    "what": "Sends a write with a credential that carries only the read scope and expects a 403. It is the one scenario that asserts the access control policy rather than the protocol, so it needs a server with authentication turned on and a second, read-only credential configured in the pane above."
+  }
+]
