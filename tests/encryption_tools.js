@@ -109,6 +109,40 @@ function fieldId(prefix, name) {
   return 'enc_' + prefix + '_' + name;
 }
 
+// THE PLAINTEXT BOX'S "hex" CHECKBOX IS STATE THE PAGE CHANGES ON ITS OWN.
+// plaintextOut() ticks it whenever a decryption is not valid UTF-8, so the
+// next Encrypt reads the plaintext box as HEX. A wrong-key decryption that
+// happens to carry the 0x01 marker (about one time in 256, in an
+// unauthenticated mode) is exactly such a decryption — and on 2026-11-16 it
+// left the ffc box ticked, so elgamalSpecifics() pasted 300 'A's, the page
+// read 150 bytes, and a message that had to be refused was encrypted (#428).
+//
+// Sets the box, fires its change event, and returns what it was before, or
+// null when the pane has no such box.
+async function setHexBox(driver, prefix, on) {
+  log.debug("Entering setHexBox(). " + prefix + " " + on);
+  const before = await driver.executeScript(
+    "var box = document.getElementById(arguments[0]);" +
+    "if (!box) return null;" +
+    "var was = box.checked;" +
+    "if (was !== arguments[1]) {" +
+    "  box.checked = arguments[1];" +
+    "  box.dispatchEvent(new Event('change'));" +
+    "}" +
+    "return was;", fieldId(prefix, 'hex'), !!on);
+  log.debug("Leaving setHexBox(). Was " + before);
+  return before;
+}
+
+async function hexBoxIsOn(driver, prefix) {
+  log.debug("Entering hexBoxIsOn(). " + prefix);
+  const on = await driver.executeScript(
+    "var box = document.getElementById(arguments[0]);" +
+    "return !!(box && box.checked);", fieldId(prefix, 'hex'));
+  log.debug("Leaving hexBoxIsOn(). " + on);
+  return on;
+}
+
 async function setField(driver, prefix, name, text) {
   log.debug("Entering setField(). " + prefix + "." + name);
   const el = await driver.findElement(By.id(fieldId(prefix, name)));
@@ -958,11 +992,19 @@ async function anotherKeyDoesNotOpenIt(driver, pane, combination) {
     await pasteField(driver, pane.prefix, name, held[name]);
   }
   await setField(driver, pane.prefix, 'plaintext', "");
+  const hexBefore = await hexBoxIsOn(driver, pane.prefix);
   await clickButton(driver, pane.pane, 'Decrypt');
   const wrongKey = await waitForSettled(driver, pane.prefix,
     pane.name + " " + label + ": decrypting under the wrong key produced no " +
     "status", cryptoWait);
   const recovered = await getField(driver, pane.prefix, 'plaintext');
+  // Put the hex box back the way it was: a noise "decryption" ticks it (see
+  // setHexBox()), and a later section must not inherit that (#428).
+  const hexAfter = await setHexBox(driver, pane.prefix, hexBefore);
+  if (hexAfter !== null && hexAfter !== hexBefore) {
+    log.info("[" + pane.prefix + "] " + label + ": the page ticked the hex " +
+             "box for the wrong-key result; put it back.");
+  }
 
   if (authenticated) {
     assert.ok(/did not verify|length marker|error/i.test(wrongKey),
@@ -1011,6 +1053,12 @@ async function elgamalSpecifics(driver) {
 
   await clickButton(driver, 'pane_ffc', 'Generate Keys');
   await waitForSettled(driver, 'ffc', "no finite-field key pair", keyWait);
+  // 300 bytes of TEXT: the hex box off, whatever an earlier section left
+  // (#428 — ticked, the same 300 characters are 150 bytes, which fit).
+  await setHexBox(driver, 'ffc', false);
+  assert.strictEqual(await hexBoxIsOn(driver, 'ffc'), false,
+    "the ffc pane's hex box would not clear, so a 300-character message " +
+    "would be read as 150 bytes");
   await pasteField(driver, 'ffc', 'plaintext', 'A'.repeat(300));
   await clickButton(driver, 'pane_ffc', 'Encrypt');
   const tooLong = await waitForSettled(driver, 'ffc',
