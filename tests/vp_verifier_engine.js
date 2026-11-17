@@ -37,10 +37,15 @@
 //     chosen so that reading either one the wrong way gives a wrong answer;
 //     draft-ietf-oauth-status-list-21's own vectors (sections 4.1/4.2 and
 //     Appendix C.1 and C.3) and Bitstring Status List v1.0's Examples 1-3;
-//     a CWT as bytes, an HTML page and binary in the list's place; and the
+//     an HTML page and binary in the list's place; and the
 //     Status List Token's signer linked to the credential's issuer by each
 //     of section 11.3's routes (certificates from x509.js, keys and
 //     thumbprints from node), and the ways it is NOT;
+//   * CWT Status List Tokens (section 5.2, #471 E5) assembled byte by byte
+//     here and signed by node's ECDSA: VALID, INVALID, SUSPENDED, a bad
+//     signature, a sub mismatch and each structural MUST, by kid, x5chain
+//     and x5t; plus the draft's own section 5.2 CWT and its section 4.3 and
+//     Appendix C.1/C.2 CBOR StatusLists;
 //   * Data Integrity: the W3C's own eddsa-jcs-2022 vector, and credentials,
 //     VPs and status list credentials signed here in five suite/curve
 //     combinations (JCS written here, RDFC by jsonld).
@@ -63,7 +68,9 @@
 //   * OpenID4VP 1.0 Appendix B.3.2: the example SD-JWT VC's _sd array, its
 //     three Disclosures and their printed SHA-256 hashes (ibid.);
 //   * draft-ietf-oauth-status-list-21 sections 4.1/4.2 and Appendix C.1 and
-//     C.3 (tokenStatusSpecVectors());
+//     C.3 (tokenStatusSpecVectors()); its section 5.2 example CWT and the
+//     CBOR StatusLists of section 4.3 and Appendix C.1 and C.2
+//     (cwtStatusLists());
 //   * Bitstring Status List v1.0 Examples 1-3 (bitstringStatusLists());
 //   * the W3C eddsa-jcs-2022 test vector (cryptosuites()).
 // ---------------------------------------------------------------------------
@@ -1775,8 +1782,9 @@ async function tokenStatusLists(env) {
                                    payload: { sub: URI + "/typ" } });
   docs[URI + "/expired"] = listToken({ payload: { sub: URI + "/expired",
     iat: now - 7200, exp: now - 3600 } });
-  // A COSE_Sign1 in CWT tag 61 (RFC 8392 section 6), as BYTES: the CWT
-  // form of section 5.2, recognised and not verified.
+  // A COSE_Sign1 in CWT tag 61 (RFC 8392 section 6), as BYTES, which
+  // section 5.2 forbids, with no type and a signature that is not one: read
+  // as a CWT and failed for each (cwtStatusLists() has the correct ones).
   docs[URI + "/cwt"] = new Uint8Array(mdocIssuer.cbor(new mdocIssuer.Tag(61,
     new mdocIssuer.Tag(18, [mdocIssuer.cbor(new Map([[1, -7]])), new Map(),
       mdocIssuer.cbor(new Map([[2, URI + "/cwt"]])),
@@ -1822,9 +1830,9 @@ async function tokenStatusLists(env) {
   ok(/VALID/.test(checkById(r, "pid[0].status").detail));
   ok(/ttl 300s/.test(checkById(r, "pid[0].status.list").detail),
      "the ttl is reported: " + checkById(r, "pid[0].status.list").detail);
-  eq(seen.length && seen[0].accept, "application/statuslist+jwt",
-     "the list is asked for as application/statuslist+jwt, and NOT as the " +
-     "CWT form this Verifier does not verify");
+  eq(seen.length && seen[0].accept, "application/statuslist+jwt, " +
+     "application/statuslist+cwt", "both of section 8.1's media types are " +
+     "asked for, the CWT form being verified too (#471, E5)");
   eq(checkById(r, "pid[0].status.signer").status, "pass");
   ok(/the same key.*kid "iss-1"/.test(
     checkById(r, "pid[0].status.signer").detail),
@@ -1860,9 +1868,9 @@ async function tokenStatusLists(env) {
   r = await at({ idx: 3, uri: URI + "/missing" });
   failsOnly(r, ["pid[0].status.list", "status"], "a list that will not load");
   r = await at({ idx: 3, uri: URI + "/cwt" });
-  allPass(r, "a CWT Status List Token");
-  eq(checkById(r, "pid[0].status.list").status, "skip");
-  ok(/COSE_Sign1 \(CBOR, in CWT tag 61\).*CWT form/.test(
+  failsOnly(r, ["pid[0].status.list", "status"],
+            "a CWT in tag 61 with no type and a signature of 0x01s");
+  ok(/CWT tag \(61\).*MUST NOT.*no type \(16\).*does NOT verify/.test(
     checkById(r, "pid[0].status.list").detail),
      checkById(r, "pid[0].status.list").detail);
   r = await at({ idx: 3, uri: URI + "/hex" });
@@ -4152,6 +4160,344 @@ async function openid4vpSpecVectors(env) {
   log.debug("Leaving openid4vpSpecVectors().");
 }
 
+// ---------------------------------------------------------------------------
+// Status List Tokens in CWT form (draft-ietf-oauth-status-list-21 section
+// 5.2, #471 E5), each assembled HERE byte by byte with tests/
+// mdoc_test_issuer.js's CBOR encoder and signed by node's ECDSA over RFC
+// 9052 section 4.4's Sig_structure: COSE_Sign1_Tagged (18), type (16)
+// application/statuslist+cwt in the protected header, the kid (4), x5chain
+// (33) or x5t (34) naming the key, and the Claims Set 2/6/4/65534/65533.
+// Then the draft's own bytes: section 5.2's example CWT (signed by a key the
+// draft does not publish, so it must be read and NOT relied on), and the
+// CBOR StatusList encodings of section 4.3 and Appendix C.1 and C.2,
+// carried verbatim as claim 65533.
+// ---------------------------------------------------------------------------
+// Section 5.2's example, hex as printed.
+const TSL_52_CWT =
+    "d2845820a2012610781a6170706c69636174696f6e2f7374617475736c6973742b63" +
+    "7774a1044231325850a502782168747470733a2f2f6578616d706c652e636f6d2f73" +
+    "74617475736c697374732f31061a648c5bea041a8898dfea19fffe19a8c019fffda2" +
+    "646269747301636c73744a78dadbb918000217015d584093fa4d01032b18c35e2fe1" +
+    "101b77fd6cc9440022caa4694450c4e4e9feab4e99d1fa6d9772ce2bf3a12e0323de" +
+    "d7c982c5e101a5e67f0cbc1e2b6f57ce99c279";
+// Section 4.3's StatusList in CBOR: [0xb9, 0xa3], one bit each.
+const TSL_43_CBOR = "a2646269747301636c73744a78dadbb918000217015d";
+// Appendix C.1 (1-bit) and C.2 (2-bit), CBOR encoding, as printed.
+const TSL_C1_CBOR =
+    "a2646269747301636c737458bd78daeddc010dc0200c0041a88249400ad2903e0f4b" +
+    "ba00bd93f002beb7a2a2010000a91e09000000000000000000000000000000807296" +
+    "04000000000000000000000000000000000000000000000000000000000000000000" +
+    "000000000000005c6f4800000000000000fc2c240000000000000000000000be1b12" +
+    "000000000000000000ecaa4b000000000000000000000000000000009b0b09000000" +
+    "00000000000038de9400000000000000002a30cc010000000080642f0bd8011b";
+const TSL_C2_CBOR =
+    "a2646269747302636c737459013d78daeddb310d00211000412ea1a04004fe5520ed" +
+    "357c28c81d3312b6df68bc65480000000000406e2101000000000000000000000000" +
+    "0000000000000000000000000000000000000040795b020000000000000000000000" +
+    "00000000000000000000000000000000000000000000000000000000000000000000" +
+    "00000000000000000000000000000000000000000000000000000000000000000000" +
+    "0080f4ba0400000000000000000000000000406d764a000000000000000000000000" +
+    "000000000000000000e0922101000000000000000000000000000000000000fc1312" +
+    "00000000000000000000000000000000000000000000000000000000000000c0912e" +
+    "01000000000000000000000000000000000000c07d4b020000000000000000000000" +
+    "00000000a8614a0000000000000000000000406a1fcd60010c";
+
+// A CWT Status List Token. `o`: claims (a Map of overrides; a value of
+// undefined removes the claim), statusListRaw (CBOR bytes spliced in as
+// claim 65533 verbatim), prot / unprot (Maps merged over the defaults),
+// tags (default [18]), signer (a node private key), mac (a COSE_Mac0).
+function cwtStatusList(sub, signer, o) {
+  log.debug("Entering cwtStatusList().");
+  const opts = o || {};
+  const cbor = mdocIssuer.cbor;
+  const now = Math.floor(Date.now() / 1000);
+  const prot = new Map([[1, -7], [16, "application/statuslist+cwt"]]);
+  (opts.prot || new Map()).forEach(function (v, k) {
+    if (v === undefined) {
+      prot.delete(k);
+    } else {
+      prot.set(k, v);
+    }
+  });
+  const unprot = new Map([[4, Buffer.from("iss-1")]]);
+  (opts.unprot || new Map()).forEach(function (v, k) {
+    if (v === undefined) {
+      unprot.delete(k);
+    } else {
+      unprot.set(k, v);
+    }
+  });
+  const claims = new Map([[2, sub], [6, now - 60], [4, now + 3600],
+    [65534, 300], [65533, new Map([["bits", 2], ["lst", Buffer.from(
+      tokenStatusLst([1, 1, 1, 0, 2, 1, 1, 3], 2), "base64url")]])]]);
+  (opts.claims || new Map()).forEach(function (v, k) {
+    if (v === undefined) {
+      claims.delete(k);
+    } else {
+      claims.set(k, v);
+    }
+  });
+  let payload;
+  if (opts.statusListRaw) {
+    claims.delete(65533);
+    const entries = [];
+    claims.forEach(function (v, k) {
+      entries.push(cbor(k), cbor(v));
+    });
+    payload = Buffer.concat([Buffer.from([0xa0 + claims.size + 1])]
+      .concat(entries, [cbor(65533), opts.statusListRaw]));
+  } else {
+    payload = cbor(claims);
+  }
+  const protectedBytes = cbor(prot);
+  const sig = opts.mac ? Buffer.alloc(32, 9) : nodeCrypto.sign("sha256",
+    coseSigStructure(protectedBytes, payload),
+    { key: signer, dsaEncoding: "ieee-p1363" });
+  let out = [protectedBytes, unprot, payload, sig];
+  (opts.tags || (opts.mac ? [17] : [18])).slice().reverse()
+    .forEach(function (t) {
+      out = new mdocIssuer.Tag(t, out);
+    });
+  log.debug("Leaving cwtStatusList().");
+  return new Uint8Array(cbor(out));
+}
+
+async function cwtStatusLists(env) {
+  log.debug("Entering cwtStatusLists().");
+  const issuer = makeIssuer();
+  const fetchJson = function fetchJson(url) {
+    log.debug("Entering fetchJson(). " + url);
+    log.debug("Leaving fetchJson().");
+    return issuer.docs[url] ? Promise.resolve(issuer.docs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+  const now = Math.floor(Date.now() / 1000);
+  const URI = "https://issuer.example/statuslists/cwt";
+  const key = issuer.key.privateKey;
+  const docs = {};
+  const add = function add(name, o, signer) {
+    log.debug("Entering add(). " + name);
+    docs[URI + name] = cwtStatusList(URI + name, signer || key, o);
+    log.debug("Leaving add().");
+  };
+  add("");
+  add("/forged", null, ecPair().privateKey);
+  add("/wrongsub", { claims: new Map([[2, URI + "/elsewhere"]]) });
+  add("/expired", { claims: new Map([[6, now - 7200], [4, now - 3600]]) });
+  add("/noiat", { claims: new Map([[6, undefined]]) });
+  add("/tag61", { tags: [61, 18] });
+  add("/untagged", { tags: [] });
+  add("/notype", { prot: new Map([[16, undefined]]) });
+  add("/unprottype", { prot: new Map([[16, undefined]]),
+    unprot: new Map([[16, "application/statuslist+cwt"]]) });
+  add("/jwttype", { prot: new Map([[16, "application/statuslist+jwt"]]) });
+  add("/textlst", { claims: new Map([[65533, new Map([["bits", 2],
+    ["lst", tokenStatusLst([0], 2)]])]]) });
+  add("/badttl", { claims: new Map([[65534, 0]]) });
+  add("/mac", { mac: true });
+  add("/agg", { claims: new Map([[65533, new Map([["bits", 2],
+    ["lst", Buffer.from(tokenStatusLst([1, 1, 1, 0], 2), "base64url")],
+    ["aggregation_uri", "https://issuer.example/aggregation"]])]]) });
+  docs[URI + "/served"] = { body: cwtStatusList(URI + "/served", key),
+    contentType: "application/statuslist+cwt" };
+  docs[URI + "/served-wrong"] = { body: cwtStatusList(URI + "/served-wrong",
+    key), contentType: "application/octet-stream" };
+  // Section 4.3 and Appendix C.1/C.2's own CBOR, verbatim as claim 65533.
+  [["/s43", TSL_43_CBOR], ["/c1", TSL_C1_CBOR], ["/c2", TSL_C2_CBOR]]
+    .forEach(function (pair) {
+      add(pair[0], { statusListRaw: Buffer.from(pair[1], "hex") });
+    });
+  // Section 5.2's example: sub https://example.com/statuslists/1, kid
+  // "12", a key the draft never publishes.
+  const SPEC_URI = "https://example.com/statuslists/1";
+  docs[SPEC_URI] = new Uint8Array(Buffer.from(TSL_52_CWT, "hex"));
+  const seen = [];
+  const fetchText = textFetcher(docs, seen);
+  const holder = ecPair();
+  const clientId = verifier.clientIdFor("x509_hash", env.identity);
+  const session = { clientId: clientId, nonce: verifier.randomToken(),
+    responseMode: "direct_post", responseUri: "https://verifier.example/r",
+    dcql: verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+      vct: VCT, claims: [["given_name"]] }] }) };
+  async function at(idx, uri) {
+    log.debug("Entering at(). " + uri + " " + idx);
+    const cred = issueSdJwt(issuer, holder.publicJwk, { payload: { status:
+      { status_list: { idx: idx, uri: uri } } } });
+    const r = await run({ fields: { vp_token: { pid: [presentSdJwt(cred.jwt,
+      [cred.d.given_name], { aud: clientId, nonce: session.nonce,
+        key: holder })] } }, session: session, fetchJson: fetchJson,
+      fetchText: fetchText });
+    log.debug("Leaving at().");
+    return r;
+  }
+  const row = function row(r, id) {
+    log.debug("Entering row(). " + id);
+    log.debug("Leaving row().");
+    return checkById(r, "pid[0].status" + id);
+  };
+  // idx 3 is VALID, 4 SUSPENDED, 5 INVALID (LSB first).
+  let r = await at(3, URI);
+  allPass(r, "CWT: VALID");
+  eq([row(r, "").status, row(r, ".list").status, row(r, ".signer").status],
+     ["pass", "pass", "pass"]);
+  ok(row(r, ".list").detail.indexOf("a CWT (COSE_Sign1_Tagged, type " +
+     "application/statuslist+cwt), sub (2) is the credential's uri, " +
+     "signed (ES256, COSE -7)") === 0, row(r, ".list").detail);
+  ok(/ttl 300s/.test(row(r, ".list").detail), row(r, ".list").detail);
+  ok(/the same key.*kid "iss-1"/.test(row(r, ".signer").detail),
+     "the COSE kid (4) names the credential's key: " +
+     row(r, ".signer").detail);
+  eq(seen[0].accept, "application/statuslist+jwt, " +
+     "application/statuslist+cwt", "both forms are asked for (section 8.1)");
+  r = await at(5, URI);
+  failsOnly(r, ["pid[0].status", "status"], "CWT: INVALID");
+  ok(/is 1 \(INVALID\).*revoked/.test(row(r, "").detail), row(r, "").detail);
+  r = await at(4, URI);
+  failsOnly(r, ["pid[0].status", "status"], "CWT: SUSPENDED");
+  ok(/is 2 \(SUSPENDED\)/.test(row(r, "").detail), row(r, "").detail);
+  r = await at(40, URI);
+  failsOnly(r, ["pid[0].status", "status"], "CWT: idx past the end");
+  r = await at(3, URI + "/forged");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: a bad signature");
+  ok(/does NOT verify/.test(row(r, ".list").detail), row(r, ".list").detail);
+  eq([row(r, "").status, row(r, ".signer").status], ["skip", "skip"],
+     "CWT: an unverified list is neither relied on nor linked");
+  r = await at(3, URI + "/wrongsub");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: sub mismatch");
+  ok(row(r, ".list").detail.indexOf("sub (2) is \"" + URI +
+     "/elsewhere\", not the uri") !== -1, row(r, ".list").detail);
+  eq(row(r, "").status, "skip");
+  r = await at(3, URI + "/expired");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: expired (4)");
+  ok(/expired at/.test(row(r, ".list").detail));
+  r = await at(3, URI + "/noiat");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: no iat (6)");
+  r = await at(3, URI + "/tag61");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: in the CWT tag");
+  ok(/CWT tag \(61\), which section 5\.2 says it MUST NOT be/.test(
+    row(r, ".list").detail), row(r, ".list").detail);
+  r = await at(3, URI + "/untagged");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: untagged");
+  ok(/not tagged COSE_Sign1_Tagged \(18\)/.test(row(r, ".list").detail));
+  r = await at(3, URI + "/notype");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: no type (16)");
+  r = await at(3, URI + "/unprottype");
+  failsOnly(r, ["pid[0].status.list", "status"],
+            "CWT: type (16) unprotected");
+  ok(/unprotected header/.test(row(r, ".list").detail));
+  r = await at(3, URI + "/jwttype");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: the JWT's type");
+  r = await at(0, URI + "/textlst");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: lst as text");
+  ok(/byte string/.test(row(r, ".list").detail));
+  eq(row(r, "").status, "skip");
+  r = await at(3, URI + "/badttl");
+  failsOnly(r, ["pid[0].status.list", "status"], "CWT: ttl 0");
+  r = await at(3, URI + "/agg");
+  allPass(r, "CWT: an aggregation_uri");
+  ok(/aggregation_uri is https:\/\/issuer\.example\/aggregation/.test(
+    row(r, ".list").detail), row(r, ".list").detail);
+  r = await at(3, URI + "/mac");
+  allPass(r, "CWT: COSE_Mac0 is reported, not judged");
+  eq([row(r, ".list").status, row(r, "").status], ["skip", "skip"]);
+  ok(/COSE_Mac0/.test(row(r, ".list").detail), row(r, ".list").detail);
+  r = await at(3, URI + "/served");
+  allPass(r, "CWT: served as application/statuslist+cwt");
+  ok(!/served as/.test(row(r, ".list").detail));
+  r = await at(3, URI + "/served-wrong");
+  allPass(r, "CWT: served under another media type, reported");
+  ok(/served as application\/octet-stream, not application\/statuslist\+cwt/
+    .test(row(r, ".list").detail), row(r, ".list").detail);
+
+  // The draft's own CBOR StatusLists, as claim 65533.
+  const cases = [
+    ["/s43", 0, 1, "fail"], ["/s43", 1, 0, "pass"], ["/s43", 15, 1, "fail"],
+    ["/c1", 0, 1, "fail"], ["/c1", 1, 0, "pass"], ["/c1", 1993, 1, "fail"],
+    ["/c1", 25460, 1, "fail"], ["/c1", 1000345, 1, "fail"],
+    ["/c1", 1048575, 0, "pass"],
+    ["/c2", 0, 1, "fail"], ["/c2", 1993, 2, "fail"], ["/c2", 2, 0, "pass"],
+    ["/c2", 159495, 3, "skip"], ["/c2", 1000345, 3, "skip"],
+    ["/c2", 645645, 2, "fail"]
+  ];
+  for (const c of cases) {
+    r = await at(c[1], URI + c[0]);
+    const what = "CWT " + c[0] + "[" + c[1] + "]";
+    eq(row(r, ".list").status, "pass", what + ": " + row(r, ".list").detail);
+    eq(row(r, "").status, c[3], what + ": " + row(r, "").detail);
+    ok(row(r, "").detail.indexOf(" is " + c[2] + " (") !== -1,
+       what + " is " + c[2] + " in the draft: " + row(r, "").detail);
+  }
+
+  // Section 5.2's example, read as printed. Everything but the signature
+  // checks out (it expires in 2042); the key behind kid "12" is not
+  // published, so the value is reported and not relied on.
+  r = await at(0, SPEC_URI);
+  failsOnly(r, ["pid[0].status.list", "status"],
+            "section 5.2's example: no published key");
+  ok(/^the CWT Status List Token: the signature does NOT verify with /.test(
+    row(r, ".list").detail) && !/sub|type|tag|iat|ttl/.test(
+    row(r, ".list").detail.split("verify with")[0]), row(r, ".list").detail);
+  eq(row(r, "").status, "skip");
+  ok(row(r, "").detail.indexOf("idx 0 of " + SPEC_URI + " is 1 " +
+     "(INVALID), but the Status List Token did not verify") === 0,
+     row(r, "").detail);
+
+  // mso_mdoc: the CWT names the credential's document signer by x5chain
+  // (33), and by x5t (34) over SHA-256 (-16) — section 11.3's COSE routes.
+  const auth = await mdocIssuer.authority("cwt");
+  const mdocUri = "https://issuer.example/statuslists/mdoc-cwt";
+  const one = function one(name, o, signer) {
+    log.debug("Entering one(). " + name);
+    log.debug("Leaving one().");
+    return cwtStatusList(mdocUri + name, signer || auth.dsKey,
+      Object.assign({ unprot: new Map([[4, undefined]]) }, o));
+  };
+  const mdocDocs = {};
+  mdocDocs[mdocUri] = one("", { prot: new Map([[33, auth.dsDer]]) });
+  mdocDocs[mdocUri + "/x5t"] = one("/x5t", { prot: new Map([[34, [-16,
+    nodeCrypto.createHash("sha256").update(auth.dsDer).digest()]]]) });
+  mdocDocs[mdocUri + "/forged"] = one("/forged",
+    { prot: new Map([[33, auth.dsDer]]) }, ecPair().privateKey);
+  const device = ecPair();
+  const nonce = verifier.randomToken();
+  const mSession = { nonce: nonce, responseMode: "dc_api", origin: ORIGIN,
+    trustAnchors: [auth.iacaPem],
+    dcql: verifier.buildDcql({ queries: [{ id: "mdl", format: "mso_mdoc",
+      doctype: mdocIssuer.DOCTYPE, claims: [[mdocIssuer.NS,
+                                             "given_name"]] }] }) };
+  async function mdocAt(status) {
+    log.debug("Entering mdocAt().");
+    const cred = issueMdocHere(auth, device.publicJwk,
+                               { given_name: "Erika" }, status);
+    const res = await run({ fields: { vp_token: { mdl: [deviceResponseHere(
+      cred, device, dcTranscript(ORIGIN, nonce, null))] } },
+      session: mSession, fetchText: textFetcher(mdocDocs) });
+    log.debug("Leaving mdocAt().");
+    return res;
+  }
+  r = await mdocAt({ idx: 3, uri: mdocUri });
+  allPass(r, "mdoc, a CWT list by x5chain, VALID");
+  eq(checkById(r, "mdl[0].status").status, "pass");
+  ok(/the same key.*the same x5c/.test(
+    checkById(r, "mdl[0].status.signer").detail),
+     checkById(r, "mdl[0].status.signer").detail);
+  r = await mdocAt({ idx: 5, uri: mdocUri });
+  failsOnly(r, ["mdl[0].status", "status"], "mdoc, a CWT list, INVALID");
+  r = await mdocAt({ idx: 3, uri: mdocUri + "/x5t" });
+  allPass(r, "mdoc, a CWT list by x5t (SHA-256)");
+  ok(/x5t#S256 that is the credential's leaf/.test(
+    checkById(r, "mdl[0].status.signer").detail),
+     checkById(r, "mdl[0].status.signer").detail);
+  r = await mdocAt({ idx: 3, uri: mdocUri + "/forged" });
+  failsOnly(r, ["mdl[0].status.list", "status"],
+            "mdoc, a CWT list not signed by its x5chain's key");
+  log.info("PASS CWT Status List Tokens (section 5.2): VALID, INVALID, " +
+           "SUSPENDED, every defect of the CWT, a COSE_Mac0, section " +
+           "5.2's example and the CBOR vectors of section 4.3 and " +
+           "Appendix C.1/C.2, for dc+sd-jwt and mso_mdoc.");
+  log.debug("Leaving cwtStatusLists().");
+}
+
 async function main() {
   log.debug("Entering main().");
   randomTokens();
@@ -4168,6 +4514,7 @@ async function main() {
   await openid4vpSpecVectors(env);
   await tokenStatusLists(env);
   await tokenStatusSpecVectors(env);
+  await cwtStatusLists(env);
   await statusSignerLinks(env);
   await bitstringStatusLists(env);
   await cryptosuites(env);
@@ -4183,10 +4530,10 @@ async function main() {
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 1300, "only " + assertions + " assertions ran; " +
-            "expected at least 1300");
-  assert.ok(checksSeen >= 4900, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 4900");
+  assert.ok(assertions >= 1440, "only " + assertions + " assertions ran; " +
+            "expected at least 1440");
+  assert.ok(checksSeen >= 5700, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 5700");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }

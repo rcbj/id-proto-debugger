@@ -140,9 +140,27 @@ them:
 * **dc+sd-jwt and mso_mdoc: the IETF Token Status List**
   (draft-ietf-oauth-status-list-21).
   * The Status List Token is fetched with `Accept:
-    application/statuslist+jwt`. The CWT form is not asked for, because it
-    is not verified. `typ` is compared as a media type (RFC 7515 section
-    4.1.9), so `application/statuslist+jwt` and any letter case pass.
+    application/statuslist+jwt, application/statuslist+cwt` (section 8.1),
+    and both forms are verified. In the JWT form (section 5.1) `typ` is
+    compared as a media type (RFC 7515 section 4.1.9), so
+    `application/statuslist+jwt` and any letter case pass.
+  * The CWT form (section 5.2) is a COSE_Sign1 decoded with `cbor.js` and
+    verified in pure JavaScript by `mdoc.verifyCoseSignature()` over RFC
+    9052's Sig_structure. It FAILs when it is not tagged
+    COSE_Sign1_Tagged (18), when it is tagged with the CWT tag (61, which
+    section 5.2 forbids), and when the protected header's type (16) is
+    missing or is not `application/statuslist+cwt`. An integer type is a
+    CoAP Content-Format, whose number section 14.8 still leaves TBD, so it
+    is reported and not judged. The claims are `2` (sub, which must be the
+    credential's uri), `6` (iat, required), `4` (exp), `5` (nbf), `65534`
+    (ttl, reported) and `65533`, the section 4.3 map whose `lst` is a byte
+    string; an `aggregation_uri` there is reported. The key is named by
+    the COSE `kid` (4), `x5chain` (33) or `x5t` (34, SHA-256 or SHA-1),
+    read into the same header the JWT path uses, so the key order and the
+    `.signer` row below are the same for both forms. A COSE_Mac0 (tag 17)
+    is SKIP: it needs a key shared with the Status Issuer, and none is held.
+    A Content-Type other than the form's media type is reported (section
+    8.2).
   * Its signature is checked with **the first key that verifies**, in this
     order: the credential issuer's own key when the token references it
     (the same `x5c`, an `x5t` or `x5t#S256` of the credential's leaf, or the
@@ -161,15 +179,17 @@ them:
     names it too.
   * `lst` is decompressed (zlib, with the browser's `DecompressionStream`).
     Entry 0 is in the least significant bits of byte 0. The tests read the
-    draft's own vectors (sections 4.1 and 4.2, Appendix C.1 and C.3).
+    draft's own vectors (sections 4.1 and 4.2, Appendix C.1 and C.3), the
+    CBOR StatusLists of section 4.3 and Appendix C.1 and C.2 inside a CWT,
+    and section 5.2's example CWT, which is read and not relied on because
+    the draft does not publish its key.
   * VALID is PASS, INVALID and SUSPENDED are FAIL. Any other value is SKIP
     and shown: 0x03 and 0x0C to 0x0F are application-specific (section
     7.1), and the rest are reserved for future registration.
-  * A body that is not a compact JWS is reported as what it is. A
-    COSE_Sign1 (detected by decoding the CBOR) is SKIP: recognised, not
-    verified. An HTML page, other binary data or other text is FAIL. The
-    page hands the body over as bytes, so a binary CWT is not mangled into
-    text.
+  * A body that is neither a compact JWS nor a COSE structure (detected by
+    decoding the CBOR, never by its first byte) is reported as what it is:
+    an HTML page, other binary data or other text is FAIL. The page hands
+    the body over as bytes, so a binary CWT is not mangled into text.
   * Status mechanisms other than `status_list`, such as an mdoc's
     `identifier_list`, are reported as SKIP by name, never as "no status".
 * **jwt_vc_json and ldp_vc: the W3C Bitstring Status List**, one row per

@@ -37,8 +37,10 @@
 // (Appendix A); the four DCQL formats; the IETF Token Status List and the
 // W3C Bitstring Status List; and the Data Integrity cryptosuites bbs-2023,
 // ecdsa-rdfc-2019, ecdsa-jcs-2019, eddsa-rdfc-2022 and eddsa-jcs-2022.
-// What it does not verify (ecdsa-sd-2023, a CWT Status List Token) is a
-// "skip" that says so, never a pass.
+// Status List Tokens are read in both forms, the JWT and the CWT
+// (draft-ietf-oauth-status-list-21 sections 5.1 and 5.2). What it does not
+// verify (ecdsa-sd-2023, a status list behind a COSE_Mac0) is a "skip" that
+// says so, never a pass.
 //
 // No DOM: tests/vp_verifier_engine.js drives all of it in node.
 // ---------------------------------------------------------------------------
@@ -73,6 +75,7 @@ var joseJwe = require("./jose_jwe");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 var mdoc = require("./mdoc");
+var coseLib = require("./cose");
 var bbs2023 = require("./bbs2023");
 var didLib = require("./did");
 var jsonld = require("jsonld");
@@ -113,11 +116,31 @@ var DC_API_PROTOCOLS = {
 var ORIGIN_PREFIX = "origin:";
 var VERIFIER_ATTESTATION_TYP = "verifier-attestation+jwt";
 var STATUS_LIST_TYP = "statuslist+jwt";
-// draft-ietf-oauth-status-list-21 section 8.1 defines two media types. Only
-// the JWT form is verified here (the CWT form is recognised and reported),
-// so only the JWT form is asked for: advertising a form this Verifier
-// cannot check would invite a list it then cannot use.
-var STATUS_LIST_ACCEPT = "application/statuslist+jwt";
+// draft-ietf-oauth-status-list-21 section 5.2: the CWT form's protected
+// header type (16), RFC 9596.
+var STATUS_LIST_CWT_TYPE = "application/statuslist+cwt";
+// Section 8.1 defines two media types for content negotiation, and both
+// forms are verified here (#471, E5), so both are asked for.
+var STATUS_LIST_ACCEPT = "application/statuslist+jwt, " +
+    STATUS_LIST_CWT_TYPE;
+// The CWT Claims Set keys section 5.2 names (RFC 8392 section 4 and this
+// draft's section 14.3), and the COSE header labels a Status List Token's
+// key is named by (RFC 9052 section 3.1, RFC 9360 section 2).
+var CWT_ISS = 1;
+var CWT_SUB = 2;
+var CWT_EXP = 4;
+var CWT_NBF = 5;
+var CWT_IAT = 6;
+var CWT_STATUS_LIST = 65533;
+var CWT_TTL = 65534;
+var COSE_HDR_ALG = 1;
+var COSE_HDR_KID = 4;
+var COSE_HDR_TYP = 16;
+var COSE_HDR_X5CHAIN = 33;
+var COSE_HDR_X5T = 34;
+// RFC 9360's x5t is [hash alg, hash]; the two a JOSE header also has.
+var COSE_X5T_SHA256 = -16;
+var COSE_X5T_SHA1 = -14;
 // draft-ietf-oauth-status-list-21 section 7.1: the registered values.
 var TOKEN_STATUS_NAMES = { 0: "VALID", 1: "INVALID", 2: "SUSPENDED" };
 // Ibid.: "The Status Type value 0x03 and Status Type values in the range
@@ -1461,27 +1484,38 @@ function keyCandidates(found, header) {
 // set by keyCandidates(), trying each candidate until one verifies.
 function verifyFound(compact, found, header) {
   log.debug("Entering verifyFound().");
+  log.debug("Leaving verifyFound().");
+  return verifyFoundBy(function (key) {
+    return verifyCompact(compact, key);
+  }, found, header);
+}
+
+// The same, for any signed thing: `verifyOne(key)` answers { valid, reason }
+// for one key (a PEM certificate or { jwk }), so a CWT Status List Token is
+// held to exactly the key choice a JWT one is (#471, E5).
+function verifyFoundBy(verifyOne, found, header) {
+  log.debug("Entering verifyFoundBy().");
   if (typeof found.key === "string" || (found.key && found.key.jwk &&
       !found.candidates)) {
-    log.debug("Leaving verifyFound(). One key.");
-    return verifyCompact(compact, found.key);
+    log.debug("Leaving verifyFoundBy(). One key.");
+    return verifyOne(found.key);
   }
   var picked = keyCandidates(found, header);
   if (picked.error) {
-    log.debug("Leaving verifyFound(). No candidate.");
+    log.debug("Leaving verifyFoundBy(). No candidate.");
     return { valid: false, reason: picked.error };
   }
   var reasons = [];
   for (var i = 0; i < picked.list.length; i++) {
-    var v = verifyCompact(compact, { jwk: picked.list[i].jwk });
+    var v = verifyOne({ jwk: picked.list[i].jwk });
     if (v.valid) {
-      log.debug("Leaving verifyFound(). Candidate " + i + ".");
+      log.debug("Leaving verifyFoundBy(). Candidate " + i + ".");
       return { valid: true, reason: "", used: picked.list[i].ids[0] || "",
                tried: picked.list.length };
     }
     reasons.push(v.reason);
   }
-  log.debug("Leaving verifyFound(). None verifies.");
+  log.debug("Leaving verifyFoundBy(). None verifies.");
   return { valid: false, reason: picked.list.length > 1 ? "none of the " +
            picked.list.length + " candidate keys verifies it" +
            (header && header.kid ? "" : " (the header has no kid, so each " +
@@ -2313,7 +2347,10 @@ function statusBody(fetched) {
 // A COSE_Sign1 found by DECODING the bytes, not by guessing from the first
 // one: RFC 9052 section 4.2's four-element array [protected bstr,
 // unprotected map, payload, signature bstr], tagged 18 or not, and RFC 8392
-// section 6's CWT tag 61 around it. Null when the bytes are not that.
+// section 6's CWT tag 61 around it — or a COSE_Mac0 (section 6.2, tag 17),
+// the same shape with a tag in place of the signature, which
+// draft-ietf-oauth-status-list-21 section 5.2 also allows. Null when the
+// bytes are not that. `parts` is the four elements, `mac` says which.
 function coseSign1Of(raw) {
   log.debug("Entering coseSign1Of().");
   if (!raw || !raw.length) {
@@ -2336,14 +2373,15 @@ function coseSign1Of(raw) {
       v[1] instanceof Map && v[3] instanceof Uint8Array &&
       (v[2] === null || v[2] instanceof Uint8Array);
   var tagsOk = tags.every(function (t) {
-    return t === 18 || t === 61;
+    return t === 17 || t === 18 || t === 61;
   });
-  if (!shaped || !tagsOk) {
+  var mac = tags.indexOf(17) !== -1;
+  if (!shaped || !tagsOk || (mac && tags.indexOf(18) !== -1)) {
     log.debug("Leaving coseSign1Of(). Not a COSE_Sign1.");
     return null;
   }
   log.debug("Leaving coseSign1Of(). Tags " + tags.join(","));
-  return { tags: tags };
+  return { tags: tags, parts: v, mac: mac };
 }
 
 // What a body that is not a compact JWS actually is, said plainly: a
@@ -2357,8 +2395,9 @@ function describeStatusBody(body) {
       (body.text !== null ? new TextEncoder().encode(body.text) : null);
   var cose = coseSign1Of(raw);
   if (cose) {
-    log.debug("Leaving describeStatusBody(). COSE_Sign1.");
-    return { kind: "cose", detail: "a COSE_Sign1 (CBOR" +
+    log.debug("Leaving describeStatusBody(). COSE.");
+    return { kind: "cose", cose: cose, type: type, detail: "a " +
+      (cose.mac ? "COSE_Mac0" : "COSE_Sign1") + " (CBOR" +
       (cose.tags.indexOf(61) !== -1 ? ", in CWT tag 61" : "") + ")" +
       served };
   }
@@ -2559,7 +2598,10 @@ function credentialIssuerKey(issuer) {
 //      not verify (an https iss with no jwt-vc-issuer metadata), unless the
 //      token carries an x5c, which names exactly one key.
 // `how` says which verified: "credential" or "own".
-async function statusListSignature(compact, h, p, issuer) {
+//
+// `verifyOne(key)` checks the token's own signature with one key: a JWS's
+// or a COSE_Sign1's (#471, E5), so both forms take the same keys.
+async function statusListSignature(verifyOne, h, p, issuer) {
   log.debug("Entering statusListSignature().");
   var ctx = issuer.ctx;
   var own = (isArray(h.x5c) && h.x5c.length > 0) ||
@@ -2593,8 +2635,9 @@ async function statusListSignature(compact, h, p, issuer) {
       credentialSigningKey(found.key, issuer.header || {});
     // The credential's key is named by the CREDENTIAL's kid, the list's
     // own by the list's.
-    var v = signing ? verifyCompact(compact, signing) :
-      verifyFound(compact, found, how === "own" ? h : issuer.header || {});
+    var v = signing ? verifyOne(signing) :
+      verifyFoundBy(verifyOne, found, how === "own" ? h :
+                    issuer.header || {});
     if (v.valid) {
       var why = how === "own" ? "" : ref ? ", which the list references " +
         "by " + ref : !own ? " (the list names no key of its own)" :
@@ -2647,7 +2690,7 @@ function credentialSigningKey(key, ih) {
 // usage" (section 10's id-kp-oauthStatusSigning). Anything else is NOT
 // linked, and says so as a SKIP: a signature that verifies with a key
 // nobody tied to the issuer is not a PASS.
-async function statusSignerLink(compact, h, p, issuer, sig) {
+async function statusSignerLink(verifyOne, h, p, issuer, sig) {
   log.debug("Entering statusSignerLink().");
   if (!sig.valid) {
     log.debug("Leaving statusSignerLink(). No signature.");
@@ -2663,7 +2706,7 @@ async function statusSignerLink(compact, h, p, issuer, sig) {
   }
   var single = credKey ? credentialSigningKey(credKey.key,
                                               issuer.header || {}) : null;
-  if (single && verifyCompact(compact, single).valid) {
+  if (single && verifyOne(single).valid) {
     log.debug("Leaving statusSignerLink(). Same key.");
     return { status: PASS, detail: "the same key: the list is signed with " +
       "the key the credential was signed with" + (sig.ref ?
@@ -2746,6 +2789,226 @@ function tokenStatusName(value) {
   return name;
 }
 
+// ---------------------------------------------------------------------------
+// The two forms of a Status List Token, read into the one shape the checks
+// in checkTokenStatus() share: { form, header, payload, statusList: { bits,
+// lst, aggregationUri }, lstBytes(), verify(key), problems, notes, summary }.
+// `header` is JOSE-shaped for both (alg, kid, x5c, x5t, x5t#S256), so the
+// key choice and the signer link (section 11.3) are one implementation;
+// `verify(key)` checks the token's own signature with one key.
+// ---------------------------------------------------------------------------
+
+// Section 5.1. Throws when the compact JWS will not decode.
+function readJwtStatusToken(compact) {
+  log.debug("Entering readJwtStatusToken().");
+  var list = decodeJwt(compact);
+  var h = list.header || {};
+  var p = list.payload || {};
+  var problems = [];
+  var notes = [];
+  if (mediaTypeOfTyp(h.typ) !== mediaTypeOfTyp(STATUS_LIST_TYP)) {
+    problems.push("typ is " + JSON.stringify(h.typ) + ', not "' +
+                  STATUS_LIST_TYP + '" (or "application/' +
+                  STATUS_LIST_TYP + '", RFC 7515 section 4.1.9)');
+  } else if (h.typ !== STATUS_LIST_TYP) {
+    notes.push("typ " + JSON.stringify(h.typ) + " is " + STATUS_LIST_TYP +
+               " by RFC 7515 section 4.1.9's comparison");
+  }
+  var sl = isPlainObject(p.status_list) ? p.status_list : {};
+  log.debug("Leaving readJwtStatusToken().");
+  return {
+    form: "JWT", mediaType: "application/" + STATUS_LIST_TYP, header: h,
+    payload: p, problems: problems, notes: notes,
+    statusList: { bits: sl.bits, lst: typeof sl.lst === "string" ?
+      sl.lst : null, aggregationUri: sl.aggregation_uri },
+    lstBytes: function lstBytes() {
+      log.debug("Entering lstBytes(). JWT.");
+      log.debug("Leaving lstBytes().");
+      return bytes.b64uToBytes(sl.lst);
+    },
+    verify: function verify(key) {
+      log.debug("Entering verify(). JWT.");
+      log.debug("Leaving verify().");
+      return verifyCompact(compact, key);
+    },
+    unreadable: "status_list must carry bits (1, 2, 4 or 8) and lst; it " +
+      "has bits " + JSON.stringify(sl.bits),
+    summary: "typ " + STATUS_LIST_TYP + ", sub is the credential's uri, " +
+      "signed (" + h.alg + ")"
+  };
+}
+
+// A COSE header parameter, from the protected bucket first (RFC 9052
+// section 3: a label appears in one bucket only).
+function coseHeaderParam(prot, unprot, label) {
+  log.debug("Entering coseHeaderParam(). " + label);
+  log.debug("Leaving coseHeaderParam().");
+  return prot.has(label) ? prot.get(label) :
+    unprot instanceof Map ? unprot.get(label) : undefined;
+}
+
+// A COSE kid (a byte string) as the text a JOSE kid would be, or its hex
+// when it is not UTF-8.
+function coseKidText(kid) {
+  log.debug("Entering coseKidText().");
+  if (typeof kid === "string") {
+    log.debug("Leaving coseKidText(). Text.");
+    return kid;
+  }
+  var b = bytes.asBytes(kid);
+  try {
+    var text = new TextDecoder("utf-8", { fatal: true }).decode(b);
+    log.debug("Leaving coseKidText(). UTF-8.");
+    return text;
+  } catch (e) {
+    log.debug("Leaving coseKidText(). Hex.");
+    return Array.prototype.map.call(b, function (x) {
+      return (x < 16 ? "0" : "") + x.toString(16);
+    }).join("");
+  }
+}
+
+// Section 5.2: a CWT (RFC 8392) in a COSE_Sign1_Tagged (18), never in the
+// CWT tag (61); type (16) application/statuslist+cwt in the protected
+// header; the Claims Set's 2 (subject), 6 (issued at), 4 (expiration),
+// 65534 (time to live) and 65533 (the section 4.3 StatusList map, whose lst
+// is a byte string). The key is named by RFC 9052's kid (4) or RFC 9360's
+// x5chain (33) and x5t (34), which section 11.3 lists for COSE. Throws when
+// the structure cannot be read at all.
+function readCwtStatusToken(cose) {
+  log.debug("Entering readCwtStatusToken().");
+  var parts = cose.parts;
+  var problems = [];
+  var notes = [];
+  if (cose.tags.indexOf(18) === -1) {
+    problems.push("it is not tagged COSE_Sign1_Tagged (18), which section " +
+                  "5.2 requires");
+  }
+  if (cose.tags.indexOf(61) !== -1) {
+    problems.push("it is tagged with RFC 8392's CWT tag (61), which " +
+                  "section 5.2 says it MUST NOT be");
+  }
+  var prot;
+  try {
+    prot = parts[0].length ? cbor.decode(parts[0]) : new Map();
+  } catch (e) {
+    log.debug("Leaving readCwtStatusToken(). Bad protected header.");
+    throw new Error("its protected header is not CBOR: " + e.message);
+  }
+  if (!(prot instanceof Map)) {
+    log.debug("Leaving readCwtStatusToken(). Protected not a map.");
+    throw new Error("its protected header is not a CBOR map.");
+  }
+  var unprot = parts[1];
+  var typ = prot.get(COSE_HDR_TYP);
+  if (typ === undefined) {
+    problems.push(unprot.has(COSE_HDR_TYP) ? "its type (16) is in the " +
+      "unprotected header, and section 5.2 puts it in the protected one" :
+      "its protected header carries no type (16); section 5.2 requires " +
+      STATUS_LIST_CWT_TYPE);
+  } else if (typeof typ === "number") {
+    notes.push("type (16) is the CoAP Content-Format " + typ + ", and " +
+               "section 14.8's number is still TBD, so it is reported and " +
+               "not judged");
+  } else if (String(typ).trim().toLowerCase() !== STATUS_LIST_CWT_TYPE) {
+    problems.push("type (16) is " + JSON.stringify(typ) + ', not "' +
+                  STATUS_LIST_CWT_TYPE + '"');
+  } else if (typ !== STATUS_LIST_CWT_TYPE) {
+    notes.push("type " + JSON.stringify(typ) + " is " +
+               STATUS_LIST_CWT_TYPE + " compared as a media type");
+  }
+  var alg = coseHeaderParam(prot, unprot, COSE_HDR_ALG);
+  if (alg !== undefined && !prot.has(COSE_HDR_ALG)) {
+    notes.push("alg (1) is in the unprotected header (RFC 9052 section " +
+               "3.1 asks for the protected one)");
+  }
+  var h = { alg: cose.mac ? "MAC" : coseAlgName(alg) };
+  var kid = coseHeaderParam(prot, unprot, COSE_HDR_KID);
+  if (kid instanceof Uint8Array || typeof kid === "string") {
+    h.kid = coseKidText(kid);
+  }
+  var chain = coseHeaderParam(prot, unprot, COSE_HDR_X5CHAIN);
+  chain = chain instanceof Uint8Array ? [chain] : isArray(chain) ? chain : [];
+  if (chain.length && chain.every(function (c) {
+    return c instanceof Uint8Array;
+  })) {
+    h.x5c = chain.map(function (c) {
+      return bytes.bytesToB64(c);
+    });
+  }
+  var x5t = coseHeaderParam(prot, unprot, COSE_HDR_X5T);
+  if (isArray(x5t) && x5t[1] instanceof Uint8Array) {
+    if (x5t[0] === COSE_X5T_SHA256) {
+      h["x5t#S256"] = bytes.bytesToB64u(x5t[1]);
+    } else if (x5t[0] === COSE_X5T_SHA1) {
+      h.x5t = bytes.bytesToB64u(x5t[1]);
+    } else {
+      notes.push("its x5t (34) uses hash " + JSON.stringify(x5t[0]) +
+                 ", which this debugger does not match against a " +
+                 "certificate");
+    }
+  }
+  if (!(parts[2] instanceof Uint8Array)) {
+    log.debug("Leaving readCwtStatusToken(). Detached payload.");
+    throw new Error("its payload is detached (null), and a CWT carries " +
+                    "its Claims Set as the payload (RFC 8392 section 7.1).");
+  }
+  var claims;
+  try {
+    claims = cbor.decode(parts[2]);
+  } catch (e) {
+    log.debug("Leaving readCwtStatusToken(). Bad Claims Set.");
+    throw new Error("its payload is not CBOR: " + e.message);
+  }
+  if (!(claims instanceof Map)) {
+    log.debug("Leaving readCwtStatusToken(). Claims Set not a map.");
+    throw new Error("its payload is not a CWT Claims Set (a CBOR map).");
+  }
+  var p = {};
+  [["iss", CWT_ISS], ["sub", CWT_SUB], ["exp", CWT_EXP], ["nbf", CWT_NBF],
+   ["iat", CWT_IAT], ["ttl", CWT_TTL]].forEach(function (pair) {
+    if (claims.has(pair[1])) p[pair[0]] = claims.get(pair[1]);
+  });
+  var sl = claims.get(CWT_STATUS_LIST);
+  sl = sl instanceof Map ? sl : new Map();
+  var lst = sl.get("lst") instanceof Uint8Array ? sl.get("lst") : null;
+  var name = cose.mac ? "COSE_Mac0" : "COSE_Sign1";
+  log.debug("Leaving readCwtStatusToken().");
+  return {
+    form: "CWT", mediaType: STATUS_LIST_CWT_TYPE, header: h, payload: p,
+    problems: problems, notes: notes,
+    statusList: { bits: sl.get("bits"), lst: lst,
+                  aggregationUri: sl.get("aggregation_uri") },
+    lstBytes: function lstBytes() {
+      log.debug("Entering lstBytes(). CWT.");
+      log.debug("Leaving lstBytes().");
+      return lst;
+    },
+    verify: function verify(key) {
+      log.debug("Entering verify(). CWT.");
+      var v = mdoc.verifyCoseSignature(alg, key,
+        mdoc.sigStructure(parts[0], parts[2]), parts[3]);
+      log.debug("Leaving verify(). " + v.ok);
+      return { valid: v.ok, reason: v.reason };
+    },
+    unreadable: "the status list (65533) must be a map carrying bits (1, " +
+      "2, 4 or 8) and lst as a byte string (section 4.3); it has bits " +
+      JSON.stringify(sl.get("bits")) + (lst ? "" : " and no byte string lst"),
+    summary: "a CWT (" + name + (cose.tags.indexOf(18) !== -1 ?
+      "_Tagged" : "") + ", type " + (typeof typ === "string" ? typ :
+      JSON.stringify(typ)) + "), sub (2) is the credential's uri, signed (" +
+      h.alg + ", COSE " + alg + ")"
+  };
+}
+
+// The COSE algorithm's name, or the number when it has none here.
+function coseAlgName(alg) {
+  log.debug("Entering coseAlgName().");
+  var a = coseLib.algorithm(alg);
+  log.debug("Leaving coseAlgName().");
+  return a ? a.name : "COSE " + JSON.stringify(alg);
+}
+
 async function checkTokenStatus(s, key, ref, issuer) {
   log.debug("Entering checkTokenStatus().");
   var ctx = issuer.ctx;
@@ -2775,49 +3038,56 @@ async function checkTokenStatus(s, key, ref, issuer) {
   }
   var body = statusBody(fetched);
   var compact = body.text !== null ? body.text.trim() : "";
-  if (!COMPACT_JWS.test(compact)) {
-    var what = describeStatusBody(body);
-    if (what.kind === "cose") {
-      s.add(key + ".list", listLabel, SKIP, uri + " answered " +
-            what.detail + ": a Status List Token in CWT form " +
-            "(draft-ietf-oauth-status-list-21 section 5.2), which this " +
-            "debugger recognises but does not verify. It asked for " +
-            STATUS_LIST_ACCEPT + " only.");
-    } else {
-      s.add(key + ".list", listLabel, FAIL, uri + " did not answer with " +
-            "a Status List Token: it answered " + what.detail + ". " +
-            "draft-ietf-oauth-status-list-21 section 8.2: the body is the " +
-            "JWS Compact Serialization of the token (or a CWT).");
-    }
-    s.add(key, label, SKIP, "the status list was not read (idx " + idx +
-          ").");
-    log.debug("Leaving checkTokenStatus(). Not a JWT: " + what.kind);
-    return;
-  }
-  var list;
+  var tok;
   try {
-    list = decodeJwt(compact);
+    if (COMPACT_JWS.test(compact)) {
+      tok = readJwtStatusToken(compact);
+    } else {
+      var what = describeStatusBody(body);
+      if (what.kind !== "cose") {
+        s.add(key + ".list", listLabel, FAIL, uri + " did not answer " +
+              "with a Status List Token: it answered " + what.detail +
+              ". draft-ietf-oauth-status-list-21 section 8.2: the body " +
+              "is the JWS Compact Serialization of the token, or the " +
+              "binary CWT.");
+        s.add(key, label, SKIP, "the status list was not read (idx " + idx +
+              ").");
+        log.debug("Leaving checkTokenStatus(). Neither form: " + what.kind);
+        return;
+      }
+      if (what.cose.mac) {
+        s.add(key + ".list", listLabel, SKIP, uri + " answered " +
+              what.detail + ": a CWT Status List Token secured with a MAC " +
+              "(draft-ietf-oauth-status-list-21 section 5.2 allows " +
+              "COSE_Mac0_Tagged), which needs a key the Status Issuer " +
+              "shares with its Relying Parties. This Verifier holds none, " +
+              "so the list is not verified.");
+        s.add(key, label, SKIP, "the status list was not verified (idx " +
+              idx + ").");
+        log.debug("Leaving checkTokenStatus(). COSE_Mac0.");
+        return;
+      }
+      tok = readCwtStatusToken(what.cose);
+    }
   } catch (e) {
     s.add(key + ".list", listLabel, FAIL, "unreadable: " + e.message);
     s.add(key, label, SKIP, "the status list was not read.");
     log.debug("Leaving checkTokenStatus(). Unreadable.");
     return;
   }
-  var h = list.header || {};
-  var p = list.payload || {};
-  var problems = [];
-  var notes = [];
-  if (mediaTypeOfTyp(h.typ) !== mediaTypeOfTyp(STATUS_LIST_TYP)) {
-    problems.push("typ is " + JSON.stringify(h.typ) + ', not "' +
-                  STATUS_LIST_TYP + '" (or "application/' +
-                  STATUS_LIST_TYP + '", RFC 7515 section 4.1.9)');
-  } else if (h.typ !== STATUS_LIST_TYP) {
-    notes.push("typ " + JSON.stringify(h.typ) + " is " + STATUS_LIST_TYP +
-               " by RFC 7515 section 4.1.9's comparison");
+  var h = tok.header;
+  var p = tok.payload;
+  var problems = tok.problems.slice();
+  var notes = tok.notes.slice();
+  var served = body.contentType.split(";")[0].trim().toLowerCase();
+  if (served && served !== tok.mediaType) {
+    notes.push("it was served as " + served + ", not " + tok.mediaType +
+               " (section 8.2)");
   }
+  var subName = tok.form === "CWT" ? "sub (2)" : "sub";
   if (p.sub !== uri) {
-    problems.push("sub is " + JSON.stringify(p.sub) + ", not the uri the " +
-                  "credential names (" + uri + ")");
+    problems.push(subName + " is " + JSON.stringify(p.sub) + ", not the " +
+                  "uri the credential names (" + uri + ")");
   }
   if (typeof p.iat !== "number") problems.push("there is no numeric iat");
   if (typeof p.exp === "number") {
@@ -2827,18 +3097,27 @@ async function checkTokenStatus(s, key, ref, issuer) {
       notes.push("valid until " + isoOf(p.exp));
     }
   }
-  if (typeof p.ttl === "number") {
-    notes.push("ttl " + p.ttl + "s, so a fresh copy is due by " +
-               isoOf((typeof p.iat === "number" ? p.iat : ctx.now) + p.ttl));
+  if (typeof p.nbf === "number" && ctx.now + SKEW_SECONDS < p.nbf) {
+    problems.push("it is not valid before " + isoOf(p.nbf));
   }
-  var sl = isPlainObject(p.status_list) ? p.status_list : {};
-  var readable = [1, 2, 4, 8].indexOf(sl.bits) !== -1 &&
-      typeof sl.lst === "string";
-  if (!readable) {
-    problems.push("status_list must carry bits (1, 2, 4 or 8) and lst; it " +
-                  "has bits " + JSON.stringify(sl.bits));
+  if (p.ttl !== undefined) {
+    if (typeof p.ttl !== "number" || !(p.ttl > 0)) {
+      problems.push("ttl is " + JSON.stringify(p.ttl) + ", and sections " +
+                    "5.1 and 5.2 make it a positive number");
+    } else {
+      notes.push("ttl " + p.ttl + "s, so a fresh copy is due by " +
+                 isoOf((typeof p.iat === "number" ? p.iat : ctx.now) +
+                       p.ttl));
+    }
   }
-  var sig = await statusListSignature(compact, h, p, issuer);
+  var sl = tok.statusList;
+  if (typeof sl.aggregationUri === "string" && sl.aggregationUri) {
+    notes.push("its aggregation_uri is " + sl.aggregationUri +
+               " (section 9)");
+  }
+  var readable = [1, 2, 4, 8].indexOf(sl.bits) !== -1 && sl.lst !== null;
+  if (!readable) problems.push(tok.unreadable);
+  var sig = await statusListSignature(tok.verify, h, p, issuer);
   if (!sig.valid) {
     problems.push("the signature does NOT verify with " + sig.from);
   }
@@ -2848,11 +3127,11 @@ async function checkTokenStatus(s, key, ref, issuer) {
                credIss);
   }
   s.add(key + ".list", listLabel, problems.length ? FAIL : PASS,
-        problems.length ? problems.join("; ") + "." : "typ " +
-        STATUS_LIST_TYP + ", sub is the credential's uri, signed (" + h.alg +
-        ") with " + sig.from +
-        (notes.length ? "; " + notes.join("; ") : "") + ".");
-  var link = await statusSignerLink(compact, h, p, issuer, sig);
+        problems.length ? (tok.form === "CWT" ? "the CWT Status List " +
+        "Token: " : "") + problems.join("; ") + "." : tok.summary +
+        " with " + sig.from + (notes.length ? "; " + notes.join("; ") : "") +
+        ".");
+  var link = await statusSignerLink(tok.verify, h, p, issuer, sig);
   s.add(key + ".signer", signerLabel, link.status, link.detail);
   if (!readable) {
     s.add(key, label, SKIP, "the list itself could not be read.");
@@ -2861,10 +3140,10 @@ async function checkTokenStatus(s, key, ref, issuer) {
   }
   var raw;
   try {
-    raw = await inflate(bytes.b64uToBytes(sl.lst), "deflate");
+    raw = await inflate(tok.lstBytes(), "deflate");
   } catch (e) {
-    s.add(key, label, FAIL, "status_list.lst does not decompress as zlib " +
-          "DEFLATE: " + e.message);
+    s.add(key, label, FAIL, "the status list's lst does not decompress " +
+          "as zlib DEFLATE: " + e.message);
     log.debug("Leaving checkTokenStatus(). Not DEFLATE.");
     return;
   }
