@@ -20,7 +20,7 @@ key.
 |---|---|---|---|
 | `IdProtoDebugger.Api` | `api/*.tsp`, one file per endpoint family | `common/model/openapi.json` (OpenAPI 3.1) | `api/model_validate.js` (every opted-in route's request validator; with `validateResponses`, every answer); the api serves it at `GET /api-docs` |
 | `IdProtoDebugger.Config` | `config/api_config.tsp`, `config/client_config.tsp` | `common/model/config.schema.json` (JSON Schema 2020-12, both objects closed) | `common/model_config.js`, called by `api/server.js` at startup and by `client/check_config.js` before bundling |
-| `IdProtoDebugger.Storage` | `storage/*.tsp`, one file per workflow | `common/model/storage.json` | `client/src/secret_storage.js`; `tests/data_model.js` and `tests/secret_storage_engine.js` |
+| `IdProtoDebugger.Storage` | `storage/*.tsp`, one file per workflow | `common/model/storage.json` | `client/src/secret_storage.js` and the three key-pair panes (`storage_classes.json`); `tests/data_model.js` (both) |
 | `IdProtoDebugger.Contract` | `contract/embedded.tsp` | `common/model/embedded_contract.json` | `embedded/build.sh` copies it into the tree; `tests/embedded_deployment.js` |
 
 `lib/debugger_lib.tsp` declares this project's decorators and the closed
@@ -116,8 +116,8 @@ Each step is done before the next starts.
    api as it is**, run `node tests/api_model_wire.js --record --family <f>`
    with `API_URL` pointing at an api started on
    `api/env/docker-tests.js` (the containerized stack's configuration, which
-   the suite replays under; plain HTTP on a spare port is fine — see
-   "Running the api by hand" below).
+   the suite replays under), over https — see "Running the api by hand"
+   below.
 2. **Write the model**, `api/<family>.tsp`, imported from `api/main.tsp`.
    Every operation has an `@operationId` and an `@tag`.
 3. **Opt the routes in**: `app.post('/x', model.route('opId'), handler)`.
@@ -133,18 +133,60 @@ document with no case, so a new operation cannot arrive unrecorded.
 
 ### Running the api by hand
 
+Record and replay over **https**, which is what the suite's stack runs:
+an endpoint whose answer depends on the listener differs on plain HTTP
+(`GET /tls/server-certificate` is a 404 there and a 200 with the PEM on
+TLS). Any self-signed pair will do:
+
 ```bash
 cd api && npm install
-cat > /tmp/api-wire.js <<'EOF'
+openssl req -x509 -newkey rsa:2048 -nodes -keyout /tmp/k.pem -out /tmp/c.pem \
+  -days 7 -subj /CN=localhost -addext subjectAltName=DNS:localhost
+cat > /tmp/api-wire.js <<'EOF2'
 module.exports = Object.assign({}, require('/abs/path/api/env/docker-tests.js'),
-  { https: false, port: '4999' });
-EOF
+  { port: '4998', tlsCertFile: '/tmp/c.pem', tlsKeyFile: '/tmp/k.pem' });
+EOF2
 NODE_PATH=$PWD/node_modules CONFIG_FILE=/tmp/api-wire.js node server.js
+# elsewhere:
+cd tests && NODE_EXTRA_CA_CERTS=/tmp/c.pem CONFIG_FILE=./env/docker-tests.js \
+  API_URL=https://localhost:4998 node api_model_wire.js --family ldap
 ```
 
 `NODE_PATH` is needed because `common/data.js` requires bunyan from outside
 `api/`. Stop it by PID, never with `pkill -f` on a pattern in the same
-command line.
+command line. **`api/env/docker-tests.js` turns the smart-card relay ON**,
+so an api run by hand on it with `node-hid` and `pcsclite` installed can
+reach a real reader or YubiKey on the machine; move the two packages out of
+`api/node_modules` first unless that is what you mean to do.
+
+### The fixture format
+
+A case is `name`, `method`, `path` (with any query string), and one of
+`body` (sent as JSON) or `form` (sent as `application/x-www-form-urlencoded`,
+what an identity provider's browser POSTs). Redirects are not followed: a
+3xx is recorded with its `location`. `volatile` lists what may differ per
+run — dotted paths into the body, or `location` for the header — and those
+are removed from both sides before comparing. A case cannot carry a value
+from one case into the next (a generated id); cover those paths by hand and
+say so in the family's `about`.
+
+`--record` re-records every case of the families it reads (all of them,
+unless `--family` names one) and `--record --missing` only cases with no
+`expect`. **Neither belongs anywhere near a family that has already
+switched**: its `expect` is now the new behaviour, and re-recording a
+`changed` case would silently drop the evidence of what changed.
+
+### What the validator does with the document
+
+It validates JSON and form-encoded bodies, and query and path parameters,
+coercing a parameter's text to the type the document gives. A parameter
+spread from a named model is emitted as a `$ref` to
+`components.parameters` and is resolved. A parameter's `@refusal` is read
+from the parameter object. An answer's status is matched exactly, then by
+range (`4XX`), then `default` — so a proxy that relays the far end's
+status can document a range. A non-JSON answer (a redirect, a page, XML)
+has its status checked and nothing else. A body that is neither JSON nor a
+form (`application/secevent+jwt`) is documented and not validated.
 
 ## Style
 

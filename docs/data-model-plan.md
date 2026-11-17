@@ -1,6 +1,16 @@
 # Abstract data model — design and implementation plan
 
-**Status: a plan, not a record. Dated 2026-11-16, and nothing in it is built.** Every "does" below means "will do". It is written in the same voice as the rest of `docs/`: each decision comes with its reasoning, so it can be argued with later. When a phase lands, its paragraphs move into `models/CLAUDE.md` and `docs/data-model.md` and are deleted from here.
+**Status: implemented on 2026-11-16, except where noted below.** The plan as written follows, for the reasoning behind each decision; where the build departed from it, the departure is noted here. The current description is `models/CLAUDE.md` (for somebody changing a model) and `docs/data-model.md` (for a reader).
+
+**What differs from the plan:**
+
+- **The compiler is in `models/package.json`**, as planned, and NOT also in `tests/package.json`. The TypeSpec compiler resolves its libraries upward from the `.tsp` files, so a copy under `tests/` cannot serve `models/`. The tests image runs `npm ci` in `/usr/src/source-tree/models` instead.
+- **The validator owns less than "remove the hand-written check" suggests.** Most checks live in modules that are libraries with callers of their own (`ldap_client.js`, `krb5_relay.js`, the `*_proxy.js` decision halves). They stay where they are and are named with `@checkedInCode`. Only checks a ROUTE made were moved into the schema, and each keeps its sentence through `@refusal`.
+- **The secret lists are read from `storage_classes.json`**, a four-list file generated beside `storage.json`, so the bundles do not carry the whole inventory. `sd_jwt_vc.js`'s holder-key list stays a literal held to the model, because the tests image copies that module flat.
+- **The storage check lives in `tests/data_model.js`**, not in `secret_storage_engine.js`, and reads the keys out of the source with acorn (`tests/storage_inventory.js`).
+- **The run-time storage recorder was not built.** Every browser test builds its own WebDriver, so there is no one place to read storage before `quit()`. The 133 call sites whose key the static inventory cannot read are reported and not checked.
+- **The interactive API explorer is gone.** `GET /api-docs` is a self-contained page listing the operations. `swagger-ui-dist` would have brought an install-time telemetry dependency.
+- **The api's families were switched in parallel**, each on its own branch from the pilot's commit, and merged.
 
 ## What this adds
 

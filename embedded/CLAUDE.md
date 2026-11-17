@@ -45,7 +45,7 @@ path or variable in it is a change to the mock STS too.
 ```
 <OUT>/ui/            client/build.js, DEPLOYMENT=embedded, CONFIG_FILE=./env/embedded.js
 <OUT>/api/           a runnable api: `cd <OUT>/api && node server.js`
-<OUT>/common/        tls_listener.js and spiffe/ — what the api requires as ../common/...
+<OUT>/common/        tls_listener.js, spiffe/, model_config.js and model/ — what the api requires as ../common/...
 <OUT>/version.json   the build's M.N.P.B (the same record as api/version.json)
 ```
 
@@ -53,8 +53,9 @@ path or variable in it is a change to the mock STS too.
 `api/` (its `env/embedded.js` included), production `node_modules` with the
 `ldapjs` link to `node-ldapjs` inside the package root, `data.js` and
 `xmldsig.js` from `common/`, the repo-root `VERSION`, the client's `version.js`
-and the stamped `version.json`. `<OUT>/common` is that Dockerfile's two COPYs
-into `/usr/src/common` and nothing more. **When `api/Dockerfile` stages
+and the stamped `version.json`. `<OUT>/common` is that Dockerfile's four COPYs
+into `/usr/src/common` and nothing more — `model/` being the generated API
+document, configuration schema and this contract (`models/CLAUDE.md`). **When `api/Dockerfile` stages
 something new beside the api, `build.sh` needs the same line**, or the image
 works and the embedded api dies at startup with `Cannot find module`.
 
