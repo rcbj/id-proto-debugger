@@ -49,7 +49,7 @@
 //
 // It needs no server, no browser and no network, so it never skips.
 //
-// TWELVE SECTIONS:
+// THIRTEEN SECTIONS:
 //
 //   1. classification — which binding, from the blob alone, in five shapes
 //   2. the artifact — 2.0 type 0x0004 and both 1.1 types
@@ -65,6 +65,7 @@
 //  11. requiredResponseSignature() — which signature SAML 1.1 Browser/POST
 //      requires, and a real Response signature in Shibboleth's shape
 //  12. trust — verifying against the IdP's published keys, not KeyInfo
+//  13. metadataExpiry() — validUntil, earliest bound wins
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -882,8 +883,8 @@ function anAssertionsPartsAreReadInBothVersions() {
 
   check('SAML 1.1 puts it in CHILD ELEMENTS, and there may be several',
       function () {
-    // saml-profile-1.1 section 4.1.1.4 requires cm:artifact for
-    // Browser/Artifact and 4.2.1.4 requires cm:bearer for Browser/POST. A
+    // sstc-saml-bindings-1.1 section 4.1.1.6 requires cm:artifact for
+    // Browser/Artifact and 4.1.2.5 requires cm:bearer for Browser/POST. A
     // reader that looks only for @Method reports the profile as unstated on
     // every 1.1 assertion, which in the 1.1 browser profiles is the whole of
     // what distinguishes the two.
@@ -1732,11 +1733,53 @@ function signaturesAreCheckedAgainstTrustedKeys() {
   log.debug("Leaving signaturesAreCheckedAgainstTrustedKeys().");
 }
 
+// ---------------------------------------------------------------------------
+// 13. METADATA EXPIRY: validUntil bounds the element and everything in it
+// (saml-metadata-2.0-os section 2.2.1), so the IdP descriptor expires at the
+// earliest validUntil on it or on anything enclosing it. Shibboleth's stock
+// example metadata is stamped with the instant it was generated.
+// ---------------------------------------------------------------------------
+function metadataExpiryIsTheEarliestBound() {
+  log.debug("Entering metadataExpiryIsTheEarliestBound().");
+  const now = new Date('2026-11-17T00:00:00Z');
+  function md(outer, inner) {
+    log.debug("Entering md().");
+    log.debug("Leaving md().");
+    return '<EntitiesDescriptor xmlns="urn:oasis:names:tc:SAML:2.0:metadata"' +
+        (outer ? ' validUntil="' + outer + '"' : '') + '>' +
+      '<EntityDescriptor entityID="https://idp.example.test">' +
+        '<IDPSSODescriptor protocolSupportEnumeration="' +
+            'urn:oasis:names:tc:SAML:1.1:protocol"' +
+            (inner ? ' validUntil="' + inner + '"' : '') + '/>' +
+      '</EntityDescriptor></EntitiesDescriptor>';
+  }
+  check('metadata with no validUntil never expires', function () {
+    assert.deepStrictEqual(sm.metadataExpiry(md('', ''), now),
+        { validUntil: '', expired: false });
+  });
+  check('an expired enclosing EntitiesDescriptor expires the IdP descriptor',
+      function () {
+    const out = sm.metadataExpiry(md('2026-11-16T00:00:00Z',
+        '2030-01-01T00:00:00Z'), now);
+    assert.strictEqual(out.validUntil, '2026-11-16T00:00:00Z');
+    assert.strictEqual(out.expired, true);
+  });
+  check('the earliest bound wins, and a future one is not expired',
+      function () {
+    const out = sm.metadataExpiry(md('2031-01-01T00:00:00Z',
+        '2030-01-01T00:00:00Z'), now);
+    assert.strictEqual(out.validUntil, '2030-01-01T00:00:00Z');
+    assert.strictEqual(out.expired, false);
+  });
+  log.debug("Leaving metadataExpiryIsTheEarliestBound().");
+}
+
 function test() {
   log.debug("Entering test().");
   shibbolethAttributeNamesAreWhole();
   theSaml11ProfileDecidesTheResponseSignature();
   signaturesAreCheckedAgainstTrustedKeys();
+  metadataExpiryIsTheEarliestBound();
   everyPastedShapeIsClassified();
   theSaml11RequestIsTheShibbolethProfile();
   theArtifactIsBytesAndNotAMessage();

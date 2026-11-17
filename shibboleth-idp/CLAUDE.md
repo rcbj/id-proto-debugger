@@ -5,9 +5,11 @@ SPDX-License-Identifier: MIT
 
 # shibboleth-idp/ — the SAML 1.1 peer side-car
 
-Scope: this image and its one compose service. The test it exists for is
-`tests/saml11_peers.js` (see its entry in `docs/test-suite-map.md`); what
-SAML 1.1 is and how the debugger speaks it is `docs/saml11.md`.
+Scope: this image and its one compose service. Two tests use it:
+`tests/saml11_peers.js`, with no browser, and the two Shibboleth jobs of
+`tests/saml11_sso.js` (`SAML11_PEER=shibboleth`), which drive the debugger's
+own pages and api against it (see both entries in `docs/test-suite-map.md`);
+what SAML 1.1 is and how the debugger speaks it is `docs/saml11.md`.
 
 **What it is.** Shibboleth Identity Provider **4.3.3** on **Jetty 10.0.22**,
 on `eclipse-temurin:11-jdk`. It answers Shibboleth's AuthnRequest profile at
@@ -26,7 +28,20 @@ loopback address, where the probe runs. It is ready in about 15 seconds.
 `run-tests-in-container.sh` sets `SHIBBOLETH_IDP_URL=http://shibboleth-idp:8080/idp`
 when the debugger is the compose `client`, and blanks it on a partial stack
 that did not start this service, so a focused mode skips that half rather
-than failing on it. No host-run launcher starts it.
+than failing on it. No host-run launcher starts it. The browser in the tests
+container and the api both reach it by that compose name, which is the one
+its metadata publishes.
+
+**The shared SP metadata volume** (#425). `shibboleth-sp-metadata`, a tmpfs
+owned by uid 10001, is mounted here at `metadata/sp` and in the tests
+container at `/shibboleth-sp-metadata` (`SHIBBOLETH_SP_METADATA_DIR`). A job
+registers a service provider by writing its metadata there as
+`<lower-case hex SHA-1 of the entityID>.xml`, which is where the
+`LocalDynamicMetadataProvider` in `conf/metadata-providers.xml` looks on the
+first request naming that entityID. Every job uses an entityID of its own
+(`https://debugger.example.test/saml11/<job>-<stamp>`) and deletes its file
+afterwards, so nothing a previous job left or a lookup cached as a miss is in
+the way.
 
 **What the image does at build.** Copies both archives out of
 `shibboleth-idp-dist:4.3.3` — a FROM scratch image holding exactly the two
@@ -61,10 +76,33 @@ in one place:
 | File | Change |
 |---|---|
 | `conf/relying-party.xml` | `Shibboleth.SSO` enabled (stock comments it out), with `includeAttributeStatement="true"`. That bean signs the **Response** and not the assertion, which is what the test asserts. |
-| `conf/attribute-filter.xml` | a policy releasing `mail` and `uid` to `https://debugger.example.test/saml11`. The stock attribute registry encodes both for SAML 1 under `urn:mace:shibboleth:1.0:attributeNamespace:uri`. |
+| `conf/attribute-filter.xml` | a policy releasing `mail` and `uid` to `https://debugger.example.test/saml11` and every entityID under it (`RequesterRegex`), which is what the per-run entityIDs are. The stock attribute registry encodes both for SAML 1 under `urn:mace:shibboleth:1.0:attributeNamespace:uri`. |
 | `conf/attribute-resolver.xml` | the `mail` template (`${uid}@example.org`) on one line rather than inside a multi-line CDATA block. |
-| `conf/metadata-providers.xml` | a filesystem provider for `metadata/debugger-saml11-sp.xml`. |
+| `conf/metadata-providers.xml` | a filesystem provider for `metadata/debugger-saml11-sp.xml`, and a `LocalDynamicMetadataProvider` over `metadata/sp` (the shared volume above). |
 | `conf/authn/password-authn-config.xml` | the Password flow validates against `credentials/demo.htpasswd` and nothing else. |
+
+Three more files of ours, each because a stock V4 IdP is not what a SAML 1.1
+deployment publishes or what a browser can reach over plain HTTP (#425):
+
+| File | What it does |
+|---|---|
+| `publish-saml11-metadata.sh` | run at build over the installer's `metadata/idp-metadata.xml`, which `/idp/shibboleth` serves. The installer writes a SAML 2.0-only *example*: the SAML 1.1 endpoints are commented out, the locations name `https://shibboleth-idp/` and `:8443`, which this side-car does not serve, and `validUntil` is the build instant, so it has expired before anybody reads it. The script adds the 1.1 protocol and `urn:mace:shibboleth:1.0` to `protocolSupportEnumeration`, uncomments the Shibboleth AuthnRequest SSO and the SAML 1.1 ArtifactResolutionService, rewrites every location to `http://shibboleth-idp:8080/idp/`, removes `validUntil`, and checks each edit so a different installer layout fails the build. |
+| `jetty/idp-override-web.xml` | applied by Jetty after the war's own `web.xml`, which marks `JSESSIONID` `Secure`. A browser drops a `Secure` cookie set over http, so the login's next step finds no session and the IdP answers *Web Login Service - Stale Request*. `idp.cookie.secure=false` covers the IdP's own cookies and not this one. It lives in `etc/`, not `webapps/`, where Jetty would deploy it as a context. |
+| `jetty/idp.xml` | names that override (`overrideDescriptor`). |
+
+The metadata it then publishes carries **two signing certificates**: the
+back-channel key first and the front-channel key second. Browser/POST
+responses and resolved artifact responses are both signed with the second, so
+a relying party that trusts only the first rejects every response; that is
+what the debugger's response page did before #425.
+
+**Artifact resolution** is the SAML 1.1 SOAP binding at
+`/idp/profile/SAML1/SOAP/ArtifactResolution`, over plain HTTP here. A SAML 1.1
+`<samlp:Request>` has no `<Issuer>`, so the IdP takes the requester from the
+artifact and authenticates it by the request's signature, against the
+signing key in that SP's metadata. An unsigned request gets *Success with no
+assertion* (`Message context was not authenticated` in the log), which is what
+`sstc-saml-bindings-1.1` section 4.1.1.6 requires.
 
 `idp-merge.properties` (ours) is merged into `idp.properties` by the
 installer: the entityID `http://shibboleth-idp:8080/idp/shibboleth`, scope
@@ -97,11 +135,25 @@ docker build -f shibboleth-idp/Dockerfile -t shibidp-dev:local \
 #   docker build -t shibidp-dist:local shibboleth-idp/dist
 #   ... --build-context "shibboleth-idp-dist:4.3.3=docker-image://shibidp-dist:local"
 docker network create shibidp-dev-net
-docker run -d --name shibidp-dev-idp --network shibidp-dev-net shibidp-dev:local
-# then, from tests/, with no iya-sts base set:
-SHIBBOLETH_IDP_URL=http://<container address>:8080/idp \
+# A host directory stands in for the shared SP metadata volume; the IdP
+# runs as uid 10001, so it must be writable by that uid.
+SPDIR=$(mktemp -d) && chmod 0777 "$SPDIR"
+docker run -d --name shibidp-dev-idp --network shibidp-dev-net \
+  -p 127.0.0.1:8080:8080 -v "$SPDIR":/opt/shibboleth-idp/metadata/sp \
+  shibidp-dev:local
+# then, from tests/, with no iya-sts base set. The metadata names
+# http://shibboleth-idp:8080, and saml11_peers.js reaches it through
+# SHIBBOLETH_IDP_URL whatever the published address says:
+SHIBBOLETH_IDP_URL=http://127.0.0.1:8080/idp SHIBBOLETH_SP_METADATA_DIR="$SPDIR" \
   CONFIG_FILE=./env/docker-tests.js node saml11_peers.js
 ```
+
+The browser job (`SAML11_PEER=shibboleth node saml11_sso.js`) needs a
+running api and client too, and a browser and an api that resolve
+`shibboleth-idp`, which the containerized stack gives it for free; from a
+host, Chrome's `--host-resolver-rules="MAP shibboleth-idp 127.0.0.1"` and
+the artifact resolution field pointed at `127.0.0.1` are enough to drive it
+by hand.
 
 The IdP's own log is `/opt/shibboleth-idp/logs/idp-process.log` inside the
 container; Jetty's goes to the container's stdout.

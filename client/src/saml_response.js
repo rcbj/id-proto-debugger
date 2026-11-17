@@ -303,8 +303,12 @@ function render(responseXml, isFresh) {
     : (isSaml1(version)
        ? '(no <saml:Assertion> — the Response carries a status and nothing ' +
          'else. SAML 1.1 has no encrypted assertion in the browser profiles, ' +
-         'so this is an error rather than something to decrypt; see the ' +
-         'Details tab.)'
+         'so this is not something to decrypt; see the Details tab. If the ' +
+         'status is Success and the Response came from resolving an ' +
+         'artifact, it is the answer sstc-saml-bindings-1.1 section 4.1.1.6 ' +
+         'requires for a requester the identity provider could not ' +
+         'authenticate as the artifact\'s destination site: load the SP key ' +
+         'pair on the request page so the API signs its <samlp:Request>.)'
        : '(no <Assertion> — the response may be an error or encrypted)');
   setVal('saml_assertion_xml', assertionXml ?
          formatXml(assertionXml) : noAssertionNote);
@@ -501,8 +505,8 @@ function buildAttributesTable(assertion) {
   }
 
   // HOW THE ASSERTION CLAIMS TO HAVE ARRIVED, which in the SAML 1.1 browser
-  // profiles IS the profile: saml-profile-1.1 section 4.1.1.4 requires
-  // cm:artifact for Browser/Artifact and 4.2.1.4 requires cm:bearer for
+  // profiles IS the profile: sstc-saml-bindings-1.1 section 4.1.1.6 requires
+  // cm:artifact for Browser/Artifact and 4.1.2.5 requires cm:bearer for
   // Browser/POST. A relying party that does not check works perfectly with
   // either, which is exactly why it is worth showing. The three
   // SubjectConfirmationData values below it are SAML 2.0's bearer check

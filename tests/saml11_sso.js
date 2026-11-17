@@ -10,6 +10,10 @@ const { Command, Option } = require('commander');
 // it is deliberately not stored in this repository. See common/sp_keypair.js.
 const { readSpKeyPair } = require("../common/sp_keypair.js");
 const crypto = require("crypto");
+const fs = require("fs");
+const os = require("os");
+const http = require("http");
+const https = require("https");
 const browserFlags = require("./browser_flags.js");
 const registry = require("./sts_applications.js");
 const { loadUrl } = require("./page_load.js");
@@ -72,8 +76,8 @@ var waitTime = appconfig.waitTime;
 //    so a working sign-in renders red and its Operations History row closes as
 //    a FAILURE. The Details tab and the history row are both asserted.
 //
-// 5. **THE CONFIRMATION METHOD IS THE PROFILE.** saml-profile-1.1 section
-//    4.1.1.4 requires `cm:artifact` for Browser/Artifact and 4.2.1.4 requires
+// 5. **THE CONFIRMATION METHOD IS THE PROFILE.** sstc-saml-bindings-1.1 section
+//    4.1.1.6 requires `cm:artifact` for Browser/Artifact and 4.1.2.5 requires
 //    `cm:bearer` for Browser/POST. A relying party that does not check works
 //    perfectly with either — which is exactly why this is asserted PER BINDING
 //    rather than once. `DoNotCacheCondition` is checked on the artifact side
@@ -107,6 +111,26 @@ var waitTime = appconfig.waitTime;
 //   SAML_BINDING          post | artifact: the browser profile under test.
 //                         `redirect` is accepted as the old name of post —
 //                         the SAML 1.1 request is always a GET (#307).
+//   SAML11_PEER           iya-sts (the default) | shibboleth: which identity
+//                         provider the round trip is against (#425).
+//
+// With SAML11_PEER=shibboleth the identity provider is somebody else's
+// implementation — the Shibboleth IdP 4.3.3 side-car (shibboleth-idp/) — and
+// the job uses nothing of iya-sts:
+//
+//   SHIBBOLETH_IDP_URL          the IdP's base, containing /idp. Its metadata
+//                               is read from <base>/shibboleth, the way a
+//                               relying party is configured, and loaded into
+//                               the page as a file (the IdP sends no CORS
+//                               headers, so a page cannot fetch it).
+//   SHIBBOLETH_SP_METADATA_DIR  where the side-car's LocalDynamic metadata
+//                               provider reads service providers from. The
+//                               page's OWN SAML 1.1 SP metadata is written
+//                               there, as <SHA-1 of the entityID>.xml, which
+//                               is this job's registration.
+//   SHIBBOLETH_IDP_USER / _PASSWORD   jdoe / saml11-shibboleth by default.
+//   SHIBBOLETH_SP_ENTITY_ID     the prefix of the per-run entityID, which the
+//                               side-car's attribute release matches.
 //
 // The HTTP Artifact profile additionally needs the API: resolving an artifact
 // is a SOAP call over the back channel, which a browser cannot make. The runner
@@ -162,6 +186,94 @@ async function loginAtIdp(driver, user, timeout) {
       "than a broken page.");
   log.info("Signed in at the mock STS sign-in screen (" + clicked + ").");
   log.debug("Leaving loginAtIdp().");
+}
+
+// Shibboleth's sign-in: its Password flow's login page (j_username,
+// j_password, a button named _eventId_proceed), then its attribute-release
+// consent page (another _eventId_proceed), with the local-storage read and
+// save pages between them submitting themselves. Loops until the browser has
+// left the identity provider.
+async function loginAtShibboleth(driver, idpOrigin, user, password,
+                                 timeout) {
+  log.debug("Entering loginAtShibboleth().");
+  var deadline = Date.now() + timeout;
+  var signedIn = false;
+  var consented = 0;
+  while (Date.now() < deadline) {
+    var url = "";
+    try {
+      url = await driver.getCurrentUrl();
+    } catch (e) {
+      log.debug("loginAtShibboleth(): navigating: " + e.message);
+    }
+    if (url && url.indexOf(idpOrigin) !== 0 &&
+        url.indexOf("saml_request.html") < 0) {
+      log.info("Left Shibboleth for " + url + " (signed in: " + signedIn +
+          ", consent screens: " + consented + ").");
+      log.debug("Leaving loginAtShibboleth().");
+      return;
+    }
+    try {
+      var userField = await driver.findElements(
+          By.css("input[name='j_username']"));
+      var proceed = await driver.findElements(
+          By.css("[name='_eventId_proceed']"));
+      if (userField.length && !signedIn) {
+        await userField[0].clear();
+        await userField[0].sendKeys(user);
+        var pass = await driver.findElement(
+            By.css("input[name='j_password']"));
+        await pass.clear();
+        await pass.sendKeys(password);
+        await proceed[0].click();
+        signedIn = true;
+        log.info("Signed in at Shibboleth as " + user + ".");
+      } else if (proceed.length && !userField.length) {
+        await proceed[0].click();
+        consented++;
+        log.info("Proceeded past a Shibboleth screen (" +
+            (await driver.getTitle()) + ").");
+      }
+    } catch (e) {
+      log.debug("loginAtShibboleth(): page changed under us: " + e.message);
+    }
+    await driver.sleep(250);
+  }
+  log.debug("Leaving loginAtShibboleth(). Timed out.");
+  throw new Error("the browser never left Shibboleth at " + idpOrigin +
+      " (signed in: " + signedIn + ", consent screens: " + consented + ")");
+}
+
+// GET a document in node. The Shibboleth metadata is fetched here rather
+// than by the page, which cannot: that IdP sends no CORS headers.
+function fetchText(urlString) {
+  log.debug("Entering fetchText().");
+  var url = new URL(urlString);
+  var lib = url.protocol === "https:" ? https : http;
+  return new Promise(function (resolve, reject) {
+    var req = lib.get(url, function (res) {
+      var chunks = [];
+      res.on("data", function (c) {
+        chunks.push(c);
+      });
+      res.on("end", function () {
+        log.debug("Leaving fetchText(). " + res.statusCode);
+        if (res.statusCode !== 200) {
+          reject(new Error("GET " + urlString + " answered " +
+              res.statusCode));
+          return;
+        }
+        resolve(Buffer.concat(chunks).toString("utf8"));
+      });
+    });
+    req.setTimeout(20000, function () {
+      req.destroy(new Error("timed out fetching " + urlString));
+    });
+    req.on("error", function (err) {
+      log.debug("Leaving fetchText(). " + err.message);
+      reject(err);
+    });
+  });
 }
 
 // Poll a field's value until the predicate passes (or timeout).
@@ -340,8 +452,20 @@ async function selectSaml11(driver) {
 // holds the SAML responder. Reading the document as though the fields were
 // exclusive populates none of them, and the page then reports "no IdP endpoint
 // for the selected binding" about a document that named it three times.
-async function assertEndpointsFromMetadata(driver) {
-  log.debug("Entering assertEndpointsFromMetadata().");
+//
+// Each peer publishes them at its own paths. Shibboleth's document also
+// describes SAML 2.0 (four SSO services and a second artifact resolver), so
+// on that peer this is the check that the 1.1 set was picked out of a
+// document naming both (#425).
+var PEER_PATHS = {
+  "iya-sts": { sso: "/saml11/sso", ars: "/saml11/responder" },
+  "shibboleth": { sso: "/profile/Shibboleth/SSO",
+                  ars: "/profile/SAML1/SOAP/ArtifactResolution" }
+};
+
+async function assertEndpointsFromMetadata(driver, peer) {
+  log.debug("Entering assertEndpointsFromMetadata(). peer=" + peer.kind);
+  var want = PEER_PATHS[peer.kind];
   var ids = ["saml_sso_redirect", "saml_sso_post", "saml_sso_artifact"];
   var seen = [];
   for (var i = 0; i < ids.length; i++) {
@@ -349,7 +473,7 @@ async function assertEndpointsFromMetadata(driver) {
   }
   assert(seen[0], "the inter-site transfer service address was not read out " +
          "of the SAML 1.1 metadata (saml_sso_redirect is empty).");
-  assert(seen[0].indexOf("/saml11/sso") >= 0,
+  assert(seen[0].indexOf(want.sso) >= 0,
     "the SSO endpoint should be the SAML 1.1 inter-site transfer service, " +
     "and is: " + seen[0]);
   assert.strictEqual(seen[1], seen[0],
@@ -359,7 +483,7 @@ async function assertEndpointsFromMetadata(driver) {
     "SAML 1.1 has one SSO endpoint named once per profile, so all three " +
     "fields should hold it. redirect=" + seen[0] + " artifact=" + seen[2]);
   var ars = await driver.findElement(By.id("saml_ars")).getAttribute("value");
-  assert(ars.indexOf("/saml11/responder") >= 0,
+  assert(ars.indexOf(want.ars) >= 0,
     "the artifact resolution field should hold the SAML 1.1 SAML responder " +
     "(ArtifactResolutionService, SOAP binding), and holds: " + ars);
   // No Single Logout exists in this protocol, so the descriptor publishes none
@@ -452,7 +576,7 @@ function previewParams(text) {
 var SAML11_REQUEST_PARAMS = ['providerId', 'shire', 'target', 'time'];
 
 async function assertRequestIsShibbolethShaped(driver, binding, spEntityId,
-                                               shire) {
+                                               shire, peer) {
   log.debug("Entering assertRequestIsShibbolethShaped(). binding=" + binding);
   var text =
       await driver.findElement(By.id("saml_authn_request")).getAttribute(
@@ -463,7 +587,8 @@ async function assertRequestIsShibbolethShaped(driver, binding, spEntityId,
   assert(text.indexOf('<samlp:AuthnRequest') < 0,
     "SAML 1.1 has no <samlp:AuthnRequest>; the page built one anyway:\n" +
         text.substring(0, 800));
-  assert(text.indexOf("POST ") !== 0 && text.indexOf("/saml11/sso") >= 0,
+  assert(text.indexOf("POST ") !== 0 &&
+         text.indexOf(PEER_PATHS[peer.kind].sso) >= 0,
     "the SAML 1.1 request is a GET: a URL at the inter-site transfer " +
     "service:\n" + text);
   assert.deepStrictEqual(Object.keys(params).sort(),
@@ -534,9 +659,20 @@ async function assertResponsePage(driver, binding, spEntityId, loginWait) {
     "the Details tab should report a Success status. SAML 1.1's status code " +
     "is the QName samlp:Success, NOT a URI ending :status:Success — a reader " +
     "written for 2.0 renders this as a failure:\n" + details);
-  assert(details.indexOf("Recipient") >= 0,
-    "a SAML 1.1 Response says where it was sent with Recipient (there is no " +
-    "Destination attribute):\n" + details);
+  // Recipient is required on Browser/POST (sstc-saml-bindings-1.1 section
+  // 4.1.2.4), where the browser carries the Response and Recipient is what
+  // stops it being replayed at another relying party. A Response resolved
+  // over SOAP goes back to whoever asked and need not carry one: Shibboleth's
+  // does not, iya-sts's does.
+  if (binding === "artifact") {
+    log.info("Resolved artifact Response " +
+        (details.indexOf("Recipient") >= 0 ? "carries" : "carries no") +
+        " Recipient (optional on the SOAP binding).");
+  } else {
+    assert(details.indexOf("Recipient") >= 0,
+      "a SAML 1.1 Browser/POST Response says where it was sent with " +
+      "Recipient (there is no Destination attribute):\n" + details);
+  }
 
   // THE ATTRIBUTES TAB.
   await driver.wait(async function () {
@@ -560,8 +696,8 @@ async function assertResponsePage(driver, binding, spEntityId, loginWait) {
   assert(attrs.indexOf(wantCm) >= 0,
     "the " + binding + " binding uses the " +
     (binding === "artifact" ? "Browser/Artifact" : "Browser/POST") +
-    " profile, which saml-profile-1.1 requires be confirmed as " + wantCm +
-    ". The assertion says otherwise:\n" + attrs);
+    " profile, which sstc-saml-bindings-1.1 requires be confirmed as " +
+    wantCm + ". The assertion says otherwise:\n" + attrs);
   assert(attrs.indexOf(wrongCm) < 0,
     "the assertion carries " + wrongCm + " on the " + binding + " binding, " +
     "which claims it travelled a way it did not:\n" + attrs);
@@ -626,7 +762,7 @@ async function assertResponsePage(driver, binding, spEntityId, loginWait) {
 // requires (sstc-saml-bindings-1.1 section 4.1.2.4), so it must be reported
 // VALID by name: until #425 the page checked only the assertion's, which on a
 // Shibboleth response is no signature at all.
-async function assertSignatureValidates(driver, binding, loginWait) {
+async function assertSignatureValidates(driver, binding, peer, loginWait) {
   log.debug("Entering assertSignatureValidates().");
   await clickByValueInPage(driver, "Validate Signatures");
   // EVERY status validateSignatures() can write, not just the ones that mean
@@ -646,9 +782,22 @@ async function assertSignatureValidates(driver, binding, loginWait) {
          status.indexOf("NOT COMPLIANT") < 0,
     "every signature on the SAML 1.1 response should verify. status=" +
     status + "\n" + detail);
-  assert(status.indexOf("assertion signature VALID") >= 0,
-    "the SAML 1.1 assertion's signature should verify through " +
-    "#<AssertionID>. status=" + status + "\n" + detail);
+  // The assertion signature is OPTIONAL in both browser profiles, and
+  // Shibboleth decides it per relying party, so on that peer it may be
+  // either; one that is present has verified (no INVALID, above). The
+  // Response signature is what Shibboleth always sends. iya-sts signs both
+  // by default, so there the assertion's is required.
+  if (peer.kind === "shibboleth") {
+    assert(status.indexOf("Response signature VALID") >= 0 &&
+           (status.indexOf("assertion not signed") >= 0 ||
+            status.indexOf("assertion signature VALID") >= 0),
+      "Shibboleth signs the Response, and the page should report that and " +
+      "the assertion's state. status=" + status + "\n" + detail);
+  } else {
+    assert(status.indexOf("assertion signature VALID") >= 0,
+      "the SAML 1.1 assertion's signature should verify through " +
+      "#<AssertionID>. status=" + status + "\n" + detail);
+  }
   // Against the identity provider's PUBLISHED keys, not each signature's
   // KeyInfo (#425): the page loaded iya-sts's metadata, so the trusted
   // certificates are its KeyDescriptor use="signing" entries, and a KeyInfo
@@ -722,8 +871,8 @@ function saml11MetadataUrl(url, entityId) {
 }
 
 async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
-                                metadataFile) {
-  log.debug("Entering saml11Activities().");
+                                metadataFile, peer) {
+  log.debug("Entering saml11Activities(). peer=" + peer.kind);
   // The mock renders in milliseconds, but a POST-binding hop plus a sign-in
   // screen plus (for artifact) a server-side SOAP round trip is several
   // navigations, and a generous timeout costs nothing when nothing is slow.
@@ -736,7 +885,14 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
   await selectSaml11(driver);
   await loadIdpMetadata(driver, metadataUrl, metadataFile);
   await assertVersionCameFromMetadata(driver);
-  await assertEndpointsFromMetadata(driver);
+  await assertEndpointsFromMetadata(driver, peer);
+  if (peer.kind === "shibboleth") {
+    // Where the browser will be while it is at the identity provider: the
+    // origin the metadata names, which is not necessarily the one this
+    // process fetched the metadata from.
+    peer.origin = new URL(await driver.findElement(By.id("saml_sso_redirect"))
+        .getAttribute("value")).origin;
+  }
   await assertUnavailableSettingsAreOff(driver);
 
   // The relying party identifier, which is what `providerId` carries and what
@@ -796,29 +952,48 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
     artifactAcsUrl);
   log.info("Assertion consumers: Browser/POST " + acsUrl +
            ", Browser/Artifact " + artifactAcsUrl);
-  await registry.provision(registry.stsBaseFor(metadataUrl), {
-    identifier: spEntityId,
-    name: "SAML 1.1 test relying party",
-    protocols: ["saml11"],
-    fields: {
-      samlEntityId: [spEntityId]
-    },
-    why: "the relying party providerId names and the assertion is audienced to"
-  });
   var spMetadata = await driver.executeScript(
     "return window.saml_request.buildSpMetadata();");
   assert(spMetadata.indexOf(PROFILE_POST) >= 0 &&
          spMetadata.indexOf(PROFILE_ARTIFACT) >= 0,
     "the page's SAML 1.1 SP metadata must bind both profiles:\n" +
         spMetadata);
-  var consumed = await registry.adminPost(registry.stsBaseFor(metadataUrl),
-      "/saml2/upload-metadata", { sp: spEntityId, document: spMetadata,
-                                  family: "saml11" });
-  assert(consumed && consumed.ok !== false && !consumed.error,
-    "iya-sts did not consume this service provider's SAML 1.1 metadata: " +
-        JSON.stringify(consumed).slice(0, 600));
-  log.info("iya-sts consumed the SP metadata: " +
-           JSON.stringify(consumed).slice(0, 300));
+  if (peer.kind === "shibboleth") {
+    // REGISTERED THE WAY A SHIBBOLETH DEPLOYMENT TAKES A NEW SERVICE
+    // PROVIDER: its metadata, in a place the IdP's metadata providers read.
+    // The document is the page's own, so the consumers, the profiles bound
+    // to them and the signing key Shibboleth authenticates the artifact
+    // resolution request with are all exactly what the debugger publishes.
+    assert(spMetadata.indexOf('use="signing"') >= 0,
+      "the page's SP metadata carries no signing key, and Shibboleth " +
+      "authenticates a SAML 1.1 artifact resolution request with the key " +
+      "in it:\n" + spMetadata);
+    var file = path.join(peer.spDir, crypto.createHash("sha1")
+        .update(spEntityId).digest("hex") + ".xml");
+    fs.writeFileSync(file, spMetadata);
+    peer.registered = file;
+    log.info("Registered " + spEntityId + " with Shibboleth through " +
+        file);
+  } else {
+    await registry.provision(registry.stsBaseFor(metadataUrl), {
+      identifier: spEntityId,
+      name: "SAML 1.1 test relying party",
+      protocols: ["saml11"],
+      fields: {
+        samlEntityId: [spEntityId]
+      },
+      why: "the relying party providerId names and the assertion is " +
+          "audienced to"
+    });
+    var consumed = await registry.adminPost(registry.stsBaseFor(metadataUrl),
+        "/saml2/upload-metadata", { sp: spEntityId, document: spMetadata,
+                                    family: "saml11" });
+    assert(consumed && consumed.ok !== false && !consumed.error,
+      "iya-sts did not consume this service provider's SAML 1.1 metadata: " +
+          JSON.stringify(consumed).slice(0, 600));
+    log.info("iya-sts consumed the SP metadata: " +
+             JSON.stringify(consumed).slice(0, 300));
+  }
 
   // The response binding is the browser profile. The request binding does
   // not apply to SAML 1.1 (always a GET), so it is not set.
@@ -845,19 +1020,25 @@ async function saml11Activities(driver, metadataUrl, spEntityId, user, binding,
     "The Generated request was not rebuilt for the " + binding +
     " profile (its shire should be " + wantShire + ").", loginWait);
   await assertRequestIsShibbolethShaped(driver, binding, spEntityId,
-                                        wantShire);
+                                        wantShire, peer);
 
   log.info("Call IdP (SAML 1.1, " + binding + ").");
   await clickByValue(driver, "Call IdP");
 
-  log.info("Log in at the mock STS.");
-  await loginAtIdp(driver, user, loginWait);
+  if (peer.kind === "shibboleth") {
+    log.info("Sign in at Shibboleth.");
+    await loginAtShibboleth(driver, peer.origin, user, peer.password,
+                            loginWait * 2);
+  } else {
+    log.info("Log in at the mock STS.");
+    await loginAtIdp(driver, user, loginWait);
+  }
 
   log.info("Wait for the SAML Response page.");
   await driver.wait(until.urlContains("saml_response.html"), loginWait);
 
   await assertResponsePage(driver, binding, spEntityId, loginWait);
-  await assertSignatureValidates(driver, binding, loginWait);
+  await assertSignatureValidates(driver, binding, peer, loginWait);
   await assertHistoryClosedAsSuccess(driver, binding, loginWait);
 
   log.info("SAML 1.1 SSO round-trip succeeded (" + binding + ").");
@@ -907,28 +1088,73 @@ async function test() {
     // with saml_sso.js's SAML 2.0 entry, that would change what the SAML 2.0
     // jobs are held to. So SAML 1.1 uses SAML_SP_ENTITY_ID + "/saml11", and
     // the per-relying-party metadata URL is re-addressed to its slug.
-    const spEntityId = saml11EntityId(process.env.SAML_SP_ENTITY_ID);
-    const metadataUrl = saml11MetadataUrl(process.env.SAML11_METADATA_URL,
-                                          spEntityId);
-    const user = process.env.SAML_USER || "saml";
+    const peer = { kind: (process.env.SAML11_PEER || "iya-sts")
+        .toLowerCase() };
+    assert(["iya-sts", "shibboleth"].indexOf(peer.kind) >= 0,
+           "SAML11_PEER must be iya-sts or shibboleth.");
+    let spEntityId = saml11EntityId(process.env.SAML_SP_ENTITY_ID);
+    let metadataUrl = saml11MetadataUrl(process.env.SAML11_METADATA_URL,
+                                        spEntityId);
+    let user = process.env.SAML_USER || "saml";
+    if (peer.kind === "shibboleth") {
+      // Nothing of iya-sts. The entityID is this run's own, so neither a
+      // previous run's registration nor a lookup Shibboleth cached as a
+      // miss is in the way; the side-car releases attributes to any entity
+      // under the prefix.
+      const base = String(process.env.SHIBBOLETH_IDP_URL || "")
+          .replace(/\/+$/, "");
+      assert(base, "SAML11_PEER=shibboleth needs SHIBBOLETH_IDP_URL (the " +
+          "base containing /idp).");
+      peer.spDir = process.env.SHIBBOLETH_SP_METADATA_DIR || "";
+      assert(peer.spDir, "SAML11_PEER=shibboleth needs " +
+          "SHIBBOLETH_SP_METADATA_DIR, the directory the side-car reads " +
+          "service provider metadata from.");
+      peer.password = process.env.SHIBBOLETH_IDP_PASSWORD ||
+          "saml11-shibboleth";
+      user = process.env.SHIBBOLETH_IDP_USER || "jdoe";
+      spEntityId = (process.env.SHIBBOLETH_SP_ENTITY_ID ||
+          "https://debugger.example.test/saml11").replace(/\/+$/, "") +
+          "/sso-" + Date.now() + "-" + process.pid;
+      metadataUrl = "";
+      peer.metadataFile = path.join(os.tmpdir(), "shibboleth-idp-metadata-" +
+          process.pid + ".xml");
+      fs.writeFileSync(peer.metadataFile,
+                       await fetchText(base + "/shibboleth"));
+      log.info("Shibboleth metadata from " + base + "/shibboleth, as " +
+          peer.metadataFile);
+    }
+    const metadataFileUsed = peer.metadataFile || metadataFile;
     // `redirect` is the old name of the Browser/POST job: the request is a
     // GET either way since #307, so the two were the same flow.
     let binding = (process.env.SAML_BINDING || "post").toLowerCase();
     if (binding === "redirect") {
       binding = "post";
     }
-    assert(metadataUrl || metadataFile,
+    assert(metadataUrl || metadataFileUsed,
       "Set SAML11_METADATA_URL (URL load) or SAML11_METADATA_FILE (file " +
       "upload). It names the mock STS's per-relying-party SAML 1.1 " +
       "descriptor; nothing has to be provisioned first, because that service " +
       "mints one for any identifier asked for.");
     assert(["post", "artifact"].indexOf(binding) >= 0,
            "SAML_BINDING must be post or artifact (the browser profile).");
-    log.info("metadata=" + (metadataUrl || metadataFile) + " sp=" +
-             spEntityId + " binding=" + binding);
-
-    await saml11Activities(driver, metadataUrl, spEntityId, user, binding,
-                           metadataFile);
+    log.info("peer=" + peer.kind + " metadata=" +
+             (metadataUrl || metadataFileUsed) + " sp=" + spEntityId +
+             " binding=" + binding);
+    try {
+      await saml11Activities(driver, metadataUrl, spEntityId, user, binding,
+                             metadataFileUsed, peer);
+    } finally {
+      [peer.registered, peer.metadataFile].forEach(function (f) {
+        if (!f) {
+          return;
+        }
+        try {
+          fs.unlinkSync(f);
+        } catch (e) {
+          log.warn("Could not remove " + f + ": " + e.message);
+        }
+      });
+    }
     log.info("Test completed successfully.");
   } catch (error) {
     log.error(error.message);

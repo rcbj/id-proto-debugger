@@ -4399,6 +4399,41 @@ function buildJobs() {
     jobs.push(job);
   }
 
+  // THE SAME ROUND TRIP AGAINST SHIBBOLETH (#425): somebody else's SAML 1.1
+  // identity provider, the side-car in shibboleth-idp/. The debugger is
+  // registered the way a Shibboleth deployment takes a service provider —
+  // its own SP metadata, written where the IdP's metadata providers read —
+  // and the IdP's metadata is loaded from <base>/shibboleth. Nothing of
+  // iya-sts is used. Only the containerized stack starts the side-car, and
+  // anywhere else these two are declared skips naming it.
+  for (const SAML_BINDING of ["post", "artifact"]) {
+    const job = {
+      name: `SAML 1.1 SSO — Browser/${SAML_BINDING === 'artifact' ?
+          'Artifact' : 'POST'} profile (Shibboleth IdP)`,
+      script: "saml11_sso.js",
+      env: {
+        SAML_BINDING,
+        SAML11_PEER: "shibboleth",
+        SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
+        SHIBBOLETH_IDP_URL: env.SHIBBOLETH_IDP_URL,
+        SHIBBOLETH_SP_METADATA_DIR: env.SHIBBOLETH_SP_METADATA_DIR,
+        SHIBBOLETH_IDP_USER: env.SHIBBOLETH_IDP_USER,
+        SHIBBOLETH_IDP_PASSWORD: env.SHIBBOLETH_IDP_PASSWORD,
+        SHIBBOLETH_SP_ENTITY_ID: env.SHIBBOLETH_SP_ENTITY_ID,
+      },
+    };
+    if (!env.SHIBBOLETH_IDP_URL || !env.SHIBBOLETH_SP_METADATA_DIR) {
+      job.skip = "no Shibboleth IdP on this stack (SHIBBOLETH_IDP_URL or " +
+        "SHIBBOLETH_SP_METADATA_DIR unset). Only the containerized stack " +
+        "starts the shibboleth-idp side-car.";
+    } else if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
+      job.skip = "HTTP Artifact needs the API backend (the SAML 1.1 SOAP " +
+        "responder is a server-side call); unavailable on the static " +
+        "deployment.";
+    }
+    jobs.push(job);
+  }
+
   // What the SP / Request pane offers on SAML 1.1 and what it must stop
   // offering — the username hint, request signing, request encryption, Single
   // Logout and the SLO endpoints, each asserted DISABLED and greyed rather than
@@ -4434,6 +4469,7 @@ function buildJobs() {
       SHIBBOLETH_IDP_PASSWORD: env.SHIBBOLETH_IDP_PASSWORD,
       SHIBBOLETH_SP_ENTITY_ID: env.SHIBBOLETH_SP_ENTITY_ID,
       SHIBBOLETH_ACS_URL: env.SHIBBOLETH_ACS_URL,
+      SHIBBOLETH_SP_METADATA_DIR: env.SHIBBOLETH_SP_METADATA_DIR,
     },
   });
 

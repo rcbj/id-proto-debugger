@@ -28,7 +28,7 @@
 // TWO PROTOCOL VERSIONS ARE FUNCTIONAL HERE, AND THEY ARE TWO PROTOCOLS.
 //
 // **SAML 1.1 has no request message.** There is no `<AuthnRequest>` in it: the
-// browser profiles (saml-profile-1.1 sections 4.1 and 4.2) are
+// browser profiles (sstc-saml-bindings-1.1 sections 4.1.1 and 4.1.2) are
 // IDENTITY-PROVIDER-INITIATED, and a flow begins when a browser arrives at the
 // inter-site transfer service carrying a `TARGET`. What a real SAML 1.1 service
 // provider actually sends is Shibboleth's request profile — identified by
@@ -473,10 +473,17 @@ function applyMetadata(xmlText, url) {
   setVal('saml_metadata_doc', xmlText);
   try {
     parseMetadata(xmlText);
+    // Loaded either way: this is a debugger, and an expired document is
+    // worth reading. It is said, because a relying party must not use one.
+    var expiry = samlMessage.metadataExpiry(xmlText, new Date());
     setStatus('saml_metadata_status', 'Loaded and parsed.' +
       (metadataVersionSwitch ? ' The document describes a SAML ' +
        metadataVersionSwitch + ' identity provider, so Protocol Version was ' +
-       'set to ' + metadataVersionSwitch + '.' : ''));
+       'set to ' + metadataVersionSwitch + '.' : '') +
+      (expiry.expired ? ' WARNING: it EXPIRED at ' + expiry.validUntil +
+       ' (validUntil, saml-metadata-2.0-os section 2.2.1). A relying party ' +
+       'must not use expired metadata; ask the identity provider for a ' +
+       'current copy.' : ''));
     // Recorded after the parse so the IdP entityID it just populated is shown.
     opSuccess('Load IdP Metadata', url ? ('loaded from ' +
               url) : 'loaded from a local file', { binding: '—' });

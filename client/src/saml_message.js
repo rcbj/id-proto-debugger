@@ -1127,9 +1127,10 @@ function attributesOf(root) {
 
 // HOW THE ASSERTION CLAIMS TO HAVE REACHED THE RELYING PARTY. The two
 // versions put this in different places and in the SAML 1.1 browser profiles
-// it IS the profile: saml-profile-1.1 section 4.1.1.4 requires cm:artifact for
-// Browser/Artifact and 4.2.1.4 requires cm:bearer for Browser/POST, and a
-// relying party that never looks works perfectly with either. SAML 2.0 puts
+// it IS the profile: sstc-saml-bindings-1.1 section 4.1.1.6 requires
+// cm:artifact for Browser/Artifact and 4.1.2.5 requires cm:bearer for
+// Browser/POST, and a relying party that never looks works perfectly with
+// either. SAML 2.0 puts
 // the method on <saml:SubjectConfirmation> and the interesting part —
 // Recipient, NotOnOrAfter, InResponseTo, Address — in the
 // <saml:SubjectConfirmationData> beneath it, which is the bearer check every
@@ -1778,6 +1779,41 @@ function saml11AuthnRequestParams(fields) {
   return out;
 }
 
+// WHEN A METADATA DOCUMENT STOPS BEING VALID (#425). saml-metadata-2.0-os
+// section 2.2.1: validUntil on an EntitiesDescriptor, an EntityDescriptor or
+// a role descriptor is the expiration time of that element and of
+// everything inside it, so the identity provider's descriptor expires at the
+// EARLIEST validUntil on it or on any element enclosing it. Shibboleth's
+// installer writes its example idp-metadata.xml with validUntil set to the
+// moment it was generated, so that document has expired before anybody reads
+// it, and a reader that ignores the attribute uses it without a word.
+//
+// Returns { validUntil, expired } for the first IDPSSODescriptor (the
+// document root when it has none); validUntil is '' when nothing bounds it.
+function metadataExpiry(xml, now) {
+  log.debug("Entering metadataExpiry().");
+  var doc = parseXml(xml);
+  if (!doc || !doc.documentElement) {
+    log.debug("Leaving metadataExpiry(). Not XML.");
+    return { validUntil: '', expired: false };
+  }
+  var node = tags(doc, 'IDPSSODescriptor')[0] || doc.documentElement;
+  var earliest = '';
+  var earliestMs = Infinity;
+  while (node && node.nodeType === 1) {
+    var v = attr(node, 'validUntil');
+    var ms = v ? Date.parse(v) : NaN;
+    if (!isNaN(ms) && ms < earliestMs) {
+      earliestMs = ms;
+      earliest = v;
+    }
+    node = node.parentNode;
+  }
+  var at = (now instanceof Date ? now : new Date()).getTime();
+  log.debug("Leaving metadataExpiry(). validUntil=" + (earliest || '(none)'));
+  return { validUntil: earliest, expired: earliest !== '' && earliestMs <= at };
+}
+
 // The certificates in a field a reader may paste several into, as a list of
 // bare base64 DER bodies with no duplicates (#425). PEM blocks are taken
 // wherever they are; text with no PEM block is split on BLANK lines, because
@@ -1873,6 +1909,7 @@ function requiredResponseSignature(xml) {
 
 module.exports = {
   requiredResponseSignature: requiredResponseSignature,
+  metadataExpiry: metadataExpiry,
   splitCertificates: splitCertificates,
   SAML11_REQUEST_PARAMS: SAML11_REQUEST_PARAMS,
   saml11AuthnRequestParams: saml11AuthnRequestParams,
