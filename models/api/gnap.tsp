@@ -30,7 +30,6 @@ using IdProtoDebugger.Lib;
 
 namespace IdProtoDebugger.Api.Gnap;
 
-alias HttpExchange = IdProtoDebugger.Api.Scim.HttpExchange;
 
 // ---------------------------------------------------------------------------
 // Requests.

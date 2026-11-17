@@ -269,39 +269,6 @@ model RegistrationRequest {
 // Answers.
 // ---------------------------------------------------------------------------
 
-/** The far end's answer, in the trace. */
-model ExchangeResponse {
-  status: int32;
-  statusText: string;
-  headers: Record<unknown>;
-
-  /** As received, cut at the api's trace limit. */
-  body: string;
-
-  bodyTruncated: boolean;
-  bodyLength: int64;
-}
-
-/**
- * The HTTP exchange the api had with the far end (buildHttpTrace() in
- * api/server.js): the request as SENT, User-Agent and any Authorization
- * header included; the response, or null when none came back; how long
- * the outbound call took; and why it failed, when it did.
- */
-model HttpExchange {
-  request: {
-    method: string;
-    url: string;
-    headers: Record<unknown>;
-    body: string;
-  };
-  response: ExchangeResponse | null;
-  timing: {
-    totalMs: int64;
-  };
-  error: string | null;
-}
-
 /**
  * The api's own failure: the far end could not be reached or gave no
  * answer (a name that does not resolve, a refused connection, a timeout, a

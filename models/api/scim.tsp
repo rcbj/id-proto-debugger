@@ -21,8 +21,8 @@
 // value is api/scim_proxy.js's describeRequest(), which tests/scim_protocol.js
 // drives with no server at all, and each such member says so.
 //
-// HttpExchange is declared here and read by ssf.tsp and gnap.tsp as well: it
-// is server.js's buildHttpTrace(), which every proxied call shares.
+// HttpExchange is common.tsp's: server.js's buildHttpTrace(), which every
+// proxied call shares.
 
 import "@typespec/http";
 import "@typespec/openapi";
@@ -71,38 +71,6 @@ model CallRequest {
 // ---------------------------------------------------------------------------
 // Answers.
 // ---------------------------------------------------------------------------
-
-/** The request as it left this service, headers it added included. */
-model SentRequest {
-  method: string;
-  url: string;
-  headers: Record<unknown>;
-  body: string;
-}
-
-/** The response as it arrived, the body cut at the trace's limit. */
-model ReceivedResponse {
-  status: int32;
-  statusText: string;
-  headers: Record<unknown>;
-  body: string;
-  bodyTruncated: boolean;
-  bodyLength: int64;
-}
-
-/**
- * What this service saw of a call it made, attached as `http_exchange` when
- * the caller asked for it. `response` is null when there was none, and
- * `error` then says why.
- */
-model HttpExchange {
-  request: SentRequest;
-  response: ReceivedResponse | null;
-  timing: {
-    totalMs: int64;
-  };
-  error: string | null;
-}
 
 /**
  * What the SCIM server said. `ok` is a 2xx; a SCIM error document fills

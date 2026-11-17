@@ -5749,7 +5749,7 @@
             "type": "string"
           },
           "http_exchange": {
-            "$ref": "#/components/schemas/Scim.HttpExchange"
+            "$ref": "#/components/schemas/HttpExchange"
           }
         },
         "description": "What the authorization server said. `ok` is a 2xx; `error` and\n`description` are its GNAP error, whether it sent a bare code or an\nobject; `notJson` is the parse error of a body that is not JSON."
@@ -5974,10 +5974,57 @@
             "type": "string"
           },
           "http_exchange": {
-            "$ref": "#/components/schemas/Scim.HttpExchange"
+            "$ref": "#/components/schemas/HttpExchange"
           }
         },
         "description": "The server could not be reached. `code` is the network error's."
+      },
+      "HttpExchange": {
+        "type": "object",
+        "required": [
+          "request",
+          "response",
+          "timing",
+          "error"
+        ],
+        "properties": {
+          "request": {
+            "$ref": "#/components/schemas/SentRequest"
+          },
+          "response": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReceivedResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "timing": {
+            "type": "object",
+            "properties": {
+              "totalMs": {
+                "type": "integer",
+                "format": "int64"
+              }
+            },
+            "required": [
+              "totalMs"
+            ]
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "description": "What this service saw of a call it made, attached as `http_exchange` when\nthe caller asked for it. `response` is null when there was none, and\n`error` then says why."
       },
       "Krb5.Failure": {
         "type": "object",
@@ -7551,42 +7598,6 @@
         },
         "description": "A device authorization request (RFC 8628 section 3.1)."
       },
-      "OAuth.ExchangeResponse": {
-        "type": "object",
-        "required": [
-          "status",
-          "statusText",
-          "headers",
-          "body",
-          "bodyTruncated",
-          "bodyLength"
-        ],
-        "properties": {
-          "status": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "statusText": {
-            "type": "string"
-          },
-          "headers": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "body": {
-            "type": "string",
-            "description": "As received, cut at the api's trace limit."
-          },
-          "bodyTruncated": {
-            "type": "boolean"
-          },
-          "bodyLength": {
-            "type": "integer",
-            "format": "int64"
-          }
-        },
-        "description": "The far end's answer, in the trace."
-      },
       "OAuth.Failure": {
         "type": "object",
         "required": [
@@ -7605,79 +7616,11 @@
             ]
           },
           "http_exchange": {
-            "$ref": "#/components/schemas/OAuth.HttpExchange",
+            "$ref": "#/components/schemas/HttpExchange",
             "description": "Present when the caller asked for http_trace, on /token and\n/tokenexchange. `response` is null in it."
           }
         },
         "description": "The api's own failure: the far end could not be reached or gave no\nanswer (a name that does not resolve, a refused connection, a timeout, a\nbody past maxContentLength, too many redirects, a blocked address or\nscheme), or the call could not be made at all. `error` is an object only\nwhere a handler's last-resort catch serialized an Error, which is `{}`."
-      },
-      "OAuth.HttpExchange": {
-        "type": "object",
-        "required": [
-          "request",
-          "response",
-          "timing",
-          "error"
-        ],
-        "properties": {
-          "request": {
-            "type": "object",
-            "properties": {
-              "method": {
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              },
-              "headers": {
-                "type": "object",
-                "additionalProperties": {}
-              },
-              "body": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "method",
-              "url",
-              "headers",
-              "body"
-            ]
-          },
-          "response": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/OAuth.ExchangeResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "timing": {
-            "type": "object",
-            "properties": {
-              "totalMs": {
-                "type": "integer",
-                "format": "int64"
-              }
-            },
-            "required": [
-              "totalMs"
-            ]
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "description": "The HTTP exchange the api had with the far end (buildHttpTrace() in\napi/server.js): the request as SENT, User-Agent and any Authorization\nheader included; the response, or null when none came back; how long\nthe outbound call took; and why it failed, when it did."
       },
       "OAuth.IntrospectionAnswer": {
         "type": "object",
@@ -8140,7 +8083,7 @@
           "error_description": {},
           "error_uri": {},
           "http_exchange": {
-            "$ref": "#/components/schemas/OAuth.HttpExchange",
+            "$ref": "#/components/schemas/HttpExchange",
             "description": "The api's own, attached when http_trace asked for it and the body is\nan object that has no member of this name already."
           }
         },
@@ -8532,105 +8475,6 @@
         "additionalProperties": {},
         "description": "OIDC UserInfo claims (OIDC Core 5.3.2), as sent, when JSON."
       },
-      "Otp.HttpExchange": {
-        "type": "object",
-        "required": [
-          "request",
-          "response",
-          "timing",
-          "error"
-        ],
-        "properties": {
-          "request": {
-            "type": "object",
-            "properties": {
-              "method": {
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              },
-              "headers": {
-                "type": "object",
-                "additionalProperties": {}
-              },
-              "body": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "method",
-              "url",
-              "headers",
-              "body"
-            ]
-          },
-          "response": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "status": {
-                    "type": "integer",
-                    "format": "int32"
-                  },
-                  "statusText": {
-                    "type": "string"
-                  },
-                  "headers": {
-                    "type": "object",
-                    "additionalProperties": {}
-                  },
-                  "body": {
-                    "type": "string"
-                  },
-                  "bodyTruncated": {
-                    "type": "boolean"
-                  },
-                  "bodyLength": {
-                    "type": "integer",
-                    "format": "int64"
-                  }
-                },
-                "required": [
-                  "status",
-                  "statusText",
-                  "headers",
-                  "body",
-                  "bodyTruncated",
-                  "bodyLength"
-                ]
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "timing": {
-            "type": "object",
-            "properties": {
-              "totalMs": {
-                "type": "integer",
-                "format": "int64"
-              }
-            },
-            "required": [
-              "totalMs"
-            ]
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "description": "The outbound request and its answer, when http_trace asked for it."
-      },
       "Otp.Limits": {
         "type": "object",
         "required": [
@@ -8693,7 +8537,7 @@
             "type": "string"
           },
           "http_exchange": {
-            "$ref": "#/components/schemas/Otp.HttpExchange"
+            "$ref": "#/components/schemas/HttpExchange"
           }
         },
         "description": "The verifier could not be reached. `code` is the network's, or empty."
@@ -8717,7 +8561,7 @@
             "type": "string"
           },
           "http_exchange": {
-            "$ref": "#/components/schemas/Otp.HttpExchange"
+            "$ref": "#/components/schemas/HttpExchange"
           }
         },
         "description": "What the verifier said. `ok` is the HTTP status being 2xx and nothing\nmore: the protocol's own status=OK or BAD_OTP is inside `body`, which the\npage reads and checks against its nonce and the API key."
@@ -8789,6 +8633,41 @@
           }
         },
         "description": "A validation request the page already signed, and where to send it."
+      },
+      "ReceivedResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "statusText",
+          "headers",
+          "body",
+          "bodyTruncated",
+          "bodyLength"
+        ],
+        "properties": {
+          "status": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "statusText": {
+            "type": "string"
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "body": {
+            "type": "string"
+          },
+          "bodyTruncated": {
+            "type": "boolean"
+          },
+          "bodyLength": {
+            "type": "integer",
+            "format": "int64"
+          }
+        },
+        "description": "The response as it arrived, the body cut at the trace's limit."
       },
       "Refusal": {
         "type": "object",
@@ -9270,7 +9149,7 @@
             "type": "string"
           },
           "http_exchange": {
-            "$ref": "#/components/schemas/Scim.HttpExchange"
+            "$ref": "#/components/schemas/HttpExchange"
           }
         },
         "description": "What the SCIM server said. `ok` is a 2xx; a SCIM error document fills\n`scimType` and `detail`, and `notJson` is the parse error of a body that\nis not JSON — which is something in front of the server answering."
@@ -9353,53 +9232,6 @@
           }
         },
         "description": "One SCIM request, as the page composed it."
-      },
-      "Scim.HttpExchange": {
-        "type": "object",
-        "required": [
-          "request",
-          "response",
-          "timing",
-          "error"
-        ],
-        "properties": {
-          "request": {
-            "$ref": "#/components/schemas/Scim.SentRequest"
-          },
-          "response": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/Scim.ReceivedResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "timing": {
-            "type": "object",
-            "properties": {
-              "totalMs": {
-                "type": "integer",
-                "format": "int64"
-              }
-            },
-            "required": [
-              "totalMs"
-            ]
-          },
-          "error": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "description": "What this service saw of a call it made, attached as `http_exchange` when\nthe caller asked for it. `response` is null when there was none, and\n`error` then says why."
       },
       "Scim.Limits": {
         "type": "object",
@@ -9503,42 +9335,26 @@
         },
         "description": "What the SCIM proxy will and will not do."
       },
-      "Scim.ReceivedResponse": {
+      "Scim.Unreachable": {
         "type": "object",
         "required": [
-          "status",
-          "statusText",
-          "headers",
-          "body",
-          "bodyTruncated",
-          "bodyLength"
+          "error",
+          "code"
         ],
         "properties": {
-          "status": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "statusText": {
+          "error": {
             "type": "string"
           },
-          "headers": {
-            "type": "object",
-            "additionalProperties": {}
-          },
-          "body": {
+          "code": {
             "type": "string"
           },
-          "bodyTruncated": {
-            "type": "boolean"
-          },
-          "bodyLength": {
-            "type": "integer",
-            "format": "int64"
+          "http_exchange": {
+            "$ref": "#/components/schemas/HttpExchange"
           }
         },
-        "description": "The response as it arrived, the body cut at the trace's limit."
+        "description": "The server could not be reached. `code` is the network error's."
       },
-      "Scim.SentRequest": {
+      "SentRequest": {
         "type": "object",
         "required": [
           "method",
@@ -9562,25 +9378,6 @@
           }
         },
         "description": "The request as it left this service, headers it added included."
-      },
-      "Scim.Unreachable": {
-        "type": "object",
-        "required": [
-          "error",
-          "code"
-        ],
-        "properties": {
-          "error": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string"
-          },
-          "http_exchange": {
-            "$ref": "#/components/schemas/Scim.HttpExchange"
-          }
-        },
-        "description": "The server could not be reached. `code` is the network error's."
       },
       "Service.Health": {
         "type": "object",
@@ -10920,7 +10717,7 @@
             "type": "string"
           },
           "http_exchange": {
-            "$ref": "#/components/schemas/Scim.HttpExchange"
+            "$ref": "#/components/schemas/HttpExchange"
           }
         },
         "description": "What the transmitter said. `ok` is a 2xx, and a 204 with no body is one\n(`noBody`). `err` and `description` are RFC 8935 section 2.4's, which SSF\nuses on every endpoint; `notJson` is the parse error of a body that is\nnot JSON."
@@ -11542,7 +11339,7 @@
             "type": "string"
           },
           "http_exchange": {
-            "$ref": "#/components/schemas/Scim.HttpExchange"
+            "$ref": "#/components/schemas/HttpExchange"
           }
         },
         "description": "The transmitter could not be reached. `code` is the network error's."

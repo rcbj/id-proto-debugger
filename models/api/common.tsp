@@ -51,3 +51,41 @@ model Ok<T> {
   @statusCode statusCode: 200;
   @body body: T;
 }
+
+// ---------------------------------------------------------------------------
+// The trace every proxied call attaches as `http_exchange` when its caller
+// asks (`http_trace`): api/server.js's buildHttpTrace(). One model, because
+// it is one function.
+// ---------------------------------------------------------------------------
+
+/** The request as it left this service, headers it added included. */
+model SentRequest {
+  method: string;
+  url: string;
+  headers: Record<unknown>;
+  body: string;
+}
+
+/** The response as it arrived, the body cut at the trace's limit. */
+model ReceivedResponse {
+  status: int32;
+  statusText: string;
+  headers: Record<unknown>;
+  body: string;
+  bodyTruncated: boolean;
+  bodyLength: int64;
+}
+
+/**
+ * What this service saw of a call it made, attached as `http_exchange` when
+ * the caller asked for it. `response` is null when there was none, and
+ * `error` then says why.
+ */
+model HttpExchange {
+  request: SentRequest;
+  response: ReceivedResponse | null;
+  timing: {
+    totalMs: int64;
+  };
+  error: string | null;
+}

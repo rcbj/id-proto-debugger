@@ -35,7 +35,6 @@ using IdProtoDebugger.Lib;
 
 namespace IdProtoDebugger.Api.Ssf;
 
-alias HttpExchange = IdProtoDebugger.Api.Scim.HttpExchange;
 alias Refusals = BadRequest<IdProtoDebugger.Api.Refusal |
   IdProtoDebugger.Api.ModelRefusal>;
 

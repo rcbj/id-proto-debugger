@@ -75,27 +75,6 @@ namespace IdProtoDebugger.Api.Otp {
   // Answers.
   // ---------------------------------------------------------------------------
 
-  /** The outbound request and its answer, when http_trace asked for it. */
-  model HttpExchange {
-    request: {
-      method: string;
-      url: string;
-      headers: Record<unknown>;
-      body: string;
-    };
-    response: {
-      status: int32;
-      statusText: string;
-      headers: Record<unknown>;
-      body: string;
-      bodyTruncated: boolean;
-      bodyLength: int64;
-    } | null;
-    timing: {
-      totalMs: int64;
-    };
-    error: string | null;
-  }
 
   /**
    * What the verifier said. `ok` is the HTTP status being 2xx and nothing
