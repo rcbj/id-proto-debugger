@@ -3747,6 +3747,18 @@ function buildJobs() {
     env: {},
   });
 
+  // The presentation PROTOCOLS in node: x509_hash and x509_san_dns against
+  // certificates node reads itself, the direct_post.jwt response opened with
+  // the Verifier's key, self-issued ID Tokens in three subject syntaxes,
+  // RFC 8785's own JCS vectors and the ecdsa-jcs-2019 holder proof, and every
+  // rule HAIP and SIOPv2 refuse on. Needs nothing.
+  jobs.push({
+    name: "VC presentation protocols (HAIP 1.0, SIOPv2 and OpenID4VP rules, " +
+        "x509 Client Identifiers, response encryption, in node)",
+    script: "vp_protocols_engine.js",
+    env: {},
+  });
+
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
   // Issuer the STS service hosts, the three vc-issuance pages, and the
   // ?sdjwtvc=1 hand-off through oauth2_oidc_1.html / oauth2_oidc_2.html. Needs
@@ -4016,6 +4028,22 @@ function buildJobs() {
       env: {
         WSTRUST_STS_URL: env.WSTRUST_STS_URL,
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+      },
+    });
+    // The same workflow under its three PROTOCOLS (vp_protocols.js): HAIP
+    // 1.0 — x509_hash, a signed request by request_uri, an encrypted
+    // direct_post.jwt answer — and SIOPv2, a self-issued ID Token beside the
+    // presentation and on its own, for every format the wallet holds. It
+    // starts its own verifications and configures nothing, so it takes no
+    // lock.
+    jobs.push({
+      name: "VC Presentation — HAIP 1.0 and SIOPv2 (x509_hash, " +
+          "direct_post.jwt, self-issued ID Tokens, every format)",
+      script: "vc_presentation_protocols.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        OID4VP_VERIFIER_URL: env.OID4VP_VERIFIER_URL || "",
       },
     });
   }

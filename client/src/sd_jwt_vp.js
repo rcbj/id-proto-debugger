@@ -48,6 +48,7 @@ var log = bunyan.createLogger({
 var metadataClient = require("./metadata_client");
 var jws = require("./jws");
 var sdJwtVc = require("./sd_jwt_vc");
+var vpProtocols = require("./vp_protocols");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -76,7 +77,17 @@ var KEYS = {
   // The Verifier's WEBSITE: the page where a person starts a verification,
   // which the three flows on step 0 link to. Any Verifier's, not only this
   // suite's; set on step 0.
-  VERIFIER_SITE_URL: "sdjwtvp_verifier_site_url"
+  VERIFIER_SITE_URL: "sdjwtvp_verifier_site_url",
+  // The protocol (OpenID4VP, HAIP, SIOPv2) and the trust anchor for x509
+  // Client Identifiers. Named in vp_protocols.js, which owns them.
+  PROTOCOL: vpProtocols.KEYS.PROTOCOL,
+  X509_TRUST_ANCHOR: vpProtocols.KEYS.X509_TRUST_ANCHOR,
+  SIOP_SUBJECT_SYNTAX: vpProtocols.KEYS.SUBJECT_SYNTAX,
+  // Pairwise self-issued subjects: { client_id: private JWK }. KEY MATERIAL,
+  // so it is kept only while SIOP_SAVE_PAIRWISE is not "0", and removed the
+  // moment it is (the rule every key-pair pane in this tree follows).
+  SIOP_PAIRWISE_KEYS: "sdjwtvp_siop_pairwise_keys",
+  SIOP_SAVE_PAIRWISE: "sdjwtvp_siop_save_pairwise"
 };
 
 var STEP1_URL = "/vc-presentation-1.html";
@@ -194,6 +205,43 @@ function setUseCase(id) {
   return uc;
 }
 
+// ---------------------------------------------------------------------------
+// The PROTOCOL the request is answered under (vp_protocols.js), orthogonal to
+// the flow above except in one place: HAIP 1.0 has no request by value, so
+// that flow is unavailable while HAIP is chosen.
+// ---------------------------------------------------------------------------
+function currentProtocol() {
+  log.debug("Entering currentProtocol().");
+  log.debug("Leaving currentProtocol().");
+  return vpProtocols.protocolById(sdJwtVc.get(vpProtocols.KEYS.PROTOCOL)) ||
+         vpProtocols.protocolById(vpProtocols.DEFAULT_PROTOCOL);
+}
+
+function setProtocol(id) {
+  log.debug("Entering setProtocol(). id=" + id);
+  var p = vpProtocols.protocolById(id);
+  if (!p) {
+    log.debug("Leaving setProtocol(). Unknown.");
+    return null;
+  }
+  sdJwtVc.set(vpProtocols.KEYS.PROTOCOL, p.id);
+  if (p.id === vpProtocols.PROTOCOL_HAIP &&
+      !useCaseAllowed(currentUseCase(), p)) {
+    sdJwtVc.set(KEYS.USE_CASE, "same-device-signed");
+  }
+  log.debug("Leaving setProtocol().");
+  return p;
+}
+
+// Whether a flow can be used under a protocol, and if not why.
+function useCaseAllowed(uc, protocol) {
+  log.debug("Entering useCaseAllowed(). " + (uc && uc.id));
+  var ok = !(protocol && protocol.id === vpProtocols.PROTOCOL_HAIP &&
+             uc && uc.id === "same-device");
+  log.debug("Leaving useCaseAllowed(). " + ok);
+  return ok;
+}
+
 // Which way this presentation is being made, in the step indicator every page
 // includes.
 function renderUseCaseBadge() {
@@ -205,13 +253,16 @@ function renderUseCaseBadge() {
     return null;
   }
   var uc = currentUseCase();
+  var protocol = currentProtocol();
   var existing = document.getElementById("vp_use_case_badge");
   if (existing) existing.parentNode.removeChild(existing);
   var badge = document.createElement("p");
   badge.id = "vp_use_case_badge";
   badge.className = "vc-use-case-badge";
-  badge.innerHTML = 'Flow: <strong>' + metadataClient.escapeHtmlText(uc.spec) +
-      ' &middot; ' +
+  badge.innerHTML = 'Protocol: <strong>' +
+                    metadataClient.escapeHtmlText(protocol.label) +
+                    '</strong> &middot; Flow: <strong>' +
+                    metadataClient.escapeHtmlText(uc.spec) + ' &middot; ' +
                     metadataClient.escapeHtmlText(uc.label) + '</strong> — ' +
                     metadataClient.escapeHtmlText(uc.mechanics) +
                     ' <a href="/vc-presentation-0.html">change</a>';
@@ -248,7 +299,7 @@ var REQUEST_PARAMS = ["client_id", "response_type", "response_mode",
                       "nonce", "state", "dcql_query", "client_metadata",
                           "request_uri",
                       "request_uri_method", "request", "scope",
-                          "transaction_data"];
+                          "transaction_data", "id_token_type"];
 
 function parseRequestQuery(search) {
   log.debug("Entering parseRequestQuery().");
@@ -621,6 +672,9 @@ module.exports = {
   useCaseById: useCaseById,
   currentUseCase: currentUseCase,
   setUseCase: setUseCase,
+  currentProtocol: currentProtocol,
+  setProtocol: setProtocol,
+  useCaseAllowed: useCaseAllowed,
   renderUseCaseBadge: renderUseCaseBadge,
   storeRequest: storeRequest,
   storedRequest: storedRequest,

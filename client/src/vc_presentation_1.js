@@ -30,6 +30,8 @@ var bunyan = require("bunyan");
 var metadataClient = require("./metadata_client");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
+var vpProtocols = require("./vp_protocols");
+var x509 = require("./x509");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_1',
                                 level: appconfig.logLevel });
@@ -136,6 +138,20 @@ function clientIdentifier(clientId) {
                 "has to come in client_metadata."
     };
   }
+  if (prefix === "x509_hash" || prefix === "x509_san_dns") {
+    log.debug("Leaving clientIdentifier(). " + prefix + " prefix.");
+    return {
+      prefix: prefix, value: id.slice(colon + 1), signable: true,
+      note: prefix === "x509_hash" ?
+        "The Verifier is named by the SHA-256 of its own certificate, " +
+        "which the signed request carries in x5c. The wallet hashes that " +
+        "certificate, verifies the request with its key, and follows its " +
+        "chain to the trust anchor configured on step 0." :
+        "The Verifier is named by a DNS name its certificate certifies, " +
+        "carried in the signed request's x5c. The answer must go to that " +
+        "same host."
+    };
+  }
   log.debug("Leaving clientIdentifier(). prefix=" + prefix);
   return {
     prefix: prefix, value: id.slice(colon + 1), signable: true,
@@ -166,13 +182,31 @@ function adoptParams(params, source) {
 
 // A request passed by reference: fetch the Request Object and, when it is a
 // signed JWT, verify it before believing a word of it.
-function fetchRequestObject(uri, clientId) {
-  log.debug("Entering fetchRequestObject(). uri=" + uri);
+function fetchRequestObject(uri, clientId, method) {
+  log.debug("Entering fetchRequestObject(). uri=" + uri + " method=" +
+            (method || "get"));
   status("vp_request_status", "Fetching the Request Object from " + uri + " …",
          "vc-pending");
+  var accept = "application/oauth-authz-req+jwt, application/jwt, " +
+               "application/json";
+  var init = { headers: { "Accept": accept } };
+  // request_uri_method=post (OpenID4VP 1.0 section 5.10): the wallet says
+  // what it can do, and sends a nonce the signed request must echo, so a
+  // Request Object made for some other wallet cannot be replayed at this one.
+  var walletNonce = "";
+  if (String(method || "").toLowerCase() === "post") {
+    walletNonce = vpProtocols.walletNonce();
+    init = {
+      method: "POST",
+      headers: { "Accept": accept,
+                 "Content-Type": "application/x-www-form-urlencoded" },
+      body: "wallet_metadata=" + encodeURIComponent(JSON.stringify(
+              vpProtocols.walletMetadata())) +
+            "&wallet_nonce=" + encodeURIComponent(walletNonce)
+    };
+  }
   log.debug("Leaving fetchRequestObject().");
-  return fetch(uri, { headers: { "Accept": "application/oauth-authz-req+jwt, " +
-               "application/jwt, application/json" } })
+  return fetch(uri, init)
     .then(function (r) {
       if (!r.ok) throw new Error("the request_uri returned HTTP " + r.status +
           ".");
@@ -191,10 +225,18 @@ function fetchRequestObject(uri, clientId) {
         });
         adoptParams(params, "request_uri (signed Request Object)");
         request.signed = true;
+        request.outerClientId = clientId || "";
+        request.walletNonce = walletNonce;
+        request.requestUriMethod = walletNonce ? "post" : "get";
         request.requestObject = body;
         request.requestObjectHeader =
             metadataClient.b64uToJson(body.split(".")[0]);
         request.requestObjectPayload = payload;
+        var prefix = vpProtocols.clientIdPrefix(clientId ||
+            payload.client_id).prefix;
+        if (prefix === "x509_hash" || prefix === "x509_san_dns") {
+          return verifyX509Signature(body, clientId || payload.client_id);
+        }
         return verifyRequestSignature(body, clientId || payload.client_id);
       }
       // An unsigned Request Object is JSON (still allowed by reference).
@@ -209,6 +251,39 @@ function fetchRequestObject(uri, clientId) {
       log.debug("Leaving fetchRequestObject(). Unsigned JSON.");
       return request;
     });
+}
+
+// A Request Object whose Client Identifier is an x509 prefix: the key is the
+// leaf certificate's, the identity is the certificate's hash or DNS name, and
+// the trust is the chain up to the anchor configured on step 0.
+function verifyX509Signature(compact, clientId) {
+  log.debug("Entering verifyX509Signature().");
+  log.debug("Leaving verifyX509Signature().");
+  return vpProtocols.verifyX509Request({
+    compact: compact,
+    clientId: clientId,
+    responseTarget: vpProtocols.responseTarget(request.params),
+    trustAnchorPem: (sdJwtVc.get(sdJwtVp.KEYS.X509_TRUST_ANCHOR) || "")
+        .trim(),
+    verifyChain: x509.verifyChain
+  }).then(function (result) {
+    request.x509 = result;
+    var sig = result.checks.filter(function (c) {
+      return c.name === "signature";
+    })[0];
+    request.signatureValid = !!(sig && sig.ok);
+    request.signatureVerdict = result.checks.map(function (c) {
+      return (c.ok ? "OK " : "FAILED ") + c.name + " — " + c.detail;
+    }).join("\n");
+    log.debug("Leaving verifyX509Signature(). valid=" +
+              request.signatureValid);
+    return request;
+  }).catch(function (e) {
+    request.signatureValid = false;
+    request.signatureVerdict = "Could not be checked: " + e.message;
+    log.warn("the x509 Request Object could not be checked: " + e.message);
+    return request;
+  });
 }
 
 // The signature on a Request Object, against the keys this wallet is configured
@@ -328,6 +403,24 @@ function renderRequestedClaims() {
   log.debug("Leaving renderRequestedClaims().");
 }
 
+// The chosen protocol's rules, one row each: what it demands of this request
+// and whether the request meets it. A blocking row is why Continue is off.
+function renderRules(protocol, rules) {
+  log.debug("Entering renderRules(). " + rules.length + " rule(s).");
+  setText("vp_protocol_label", protocol.label);
+  setHtml("vp_protocol_rules",
+    "<thead><tr><th style='width:22%'>Rule</th><th style='width:10%'>" +
+    "Result</th><th>Detail</th></tr></thead><tbody>" +
+    rules.map(function (r) {
+      var cls = r.ok ? "vc-ok" : (r.level === "block" ? "vc-rule-block" :
+                                  "vc-rule-warn");
+      var word = r.ok ? "OK" : (r.level === "block" ? "REFUSED" : "WARNING");
+      return "<tr><td>" + esc(r.id) + '</td><td class="' + cls + '">' +
+             word + "</td><td>" + esc(r.text) + "</td></tr>";
+    }).join("") + "</tbody>");
+  log.debug("Leaving renderRules().");
+}
+
 function renderRequest() {
   log.debug("Entering renderRequest().");
   if (!request) {
@@ -361,19 +454,26 @@ function renderRequest() {
         : "With the redirect_uri prefix it cannot be, which is by design."));
   renderRequestedClaims();
 
-  // Everything the wallet needs before it can present anything.
-  var problems = [];
-  if (!p.nonce) problems.push("no nonce (nothing would stop the presentation " +
-      "being replayed)");
-  if (String(p.response_type ||
-      "") !== "vp_token") problems.push('response_type is not "vp_token"');
-  if (String(p.response_mode || "") === "direct_post" && !p.response_uri) {
-    problems.push("response_mode is direct_post but there is no response_uri " +
-                  "to post to");
-  }
-  if (!request.dcql) problems.push("no dcql_query, so the request does not " +
-      "say what it wants");
+  // Everything the wallet needs before it can answer: first what the chosen
+  // PROTOCOL demands of the request (vp_protocols.js), then what answering
+  // demands of this wallet.
+  var protocol = sdJwtVp.currentProtocol();
   var held = heldCredential();
+  var rules = vpProtocols.requestRules(protocol.id, {
+    request: request,
+    x509: request.x509 || null,
+    heldFormat: held && held.parsed ? held.parsed.format : "",
+    requestedFormat: sdJwtVp.firstCredentialQueryFormat(request.dcql)
+  });
+  renderRules(protocol, rules);
+  var problems = vpProtocols.blockingRules(rules).map(function (r) {
+    return r.text.replace(/\.$/, "");
+  });
+  // An ID Token on its own presents no credential, so there is nothing about
+  // a held credential to check: the subject key is the holder key when there
+  // is one, and a pairwise key otherwise (step 2).
+  var idTokenOnly = vpProtocols.asksForIdToken(p) &&
+                    !vpProtocols.asksForVpToken(p);
   // The format this verifier asked for, which is not necessarily the one in
   // hand. Empty when the query does not say, in which case there is nothing to
   // disagree with and the check below stays silent.
@@ -383,7 +483,12 @@ function renderRequest() {
   // (issuance step 2), "not in storage" now has two meanings, and treating them
   // alike would strand the user one page before the field that fixes it.
   var holderKeyAdvisory = null;
-  if (!held) problems.push("this wallet holds no credential to present");
+  if (idTokenOnly) {
+    holderKeyAdvisory = "This request asks for a self-issued ID Token " +
+        "alone, so no credential is presented; step 2 chooses the key it " +
+        "is signed with.";
+  }
+  else if (!held) problems.push("this wallet holds no credential to present");
   else if (!held.parsed) problems.push("the credential in storage cannot " +
            "be parsed: " + held.error);
   // Asked for one format, holding another. This blocks rather than advises,
@@ -423,7 +528,9 @@ function renderRequest() {
         "step 2 — paste it on the next page so the Key Binding JWT can be signed.";
     }
   }
-  if (request.signed && request.signatureValid === false) {
+  if (request.signed && request.signatureValid === false &&
+      problems.indexOf("the Request Object's signature does not verify") ===
+      -1) {
     problems.push("the Request Object's signature does not verify");
   }
 
@@ -434,9 +541,12 @@ function renderRequest() {
   } else {
     status("vp_request_status",
       "Request read" + (request.signed ? " and its signature checked" : "") +
-      ". It asks for " + sdJwtVp.requestedClaims(request.dcql).length +
-          " claim(s) and nothing else has to be " +
-      "sent. Continue to choose what to disclose." +
+      " under " + protocol.label + ". " + (idTokenOnly ?
+        "It asks for a self-issued ID Token and no credential. Continue " +
+        "to sign it." :
+        "It asks for " + sdJwtVp.requestedClaims(request.dcql).length +
+        " claim(s) and nothing else has to be sent. Continue to choose " +
+        "what to disclose.") +
       (holderKeyAdvisory ? " " + holderKeyAdvisory : ""),
       holderKeyAdvisory ? "vc-pending" : "vc-ok");
     disable("vp_continue_button", false);
@@ -470,7 +580,8 @@ function usePastedRequest() {
   }
   adoptParams(params, "pasted by hand");
   if (params.request_uri) {
-    fetchRequestObject(params.request_uri, params.client_id)
+    fetchRequestObject(params.request_uri, params.client_id,
+                       params.request_uri_method)
       .then(renderRequest)
       .catch(function (e) {
         status("vp_request_status", "Could not fetch the Request Object: " +
@@ -550,7 +661,8 @@ function onload() {
                                                  : "the verifier's redirect " +
                                                      "(by value)");
     if (fromQuery.request_uri) {
-      fetchRequestObject(fromQuery.request_uri, fromQuery.client_id)
+      fetchRequestObject(fromQuery.request_uri, fromQuery.client_id,
+                         fromQuery.request_uri_method)
         .then(renderRequest)
         .catch(function (e) {
           status("vp_request_status", "Could not fetch the Request Object: " +

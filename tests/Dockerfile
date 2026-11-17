@@ -367,6 +367,10 @@ COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
 # silently replace the module it drives. It needs its own line because the
 # `tests/sd_jwt_vc_*` files above are named individually rather than globbed.
 COPY tests/sd_jwt_vc_engine.js ./
+# The presentation PROTOCOLS: HAIP 1.0 and SIOPv2 through the pages against
+# iya-sts, and their engine (client/src/vp_protocols.js, read from
+# /usr/src/source-tree) in node.
+COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires
