@@ -371,6 +371,7 @@ COPY tests/sd_jwt_vc_engine.js ./
 # iya-sts, and their engine (client/src/vp_protocols.js, read from
 # /usr/src/source-tree) in node.
 COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
+COPY tests/vc_presentation_polaris.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires

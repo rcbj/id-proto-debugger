@@ -45,3 +45,4 @@ waltid/verifier-api2:0.23.0              waltid/verifier-api2:0.23.0
 # changes this line together with the IYA_STS_IMAGE defaults in the compose
 # files, which tests/image_mirror_coverage.js holds to it.
 ghcr.io/rcbj/iya-sts:1.0.0               iya-sts:1.0.0
+ghcr.io/egorkhaklin/polaris-oid4vp:v1.1.0 polaris-oid4vp:v1.1.0

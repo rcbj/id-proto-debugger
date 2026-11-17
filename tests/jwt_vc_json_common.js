@@ -649,6 +649,20 @@ async function offerFromThePortalWallet(driver, opts) {
   assert.strictEqual(chosen, true,
     "the portal's wallet page does not offer " + opts.configuration + " in " +
     "mode " + opts.mode + "; it offers " + JSON.stringify(chosen) + ".");
+  // The algorithm the credential is signed with, where the page offers the
+  // choice (iya-sts 2026-10-16: one select, name="signingAlg").
+  if (opts.signingAlg) {
+    const picked = await driver.executeScript(
+      "var s = document.querySelector('select[name=signingAlg]');" +
+      "if (!s) { return null; }" +
+      "var known = Array.prototype.map.call(s.options, function (o) {" +
+      "  return o.value; });" +
+      "if (known.indexOf(arguments[0]) < 0) { return known; }" +
+      "s.value = arguments[0]; return true;", opts.signingAlg);
+    assert.strictEqual(picked, true,
+      "the portal's wallet page cannot sign with " + opts.signingAlg +
+      "; it offers " + JSON.stringify(picked) + ".");
+  }
   await driver.findElement(By.id("wallet-make")).click();
   await driver.wait(until.elementLocated(By.id("tx_code")), opts.wait,
     "making the offer should draw it, with its Transaction Code (#tx_code).");
@@ -669,6 +683,49 @@ async function offerFromThePortalWallet(driver, opts) {
 // `{ params, location, query }` parsed off the URL the browser landed on —
 // for the checks that need the request's state or DCQL query. `opts`:
 // { By, until, siteUrl, format, byReference, wait }.
+// A pre-authorized offer, redeemed the way a wallet does it but in node: the
+// offer document by reference, then the token endpoint with the
+// pre-authorized code and the Transaction Code. Answers the access token,
+// which carries whatever the offer chose (the signing algorithm among it).
+async function redeemPreAuthorizedOffer(issuerBase, offerUri, txCode) {
+  log.debug("Entering redeemPreAuthorizedOffer().");
+  const query = offerUri.slice(offerUri.indexOf("?") + 1);
+  const params = new URLSearchParams(query);
+  let offer = params.get("credential_offer") ?
+      JSON.parse(params.get("credential_offer")) : null;
+  if (!offer) {
+    const byRef = await httpJson(params.get("credential_offer_uri"));
+    assert.ok(byRef.ok, "the offer by reference should be fetchable: " +
+              byRef.status + " " + String(byRef.raw).slice(0, 200));
+    offer = byRef.body;
+  }
+  const grant = ((offer.grants || {})[
+      "urn:ietf:params:oauth:grant-type:pre-authorized_code"]) || {};
+  assert.ok(grant["pre-authorized_code"], "the offer carries no " +
+            "pre-authorized code: " + JSON.stringify(offer).slice(0, 300));
+  const meta = await issuerMetadata(issuerBase);
+  const as = ((meta && meta.authorization_servers) || [])[0] ||
+      (meta && meta.credential_issuer) || issuerBase;
+  const asMeta = await httpJson(String(as).replace(/\/+$/, "") +
+      "/.well-known/oauth-authorization-server");
+  const tokenEndpoint = (asMeta.body && asMeta.body.token_endpoint) ||
+      String(as).replace(/\/+$/, "") + "/oauth2/token";
+  const form = new URLSearchParams({
+    grant_type: "urn:ietf:params:oauth:grant-type:pre-authorized_code",
+    "pre-authorized_code": grant["pre-authorized_code"],
+    client_id: WALLET_CLIENT_ID });
+  if (txCode) form.set("tx_code", txCode);
+  const token = await httpJson(tokenEndpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: form.toString() });
+  assert.ok(token.ok && token.body && token.body.access_token,
+    "the pre-authorized code should redeem for an access token: " +
+    token.status + " " + String(token.raw).slice(0, 300));
+  log.debug("Leaving redeemPreAuthorizedOffer().");
+  return token.body.access_token;
+}
+
 async function requestThroughTheVerifierWebsite(driver, opts) {
   log.debug("Entering requestThroughTheVerifierWebsite().");
   await driver.get(opts.siteUrl);
@@ -874,6 +931,7 @@ module.exports = {
   startAtTheVerifierWebsite: startAtTheVerifierWebsite,
   requestThroughTheVerifierWebsite: requestThroughTheVerifierWebsite,
   offerFromThePortalWallet: offerFromThePortalWallet,
+  redeemPreAuthorizedOffer: redeemPreAuthorizedOffer,
   verificationResult: verificationResult,
   verdictOfWhatWasSent: verdictOfWhatWasSent,
   verdictFor: verdictFor

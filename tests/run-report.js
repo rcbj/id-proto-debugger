@@ -263,6 +263,10 @@ const JOB_LOCKS = {
   // the default format), and its credentials from /admin/vc: a pin landing
   // mid-case changes what is asked for under a credential minted before it.
   "vc_presentation_protocols.js": "sts-vc",
+  // Mints with oid4vci.credentialCertificateHeader=none for the length of
+  // one issuance (Polaris verifies an issuer chain with ECDSA only, and
+  // iya-sts's CA tiers are RSA-signed), and puts it back.
+  "vc_presentation_polaris.js": "sts-vc",
   "ldp_vc_refresh.js": "sts-vc",
   "jwt_vc_json_issuance.js": "sts-vc",
   "jwt_vc_json_presentation.js": "sts-vc",
@@ -4105,6 +4109,25 @@ function buildJobs() {
         WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL || "",
         KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+      },
+    });
+  }
+
+  // HAIP against POLARIS (#423): polaris-oid4vp, an independently written
+  // OpenID4VP 1.0 + HAIP 1.0 verifier, from its own published image, with an
+  // ES256 SD-JWT VC iya-sts issues in the same run. Scheduled where the
+  // volume it shares with the polaris-verifier container is mounted, which
+  // is the containerized stack. Holds `sts-vc` (JOB_LOCKS) because it mints
+  // with one iya-sts setting changed and put back.
+  if (env.POLARIS_DATA_DIR) {
+    jobs.push({
+      name: "VC Presentation — HAIP 1.0 against Polaris (x509_hash, " +
+          "request_uri POST, direct_post.jwt, an independent verifier)",
+      script: "vc_presentation_polaris.js",
+      env: {
+        POLARIS_DATA_DIR: env.POLARIS_DATA_DIR,
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
   }
