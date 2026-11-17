@@ -56,6 +56,29 @@ settings and limits are in `docs/vc-verifier-api.md`.
 On the static sites there is no api, so the page cannot host a request. It
 says so, and pane 4 still checks a pasted answer.
 
+## Issuer metadata, DID documents and status lists
+
+Checking an answer means reading things the WALLET did not send: an SD-JWT
+VC issuer's `/.well-known/jwt-vc-issuer` and its `jwks_uri`, a `did:web`
+document, a Token Status List or a Bitstring Status List credential. From the
+page each is a cross-origin GET, which the browser lets the page read only
+when the server sends CORS headers. iya-sts sends them; SD-JWT VC issuers and
+`did:web` hosts generally do not, and Token Status List section 8.1 makes
+CORS only a SHOULD.
+
+So pane 2 has **Fetch issuer metadata, DID documents and status lists
+through the api** (`vpv_fetch_via_api`, an ordinary remembered setting). It
+is **on by default wherever there is an api** and off, and disabled, on the
+static sites, which have none. Ticked, each GET goes through `POST
+/oid4vp/call` with `responseEncoding: "base64"`, so the api's address
+policy, timeouts and size and redirect caps apply, and a status list that is
+a binary CWT arrives as its bytes. Unticked, the browser fetches directly,
+and a server with no CORS headers is named in the error.
+
+Either way a fetch that fails throws an error naming the URL. For an
+issuer's key the engine reports that as a SKIP ("could not fetch …"), which
+makes the verdict incomplete, not a signature FAIL.
+
 ## The certificate
 
 Each request gets a new self-signed P-256 root and a leaf signed by it. The

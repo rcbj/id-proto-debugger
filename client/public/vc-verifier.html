@@ -163,6 +163,18 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               (SD-JWT VC section 2.5).</span></td>
         </tr>
         <tr>
+          <td><label for="vpv_fetch_via_api">Issuer-side fetches</label></td>
+          <td><label><input type="checkbox" id="vpv_fetch_via_api"
+                            onchange="return vcverifier.settingsChanged();" />
+              Fetch issuer metadata, DID documents and status lists through the api</label>
+              <span class="vc-note">On by default wherever there is an api. From the page, each of these is a
+              cross-origin GET the browser lets it read only when the server sends CORS headers, and SD-JWT VC
+              issuer metadata and did:web hosts usually send none (Token Status List section 8.1 makes it only a
+              SHOULD). Through the api it is fetched server-side under the api's address policy. Either way a
+              fetch that fails is reported as a check not performed, naming the URL. A static site has no api,
+              so the box is off there.</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_redirect_uri">Send the wallet's browser to (optional)</label></td>
           <td><input type="text" id="vpv_redirect_uri" size="60"
                      placeholder="https://verifier.example/done"

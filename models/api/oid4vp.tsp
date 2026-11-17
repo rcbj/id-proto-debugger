@@ -53,6 +53,11 @@ model CallRequest {
   @passthrough
   body?: unknown;
 
+  /** "text" (absent: the default) or "base64": how the far end's body
+   *  comes back. base64 is for bytes that are not text, a CWT status list. */
+  @checkedInCode("api/oid4vp_proxy.js: \"text\" or \"base64\"")
+  responseEncoding?: string | null;
+
   /** Only false or "false" turns off certificate verification. */
   @checkedInCode("api/oid4vp_proxy.js: only false or \"false\" turns verification off")
   sslValidate?: boolean | string | null;
@@ -76,6 +81,11 @@ model Answer {
   ok: boolean;
   headers: Record<unknown>;
   body: string;
+
+  /** "base64" when the call asked for responseEncoding base64: `body` is
+   *  then the bytes in base64 and `json` is null. Absent for text. */
+  bodyEncoding?: "base64";
+
   json: unknown;
   http_exchange?: HttpExchange;
 }
@@ -101,6 +111,7 @@ model Unreachable {
 /** What the OpenID4VP proxy will and will not do. */
 model Limits {
   methods: string[];
+  responseEncodings: string[];
   refusedHeaders: string[];
   maxRequestBytes: int64;
   statusRule: string;

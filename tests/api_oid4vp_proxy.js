@@ -155,6 +155,8 @@ async function main() {
           /GET carries no body/, "a body on a GET");
   refused({ url: url, method: "POST", body: { vp_token: {} } },
           /must be a string/, "a body that is not a string");
+  refused({ url: url, responseEncoding: "hex" }, /"text" or "base64"/,
+          "a responseEncoding that is neither text nor base64");
   const big = "x".repeat(proxy.DEFAULT_MAX_REQUEST_BYTES + 1);
   refused({ url: url, method: "POST", body: big },
           /oid4vpMaxRequestBytes/, "a body past the cap");
@@ -176,6 +178,12 @@ async function main() {
   assert.strictEqual(r.headers.Accept, "application/oauth-authz-req+jwt",
     "the page's Accept is kept");
   assert.strictEqual(r.body, null);
+  assert.strictEqual(r.responseEncoding, "text", "a body comes back as " +
+                     "text unless the caller asks for its bytes");
+  r = proxy.describeRequest({ url: url, responseEncoding: "base64",
+    headers: { Accept: "application/statuslist+cwt" } }, {});
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.strictEqual(r.responseEncoding, "base64");
   assert.strictEqual(proxy.maxRequestBytes({ oid4vpMaxRequestBytes: 10 }),
                      10);
   assert.strictEqual(proxy.maxRequestBytes({ oid4vpMaxRequestBytes: 0 }),
@@ -192,8 +200,23 @@ async function main() {
   assert.strictEqual(a.status, 400, "a Verifier's refusal is reported " +
                      "with its own status");
   assert.strictEqual(a.json.error, "invalid_request");
+  // A binary body (a CWT Status List Token's first bytes, a COSE_Sign1
+  // tag 18 and a protected header) survives byte for byte under base64,
+  // which the Verifier page's status list fetch relies on (#470, B3).
+  const cwt = Buffer.from([0xd2, 0x84, 0x43, 0xa1, 0x01, 0x26, 0xa0, 0xff,
+                           0x00, 0x80]);
+  a = proxy.readResponse(200, { "content-type": "application/statuslist+cwt" },
+                         cwt, "base64");
+  assert.strictEqual(a.bodyEncoding, "base64");
+  assert.ok(Buffer.from(a.body, "base64").equals(cwt), "the bytes come " +
+            "back exactly as they arrived");
+  assert.strictEqual(a.json, null);
+  a = proxy.readResponse(404, {}, null, "base64");
+  assert.strictEqual(a.ok, false);
+  assert.strictEqual(a.body, "");
   const limits = proxy.limits({});
   assert.deepStrictEqual(limits.methods, ["GET", "POST"]);
+  assert.deepStrictEqual(limits.responseEncodings, ["text", "base64"]);
   assert.ok(limits.refusedHeaders.indexOf("host") !== -1);
   log.info("PASS the Verifier's answer and the published limits.");
 
@@ -235,6 +258,8 @@ async function main() {
   });
   assert.ok(/\baxios\(\{/.test(handler), "and must call the shared axios " +
     "instance the guard is installed on");
+  assert.ok(/responseType: binary \? 'arraybuffer' : 'text'/.test(handler),
+    "a base64 call must read the body as bytes, not as text");
   // connectionTimeout rides on the outbound agents, asserted above.
   log.info("api_oid4vp_proxy: all checks passed.");
   log.debug("Leaving main().");

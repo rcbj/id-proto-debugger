@@ -1,6 +1,6 @@
 {
   "family": "oid4vp",
-  "about": "POST /oid4vp/call and GET /oid4vp/limits (api/oid4vp_proxy.js), added by #436 after the data model was recorded (#437). The refusals and the limits document were computed from api/oid4vp_proxy.js with api/env/docker-tests.js, the configuration the containerized stack runs; every outbound target is verifier.invalid, so no case leaves the api. The Verifier role's nine routes (api/oid4vp_verifier.js, #364) were added with their model: a session's id and secret are generated, so the cases that reach one by id use one that was never created (every page call there is a 404 before its Bearer secret is asked for), and the one session created here asks for a 1 ms idle lifetime, so it is gone by the next request and replaying this file never reaches oid4vpVerifierMaxSessionsPerCaller. The live-signing publish (oid4vpVerifierPublishFor) needs a Wallet held open on a live session, which no single recorded request can make, so its cases are the unknown session and the wrong type; the held Wallet, the 401s, the timeout, and the 503 temporarily_unavailable (oid4vpVerifierRequestPost) that a Wallet which sent a wallet_nonce gets on a timeout or at oid4vpVerifierMaxPendingSignings (OpenID4VP section 5.10.2) are driven by tests/api_oid4vp_verifier.js too. The lifecycle, the 401s, the media types and the size caps are driven by tests/api_oid4vp_verifier.js.",
+  "about": "POST /oid4vp/call and GET /oid4vp/limits (api/oid4vp_proxy.js), added by #436 after the data model was recorded (#437). The refusals and the limits document were computed from api/oid4vp_proxy.js with api/env/docker-tests.js, the configuration the containerized stack runs; every outbound target is verifier.invalid, so no case leaves the api. The Verifier role's nine routes (api/oid4vp_verifier.js, #364) were added with their model: a session's id and secret are generated, so the cases that reach one by id use one that was never created (every page call there is a 404 before its Bearer secret is asked for), and the one session created here asks for a 1 ms idle lifetime, so it is gone by the next request and replaying this file never reaches oid4vpVerifierMaxSessionsPerCaller. The live-signing publish (oid4vpVerifierPublishFor) needs a Wallet held open on a live session, which no single recorded request can make, so its cases are the unknown session and the wrong type; the held Wallet, the 401s, the timeout, and the 503 temporarily_unavailable (oid4vpVerifierRequestPost) that a Wallet which sent a wallet_nonce gets on a timeout or at oid4vpVerifierMaxPendingSignings (OpenID4VP section 5.10.2) are driven by tests/api_oid4vp_verifier.js too. The lifecycle, the 401s, the media types and the size caps are driven by tests/api_oid4vp_verifier.js. #470 (B3) added responseEncoding to the call; its refusals are recorded here.",
   "cases": [
     {
       "name": "oid4vp call: an empty body is refused for its url",
@@ -78,6 +78,37 @@
       }
     },
     {
+      "name": "oid4vp call: a responseEncoding other than text or base64 is refused",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/status",
+        "responseEncoding": "hex"
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "responseEncoding must be \"text\" or \"base64\": the body comes back as the text that arrived, or as its bytes in base64 (a status list may be binary CBOR)."
+        }
+      }
+    },
+    {
+      "name": "oid4vp call: a responseEncoding that is not a string",
+      "method": "POST",
+      "path": "/oid4vp/call",
+      "body": {
+        "url": "https://verifier.invalid/status",
+        "responseEncoding": 64
+      },
+      "expect": {
+        "status": 400,
+        "body": {
+          "error": "Refusing the request: `responseEncoding` must be a JSON string or null. GET /api-docs describes what oid4vpCall takes.",
+          "code": "EMODELREQUEST"
+        }
+      }
+    },
+    {
       "name": "oid4vp call: a framing header is refused",
       "method": "POST",
       "path": "/oid4vp/call",
@@ -98,12 +129,39 @@
       "name": "oid4vp limits: what the proxy will and will not do",
       "method": "GET",
       "path": "/oid4vp/limits",
+      "changed": "#470 (B3) added responseEncodings: the Verifier page's issuer, DID and status list fetches come back as base64 bytes, because a status list may be a binary CWT.",
+      "before": {
+        "status": 200,
+        "body": {
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "refusedHeaders": [
+            "host",
+            "content-length",
+            "transfer-encoding",
+            "connection",
+            "keep-alive",
+            "upgrade",
+            "te",
+            "trailer",
+            "proxy-authorization"
+          ],
+          "maxRequestBytes": 262144,
+          "statusRule": "a 400 is this service refusing; a 502 is the Verifier unreachable; anything the Verifier answered is a 200 with its status inside."
+        }
+      },
       "expect": {
         "status": 200,
         "body": {
           "methods": [
             "GET",
             "POST"
+          ],
+          "responseEncodings": [
+            "text",
+            "base64"
           ],
           "refusedHeaders": [
             "host",

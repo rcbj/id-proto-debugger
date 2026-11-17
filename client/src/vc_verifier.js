@@ -46,8 +46,12 @@ var VERIFIER_KEYS = [
   "vpv_query_id", "vpv_format", "vpv_type", "vpv_claims", "vpv_binding",
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
-  "vpv_trust_anchors"
+  "vpv_trust_anchors", "vpv_fetch_via_api"
 ];
+
+// Whether issuer metadata, DID documents and status lists are fetched
+// through the api (#470, B3). See fetchViaApi().
+var FETCH_VIA_API_ID = "vpv_fetch_via_api";
 
 // The trust anchors typed into pane 2, one string per PEM certificate.
 // Public certificates, so they are remembered like the other settings.
@@ -156,6 +160,7 @@ function saveState() {
 
 function loadState() {
   log.debug("Entering loadState().");
+  var viaApi = null;
   try {
     VERIFIER_KEYS.forEach(function (id) {
       var stored = localStorage.getItem(id);
@@ -163,9 +168,11 @@ function loadState() {
         setVal(id, stored);
       }
     });
+    viaApi = localStorage.getItem(FETCH_VIA_API_ID);
   } catch (e) {
     log.debug("loadState(): no storage — " + e.message);
   }
+  initFetchViaApi(viaApi);
   log.debug("Leaving loadState().");
 }
 
@@ -890,14 +897,179 @@ async function poll() {
   log.debug("Leaving poll(). Still waiting.");
 }
 
-async function fetchJson(url) {
-  log.debug("Entering fetchJson(). " + url);
-  var response = await fetch(url, { headers: { Accept: "application/json" } });
+// ---------------------------------------------------------------------------
+// THE ISSUER-SIDE FETCHES (#470, B3): an issuer's SD-JWT VC metadata and its
+// JWKS, a did:web document, a Token Status List or a Bitstring Status List
+// credential. From the page, each is a cross-origin GET that the browser
+// lets the page read only if the server sends CORS headers — and SD-JWT VC
+// metadata and did:web hosts generally send none, while Token Status List
+// section 8.1 makes CORS only a SHOULD. So by default they go through the
+// api's guarded proxy, POST /oid4vp/call, which no browser policy applies to
+// and which carries the address policy, the timeouts and the size and
+// redirect caps of every other outbound call.
+//
+// THE DEFAULT IS ON WHERE THERE IS AN API AND OFF WHERE THERE IS NONE. A
+// Verifier that can only read issuers that happen to allow its origin
+// reports "could not fetch" for most of the world, which is the wrong
+// default wherever the api can do better. A static site has no api, so the
+// box is unticked and disabled there and the browser fetches directly. A
+// choice the reader made is remembered (an ordinary setting) and wins.
+//
+// Either way a fetch that fails throws an Error naming the URL, which the
+// engine reports as a SKIP ("could not fetch …"), never as a signature
+// FAIL: a key nobody could read is a check not performed.
+// ---------------------------------------------------------------------------
+function apiOffered() {
+  log.debug("Entering apiOffered().");
+  var on = BACKEND_AVAILABLE && !!API_URL;
+  log.debug("Leaving apiOffered(). " + on);
+  return on;
+}
+
+function fetchViaApi() {
+  log.debug("Entering fetchViaApi().");
+  var on = apiOffered() && !!val(FETCH_VIA_API_ID);
+  log.debug("Leaving fetchViaApi(). " + on);
+  return on;
+}
+
+// The ticked state on load: the reader's remembered choice, else the
+// default above. Disabled where there is no api to choose.
+function initFetchViaApi(stored) {
+  log.debug("Entering initFetchViaApi().");
+  var box = el(FETCH_VIA_API_ID);
+  if (!box) {
+    log.debug("Leaving initFetchViaApi(). No element.");
+    return;
+  }
+  if (!apiOffered()) {
+    box.checked = false;
+    box.disabled = true;
+    log.debug("Leaving initFetchViaApi(). No api.");
+    return;
+  }
+  box.disabled = false;
+  if (stored === null || stored === undefined) {
+    box.checked = true;
+  }
+  log.debug("Leaving initFetchViaApi(). " + box.checked);
+}
+
+function bytesOfBase64(text) {
+  log.debug("Entering bytesOfBase64().");
+  var binary = atob(String(text || ""));
+  var out = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) {
+    out[i] = binary.charCodeAt(i);
+  }
+  log.debug("Leaving bytesOfBase64(). " + out.length + " bytes.");
+  return out;
+}
+
+function headerOf(headers, name) {
+  log.debug("Entering headerOf(). " + name);
+  var wanted = String(name).toLowerCase();
+  var found = "";
+  Object.keys(headers || {}).forEach(function (key) {
+    if (key.toLowerCase() === wanted && !found) {
+      found = String(headers[key]);
+    }
+  });
+  log.debug("Leaving headerOf().");
+  return found;
+}
+
+// One GET through POST /oid4vp/call, the body as bytes (responseEncoding
+// base64, so a CWT status list arrives intact). A 400 is the api refusing
+// (the address policy, most often), a 502 the server unreachable, and a
+// non-2xx inside a 200 is what the server itself answered.
+async function apiGet(url, accept) {
+  log.debug("Entering apiGet(). " + url);
+  var response;
+  try {
+    response = await fetch(API_URL + "/oid4vp/call", {
+      method: "POST",
+      headers: { "Content-Type": "application/json",
+                 Accept: "application/json" },
+      body: JSON.stringify({ url: url, method: "GET",
+                             headers: { Accept: accept },
+                             responseEncoding: "base64" })
+    });
+  } catch (e) {
+    log.debug("Leaving apiGet(). The api did not answer.");
+    throw new Error("GET " + url + " through the api: the api at " +
+                    API_URL + " did not answer (" + e.message + ").");
+  }
+  var answer = null;
+  try {
+    answer = await response.json();
+  } catch (e) {
+    answer = null;
+  }
+  if (!response.ok || !answer) {
+    var why = (answer && answer.error) || ("HTTP " + response.status);
+    log.debug("Leaving apiGet(). The api answered " + response.status);
+    throw new Error("GET " + url + " through the api: " +
+      (response.status === 400 ? "the api refused it: " :
+       "it could not be reached: ") + why);
+  }
+  if (!answer.ok) {
+    log.debug("Leaving apiGet(). " + answer.status);
+    throw new Error("GET " + url + " answered " + answer.status +
+                    " (through the api).");
+  }
+  var body = answer.bodyEncoding === "base64" ? bytesOfBase64(answer.body)
+    : new TextEncoder().encode(String(answer.body || ""));
+  log.debug("Leaving apiGet(). " + body.length + " bytes.");
+  return { body: body,
+           contentType: headerOf(answer.headers, "content-type") };
+}
+
+// The browser's own GET. A server that sends no CORS headers makes fetch()
+// throw a bare TypeError ("Failed to fetch") with nothing in it about why,
+// so the URL and the likely reason are added.
+async function browserGet(url, accept) {
+  log.debug("Entering browserGet(). " + url);
+  var response;
+  try {
+    response = await fetch(url, { headers: { Accept: accept } });
+  } catch (e) {
+    log.debug("Leaving browserGet(). " + e.message);
+    throw new Error("GET " + url + " failed in the browser (" + e.message +
+      "). A server that sends no CORS headers cannot be read from a page; " +
+      (apiOffered() ? "tick \"through the api\" in pane 2."
+                    : "this deployment has no api to fetch it through."));
+  }
   if (!response.ok) {
-    log.debug("Leaving fetchJson(). " + response.status);
+    log.debug("Leaving browserGet(). " + response.status);
     throw new Error("GET " + url + " answered " + response.status);
   }
-  var json = await response.json();
+  var body = new Uint8Array(await response.arrayBuffer());
+  log.debug("Leaving browserGet(). " + body.length + " bytes.");
+  return { body: body,
+           contentType: response.headers.get("content-type") || "" };
+}
+
+async function getBytes(url, accept) {
+  log.debug("Entering getBytes(). " + url);
+  var got = fetchViaApi() ? await apiGet(url, accept)
+                          : await browserGet(url, accept);
+  log.debug("Leaving getBytes().");
+  return got;
+}
+
+async function fetchJson(url) {
+  log.debug("Entering fetchJson(). " + url);
+  var got = await getBytes(url, "application/json");
+  var json;
+  try {
+    json = JSON.parse(new TextDecoder().decode(got.body));
+  } catch (e) {
+    log.debug("Leaving fetchJson(). Not JSON.");
+    throw new Error("GET " + url + " did not answer JSON (" +
+                    (got.contentType || "no Content-Type") + "): " +
+                    e.message);
+  }
   log.debug("Leaving fetchJson().");
   return json;
 }
@@ -909,15 +1081,9 @@ async function fetchJson(url) {
 async function fetchText(url, opts) {
   log.debug("Entering fetchText(). " + url);
   var accept = (opts && opts.accept) || "*/*";
-  var response = await fetch(url, { headers: { Accept: accept } });
-  if (!response.ok) {
-    log.debug("Leaving fetchText(). " + response.status);
-    throw new Error("GET " + url + " answered " + response.status);
-  }
-  var body = new Uint8Array(await response.arrayBuffer());
-  log.debug("Leaving fetchText(). " + body.length + " bytes.");
-  return { body: body, contentType: response.headers.get("content-type") ||
-    "" };
+  var got = await getBytes(url, accept);
+  log.debug("Leaving fetchText(). " + got.body.length + " bytes.");
+  return got;
 }
 
 function clearVerdict() {

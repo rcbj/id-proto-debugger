@@ -3818,6 +3818,12 @@
       "area": "local"
     },
     {
+      "key": "vpv_fetch_via_api",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_format",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",

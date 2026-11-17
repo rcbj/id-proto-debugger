@@ -198,6 +198,14 @@ session, so the gate would answer it before this service did. Create returns
   with the role switched off returns 200 with `enabled: false`.
 * **CORS** needed no change. The api's `cors()` reflects requested headers
   and allows PUT and DELETE, so `Authorization` passes the preflight.
+* **Issuer-side fetches** (issuer metadata, DID documents, status lists) go
+  through the wallet's proxy, `POST /oid4vp/call`, when the page's "through
+  the api" box is ticked, which is its default wherever there is an api. They
+  ask for `responseEncoding: "base64"`, so the answer's `body` is the bytes
+  in base64 with `bodyEncoding: "base64"` (a Token Status List may be a
+  binary CWT). `GET /oid4vp/limits` lists `responseEncodings`. That proxy's
+  rules are in `api/oid4vp_proxy.js`: GET or POST only, the address policy,
+  the timeouts, and the size and redirect caps of every outbound call.
 * Sessions live in memory and are lost when the api restarts. When the api
   returns 404 for a session, create a new one and sign again. The `client_id`
   and certificates do not depend on the session, but `request_uri` and

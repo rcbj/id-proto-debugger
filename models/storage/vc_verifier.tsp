@@ -58,4 +58,10 @@ model VcVerifierKeys {
 
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_trust_anchors: unknown;
+
+  // "1" or "0": issuer metadata, DID documents and status lists fetched
+  // through the api's POST /oid4vp/call (#470, B3). Absent is the default,
+  // on wherever there is an api.
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_fetch_via_api: unknown;
 }
