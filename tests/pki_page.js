@@ -963,6 +963,102 @@ async function everyFieldHasATooltip(driver) {
 }
 
 // ---------------------------------------------------------------------------
+// 2d'. The keyUsage boxes follow the KEY ALGORITHM as well as the profile
+//      (issue #310), and a box ticked by hand that the key may not carry is
+//      reported, on the form and on the issued certificate.
+//
+// The per-algorithm rules themselves are asserted in node by pki_x509.js and
+// pki_pqc_x509.js; this is the wiring. Both orders matter: choosing a key
+// algorithm after the profile, which is what onKeyAlgChange() handles, and
+// choosing the profile after the key algorithm, which is what
+// applyProfileDefaults() handles.
+// ---------------------------------------------------------------------------
+const KU_BITS = ["digitalSignature", "nonRepudiation", "keyEncipherment",
+  "dataEncipherment", "keyAgreement", "keyCertSign", "cRLSign",
+  "encipherOnly", "decipherOnly"];
+
+async function tickedKeyUsage(driver) {
+  log.debug("Entering tickedKeyUsage().");
+  const ticked = await driver.executeScript(
+    "return arguments[0].filter(function (bit) {" +
+    "  var e = document.getElementById('pki_ku_' + bit);" +
+    "  return !!(e && e.checked);" +
+    "});", KU_BITS);
+  log.debug("Leaving tickedKeyUsage(). " + ticked.join(","));
+  return ticked;
+}
+
+async function theKeyUsageFollowsTheKeyAlgorithm(driver) {
+  log.debug("Entering theKeyUsageFollowsTheKeyAlgorithm().");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_key_alg"));
+  await driver.executeScript("window.localStorage.clear();");
+  await openThePageFromTheLandingCard(driver);
+  await waitVisible(driver, By.id("pki_key_alg"));
+
+  // Profile first, then the key algorithm.
+  await selectOption(driver, "pki_key_alg", "rsa-2048");
+  await selectOption(driver, "pki_profile", "tls-server");
+  assert.deepStrictEqual(await tickedKeyUsage(driver),
+    ["digitalSignature", "keyEncipherment"],
+    "an RSA TLS server should keep the profile's own keyUsage");
+  assert.strictEqual((await textOf(driver, "pki_ku_note")).trim(), "",
+    "the keyUsage note should be empty when nothing was changed");
+  await selectOption(driver, "pki_key_alg", "ec-p256");
+  assert.deepStrictEqual(await tickedKeyUsage(driver),
+    ["digitalSignature", "keyAgreement"],
+    "changing the key to EC did not re-apply the keyUsage defaults");
+  assert.ok(/RFC 5480/.test(await textOf(driver, "pki_ku_note")),
+    "the keyUsage note does not say why keyEncipherment became " +
+    "keyAgreement: " + await textOf(driver, "pki_ku_note"));
+  await selectOption(driver, "pki_key_alg", "ml-dsa-44");
+  assert.deepStrictEqual(await tickedKeyUsage(driver), ["digitalSignature"],
+    "an ML-DSA TLS server should carry digitalSignature alone");
+
+  // Key algorithm first, then the profile.
+  await selectOption(driver, "pki_profile", "key-encipherment");
+  assert.deepStrictEqual(await tickedKeyUsage(driver), [],
+    "an ML-DSA key cannot encipher anything, so the key-encipherment " +
+    "profile has no keyUsage to give it");
+  assert.ok(/Nothing this profile asks for/.test(
+      await textOf(driver, "pki_ku_note")),
+    "an empty keyUsage was not explained");
+  await selectOption(driver, "pki_key_alg", "ml-kem-768");
+  assert.deepStrictEqual(await tickedKeyUsage(driver), ["keyEncipherment"],
+    "an ML-KEM key's only keyUsage is keyEncipherment (RFC 9935)");
+
+  // A box ticked by hand that the key may not carry is reported at once,
+  // issued anyway, and reported again on the certificate.
+  await selectOption(driver, "pki_key_alg", "ec-p256");
+  await selectOption(driver, "pki_profile", "root-ca");
+  await setCheckbox(driver, "pki_ku_keyEncipherment", true);
+  assert.ok(/Not conformant: keyEncipherment/.test(
+      await textOf(driver, "pki_ku_note")),
+    "a hand-ticked keyEncipherment on an EC key was not reported: " +
+    await textOf(driver, "pki_ku_note"));
+  const status = await issueThrough(driver, { profile: "root-ca",
+    keyAlg: "ec-p256", sigAlg: "sha256-ecdsa", cn: "Page Bad KeyUsage Root",
+    apply: async function (d) {
+      await setCheckbox(d, "pki_ku_keyEncipherment", true);
+    } });
+  assert.ok(/Not conformant: keyEncipherment/.test(status),
+    "the status line issued a non-conformant certificate without saying " +
+    "so: " + status);
+  const finding = await driver.executeScript(
+    "var rows = document.querySelectorAll('#pki_details_table tr');" +
+    "for (var i = 0; i < rows.length; i++) {" +
+    "  if (rows[i].cells[0].textContent === 'Finding') {" +
+    "    return rows[i].cells[1].textContent;" +
+    "  }" +
+    "}" +
+    "return null;");
+  assert.ok(finding && /keyEncipherment/.test(finding),
+    "the details table has no finding for the EC key's keyEncipherment: " +
+    finding);
+  log.debug("Leaving theKeyUsageFollowsTheKeyAlgorithm().");
+}
+
+// ---------------------------------------------------------------------------
 // 2e. Not Before / Not After are date-and-time pickers, and an ISO 8601 string
 //     stored by the older build still arrives.
 //
@@ -1886,6 +1982,7 @@ async function test() {
     await theSerialIsFilledInEditableAndRotates(driver);
     await theSubjectDefaultsAndTheSanFollowTheProfile(driver);
     await everyFieldHasATooltip(driver);
+    await theKeyUsageFollowsTheKeyAlgorithm(driver);
     await theValidityFieldsArePickers(driver);
     await theListFieldSyntaxIsWhatThePageDocuments(driver);
     await theDetailsPageReadsEveryKeyAlgorithm(driver);

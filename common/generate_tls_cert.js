@@ -338,7 +338,7 @@ async function makeRootCa() {
     subjectPublicKey: key.publicPem,
     issuerPrivateKey: key.privatePem,
     signatureAlg: SIG_ALG,
-    extensions: x509.defaultExtensions('root-ca')
+    extensions: x509.defaultExtensions('root-ca', KEY_ALG)
   });
   log.debug('Leaving makeRootCa().');
   return { pem: cert.pem, privatePem: key.privatePem };
@@ -354,7 +354,7 @@ async function makeIssuingCa(root) {
     issuer: { certificatePem: root.pem, privateKeyPem: root.privatePem,
               keyAlg: KEY_ALG },
     signatureAlg: SIG_ALG,
-    extensions: x509.defaultExtensions('issuing-ca')
+    extensions: x509.defaultExtensions('issuing-ca', KEY_ALG)
   });
   log.debug('Leaving makeIssuingCa().');
   return { pem: cert.pem, privatePem: key.privatePem };
@@ -407,7 +407,7 @@ async function generate(outDir, extraNames, opts) {
   const ca = await loadOrMakeCa(caDir, options.rotateCa);
 
   const key = await keys.generateKeyPair(KEY_ALG);
-  const extensions = x509.defaultExtensions('tls-server');
+  const extensions = x509.defaultExtensions('tls-server', KEY_ALG);
   extensions.subjectAltName = { present: true, critical: false,
                                 names: altNames(extraNames) };
   const cert = await x509.issueCertificate({

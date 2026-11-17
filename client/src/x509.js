@@ -1315,17 +1315,248 @@ function isDefaultSubjectAltName(value) {
   return found;
 }
 
+// ---------------------------------------------------------------------------
+// WHICH KEY USAGES A KEY CAN HAVE, BY WHAT KIND OF KEY IT IS (issue #310).
+//
+// The profile table above says what a certificate is FOR. It cannot say which
+// KeyUsage bits express that, because the answer depends on the key: a TLS
+// server with an RSA key does key transport (keyEncipherment), one with an EC
+// key does key agreement (keyAgreement), and one with an ML-DSA key does
+// neither, only signs. Every algorithm specification for X.509 names the bits
+// its keys may carry, and a bit outside that list makes the certificate
+// non-conformant. That is invisible to a plain `openssl verify`, which does not
+// check it, and fatal at a relying party that does (iya-sts refuses such a
+// chain as STS-PKI-0198, which is how this was found).
+//
+// So the profiles keep their RSA-shaped lists, and `defaultKeyUsage()` reads
+// each one THROUGH the key's family: a usage the family has is kept, a usage
+// it has an equivalent of is mapped, and anything else is dropped and reported.
+// The same table is what `keyUsageFindings()` holds a certificate to, so a box
+// ticked by hand is caught as well as a default.
+//
+// `allowed` is the whole permitted set. `map` turns an RSA-shaped usage into
+// the family's own way of doing the same thing. ML-KEM's whole list is
+// keyEncipherment, because RFC 9935 makes it the ONLY bit such a key may carry.
+// ---------------------------------------------------------------------------
+var SIGNATURE_ONLY_USAGES = ['digitalSignature', 'nonRepudiation',
+                             'keyCertSign', 'cRLSign'];
+
+var KEY_USAGE_FAMILIES = {
+  rsa: {
+    label: 'RSA',
+    spec: 'RFC 3279 section 2.3.1',
+    allowed: ['digitalSignature', 'nonRepudiation', 'keyEncipherment',
+              'dataEncipherment', 'keyCertSign', 'cRLSign']
+  },
+  'rsa-pss': {
+    label: 'RSASSA-PSS',
+    spec: 'RFC 4055 section 3',
+    allowed: SIGNATURE_ONLY_USAGES
+  },
+  ec: {
+    label: 'EC',
+    spec: 'RFC 5480 section 3',
+    allowed: ['digitalSignature', 'nonRepudiation', 'keyAgreement',
+              'keyCertSign', 'cRLSign', 'encipherOnly', 'decipherOnly'],
+    map: { keyEncipherment: 'keyAgreement', dataEncipherment: 'keyAgreement' }
+  },
+  eddsa: {
+    label: 'EdDSA (Ed25519 / Ed448)',
+    spec: 'RFC 8410 section 5',
+    allowed: SIGNATURE_ONLY_USAGES
+  },
+  xdh: {
+    label: 'X25519 / X448',
+    spec: 'RFC 8410 section 5',
+    allowed: ['keyAgreement', 'encipherOnly', 'decipherOnly']
+  },
+  'ml-dsa': {
+    label: 'ML-DSA',
+    spec: 'RFC 9881 section 5',
+    allowed: SIGNATURE_ONLY_USAGES
+  },
+  'slh-dsa': {
+    label: 'SLH-DSA',
+    spec: 'RFC 9909',
+    allowed: SIGNATURE_ONLY_USAGES
+  },
+  'composite-ml-dsa': {
+    label: 'Composite ML-DSA',
+    spec: 'draft-ietf-lamps-pq-composite-sigs-19',
+    allowed: SIGNATURE_ONLY_USAGES
+  },
+  'ml-kem': {
+    label: 'ML-KEM',
+    spec: 'RFC 9935',
+    allowed: ['keyEncipherment'],
+    map: { dataEncipherment: 'keyEncipherment',
+           keyAgreement: 'keyEncipherment' }
+  }
+};
+
+var PQC_USAGE_FAMILY = {
+  'ML-DSA': 'ml-dsa',
+  'SLH-DSA': 'slh-dsa',
+  'Composite ML-DSA': 'composite-ml-dsa',
+  'ML-KEM': 'ml-kem'
+};
+
+var SPKI_USAGE_FAMILY = {
+  '1.2.840.113549.1.1.1': 'rsa',
+  '1.2.840.113549.1.1.10': 'rsa-pss',
+  '1.2.840.10045.2.1': 'ec',
+  '1.3.101.110': 'xdh',
+  '1.3.101.111': 'xdh',
+  '1.3.101.112': 'eddsa',
+  '1.3.101.113': 'eddsa'
+};
+
+// The KEY_USAGE_FAMILIES key for a key. Takes a key_material.js id
+// ('ec-p256'), a descriptor from keys.keyAlg(), or a SubjectPublicKeyInfo
+// algorithm OID. Null when nothing here knows the key, which callers read as
+// "no restriction known" rather than as "nothing permitted".
+function keyUsageFamily(key) {
+  log.debug("Entering keyUsageFamily().");
+  if (!key) {
+    log.debug("Leaving keyUsageFamily(). No key.");
+    return null;
+  }
+  if (typeof key === 'string' && SPKI_USAGE_FAMILY[key]) {
+    log.debug("Leaving keyUsageFamily(). By OID: " + SPKI_USAGE_FAMILY[key]);
+    return SPKI_USAGE_FAMILY[key];
+  }
+  if (typeof key === 'string' && pqx.algForOid(key)) {
+    var byOid = PQC_USAGE_FAMILY[pqx.algForOid(key).family] || null;
+    log.debug("Leaving keyUsageFamily(). By PQC OID: " + byOid);
+    return byOid;
+  }
+  var desc = typeof key === 'string' ? keys.keyAlg(key) : key;
+  var family = null;
+  if (desc && desc.kind === 'rsa') {
+    family = 'rsa';
+  } else if (desc && desc.kind === 'ec') {
+    family = 'ec';
+  } else if (desc && desc.kind === 'okp') {
+    family = /^X/.test(desc.name || '') ? 'xdh' : 'eddsa';
+  } else if (desc && desc.kind === 'pqc') {
+    family = PQC_USAGE_FAMILY[desc.family] || null;
+  }
+  log.debug("Leaving keyUsageFamily(). " + family);
+  return family;
+}
+
+// The usage names in `list`, in KEY_USAGE_BITS order and without repeats.
+function usagesInBitOrder(list) {
+  log.debug("Entering usagesInBitOrder().");
+  var out = KEY_USAGE_BITS.map(function (b) { return b.name; })
+    .filter(function (name) { return list.indexOf(name) >= 0; });
+  log.debug("Leaving usagesInBitOrder().");
+  return out;
+}
+
+// A profile's KeyUsage, read through the key's family. Returns
+//   usages   what the certificate should assert, in KEY_USAGE_BITS order
+//   mapped   [{from, to}] usages translated to the family's equivalent
+//   dropped  usages the family has no equivalent of
+//   family   the KEY_USAGE_FAMILIES key, or null for an unknown key
+//   note     one sentence for a page to show, or '' when nothing changed
+// With no key, or one this table does not know, the profile's list comes back
+// unchanged apart from being in bit order, which is what every caller got
+// before this function existed: a BIT STRING has no order of its own.
+function defaultKeyUsage(profileId, key) {
+  log.debug("Entering defaultKeyUsage(). profile=" + profileId);
+  var p = profile(profileId) || {};
+  var wanted = (p.keyUsage || []).slice();
+  var familyId = keyUsageFamily(key);
+  var family = familyId ? KEY_USAGE_FAMILIES[familyId] : null;
+  var out = { usages: usagesInBitOrder(wanted), mapped: [], dropped: [],
+              family: familyId, note: '' };
+  if (!family) {
+    log.debug("Leaving defaultKeyUsage(). No family; profile list as is.");
+    return out;
+  }
+  var kept = [];
+  wanted.forEach(function (usage) {
+    var target = family.allowed.indexOf(usage) >= 0 ? usage
+      : (family.map && family.map[usage]) || null;
+    if (!target) {
+      out.dropped.push(usage);
+      return;
+    }
+    if (target !== usage && wanted.indexOf(target) >= 0) {
+      // The profile already asks for the usage this one maps to.
+      out.dropped.push(usage);
+      return;
+    }
+    if (target !== usage) out.mapped.push({ from: usage, to: target });
+    if (kept.indexOf(target) < 0) kept.push(target);
+  });
+  out.usages = usagesInBitOrder(kept);
+  var parts = [];
+  if (out.mapped.length) {
+    parts.push(out.mapped.map(function (m) {
+      return m.from + ' became ' + m.to;
+    }).join(', '));
+  }
+  if (out.dropped.length) {
+    parts.push(out.dropped.join(', ') + ' dropped');
+  }
+  if (parts.length) {
+    out.note = 'For ' + family.label + ' keys (' + family.spec + '): ' +
+        parts.join('; ') + '.';
+    if (!out.usages.length) {
+      out.note += ' Nothing this profile asks for is a usage this key ' +
+          'can have, so the certificate carries no KeyUsage extension. ' +
+          'Choose a different key algorithm or a different profile.';
+    }
+  }
+  log.debug("Leaving defaultKeyUsage(). " + out.usages.join(','));
+  return out;
+}
+
+// The KeyUsage bits in `usages` that a key of this kind may not carry, as
+// [{usage, reason}]. Empty when every bit is permitted, or when the key is of
+// a kind this table does not know. Also reports ML-KEM's "only" rule and
+// RFC 5280's rule that encipherOnly and decipherOnly mean nothing without
+// keyAgreement.
+function keyUsageFindings(usages, key) {
+  log.debug("Entering keyUsageFindings().");
+  var list = usages || [];
+  var familyId = keyUsageFamily(key);
+  var family = familyId ? KEY_USAGE_FAMILIES[familyId] : null;
+  var out = [];
+  if (family) {
+    list.forEach(function (usage) {
+      if (family.allowed.indexOf(usage) < 0) {
+        out.push({ usage: usage, reason: usage + ' is not a usage ' +
+            family.label + ' keys may carry (' + family.spec + ' permits ' +
+            family.allowed.join(', ') + ').' });
+      }
+    });
+  }
+  var agree = list.indexOf('keyAgreement') >= 0;
+  ['encipherOnly', 'decipherOnly'].forEach(function (usage) {
+    if (list.indexOf(usage) >= 0 && !agree) {
+      out.push({ usage: usage, reason: usage + ' is undefined without ' +
+          'keyAgreement (RFC 5280 section 4.2.1.3).' });
+    }
+  });
+  log.debug("Leaving keyUsageFindings(). " + out.length + " finding(s).");
+  return out;
+}
+
 // The extension spec a profile starts from, which the page then edits. Kept
 // here rather than in the page so that the node tests issue exactly what the
-// browser issues.
-function defaultExtensions(profileId) {
+// browser issues. `key` is optional and is anything keyUsageFamily() reads;
+// with it, the KeyUsage is the one defaultKeyUsage() gives for that key.
+function defaultExtensions(profileId, key) {
   log.debug("Entering defaultExtensions(). profile=" + profileId);
   var p = profile(profileId) || {};
+  var usage = defaultKeyUsage(profileId, key);
   var out = {
     basicConstraints: { present: true, ca: !!p.ca, pathLen: p.pathLen,
                        critical: true },
-    keyUsage: { present: true, usages: (p.keyUsage || []).slice(),
-               critical: true },
+    keyUsage: { present: true, usages: usage.usages, critical: true },
     extKeyUsage: { present: !!(p.extKeyUsage || []).length,
                   usages: (p.extKeyUsage || []).slice(),
                   critical: !!p.ekuCritical },
@@ -2786,6 +3017,18 @@ async function describeCertificate(pemOrDer) {
     ? (keyDesc.kind === 'rsa' ? 'RSA ' + keyDesc.bits + '-bit'
       : keyDesc.kind === 'ec' ? 'ECDSA ' + keyDesc.curve : 'Ed25519')
     : out.publicKeyAlgorithm;
+  // A KeyUsage this kind of key may not carry (issue #310). Reported rather
+  // than refused: this describes certificates other people issued too, and a
+  // debugger that would not show a non-conformant certificate could not help
+  // anybody find out why a relying party refused it.
+  var ku = out.extensions.filter(function (ext) {
+    return ext.name === 'keyUsage' && Array.isArray(ext.value);
+  })[0];
+  out.findings = ku
+    ? keyUsageFindings(ku.value,
+        cert.subjectPublicKeyInfo.algorithm.algorithmId)
+      .map(function (f) { return 'KeyUsage: ' + f.reason; })
+    : [];
   out.fingerprints = await fingerprintsOf(der);
   log.debug("Leaving describeCertificate().");
   return out;
@@ -2966,7 +3209,7 @@ async function selfSignedCertPem(options) {
     serial: opts.serial || '01',
     notBefore: new Date(Date.UTC(2020, 0, 1)),
     notAfter: new Date(Date.UTC(2035, 0, 1)),
-    extensions: defaultExtensions(opts.profile || 'tls-server')
+    extensions: defaultExtensions(opts.profile || 'tls-server', opts.desc)
   });
   log.debug("Leaving selfSignedCertPem().");
   return issued.pem;
@@ -3012,6 +3255,10 @@ module.exports = {
   certificationRequest: certificationRequest,
   describeCertificate: describeCertificate,
   keyUsageOf: keyUsageOf,
+  KEY_USAGE_FAMILIES: KEY_USAGE_FAMILIES,
+  keyUsageFamily: keyUsageFamily,
+  defaultKeyUsage: defaultKeyUsage,
+  keyUsageFindings: keyUsageFindings,
   keyUsagePermits: keyUsagePermits,
   extensionValueText: extensionValueText,
   verifyChain: verifyChain,
