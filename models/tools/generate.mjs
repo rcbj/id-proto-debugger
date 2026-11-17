@@ -352,7 +352,9 @@ function catalogues(program) {
     }
     const found = [];
     (function walk(node) {
+      log.debug("Entering walk().");
       if (!node) {
+        log.debug("Leaving walk(). No node.");
         return;
       }
       if (node.kind === SyntaxKind.ConstStatement) {
@@ -364,6 +366,7 @@ function catalogues(program) {
       } else if (inner) {
         walk(inner);
       }
+      log.debug("Leaving walk().");
     })(file);
     found.forEach(function (node) {
       const value = program.checker.getValueForNode(node.value);
