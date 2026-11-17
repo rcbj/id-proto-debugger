@@ -7,6 +7,11 @@
 
 .vc-return { margin: 8px 0 2px; font-size: 0.9em; }
 .vc-title { margin: 6px 0 10px; }
+/* The two choices on presentation step 0 — the protocol, then the flow. */
+.vc-subtitle { margin: 18px 0 4px; }
+/* A protocol's rules on presentation step 1: one row each. */
+.vc-rule-block { color: #a40000; font-weight: 600; }
+.vc-rule-warn { color: #8a5a00; font-weight: 600; }
 .vc-intro, .vc-note { max-width: 1100px; line-height: 1.45; }
 .vc-note { font-size: 0.9em; color: #333; }
 

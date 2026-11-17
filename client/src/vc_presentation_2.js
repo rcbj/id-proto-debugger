@@ -35,6 +35,8 @@ var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 var bbs2023 = require("./bbs2023");
 var didLib = require("./did");
+var vpProtocols = require("./vp_protocols");
+var cbor = require("./cbor");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_2',
                                 level: appconfig.logLevel });
@@ -49,7 +51,10 @@ var state = {
   parsed: null,
   // The Disclosures, in credential order: { encoded, name, value, requested, checked }
   rows: [],
-  built: null
+  built: null,
+  // The answer around the presentation: { fields, idToken, encryption,
+  // delivery }, rebuilt with it.
+  response: null
 };
 
 function el(id) {
@@ -153,6 +158,9 @@ function loadState() {
   state.formatMismatch = !!(state.requestedFormat && state.heldFormat &&
                             state.requestedFormat !== state.heldFormat);
   state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON;
+  // SIOPv2: whether an ID Token is asked for, and whether it is ALL that is.
+  state.wantsIdToken = vpProtocols.asksForIdToken(params);
+  state.idTokenOnly = state.wantsIdToken && !vpProtocols.asksForVpToken(params);
   state.rows = ((state.parsed && state.parsed.disclosures) ||
       []).map(function (d) {
     var requested = state.requested.indexOf(d.name) !== -1;
@@ -230,6 +238,20 @@ function prepareLdpStatements() {
       state.rows[i].requested = true;
       state.rows[i].checked = true;
     });
+    // A presentation bound to its holder has to SAY who the holder is: the
+    // statement linking the credential to its credentialSubject names the
+    // holder's DID, and without it the holder's proof is a signature by a key
+    // the credential never mentions. Selected whenever the query requires
+    // holder binding (DCQL's default) or a SIOPv2 ID Token goes with it.
+    if (sdJwtVp.requiresKeyBinding(state.credentialQuery) ||
+        state.wantsIdToken) {
+      state.rows.forEach(function (r) {
+        if (/[#/]credentialSubject>/.test(r.value)) {
+          r.requested = true;
+          r.checked = true;
+        }
+      });
+    }
     log.debug("Leaving prepareLdpStatements(). " + statements.length +
               " statement(s).");
     return true;
@@ -379,7 +401,8 @@ function renderDisclosureTable() {
                         .map(function (r) { return r.name; });
   setHtml("vp_selection_summary",
     "Selected " + selectedEncoded().length + " of " + state.rows.length +
-        " Disclosure(s). " +
+        (state.format === sdJwtVc.FORMAT_MSO_MDOC ?
+         " mdoc element(s) (namespace/element). " : " Disclosure(s). ") +
     (missing.length
       ? '<span class="vc-bad">Not selected, though the verifier ' +
           'asked for it: ' + esc(missing.join(", ")) +
@@ -413,6 +436,18 @@ function buildPresentation() {
       "vp_holder_private_jwk");
   var priv = holderKey.jwk;
   renderHolderKeyRow(holderKey);
+  // A self-issued ID Token alone presents no credential: there is nothing to
+  // select or derive, only the token to sign.
+  if (state.idTokenOnly) {
+    state.built = null;
+    setValue("vp_presentation", "");
+    setValue("vp_kb_jwt", "");
+    setJson("vp_kb_header", null);
+    setJson("vp_kb_payload", null);
+    setJson("vp_presented_claims", null);
+    log.debug("Leaving buildPresentation(). ID Token only.");
+    return finishResponse();
+  }
   if (!state.parsed || !params.client_id || !params.nonce) {
     setValue("vp_presentation", "");
     setValue("vp_kb_jwt", "");
@@ -493,7 +528,8 @@ function buildPresentation() {
           proofOptions: proofOptions
         };
         state.built = { presentation: JSON.stringify(envelope),
-            derived: derived };
+            vpElement: envelope, derived: derived,
+            format: sdJwtVc.FORMAT_LDP_VC };
         setValue("vp_presentation", state.built.presentation);
         setText("vp_sd_hash", "");
         setValue("vp_kb_jwt", "");
@@ -501,16 +537,12 @@ function buildPresentation() {
                 disclosed: derived.disclosedIndexes.length,
                                   of: derived.statements.length });
         setJson("vp_kb_payload", derived.disclosedStatements);
-        setJson("vp_vp_token",
-                sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
-                                               state.built.presentation));
-        renderAssembledCall();
         setJson("vp_presented_claims", derived.disclosedStatements);
         status("vp_present_status", "Derived a bbs-2023 proof disclosing " +
           derived.disclosedIndexes.length + " of " + derived.statements.length +
               " statements.", "vc-ok");
         log.debug("Leaving buildPresentation(). bbs-2023 proof derived.");
-        return true;
+        return finishResponse();
       })
       .catch(function (e) {
         log.error("could not derive the bbs-2023 proof: " + e.message);
@@ -542,7 +574,12 @@ function buildPresentation() {
     holderPrivateJwk: priv,
     aud: params.client_id,
     nonce: params.nonce,
-    keyBinding: keyBinding
+    keyBinding: keyBinding,
+    // An mdoc's device signature covers the session transcript, which names
+    // where the answer goes and, under direct_post.jwt, the key it is
+    // encrypted to (OpenID4VP 1.0 Appendix B.2.6.1).
+    responseUri: vpProtocols.responseTarget(params),
+    encryptionJwk: responseEncryptionKey()
   }).then(function (built) {
     state.built = built;
     setValue("vp_presentation", built.presentation);
@@ -554,6 +591,18 @@ function buildPresentation() {
       setValue("vp_kb_jwt", built.vp.jwt);
       setJson("vp_kb_header", built.vp.header);
       setJson("vp_kb_payload", built.vp.payload);
+    } else if (built.mdoc) {
+      // An mdoc's holder proof is its device signature, over the session
+      // transcript: shown where a KB-JWT would be.
+      setValue("vp_kb_jwt", "");
+      setJson("vp_kb_header", { deviceAuth: "deviceSignature",
+        cose: "COSE_Sign1, ES256 (-7), detached",
+        signedOver: "DeviceAuthenticationBytes",
+        disclosed: built.mdoc.disclosed.map(function (it) {
+          return it.namespace + "/" + it.elementIdentifier;
+        }) });
+      setJson("vp_kb_payload", { SessionTranscript:
+        cbor.toPlain(built.mdoc.transcript) });
     } else if (built.kb) {
       setValue("vp_kb_jwt", built.kb.jwt);
       setJson("vp_kb_header", built.kb.header);
@@ -563,16 +612,12 @@ function buildPresentation() {
       setJson("vp_kb_header", null);
       setJson("vp_kb_payload", null);
     }
-    setJson("vp_vp_token",
-            sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
-            built.presentation));
-    renderAssembledCall();
     // What a verifier will end up knowing, computed from the bytes being sent.
     var presented = sdJwtVp.presentedClaims(built.presentation);
     setJson("vp_presented_claims", presented.claims);
     log.debug("Leaving buildPresentation(). Built " +
               built.presentation.length + " characters.");
-    return true;
+    return finishResponse();
   }).catch(function (e) {
     log.error("could not build the presentation: " + e.message);
     status("vp_present_status", "Could not build the presentation: " +
@@ -581,44 +626,277 @@ function buildPresentation() {
   });
 }
 
-// The call Present will make. With direct_post the wallet POSTs a form to the
-// verifier's Response URI (OID4VP section 8.2); with any other response mode
-// the answer would go back through the browser instead, and this page says so
-// rather than pretending to implement it.
+// ---------------------------------------------------------------------------
+// The ANSWER around the presentation, as the chosen protocol and the request's
+// response_mode make it (vp_protocols.js):
+//
+//   * an ldp_vc credential bound to its holder travels inside a W3C
+//     VerifiablePresentation with the holder's own Data Integrity proof —
+//     whenever the query requires holder binding, which is DCQL's default, and
+//     always beside a SIOPv2 ID Token, which has to name the same key;
+//   * a SIOPv2 request gets a self-issued ID Token, signed by the key the
+//     credential is bound to (or, alone, by a pairwise key if chosen);
+//   * direct_post.jwt encrypts the lot to the Verifier's key, and the
+//     delivery is worked out once so Present does exactly what is shown.
+// ---------------------------------------------------------------------------
+
+// The private key a presentation's holder proof — and a SIOPv2 ID Token
+// beside it — is signed with, for whichever format is held.
+function holderSigningKey() {
+  log.debug("Entering holderSigningKey().");
+  var cnf = credentialCnfJwk();
+  if (!cnf && state.parsed && state.parsed.format === sdJwtVc.FORMAT_LDP_VC) {
+    var subject = ldpHolderDid();
+    if (/^did:jwk:/.test(subject)) {
+      cnf = didLib.didJwkToJwk(subject);
+    } else if (/^did:key:/.test(subject)) {
+      cnf = didLib.didKeyToJwk(subject);
+    }
+  }
+  log.debug("Leaving holderSigningKey().");
+  return sdJwtVc.boundPrivateJwk(cnf, "vp_holder_private_jwk");
+}
+
+// The DID an ldp_vc names its subject by: who the holder is, for the VP.
+function ldpHolderDid() {
+  log.debug("Entering ldpHolderDid().");
+  var doc = (state.parsed && state.parsed.document) || {};
+  var subject = [].concat(doc.credentialSubject || [])[0] || {};
+  log.debug("Leaving ldpHolderDid().");
+  return String(subject.id || "");
+}
+
+// Whether an ldp_vc goes inside a holder-signed VP.
+function ldpNeedsHolderProof() {
+  log.debug("Entering ldpNeedsHolderProof().");
+  var needs = !!state.built && state.built.format === sdJwtVc.FORMAT_LDP_VC &&
+    (sdJwtVp.requiresKeyBinding(state.credentialQuery) || state.wantsIdToken);
+  log.debug("Leaving ldpNeedsHolderProof(). " + needs);
+  return needs;
+}
+
+function wrapLdpForHolder() {
+  log.debug("Entering wrapLdpForHolder().");
+  var params = (state.request && state.request.params) || {};
+  if (!ldpNeedsHolderProof()) {
+    log.debug("Leaving wrapLdpForHolder(). Not needed.");
+    return Promise.resolve(true);
+  }
+  var holder = ldpHolderDid();
+  var key = holderSigningKey();
+  if (!holder || !key.jwk) {
+    status("vp_present_status", "This request needs a holder proof around " +
+      "the ldp_vc presentation, and " + (holder ? "the private key of " +
+      holder + " is not available" + (key.problem ? ": " + key.problem : "") :
+      "the credential names no credentialSubject.id to be the holder") + ".",
+      "vc-bad");
+    log.debug("Leaving wrapLdpForHolder(). No holder key.");
+    return Promise.resolve(false);
+  }
+  log.debug("Leaving wrapLdpForHolder().");
+  return vpProtocols.ldpVerifiablePresentation({
+    credential: state.built.vpElement,
+    holder: holder,
+    privateJwk: key.jwk,
+    nonce: params.nonce,
+    aud: params.client_id
+  }).then(function (vp) {
+    state.built.envelope = state.built.vpElement;
+    state.built.vpElement = vp;
+    state.built.presentation = JSON.stringify(vp);
+    setValue("vp_presentation", state.built.presentation);
+    setJson("vp_kb_header", vp.proof);
+    log.debug("Leaving wrapLdpForHolder(). Wrapped.");
+    return true;
+  });
+}
+
+// The pairwise key for this Verifier: made the first time, then reused so the
+// person is the same subject to it next time and a different one to every
+// other Verifier. Kept unless the holder said not to.
+function pairwiseKey(clientId) {
+  log.debug("Entering pairwiseKey().");
+  var keep = sdJwtVc.get(sdJwtVp.KEYS.SIOP_SAVE_PAIRWISE) !== "0";
+  var all = (keep && sdJwtVc.getJson(sdJwtVp.KEYS.SIOP_PAIRWISE_KEYS)) || {};
+  if (all[clientId]) {
+    log.debug("Leaving pairwiseKey(). Reused.");
+    return Promise.resolve(all[clientId]);
+  }
+  if (state.pairwiseThisLoad && state.pairwiseThisLoad[clientId]) {
+    log.debug("Leaving pairwiseKey(). This page load's.");
+    return Promise.resolve(state.pairwiseThisLoad[clientId]);
+  }
+  log.debug("Leaving pairwiseKey(). New.");
+  return vpProtocols.generateSubjectKey().then(function (jwk) {
+    state.pairwiseThisLoad = state.pairwiseThisLoad || {};
+    state.pairwiseThisLoad[clientId] = jwk;
+    if (keep) {
+      all[clientId] = jwk;
+      sdJwtVc.setJson(sdJwtVp.KEYS.SIOP_PAIRWISE_KEYS, all);
+    }
+    return jwk;
+  });
+}
+
+// The ID Token's key: the credential's holder key beside a presentation (the
+// two must name the same key, or the identity and the credential are about
+// two different people), and for an ID Token alone the holder key or a
+// pairwise one, as chosen.
+function idTokenKey() {
+  log.debug("Entering idTokenKey().");
+  var params = (state.request && state.request.params) || {};
+  var pairwise = el("vp_siop_pairwise");
+  if (state.idTokenOnly && pairwise && pairwise.checked) {
+    log.debug("Leaving idTokenKey(). Pairwise.");
+    return pairwiseKey(params.client_id).then(function (jwk) {
+      return { jwk: jwk, boundTo: "a pairwise key for " + params.client_id };
+    });
+  }
+  var key = holderSigningKey();
+  if (!key.jwk && state.idTokenOnly) {
+    // No credential and no holder key: a pairwise key is the only subject
+    // this wallet has.
+    log.debug("Leaving idTokenKey(). Pairwise, for want of a holder key.");
+    return pairwiseKey(params.client_id).then(function (jwk) {
+      return { jwk: jwk, boundTo: "a pairwise key for " + params.client_id +
+               " (this wallet holds no holder key)" };
+    });
+  }
+  log.debug("Leaving idTokenKey().");
+  return Promise.resolve(key);
+}
+
+function chosenSubjectSyntax() {
+  log.debug("Entering chosenSubjectSyntax().");
+  var select = el("vp_subject_syntax");
+  var preferred = (select && select.value) ||
+      sdJwtVc.get(sdJwtVp.KEYS.SIOP_SUBJECT_SYNTAX) || "";
+  log.debug("Leaving chosenSubjectSyntax().");
+  return vpProtocols.chooseSubjectSyntax(
+      state.request && state.request.clientMetadata, preferred);
+}
+
+function buildIdToken() {
+  log.debug("Entering buildIdToken().");
+  var params = (state.request && state.request.params) || {};
+  if (!state.wantsIdToken) {
+    setValue("vp_id_token", "");
+    setJson("vp_id_token_header", null);
+    setJson("vp_id_token_payload", null);
+    log.debug("Leaving buildIdToken(). Not asked for.");
+    return Promise.resolve(null);
+  }
+  var syntax = chosenSubjectSyntax();
+  if (!syntax) {
+    log.debug("Leaving buildIdToken(). No common subject syntax.");
+    return Promise.reject(new Error("the Verifier accepts no subject " +
+        "syntax this wallet can make, so the only answer is " +
+        "subject_syntax_types_not_supported (Refuse sends it)."));
+  }
+  log.debug("Leaving buildIdToken().");
+  return idTokenKey().then(function (key) {
+    if (!key.jwk) {
+      throw new Error("there is no key to sign the self-issued ID Token " +
+        "with" + (key.problem ? ": " + key.problem : "."));
+    }
+    return vpProtocols.selfIssuedIdToken({
+      privateJwk: key.jwk, syntax: syntax, aud: params.client_id,
+      nonce: params.nonce
+    }).then(function (t) {
+      t.boundTo = key.boundTo;
+      setValue("vp_id_token", t.jwt);
+      setJson("vp_id_token_header", t.header);
+      setJson("vp_id_token_payload", t.payload);
+      setText("vp_id_token_note", "Signed with " + (key.boundTo ||
+        "the holder key") + ", as a " + syntax + " subject. It proves " +
+        "control of that key and nothing else: every claim in it is the " +
+        "person's own say-so.");
+      log.debug("Leaving buildIdToken(). " + t.payload.sub);
+      return t;
+    });
+  });
+}
+
+function finishResponse() {
+  log.debug("Entering finishResponse().");
+  var params = (state.request && state.request.params) || {};
+  var built = null;
+  log.debug("Leaving finishResponse().");
+  return wrapLdpForHolder().then(function (ok) {
+    if (!ok) {
+      return false;
+    }
+    built = state.built;
+    return buildIdToken().then(function (idToken) {
+      var vpToken = built ? sdJwtVp.vpToken(
+          sdJwtVp.firstCredentialQueryId(state.dcql),
+          built.vpElement || built.presentation) : null;
+      var fields = vpProtocols.responseFields({
+        vpToken: vpToken, idToken: idToken ? idToken.jwt : "",
+        state: params.state });
+      setJson("vp_vp_token", vpToken);
+      var mode = vpProtocols.responseMode(params);
+      var encrypting = mode === "direct_post.jwt" ?
+        vpProtocols.encryptResponse({ fields: fields,
+          clientMetadata: state.request.clientMetadata,
+          kid: (responseEncryptionKey() || {}).kid,
+          enc: (el("vp_response_enc") || {}).value }) :
+        Promise.resolve(null);
+      return encrypting.then(function (encryption) {
+        var delivery = vpProtocols.deliveryFor(params, fields, encryption);
+        state.response = { fields: fields, idToken: idToken,
+                           encryption: encryption, delivery: delivery };
+        renderEncryption(encryption);
+        setValue("vp_assembled_call", vpProtocols.describeDelivery(delivery));
+        return true;
+      });
+    });
+  }).catch(function (e) {
+    state.response = null;
+    log.warn("could not finish the response: " + e.message);
+    status("vp_present_status", "Could not build the answer: " + e.message,
+           "vc-bad");
+    setValue("vp_assembled_call", "");
+    return false;
+  });
+}
+
+function renderEncryption(encryption) {
+  log.debug("Entering renderEncryption().");
+  var row = el("vp_encryption_pane");
+  if (row) row.style.display = encryption ? "" : "none";
+  if (encryption) {
+    setJson("vp_jwe_header", encryption.header);
+    setValue("vp_jwe", encryption.jwe);
+    setText("vp_jwe_note", "Encrypted " + encryption.header.alg + " / " +
+      encryption.enc + " to the Verifier's key " + (encryption.key.kid ||
+      "(no kid)") + " from client_metadata.jwks. Only that Verifier can " +
+      "read what is above; anybody on the way sees this.");
+  }
+  log.debug("Leaving renderEncryption().");
+}
+
+// The Verifier key a direct_post.jwt answer is encrypted to, or null. One
+// choice, made here, because an mdoc's device signature names it and the
+// encryption must then use the same key.
+function responseEncryptionKey() {
+  log.debug("Entering responseEncryptionKey().");
+  var params = (state.request && state.request.params) || {};
+  if (vpProtocols.responseMode(params) !== "direct_post.jwt") {
+    log.debug("Leaving responseEncryptionKey(). Not encrypted.");
+    return null;
+  }
+  var keys = vpProtocols.encryptionKeys(state.request.clientMetadata);
+  log.debug("Leaving responseEncryptionKey(). " + keys.length + " key(s).");
+  return keys[0] || null;
+}
+
+// Kept for the name: every caller that used to draw the call now finishes the
+// whole answer.
 function renderAssembledCall() {
   log.debug("Entering renderAssembledCall().");
-  var params = (state.request && state.request.params) || {};
-  var mode = String(params.response_mode || "fragment");
-  if (!state.built) {
-    setValue("vp_assembled_call", "");
-    log.debug("Leaving renderAssembledCall().");
-    return "";
-  }
-  var form = [];
-  form.push("vp_token=" + encodeURIComponent(JSON.stringify(
-    sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
-                    state.built.presentation))));
-  if (params.state) form.push("state=" + encodeURIComponent(params.state));
-  var body = form.join("&");
-  var text;
-  if (mode === "direct_post") {
-    text = ["POST " + (params.response_uri || "(no response_uri)"),
-            "Content-Type: application/x-www-form-urlencoded",
-            "Content-Length: " + body.length,
-            "",
-            body].join("\n");
-  } else {
-    text = "This request asks for response_mode=" + mode +
-        ", which returns the vp_token through the " +
-           "browser (a redirect to " + (params.redirect_uri ||
-               "(no redirect_uri)") + ") rather than as a " +
-           "POST from the wallet. This workflow implements direct_post; the " +
-               "presentation above is what " +
-           "would travel either way:\n\n" + body;
-  }
-  setValue("vp_assembled_call", text);
-  log.debug("Leaving renderAssembledCall(). mode=" + mode);
-  return text;
+  log.debug("Leaving renderAssembledCall().");
+  return finishResponse();
 }
 
 function onSelectionChange(index, checked) {
@@ -672,53 +950,125 @@ function selectAll() {
 }
 
 // --- sending it -------------------------------------------------------------
+// Send `delivery` the way it says: the wallet POSTs it, the browser posts it
+// as a form, or the browser is redirected with it. Answers a promise of
+// { ok, statusCode, body, raw } for a POST, and never settles for the other
+// two, because the page is navigating away.
+function deliver(delivery) {
+  log.debug("Entering deliver(). " + delivery.kind + " " + delivery.mode);
+  if (delivery.kind === "redirect") {
+    log.debug("Leaving deliver(). Redirecting.");
+    window.location.href = delivery.url;
+    return new Promise(function () {});
+  }
+  if (delivery.kind === "form") {
+    var form = document.createElement("form");
+    form.method = "POST";
+    form.action = delivery.target;
+    Object.keys(delivery.fields).forEach(function (k) {
+      var input = document.createElement("input");
+      var v = delivery.fields[k];
+      input.type = "hidden";
+      input.name = k;
+      input.value = typeof v === "string" ? v : JSON.stringify(v);
+      form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    log.debug("Leaving deliver(). Submitting the form.");
+    form.submit();
+    return new Promise(function () {});
+  }
+  log.debug("Leaving deliver(). POST.");
+  // Straight from the browser, or through the debugger's api when step 0
+  // says so (sd_jwt_vp.js verifierFetch()).
+  return sdJwtVp.verifierFetch(delivery.target, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: delivery.body
+  }).then(function (r) {
+    return r.text().then(function (text) {
+      var parsed = null;
+      try {
+        parsed = JSON.parse(text);
+      } catch (e) {
+        // Not JSON: the raw text is what gets shown.
+      }
+      return { ok: r.ok, statusCode: r.status, body: parsed, raw: text };
+    });
+  });
+}
+
+// What step 3 shows, written BEFORE anything is sent: a redirect or a form
+// post leaves this page and does not come back to write it afterwards.
+function recordSent(response) {
+  log.debug("Entering recordSent().");
+  var params = (state.request && state.request.params) || {};
+  var built = state.built || {};
+  var r = state.response || {};
+  var record = {
+    protocol: sdJwtVp.currentProtocol().id,
+    responseType: params.response_type || "",
+    responseMode: vpProtocols.responseMode(params),
+    delivery: r.delivery ? r.delivery.kind : "",
+    // How the wallet reached the Verifier: from this page, or through the
+    // debugger's api (POST /oid4vp/call). A browser-carried answer (fragment,
+    // query, form_post) is always the browser's.
+    route: r.delivery && r.delivery.kind === "post" && sdJwtVp.viaApi() ?
+        "api" : "browser",
+    presentation: built.presentation || "",
+    format: built.format || state.format || "",
+    kbJwt: built.kb ? built.kb.jwt : "",
+    kbPayload: built.kb ? built.kb.payload : null,
+    sdHash: built.sdHash || "",
+    selected: selectedEncoded(),
+    requested: state.idTokenOnly ? [] : state.requested,
+    idToken: r.idToken ? r.idToken.jwt : "",
+    idTokenPayload: r.idToken ? r.idToken.payload : null,
+    idTokenHeader: r.idToken ? r.idToken.header : null,
+    idTokenSyntax: r.idToken ? r.idToken.syntax : "",
+    encryption: r.encryption ? { header: r.encryption.header,
+      enc: r.encryption.enc, kid: r.encryption.key.kid || "",
+      plaintext: r.encryption.plaintext, jwe: r.encryption.jwe } : null,
+    holderBinding: built.envelope ? "VerifiablePresentation, " +
+      ((built.vpElement || {}).proof || {}).cryptosuite : "",
+    sentAt: new Date().toISOString(),
+    responseUri: r.delivery ? r.delivery.target : "",
+    // The public key the answer was encrypted to: an mdoc's device signature
+    // names it, so step 3 needs it to re-check that signature.
+    encryptionJwk: r.encryption ? r.encryption.key : null,
+    clientId: params.client_id,
+    nonce: params.nonce,
+    state: params.state || "",
+    accepted: response ? !!response.ok : null,
+    statusCode: response ? response.statusCode : 0,
+    response: response ? (response.body || response.raw) :
+      "(handed to the browser: " + (r.delivery ? r.delivery.mode : "") +
+      " — the Verifier's answer is whatever page it shows next)"
+  };
+  sdJwtVc.setJson(sdJwtVp.KEYS.PRESENTATION, record);
+  log.debug("Leaving recordSent().");
+  return record;
+}
+
 function present() {
   log.debug("Entering present().");
-  var params = (state.request && state.request.params) || {};
-  if (!state.built) {
-    status("vp_present_status", "There is no presentation built yet.",
-           "vc-bad");
+  if (!state.response || !state.response.delivery) {
+    status("vp_present_status", "There is no answer built yet.", "vc-bad");
     log.debug("Leaving present().");
     return false;
   }
-  if (String(params.response_mode || "") !== "direct_post") {
-    status("vp_present_status",
-      "This workflow sends the presentation with response_mode=direct_post; " +
-          "this request asked for " +
-      (params.response_mode || "the OAuth 2.0 default") + ".", "vc-bad");
-    log.debug("Leaving present().");
-    return false;
-  }
-  if (!params.response_uri) {
-    status("vp_present_status",
-           "The request has no response_uri to post the presentation to.",
-           "vc-bad");
+  var delivery = state.response.delivery;
+  if (!delivery.target) {
+    status("vp_present_status", "The request names nowhere to send the " +
+           "answer (" + delivery.mode + ").", "vc-bad");
     log.debug("Leaving present().");
     return false;
   }
   disable("vp_present_button", true);
-  status("vp_present_status", "Presenting to " + params.response_uri + " …",
-         "vc-pending");
-  var body = "vp_token=" + encodeURIComponent(JSON.stringify(
-    sdJwtVp.vpToken(sdJwtVp.firstCredentialQueryId(state.dcql),
-                    state.built.presentation))) +
-    (params.state ? "&state=" + encodeURIComponent(params.state) : "");
-  fetch(params.response_uri, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body
-  })
-    .then(function (r) {
-      return r.text().then(function (text) {
-        var parsed = null;
-        try {
-          parsed = JSON.parse(text);
-        } catch (e) {
-          // Not JSON: the raw text is what gets shown.
-        }
-        return { ok: r.ok, statusCode: r.status, body: parsed, raw: text };
-      });
-    })
+  status("vp_present_status", "Answering " + delivery.target + " by " +
+         delivery.mode + " …", "vc-pending");
+  recordSent(null);
+  deliver(delivery)
     .then(function (response) {
       var box = el("vp_response_body");
       if (box) {
@@ -728,28 +1078,13 @@ function present() {
       }
       // Whatever the verifier said, the wallet keeps a record of what it sent:
       // step 3 shows both sides.
-      sdJwtVc.setJson(sdJwtVp.KEYS.PRESENTATION, {
-        presentation: state.built.presentation,
-        kbJwt: state.built.kb ? state.built.kb.jwt : "",
-        kbPayload: state.built.kb ? state.built.kb.payload : null,
-        sdHash: state.built.sdHash,
-        selected: selectedEncoded(),
-        requested: state.requested,
-        sentAt: new Date().toISOString(),
-        responseUri: params.response_uri,
-        clientId: params.client_id,
-        nonce: params.nonce,
-        state: params.state || "",
-        accepted: !!response.ok,
-        statusCode: response.statusCode,
-        response: response.body || response.raw
-      });
+      recordSent(response);
       if (!response.ok) {
         var err = (response.body && (response.body.error_description ||
             response.body.error)) ||
                   ("HTTP " + response.statusCode);
         status("vp_present_status",
-          "The verifier refused the presentation: " + err +
+          "The verifier refused the response: " + err +
               " Step 3 shows what it answered.",
           "vc-bad");
         disable("vp_present_button", false);
@@ -758,13 +1093,13 @@ function present() {
         return;
       }
       status("vp_present_status",
-             "The verifier accepted the presentation. Opening step 3 …",
+             "The verifier accepted the response. Opening step 3 …",
              "vc-ok");
       window.location.href = sdJwtVp.STEP3_URL;
     })
     .catch(function (e) {
-      log.error("the presentation could not be sent: " + e.message);
-      status("vp_present_status", "The presentation could not be sent: " +
+      log.error("the response could not be sent: " + e.message);
+      status("vp_present_status", "The response could not be sent: " +
              e.message, "vc-bad");
       disable("vp_present_button", false);
     });
@@ -772,32 +1107,45 @@ function present() {
   return false;
 }
 
-// Refusing is an answer, and OID4VP has one for it: access_denied to the same
-// Response URI (section 8.4). The verifier learns the request was seen and
-// declined — which is not the same as never having arrived.
+// Refusing is an answer, and both protocols have one: OpenID4VP's
+// access_denied (section 8.5) and SIOPv2's user_cancelled — or
+// subject_syntax_types_not_supported, when the wallet cannot make a subject
+// the Verifier accepts. It goes back the way an answer would, encrypted
+// under direct_post.jwt.
 function refuse() {
   log.debug("Entering refuse().");
   var params = (state.request && state.request.params) || {};
-  if (!params.response_uri) {
+  if (!vpProtocols.responseTarget(params)) {
     status("vp_present_status",
-      "Nothing was sent. There is no response_uri to tell the verifier you " +
+      "Nothing was sent. There is nowhere to tell the verifier you " +
           "declined, either.", "vc-pending");
     log.debug("Leaving refuse().");
     return false;
   }
   disable("vp_refuse_button", true);
-  var body = "error=access_denied&error_description=" +
-    encodeURIComponent("The holder declined to present this credential.") +
-    (params.state ? "&state=" + encodeURIComponent(params.state) : "");
-  fetch(params.response_uri, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: body
-  })
+  var reason = state.wantsIdToken && !chosenSubjectSyntax() ?
+      "subject_syntax" : "declined";
+  var fields = vpProtocols.refusalFields(params, reason);
+  var mode = vpProtocols.responseMode(params);
+  var encrypting = mode === "direct_post.jwt" &&
+      vpProtocols.encryptionKeys(state.request.clientMetadata).length ?
+    vpProtocols.encryptResponse({ fields: fields,
+      clientMetadata: state.request.clientMetadata }) :
+    Promise.resolve(null);
+  encrypting
+    .then(function (encryption) {
+      var delivery = vpProtocols.deliveryFor(params, fields, encryption);
+      if (mode === "direct_post.jwt" && !encryption) {
+        delivery = vpProtocols.deliveryFor(
+          Object.assign({}, params, { response_mode: "direct_post" }),
+          fields, null);
+      }
+      return deliver(delivery);
+    })
     .then(function () {
       status("vp_present_status",
-        "Refused. access_denied was sent to the verifier and no part of the " +
-            "credential left this browser.",
+        "Refused. " + fields.error + " was sent to the verifier and no " +
+            "part of the credential left this browser.",
         "vc-pending");
     })
     .catch(function (e) {
@@ -808,6 +1156,73 @@ function refuse() {
     });
   log.debug("Leaving refuse().");
   return false;
+}
+
+// The SIOPv2 and encryption controls change the answer, not the
+// presentation, so they rebuild the answer only.
+function onAnswerOptionChange() {
+  log.debug("Entering onAnswerOptionChange().");
+  var select = el("vp_subject_syntax");
+  if (select && select.value) {
+    sdJwtVc.set(sdJwtVp.KEYS.SIOP_SUBJECT_SYNTAX, select.value);
+  }
+  var save = el("vp_siop_save_pairwise");
+  if (save) {
+    sdJwtVc.set(sdJwtVp.KEYS.SIOP_SAVE_PAIRWISE, save.checked ? "1" : "0");
+    // An opt-out that leaves yesterday's private keys in storage is not an
+    // opt-out.
+    if (!save.checked) sdJwtVc.remove(sdJwtVp.KEYS.SIOP_PAIRWISE_KEYS);
+  }
+  finishResponse().then(function (ok) {
+    if (ok) {
+      status("vp_present_status", "Ready: what is shown below is exactly " +
+             "what will be sent.", "vc-ok");
+    }
+  });
+  log.debug("Leaving onAnswerOptionChange().");
+  return true;
+}
+
+// The SIOPv2 and response-encryption panes, drawn for the request in hand.
+function renderAnswerOptions() {
+  log.debug("Entering renderAnswerOptions().");
+  var params = (state.request && state.request.params) || {};
+  var siopPane = el("vp_siop_pane");
+  if (siopPane) siopPane.style.display = state.wantsIdToken ? "" : "none";
+  var select = el("vp_subject_syntax");
+  if (select) {
+    var offered = vpProtocols.subjectSyntaxesOffered(
+        state.request && state.request.clientMetadata);
+    var both = vpProtocols.SUBJECT_SYNTAXES.filter(function (x) {
+      return offered.indexOf(x) !== -1;
+    });
+    var chosen = chosenSubjectSyntax();
+    select.innerHTML = both.map(function (x) {
+      return '<option value="' + esc(x) + '"' + (x === chosen ?
+             ' selected="selected"' : "") + ">" + esc(x) + "</option>";
+    }).join("") || '<option value="">(none in common)</option>';
+    setText("vp_subject_offered", offered.join(", "));
+  }
+  var pairRow = el("vp_siop_pairwise_row");
+  if (pairRow) pairRow.style.display = state.idTokenOnly ? "" : "none";
+  var save = el("vp_siop_save_pairwise");
+  if (save) {
+    save.checked = sdJwtVc.get(sdJwtVp.KEYS.SIOP_SAVE_PAIRWISE) !== "0";
+  }
+  var enc = el("vp_response_enc");
+  if (enc) {
+    var encs = vpProtocols.encValues(state.request &&
+                                     state.request.clientMetadata);
+    enc.innerHTML = encs.map(function (x) {
+      return '<option value="' + esc(x) + '">' + esc(x) + "</option>";
+    }).join("");
+  }
+  var encPane = el("vp_encryption_pane");
+  if (encPane) {
+    encPane.style.display = vpProtocols.responseMode(params) ===
+        "direct_post.jwt" ? "" : "none";
+  }
+  log.debug("Leaving renderAnswerOptions().");
 }
 
 // ---------------------------------------------------------------------------
@@ -1090,6 +1505,13 @@ function onload() {
           "Presentation JWT signed with the " +
       "bound key — there is no Key Binding JWT, and no Disclosures to " +
           "choose between.");
+  } else if (state.format === sdJwtVc.FORMAT_MSO_MDOC) {
+    setText("vp_key_binding",
+      "This credential is an ISO mdoc, so holder binding is the device " +
+      "signature: a COSE_Sign1 by the device key the Mobile Security " +
+      "Object names, over a session transcript binding this Verifier's " +
+      "client_id, the nonce, where the answer goes and, encrypted, the key " +
+      "it is encrypted to. There is no Key Binding JWT.");
   } else
   setText("vp_key_binding", sdJwtVp.requiresKeyBinding(state.credentialQuery)
     ? "required — the presentation carries a Key Binding JWT signed by the holder key"
@@ -1102,6 +1524,17 @@ function onload() {
       "There is no request to answer. Step 1 reads one from the verifier.",
           "vc-bad");
     log.debug("Leaving onload().");
+    return;
+  }
+  renderAnswerOptions();
+  if (state.idTokenOnly) {
+    buildPresentation().then(function (ok) {
+      if (ok) {
+        status("vp_present_status", "Ready: a self-issued ID Token and " +
+               "nothing else, exactly as shown below.", "vc-ok");
+      }
+    });
+    log.debug("Leaving onload(). ID Token only.");
     return;
   }
   if (!state.parsed) {
@@ -1135,6 +1568,7 @@ module.exports = {
   selectAll: selectAll,
   present: present,
   refuse: refuse,
+  onAnswerOptionChange: onAnswerOptionChange,
   togglePane: togglePane,
   addSuppliedContext: addSuppliedContext,
   removeSuppliedContext: removeSuppliedContext,

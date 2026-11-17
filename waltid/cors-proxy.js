@@ -29,10 +29,23 @@
 //
 //   WALTID_UPSTREAM     host:port of the walt.id service (default localhost:7006)
 //   WALTID_PROXY_PORT   the port to serve (default 7005)
+//   CORS_PROXY_TLS_CERT_FILE, CORS_PROXY_TLS_KEY_FILE
+//                       when both are set, serve HTTPS with that pair instead
+//                       of HTTP. The upstream is still spoken to in HTTP.
+//
+// The TLS option is for a service whose OWN URLs must be https and that
+// sends no CORS headers either: the Polaris OpenID4VP verifier (#423), which
+// HAIP has hand a wallet https request_uri and response_uri values, and which
+// is run with --no-local-tls --public-base-url naming this proxy. An https
+// page cannot call an http one, so a plain-HTTP proxy would be unreachable
+// from the wallet. Nothing in this file is specific to walt.id beyond the
+// variable names it has always read.
 //
 // No dependencies, so it runs on a stock node image with nothing installed.
 // ---------------------------------------------------------------------------
 var http = require("http");
+var https = require("https");
+var fs = require("fs");
 
 // The Entering/Leaving logging convention (see the repo-root CLAUDE.md)
 // wants a `log` here, and bunyan is not reachable from this file:
@@ -104,7 +117,8 @@ function logLine(message) {
   log.debug("Leaving logLine().");
 }
 
-var server = http.createServer(function (req, res) {
+function handle(req, res) {
+  log.debug("Entering handle(). " + req.method + " " + req.url);
   applyCors(res);
 
   // A preflight is answered here rather than forwarded: the issuer has no route
@@ -114,6 +128,7 @@ var server = http.createServer(function (req, res) {
     res.writeHead(204);
     res.end();
     logLine("204 OPTIONS " + req.url + " (preflight answered here)");
+    log.debug("Leaving handle(). Preflight.");
     return;
   }
 
@@ -154,15 +169,23 @@ var server = http.createServer(function (req, res) {
     }
     res.end(JSON.stringify({
       error: "upstream_unavailable",
-      error_description: "The walt.id service at " + UPSTREAM +
+      error_description: "The service at " + UPSTREAM +
           " did not answer: " + e.message
     }));
   });
 
   req.pipe(upstream);
-});
+  log.debug("Leaving handle().");
+}
+
+var TLS_CERT = process.env.CORS_PROXY_TLS_CERT_FILE || "";
+var TLS_KEY = process.env.CORS_PROXY_TLS_KEY_FILE || "";
+var server = (TLS_CERT && TLS_KEY) ?
+  https.createServer({ cert: fs.readFileSync(TLS_CERT),
+                       key: fs.readFileSync(TLS_KEY) }, handle) :
+  http.createServer(handle);
 
 server.listen(PORT, "0.0.0.0", function () {
-  logLine("CORS proxy listening on 0.0.0.0:" + PORT + ", forwarding to " +
-      UPSTREAM + ".");
+  logLine("CORS proxy listening on " + (TLS_CERT && TLS_KEY ? "https" :
+      "http") + "://0.0.0.0:" + PORT + ", forwarding to " + UPSTREAM + ".");
 });

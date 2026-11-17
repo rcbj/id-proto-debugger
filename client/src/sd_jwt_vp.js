@@ -48,6 +48,8 @@ var log = bunyan.createLogger({
 var metadataClient = require("./metadata_client");
 var jws = require("./jws");
 var sdJwtVc = require("./sd_jwt_vc");
+var vpProtocols = require("./vp_protocols");
+var mdoc = require("./mdoc");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -76,7 +78,23 @@ var KEYS = {
   // The Verifier's WEBSITE: the page where a person starts a verification,
   // which the three flows on step 0 link to. Any Verifier's, not only this
   // suite's; set on step 0.
-  VERIFIER_SITE_URL: "sdjwtvp_verifier_site_url"
+  VERIFIER_SITE_URL: "sdjwtvp_verifier_site_url",
+  // The protocol (OpenID4VP, HAIP, SIOPv2) and the trust anchor for x509
+  // Client Identifiers. Named in vp_protocols.js, which owns them.
+  PROTOCOL: vpProtocols.KEYS.PROTOCOL,
+  X509_TRUST_ANCHOR: vpProtocols.KEYS.X509_TRUST_ANCHOR,
+  SIOP_SUBJECT_SYNTAX: vpProtocols.KEYS.SUBJECT_SYNTAX,
+  // Pairwise self-issued subjects: { client_id: private JWK }. KEY MATERIAL,
+  // so it is kept only while SIOP_SAVE_PAIRWISE is not "0", and removed the
+  // moment it is (the rule every key-pair pane in this tree follows).
+  SIOP_PAIRWISE_KEYS: "sdjwtvp_siop_pairwise_keys",
+  // "1" to reach the Verifier through the debugger's api (POST
+  // /oid4vp/call) rather than straight from the browser, for a Verifier that
+  // sends no CORS headers; and "0" to skip TLS certificate checks on that
+  // route, as the OAuth pages offer for a self-signed test server.
+  VIA_API: "sdjwtvp_via_api",
+  API_SSL_VALIDATE: "sdjwtvp_api_ssl_validate",
+  SIOP_SAVE_PAIRWISE: "sdjwtvp_siop_save_pairwise"
 };
 
 var STEP1_URL = "/vc-presentation-1.html";
@@ -194,6 +212,43 @@ function setUseCase(id) {
   return uc;
 }
 
+// ---------------------------------------------------------------------------
+// The PROTOCOL the request is answered under (vp_protocols.js), orthogonal to
+// the flow above except in one place: HAIP 1.0 has no request by value, so
+// that flow is unavailable while HAIP is chosen.
+// ---------------------------------------------------------------------------
+function currentProtocol() {
+  log.debug("Entering currentProtocol().");
+  log.debug("Leaving currentProtocol().");
+  return vpProtocols.protocolById(sdJwtVc.get(vpProtocols.KEYS.PROTOCOL)) ||
+         vpProtocols.protocolById(vpProtocols.DEFAULT_PROTOCOL);
+}
+
+function setProtocol(id) {
+  log.debug("Entering setProtocol(). id=" + id);
+  var p = vpProtocols.protocolById(id);
+  if (!p) {
+    log.debug("Leaving setProtocol(). Unknown.");
+    return null;
+  }
+  sdJwtVc.set(vpProtocols.KEYS.PROTOCOL, p.id);
+  if (p.id === vpProtocols.PROTOCOL_HAIP &&
+      !useCaseAllowed(currentUseCase(), p)) {
+    sdJwtVc.set(KEYS.USE_CASE, "same-device-signed");
+  }
+  log.debug("Leaving setProtocol().");
+  return p;
+}
+
+// Whether a flow can be used under a protocol, and if not why.
+function useCaseAllowed(uc, protocol) {
+  log.debug("Entering useCaseAllowed(). " + (uc && uc.id));
+  var ok = !(protocol && protocol.id === vpProtocols.PROTOCOL_HAIP &&
+             uc && uc.id === "same-device");
+  log.debug("Leaving useCaseAllowed(). " + ok);
+  return ok;
+}
+
 // Which way this presentation is being made, in the step indicator every page
 // includes.
 function renderUseCaseBadge() {
@@ -205,19 +260,125 @@ function renderUseCaseBadge() {
     return null;
   }
   var uc = currentUseCase();
+  var protocol = currentProtocol();
   var existing = document.getElementById("vp_use_case_badge");
   if (existing) existing.parentNode.removeChild(existing);
   var badge = document.createElement("p");
   badge.id = "vp_use_case_badge";
   badge.className = "vc-use-case-badge";
-  badge.innerHTML = 'Flow: <strong>' + metadataClient.escapeHtmlText(uc.spec) +
-      ' &middot; ' +
+  badge.innerHTML = 'Protocol: <strong>' +
+                    metadataClient.escapeHtmlText(protocol.label) +
+                    '</strong> &middot; Flow: <strong>' +
+                    metadataClient.escapeHtmlText(uc.spec) + ' &middot; ' +
                     metadataClient.escapeHtmlText(uc.label) + '</strong> — ' +
                     metadataClient.escapeHtmlText(uc.mechanics) +
                     ' <a href="/vc-presentation-0.html">change</a>';
   host.parentNode.insertBefore(badge, host.nextSibling);
   log.debug("Leaving renderUseCaseBadge().");
   return uc;
+}
+
+// ---------------------------------------------------------------------------
+// REACHING THE VERIFIER. Every call the wallet makes to a Verifier — the
+// Request Object (GET, or POST under request_uri_method=post), its JWKS, and
+// every answer posted — goes through here, so the one choice between the two
+// routes is made once:
+//
+//   * straight from the browser (the default, and the only route on a
+//     deployment with no api), which needs the Verifier to send CORS headers;
+//   * through the debugger's api (POST /oid4vp/call), which no browser policy
+//     applies to, so any compliant Verifier can be used, CORS or not.
+//
+// Either way the answer comes back as { ok, status, text(), json() }, the
+// Response methods the pages already use, so a caller cannot tell the routes
+// apart and does not branch on them.
+// ---------------------------------------------------------------------------
+function apiBase() {
+  log.debug("Entering apiBase().");
+  var url = "";
+  try {
+    url = String(require(process.env.CONFIG_FILE).apiUrl || "");
+  } catch (e) {
+    url = "";
+  }
+  log.debug("Leaving apiBase(). " + url);
+  return url.replace(/\/+$/, "");
+}
+
+function viaApi() {
+  log.debug("Entering viaApi().");
+  var on = sdJwtVc.get(KEYS.VIA_API) === "1" && !!apiBase();
+  log.debug("Leaving viaApi(). " + on);
+  return on;
+}
+
+function verifierFetch(url, init) {
+  log.debug("Entering verifierFetch(). " + url + (viaApi() ? " (api)" : ""));
+  var options = init || {};
+  if (!viaApi()) {
+    log.debug("Leaving verifierFetch(). Direct.");
+    return fetch(url, options);
+  }
+  var headers = {};
+  Object.keys(options.headers || {}).forEach(function (k) {
+    headers[k] = options.headers[k];
+  });
+  log.debug("Leaving verifierFetch(). Through the api.");
+  return fetch(apiBase() + "/oid4vp/call", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: url,
+      method: options.method || "GET",
+      headers: headers,
+      body: options.body || "",
+      sslValidate: sdJwtVc.get(KEYS.API_SSL_VALIDATE) !== "0"
+    })
+  }).then(function (r) {
+    return r.json().catch(function () {
+      return { error: "the api answered HTTP " + r.status + " with no JSON" };
+    }).then(function (answer) {
+      if (!r.ok) {
+        // 400: the api refused to send it; 502: the Verifier did not answer.
+        // Neither is something the Verifier said, so it is thrown, the way a
+        // direct fetch throws when nothing comes back.
+        throw new Error("the debugger's api " + (r.status === 400 ?
+          "refused the call: " : "could not reach the Verifier: ") +
+          (answer.error || ("HTTP " + r.status)));
+      }
+      var text = String(answer.body || "");
+      return {
+        ok: !!answer.ok,
+        status: answer.status,
+        headers: answer.headers || {},
+        viaApi: true,
+        text: function () {
+          return Promise.resolve(text);
+        },
+        json: function () {
+          return Promise.resolve().then(function () {
+            return JSON.parse(text);
+          });
+        }
+      };
+    });
+  });
+}
+
+// Whether this deployment has an api that offers the route at all: a static
+// deployment answers nothing at /oid4vp/limits.
+function apiRouteAvailable() {
+  log.debug("Entering apiRouteAvailable().");
+  if (!apiBase()) {
+    log.debug("Leaving apiRouteAvailable(). No api configured.");
+    return Promise.resolve(false);
+  }
+  log.debug("Leaving apiRouteAvailable().");
+  return fetch(apiBase() + "/oid4vp/limits").then(function (r) {
+    return r.ok;
+  }).catch(function () {
+    return false;
+  });
 }
 
 // --- the request in hand ----------------------------------------------------
@@ -248,7 +409,7 @@ var REQUEST_PARAMS = ["client_id", "response_type", "response_mode",
                       "nonce", "state", "dcql_query", "client_metadata",
                           "request_uri",
                       "request_uri_method", "request", "scope",
-                          "transaction_data"];
+                          "transaction_data", "id_token_type"];
 
 function parseRequestQuery(search) {
   log.debug("Entering parseRequestQuery().");
@@ -356,9 +517,20 @@ function dcqlClaimPaths(credentialQuery) {
 function claimNameForPath(path, format) {
   log.debug("Entering claimNameForPath().");
   var parts = String(path || "").split(".");
-  if (format === sdJwtVc.FORMAT_JWT_VC_JSON && parts.length > 1 &&
+  // Both W3C formats keep their claims under credentialSubject. ldp_vc was
+  // missing here, so step 1 reported every requested ldp_vc claim as "not in
+  // the credential you hold" while the presentation itself was fine.
+  if ((format === sdJwtVc.FORMAT_JWT_VC_JSON ||
+       format === sdJwtVc.FORMAT_LDP_VC) && parts.length > 1 &&
       parts[0] === "credentialSubject") {
     parts = parts.slice(1);
+  }
+  // An mdoc claim is [namespace, element], and the namespace has dots of
+  // its own (org.iso.18013.5.1), so the dotted form cannot be split on its
+  // first one: the element is the LAST segment. ISO/IEC 18013-5 element
+  // identifiers are snake_case and carry no dot.
+  if (format === sdJwtVc.FORMAT_MSO_MDOC && parts.length > 1) {
+    parts = parts.slice(-1);
   }
   log.debug("Leaving claimNameForPath().");
   return parts.join(".");
@@ -551,8 +723,36 @@ function signVpJwt(opts) {
 // return the same shape so the pages that display and submit it do not branch:
 // `selected` and `sdHash` are simply absent for a VP JWT, because that format
 // has nothing to select and nothing to commit to beyond its own signature.
+// An mdoc presentation: a DeviceResponse disclosing the selected elements,
+// device-signed over OpenID4VP's session transcript (mdoc.js). Its holder
+// proof is that device signature, so the shape returned has no KB-JWT.
+function buildMdocPresentation(opts) {
+  log.debug("Entering buildMdocPresentation().");
+  var parsed = opts.parsed && opts.parsed.mdoc ? opts.parsed.mdoc :
+      mdoc.parseIssuerSigned(opts.credential);
+  log.debug("Leaving buildMdocPresentation().");
+  return mdoc.deviceResponse({
+    parsed: parsed,
+    selected: opts.selected || [],
+    devicePrivateJwk: opts.holderPrivateJwk,
+    clientId: opts.aud,
+    nonce: opts.nonce,
+    responseUri: opts.responseUri || "",
+    encryptionJwk: opts.encryptionJwk || null
+  }).then(function (r) {
+    log.debug("Leaving buildMdocPresentation(). " + r.disclosed.length +
+              " element(s).");
+    return { presentation: r.deviceResponse, prefix: "", sdHash: "",
+             kb: null, format: sdJwtVc.FORMAT_MSO_MDOC, mdoc: r };
+  });
+}
+
 function buildPresentationFor(opts) {
   var format = sdJwtVc.credentialFormat(opts.credential);
+  if (format === sdJwtVc.FORMAT_MSO_MDOC) {
+    log.debug("Leaving buildPresentationFor(). mso_mdoc.");
+    return buildMdocPresentation(opts);
+  }
   if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) {
     log.debug("Leaving buildPresentationFor().");
     return buildPresentation(opts);
@@ -587,6 +787,12 @@ function vpToken(credentialQueryId, presentation) {
 // rather than from what the wallet believes it sent.
 function presentedClaims(presentation) {
   log.debug("Entering presentedClaims().");
+  if (mdoc.looksLikeDeviceResponse(presentation)) {
+    var read = mdoc.readDeviceResponse(presentation);
+    log.debug("Leaving presentedClaims(). mso_mdoc.");
+    return { parsed: read.parsed, claims: mdoc.claimsOf(read.parsed),
+             mdoc: read };
+  }
   // A VP JWT carries the credential inside its vp claim, so what reached the
   // Verifier is read from the EMBEDDED credential — reading the outer JWT would
   // report the presentation's own claims (nonce, aud) as if they were the
@@ -621,7 +827,14 @@ module.exports = {
   useCaseById: useCaseById,
   currentUseCase: currentUseCase,
   setUseCase: setUseCase,
+  currentProtocol: currentProtocol,
+  setProtocol: setProtocol,
+  useCaseAllowed: useCaseAllowed,
   renderUseCaseBadge: renderUseCaseBadge,
+  apiBase: apiBase,
+  viaApi: viaApi,
+  verifierFetch: verifierFetch,
+  apiRouteAvailable: apiRouteAvailable,
   storeRequest: storeRequest,
   storedRequest: storedRequest,
   forgetRequest: forgetRequest,
@@ -641,6 +854,7 @@ module.exports = {
   signKbJwt: signKbJwt,
   buildPresentation: buildPresentation,
   buildPresentationFor: buildPresentationFor,
+  buildMdocPresentation: buildMdocPresentation,
   signVpJwt: signVpJwt,
   vpToken: vpToken,
   presentedClaims: presentedClaims

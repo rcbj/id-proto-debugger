@@ -131,6 +131,9 @@ var config = {
   ldapMaxEntries: 1000,
   scimMaxRequestBytes: 1048576,
   ssfMaxRequestBytes: 262144,
+  // The cap on a body POST /oid4vp/call forwards (an OpenID4VP answer
+  // or a request_uri POST); see api/oid4vp_proxy.js.
+  oid4vpMaxRequestBytes: 262144,
   gnapMaxRequestBytes: 262144,
   ssfReceiverEnabled: true,
   // ssfReceiverTtlMs, ssfReceiverIdleTtlMs and ssfReceiverMaxInboxBytes are

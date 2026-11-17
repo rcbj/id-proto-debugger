@@ -35,7 +35,7 @@ It proxies token endpoint calls server-side and provides a `/claimdescription` e
 
 **AND SINCE 2026-08-31 IT DOES ONE THING THAT IS NOT A PROTOCOL A BROWSER CANNOT SPEAK.** `POST /ssf/receiver/:id` is an RFC 8935 **push endpoint hosted on a page's behalf**, and the reason is neither CORS nor a certificate: **a browser is not an HTTP server**, so it cannot be the far end of a push at all. That is a property of the specification rather than of this service, and no amount of proxying changes it. It is the only endpoint here that is unauthenticated AND accepts data, and `api/ssf_receiver.js` argues the five structural bounds that stand in for a gate.
 
-## Outbound calls: the address policy and the sixteen settings
+## Outbound calls: the address policy and the seventeen settings
 
 It fetches URLs its **caller** chooses (token, introspection, revocation, device-authorization and userinfo endpoints, the SAML ArtifactResolve back-channel, the WS-Trust STS, the generic proxy), so `api/ssrf_guard.js` refuses outbound calls to loopback and private networks — otherwise anyone who can reach the api can use it to probe `127.0.0.1`, the deployment's private neighbours, or `169.254.169.254` (cloud metadata, which hands out credentials). It is installed **once** on the shared axios instance in `server.js`, so every call site present and future is covered, and it works in two layers: a request interceptor for a readable error, plus the http/https **agents** — which is what catches **redirects** (axios follows them, so a public host answering `302 → http://127.0.0.1` walks past a URL-only check) and closes most of the DNS-rebinding window. The agent needs **two** hooks, not one: a custom DNS `lookup` for hosts given as names, and a wrapped `createConnection` for hosts given as literal addresses — Node never calls `lookup` for a literal, and a redirect `Location` usually is one. That gap was real and is what `tests/api_ssrf_guard.js` caught on its first run. Hostnames are judged by what they RESOLVE to, so `localtest.me` and `127.0.0.1.nip.io` are caught by the same rule, and IPv4-mapped IPv6 (`::ffff:127.0.0.1`) is reduced to its IPv4 form because that is the address the socket reaches.
 
@@ -243,6 +243,72 @@ server on the other end — so a rule that stopped being enforced fails a test
 naming the rule rather than timing out against a host. `GET /scim/limits`
 publishes the methods, the refused headers, the caps and the status rule, and is
 also how the page discovers whether there is an api at all. See `docs/scim.md`.
+
+## OpenID4VP: the wallet's route to a Verifier that sends no CORS headers
+
+`POST /oid4vp/call` (`api/oid4vp_proxy.js`) makes one OpenID4VP exchange on the
+**wallet's** behalf. That means fetching the Request Object from `request_uri`
+(a GET, or a POST carrying `wallet_metadata` and `wallet_nonce` under
+`request_uri_method=post`), or posting the answer to `response_uri`
+(`direct_post`, `direct_post.jwt`, and a SIOPv2 `post`). The VC Presentation
+pages use it when step 0's "Reach the Verifier through the debugger's api" is
+ticked, and from the browser otherwise. The option is enabled only where `GET
+/oid4vp/limits` answers, so a static deployment never offers it.
+
+It exists for one thing a browser cannot do: **use a Verifier that sends no CORS
+headers.** Most send none, because a wallet is normally a native app and has no
+CORS. Without this, a browser-based wallet can talk to such a Verifier only
+through a reverse proxy put in front of it, which is what the test stack does
+for walt.id and Polaris (`waltid/cors-proxy.js`, #431).
+
+It is **the SSF proxy's shape, narrowed to what OpenID4VP sends**:
+
+* **GET and POST only.** A Request Object is fetched and an answer is posted;
+  nothing else crosses.
+* **A string body**, because both OpenID4VP bodies are
+  `application/x-www-form-urlencoded`. A POST defaults to that content type.
+* **The reply comes back as TEXT**, because a Request Object is a compact JWS
+  and not JSON.
+* **Headers are refused by shape** with `ssf_proxy.js`'s own list and sanitiser,
+  not a copy of either.
+* **The seventeenth outbound setting is `oid4vpMaxRequestBytes`** (default
+  262144), the cap on the forwarded body. It sits **beside** `callTimeout`,
+  `connectionTimeout`, `maxContentLength` and `maxRedirects`, all of which the
+  handler sets, and does not replace them.
+
+**THE THREE OUTCOMES, with the spnego rule for a policy refusal.**
+
+* **200:** whatever the Verifier answered, including its `400 invalid_request`
+  naming a failed check, is a 200 here with that status inside. A Verifier's
+  refusal is its answer, and the wallet's step 3 exists to show it.
+* **400:** a refusal by this service, both the relay's own checks and the
+  address policy (`EBLOCKEDADDRESS`, on the first URL or a redirect hop) or the
+  scheme check (`EPROTOCOLNOTALLOWED`). That is the caller asking for something
+  this service will not do, as `POST /krb5/spnego` reports it. (The SSF and
+  SCIM handlers answer those 502, which is the older shape.) A name that does
+  not resolve is `EBLOCKEDADDRESS` too: the guard refuses an address it cannot
+  judge, and says so.
+* **502:** anything else with no response: a refused connection, a timeout, a
+  body past `maxContentLength`.
+
+**The address policy is not re-implemented**: this is an axios call through the
+shared instance, with `outboundHttpAgent()` / `outboundHttpsAgent()`, so the
+guard covers it, redirects included.
+
+**`tests/api_oid4vp_proxy.js` holds all of it, in node:**
+
+* every refusal by name;
+* the address policy, with the guard **enabled** as a deployed api runs it:
+  loopback, a name resolving to loopback, IPv6 loopback, a private range and the
+  metadata address are refused, as is a redirect hop to a loopback literal
+  through the guarded agent;
+* in a checkout, that the handler sets every outbound cap, uses both guarded
+  agents, and maps the outcomes as above.
+
+The suite's own api runs with the guard off (`env/docker-tests.js`), so a live
+call to it would prove nothing about the refusal. That is why the policy is
+asserted against an enabled guard. `tests/vc_presentation_polaris.js` carries a
+real HAIP exchange through the endpoint end to end.
 
 ## Shared Signals: the SCIM proxy's shape, and one thing that is neither
 

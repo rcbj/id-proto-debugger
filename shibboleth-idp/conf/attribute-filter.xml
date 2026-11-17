@@ -102,8 +102,8 @@
     </AttributeFilterPolicy>
     
     <AttributeFilterPolicy id="debugger-saml11">
-        <PolicyRequirementRule xsi:type="Requester"
-            value="https://debugger.example.test/saml11" />
+        <PolicyRequirementRule xsi:type="RequesterRegex"
+            regex="^https://debugger\.example\.test/saml11(/.*)?$" />
         <AttributeRule attributeID="mail" permitAny="true" />
         <AttributeRule attributeID="uid" permitAny="true" />
     </AttributeFilterPolicy>

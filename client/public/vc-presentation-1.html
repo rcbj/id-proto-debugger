@@ -48,7 +48,7 @@ Nothing is disclosed on this page.</p>
 
 <script type="text/javascript">
 function vpSetAllPanes(expand) {
-  var fieldsets = ['request_fieldset', 'requested_fieldset', 'receive_fieldset', 'vc_tools_fieldset'];
+  var fieldsets = ['request_fieldset', 'rules_fieldset', 'requested_fieldset', 'receive_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -58,6 +58,18 @@ function vpSetAllPanes(expand) {
   return false;
 }
 </script>
+
+<!-- ============ Pane 0: the protocol's rules ============ -->
+<div class="step0 dbg-pane" id="pane_rules">
+  <legend class="dbg-legend" id="rules_expand_button" onclick="return vcpresentation1.togglePane('rules_fieldset');">What <span id="vp_protocol_label">the protocol</span> Demands of This Request</legend>
+  <fieldset name="rules_fieldset" id="rules_fieldset" style="display: block;">
+    <p class="vc-note">The protocol chosen on step 0 decides what this wallet refuses. Every rule is listed whether or
+    not it passed. A <strong>REFUSED</strong> row is why Continue is off; a <strong>WARNING</strong> row is shown and
+    answered anyway. Under HAIP 1.0 the rules about the transport refuse, because the profile exists so that wallets
+    do not negotiate them.</p>
+    <table class="vc-table" id="vp_protocol_rules"><tbody></tbody></table>
+  </fieldset>
+</div>
 
 <!-- ============ Pane 1: the request ============ -->
 <div class="step0 dbg-pane" id="pane_request">
@@ -83,7 +95,7 @@ function vpSetAllPanes(expand) {
         </tr>
         <tr>
           <td><div class="tooltip"><label>Signature</label><span class="tooltiptext">A Request Object fetched by reference can be signed (RFC 9101). Verified here against the keys this wallet trusts for the verifier.</span></div></td>
-          <td><code id="vp_signature_verdict">&mdash;</code></td>
+          <td><pre class="vc-json" id="vp_signature_verdict">&mdash;</pre></td>
         </tr>
         <tr>
           <td><div class="tooltip"><label>nonce</label><span class="tooltiptext">The freshness of the whole presentation rests on this: the wallet signs it into the Key Binding JWT, so a presentation cannot be replayed for another request.</span></div></td>

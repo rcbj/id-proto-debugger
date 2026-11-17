@@ -49,7 +49,7 @@ Nothing is sent until you press Present.</p>
 
 <script type="text/javascript">
 function vpSetAllPanes(expand) {
-  var fieldsets = ['ask_fieldset', 'choose_fieldset', 'presentation_fieldset', 'dpop_note_fieldset', 'present_fieldset', 'vc_tools_fieldset'];
+  var fieldsets = ['ask_fieldset', 'choose_fieldset', 'presentation_fieldset', 'siop_fieldset', 'encryption_fieldset', 'dpop_note_fieldset', 'present_fieldset', 'vc_tools_fieldset'];
   for (var i = 0; i < fieldsets.length; i++) {
     var fs = document.getElementById(fieldsets[i]);
     if (fs) fs.style.display = expand ? 'block' : 'none';
@@ -188,6 +188,70 @@ function vpSetAllPanes(expand) {
   </fieldset>
 </div>
 
+<!-- ============ SIOPv2: the self-issued ID Token ============ -->
+<div class="step0 dbg-pane" id="vp_siop_pane" style="display: none;">
+  <legend class="dbg-legend" id="siop_expand_button" onclick="return vcpresentation2.togglePane('siop_fieldset');">The Self-Issued ID Token (SIOPv2)</legend>
+  <fieldset name="siop_fieldset" id="siop_fieldset" style="display: block;">
+    <p class="vc-note">This wallet is its own OpenID Provider: it signs an ID Token whose <code>iss</code> is its
+    <code>sub</code>, addressed to the Verifier (<code>aud</code>) and bound to this request (<code>nonce</code>). Beside a
+    presentation it is signed by the <strong>same key</strong> the credential is bound to, so the self-issued identity
+    and the issued credential are about one holder. A valid signature proves control of a key; it does not make any
+    claim true.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vp_subject_syntax">Subject syntax</label><span class="tooltiptext">SIOPv2 section 8. A JWK Thumbprint subject is the RFC 7638 thumbprint, with the public key in sub_jwk; a did:jwk or did:key subject IS the key, named in the header's kid. Only syntaxes the Verifier lists in subject_syntax_types_supported are offered.</span></div></td>
+          <td><select id="vp_subject_syntax" onchange="return vcpresentation2.onAnswerOptionChange();"></select>
+            <span class="vc-note">The Verifier accepts: <code id="vp_subject_offered">&mdash;</code></span></td>
+        </tr>
+        <tr id="vp_siop_pairwise_row" style="display: none;">
+          <td><div class="tooltip"><label for="vp_siop_pairwise">Pairwise subject</label><span class="tooltiptext">A different key, and so a different sub, for every Verifier: two Verifiers cannot tell from the subject that they saw the same person. Made the first time and reused for this Verifier after that. Only for an ID Token on its own — beside a presentation the token must name the credential's key.</span></div></td>
+          <td><label><input type="checkbox" id="vp_siop_pairwise" onchange="return vcpresentation2.onAnswerOptionChange();" /> a pairwise key for this Verifier</label>
+            <label><input type="checkbox" id="vp_siop_save_pairwise" checked="checked" onchange="return vcpresentation2.onAnswerOptionChange();" /> keep pairwise keys in browser localStorage</label></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>ID Token header</label><span class="tooltiptext">ES256; a DID subject's verification method in kid.</span></div></td>
+          <td><pre class="vc-json" id="vp_id_token_header">&nbsp;</pre></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>ID Token payload</label><span class="tooltiptext">iss equal to sub, aud the Client Identifier, the request's nonce, iat and a short exp — SIOPv2 section 11.</span></div></td>
+          <td><pre class="vc-json" id="vp_id_token_payload">&nbsp;</pre><span class="vc-note" id="vp_id_token_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>id_token</label><span class="tooltiptext">The signed ID Token, as it will be sent.</span></div></td>
+          <td><textarea class="vc-token" rows="4" readonly id="vp_id_token"></textarea></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
+<!-- ============ direct_post.jwt: the encrypted answer ============ -->
+<div class="step0 dbg-pane" id="vp_encryption_pane" style="display: none;">
+  <legend class="dbg-legend" id="encryption_expand_button" onclick="return vcpresentation2.togglePane('encryption_fieldset');">The Encrypted Response (direct_post.jwt)</legend>
+  <fieldset name="encryption_fieldset" id="encryption_fieldset" style="display: block;">
+    <p class="vc-note">OpenID4VP 1.0 section 8.3, and HAIP 1.0's requirement: the response parameters above, as a
+    JSON object, encrypted to a key the Verifier put in <code>client_metadata.jwks</code> and posted as one form field,
+    <code>response</code>. Nothing on the way &mdash; a proxy, a browser extension, a log &mdash; sees a claim.</p>
+    <table class="vc-token-table">
+      <tbody>
+        <tr>
+          <td><div class="tooltip"><label for="vp_response_enc">Content encryption</label><span class="tooltiptext">From the Verifier's encrypted_response_enc_values_supported (A128GCM when it says nothing). Key agreement is ECDH-ES on P-256.</span></div></td>
+          <td><select id="vp_response_enc" onchange="return vcpresentation2.onAnswerOptionChange();"></select></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>JWE header</label><span class="tooltiptext">alg, enc, the ephemeral key (epk), and the kid of the Verifier's key — which is how the Verifier knows which of its keys opens it.</span></div></td>
+          <td><pre class="vc-json" id="vp_jwe_header">&nbsp;</pre><span class="vc-note" id="vp_jwe_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><div class="tooltip"><label>response</label><span class="tooltiptext">The compact JWE, as it will be posted.</span></div></td>
+          <td><textarea class="vc-token" rows="5" readonly id="vp_jwe"></textarea></td>
+        </tr>
+      </tbody>
+    </table>
+  </fieldset>
+</div>
+
 <!-- ============ Pane 4: sending it ============ -->
 <!-- ====== Why there is no DPoP here (RFC 9449 / OID4VP) ====== -->
 <div class="step0 dbg-pane" id="pane_dpop_note">
@@ -227,9 +291,11 @@ function vpSetAllPanes(expand) {
   <fieldset name="present_fieldset" id="present_fieldset" style="display: block;">
     <div class="vc-approval">
       <h4>Present these claims to this verifier?</h4>
-      <p>With <code>response_mode=direct_post</code> the wallet is the one making the request: it POSTs the
-      <code>vp_token</code> to the verifier&rsquo;s Response URI. Refusing is a real answer too &mdash; OID4VP
-      section 8.4 has <code>access_denied</code> for it, and the verifier learns the request was seen and
+      <p>The request's <code>response_mode</code> decides how the answer travels: with <code>direct_post</code> and
+      <code>direct_post.jwt</code> (and SIOPv2's <code>post</code>) the wallet POSTs it to the Verifier itself; with
+      <code>fragment</code>, <code>query</code> or <code>form_post</code> the browser carries it back to the
+      <code>redirect_uri</code>. Refusing is a real answer too &mdash; <code>access_denied</code> for a presentation,
+      SIOPv2's <code>user_cancelled</code> for an ID Token &mdash; and the Verifier learns the request was seen and
       declined.</p>
       <div class="tooltip vc-approval-request">
         <label for="vp_assembled_call">The call this will make</label>

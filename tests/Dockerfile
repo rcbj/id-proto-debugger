@@ -360,12 +360,32 @@ COPY client/src/contexts ./contexts
 # directly — they are what these two require at load time, and a missing one is
 # a MODULE_NOT_FOUND at require, i.e. a hard failure rather than a silent skip.
 COPY client/src/vci_wallet.js client/src/sd_jwt_vc.js ./
+# sd_jwt_vc.js reads the fourth format, ISO mdoc, through mdoc.js, which
+# requires vp_protocols.js for the certificate's key. Both go beside it: a
+# module this flat directory lacks is a MODULE_NOT_FOUND at require, and it
+# took sd_jwt_vc_engine.js, ldp_vc_issuance.js and ldp_vc_refresh.js down in
+# 0.1s on the first containerized run (2026-11-17). Everything else either
+# requires (cbor, cose, crypto_bytes, dpop, jws, jose_jwe, did,
+# metadata_client) is already copied flat elsewhere in this file.
+COPY client/src/mdoc.js client/src/vp_protocols.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
 # silently replace the module it drives. It needs its own line because the
 # `tests/sd_jwt_vc_*` files above are named individually rather than globbed.
 COPY tests/sd_jwt_vc_engine.js ./
+# The presentation PROTOCOLS: HAIP 1.0 and SIOPv2 through the pages against
+# iya-sts, and their engine (client/src/vp_protocols.js, read from
+# /usr/src/source-tree) in node.
+COPY tests/vc_presentation_protocols.js tests/vp_protocols_engine.js ./
+COPY tests/vc_presentation_polaris.js ./
+# ISO mdoc: the engine test and the test issuer it and
+# vc_presentation_protocols.js require (a shared module, scheduled by nothing).
+COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
+# A credential collected through the wallet's own issuance pages from an
+# offer made on iya-sts's portal: shared by vc_presentation_protocols.js and
+# vc_presentation_polaris.js, and scheduled by nothing.
+COPY tests/wallet_issuance.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires
@@ -479,6 +499,9 @@ COPY tests/krb5_field_naming.js ./
 # krb5 block above already copies flat beside the codec it requires.
 COPY tests/krb5_ticket_history.js ./
 COPY client/src/kerberos_panes.js ./
+# kerberos_panes.js requires ./kerberos_hex inside a function, so a flat copy
+# that reached that path without it would fail when called (#429).
+COPY client/src/kerberos_hex.js ./
 # The Operations History pane. It loads client/src/kerberos_history.js, which
 # requires client/src/op_history.js — the store the SAML, WS-Trust and
 # WS-Federation logs share — so both come in flat.
@@ -869,6 +892,10 @@ COPY tests/run-report.js ./
 # rather than this line. Both scim_client.js and scim_scenarios.js are ALSO
 # browser bundle source, so a rename on either side has to be made here too.
 COPY client/src/scim_client.js client/src/scim_scenarios.js ./
+# scim_client.js requires ./rfc6750 (Copy Token's credentials), and a flat
+# copy resolves that beside itself. Found by flatCopiedModulesCarryTheirRequires()
+# in jwk_pem_encoding.js (#429).
+COPY client/src/rfc6750.js ./
 COPY api/scim_proxy.js ./
 COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 # ---------------------------------------------------------------------------
@@ -897,7 +924,19 @@ COPY tests/scim_engine.js tests/scim_protocol.js tests/scim_page.js ./
 COPY client/src/ssf_client.js client/src/ssf_events.js ./
 COPY client/src/ssf_history.js client/src/caep_session.js ./
 COPY client/src/risc_account.js ./
+# Both caep_session.js and risc_account.js require ./session_handoff, which
+# a flat copy resolves beside itself (#429).
+COPY client/src/session_handoff.js ./
 COPY api/ssf_proxy.js api/ssf_receiver.js ./
+# The OpenID4VP relay (POST /oid4vp/call) and its engine test. The module
+# requires ssf_proxy.js, copied flat on the line above.
+COPY api/oid4vp_proxy.js tests/api_oid4vp_proxy.js ./
+# api/server.js, as TEXT for api_oid4vp_proxy.js's route checks (that the
+# handler sets every outbound cap and uses both guarded agents), so they run
+# in the image and in CI and not only in a checkout. Renamed off .js so
+# nothing loads it and jwk_pem_encoding.js's in-image require check does
+# not try to resolve the api's own modules beside it.
+COPY api/server.js ./api_server.js.txt
 COPY tests/ssf_engine.js tests/ssf_protocol.js ./
 COPY tests/api_ssf.js tests/ssf_page.js ./
 # CAEP is a VOCABULARY over SSF rather than a family of its own, so it adds one

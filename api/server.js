@@ -1424,10 +1424,13 @@ function buildArtifactResolveMessage(artifact, ctx) {
   var id = '_' + crypto.randomBytes(16).toString('hex');
   var instant = new Date().toISOString();
   if (ctx.samlVersion === '1.1') {
-    // saml-bindings-1.1 section 3.2.3. MajorVersion/MinorVersion rather than a
-    // Version attribute, RequestID rather than ID, and NO <Issuer> — SAML 1.1
-    // has no element for a requester to name itself in, which is why the
-    // responder identifies the caller by the transport or not at all.
+    // sstc-saml-bindings-1.1 section 4.1.1.6. MajorVersion/MinorVersion rather
+    // than a Version attribute, RequestID rather than ID, and NO <Issuer> —
+    // SAML 1.1 has no element for a requester to name itself in. The
+    // responder knows whom the artifact was issued to and authenticates the
+    // caller as that party, by TLS or by this message's signature (section
+    // 4.1.1.6 requires one or the other); Shibboleth checks the signature
+    // against the SP metadata's signing key.
     var req = '<samlp:Request ' +
         'xmlns:samlp="urn:oasis:names:tc:SAML:1.0:protocol"' +
         ' xmlns:saml="urn:oasis:names:tc:SAML:1.0:assertion"' +
@@ -1493,10 +1496,23 @@ function resolveArtifact(artifact, relayState) {
         return reject(new Error('signing the artifact resolution request ' +
                       'failed: ' + e.message));
       }
+    } else if (ctx.samlVersion === '1.1') {
+      // SAML 1.1 REQUIRES the requester be authenticated here
+      // (sstc-saml-bindings-1.1 section 4.1.1.6: the SOAP binding "MUST
+      // provide ... bilateral authentication"), and a source site that cannot
+      // tell who asked answers Success with NO assertions — which is what
+      // Shibboleth does (#425). A signature over the <samlp:Request> is how
+      // this API authenticates; without a key it can only send it unsigned.
+      log.warn('resolveArtifact: no SP private key was registered for this ' +
+               'flow, so the SAML 1.1 artifact resolution request is being ' +
+               'sent UNSIGNED. sstc-saml-bindings-1.1 section 4.1.1.6 ' +
+               'requires the requester to be authenticated; an identity ' +
+               'provider that enforces it answers Success with no ' +
+               'assertion. Load the SP key pair to sign it.');
     } else {
       log.info('resolveArtifact: no SP private key was registered for this ' +
                'flow, so the artifact resolution request is being sent ' +
-               'UNSIGNED. Neither version requires a signature here; an ' +
+               'UNSIGNED. SAML 2.0 does not require a signature here; an ' +
                'identity provider that wants one refuses with a SAML status ' +
                'rather than an HTTP error.');
     }
@@ -3080,6 +3096,9 @@ const scimProxy = require('./scim_proxy.js');
 // express in either — which is what lets tests/api_ssf.js drive every refusal
 // and every cap with no listener and no transmitter.
 const ssfProxy = require('./ssf_proxy.js');
+// The wallet's OpenID4VP exchanges, made from here for a Verifier that sends
+// no CORS headers. See oid4vp_proxy.js.
+const oid4vpProxy = require('./oid4vp_proxy.js');
 const ssfReceiver = require('./ssf_receiver.js');
 // GNAP signs in the browser. This module only decides what may be
 // forwarded. The private key never arrives here. See api/gnap_proxy.js.
@@ -3757,6 +3776,98 @@ app.get('/ssf/limits', model.route('ssfLimits'), function (req, res) {
   log.debug('Leaving GET /ssf/limits.');
   return res.status(STATUS_200).json(
       ssfProxy.limits(appconfig, ssfReceiver.limits(appconfig)));
+});
+
+/**
+ * One OpenID4VP exchange made on the WALLET's behalf: the Request Object
+ * fetched from request_uri (GET, or POST under request_uri_method=post), or
+ * the answer posted to response_uri. For a Verifier that sends no CORS
+ * headers, which a browser-based wallet cannot otherwise use at all. See
+ * api/oid4vp_proxy.js and api/CLAUDE.md, OpenID4VP.
+ * @route POST /oid4vp/call
+ * @param {object} request.body - url, method, headers, body (a string),
+ *     sslValidate
+ * @returns {object} 200 - the Verifier's answer, whatever its status
+ * @returns {object} 400 - this service refused to send it
+ * @returns {object} 502 - the Verifier could not be reached
+ */
+app.post('/oid4vp/call', function (req, res) {
+  log.debug('Entering POST /oid4vp/call.');
+  var described = oid4vpProxy.describeRequest(req.body || {}, appconfig);
+  if (!described.ok) {
+    log.debug('Leaving POST /oid4vp/call. Refused: ' + described.error);
+    return res.status(STATUS_400).json({ error: described.error });
+  }
+  var wantsTrace = (req.body || {}).http_trace === true ||
+      (req.body || {}).http_trace === 'true';
+  var sink = {};
+  var startedAt = Date.now();
+  var sentHeaders = withUserAgent(described.headers);
+  axios({
+    method: described.method.toLowerCase(),
+    url: described.url,
+    data: described.body === null ? undefined : described.body,
+    responseType: 'text',
+    timeout: CALL_TIMEOUT,
+    maxContentLength: MAX_CONTENT_LENGTH,
+    maxRedirects: MAX_REDIRECTS,
+    transformResponse: [captureRawBody(sink)],
+    // A Verifier's 400 is its ANSWER (invalid_request naming the check that
+    // failed), so it must not throw.
+    validateStatus: function () {
+      return true;
+    },
+    httpAgent: outboundHttpAgent(),
+    httpsAgent: outboundHttpsAgent(described.sslValidate),
+    headers: sentHeaders
+  })
+    .then(function (response) {
+      var answer = oid4vpProxy.readResponse(response.status,
+          traceHeaders(response.headers), sink.raw);
+      var trace = buildHttpTrace({ method: described.method,
+          url: described.url, headers: sentHeaders,
+          body: described.body === null ? '' : described.body },
+          response, sink.raw, startedAt, null);
+      log.debug('Leaving POST /oid4vp/call. The Verifier answered ' +
+          answer.status + '.');
+      return res.status(STATUS_200).json(withHttpTrace(answer, trace,
+          wantsTrace));
+    })
+    .catch(function (error) {
+      // THE NO-RESPONSE BRANCH MUST ANSWER. A refusal by the address policy
+      // (the SSRF guard, on the first URL or on a redirect hop) or the scheme
+      // check is the caller asking for something this service will not do:
+      // a 400, as POST /krb5/spnego answers it. Anything else (a refused
+      // connection, a timeout, a body past maxContentLength) is the far end:
+      // a 502, because nothing the Verifier said is involved.
+      var message = (error && error.message) ? error.message : String(error);
+      var blocked = error && (error.code === 'EBLOCKEDADDRESS' ||
+                              error.code === 'EPROTOCOLNOTALLOWED');
+      var status = blocked ? STATUS_400 : 502;
+      log.warn('POST /oid4vp/call to ' + described.url + ' failed [' +
+               (error && error.code) + ']: ' + message);
+      var trace = buildHttpTrace({ method: described.method,
+          url: described.url, headers: sentHeaders,
+          body: described.body === null ? '' : described.body },
+          null, sink.raw, startedAt, message);
+      log.debug('Leaving POST /oid4vp/call. status=' + status);
+      return res.status(status).json(withHttpTrace({
+        error: blocked ? message :
+          'The Verifier could not be reached: ' + message,
+        code: (error && error.code) || '' }, trace, wantsTrace));
+    });
+});
+
+/**
+ * What POST /oid4vp/call will and will not do. The presentation pages read it
+ * to decide whether to offer the api route at all.
+ * @route GET /oid4vp/limits
+ * @returns {object} 200 - the methods, refused headers, cap and status rule
+ */
+app.get('/oid4vp/limits', function (req, res) {
+  log.debug('Entering GET /oid4vp/limits.');
+  log.debug('Leaving GET /oid4vp/limits.');
+  return res.status(STATUS_200).json(oid4vpProxy.limits(appconfig));
 });
 
 /**

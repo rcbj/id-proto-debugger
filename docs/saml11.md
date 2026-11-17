@@ -2,15 +2,17 @@
 
 Scope: the **Protocol Version** selector on `saml_request.html` and everything
 that follows from choosing **SAML 1.1** — what is sent, what comes back, which
-settings stop applying, and what the four tests hold it to. SAML 2.0 is the
+settings stop applying, and what the tests hold it to. SAML 2.0 is the
 workflow's default and is not described here except where the two differ.
 How to drive that sign-in, including every field this note only mentions
 where the two versions differ, is in [Using the SAML workflow](saml.md).
 
 Read this before touching `client/src/saml_request.js`,
 `client/src/saml_response.js`, `POST /samlartifactctx` or `handleSamlAcs()` in
-`api/server.js`. The identity provider at the other end is `sts/saml/saml11_sso.js`,
-whose own notes are in iya-sts's `saml/CLAUDE.md`.
+`api/server.js`. Two identity providers are at the other end in the suite:
+iya-sts (`saml/saml11_sso.ts` in that repository, whose own notes are its
+`saml/CLAUDE.md`) and the Shibboleth IdP 4.3.3 side-car in `shibboleth-idp/`,
+which is somebody else's implementation (see *Against Shibboleth* below).
 
 ---
 
@@ -20,9 +22,9 @@ whose own notes are in iya-sts's `saml/CLAUDE.md`.
 
 It is not, and almost everything below is a consequence of the difference:
 **SAML 1.1 has no request message.** There is no `<samlp:AuthnRequest>` in the
-specification. The browser profiles (`saml-profile-1.1` sections 4.1 and 4.2) are
-**identity-provider-initiated**, and a flow begins when a browser arrives at the
-*inter-site transfer service* carrying a `TARGET`.
+specification. The browser profiles (`sstc-saml-bindings-1.1` sections 4.1.1
+and 4.1.2) are **identity-provider-initiated**, and a flow begins when a
+browser arrives at the *inter-site transfer service* carrying a `TARGET`.
 
 Six things follow, and each of them is a place where a reader who knows 2.0 will
 expect the opposite:
@@ -153,15 +155,25 @@ identity provider it knows.
 * **The signature is the FIRST child.** SAML 1.1's `RequestAbstractType` sequence
   is `RespondWith*`, `ds:Signature?`, then the query or the artifact. A 2.0
   `<ArtifactResolve>` has an `<Issuer>` and the signature follows it.
-* **A key is optional.** Neither version requires this message be signed, and
-  SAML 1.1 has no request to sign in the first place, so `POST /samlartifactctx`
-  no longer refuses without one — it says out loud that it is sending an unsigned
-  request. (That refusal used to make "the service provider generated no key
-  pair" fail in a call whose error text names `privateKeyPem` and nothing else.)
+* **A key is optional to the API, and NOT to SAML 1.1.** `POST
+  /samlartifactctx` does not refuse without one, because a debugger should be
+  able to send the unsigned request and show what comes back. But
+  `sstc-saml-bindings-1.1` section 4.1.1.6 requires the artifact resolution
+  binding to provide **bilateral authentication**, and a source site that
+  cannot authenticate the requester as the artifact's destination site MUST
+  answer **Success with no assertions**. Shibboleth does exactly that
+  (`Message context was not authenticated` in its log), so the API warns when
+  it sends a SAML 1.1 request unsigned, and the response page explains an
+  assertion-less Success. A signature over the `<samlp:Request>`, made with the
+  SP key and verified against the SP metadata's `KeyDescriptor`, is how this
+  API authenticates; TLS client authentication is the binding's other way and
+  is not offered here. SAML 2.0 has no such requirement.
 
-An artifact is **one-shot** in both versions (`saml-bindings-1.1` section 3.2.3):
-resolving it destroys it. That is the identity provider's rule rather than this
-page's, and it is why the response page is reached exactly once per artifact.
+An artifact is **one-shot** in both versions (`sstc-saml-bindings-1.1` section
+4.1.1.6, the "one-time request" property): resolving it destroys it, and
+presenting it again gets the answer an unknown artifact gets. That is the
+identity provider's rule rather than this page's, and it is why the response
+page is reached exactly once per artifact.
 
 ---
 
@@ -304,12 +316,13 @@ nowhere is a malformed document that every lenient reader in the world accepts.
 
 ### The confirmation method IS the profile
 
-`saml-profile-1.1` section 4.1.1.4 requires
-`urn:oasis:names:tc:SAML:1.0:cm:artifact` for Browser/Artifact and section 4.2.1.4
-requires `...:cm:bearer` for Browser/POST. They are not interchangeable and they
-are not decoration: the confirmation method is the assertion's own statement of
-**how it reached the relying party**, so an artifact-profile assertion confirmed as
-`bearer` claims to have travelled through the browser when it did not.
+`sstc-saml-bindings-1.1` section 4.1.1.6 requires
+`urn:oasis:names:tc:SAML:1.0:cm:artifact` for Browser/Artifact and section
+4.1.2.5 requires `...:cm:bearer` for Browser/POST. They are not interchangeable
+and they are not decoration: the confirmation method is the assertion's own
+statement of **how it reached the relying party**, so an artifact-profile
+assertion confirmed as `bearer` claims to have travelled through the browser
+when it did not.
 
 **A relying party that does not check works perfectly with either**, which is
 exactly why the tests assert it per binding rather than once. `DoNotCacheCondition`
@@ -340,8 +353,29 @@ is Browser/Artifact, whose Response came back over the authenticated SOAP back
 channel and needs no signature. SAML 2.0 gets no verdict: either level may
 carry its signature there, depending on the binding.
 
-Both checks still use the certificate in each signature's `KeyInfo`, not the
-identity provider's certificate from metadata; #425 tracks that.
+**And they are checked against the identity provider's PUBLISHED keys**, not
+the certificate in each signature's own `KeyInfo` (#425). A `KeyInfo`
+certificate came with the document, so verifying with it proves only that
+nothing was altered after signing: a forged response carrying a certificate of
+its own verifies. The **Verify with** selector defaults to the trusted
+certificates whenever any are known, and **KeyInfo** stays as a choice labelled
+*integrity only*. The trusted list is every `KeyDescriptor use="signing"`
+certificate in the metadata the request page last loaded
+(`samltools_saml_signer_certs`), plus its Signer Certificate field, and a
+signature is valid when ANY of them verifies it. The list matters: a Shibboleth
+V4 IdP publishes **two** signing keys, the back-channel one first and the
+front-channel one that signs a Browser/POST response second, so the request
+page's old habit of keeping only the first would have rejected every Shibboleth
+response. A signature that verifies with its `KeyInfo` and with none of the
+trusted keys is reported as *signed by an untrusted key*, not as a broken
+digest. `xmldsig.verifyXmlSignatureTrusted()` is the check.
+
+The request page also says, on loading, when a metadata document's
+`validUntil` has passed (`saml_message.metadataExpiry()`,
+`saml-metadata-2.0-os` section 2.2.1: the earliest `validUntil` on the
+descriptor or anything enclosing it). It still loads the document — this is a
+debugger — but a relying party must not use expired metadata, and Shibboleth's
+installer stamps its example metadata with the instant it was generated.
 
 ### Signature verification resolves through `AssertionID`
 
@@ -358,32 +392,54 @@ armed on a version where it is disabled.
 
 ---
 
-## THE FIVE TESTS, AND WHY THERE ARE FIVE
+## THE TESTS
 
 | Test | What it drives | Needs |
 |---|---|---|
-| `tests/saml11_sso.js` | the DEBUGGER's pages, once per binding — the full round trip | the mock STS, a browser; artifact also needs the api |
+| `tests/saml11_sso.js` | the DEBUGGER's pages, once per binding and once per identity provider (`SAML11_PEER`: iya-sts or Shibboleth) — the full round trip | that identity provider and a browser; artifact also needs the api |
+| `tests/saml11_peers.js` | the request profile and the identity providers' answers with NO browser: Shibboleth's published metadata, its Response signature against the published keys, and a Browser/Artifact resolution over SOAP | nothing for the fixture half; iya-sts and the Shibboleth side-car for theirs |
 | `tests/saml11_options.js` | which settings apply and which are off, the request shape per binding, the 1.1 SP metadata | a browser and nothing else |
+| `tests/saml_message_engine.js` | the reader, the profile's signature rule, trust against published keys, metadata expiry — in node | nothing |
 | `tests/saml_operation_history.js` | the shared log — its reference-only refusal case is SAML **1.0** now | a browser |
 | `tests/saml_response_decoder_page.js` | the SAML Response Decoder, whose 1.1 case asserts the VERDICT off a `samlp:Success` rather than that a table rendered | a browser and nothing else — it builds its own fixtures |
 
-**There is no Keycloak half of any of them and there will not be one.** Every
-other browser-SSO job in this suite runs once per identity provider, because a
-mock that is quietly more permissive than the real thing passes every test written
-against it alone. That argument still holds and there is nothing to act on it
-with: Keycloak dropped SAML 1.1 years ago.
+**There is no Keycloak half of any of them and there will not be one**:
+Keycloak dropped SAML 1.1 years ago. Every other browser-SSO job in this suite
+runs once per identity provider, because a mock that is quietly more permissive
+than the real thing passes every test written against it alone. For SAML 1.1
+the second identity provider is **Shibboleth**, since #425.
 
-What compensated was `sts_saml11.js`, which drove the mock's identity
-provider over HTTP with a relying party written independently, almost entirely
-negatives — an artifact resolved twice, an `InResponseTo` on a profile with no
-request, a signature reference through the real `AssertionID`. **It was retired
-from this suite on 2026-10-22**: iya-sts runs its own version of it
-(`sts/tests/vendored/sts_saml11.js`), and with it went the `sts-saml11`
-JOB_LOCK it shared with the three binding jobs, which only existed because that
-job turned the mock's SAML 1.1 signing settings off and on.
+`sts_saml11.js`, which drove iya-sts's identity provider over HTTP with a
+relying party written independently, **was retired from this suite on
+2026-10-22**: iya-sts runs its own version of it, and with it went the
+`sts-saml11` JOB_LOCK, which only existed because that job turned iya-sts's
+SAML 1.1 signing settings off and on. None of the jobs above holds a lock.
 
-`saml11_options.js` is deliberately outside that lock: it needs no identity
-provider at all.
+### Against Shibboleth
+
+The side-car (`shibboleth-idp/`, see its `CLAUDE.md`) runs on the containerized
+stack only. The browser job registers the debugger the way a Shibboleth
+deployment takes a service provider: the page's own SAML 1.1 SP metadata,
+written into a directory the IdP's `LocalDynamicMetadataProvider` reads, under
+the SHA-1 of a per-run entityID. It loads the IdP's metadata from
+`<base>/shibboleth` as a FILE, because that endpoint sends no CORS headers.
+What Shibboleth showed that iya-sts could not, each of which is the
+specification and not a Shibboleth habit:
+
+* **It signs the Response on both profiles**, with the second of its two
+  published signing keys, and signs the assertion as it decides per relying
+  party. The profile requires the first and allows the second.
+* **Its resolved artifact Response carries no `Recipient`.** Section 4.1.2.5
+  requires `Recipient` on Browser/POST, where the browser carries the
+  Response; a Response returned over SOAP goes to whoever asked. The browser
+  job requires it on POST only.
+* **It refuses an unsigned artifact resolution request** with *Success and no
+  assertion*, which is what section 4.1.1.6 requires of a source site that
+  cannot authenticate the requester. Load the SP key pair.
+* **Its session cookie is `Secure`**, so over the side-car's plain HTTP a
+  browser drops it and the login answers *Stale Request*. The side-car
+  overrides that; a node client with its own cookie jar never notices, which is
+  why only the browser job found it.
 
 ### Running one by hand
 

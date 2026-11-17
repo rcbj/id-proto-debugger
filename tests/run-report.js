@@ -268,6 +268,15 @@ const JOB_LOCKS = {
   "sd_jwt_vc_presentation.js": "sts-vc",
   "ldp_vc_issuance.js": "sts-vc",
   "ldp_vc_presentation.js": "sts-vc",
+  // Configures nothing, but every case's request is built from the
+  // Verifier configuration sd_jwt_vc_presentation.js pins (the claims and
+  // the default format), and its credentials from /admin/vc: a pin landing
+  // mid-case changes what is asked for under a credential minted before it.
+  "vc_presentation_protocols.js": "sts-vc",
+  // Mints with oid4vci.credentialCertificateHeader=none for the length of
+  // one issuance (Polaris verifies an issuer chain with ECDSA only, and
+  // iya-sts's CA tiers are RSA-signed), and puts it back.
+  "vc_presentation_polaris.js": "sts-vc",
   "ldp_vc_refresh.js": "sts-vc",
   "jwt_vc_json_issuance.js": "sts-vc",
   "jwt_vc_json_presentation.js": "sts-vc",
@@ -3806,6 +3815,39 @@ function buildJobs() {
     env: {},
   });
 
+  // The presentation PROTOCOLS in node: x509_hash and x509_san_dns against
+  // certificates node reads itself, the direct_post.jwt response opened with
+  // the Verifier's key, self-issued ID Tokens in three subject syntaxes,
+  // RFC 8785's own JCS vectors and the ecdsa-jcs-2019 holder proof, and every
+  // rule HAIP and SIOPv2 refuse on. Needs nothing.
+  jobs.push({
+    name: "VC presentation protocols (HAIP 1.0, SIOPv2 and OpenID4VP rules, " +
+        "x509 Client Identifiers, response encryption, in node)",
+    script: "vp_protocols_engine.js",
+    env: {},
+  });
+
+  // POST /oid4vp/call, the wallet's route to a Verifier that sends no CORS
+  // headers: every refusal api/oid4vp_proxy.js makes, its defaults and its
+  // status rule, with no Verifier and no api running.
+  jobs.push({
+    name: "OpenID4VP relay (POST /oid4vp/call: refusals by rule, form " +
+        "bodies, text answers, in node)",
+    script: "api_oid4vp_proxy.js",
+    env: {},
+  });
+
+  // ISO mdoc in the wallet (client/src/mdoc.js), in node, against an issuer
+  // written apart from it (tests/mdoc_test_issuer.js): reading, the digest
+  // and issuer-signature checks, and a DeviceResponse whose device signature
+  // the issuer's own encoder verifies over OpenID4VP's session transcript.
+  jobs.push({
+    name: "ISO mdoc wallet (IssuerSigned, MSO digests, DeviceResponse and " +
+        "its device signature over the OpenID4VP transcript, in node)",
+    script: "mdoc_engine.js",
+    env: {},
+  });
+
   // The SD-JWT VC issuance workflow (OID4VCI + RFC 9901): the mock Credential
   // Issuer the STS service hosts, the three vc-issuance pages, and the
   // ?sdjwtvc=1 hand-off through oauth2_oidc_1.html / oauth2_oidc_2.html. Needs
@@ -4077,6 +4119,22 @@ function buildJobs() {
         OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
+    // The same workflow under its three PROTOCOLS (vp_protocols.js): HAIP
+    // 1.0 — x509_hash, a signed request by request_uri, an encrypted
+    // direct_post.jwt answer — and SIOPv2, a self-issued ID Token beside the
+    // presentation and on its own, for every format the wallet holds. It
+    // configures nothing, but holds `sts-vc` (JOB_LOCKS) because what it is
+    // asked for comes from the configuration other jobs pin.
+    jobs.push({
+      name: "VC Presentation — HAIP 1.0 and SIOPv2 (x509_hash, " +
+          "direct_post.jwt, self-issued ID Tokens, every format)",
+      script: "vc_presentation_protocols.js",
+      env: {
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL,
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
+        OID4VP_VERIFIER_URL: env.OID4VP_VERIFIER_URL || "",
+      },
+    });
   }
 
   // The PRESENTATION half of the same format: a Verifiable Presentation JWT
@@ -4131,6 +4189,25 @@ function buildJobs() {
         WALTID_VERIFIER_URL: env.WALTID_VERIFIER_URL,
         WALTID_ISSUER_URL: env.WALTID_ISSUER_URL || "",
         KEYCLOAK_BASE_URL: env.KEYCLOAK_BASE_URL || "",
+      },
+    });
+  }
+
+  // HAIP against POLARIS (#423): polaris-oid4vp, an independently written
+  // OpenID4VP 1.0 + HAIP 1.0 verifier, from its own published image, with an
+  // ES256 SD-JWT VC iya-sts issues in the same run. Scheduled where the
+  // volume it shares with the polaris-verifier container is mounted, which
+  // is the containerized stack. Holds `sts-vc` (JOB_LOCKS) because it mints
+  // with one iya-sts setting changed and put back.
+  if (env.POLARIS_DATA_DIR) {
+    jobs.push({
+      name: "VC Presentation — HAIP 1.0 against Polaris (x509_hash, " +
+          "request_uri POST, direct_post.jwt, an independent verifier)",
+      script: "vc_presentation_polaris.js",
+      env: {
+        POLARIS_DATA_DIR: env.POLARIS_DATA_DIR,
+        WSTRUST_STS_URL: env.WSTRUST_STS_URL || "",
+        OID4VCI_ISSUER_URL: env.OID4VCI_ISSUER_URL || "",
       },
     });
   }
@@ -4458,6 +4535,41 @@ function buildJobs() {
     jobs.push(job);
   }
 
+  // THE SAME ROUND TRIP AGAINST SHIBBOLETH (#425): somebody else's SAML 1.1
+  // identity provider, the side-car in shibboleth-idp/. The debugger is
+  // registered the way a Shibboleth deployment takes a service provider —
+  // its own SP metadata, written where the IdP's metadata providers read —
+  // and the IdP's metadata is loaded from <base>/shibboleth. Nothing of
+  // iya-sts is used. Only the containerized stack starts the side-car, and
+  // anywhere else these two are declared skips naming it.
+  for (const SAML_BINDING of ["post", "artifact"]) {
+    const job = {
+      name: `SAML 1.1 SSO — Browser/${SAML_BINDING === 'artifact' ?
+          'Artifact' : 'POST'} profile (Shibboleth IdP)`,
+      script: "saml11_sso.js",
+      env: {
+        SAML_BINDING,
+        SAML11_PEER: "shibboleth",
+        SAML_SP_ENTITY_ID: env.SAML_SP_ENTITY_ID,
+        SHIBBOLETH_IDP_URL: env.SHIBBOLETH_IDP_URL,
+        SHIBBOLETH_SP_METADATA_DIR: env.SHIBBOLETH_SP_METADATA_DIR,
+        SHIBBOLETH_IDP_USER: env.SHIBBOLETH_IDP_USER,
+        SHIBBOLETH_IDP_PASSWORD: env.SHIBBOLETH_IDP_PASSWORD,
+        SHIBBOLETH_SP_ENTITY_ID: env.SHIBBOLETH_SP_ENTITY_ID,
+      },
+    };
+    if (!env.SHIBBOLETH_IDP_URL || !env.SHIBBOLETH_SP_METADATA_DIR) {
+      job.skip = "no Shibboleth IdP on this stack (SHIBBOLETH_IDP_URL or " +
+        "SHIBBOLETH_SP_METADATA_DIR unset). Only the containerized stack " +
+        "starts the shibboleth-idp side-car.";
+    } else if (SAML_BINDING === "artifact" && !samlBackendAvailable) {
+      job.skip = "HTTP Artifact needs the API backend (the SAML 1.1 SOAP " +
+        "responder is a server-side call); unavailable on the static " +
+        "deployment.";
+    }
+    jobs.push(job);
+  }
+
   // What the SP / Request pane offers on SAML 1.1 and what it must stop
   // offering — the username hint, request signing, request encryption, Single
   // Logout and the SLO endpoints, each asserted DISABLED and greyed rather than
@@ -4493,6 +4605,7 @@ function buildJobs() {
       SHIBBOLETH_IDP_PASSWORD: env.SHIBBOLETH_IDP_PASSWORD,
       SHIBBOLETH_SP_ENTITY_ID: env.SHIBBOLETH_SP_ENTITY_ID,
       SHIBBOLETH_ACS_URL: env.SHIBBOLETH_ACS_URL,
+      SHIBBOLETH_SP_METADATA_DIR: env.SHIBBOLETH_SP_METADATA_DIR,
     },
   });
 
