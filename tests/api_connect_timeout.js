@@ -57,6 +57,9 @@ var connectTimeout = paths.requireSharedModule(
 var guardModule = paths.requireSharedModule(
   [__dirname + "/../api/ssrf_guard.js", __dirname + "/ssrf_guard.js"],
    "ssrf_guard.js");
+var sslValidateModule = paths.requireSharedModule(
+  [__dirname + "/../api/ssl_validate.js", __dirname + "/ssl_validate.js"],
+  "ssl_validate.js");
 
 var quiet = { debug: function () {
   log.debug("Entering debug().");
@@ -416,6 +419,25 @@ function shippedConfiguration() {
       "and drops the SSRF guard's hooks along with the connect timeout.");
     log.info("[shipped] OK — all " + sites + " axios call sites are bounded " +
              "by both timeouts, the size cap and the redirect cap.");
+
+    // #434: a request's sslValidate reaches an agent only through
+    // verifiesCertificates(). The pages send it as TEXT, and a handler that
+    // handed `body.sslValidate` to outboundHttpsAgent() directly verified a
+    // certificate the user had said not to — "false" is not `false`.
+    var raw = [];
+    lines.forEach(function (line, i) {
+      if (/outboundHttpsAgent\(\s*(body|b|req\.body)\.sslValidate\s*\)/
+          .test(line) ||
+          /sslValidate\s*=\s*(body|b|req\.body)\.sslValidate\s*;/
+          .test(line)) {
+        raw.push("server.js:" + (i + 1));
+      }
+    });
+    assert.deepStrictEqual(raw, [], "a request's sslValidate reaches an " +
+      "agent without verifiesCertificates() at " + raw.join(", ") + "; a " +
+      "page's \"false\" would then verify (#434).");
+    log.info("[shipped] OK — every request's sslValidate goes through " +
+             "verifiesCertificates().");
   }
   log.debug("Leaving shippedConfiguration().");
 }
@@ -1104,6 +1126,26 @@ function manifestDeclaresEveryRequire() {
   log.debug("Leaving manifestDeclaresEveryRequire().");
 }
 
+// #434. The one rule for a request's sslValidate: `false` or "false" turns
+// certificate verification off, and nothing else does.
+function sslValidateReadsBothSpellings() {
+  log.debug("Entering sslValidateReadsBothSpellings().");
+  log.info("=== sslValidate: false and \"false\" turn verification off ===");
+  var verifies = sslValidateModule.verifiesCertificates;
+  [false, "false"].forEach(function (value) {
+    assert.strictEqual(verifies(value), false, JSON.stringify(value) +
+      " must turn verification off: it is what the pages send for No.");
+  });
+  [true, "true", undefined, null, "", "no", "False", " false", 0, "0", {},
+   []].forEach(function (value) {
+    assert.strictEqual(verifies(value), true, JSON.stringify(value) +
+      " must leave verification on: an odd value fails toward checking.");
+  });
+  log.info("[sslValidate] OK — false and \"false\" turn it off; twelve " +
+           "other values, absent included, leave it on.");
+  log.debug("Leaving sslValidateReadsBothSpellings().");
+}
+
 async function test() {
   log.debug("Entering test().");
   await stalledConnectIsAborted();
@@ -1116,6 +1158,7 @@ async function test() {
   userAgentIsConfigured();
   await keepAliveIsConfigured();
   await pooledSocketHonoursServerHint();
+  sslValidateReadsBothSpellings();
   shippedConfiguration();
   manifestDeclaresEveryRequire();
   log.info("Test completed successfully.");
