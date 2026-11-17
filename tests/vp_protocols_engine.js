@@ -326,7 +326,11 @@ async function jcsAndDataIntegrity() {
   assert.strictEqual(proof.cryptosuite, "ecdsa-jcs-2019");
   assert.strictEqual(proof.challenge, "n-2");
   assert.strictEqual(proof.domain, "x509_hash:abc");
-  const config = Object.assign({}, proof, { "@context": doc["@context"] });
+  // The proof options are hashed EXACTLY AS RECEIVED (VC Data Integrity,
+  // Verify Proof, #469 C14), so the proof must carry its @context.
+  assert.deepStrictEqual(proof["@context"], doc["@context"],
+    "the ecdsa-jcs-2019 proof carries the @context it was signed with");
+  const config = Object.assign({}, proof);
   delete config.proofValue;
   const hash = function (v) {
     return nodeCrypto.createHash("sha256").update(vp.jcs(v)).digest();

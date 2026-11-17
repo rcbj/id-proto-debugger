@@ -61,7 +61,9 @@ var cbor = require("./cbor");
 var cose = require("./cose");
 var bytes = require("./crypto_bytes");
 var dpop = require("./dpop");
-var vpProtocols = require("./vp_protocols");
+var jws = require("./jws");
+var nobleSha256 = require("@noble/hashes/sha256").sha256;
+var nobleSha512 = require("@noble/hashes/sha512");
 
 var FORMAT = "mso_mdoc";
 var Tagged = cbor.Tagged;
@@ -69,6 +71,35 @@ var Tagged = cbor.Tagged;
 var COSE_ALG = 1;
 var COSE_X5CHAIN = 33;
 var ES256 = -7;
+
+// The COSE signature algorithms an issuerAuth or a deviceSignature may name
+// (#469, C8), each with the jws.js row that verifies it in pure JavaScript.
+// -7, -35 and -36 are the IANA COSE registry's ECDSA-with-SHA-2 values, -8
+// is EdDSA; -9, -51, -52 and -19 are the FULLY SPECIFIED ones of
+// draft-ietf-jose-fully-specified-algorithms (RFC 9864): ESP256 is ECDSA on
+// P-256 with SHA-256, and so on. HAIP 1.0 section 7 has a Verifier support
+// "COSE algorithm identifier -7 or -9, as applicable", and OpenID4VP 1.0
+// Appendix B.2.2's own example advertises [-9, -50]. Until #469 this file
+// verified -7 and refused every other value.
+var COSE_SIGNATURE_ALGS = {
+  "-7": { name: "ES256", jws: "ES256" },
+  "-9": { name: "ESP256", jws: "ES256" },
+  "-35": { name: "ES384", jws: "ES384" },
+  "-51": { name: "ESP384", jws: "ES384" },
+  "-36": { name: "ES512", jws: "ES512" },
+  "-52": { name: "ESP512", jws: "ES512" },
+  "-8": { name: "EdDSA", jws: "EdDSA-Ed25519" },
+  "-19": { name: "Ed25519", jws: "EdDSA-Ed25519" }
+};
+var COSE_SIGNATURE_ALG_IDS = [-7, -9, -35, -51, -36, -52, -8, -19];
+
+// The MSO's digestAlgorithm (ISO/IEC 18013-5 section 9.1.2.5): "SHA-256",
+// "SHA-384" or "SHA-512". Pure JavaScript.
+var MSO_DIGESTS = {
+  "SHA-256": nobleSha256,
+  "SHA-384": nobleSha512.sha384,
+  "SHA-512": nobleSha512.sha512
+};
 
 // ---------------------------------------------------------------------------
 // CBOR encoding (RFC 8949), deterministic as section 4.2.1 has it: shortest
@@ -321,58 +352,156 @@ function verifyEs256(jwk, data, signature) {
     });
 }
 
+// A COSE signature verified in pure JavaScript (#469, C8): `alg` is the COSE
+// algorithm the structure's protected header names, `key` a certificate
+// (DER bytes) or { jwk }. Answers { ok, name, reason }.
+function verifyCoseSignature(alg, key, data, signature) {
+  log.debug("Entering verifyCoseSignature(). alg=" + alg);
+  var row = COSE_SIGNATURE_ALGS[String(alg)];
+  if (!row) {
+    log.debug("Leaving verifyCoseSignature(). Unknown alg.");
+    return { ok: false, name: String(alg), reason: "COSE algorithm " +
+             JSON.stringify(alg) + " is not one this debugger verifies (" +
+             COSE_SIGNATURE_ALG_IDS.join(", ") + ")." };
+  }
+  var input = key instanceof Uint8Array ?
+      bytes.derToPem(key, "CERTIFICATE") : key;
+  try {
+    var spec = jws.algSpec(row.jws);
+    var resolved = jws.resolveKey(spec, input, "verify");
+    // EdDSA (-8) names no curve: the key's length does (RFC 8037).
+    if (alg === -8 && resolved.key && resolved.key.length === 57) {
+      spec = jws.algSpec("EdDSA-Ed448");
+      resolved = jws.resolveKey(spec, input, "verify");
+    }
+    var ok = !!jws.verifyOctets(spec, resolved.key, data,
+                                bytes.asBytes(signature));
+    log.debug("Leaving verifyCoseSignature(). " + ok);
+    return { ok: ok, name: row.name, reason: ok ? "" : "the " + row.name +
+             " signature does not verify." };
+  } catch (e) {
+    log.debug("Leaving verifyCoseSignature(). Threw: " + e.message);
+    return { ok: false, name: row.name, reason: "the key cannot verify " +
+             row.name + " (" + alg + "): " + e.message };
+  }
+}
+
 // What the wallet can check about what it holds: every item's digest is the
 // MSO's, and issuerAuth verifies with the document signer certificate it
 // carries. Whether that certificate is anybody the wallet should believe is
 // the Verifier's question (its IACA trust list); this says who it is.
+//
+// Pure JavaScript since #469 (C8): the digests are the MSO's own
+// digestAlgorithm, not always SHA-256, and issuerAuth may be any COSE
+// algorithm COSE_SIGNATURE_ALGS names. Still a Promise, for its callers.
 function checkIssuerSigned(parsed) {
   log.debug("Entering checkIssuerSigned().");
   var checks = [];
   var digests = get(parsed.mso, "valueDigests") || new Map();
-  log.debug("Leaving checkIssuerSigned().");
-  return Promise.all(parsed.items.map(function (it) {
-    return sha256(encode(new Tagged(24, it.tagged))).then(function (d) {
+  var digestAlg = String(parsed.digestAlgorithm || "");
+  var digest = MSO_DIGESTS[digestAlg];
+  if (!digest) {
+    checks.push({ name: "Element digests", ok: false, detail: "the MSO's " +
+      "digestAlgorithm is " + JSON.stringify(parsed.digestAlgorithm) +
+      ", not one of " + Object.keys(MSO_DIGESTS).join(", ") +
+      " (ISO/IEC 18013-5 section 9.1.2.5)." });
+  } else {
+    var bad = parsed.items.filter(function (it) {
       var expected = get(get(digests, it.namespace), it.digestID);
-      return expected instanceof Uint8Array &&
-             bytes.bytesEqual(expected, d);
-    });
-  })).then(function (matches) {
-    var bad = parsed.items.filter(function (it, i) {
-      return !matches[i];
+      return !(expected instanceof Uint8Array &&
+               bytes.bytesEqual(expected,
+                                digest(encode(new Tagged(24, it.tagged)))));
     });
     checks.push({ name: "Element digests", ok: bad.length === 0,
-      detail: bad.length === 0 ? "every element hashes to the digest the " +
-        "Mobile Security Object holds for it." : bad.map(function (it) {
+      detail: bad.length === 0 ? "every element hashes (" + digestAlg +
+        ", the MSO's digestAlgorithm) to the digest the Mobile Security " +
+        "Object holds for it." : bad.map(function (it) {
           return it.namespace + "/" + it.elementIdentifier;
-        }).join(", ") + " do not match the MSO." });
-    if (!parsed.x5chain.length) {
-      checks.push({ name: "Issuer signature", ok: false, detail: "issuerAuth " +
-        "carries no x5chain, so there is no key to check it with." });
-      return checks;
-    }
-    if (parsed.alg !== ES256) {
-      checks.push({ name: "Issuer signature", ok: false, detail: "issuerAuth " +
-        "is COSE algorithm " + parsed.alg + "; this wallet checks ES256 " +
-        "(-7)." });
-      return checks;
-    }
-    return vpProtocols.certificatePublicJwk(parsed.x5chain[0], "ES256")
-      .then(function (jwk) {
-        return verifyEs256(jwk, sigStructure(parsed.issuerAuth[0],
-                                             parsed.issuerAuth[2]),
-                           parsed.issuerAuth[3]);
-      })
-      .then(function (ok) {
-        checks.push({ name: "Issuer signature", ok: ok, detail: ok ?
-          "issuerAuth verifies with the document signer certificate in " +
-          "its x5chain. That certificate is UNANCHORED: this check does " +
-          "not chain it to an IACA or any trust list, so it says only " +
-          "that the MSO is the certificate's, not whose the certificate " +
-          "is." : "issuerAuth does NOT verify with its own " +
-          "document signer certificate." });
-        return checks;
-      });
-  });
+        }).join(", ") + " do not match the MSO (" + digestAlg + ")." });
+  }
+  if (!parsed.x5chain.length) {
+    checks.push({ name: "Issuer signature", ok: false, detail: "issuerAuth " +
+      "carries no x5chain, so there is no key to check it with." });
+    log.debug("Leaving checkIssuerSigned(). No x5chain.");
+    return Promise.resolve(checks);
+  }
+  var v = verifyCoseSignature(parsed.alg, bytes.asBytes(parsed.x5chain[0]),
+    sigStructure(parsed.issuerAuth[0], parsed.issuerAuth[2]),
+    parsed.issuerAuth[3]);
+  checks.push({ name: "Issuer signature", ok: v.ok, detail: v.ok ?
+    "issuerAuth (" + v.name + ", COSE " + parsed.alg + ") verifies with " +
+    "the document signer certificate in its x5chain. That certificate is " +
+    "UNANCHORED: this check does not chain it to an IACA or any trust " +
+    "list, so it says only that the MSO is the certificate's, not whose " +
+    "the certificate is." : "issuerAuth does NOT verify with its own " +
+    "document signer certificate: " + v.reason });
+  log.debug("Leaving checkIssuerSigned().");
+  return Promise.resolve(checks);
+}
+
+// The Document's docType against the MSO's (#469, C8). ISO/IEC 18013-5
+// section 9.1.2.4 signs the docType inside the MSO; the one beside it in
+// the Document is what a reader matches a request against, and nothing
+// signs it — so a Document claiming another docType than its MSO is one
+// whose type the issuer never vouched for.
+function checkDocType(read) {
+  log.debug("Entering checkDocType().");
+  var docType = read.doc && read.doc.get ? read.doc.get("docType") :
+      undefined;
+  var msoType = read.parsed.docType;
+  var ok = typeof docType === "string" && docType === msoType;
+  log.debug("Leaving checkDocType(). " + ok);
+  return { name: "The Document's docType is the MSO's", ok: ok,
+           detail: ok ? "both are " + docType + "." : "the Document says " +
+             JSON.stringify(docType) + " and the issuer-signed MSO says " +
+             JSON.stringify(msoType) + "." };
+}
+
+// The device authentication of a DeviceResponse, pure JavaScript (#469,
+// C8): the deviceSignature's COSE alg is the one its protected header
+// names, and DeviceAuthentication is over the Document's docType. A
+// deviceMac (ISO/IEC 18013-5 section 9.1.3.5) needs the reader's
+// ephemeral key and an ECDH this Verifier does not hold, so it is reported
+// as not performed rather than as a forgery. Answers { status: "pass" |
+// "fail" | "skip", detail }.
+function verifyDeviceAuthentication(read, transcript) {
+  log.debug("Entering verifyDeviceAuthentication().");
+  var deviceSigned = read.deviceSigned;
+  var deviceAuth = get(deviceSigned, "deviceAuth");
+  var sig = get(deviceAuth, "deviceSignature");
+  if (!sig && get(deviceAuth, "deviceMac")) {
+    log.debug("Leaving verifyDeviceAuthentication(). deviceMac.");
+    return { status: "skip", detail: "the device authenticated with a " +
+      "deviceMac (ISO/IEC 18013-5 section 9.1.3.5), which needs an " +
+      "EMacKey agreed with the reader's ephemeral key; this Verifier holds " +
+      "none and does not verify DeviceMac, so device authentication was " +
+      "not performed." };
+  }
+  var jwk = read.parsed.deviceJwk;
+  if (!Array.isArray(sig) || sig.length !== 4 || !jwk) {
+    log.debug("Leaving verifyDeviceAuthentication(). Nothing to check.");
+    return { status: "fail", detail: "there is no deviceSignature (or no " +
+             "device key in the MSO) to check." };
+  }
+  var protectedHeader;
+  try {
+    protectedHeader = sig[0] && sig[0].length ? cbor.decode(sig[0]) :
+      new Map();
+  } catch (e) {
+    log.debug("Leaving verifyDeviceAuthentication(). Bad header.");
+    return { status: "fail", detail: "the deviceSignature's protected " +
+             "header is not CBOR: " + e.message };
+  }
+  var alg = get(protectedHeader, COSE_ALG);
+  var docType = (read.doc && read.doc.get && read.doc.get("docType")) ||
+      read.parsed.docType;
+  var auth = encode(embed(["DeviceAuthentication", transcript, docType,
+                           get(deviceSigned, "nameSpaces")]));
+  var v = verifyCoseSignature(alg, { jwk: jwk }, sigStructure(sig[0], auth),
+                              sig[3]);
+  log.debug("Leaving verifyDeviceAuthentication(). " + v.ok);
+  return { status: v.ok ? "pass" : "fail", alg: alg, name: v.name,
+           detail: v.reason };
 }
 
 // ---------------------------------------------------------------------------
@@ -502,6 +631,10 @@ module.exports = {
   parseIssuerSigned: parseIssuerSigned,
   claimsOf: claimsOf,
   checkIssuerSigned: checkIssuerSigned,
+  checkDocType: checkDocType,
+  verifyCoseSignature: verifyCoseSignature,
+  verifyDeviceAuthentication: verifyDeviceAuthentication,
+  COSE_SIGNATURE_ALG_IDS: COSE_SIGNATURE_ALG_IDS,
   sessionTranscript: sessionTranscript,
   chosenItems: chosenItems,
   deviceResponse: deviceResponse,

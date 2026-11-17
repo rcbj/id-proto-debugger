@@ -44,6 +44,13 @@
 //   * Data Integrity: the W3C's own eddsa-jcs-2022 vector, and credentials,
 //     VPs and status list credentials signed here in five suite/curve
 //     combinations (JCS written here, RDFC by jsonld).
+//   * #469: what a conformant Wallet or Issuer may send — a bare VC JWT,
+//     a VP JWT with no iat, aud arrays, exp/nbf, DID holders and cnf.kid /
+//     cnf.jku, DID documents naming keys every way DID Core allows,
+//     SD-JWT VC -27's aka_vcts and extends examples (Figures 4, 16, 17),
+//     OpenID4VP 1.0 Appendix B.1.1's type_values examples expanded as
+//     IRIs, mdocs signed here with -9, -35, SHA-384/512 digests and
+//     DeviceMac, and the Data Integrity proof @context rules.
 // ---------------------------------------------------------------------------
 
 const assert = require("assert");
@@ -200,6 +207,25 @@ function failsOnly(result, ids, what) {
   ok(!result.ok, what + ": ok must be false when a check failed");
   eq(result.verdict, "fail", what + ": the verdict when a check failed");
   log.debug("Leaving failsOnly().");
+}
+
+// Nothing failed, and the essential checks `ids` were NOT performed: the
+// verdict is "incomplete" (#467 S4), which is what a key that could not be
+// had produces (#469 B2) — never a pass, and not a forgery either.
+function incompleteOnly(result, ids, what) {
+  log.debug("Entering incompleteOnly(). " + what);
+  eq(failedIds(result), [], what + ": nothing may fail: " +
+     JSON.stringify(result.checks.filter(function (c) {
+       return c.status === "fail";
+     }), null, 2));
+  eq(result.verdict, "incomplete", what + ": the verdict is incomplete");
+  ok(!result.ok, what + ": ok is false");
+  ids.forEach(function (id) {
+    const c = checkById(result, id);
+    ok(c && c.status === "skip" && c.essential, what + ": " + id +
+       " is an essential skip: " + JSON.stringify(c));
+  });
+  log.debug("Leaving incompleteOnly().");
 }
 
 let checksSeen = 0;
@@ -1171,8 +1197,14 @@ function coseSigStructure(protectedBytes, payload) {
                           payload]);
 }
 
-function issueMdocHere(auth, devicePublicJwk, elements, status) {
+// `opts` (#469, C8): alg (the issuerAuth COSE alg, -7), hash (node's name
+// for the digest, "sha256"), digestAlgorithm (what the MSO SAYS, which a
+// test may make disagree with `hash`), msoDocType, deviceCrv (the COSE
+// curve of the device key: 1 P-256, 2 P-384).
+function issueMdocHere(auth, devicePublicJwk, elements, status, opts) {
   log.debug("Entering issueMdocHere().");
+  const o = opts || {};
+  const hashName = o.hash || "sha256";
   const Tag = mdocIssuer.Tag;
   const cbor = mdocIssuer.cbor;
   const tdate = function tdate(d) {
@@ -1188,22 +1220,22 @@ function issueMdocHere(auth, devicePublicJwk, elements, status) {
   });
   const digests = new Map();
   items.forEach(function (it) {
-    digests.set(it.digestID, nodeCrypto.createHash("sha256")
+    digests.set(it.digestID, nodeCrypto.createHash(hashName)
       .update(cbor(new Tag(24, it.bytes))).digest());
   });
   const mso = {
-    version: "1.0", digestAlgorithm: "SHA-256",
+    version: "1.0", digestAlgorithm: o.digestAlgorithm || "SHA-256",
     valueDigests: new Map([[mdocIssuer.NS, digests]]),
-    deviceKeyInfo: { deviceKey: new Map([[1, 2], [-1, 1],
+    deviceKeyInfo: { deviceKey: new Map([[1, 2], [-1, o.deviceCrv || 1],
       [-2, Buffer.from(devicePublicJwk.x, "base64url")],
       [-3, Buffer.from(devicePublicJwk.y, "base64url")]]) },
-    docType: mdocIssuer.DOCTYPE,
+    docType: o.msoDocType || mdocIssuer.DOCTYPE,
     validityInfo: { signed: tdate(now), validFrom: tdate(now),
       validUntil: tdate(new Date(now.getTime() + 30 * 86400000)) }
   };
   if (status) mso.status = status.raw || { status_list: status };
   const payload = cbor(new Tag(24, cbor(mso)));
-  const protectedBytes = cbor(new Map([[1, -7]]));
+  const protectedBytes = cbor(new Map([[1, o.alg || -7]]));
   const signature = nodeCrypto.sign("sha256",
     coseSigStructure(protectedBytes, payload),
     { key: auth.dsKey, dsaEncoding: "ieee-p1363" });
@@ -1226,18 +1258,28 @@ function dcTranscript(origin, nonce, encryptionJwk) {
     nodeCrypto.createHash("sha256").update(info).digest()]];
 }
 
-function deviceResponseHere(cred, device, transcript) {
+// `opts` (#469, C8): docType (the DOCUMENT's, which DeviceAuthentication
+// signs, ISO/IEC 18013-5 section 9.1.3.4), alg and hash (the device
+// signature's COSE alg and node's digest), deviceMac (a MAC in place of
+// the signature).
+function deviceResponseHere(cred, device, transcript, opts) {
   log.debug("Entering deviceResponseHere().");
+  const o = opts || {};
   const Tag = mdocIssuer.Tag;
   const cbor = mdocIssuer.cbor;
   const nsBytes = cbor(new Map());
+  const docType = o.docType || cred.docType;
   const auth = cbor(new Tag(24, cbor(["DeviceAuthentication", transcript,
-    cred.docType, new Tag(24, nsBytes)])));
-  const protectedBytes = cbor(new Map([[1, -7]]));
-  const sig = nodeCrypto.sign("sha256", coseSigStructure(protectedBytes,
-    auth), { key: device.privateKey, dsaEncoding: "ieee-p1363" });
+    docType, new Tag(24, nsBytes)])));
+  const protectedBytes = cbor(new Map([[1, o.alg || -7]]));
+  const sig = nodeCrypto.sign(o.hash || "sha256",
+    coseSigStructure(protectedBytes, auth),
+    { key: device.privateKey, dsaEncoding: "ieee-p1363" });
+  const deviceAuth = o.deviceMac ? new Map([["deviceMac",
+    [cbor(new Map([[1, 5]])), new Map(), null, Buffer.alloc(32, 7)]]]) :
+    new Map([["deviceSignature", [protectedBytes, new Map(), null, sig]]]);
   const doc = new Map([
-    ["docType", cred.docType],
+    ["docType", docType],
     ["issuerSigned", new Map([
       ["nameSpaces", new Map([[mdocIssuer.NS, cred.items.map(function (it) {
         return new Tag(24, it.bytes);
@@ -1245,8 +1287,7 @@ function deviceResponseHere(cred, device, transcript) {
       ["issuerAuth", cred.issuerAuth]])],
     ["deviceSigned", new Map([
       ["nameSpaces", new Tag(24, nsBytes)],
-      ["deviceAuth", new Map([["deviceSignature",
-        [protectedBytes, new Map(), null, sig]]])]])]
+      ["deviceAuth", deviceAuth]])]
   ]);
   log.debug("Leaving deviceResponseHere().");
   return b64u(cbor(new Map([["version", "1.0"], ["documents", [doc]],
@@ -2253,6 +2294,17 @@ async function diSign(doc, suite, key, purpose, extra) {
   const proof = Object.assign({ type: "DataIntegrityProof",
     cryptosuite: suite, created: "2026-01-01T00:00:00Z",
     verificationMethod: key.vm, proofPurpose: purpose }, extra || {});
+  // A JCS suite hashes the proof options exactly as received, so the
+  // proof carries the @context it is signed with (the W3C vectors do); an
+  // RDFC one expands its configuration under the document's @context
+  // (VC Data Integrity, Verify Proof step 4). `extra.omitContext` signs
+  // the non-conformant JCS shape: @context hashed, then left out.
+  const jcsSuite = /-jcs-/.test(suite);
+  if (jcsSuite && doc["@context"] && !(extra && extra.omitContext) &&
+      !("@context" in proof)) {
+    proof["@context"] = doc["@context"];
+  }
+  delete proof.omitContext;
   const config = Object.assign({ "@context": doc["@context"] }, proof);
   const unsecured = Object.assign({}, doc);
   delete unsecured.proof;
@@ -2826,6 +2878,607 @@ async function securityFindings(env) {
   log.debug("Leaving securityFindings().");
 }
 
+// ---------------------------------------------------------------------------
+// #469: what a conformant Wallet or Issuer may send, and this Verifier used
+// to refuse — each case built from the specifications' own examples or
+// with node's crypto, never with this tree's wallet.
+// ---------------------------------------------------------------------------
+function didKeyOf(pair) {
+  log.debug("Entering didKeyOf().");
+  const did = didLib.jwkToDidKey(pair.publicJwk);
+  log.debug("Leaving didKeyOf().");
+  return { did: did, kid: did + "#" + did.slice("did:key:".length) };
+}
+
+function docFetcher(docs) {
+  log.debug("Entering docFetcher().");
+  log.debug("Leaving docFetcher().");
+  return function fetchJson(url) {
+    log.debug("Entering fetchJson(). " + url);
+    log.debug("Leaving fetchJson().");
+    return docs[url] !== undefined ? Promise.resolve(docs[url]) :
+      Promise.reject(new Error("no such document: " + url));
+  };
+}
+
+function jwtVcSession(env, dcql) {
+  log.debug("Entering jwtVcSession().");
+  log.debug("Leaving jwtVcSession().");
+  return { clientId: verifier.clientIdFor("x509_hash", env.identity),
+           nonce: verifier.randomToken(), state: "s",
+           responseMode: "direct_post", dcql: dcql };
+}
+
+async function sendOne(session, id, presentation, extra) {
+  log.debug("Entering sendOne().");
+  const vpToken = {};
+  vpToken[id] = [presentation];
+  log.debug("Leaving sendOne().");
+  return run(Object.assign({ fields: vp.formEncode({ vp_token: vpToken,
+    state: "s" }), session: session }, extra || {}));
+}
+
+// OpenID4VP 1.0 Appendix B.1.3.1.2's example credential, with a DID issuer
+// whose key node holds. `over` replaces members of the payload.
+function exampleVc(issuer, over) {
+  log.debug("Entering exampleVc().");
+  const payload = Object.assign({
+    iss: issuer.did, nbf: 1262304000,
+    jti: "http://example.gov/credentials/3732",
+    sub: "did:example:ebfeb1f712ebc6f1c276e12ec21",
+    vc: { "@context": ["https://www.w3.org/2018/credentials/v1",
+                       "https://www.w3.org/2018/credentials/examples/v1"],
+          type: ["VerifiableCredential", "IDCredential"],
+          credentialSubject: { given_name: "Max",
+            family_name: "Mustermann", birthdate: "1998-01-11",
+            address: { street_address: "Sandanger 25",
+              locality: "Musterstadt", postal_code: "123456",
+              country: "DE" } } } }, over || {});
+  log.debug("Leaving exampleVc().");
+  return nodeJws({ alg: "ES256", typ: "JWT", kid: issuer.kid }, payload,
+                 issuer.pair);
+}
+
+// The VP JWT of Appendix B.1.3.1.5, signed by node; `over` replaces or (as
+// undefined) removes members.
+function exampleVp(holder, session, vcs, over, header) {
+  log.debug("Entering exampleVp().");
+  const now = Math.floor(Date.now() / 1000);
+  const payload = Object.assign({ iss: holder.did,
+    jti: "urn:uuid:3978344f-8596-4c3a-a978-8fcaba3903c5",
+    aud: session.clientId, nbf: now - 10, iat: now - 10, exp: now + 600,
+    nonce: session.nonce,
+    vp: { "@context": ["https://www.w3.org/2018/credentials/v1"],
+          type: ["VerifiablePresentation"], verifiableCredential: vcs } },
+    over || {});
+  Object.keys(payload).forEach(function (k) {
+    if (payload[k] === undefined) delete payload[k];
+  });
+  log.debug("Leaving exampleVp().");
+  return nodeJws(Object.assign({ alg: "ES256", typ: "JWT",
+                                 kid: holder.kid }, header || {}),
+                 payload, holder.pair);
+}
+
+function exampleContexts() {
+  log.debug("Entering exampleContexts().");
+  // The two example contexts the specifications' examples name, as much of
+  // them as these cases use: both put undefined terms under @vocab.
+  [["https://www.w3.org/2018/credentials/examples/v1",
+    "https://example.org/examples#"],
+   ["https://www.w3.org/ns/credentials/examples/v2",
+    "https://www.w3.org/ns/credentials/examples#"]].forEach(function (c) {
+    try {
+      bbs2023.addContext(c[0], { "@context": { "@vocab": c[1] } });
+    } catch (e) {
+      log.debug("exampleContexts(): " + c[0] + ": " + e.message);
+    }
+  });
+  log.debug("Leaving exampleContexts().");
+}
+
+async function jwtVcJsonFindings(env) {
+  log.debug("Entering jwtVcJsonFindings().");
+  exampleContexts();
+  const issuerPair = ecPair();
+  const issuer = Object.assign({ pair: issuerPair }, didKeyOf(issuerPair));
+  const holderPair = ecPair();
+  const holder = Object.assign({ pair: holderPair }, didKeyOf(holderPair));
+  // Appendix B.1.3.1.4's own query, holder binding not required.
+  const unbound = { credentials: [{ id: "example_jwt_vc",
+    format: "jwt_vc_json", require_cryptographic_holder_binding: false,
+    meta: { type_values: [["IDCredential"]] },
+    claims: [{ path: ["credentialSubject", "family_name"] },
+             { path: ["credentialSubject", "given_name"] }] }] };
+  const session = jwtVcSession(env, unbound);
+  const vc = exampleVc(issuer);
+
+  // C1: a bare VC is the answer B.1 REQUIRES when binding is not.
+  let r = await sendOne(session, "example_jwt_vc", vc);
+  allPass(r, "C1: a bare VC JWT, binding not required");
+  eq(checkById(r, "example_jwt_vc[0].vp.signature").status, "skip",
+     "C1: there is no VP to verify");
+  ok(/bare VC JWT/.test(checkById(r, "example_jwt_vc[0].format").detail),
+     "C1: the format row says it is a bare VC");
+  const bound = JSON.parse(JSON.stringify(unbound));
+  delete bound.credentials[0].require_cryptographic_holder_binding;
+  r = await sendOne(jwtVcSession(env, bound), "example_jwt_vc", vc);
+  failsOnly(r, ["example_jwt_vc[0].vp.signature"], "C1: a bare VC when " +
+            "binding IS required");
+
+  // C6: the spec's [["IDCredential"]] against a type under an @vocab
+  // context: as written it matches, expanded it does not, and the row
+  // says which.
+  ok(/matched only as WRITTEN/.test(checkById(allPassOf(await sendOne(
+     session, "example_jwt_vc", vc)), "example_jwt_vc[0].types").detail),
+     "C6: a compact type_values value is reported as such");
+
+  // C2, C15, C16 on a VP JWT signed by node, binding required, the holder
+  // a did:key that is the credential's sub (C3).
+  const subjectVc = exampleVc(issuer, { sub: holder.did });
+  const bSession = jwtVcSession(env, bound);
+  const send = function send(jwt, extra) {
+    log.debug("Entering send().");
+    log.debug("Leaving send().");
+    return sendOne(bSession, "example_jwt_vc", jwt, extra);
+  };
+  r = await send(exampleVp(holder, bSession, [subjectVc]));
+  allPass(r, "C3: a did:key holder that is the credential's sub");
+  ok(/which is the credential's sub/.test(checkById(r,
+     "example_jwt_vc[0].vp.binding").detail), "C3: bound by DID");
+  r = await send(exampleVp(holder, bSession, [subjectVc],
+                           { iat: undefined }));
+  allPass(r, "C2: a VP JWT with no iat");
+  eq(checkById(r, "example_jwt_vc[0].vp.iat").status, "skip",
+     "C2: no iat is a skip");
+  ok(/B\.1\.3\.1\.5/.test(checkById(r, "example_jwt_vc[0].vp.iat").detail),
+     "C2: the skip cites B.1.3.1.5");
+  const old = Math.floor(Date.now() / 1000) - 3600;
+  r = await send(exampleVp(holder, bSession, [subjectVc], { iat: old }));
+  failsOnly(r, ["example_jwt_vc[0].vp.iat"], "C2: an hour-old VP JWT");
+  ok(/this debugger's freshness policy/.test(checkById(r,
+     "example_jwt_vc[0].vp.iat").detail), "C2: the policy is labelled");
+  r = await send(exampleVp(holder, bSession, [subjectVc], { iat: old }),
+                 { maxAgeSeconds: 7200 });
+  allPass(r, "C2: the policy raised to two hours");
+  r = await sendOne(Object.assign({}, bSession, { maxAgeSeconds: 0 }),
+                    "example_jwt_vc",
+                    exampleVp(holder, bSession, [subjectVc], { iat: old }));
+  allPass(r, "C2: maxAgeSeconds 0 sets no age limit");
+  r = await send(exampleVp(holder, bSession, [subjectVc],
+                           { aud: ["https://other.example",
+                                   bSession.clientId] }));
+  allPass(r, "C15: aud an array containing the client_id");
+  r = await send(exampleVp(holder, bSession, [subjectVc],
+                           { aud: ["https://other.example"] }));
+  failsOnly(r, ["example_jwt_vc[0].vp.aud"], "C15: an array without it");
+  const now = Math.floor(Date.now() / 1000);
+  r = await send(exampleVp(holder, bSession, [subjectVc],
+                           { exp: now - 3600 }));
+  failsOnly(r, ["example_jwt_vc[0].vp.validity"], "C16: an expired VP");
+  r = await send(exampleVp(holder, bSession, [subjectVc],
+                           { nbf: now + 3600 }));
+  failsOnly(r, ["example_jwt_vc[0].vp.validity"], "C16: a VP not yet valid");
+
+  // C3: a VP by another did:key is not the subject's.
+  const otherPair = ecPair();
+  const other = Object.assign({ pair: otherPair }, didKeyOf(otherPair));
+  r = await send(exampleVp(other, bSession, [subjectVc]));
+  failsOnly(r, ["example_jwt_vc[0].vp.binding"], "C3: another did:key");
+  // C3: a did:web holder, resolved through fetchJson.
+  const webDid = "did:web:holder.example";
+  const webDocs = {};
+  webDocs["https://holder.example/.well-known/did.json"] = { id: webDid,
+    verificationMethod: [{ id: "#k1", type: "JsonWebKey2020",
+      controller: webDid, publicKeyJwk: holderPair.publicJwk }],
+    authentication: ["#k1"] };
+  const webHolder = { pair: holderPair, did: webDid, kid: webDid + "#k1" };
+  r = await send(exampleVp(webHolder, bSession, [exampleVc(issuer,
+    { sub: webDid })]), { fetchJson: docFetcher(webDocs) });
+  allPass(r, "C3: a did:web holder that is the credential's sub");
+  // C3: the VP's key in its header, the subject a did:key of that key.
+  r = await send(exampleVp(holder, bSession, [subjectVc], {},
+    { kid: undefined, jwk: holderPair.publicJwk }));
+  allPass(r, "C3: a header jwk that is a key of the subject's did:key");
+  // C4 for jwt_vc_json: cnf.kid, a DID URL, resolved.
+  r = await send(exampleVp(holder, bSession, [exampleVc(issuer,
+    { cnf: { kid: holder.kid } })], {},
+    { kid: undefined, jwk: holderPair.publicJwk }));
+  allPass(r, "C4: jwt_vc_json bound by cnf.kid");
+  ok(/cnf\.kid/.test(checkById(r, "example_jwt_vc[0].vp.binding").detail),
+     "C4: the binding row names cnf.kid");
+  log.info("PASS #469 jwt_vc_json: a bare VC (C1), iat optional and the " +
+           "freshness window a policy (C2), DID holders (C3), cnf.kid " +
+           "(C4), aud arrays (C15) and exp/nbf (C16).");
+  log.debug("Leaving jwtVcJsonFindings().");
+}
+
+function allPassOf(result) {
+  log.debug("Entering allPassOf().");
+  allPass(result, "a passing response");
+  log.debug("Leaving allPassOf().");
+  return result;
+}
+
+// C7: a did:web issuer whose document names its keys the ways DID Core
+// allows — a RELATIVE id, an absolute one, a publicKeyJwk with a kid of
+// its own — and credentials with and without a kid.
+async function didIssuerKeys(env) {
+  log.debug("Entering didIssuerKeys().");
+  const did = "did:web:issuer.example:tenant";
+  const k1 = ecPair();
+  const k2 = ecPair();
+  const docs = {};
+  docs["https://issuer.example/tenant/did.json"] = { id: did,
+    verificationMethod: [
+      { id: "#key-1", type: "JsonWebKey2020", controller: did,
+        publicKeyJwk: k1.publicJwk },
+      { id: did + "#key-2", type: "JsonWebKey2020", controller: did,
+        publicKeyJwk: Object.assign({ kid: "own-kid" }, k2.publicJwk) }],
+    assertionMethod: ["#key-1", did + "#key-2"] };
+  const fetchJson = docFetcher(docs);
+  const dcql = { credentials: [{ id: "w", format: "jwt_vc_json",
+    require_cryptographic_holder_binding: false,
+    meta: { type_values: [["VerifiableCredential"]] } }] };
+  const session = jwtVcSession(env, dcql);
+  const vcBy = function vcBy(key, kid) {
+    log.debug("Entering vcBy().");
+    const header = { alg: "ES256", typ: "JWT" };
+    if (kid !== undefined) header.kid = kid;
+    log.debug("Leaving vcBy().");
+    return nodeJws(header, { iss: did, iat: Math.floor(Date.now() / 1000),
+      vc: { "@context": ["https://www.w3.org/2018/credentials/v1"],
+            type: ["VerifiableCredential"],
+            credentialSubject: { name: "X" } } }, key);
+  };
+  let r = await sendOne(session, "w", vcBy(k1, did + "#key-1"),
+                        { fetchJson: fetchJson });
+  allPass(r, "C7: kid names a RELATIVE verification method id");
+  r = await sendOne(session, "w", vcBy(k1, "#key-1"),
+                    { fetchJson: fetchJson });
+  allPass(r, "C7: a relative kid");
+  r = await sendOne(session, "w", vcBy(k2, "own-kid"),
+                    { fetchJson: fetchJson });
+  allPass(r, "C7: kid names the publicKeyJwk's own kid");
+  r = await sendOne(session, "w", vcBy(k2, did + "#key-2"),
+                    { fetchJson: fetchJson });
+  allPass(r, "C7: kid names the absolute id of a key that has its own kid");
+  r = await sendOne(session, "w", vcBy(k2), { fetchJson: fetchJson });
+  allPass(r, "C7: no kid, two keys, each tried (SD-JWT VC section 4.2)");
+  ok(/each of 2 keys was tried/.test(checkById(r, "w[0].vc.signature")
+     .detail), "C7: the row says each key was tried: " +
+     checkById(r, "w[0].vc.signature").detail);
+  r = await sendOne(session, "w", vcBy(k2, did + "#key-1"),
+                    { fetchJson: fetchJson });
+  failsOnly(r, ["w[0].vc.signature"], "C7: kid names key-1, signed by 2");
+  r = await sendOne(session, "w", vcBy(k1, did + "#nope"),
+                    { fetchJson: fetchJson });
+  failsOnly(r, ["w[0].vc.signature"], "C7: a kid no key answers to");
+  ok(/no key has kid/.test(checkById(r, "w[0].vc.signature").detail),
+     "C7: and says so");
+  r = await sendOne(session, "w", vcBy(ecPair()), { fetchJson: fetchJson });
+  failsOnly(r, ["w[0].vc.signature"], "C7: no kid, signed by neither key");
+  log.info("PASS #469 C7: DID issuer keys by relative id, absolute id, " +
+           "their own kid, and with no kid at all.");
+  log.debug("Leaving didIssuerKeys().");
+}
+
+// C4 and C5 on dc+sd-jwt: the Key Binding JWT's key from cnf.kid and
+// cnf.jku, and SD-JWT VC -27's own type examples.
+async function sdJwtFindings(env) {
+  log.debug("Entering sdJwtFindings().");
+  const issuer = makeIssuer();
+  const holder = ecPair();
+  const hk = didKeyOf(holder);
+  const docs = Object.assign({}, issuer.docs);
+  docs["https://holder.example/jwks"] = { keys: [
+    Object.assign({ kid: "h0" }, ecPair().publicJwk),
+    Object.assign({ kid: "h1" }, holder.publicJwk)] };
+  const fetchJson = docFetcher(docs);
+  const dcql = { credentials: [{ id: "p", format: "dc+sd-jwt",
+    meta: { vct_values: [VCT] } }] };
+  const session = jwtVcSession(env, dcql);
+  const present = function present(payload, kb) {
+    log.debug("Entering present().");
+    const jwt = issueSdJwt(issuer, holder.publicJwk,
+                           { payload: payload }).jwt;
+    log.debug("Leaving present().");
+    return presentSdJwt(jwt, [], Object.assign({ aud: session.clientId,
+      nonce: session.nonce, key: holder }, kb || {}));
+  };
+  let r = await sendOne(session, "p", present({ cnf: { kid: hk.kid } }),
+                        { fetchJson: fetchJson });
+  allPass(r, "C4: a KB-JWT whose key is cnf.kid, a did:key URL");
+  ok(/cnf\.kid/.test(checkById(r, "p[0].kb.signature").detail),
+     "C4: the row names cnf.kid");
+  r = await sendOne(session, "p", present({ cnf: {
+    jku: "https://holder.example/jwks", kid: "h1" } }),
+    { fetchJson: fetchJson });
+  allPass(r, "C4: cnf.jku narrowed by cnf.kid");
+  r = await sendOne(session, "p", present({ cnf: {
+    jku: "https://holder.example/jwks" } }), { fetchJson: fetchJson });
+  allPass(r, "C4: cnf.jku alone, each key tried");
+  r = await sendOne(session, "p", present({ cnf: {
+    jku: "https://holder.example/missing" } }), { fetchJson: fetchJson });
+  incompleteOnly(r, ["p[0].kb.signature"], "C4: a cnf.jku that cannot be " +
+                 "fetched");
+  r = await sendOne(session, "p", present({ cnf: { kid: "opaque-1" } }),
+                    { fetchJson: fetchJson });
+  incompleteOnly(r, ["p[0].kb.signature"], "C4: an opaque cnf.kid");
+  r = await sendOne(session, "p", present({ cnf: { kid: hk.kid } },
+                                          { key: ecPair() }),
+                    { fetchJson: fetchJson });
+  failsOnly(r, ["p[0].kb.signature"], "C4: a KB-JWT by another key");
+  r = await sendOne(session, "p", present({}, { iat: null }),
+                    { fetchJson: fetchJson });
+  failsOnly(r, ["p[0].kb.iat"], "C2: a KB-JWT's iat stays REQUIRED " +
+            "(RFC 9901 section 4.3)");
+
+  // C5: SD-JWT VC -27 Figure 4, the PID with aka_vcts, against a query for
+  // the general type.
+  const pidQuery = { credentials: [{ id: "p", format: "dc+sd-jwt",
+    meta: { vct_values: ["urn:example:eudi:pid"] } }] };
+  const pidSession = jwtVcSession(env, pidQuery);
+  const pid = function pid(payload) {
+    log.debug("Entering pid().");
+    const jwt = issueSdJwt(issuer, holder.publicJwk,
+                           { payload: payload }).jwt;
+    log.debug("Leaving pid().");
+    return presentSdJwt(jwt, [], { aud: pidSession.clientId,
+      nonce: pidSession.nonce, key: holder });
+  };
+  r = await sendOne(pidSession, "p", pid({
+    vct: "urn:example:eudi:pid:aendgard:1",
+    aka_vcts: ["urn:example:eudi:pid"] }), { fetchJson: fetchJson });
+  allPass(r, "C5: SD-JWT VC -27 Figure 4, aka_vcts");
+  ok(/through aka_vcts/.test(checkById(r, "p[0].vct").detail),
+     "C5: the row says aka_vcts matched");
+  r = await sendOne(pidSession, "p", pid({
+    vct: "urn:example:eudi:pid:aendgard:1",
+    aka_vcts: ["urn:example:eudi:pid", "urn:example:eudi:pid:aendgard:1"] }),
+    { fetchJson: fetchJson });
+  failsOnly(r, ["p[0].vct"], "C5: aka_vcts containing the vct itself");
+  r = await sendOne(pidSession, "p", pid({
+    vct: "urn:example:eudi:pid:aendgard:1",
+    aka_vcts: ["urn:example:eudi:other"] }), { fetchJson: fetchJson });
+  failsOnly(r, ["p[0].vct"], "C5: aka_vcts naming another type");
+  // SD-JWT VC -27 Figures 16 and 17: v42 extends the galactic type.
+  const V42 = "https://betelgeuse.example.com/education_credential/v42";
+  const GALAXY = "https://galaxy.example.com/galactic-education-credential/v2";
+  const typeDocs = Object.assign({}, docs);
+  typeDocs[V42] = { vct: V42,
+    name: "Betelgeuse Education Credential - Version 42",
+    description: "This is our education credential. Don't panic.",
+    extends: GALAXY };
+  typeDocs[GALAXY] = { vct: GALAXY, name: "Galactic Education" };
+  const eduSession = jwtVcSession(env, { credentials: [{ id: "p",
+    format: "dc+sd-jwt", meta: { vct_values: [GALAXY] } }] });
+  const edu = function edu() {
+    log.debug("Entering edu().");
+    const jwt = issueSdJwt(issuer, holder.publicJwk,
+                           { payload: { vct: V42 } }).jwt;
+    log.debug("Leaving edu().");
+    return presentSdJwt(jwt, [], { aud: eduSession.clientId,
+      nonce: eduSession.nonce, key: holder });
+  };
+  r = await sendOne(eduSession, "p", edu(),
+                    { fetchJson: docFetcher(typeDocs) });
+  allPass(r, "C5: a vct that extends the requested type (B.3.5)");
+  ok(/extends chain/.test(checkById(r, "p[0].vct").detail),
+     "C5: the row says the extends chain matched");
+  const loop = Object.assign({}, typeDocs);
+  loop[GALAXY] = { vct: GALAXY, extends: V42 };
+  const loopSession = jwtVcSession(env, { credentials: [{ id: "p",
+    format: "dc+sd-jwt", meta: { vct_values: ["urn:example:none"] } }] });
+  const loopJwt = issueSdJwt(issuer, holder.publicJwk,
+                             { payload: { vct: V42 } }).jwt;
+  r = await sendOne(loopSession, "p", presentSdJwt(loopJwt, [],
+    { aud: loopSession.clientId, nonce: loopSession.nonce, key: holder }),
+    { fetchJson: docFetcher(loop) });
+  failsOnly(r, ["p[0].vct"], "C5: a circular extends (section 7.4)");
+  ok(/circular/.test(checkById(r, "p[0].vct").detail), "C5: named");
+  r = await sendOne(eduSession, "p", edu(), { fetchJson: fetchJson });
+  eq(checkById(r, "p[0].vct").status, "skip", "C5: Type Metadata that " +
+     "cannot be fetched leaves inheritance unknown");
+  log.info("PASS #469 dc+sd-jwt: KB-JWT keys from cnf.kid and cnf.jku " +
+           "(C4), aka_vcts and extends (C5).");
+  log.debug("Leaving sdJwtFindings().");
+}
+
+// C6: OpenID4VP 1.0 Appendix B.1.1's own type_values and the three
+// credentials it says match them, for both W3C formats.
+async function typeValueFindings(env) {
+  log.debug("Entering typeValueFindings().");
+  exampleContexts();
+  const typeValues = [
+    ["https://www.w3.org/2018/credentials#VerifiableCredential",
+     "https://example.org/examples#AlumniCredential",
+     "https://example.org/examples#BachelorDegree"],
+    ["https://www.w3.org/2018/credentials#VerifiableCredential",
+     "https://example.org/examples#UniversityDegreeCredential"],
+    ["IdentityCredential"]];
+  const examples = [
+    [["https://www.w3.org/2018/credentials/v1",
+      "https://www.w3.org/2018/credentials/examples/v1"],
+     ["VerifiableCredential", "UniversityDegreeCredential"]],
+    [["https://www.w3.org/2018/credentials/v1",
+      "https://www.w3.org/2018/credentials/examples/v1"],
+     ["VerifiableCredential", "BachelorDegree", "AlumniCredential"]],
+    [["https://www.w3.org/2018/credentials/v1"],
+     ["VerifiableCredential", "IdentityCredential"]]];
+  const key = suiteKey("ed25519");
+  const issuerPair = ecPair();
+  const issuer = Object.assign({ pair: issuerPair }, didKeyOf(issuerPair));
+  for (const format of ["jwt_vc_json", "ldp_vc"]) {
+    const session = jwtVcSession(env, { credentials: [{ id: "c",
+      format: format, require_cryptographic_holder_binding: false,
+      meta: { type_values: typeValues } }] });
+    const make = async function make(ctx, types) {
+      log.debug("Entering make().");
+      const body = { "@context": ctx, type: types,
+        issuer: format === "ldp_vc" ? key.did : issuer.did,
+        issuanceDate: "2026-01-01T00:00:00Z",
+        credentialSubject: { id: "did:example:abc" } };
+      const out = format === "ldp_vc" ?
+        JSON.stringify(await diSign(body, "eddsa-jcs-2022", key,
+                                    "assertionMethod")) :
+        exampleVc(issuer, { vc: body });
+      log.debug("Leaving make().");
+      return out;
+    };
+    for (let i = 0; i < examples.length; i++) {
+      const r = await sendOne(session, "c", await make(examples[i][0],
+                                                       examples[i][1]));
+      allPass(r, "C6: " + format + ", Appendix B.1.1 example " + (i + 1));
+      ok(/after JSON-LD expansion/.test(checkById(r, "c[0].types").detail),
+         "C6: " + format + " example " + (i + 1) + " matched as IRIs: " +
+         checkById(r, "c[0].types").detail);
+    }
+    const r = await sendOne(session, "c", await make(examples[0][0],
+      ["VerifiableCredential", "AlumniCredential"]));
+    failsOnly(r, ["c[0].types"], "C6: " + format + ", AlumniCredential " +
+              "without BachelorDegree matches no alternative");
+  }
+  log.info("PASS #469 C6: type_values compared as expanded IRIs, for " +
+           "jwt_vc_json and (now at all) ldp_vc.");
+  log.debug("Leaving typeValueFindings().");
+}
+
+// C8: mdocs signed here with the algorithms and digests ISO/IEC 18013-5
+// and HAIP 1.0 allow, and a Document whose docType is not its MSO's.
+async function mdocFindings(env) {
+  log.debug("Entering mdocFindings().");
+  const auth = await mdocIssuer.authority("issue 469");
+  const NS = mdocIssuer.NS;
+  const device = ecPair();
+  const dcql = { credentials: [{ id: "mdl", format: "mso_mdoc",
+    meta: { doctype_value: mdocIssuer.DOCTYPE },
+    claims: [{ path: [NS, "given_name"] }] }] };
+  const session = Object.assign(jwtVcSession(env, dcql), {
+    responseUri: "https://verifier.example/response",
+    trustAnchors: [auth.iacaPem] });
+  const transcript = mdocIssuer.transcript(session.clientId, session.nonce,
+                                           null, session.responseUri);
+  const send = function send(cred, dev, opts) {
+    log.debug("Entering send().");
+    log.debug("Leaving send().");
+    return sendOne(session, "mdl", deviceResponseHere(cred, dev || device,
+                                                      transcript, opts));
+  };
+  const elements = { given_name: "Erika" };
+  let r = await send(issueMdocHere(auth, device.publicJwk, elements));
+  allPass(r, "C8: the baseline mdoc, -7");
+  r = await send(issueMdocHere(auth, device.publicJwk, elements, null,
+                               { alg: -9 }));
+  allPass(r, "C8: issuerAuth -9 (ESP256, HAIP 1.0 section 7)");
+  ok(/ESP256/.test(checkById(r, "mdl[0].mdoc.issuer-signature").detail),
+     "C8: the row names ESP256");
+  r = await send(issueMdocHere(auth, device.publicJwk, elements, null,
+                               { alg: -999 }));
+  failsOnly(r, ["mdl[0].mdoc.issuer-signature"], "C8: an unknown COSE alg");
+  r = await send(issueMdocHere(auth, device.publicJwk, elements, null,
+    { hash: "sha384", digestAlgorithm: "SHA-384" }));
+  allPass(r, "C8: SHA-384 element digests");
+  ok(/SHA-384/.test(checkById(r, "mdl[0].mdoc.element-digests").detail),
+     "C8: the row names SHA-384");
+  r = await send(issueMdocHere(auth, device.publicJwk, elements, null,
+    { hash: "sha512", digestAlgorithm: "SHA-512" }));
+  allPass(r, "C8: SHA-512 element digests");
+  r = await send(issueMdocHere(auth, device.publicJwk, elements, null,
+    { hash: "sha384", digestAlgorithm: "SHA-256" }));
+  failsOnly(r, ["mdl[0].mdoc.element-digests"], "C8: SHA-384 digests in " +
+            "an MSO that says SHA-256");
+  r = await send(issueMdocHere(auth, device.publicJwk, elements, null,
+                               { msoDocType: "org.example.other" }),
+                 null, { docType: mdocIssuer.DOCTYPE });
+  failsOnly(r, ["mdl[0].mdoc.mso-doctype", "mdl[0].mdoc.doctype"],
+            "C8: a Document claiming mDL over an MSO that says otherwise");
+  // The device signature in its own COSE alg: a P-384 device key, -35.
+  const p384 = nodeCrypto.generateKeyPairSync("ec",
+                                              { namedCurve: "P-384" });
+  const dev384 = { privateKey: p384.privateKey,
+                   publicJwk: p384.publicKey.export({ format: "jwk" }) };
+  r = await send(issueMdocHere(auth, dev384.publicJwk, elements, null,
+                               { deviceCrv: 2 }), dev384,
+                 { alg: -35, hash: "sha384" });
+  allPass(r, "C8: a P-384 device key signing ES384 (-35)");
+  r = await send(issueMdocHere(auth, device.publicJwk, elements), device,
+                 { alg: -35 });
+  failsOnly(r, ["mdl[0].mdoc.device-signature"], "C8: a header alg the " +
+            "device key cannot have made");
+  r = await send(issueMdocHere(auth, device.publicJwk, elements), device,
+                 { deviceMac: true });
+  incompleteOnly(r, ["mdl[0].mdoc.device-signature"], "C8: DeviceMac is " +
+                 "not performed, not a forgery");
+  ok(/DeviceMac/.test(checkById(r, "mdl[0].mdoc.device-signature").detail),
+     "C8: and says DeviceMac");
+  const formats = verifier.vpFormatsSupported().mso_mdoc;
+  ok(formats.issuerauth_alg_values.indexOf(-7) !== -1 &&
+     formats.issuerauth_alg_values.indexOf(-9) !== -1 &&
+     formats.deviceauth_alg_values.indexOf(-9) !== -1,
+     "C8: -7 and -9 are advertised: " + JSON.stringify(formats));
+  log.info("PASS #469 C8: mdoc issuerAuth -7/-9/-35, the MSO's " +
+           "digestAlgorithm, its docType, the device alg, and DeviceMac.");
+  log.debug("Leaving mdocFindings().");
+}
+
+// C14: the proof's @context, by the cryptosuites' Verify Proof step 4. A
+// JCS proof is hashed exactly as received and its @context must be a
+// PREFIX of the document's; an RDFC proof's must be the document's.
+async function proofContexts(env) {
+  log.debug("Entering proofContexts().");
+  const key = suiteKey("ed25519");
+  const A = "https://www.w3.org/ns/credentials/v2";
+  const B = "https://www.w3.org/ns/credentials/examples/v2";
+  const body = function body(ctx) {
+    log.debug("Entering body().");
+    log.debug("Leaving body().");
+    return { "@context": ctx, type: ["VerifiableCredential"],
+             issuer: key.did, credentialSubject: { id: "did:example:x" } };
+  };
+  // Signed over [A]; the document then grows a second context. Verify
+  // Proof hashes the document with the PROOF's @context.
+  const grown = await diSign(body([A]), "eddsa-jcs-2022", key,
+                             "assertionMethod");
+  grown["@context"] = [A, B];
+  let v = await verifier.verifyDataIntegrity(grown);
+  ok(v.valid, "C14: a JCS proof whose @context is a " +
+     "strict prefix: " + v.reason);
+  const notPrefix = await diSign(body([A, B]), "eddsa-jcs-2022", key,
+                                 "assertionMethod", { "@context": [B] });
+  v = await verifier.verifyDataIntegrity(notPrefix);
+  ok(!v.valid && /start with/.test(v.reason), "C14: a JCS proof @context " +
+     "that is not a prefix: " + v.reason);
+  const omitted = await diSign(body([A]), "eddsa-jcs-2022", key,
+                               "assertionMethod", { omitContext: true });
+  ok(!("@context" in omitted.proof), "the omitted shape has no @context");
+  v = await verifier.verifyDataIntegrity(omitted);
+  ok(!v.valid && new RegExp("non-conformant: the proof was signed over " +
+     "an @context it does not carry").test(v.reason),
+     "C14: the old shape FAILS, and says why: " + v.reason);
+  const dcql = { credentials: [{ id: "c", format: "ldp_vc",
+    require_cryptographic_holder_binding: false }] };
+  const r = await sendOne(jwtVcSession(env, dcql), "c",
+                          JSON.stringify(omitted));
+  failsOnly(r, ["c[0].vc.proof"], "C14: the issuer proof row fails");
+  eq(checkById(r, "c[0].vc.proof").essential, true,
+     "C14: and it is essential");
+  const rdfcSame = await diSign(body([A]), "eddsa-rdfc-2022", key,
+                                "assertionMethod", { "@context": [A] });
+  v = await verifier.verifyDataIntegrity(rdfcSame);
+  ok(v.valid, "C14: an RDFC proof naming the document's @context: " +
+     v.reason);
+  const rdfcPrefix = await diSign(body([A]), "eddsa-rdfc-2022", key,
+                                  "assertionMethod", { "@context": [A] });
+  rdfcPrefix["@context"] = [A, B];
+  v = await verifier.verifyDataIntegrity(rdfcPrefix);
+  ok(!v.valid && /is not the document's/.test(v.reason), "C14: an RDFC " +
+     "proof @context that is only a prefix: " + v.reason);
+  log.info("PASS #469 C14: JCS proof options hashed as received under the " +
+           "prefix rule, RDFC under equality, the old shape a FAIL.");
+  log.debug("Leaving proofContexts().");
+}
+
 // ONE DECLARATION PER NAME in vp_verifier.js. Two branches once each added a
 // certSignedBy() and a CERT_SIG_ALGS of different shapes; in JavaScript the
 // second declaration silently replaces the first, and the merged engine
@@ -2868,14 +3521,20 @@ async function main() {
   await bitstringStatusLists(env);
   await cryptosuites(env);
   await securityFindings(env);
+  await jwtVcJsonFindings(env);
+  await didIssuerKeys(env);
+  await sdJwtFindings(env);
+  await typeValueFindings(env);
+  await mdocFindings(env);
+  await proofContexts(env);
   log.info("vp_verifier_engine: " + assertions + " assertions, " +
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
   // pass by checking less.
-  assert.ok(assertions >= 950, "only " + assertions + " assertions ran; " +
-            "expected at least 950");
-  assert.ok(checksSeen >= 3450, "only " + checksSeen + " Verifier checks " +
-            "were examined; expected at least 3450");
+  assert.ok(assertions >= 1150, "only " + assertions + " assertions ran; " +
+            "expected at least 1150");
+  assert.ok(checksSeen >= 4380, "only " + checksSeen + " Verifier checks " +
+            "were examined; expected at least 4380");
   log.info("vp_verifier_engine: all checks passed.");
   log.debug("Leaving main().");
 }

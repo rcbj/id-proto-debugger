@@ -1121,8 +1121,11 @@ function ecdsaJcs2019Proof(opts) {
         });
     })
     .then(function (sig) {
+      // The proof keeps the @context it was hashed with (#469, C14): a
+      // JCS verifier hashes the proof options EXACTLY AS RECEIVED (VC
+      // Data Integrity, Verify Proof), so a proof that dropped it — as
+      // this one did until #469 — verifies nowhere but here.
       var proof = Object.assign({}, config);
-      delete proof["@context"];
       proof.proofValue = "z" + didLib.base58Encode(new Uint8Array(sig));
       log.debug("Leaving ecdsaJcs2019Proof().");
       return proof;
