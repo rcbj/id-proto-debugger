@@ -386,6 +386,10 @@ COPY tests/mdoc_engine.js tests/mdoc_test_issuer.js ./
 # offer made on iya-sts's portal: shared by vc_presentation_protocols.js and
 # vc_presentation_polaris.js, and scheduled by nothing.
 COPY tests/wallet_issuance.js ./
+# The test-stack CORS proxy and its node job (#431). The proxy lands FLAT as
+# cors-proxy.js (hyphen) beside cors_proxy_engine.js (underscore), so the two
+# never collide; the job finds it here or in tests/cors-proxy/ on a host run.
+COPY tests/cors_proxy_engine.js tests/cors-proxy/cors-proxy.js ./
 # The Encryption / Decryption page's cryptography, loaded directly by
 # tests/crypto_engines.js so the RFCs' own vectors can be asserted with no
 # browser. All three, because the closure matters: symmetric_crypto.js requires

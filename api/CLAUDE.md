@@ -259,7 +259,7 @@ It exists for one thing a browser cannot do: **use a Verifier that sends no CORS
 headers.** Most send none, because a wallet is normally a native app and has no
 CORS. Without this, a browser-based wallet can talk to such a Verifier only
 through a reverse proxy put in front of it, which is what the test stack does
-for walt.id and Polaris (`waltid/cors-proxy.js`, #431).
+for walt.id and Polaris (`tests/cors-proxy/cors-proxy.js`, #431).
 
 It is **the SSF proxy's shape, narrowed to what OpenID4VP sends**:
 

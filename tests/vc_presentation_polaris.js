@@ -38,8 +38,8 @@
 //
 // Wiring: Polaris runs inside tests/polaris/serve-loop.sh, which restarts
 // `serve --once` for each case on a signal file in a volume this job shares
-// (POLARIS_DATA_DIR), and sits behind waltid/cors-proxy.js serving TLS
-// (POLARIS_URL), because Polaris sends no CORS headers and HAIP's URLs are
+// (POLARIS_DATA_DIR), and sits behind tests/cors-proxy/cors-proxy.js serving
+// TLS (POLARIS_URL), because Polaris sends no CORS headers and HAIP's URLs are
 // https. The job is not scheduled when POLARIS_DATA_DIR is unset.
 // ---------------------------------------------------------------------------
 
