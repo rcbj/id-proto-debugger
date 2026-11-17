@@ -51,18 +51,19 @@
 // Every one of those produces a workflow that works perfectly against itself.
 //
 // ---------------------------------------------------------------------------
-// THE SUBJECT GRAMMAR IS WRITTEN OUT HERE AND IS **NOT** SHARED WITH THE MOCK.
+// THE SUBJECT GRAMMAR IS WRITTEN OUT HERE AND IS **NOT** SHARED WITH IYA-STS.
 //
-// `common/krb5` is vendored into the mock STS because one wire CODEC must not
-// exist twice. This is the opposite case and the reason is worth stating,
-// because the two look alike: a subject identifier is JSON, and the defect
+// Nothing in this tree is shared with iya-sts as source — not even
+// `common/krb5`, which was copied there until 2026-11-12 and is iya-sts's own
+// now. That is the right shape for a grammar especially, and the reason is
+// worth stating: a subject identifier is JSON, and the defect
 // that matters in it is a READING — an accepted extra member, a missing
 // required one, a format name spelt from memory. If both ends read one
 // implementation, a misunderstanding they share is one neither can see, and
-// the round trip passes while interoperating with nothing. So the mock has
-// `sts/ssf/ssf_subjects.js`, this file has its own, and
+// the round trip passes while interoperating with nothing. So iya-sts has
+// `ssf/ssf_subjects.js`, this file has its own, and
 // `tests/ssf_protocol.js` drives one against the other OVER THE WIRE. It is
-// the argument `common/pq_jose.js` makes in the mock, applied to a grammar
+// the argument `common/pq_jose.js` makes in iya-sts, applied to a grammar
 // instead of to a signature.
 //
 // ---------------------------------------------------------------------------
