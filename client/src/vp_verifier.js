@@ -3717,6 +3717,27 @@ function audMatches(aud, clientId) {
   return isArray(aud) ? aud.indexOf(clientId) !== -1 : aud === clientId;
 }
 
+// Why an audience that is the DC API's origin: audience plus a "/" is not
+// it (#471, E6). OpenID4VP 1.0 Appendix A.4 and section 5.9.3 illustrate
+// the audience as "origin:https://verifier.example.com/", but that is an
+// example, and the Origin it prefixes is defined without one (section 2,
+// "Origin": "The web origin is https://verify.example.com"; Appendix
+// B.2.6.2 hashes "https://example.com"). "" when that is not the mismatch.
+function originSlashHint(got, audience) {
+  log.debug("Entering originSlashHint().");
+  var values = isArray(got) ? got : [got];
+  var slashed = !!audience && audience.indexOf(ORIGIN_PREFIX) === 0 &&
+      values.indexOf(audience + "/") !== -1;
+  log.debug("Leaving originSlashHint(). " + slashed);
+  return slashed ? " It is the origin with a trailing slash, which is a " +
+    "URL and not an Origin: OpenID4VP 1.0 section 2 defines the Origin " +
+    "as scheme, host and port (\"The web origin is " +
+    "https://verify.example.com\"), the HTML Standard's serialization of " +
+    "an origin (window.location.origin) has no slash, and the slash in " +
+    "Appendix A.4's \"for example, origin:https://verifier.example.com/\" " +
+    "is that example's alone." : "";
+}
+
 // ---------------------------------------------------------------------------
 // SD-JWT VC (dc+sd-jwt).
 // ---------------------------------------------------------------------------
@@ -4089,7 +4110,8 @@ async function verifyKbJwt(s, query, parsed, ctx) {
   s.add("kb.aud", labels["kb.aud"], audOk ? PASS : FAIL, audOk ?
         "aud is " + ctx.audience + "." : "aud is " +
         JSON.stringify(p.aud) + ", not " + (ctx.audience ||
-        "known: the request's origin was not given") + ".");
+        "known: the request's origin was not given") + "." +
+        originSlashHint(p.aud, ctx.audience));
   var fresh = freshness(p.iat, ctx.now, { required: true,
     maxAge: ctx.maxAgeSeconds, what: "RFC 9901 section 4.3" });
   s.add("kb.iat", labels["kb.iat"], fresh.status, fresh.detail);
@@ -4544,7 +4566,8 @@ async function checkVpJwt(s, query, presentation, vp, vcs, ctx) {
   s.add("vp.aud", "The VP JWT's aud is this Verifier's Client Identifier",
         audOk ? PASS : FAIL, "aud is " + JSON.stringify(p.aud) +
         (audOk ? "." : ", not " + (ctx.audience || "known: the request's " +
-        "origin was not given") + "."));
+        "origin was not given") + "." + originSlashHint(p.aud,
+                                                         ctx.audience)));
   var fresh = freshness(p.iat, ctx.now, { required: false,
     maxAge: ctx.maxAgeSeconds,
     what: "OpenID4VP 1.0 Appendix B.1.3.1.5 (nonce and aud only)" });
@@ -4921,7 +4944,7 @@ async function verifyLdpVc(s, query, presentation, ctx) {
           "Identifier", domainOk ? PASS : FAIL, "domain is " +
           JSON.stringify(proof.domain) + (domainOk ? "." : ", not " +
           (ctx.audience || "known: the request's origin was not given") +
-          "."));
+          "." + originSlashHint(proof.domain, ctx.audience)));
   } else {
     s.add("vp.proof", "The VP's holder proof verifies",
           requiresBinding(query) ? FAIL : SKIP, requiresBinding(query) ?
@@ -5430,9 +5453,31 @@ async function verifyResponse(opts) {
   }
   var audience = session.clientId;
   if (dc) {
-    audience = session.origin ? ORIGIN_PREFIX + session.origin : "";
+    // The Origin is used AS GIVEN, and is window.location.origin on the
+    // page: the HTML Standard's ASCII serialization of an origin, scheme
+    // "://" host [":" port], with no trailing slash (#471, E6). That is the
+    // Origin OpenID4VP 1.0 means: section 2 defines it as "the combination
+    // of a scheme/protocol, host, and port" ("The web origin is
+    // https://verify.example.com"), Appendix A.2's expected_origins example
+    // is "https://origin1.example.com", and Appendix B.2.6.2's worked
+    // SessionTranscript hashes "https://example.com" — the bytes
+    // tests/vp_verifier_engine.js reproduces. Only the illustrative
+    // "origin:https://verifier.example.com/" of section 5.9.3 and Appendix
+    // A.4 has a slash. The W3C Digital Credentials API records the
+    // top-level document's origin, an origin and not a URL (its section
+    // 6.7), and A.2 leaves how the wallet receives it to the platform. So
+    // the KB-JWT aud is "origin:" + this, and the mdoc DC handover's
+    // origin is this, unprefixed (B.2.6.2: "It MUST NOT be prefixed with
+    // origin:"). A session origin with a path is a URL, not an Origin.
+    var origin = String(session.origin || "");
+    var pathed = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]+[/?#]/i.test(origin);
+    audience = origin ? ORIGIN_PREFIX + origin : "";
     addCheck(report, "response.origin", g, "The audience is this page's " +
-             "origin (DC API)", audience ? PASS : FAIL, audience ?
+             "origin (DC API)", audience && !pathed ? PASS : FAIL,
+             pathed ? "session.origin is " + JSON.stringify(origin) +
+             ", a URL with a path, not an Origin (scheme, host and port, " +
+             "OpenID4VP 1.0 section 2; window.location.origin has no " +
+             "trailing slash)." : audience ?
              "over the Digital Credentials API every presentation's " +
              "audience is " + audience + ", signed request or not " +
              "(Appendix A.4)." : "session.origin was not given, so there is " +

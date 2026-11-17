@@ -226,6 +226,17 @@ back to the page.
 * **Audience:** under the DC API a KB-JWT, a VP and an `ldp_vc` proof are
   held to `origin:<origin>`. An mdoc device signature is checked against the
   DC API handover (B.2.6.2).
+* **The origin has no trailing slash.** It is `window.location.origin`, the
+  HTML serialization of an origin (scheme, host, port), and that is what
+  OpenID4VP 1.0 calls the Origin: section 2 says "The web origin is
+  https://verify.example.com", Appendix A.2's `expected_origins` example is
+  `https://origin1.example.com`, and B.2.6.2's worked SessionTranscript
+  hashes `https://example.com`. The tests reproduce those bytes. The
+  `origin:https://verifier.example.com/` in section 5.9.3 and Appendix A.4 is
+  a "for example", and it is the only example that has a slash. An `aud` of
+  `origin:<origin>/` therefore FAILs, and the detail explains why. A
+  `session.origin` with a path is a URL, not an origin, so
+  `response.origin` FAILs too.
 
 A browser without the API, or without a wallet the platform knows, is told
 so by name.

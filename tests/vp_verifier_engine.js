@@ -1567,6 +1567,12 @@ async function dcApi(env) {
     return verifier.dcApiRequest({ signed: true, claims: signedClaims,
       identity: env.identity, origin: "https://elsewhere.example" });
   }, /expected_origins/, "an origin outside expected_origins is refused");
+  // #471, E6: an Origin has no trailing slash (OpenID4VP 1.0 section 2;
+  // the HTML Standard's serialization, window.location.origin).
+  await rejects(function () {
+    return verifier.dcApiRequest({ signed: true, claims: signedClaims,
+      identity: env.identity, origin: ORIGIN + "/" });
+  }, /is not an origin/, "an origin with a trailing slash is a URL");
   await rejects(function () {
     return verifier.dcApiRequest({ multisigned: true, claims: signedClaims,
       identity: env.identity });
@@ -1609,6 +1615,24 @@ async function dcApi(env) {
   r = await run({ fields: { vp_token: { pid: [pres(ORIGIN)] } },
                   session: unsignedSession, fetchJson: fetchJson });
   failsOnly(r, ["pid[0].kb.aud"], "aud without the origin: prefix");
+  // #471, E6: Appendix A.4's example audience has a slash; the Origin
+  // (section 2, B.2.6.2's hashed "https://example.com") has none. The
+  // audience stays exact, and the mismatch is explained.
+  r = await run({ fields: { vp_token: { pid: [pres("origin:" + ORIGIN +
+    "/")] } }, session: unsignedSession, fetchJson: fetchJson });
+  failsOnly(r, ["pid[0].kb.aud"], "aud with a trailing slash");
+  ok(/trailing slash, which is a URL and not an Origin.*section 2/.test(
+    checkById(r, "pid[0].kb.aud").detail),
+     checkById(r, "pid[0].kb.aud").detail);
+  r = await run({ fields: { vp_token: { pid: [pres("origin:" + ORIGIN +
+    "/")] } }, session: Object.assign({}, unsignedSession,
+    { origin: ORIGIN + "/" }), fetchJson: fetchJson });
+  failsOnly(r, ["response.origin"], "a session origin with a path");
+  ok(/a URL with a path, not an Origin/.test(
+    checkById(r, "response.origin").detail),
+     checkById(r, "response.origin").detail);
+  eq(checkById(r, "pid[0].kb.aud").detail.indexOf("trailing slash"), -1,
+     "no slash hint where the audience is what the session says");
   r = await run({ fields: { vp_token: { pid: [pres("origin:" +
     ORIGIN)] } }, session: Object.assign({}, unsignedSession,
     { origin: undefined }), fetchJson: fetchJson });
