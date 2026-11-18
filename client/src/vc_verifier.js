@@ -52,7 +52,8 @@ var VERIFIER_KEYS = [
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
   "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity",
-  "vpv_public_base_url", "vpv_issuer_bindings", "vpv_trusted_authorities"
+  "vpv_public_base_url", "vpv_issuer_bindings", "vpv_trusted_authorities",
+  "vpv_profile"
 ];
 
 // Whether issuer metadata, DID documents and status lists are fetched
@@ -871,6 +872,37 @@ function showQr(invocation) {
   log.debug("Leaving showQr().");
 }
 
+function isHaip() {
+  log.debug("Entering isHaip().");
+  log.debug("Leaving isHaip().");
+  return val("vpv_profile") === "haip";
+}
+
+// Under the HAIP profile (#471, E1), refuse a request HAIP forbids this
+// Verifier to send, naming each rule; say what it only RECOMMENDS.
+function haipGate(r) {
+  log.debug("Entering haipGate().");
+  if (!isHaip()) {
+    setText("vpv_profile_note", "");
+    log.debug("Leaving haipGate(). Not HAIP.");
+    return;
+  }
+  var found = verifier.haipRequestProblems(Object.assign({}, r, {
+    formats: ((r.dcql || {}).credentials || []).map(function (q) {
+      return q.format;
+    }) }));
+  setText("vpv_profile_note", found.advised.length
+    ? "HAIP 1.0 advises: " + found.advised.join(" ") : "",
+    found.advised.length ? "vc-warn" : "");
+  if (found.refused.length) {
+    log.debug("Leaving haipGate(). Refused.");
+    throw new Error("HAIP 1.0 does not let this Verifier send that " +
+                    "request: " + found.refused.join(" ") + " Change it, " +
+                    "or choose the OpenID4VP 1.0 profile.");
+  }
+  log.debug("Leaving haipGate().");
+}
+
 async function createRequest() {
   log.debug("Entering createRequest().");
   saveState();
@@ -902,6 +934,8 @@ async function createRequest() {
     if (publicBase) {
       create.publicBaseUrl = publicBase;
     }
+    haipGate({ dcApi: false, prefix: prefix, delivery: delivery,
+               responseMode: mode, dcql: dcql, redirectUri: redirectUri });
     var hosted = await apiJson("POST", "/oid4vp/verifier", create);
     var host = new URL(hosted.responseUri).hostname;
     if (prefix === "x509_san_dns") {
@@ -964,6 +998,7 @@ async function createRequest() {
       claimsInput: claimsInput,
       live: live,
       session: {
+        profile: isHaip() ? "haip" : "",
         clientId: clientId, nonce: nonce, state: state,
         responseUri: hosted.responseUri, responseMode: mode, dcql: dcql,
         decryptionJwk: encryption ? encryption.privateJwk : undefined
@@ -1008,6 +1043,8 @@ async function askThroughDcApi() {
     var signed = !!val("vpv_dc_signed");
     var origin = window.location.origin;
     var dcql = dcqlFromPage();
+    haipGate({ dcApi: true, signed: signed, responseMode: mode, dcql: dcql,
+               prefix: val("vpv_client_prefix") || "x509_hash" });
     var encryption = mode === "dc_api.jwt"
       ? await verifier.responseEncryptionKey() : null;
     var nonce = verifier.randomToken(16);
@@ -1037,7 +1074,8 @@ async function askThroughDcApi() {
     current = {
       hosted: null, identity: signer ? signer.identity : {}, signer: signer,
       live: false,
-      session: { clientId: clientId, nonce: nonce, responseMode: mode,
+      session: { profile: isHaip() ? "haip" : "",
+                 clientId: clientId, nonce: nonce, responseMode: mode,
                  dcql: dcql, origin: origin,
                  decryptionJwk: encryption ? encryption.privateJwk
                                            : undefined },
@@ -1553,10 +1591,21 @@ function renderChecks(result) {
       row.insertCell(-1).textContent = text;
     });
   });
+  // HAIP 1.0 rows (#471, E1) are a conformance report beside the
+  // validity verdict, not part of it.
   var failed = (result.checks || []).filter(function (check) {
-    return check.status === "fail";
+    return check.status === "fail" && !check.profile;
   }).length;
-  var total = (result.checks || []).length;
+  var total = (result.checks || []).filter(function (check) {
+    return !check.profile;
+  }).length;
+  var profile = result.profile;
+  setText("vpv_profile_verdict", !profile ? "" : profile.conformant
+    ? "HAIP 1.0: the answer conforms to every HAIP rule checked."
+    : "HAIP 1.0: the answer VIOLATES HAIP in " + profile.violations +
+      " place" + (profile.violations === 1 ? "" : "s") + " (the rows " +
+      "marked \"HAIP 1.0\"). Everything else was checked as far as it " +
+      "could be.", !profile ? "" : profile.conformant ? "vc-ok" : "vc-bad");
   // Three verdicts (#467, S4). "incomplete" is nothing failed AND an
   // essential check — an issuer proof, an x5c chain's anchor, a holder
   // signature — was not performed. It is not a pass and is not drawn as

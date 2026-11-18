@@ -110,6 +110,19 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
     <table border="0">
       <tbody>
         <tr>
+          <td><label for="vpv_profile">Profile</label></td>
+          <td><select id="vpv_profile" onchange="return vcverifier.settingsChanged();">
+                <option value="openid4vp">OpenID4VP 1.0</option>
+                <option value="haip">HAIP 1.0 (High Assurance Interoperability Profile)</option>
+              </select>
+              <span class="vc-note">HAIP is a profile of OpenID4VP, not another protocol. Under it this Verifier
+              does not send a request HAIP forbids it to (anything but x509_hash, a request by value, an
+              unencrypted response, a format other than dc+sd-jwt or mso_mdoc), and names the rule. An answer
+              that breaks one of HAIP's rules is reported on its own "HAIP 1.0" rows, and every other check
+              still runs; the HAIP line says whether the answer conforms.</span>
+              <span class="vc-note" id="vpv_profile_note">&nbsp;</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_client_prefix">Client Identifier prefix</label></td>
           <td><select id="vpv_client_prefix" onchange="return vcverifier.settingsChanged();">
                 <option value="x509_hash">x509_hash (the hash of the request's certificate)</option>
@@ -325,6 +338,7 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
     <p><input class="btn2" id="btn_vpv_check" type="button" value="Check this answer"
               onclick="return vcverifier.checkPasted();" /></p>
     <div id="vpv_verdict" class="vc-note vc-status">&nbsp;</div>
+    <div id="vpv_profile_verdict" class="vc-note vc-status">&nbsp;</div>
     <table class="vc-checks" id="vpv_checks"></table>
     <h4 class="vc-subtitle">Disclosed claims</h4>
     <pre class="vc-mono" id="vpv_claims_out"></pre>

@@ -139,6 +139,48 @@ to its `d` and that the root's key is the one in its certificate. The import
 field is never stored. **Make a new identity** discards it, and every wallet
 must then be given the new one.
 
+## The HAIP 1.0 profile (#471, E1)
+
+"Profile" on pane 2 chooses OpenID4VP 1.0 or HAIP 1.0. HAIP is a profile of
+OpenID4VP, not another protocol, and it binds both ends.
+
+**What this Verifier sends.** `vp_verifier.haipRequestProblems()` lists the
+rules a request would break, and the page refuses to send it, naming each
+rule. These are the Verifier's own MUSTs:
+
+* redirect flow: x509_hash, by reference (`request_uri`), `direct_post.jwt`
+  (sections 5 and 5.1);
+* DC API: `dc_api.jwt`, and x509_hash when the request is signed (5.2);
+* `dc+sd-jwt` or `mso_mdoc` only (5);
+* A128GCM and A256GCM both in `encrypted_response_enc_values_supported`
+  (5).
+
+No `redirect_uri` back to the wallet is only advised: section 5.1
+RECOMMENDS the same-device flow, which needs one.
+
+**What it reports about an answer (rcbj, 2026-11-17).** A presentation that
+breaks a HAIP MUST is reported as violating HAIP, and every other check
+still runs as far as the information allows. Each rule is a row whose id
+contains `haip.` and whose label starts "HAIP 1.0:". It is a PASS, or a FAIL
+reading "VIOLATES HAIP 1.0: ..." with the section quoted. These rows carry
+`profile: "haip"`. `finish()` leaves them out of the validity verdict and
+returns `profile: { name, violations, conformant }`. The page prints that on
+its own line under the verdict. The rules:
+
+* the answer is encrypted, and its JWE is ECDH-ES with A128GCM or A256GCM;
+* the format is `dc+sd-jwt` or `mso_mdoc`;
+* SD-JWT VC (6.1, 6.1.1, 6.1.1.1): the issuer JWT carries `x5c`, its signer
+  is not self-signed and its chain does not carry the anchor, a
+  credential with `cnf` comes with a KB-JWT, and a `status` claim
+  carries `status_list`;
+* a Status List Token (6.1): its key is in `x5c`, with the same two chain
+  rules;
+* mdoc (5.3.1): one document per DeviceResponse, and the same two chain
+  rules on its `x5chain`.
+
+Outside HAIP mode none of these rows exist. The self-signed and
+included-anchor findings stay the reported rows described below.
+
 ## What is checked
 
 `vp_verifier.verifyResponse()` returns one entry per check and never folds

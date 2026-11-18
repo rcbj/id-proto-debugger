@@ -3472,6 +3472,83 @@ async function securityFindings(env) {
      JSON.stringify(taMiss));
   eq(failedIds(r), [], "E2: a credential outside trusted_authorities " +
      "fails nothing (the wallet SHOULD, the trust rows decide)");
+  // #471 E1: the HAIP 1.0 Verifier mode. A HAIP violation is REPORTED on
+  // a "haip." row and every other check still runs (rcbj, 2026-11-17); the
+  // validity verdict leaves those rows out and `profile` counts them.
+  const haipSession = function haipSession(extra) {
+    log.debug("Entering haipSession().");
+    log.debug("Leaving haipSession().");
+    return { session: Object.assign({}, anchors.session, { profile: "haip" },
+                                    extra || {}) };
+  };
+  r = await sendSd(x5cJwt([leaf, inter], GOV), haipSession());
+  eq(r.verdict, "pass", "E1: a sound chain is still a pass under HAIP");
+  ok(r.profile && r.profile.name === "HAIP 1.0", "E1: profile reported");
+  eq(r.checks.filter(function (c) {
+    return c.profile === "haip" && c.status === "fail";
+  }).map(function (c) {
+    return c.id;
+  }), ["response.haip.encrypted"], "E1: the only violation of a sound x5c " +
+     "credential sent by direct_post is the unencrypted answer");
+  ok(/VIOLATES HAIP 1\.0.*direct_post\.jwt or dc_api\.jwt/.test(
+     checkById(r, "response.haip.encrypted").detail), "E1: says which rule");
+  for (const id of ["p[0].haip.format", "p[0].haip.issuer.x5c",
+                    "p[0].haip.issuer.not-self-signed",
+                    "p[0].haip.issuer.no-anchor-in-chain",
+                    "p[0].haip.kb.present"]) {
+    eq(checkById(r, id).status, "pass", "E1: " + id);
+  }
+  // The anchor carried in x5c: a HAIP violation, reported, and the chain
+  // still anchored and the signature still checked.
+  r = await sendSd(x5cJwt([leaf, inter, root], GOV), haipSession());
+  eq(checkById(r, "p[0].haip.issuer.no-anchor-in-chain").status, "fail",
+     "E1: an included anchor violates HAIP 6.1.1");
+  eq([checkById(r, "p[0].issuer.signature").status, trustOf(r).status,
+      r.verdict], ["pass", "pass", "pass"], "E1: and validation goes on");
+  eq(r.profile.violations, 2, "E1: two violations counted");
+  // No x5c, a cnf with no KB-JWT, and a status with no status_list: three
+  // violations of HAIP 6.1, each reported; the issuer key is then looked
+  // for the non-HAIP way, and the checks that can still run do.
+  const noX5c = nodeJws({ alg: "ES256", typ: "dc+sd-jwt" }, Object.assign(
+    sdPayload(GOV), { cnf: { jwk: { kty: "EC", crv: "P-256",
+      x: "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+      y: "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0" } },
+      status: { identifier_list: { id: "1", uri: "https://x.example" } } }),
+    { privateKey: leafKey.privateKey });
+  r = await sendSd(noX5c, haipSession());
+  eq(["p[0].haip.issuer.x5c", "p[0].haip.kb.present",
+      "p[0].haip.status.status_list"].map(function (id) {
+    return checkById(r, id).status;
+  }), ["fail", "fail", "fail"], "E1: three HAIP 6.1 violations reported");
+  ok(checkById(r, "p[0].issuer.signature") && checkById(r, "p[0].vct"),
+     "E1: and the issuer key and vct were still checked");
+  // Outside HAIP mode there are no haip rows at all.
+  r = await sendSd(x5cJwt([leaf, inter, root], GOV), anchors);
+  ok(!r.profile && !r.checks.some(function (c) {
+    return /\.haip\./.test(c.id) || c.profile;
+  }), "E1: plain OpenID4VP has no HAIP rows");
+  // The request side.
+  const haipReq = function haipReq(over) {
+    log.debug("Entering haipReq().");
+    log.debug("Leaving haipReq().");
+    return verifier.haipRequestProblems(Object.assign({ dcApi: false,
+      prefix: "x509_hash", delivery: "reference-get",
+      responseMode: "direct_post.jwt", formats: ["dc+sd-jwt"],
+      redirectUri: "https://verifier.example/done" }, over || {}));
+  };
+  eq(haipReq(), { refused: [], advised: [] }, "E1: a HAIP request");
+  eq(haipReq({ prefix: "x509_san_dns" }).refused.length, 1);
+  eq(haipReq({ delivery: "value" }).refused.length, 1);
+  eq(haipReq({ responseMode: "direct_post" }).refused.length, 1);
+  eq(haipReq({ formats: ["ldp_vc", "mso_mdoc"] }).refused.length, 1);
+  eq(haipReq({ encValues: ["A256GCM"] }).refused.length, 1);
+  eq(haipReq({ redirectUri: "" }).advised.length, 1, "E1: same-device " +
+     "is advised, not required");
+  eq(haipReq({ dcApi: true, responseMode: "dc_api.jwt", signed: false,
+               prefix: "redirect_uri" }).refused, [],
+     "E1: an unsigned DC API request names no prefix");
+  eq(haipReq({ dcApi: true, responseMode: "dc_api", signed: true,
+               prefix: "decentralized_identifier" }).refused.length, 2);
   // A chain anchored at some OTHER root.
   const otherRootKey = nodePemPair("ec");
   const otherRoot = await testCert({ profile: "root-ca", cn: "Other Root",
