@@ -74,7 +74,11 @@ var LDP_SUITES = {
     "P-256", "P-384", "P-521", "RSA"] },
   "EcdsaSecp256k1Signature2019": { kind: "ld", curves: ["secp256k1"] },
   "BbsBlsSignature2020": { kind: "ld", curves: ["BLS12-381"],
-                           selective: true }
+                           selective: true },
+  // What a holder derives from a BbsBlsSignature2020 credential: the proof
+  // a PRESENTED one carries.
+  "BbsBlsSignatureProof2020": { kind: "ld", curves: ["BLS12-381"],
+                                selective: true, derived: true }
 };
 
 // The proof a HOLDER signs a Verifiable Presentation with, for each key

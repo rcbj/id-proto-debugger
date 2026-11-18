@@ -3935,6 +3935,16 @@ function buildJobs() {
     env: {},
   });
 
+  // BbsBlsSignature2020 and BbsBlsSignatureProof2020: the 2020 BBS+ scheme
+  // and the JSON-LD suite over it, in both directions against MATTR's
+  // released bbs-signatures and jsonld-signatures-bbs 1.2.0. Needs nothing.
+  jobs.push({
+    name: "BbsBlsSignature2020 and its derived proofs (BBS+ 2020, " +
+        "cross-implementation with MATTR, in node)",
+    script: "bbs_bls_2020_engine.js",
+    env: {},
+  });
+
   // The same engine against iya-sts's own vc_data_integrity.js, loaded in
   // process from the image the stack runs: its credentials verified here,
   // ours there, and the wallet's holder VP through its Verifier. Fails,
