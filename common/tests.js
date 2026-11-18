@@ -216,9 +216,56 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
                     (last ? last.message.split("\n")[0] : "(never found)"));
   }
 
+  // **A STALE REFERENCE MEANS START AGAIN (#507).** caep_page's Client
+  // Credential round trip threw "stale element reference" from inside the
+  // attempt below, 3 runs in 20, after the Password grant before it had
+  // passed: the page it was working on was replaced underneath it (a
+  // navigation still settling, or the discovery fieldset re-rendering
+  // around its own Retrieve click). Every element in the attempt is now
+  // located afresh where it is used, and if one still goes stale the whole
+  // attempt is run again on the page as it now is, rather than failing.
   async function populateMetadata(driver, discovery_endpoint) {
     log.debug("Entering populateMetadata().");
     log.info("Entering populateMetadata().");
+    const attempts = 3;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await populateMetadataOnce(driver, discovery_endpoint);
+        break;
+      } catch (e) {
+        if (!isGoneError(e) || attempt >= attempts) {
+          log.debug("Leaving populateMetadata(). Failed: " + e.message);
+          throw e;
+        }
+        log.warn("populateMetadata(): the page changed under attempt " +
+                 attempt + " (" + e.message.split("\n")[0] + "); " +
+                 "starting again.");
+      }
+    }
+    log.info("Leaving populateMetadata().");
+    log.debug("Leaving populateMetadata().");
+  }
+
+  // Re-locate `locator` and click it, a stale or missing copy being retried
+  // until the wait runs out.
+  async function clickSteadily(driver, locator, budget) {
+    log.debug("Entering clickSteadily(). " + locator);
+    await driver.wait(async function () {
+      try {
+        const el = await driver.findElement(locator);
+        if (!(await el.isDisplayed())) return false;
+        await el.click();
+        return true;
+      } catch (e) {
+        if (isGoneError(e)) return false;
+        throw e;
+      }
+    }, budget || waitTime * 3, "could not click " + locator);
+    log.debug("Leaving clickSteadily().");
+  }
+
+  async function populateMetadataOnce(driver, discovery_endpoint) {
+    log.debug("Entering populateMetadataOnce().");
     // Locate the discovery endpoint field and its related buttons
     const oidc_discovery_endpoint = By.id("oidc_discovery_endpoint");
     const btn_oidc_discovery_endpoint =
@@ -226,16 +273,17 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     const btn_oidc_populate_meta_data =
         By.className("btn_oidc_populate_meta_data");
 
-    // Wait until page is loaded
-    await driver.wait(until.elementLocated(oidc_discovery_endpoint), waitTime);
-    await driver.wait(until.elementIsVisible(driver.findElement(
-                      oidc_discovery_endpoint)), waitTime);
+    // Wait until the page is loaded: the document complete, then the field
+    // shown, located afresh on every poll (#507).
+    await driver.wait(async function () {
+      return (await driver.executeScript("return document.readyState;")) ===
+          "complete";
+    }, waitTime * 3, "the page never finished loading");
+    await waitUntilShown(driver, oidc_discovery_endpoint);
 
-    // Enter discovery endpoint
-    await driver.findElement(oidc_discovery_endpoint).clear();
-    await driver.findElement(oidc_discovery_endpoint)
-                             .sendKeys(discovery_endpoint);
-    await driver.findElement(btn_oidc_discovery_endpoint).click();
+    // Enter discovery endpoint, and Retrieve. Both re-located as used.
+    await typeSteadily(driver, oidc_discovery_endpoint, discovery_endpoint);
+    await clickSteadily(driver, btn_oidc_discovery_endpoint);
 
     // Populate metadata.
     //
@@ -268,11 +316,12 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     // round trip.
     await driver.wait(until.elementLocated(btn_oidc_populate_meta_data),
                       waitTime * 6);
-    await driver.wait(until.elementIsVisible(driver.findElement(
-                      btn_oidc_populate_meta_data)), waitTime);
-    await driver.executeScript("arguments[0].scrollIntoView({ behavior: " +
-        "'smooth', block: 'center' });",
-        await driver.findElement(btn_oidc_populate_meta_data));
+    await waitUntilShown(driver, btn_oidc_populate_meta_data);
+    // Scrolled by a script that finds the button itself, so no handle is
+    // carried across from here to the clicks below.
+    await driver.executeScript("var b = document.getElementsByClassName(" +
+        "'btn_oidc_populate_meta_data'); if (b.length) " +
+        "b[b.length - 1].scrollIntoView({ block: 'center' });");
 
     // Click Populate and wait for the CONTENT, and be willing to click AGAIN.
     //
@@ -337,8 +386,8 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     await snap(driver, "01-metadata",
                { ids: ["oidc_expand_button", "oidc_fieldset"],
                  maxHeight: 640 });
-    log.info("Leaving populateMetadata(). authorization_endpoint=" + seen);
-    log.debug("Leaving populateMetadata().");
+    log.info("populateMetadataOnce(): authorization_endpoint=" + seen);
+    log.debug("Leaving populateMetadataOnce().");
   }
 
   // Authorization-Code family flow (OAuth2 Authorization Code Grant / OIDC
