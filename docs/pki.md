@@ -1026,16 +1026,24 @@ sign with one. Both are avoidable:
 OpenSSL verifies the result, and `tests/pki_x509.js` issues a whole chain
 through it.
 
-### The one thing here that still needs Web Crypto
+### Nothing here needs Web Crypto
 
-Since #463 every key, signature and certificate on this page is
-`crypto_provider.js`'s, pure JS, and works on a plain-HTTP origin. **Two
-keystore formats are the exception**: PKCS#12 and password-protected PKCS#8
-are built by PKI.js, which does their cryptography (PBES2, the MAC)
-through its own Web Crypto engine. `key_material.js`'s `requirePkiEngine()`
-refuses them up front on a page with no `crypto.subtle`, saying it needs a
-secure context and that every other format works, rather than failing
-somewhere inside PKI.js. `tests/pki_key_formats.js` holds that sentence.
+Since #463 every key, signature, certificate and keystore on this page is
+`crypto_provider.js`'s, pure JS, and works on a plain-HTTP origin. That
+includes the two keystore formats that were the last exception, PKCS#12
+and password-protected PKCS#8, which PKI.js used to encrypt through its own
+Web Crypto engine. `key_material.js` now builds their cryptography itself
+and uses PKI.js for ASN.1 structure only:
+
+* **PBES2** (RFC 8018), as OpenSSL 3 writes it by default: PBKDF2 with
+  HMAC-SHA-256, 100000 iterations, a 16-byte salt, AES-256-CBC.
+* **The PKCS#12 MAC** (RFC 7292): HMAC-SHA-256 over the AuthenticatedSafe,
+  keyed by the Appendix B key derivation (`pkcs12Kdf()`, id 3) over the
+  password as a terminated BMPString.
+
+`tests/pki_key_formats.js` hands every keystore it makes to OpenSSL, and
+makes one of each with `crypto.subtle` removed; OpenSSL and node must open
+those with the password and refuse them without.
 
 ### The browser has to have Ed25519 at all
 

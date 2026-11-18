@@ -56,19 +56,10 @@ var log = bunyan.createLogger({
   })()
 });
 
-// PKI.js needs a Web Crypto engine. In the browser the global `crypto` object
-// provides it; in node (v18+) the same global exists, which is what lets the
-// keystore formats be tested with no browser.
-(function initPkiEngine() {
-  try {
-    if (typeof crypto !== 'undefined' && crypto.subtle) {
-      pkijs.setEngine('webcrypto', new pkijs.CryptoEngine({ name: 'webcrypto',
-                      crypto: crypto }));
-    }
-  } catch (e) {
-    log.error('Failed to init PKI.js engine: ' + e.message);
-  }
-})();
+// PKI.js is used here for ASN.1 STRUCTURE only (certificates, bags,
+// attributes), never for cryptography, so it needs no engine and nothing
+// here needs Web Crypto (#463). The keystore cryptography (PBES2, the
+// PKCS#12 MAC) is below, on crypto_provider.js.
 
 // Keys are generated, read and written by crypto_provider.js (#463): pure
 // JS, so the key pane works on a plain-HTTP page. PKI.js above keeps its Web
@@ -579,30 +570,134 @@ var PKCS12_KEY_OID = '1.2.840.113549.1.12.10.1.2';
 var OID_LOCAL_KEY_ID = '1.2.840.113549.1.9.21';
 var OID_FRIENDLY_NAME = '1.2.840.113549.1.9.20';
 
-var PBES2_OPTS = {
-  contentEncryptionAlgorithm: { name: 'AES-CBC', length: 256 },
-  hmacHashAlgorithm: 'SHA-256',
-  iterationCount: 100000,
-  pbkdf2HashAlgorithm: 'SHA-256'
-};
+// PBES2 (RFC 8018 section 6.2) as OpenSSL 3 writes it by default: PBKDF2
+// with HMAC-SHA-256, AES-256-CBC, a 16-byte salt and IV. 100000 iterations,
+// as PKI.js was given before #463 moved this onto crypto_provider.js.
+var PBES2_ITERATIONS = 100000;
+var OID_PBES2 = '1.2.840.113549.1.5.13';
+var OID_PBKDF2 = '1.2.840.113549.1.5.12';
+var OID_HMAC_SHA256 = '1.2.840.113549.2.9';
+var OID_AES256_CBC = '2.16.840.1.101.3.4.1.42';
+var OID_SHA256 = '2.16.840.1.101.3.4.2.1';
+var OID_DATA = '1.2.840.113549.1.7.1';
 
-function strBuf(s) {
-  log.debug("Entering strBuf().");
-  log.debug("Leaving strBuf().");
-  return new TextEncoder().encode(s).buffer;
+function oid(value) {
+  log.debug("Entering oid(). " + value);
+  log.debug("Leaving oid().");
+  return new asn1js.ObjectIdentifier({ value: value });
+}
+
+function octets(bytes) {
+  log.debug("Entering octets().");
+  log.debug("Leaving octets().");
+  return new asn1js.OctetString({ valueHex: Uint8Array.from(bytes).buffer });
+}
+
+function derOf(node) {
+  log.debug("Entering derOf().");
+  log.debug("Leaving derOf().");
+  return new Uint8Array(node.toBER(false));
+}
+
+// An EncryptedPrivateKeyInfo (RFC 5208 section 6) under PBES2, as an asn1js
+// node. `password` is a string, encoded as UTF-8 for PBKDF2 (RFC 8018 leaves
+// the encoding to the application; OpenSSL and node use UTF-8).
+function pbes2EncryptedPrivateKeyInfo(privDer, password) {
+  log.debug("Entering pbes2EncryptedPrivateKeyInfo().");
+  var salt = provider.randomBytes(16);
+  var iv = provider.randomBytes(16);
+  var key = provider.pbkdf2('sha256', new TextEncoder().encode(password),
+                            salt, PBES2_ITERATIONS, 32);
+  var encrypted = provider.aesCbcEncrypt(key, iv, privDer);
+  var node = new asn1js.Sequence({ value: [
+    new asn1js.Sequence({ value: [
+      oid(OID_PBES2),
+      new asn1js.Sequence({ value: [
+        new asn1js.Sequence({ value: [
+          oid(OID_PBKDF2),
+          new asn1js.Sequence({ value: [
+            octets(salt),
+            new asn1js.Integer({ value: PBES2_ITERATIONS }),
+            new asn1js.Sequence({ value: [oid(OID_HMAC_SHA256),
+                                          new asn1js.Null()] })
+          ] })
+        ] }),
+        new asn1js.Sequence({ value: [oid(OID_AES256_CBC), octets(iv)] })
+      ] })
+    ] }),
+    octets(encrypted)
+  ] });
+  log.debug("Leaving pbes2EncryptedPrivateKeyInfo().");
+  return node;
 }
 
 // Encrypt a PKCS#8 private key into an EncryptedPrivateKeyInfo (PBES2).
-// Returns DER bytes.
+// Returns DER bytes. Pure JS since #463, so it works on a plain-HTTP page.
 async function encryptedPkcs8Der(privDer, password) {
   log.debug("Entering encryptedPkcs8Der().");
-  requirePkiEngine('A password-protected PKCS#8 key');
-  var bag = new pkijs.PKCS8ShroudedKeyBag({
-      parsedValue: pkijs.PrivateKeyInfo.fromBER(privDer) });
-  var opts = Object.assign({ password: strBuf(password) }, PBES2_OPTS);
-  await bag.makeInternalValues(opts);
+  var der = derOf(pbes2EncryptedPrivateKeyInfo(privDer, password));
   log.debug("Leaving encryptedPkcs8Der().");
-  return new Uint8Array(bag.toSchema().toBER(false));
+  return der;
+}
+
+// RFC 7292 Appendix B.2, the PKCS#12 key derivation, with SHA-256 (u = 32,
+// v = 64). `id` 3 derives a MAC key. The password is a BMPString with its
+// two-byte terminator, as B.1 requires.
+function pkcs12Kdf(password, salt, iterations, id, length) {
+  log.debug("Entering pkcs12Kdf(). id=" + id);
+  var u = 32;
+  var v = 64;
+  var pw = new Uint8Array((password.length + 1) * 2);
+  for (var c = 0; c < password.length; c++) {
+    pw[2 * c] = password.charCodeAt(c) >> 8;
+    pw[2 * c + 1] = password.charCodeAt(c) & 0xff;
+  }
+  function fill(src) {
+    log.debug("Entering fill().");
+    var out = new Uint8Array(src.length ? v * Math.ceil(src.length / v) : 0);
+    for (var k = 0; k < out.length; k++) {
+      out[k] = src[k % src.length];
+    }
+    log.debug("Leaving fill().");
+    return out;
+  }
+  var D = new Uint8Array(v).fill(id);
+  var S = fill(salt);
+  var P = fill(pw);
+  var I = new Uint8Array(S.length + P.length);
+  I.set(S, 0);
+  I.set(P, S.length);
+  var out = new Uint8Array(length);
+  for (var done = 0; done < length; done += u) {
+    var A = provider.digest('sha256', concatBytes(D, I));
+    for (var r = 1; r < iterations; r++) {
+      A = provider.digest('sha256', A);
+    }
+    out.set(A.subarray(0, Math.min(u, length - done)), done);
+    // Step 6C: each v-byte block of I becomes (I_j + B + 1) mod 2^(8v).
+    var B = fill(A).subarray(0, v);
+    for (var j = 0; j < I.length; j += v) {
+      var carry = 1;
+      for (var b = v - 1; b >= 0; b--) {
+        var sum = I[j + b] + B[b] + carry;
+        I[j + b] = sum & 0xff;
+        carry = sum >> 8;
+      }
+    }
+  }
+  log.debug("Leaving pkcs12Kdf().");
+  return out;
+}
+
+// A ContentInfo of type data (RFC 7292 section 4.1) carrying `der`.
+function dataContentInfo(der) {
+  log.debug("Entering dataContentInfo().");
+  log.debug("Leaving dataContentInfo().");
+  return new asn1js.Sequence({ value: [
+    oid(OID_DATA),
+    new asn1js.Constructed({ idBlock: { tagClass: 3, tagNumber: 0 },
+                             value: [octets(der)] })
+  ] });
 }
 
 // A certificate, however the caller has it, as a pkijs.Certificate. Accepts a
@@ -623,25 +718,6 @@ function asCertificate(cert) {
   return pkijs.Certificate.fromBER(cert);
 }
 
-// THE ONE PLACE LEFT THAT NEEDS WEB CRYPTO (#463). Every key, signature and
-// certificate on these pages is crypto_provider.js's, pure JS. The keystore
-// formats that PKI.js builds, PKCS#12 and password-protected PKCS#8, do their
-// own cryptography through PKI.js's Web Crypto engine, and crypto.subtle does
-// not exist on a plain-HTTP page. So they say so, naming the reason and what
-// still works, instead of failing somewhere inside PKI.js.
-function requirePkiEngine(what) {
-  log.debug("Entering requirePkiEngine(). " + what);
-  if (typeof crypto !== 'undefined' && crypto.subtle) {
-    log.debug("Leaving requirePkiEngine(). Available.");
-    return;
-  }
-  log.debug("Leaving requirePkiEngine(). No Web Crypto.");
-  throw new Error(what + ' is built by PKI.js, whose cryptography is the ' +
-      "browser's Web Crypto, and this page is not in a secure context " +
-      '(https, or localhost), so it has none. Every other key format works ' +
-      'here: PEM, DER and JWK, public and private.');
-}
-
 // A PKCS#12 (.p12/.pfx) holding one private key and the certificates given —
 // the leaf first, then as much of its chain as the caller wants to ship.
 //
@@ -651,7 +727,6 @@ function requirePkiEngine(what) {
 // certificate imports and then fails to authenticate anything.
 async function buildPkcs12(options) {
   log.debug("Entering buildPkcs12().");
-  requirePkiEngine('A PKCS#12 keystore');
   var opts = options || {};
   var certs = (opts.certs || []).map(asCertificate);
   if (!certs.length) {
@@ -664,7 +739,7 @@ async function buildPkcs12(options) {
     throw new Error('PKCS#12 requires a password.');
   }
   var privDer = pemToDer(opts.privatePem);
-  var keyId = crypto.getRandomValues(new Uint8Array(20));
+  var keyId = provider.randomBytes(20);
   var friendly = opts.friendlyName || 'idptools';
   function attrs() {
     log.debug("Entering attrs().");
@@ -684,36 +759,44 @@ async function buildPkcs12(options) {
         bagValue: new pkijs.CertBag({ parsedValue: cert }),
         bagAttributes: index === 0 ? attrs() : [] });
   });
+  // The key bag's value is an EncryptedPrivateKeyInfo, built and encrypted
+  // here (pure JS) and handed to PKI.js as structure only.
+  var shrouded = new pkijs.PKCS8ShroudedKeyBag({ schema: asn1js.fromBER(
+      derOf(pbes2EncryptedPrivateKeyInfo(privDer, opts.password)).buffer)
+      .result });
   var keyBag = new pkijs.SafeBag({ bagId: PKCS12_KEY_OID,
-      bagValue: new pkijs.PKCS8ShroudedKeyBag({
-      parsedValue: pkijs.PrivateKeyInfo.fromBER(privDer) }),
-      bagAttributes: attrs() });
-  await keyBag.bagValue.makeInternalValues(Object.assign({
-      password: strBuf(opts.password) }, PBES2_OPTS));
-
-  var pfx = new pkijs.PFX({
-    parsedValue: {
-      integrityMode: 0, // password integrity
-      authenticatedSafe: new pkijs.AuthenticatedSafe({
-        parsedValue: {
-          safeContents: [
-            { privacyMode: 0,
-             value: new pkijs.SafeContents({ safeBags: certBags }) },
-            { privacyMode: 0,
-             value: new pkijs.SafeContents({ safeBags: [keyBag] }) }
-          ]
-        }
-      })
-    }
-  });
-  await pfx.parsedValue.authenticatedSafe.makeInternalValues({ safeContents: [{
-      }, {}] });
-  await pfx.makeInternalValues({ password: strBuf(opts.password),
-                               iterations: 100000,
-                               pbkdf2HashAlgorithm: 'SHA-256',
-                               hmacHashAlgorithm: 'SHA-256' });
+      bagValue: shrouded, bagAttributes: attrs() });
+  function safeContentsDer(bags) {
+    log.debug("Entering safeContentsDer().");
+    log.debug("Leaving safeContentsDer().");
+    return derOf(new pkijs.SafeContents({ safeBags: bags }).toSchema());
+  }
+  // AuthenticatedSafe (RFC 7292 section 4.1): two unencrypted ContentInfos,
+  // the certificates and the (already shrouded) key, as PKI.js wrote them.
+  var authSafeDer = derOf(new asn1js.Sequence({ value: [
+    dataContentInfo(safeContentsDer(certBags)),
+    dataContentInfo(safeContentsDer([keyBag]))
+  ] }));
+  // Password integrity: HMAC-SHA-256 over the AuthenticatedSafe's octets,
+  // keyed by the RFC 7292 Appendix B KDF (id 3), with a 16-byte salt.
+  var macSalt = provider.randomBytes(16);
+  var macKey = pkcs12Kdf(String(opts.password), macSalt, PBES2_ITERATIONS, 3,
+                         32);
+  var mac = provider.hmac('sha256', macKey, authSafeDer);
+  var pfx = new asn1js.Sequence({ value: [
+    new asn1js.Integer({ value: 3 }),
+    dataContentInfo(authSafeDer),
+    new asn1js.Sequence({ value: [
+      new asn1js.Sequence({ value: [
+        new asn1js.Sequence({ value: [oid(OID_SHA256), new asn1js.Null()] }),
+        octets(mac)
+      ] }),
+      octets(macSalt),
+      new asn1js.Integer({ value: PBES2_ITERATIONS })
+    ] })
+  ] });
   log.debug("Leaving buildPkcs12().");
-  return new Uint8Array(pfx.toSchema().toBER(false));
+  return derOf(pfx);
 }
 
 // Password-protecting a string as a compact PBES2 JWE (RFC 7518 section 4.8)
