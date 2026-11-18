@@ -41,7 +41,6 @@ set -x
 MODE=suite
 MODE_WHAT=""
 KEEP_STACK=0
-KEEP_STACK_ASKED=0
 # auto: publish no host ports when one the stack wants is already held;
 # 1: never publish (--no-host-ports).
 NO_HOST_PORTS=auto
@@ -119,14 +118,14 @@ Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
                ?NAME=value&... to pick one of its jobs (for example
                caep_page.js, or saml_sso.js?SAML_IDP=sts). With no value it
                takes TEST_SELECT from the environment. A selector that
-               matches no job fails the run, naming it. The stack is left up.
+               matches no job fails the run, naming it. The stack is torn
+               down at the end unless --keep-stack is given too.
 
   --repeat=<N> With --select, run the selection N times against the same
                stack, every one of them even after a failure, and fail when
                any did, saying how many. For a job that flakes: each run's
-               report is under tests/report/ as usual. Unlike a single
-               --select, the stack is torn down at the end unless
-               --keep-stack is given too.
+               report is under tests/report/ as usual. Torn down at the end
+               like --select, for every N, unless --keep-stack is given.
 
   --krb5-real-dc[=test|capture|both]
                Create a Windows Server 2025 domain controller on AWS, run
@@ -149,7 +148,8 @@ Usage: $(basename "$0") [one mode] [--sts-url=<base>] [--keep-stack] [-h|--help]
                focused mode.
 
   The focused modes run their jobs one at a time (TEST_CONCURRENCY=1) unless
-  TEST_CONCURRENCY says otherwise, and leave the stack up. Stop it with
+  TEST_CONCURRENCY says otherwise, and leave the stack up (all but --select,
+  which tears it down unless --keep-stack is given). Stop it with
   \`docker compose -f docker-compose-run-tests.yml down -v\`, or by running this
   script again, which always starts from a clean stack.
 USAGE
@@ -184,7 +184,7 @@ do
     --krb5-real-dc) setMode "$1" krb5-real-dc test ;;
     --krb5-real-dc=*) setMode "$1" krb5-real-dc "${1#*=}" ;;
     --sts-url=*) STS_EXTERNAL_URL="${1#*=}" ;;
-    --keep-stack) KEEP_STACK=1; KEEP_STACK_ASKED=1 ;;
+    --keep-stack) KEEP_STACK=1 ;;
     --no-host-ports) NO_HOST_PORTS=1 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
@@ -299,7 +299,7 @@ case "${MODE}" in
 esac
 TEST_SELECT="${TEST_SELECT# }"
 case "${MODE}" in
-  saml-only|wsfed-only|delegation-only|federation-only|saml-dev|select)
+  saml-only|wsfed-only|delegation-only|federation-only|saml-dev)
     KEEP_STACK=1
     ;;
 esac
@@ -313,13 +313,12 @@ then
   echo "--repeat runs a --select selection again; it needs --select." >&2
   exit 1
 fi
-# A REPEATED selection is a measurement, not a stack to look at afterwards,
-# and leaving it up collides with the next run's fixed container names. So
-# --repeat tears down at the end unless --keep-stack was given as well.
-if [ "${REPEAT}" != "1" ] && [ "${KEEP_STACK_ASKED}" != "1" ];
-then
-  KEEP_STACK=0
-fi
+# --select (with or without --repeat, whatever N is) TEARS DOWN at the end
+# unless --keep-stack is given as well. It is a measurement rather than a
+# stack to look at, and a stack it left up collided with the next run's
+# fixed container names: --repeat=1 did exactly that, because only N > 1
+# used to tear down. It is no longer in the list of modes above that keep
+# their stack, so KEEP_STACK is 1 for it only when --keep-stack set it.
 
 # CONFIG_FILE selects the api/client build-time config baked into their images.
 # The whole stack runs on a private compose network, so the browser (running
@@ -767,13 +766,18 @@ onExit()
 {
   local status=$?
   echo "Entering onExit()."
+  local stackLine
   if [ "${KEEP_STACK}" = "1" ];
   then
     printKeptStack
+    stackLine="docker-run-tests.sh: the stack was LEFT UP (see above)."
   else
     teardown
+    stackLine="docker-run-tests.sh: the stack was torn down."
   fi
   launcherExitStatus "${status}" "docker-run-tests.sh"
+  # The last line, so whoever runs next knows whether containers remain.
+  echo "${stackLine}"
   exit "${status}"
 }
 trap onExit EXIT

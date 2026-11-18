@@ -462,9 +462,9 @@ TEST_WAIT_TIME_MS=10000 ./docker-run-tests.sh
 # catch a flake. --select takes run-report.js's TEST_SELECT selectors (a bare
 # --select reads TEST_SELECT from the environment); --repeat=<N> runs them N
 # times against the same stack, every run even after a failure, and says how
-# many failed. A single --select leaves the stack up; --repeat tears it down
-# at the end (its fixed container names would collide with the next run)
-# unless --keep-stack is given as well.
+# many failed. Both tear the stack down at the end (a stack left up collides
+# with the next run's fixed container names) unless --keep-stack is given as
+# well; the last line printed says which happened.
 ./docker-run-tests.sh --select=caep_page.js --repeat=10
 
 # Against a site that is ALREADY DEPLOYED, with everything on the other side
