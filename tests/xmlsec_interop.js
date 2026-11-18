@@ -1492,12 +1492,104 @@ function publishedMerlinTests() {
   log.debug("Leaving publishedMerlinTests().");
 }
 
+// XML Encryption made by OTHER code and opened by xmldsig.js, and the
+// reverse (#463 step 3b). Two cases the round trips above cannot show,
+// because they need the far end to differ from this file:
+//   * CBC padding as XML Encryption 1.1 section 5.2.1 defines it: arbitrary
+//     octets, the last naming their count. Built by node's crypto with
+//     RANDOM padding, which a PKCS#7 unpad refuses.
+//   * xenc11 rsa-oaep with a DigestMethod (SHA-256) that is not its MGF
+//     (MGF1-SHA-1), wrapped by node-forge directly; and xmldsig.js's own
+//     wrap of that combination unwrapped by forge.
+function independentlyMadeEncryption() {
+  log.debug("Entering independentlyMadeEncryption().");
+  log.info("== XML-Encryption against other implementations ==");
+  const forge = xd.forge;
+  const pub = forge.pki.certificateFromPem(kp.certPem).publicKey;
+  const enc = function enc(dataAlg, keyAlg, inner, wrapped, cipherValue) {
+    log.debug("Entering enc().");
+    log.debug("Leaving enc().");
+    return '<xenc:EncryptedData xmlns:xenc="' + XENC + '" Type="' + XENC +
+      'Element"><xenc:EncryptionMethod Algorithm="' + dataAlg + '"/>' +
+      '<ds:KeyInfo xmlns:ds="' + DSIG_NS + '"><xenc:EncryptedKey>' +
+      '<xenc:EncryptionMethod Algorithm="' + keyAlg + '">' + inner +
+      '</xenc:EncryptionMethod><xenc:CipherData><xenc:CipherValue>' +
+      wrapped + '</xenc:CipherValue></xenc:CipherData></xenc:EncryptedKey>' +
+      '</ds:KeyInfo><xenc:CipherData><xenc:CipherValue>' + cipherValue +
+      '</xenc:CipherValue></xenc:CipherData></xenc:EncryptedData>';
+  };
+  // 1. AES-256-CBC with random padding, the key by node's RSA-OAEP (SHA-1).
+  const key = crypto.randomBytes(32);
+  const iv = crypto.randomBytes(16);
+  const pt = Buffer.from(PLAINTEXT, "utf8");
+  const n = 16 - (pt.length % 16);
+  const pad = Buffer.concat([crypto.randomBytes(n - 1), Buffer.from([n])]);
+  const c = crypto.createCipheriv("aes-256-cbc", key, iv);
+  c.setAutoPadding(false);
+  const ct = Buffer.concat([c.update(Buffer.concat([pt, pad])), c.final()]);
+  const wrappedByNode = crypto.publicEncrypt({ key: kp.certPem,
+    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha1" },
+    key);
+  let out;
+  try {
+    out = xd.decryptXml(enc(XENC + "aes256-cbc", XENC + "rsa-oaep-mgf1p",
+      '<ds:DigestMethod xmlns:ds="' + DSIG_NS + '" Algorithm="' + SHA1 +
+      '"/>', wrappedByNode.toString("base64"),
+      Buffer.concat([iv, ct]).toString("base64")),
+      { privateKeyPem: kp.privateKeyPem });
+  } catch (e) {
+    out = "error: " + e.message;
+  }
+  check("AES-256-CBC with RANDOM padding (section 5.2.1), made by node, " +
+        "decrypts", out === PLAINTEXT, String(out).slice(0, 120));
+  // 2. rsa-oaep, SHA-256 digest with MGF1-SHA-1, wrapped by forge.
+  const key2 = crypto.randomBytes(32);
+  const iv2 = crypto.randomBytes(12);
+  const g = crypto.createCipheriv("aes-256-gcm", key2, iv2);
+  const ct2 = Buffer.concat([g.update(pt), g.final(), g.getAuthTag()]);
+  const wrappedByForge = forge.util.encode64(pub.encrypt(
+    forge.util.binary.raw.encode(key2), "RSA-OAEP",
+    { md: forge.md.sha256.create(), mgf1: { md: forge.md.sha1.create() } }));
+  const inner = '<ds:DigestMethod xmlns:ds="' + DSIG_NS + '" Algorithm="' +
+    XENC + 'sha256"/><xenc11:MGF xmlns:xenc11="' + XENC11 +
+    '" Algorithm="' + XENC11 + 'mgf1sha1"/>';
+  try {
+    out = xd.decryptXml(enc(XENC11 + "aes256-gcm", XENC11 + "rsa-oaep",
+      inner, wrappedByForge, Buffer.concat([iv2, ct2]).toString("base64")),
+      { privateKeyPem: kp.privateKeyPem });
+  } catch (e) {
+    out = "error: " + e.message;
+  }
+  check("rsa-oaep SHA-256 with MGF1-SHA-1, wrapped by forge, decrypts",
+        out === PLAINTEXT, String(out).slice(0, 120));
+  // 3. The reverse: xmldsig.js wraps that combination, forge unwraps.
+  const mine = xd.encryptXml(PLAINTEXT, { certPem: kp.certPem,
+    dataAlg: XENC11 + "aes256-gcm", keyAlg: XENC11 + "rsa-oaep",
+    digest: XENC + "sha256", mgf: XENC11 + "mgf1sha1",
+    type: XENC + "Element", c14nMode: "none" });
+  const wrappedMine = /<xenc:EncryptedKey>[\s\S]*?<xenc:CipherValue>([^<]+)/
+    .exec(mine)[1];
+  let unwrapped = "";
+  try {
+    unwrapped = forge.pki.privateKeyFromPem(kp.privateKeyPem).decrypt(
+      forge.util.decode64(wrappedMine), "RSA-OAEP",
+      { md: forge.md.sha256.create(), mgf1: { md: forge.md.sha1.create() } });
+  } catch (e) {
+    unwrapped = "";
+  }
+  check("xmldsig.js's rsa-oaep SHA-256/MGF1-SHA-1 wrap is unwrapped by " +
+        "forge", unwrapped.length === 32, "unwrapped " + unwrapped.length +
+        " bytes");
+  log.debug("Leaving independentlyMadeEncryption().");
+}
+
 async function main() {
   log.debug("Entering main().");
   try {
     signatureTests();
     await encryptionTests();
     decryptRoundTripTests();
+    independentlyMadeEncryption();
     envelopedSignatureTests();
     generalSignatureTests();
     apiSignatureTests();
