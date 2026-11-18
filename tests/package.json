@@ -7,6 +7,7 @@
     "report:demo": "node run-report.js --demo"
   },
   "dependencies": {
+    "@auth0/cose": "^1.0.2",
     "@blockcerts/ecdsa-secp256k1-signature-2019": "^1.0.3",
     "@digitalbazaar/bbs-2023-cryptosuite": "2.0.1",
     "@digitalbazaar/bbs-signatures": "^3.1.0",
@@ -14,6 +15,7 @@
     "@digitalbazaar/ecdsa-jcs-2019-cryptosuite": "^1.0.0",
     "@digitalbazaar/ecdsa-multikey": "^1.8.0",
     "@digitalbazaar/ecdsa-rdfc-2019-cryptosuite": "^1.3.0",
+    "@digitalbazaar/ecdsa-sd-2023-cryptosuite": "^3.4.1",
     "@digitalbazaar/ed25519-multikey": "^1.3.1",
     "@digitalbazaar/ed25519-signature-2018": "^4.2.0",
     "@digitalbazaar/ed25519-signature-2020": "^5.4.0",
@@ -28,6 +30,7 @@
     "@noble/curves": "1.4.0",
     "@noble/hashes": "1.4.0",
     "@noble/post-quantum": "^0.4.1",
+    "@sd-jwt/core": "^0.25.0",
     "@xmldom/xmldom": "^0.9.12",
     "acorn": "^8.18.0",
     "acorn-walk": "^8.3.5",

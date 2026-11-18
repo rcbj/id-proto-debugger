@@ -62,6 +62,7 @@ var nobleSha1 = require("@noble/hashes/sha1").sha1;
 var forge = require("node-forge");
 var cbor = require("./cbor");
 var nobleSha512 = require("@noble/hashes/sha512");
+var nobleSha3 = require("@noble/hashes/sha3");
 var p256 = require("@noble/curves/p256").p256;
 var p384 = require("@noble/curves/p384").p384;
 var p521 = require("@noble/curves/p521").p521;
@@ -72,6 +73,8 @@ var x509 = require("./x509");
 var keyMaterial = require("./key_material");
 var vpProtocols = require("./vp_protocols");
 var joseJwe = require("./jose_jwe");
+// Registers RDFC-1.0 with data_integrity.js and answers it (#475).
+var dataIntegrity = require("./data_integrity_rdfc");
 var sdJwtVc = require("./sd_jwt_vc");
 var sdJwtVp = require("./sd_jwt_vp");
 var mdoc = require("./mdoc");
@@ -179,13 +182,6 @@ var BITSTRING_MIN_ENTRIES = 131072;
 // i.e. 134 million one-bit entries. A small compressed body that inflates
 // past this is a decompression bomb, not a status list.
 var MAX_INFLATED_BYTES = 16 * 1024 * 1024;
-// The Data Integrity cryptosuites verified here, and how each one hashes.
-var DI_SUITES = {
-  "eddsa-rdfc-2022": { canon: "rdfc", family: "eddsa" },
-  "eddsa-jcs-2022": { canon: "jcs", family: "eddsa" },
-  "ecdsa-rdfc-2019": { canon: "rdfc", family: "ecdsa" },
-  "ecdsa-jcs-2019": { canon: "jcs", family: "ecdsa" }
-};
 var DI_SUITES_NOT_VERIFIED = {
   "ecdsa-sd-2023": "ecdsa-sd-2023 is not verified by this debugger: a " +
     "derived proof needs the selective-disclosure machinery of that suite " +
@@ -437,10 +433,53 @@ function buildCredentialQuery(q, index, seen) {
     }
     var claim = { path: path };
     if (isPlainObject(c) && c.id) claim.id = c.id;
-    if (isPlainObject(c) && isArray(c.values)) claim.values = c.values;
+    if (isPlainObject(c) && isArray(c.values)) {
+      // Section 6.3: values is a non-empty array of strings, integers or
+      // booleans.
+      if (!c.values.length || c.values.some(function (v) {
+        return !(typeof v === "string" || typeof v === "boolean" ||
+                 (typeof v === "number" && Math.floor(v) === v));
+      })) {
+        throw new Error(where + ": a claim's values are a non-empty " +
+                        "array of strings, integers or booleans (section " +
+                        "6.3).");
+      }
+      claim.values = c.values.slice();
+    }
+    if (isPlainObject(c) && typeof c.intentToRetain === "boolean") {
+      // Appendix B.2.4: an mdoc-only Claims Query parameter.
+      if (q.format !== FORMAT_MSO_MDOC) {
+        throw new Error(where + ": intent_to_retain is an mso_mdoc claims " +
+                        "parameter (Appendix B.2.4).");
+      }
+      claim.intent_to_retain = c.intentToRetain;
+    }
     return claim;
   });
   if (claims.length) out.claims = claims;
+  if (isArray(q.claimSets) && q.claimSets.length) {
+    // Section 6.1: claim_sets is a non-empty array of non-empty arrays of
+    // claim ids; section 6.3: every claim then needs an id.
+    var ids = claims.map(function (c) {
+      return c.id;
+    });
+    if (ids.some(function (id) {
+      return !id;
+    })) {
+      throw new Error(where + ": claim_sets needs an id on every claim " +
+                      "(section 6.3).");
+    }
+    out.claim_sets = q.claimSets.map(function (set) {
+      if (!isArray(set) || !set.length || set.some(function (id) {
+        return ids.indexOf(id) === -1;
+      })) {
+        throw new Error(where + ": each claim set is a non-empty array of " +
+                        "the claim ids above; got " + JSON.stringify(set) +
+                        ".");
+      }
+      return set.slice();
+    });
+  }
   if (q.requireBinding === false) {
     out.require_cryptographic_holder_binding = false;
   }
@@ -667,10 +706,21 @@ async function makeVerifierIdentity(opts) {
   }
   var nowMs = nowSeconds(o.now) * 1000;
   var notBefore = new Date(nowMs - 5 * 60 * 1000);
-  var desc = keyMaterial.keyAlg("ec-p256");
+  // The request key (#471, E3): P-256 by default, or P-384 or Ed25519.
+  // The root stays P-256; only the leaf, which signs Request Objects,
+  // changes.
+  var keyAlgId = o.keyAlg || "ec-p256";
+  var JOSE_ALG = { "ec-p256": "ES256", "ec-p384": "ES384",
+                   "ed25519": "EdDSA" };
+  if (!JOSE_ALG[keyAlgId]) {
+    log.debug("Leaving makeVerifierIdentity(). Unknown key: " + keyAlgId);
+    throw new Error("a request key is ec-p256, ec-p384 or ed25519, not " +
+                    keyAlgId + ".");
+  }
+  var desc = keyMaterial.keyAlg(keyAlgId);
   var root = await rootForSigning(o.root ||
                                   await makeVerifierRoot({ now: o.now }));
-  var leafKey = await keyMaterial.generateKeyPair("ec-p256");
+  var leafKey = await keyMaterial.generateKeyPair(keyAlgId);
   // The leaf's KeyUsage is read through its P-256 key (#468, M5). The
   // tls-server profile's list is RSA-shaped (digitalSignature,
   // keyEncipherment), and RFC 5480 section 3 permits an id-ecPublicKey
@@ -697,9 +747,9 @@ async function makeVerifierIdentity(opts) {
     signatureAlg: "sha256-ecdsa", notBefore: notBefore, extensions: ext
   });
   var privateJwk = await keyMaterial.privToJwk(leafKey.privatePem, desc,
-                                               "ES256");
+                                               JOSE_ALG[keyAlgId]);
   var publicJwk = await keyMaterial.pubToJwk(leafKey.publicPem, desc,
-                                             "ES256", "sig");
+                                             JOSE_ALG[keyAlgId], "sig");
   var leafDer = bytes.asBytes(leaf.der);
   log.debug("Leaving makeVerifierIdentity(). dns=" + o.dnsName);
   return {
@@ -1109,6 +1159,41 @@ function isEncryptedMode(mode) {
   return mode === "direct_post.jwt" || mode === "dc_api.jwt";
 }
 
+// verifier_info (section 5.1): a non-empty array of { format, data,
+// credential_ids? }, format a string, data an object or a string,
+// credential_ids a non-empty array naming credential queries. Throws
+// naming what is wrong; answers a copy.
+function checkedVerifierInfo(info, dcql) {
+  log.debug("Entering checkedVerifierInfo().");
+  if (!isArray(info) || !info.length) {
+    log.debug("Leaving checkedVerifierInfo(). Not a non-empty array.");
+    throw new Error("verifier_info is a non-empty array of attestations " +
+                    "(section 5.1).");
+  }
+  var ids = ((dcql && dcql.credentials) || []).map(function (q) {
+    return q.id;
+  });
+  var out = info.map(function (a, i) {
+    var where = "verifier_info[" + i + "]";
+    if (!isPlainObject(a) || typeof a.format !== "string" || !a.format) {
+      throw new Error(where + " needs a format string.");
+    }
+    if (!(typeof a.data === "string" && a.data) && !isPlainObject(a.data)) {
+      throw new Error(where + " needs data, an object or a string.");
+    }
+    if (a.credential_ids !== undefined && (!isArray(a.credential_ids) ||
+        !a.credential_ids.length || a.credential_ids.some(function (id) {
+          return ids.indexOf(id) === -1;
+        }))) {
+      throw new Error(where + ".credential_ids must be a non-empty array " +
+                      "of credential query ids (" + ids.join(", ") + ").");
+    }
+    return JSON.parse(JSON.stringify(a));
+  });
+  log.debug("Leaving checkedVerifierInfo(). " + out.length);
+  return out;
+}
+
 // The Authorization Request's parameters (the Request Object's claims when
 // it is signed).
 //
@@ -1170,7 +1255,23 @@ function requestObjectClaims(opts) {
   if (!dc) claims.response_uri = o.responseUri;
   claims.nonce = o.nonce;
   if (o.state && !dc) claims.state = o.state;
-  claims.dcql_query = o.dcql;
+  // Section 5.1: "Either a dcql_query or a scope parameter representing a
+  // DCQL Query MUST be present in the Authorization Request, but not
+  // both." A scope (section 5.5) is an alias the wallet resolves; o.dcql is
+  // then what this Verifier takes it to mean, and checks answers against.
+  if (o.scope) {
+    claims.scope = String(o.scope);
+  } else {
+    claims.dcql_query = o.dcql;
+  }
+  if (o.verifierInfo !== undefined) {
+    claims.verifier_info = checkedVerifierInfo(o.verifierInfo, o.dcql);
+  }
+  if (isArray(o.transactionData) && o.transactionData.length) {
+    // Already encoded (encodeTransactionData()): the Verifier hashes these
+    // exact strings when it checks the answer.
+    claims.transaction_data = o.transactionData.slice();
+  }
   if (o.walletNonce) claims.wallet_nonce = String(o.walletNonce);
   if (!unsigned) {
     claims.iat = iat;
@@ -1276,10 +1377,17 @@ async function signRequestObject(opts) {
   } else if (who.prefix === "") {
     header.kid = preRegisteredJwks(identity).keys[0].kid;
   }
+  // A multisigned request (Appendix A.3.2.2) signs ONE payload under
+  // several headers: o.payload is that shared payload, and o.header adds
+  // what must be in this signature's protected header only (client_id,
+  // verifier_info).
+  Object.keys(o.header || {}).forEach(function (k) {
+    header[k] = o.header[k];
+  });
   var signed = await jws.signJwsAsync({
     algId: alg.algId,
     protectedHeader: header,
-    payload: claims,
+    payload: o.payload || claims,
     privateKey: { jwk: identity.privateJwk },
     backend: "js"
   });
@@ -1564,8 +1672,15 @@ async function encryptRequestObject(jwsCompact, plan) {
 //               data: { request: <compact JWS> } }
 //             `origin`, when given, must be one of expected_origins.
 //
-// openid4vp-v1-multisigned (a JWS JSON serialization with one signature per
-// Client Identifier) is refused: this debugger is one Verifier.
+//   multisigned  { protocol: "openid4vp-v1-multisigned",
+//               data: { request: <JWS JSON Serialization> } }
+//             (Appendix A.3.2.2): one payload, one signature per Client
+//             Identifier. `o.signers` is [{ identity, clientId, attester?,
+//             verifierInfo? }], at least two. client_id, verifier_info and
+//             iss (which names the client_id for an x509 prefix) are in
+//             each signature's protected header only: "MUST be present
+//             only in the protected header of the respective signature
+//             object"; everything else is in the payload.
 async function dcApiRequest(opts) {
   log.debug("Entering dcApiRequest().");
   var o = opts || {};
@@ -1576,17 +1691,17 @@ async function dcApiRequest(opts) {
                     "dc_api or dc_api.jwt, not " +
                     JSON.stringify(claims.response_mode) + ".");
   }
-  if (o.multisigned) {
-    log.debug("Leaving dcApiRequest(). Multisigned.");
-    throw new Error(DC_API_PROTOCOLS.multisigned + " is not built by this " +
-                    "debugger: it signs as one Verifier.");
+  if (o.multisigned && (!isArray(o.signers) || o.signers.length < 2)) {
+    log.debug("Leaving dcApiRequest(). Multisigned with too few signers.");
+    throw new Error(DC_API_PROTOCOLS.multisigned + " needs at least two " +
+                    "signers, one per Client Identifier (Appendix A.3.2.2).");
   }
   if (o.origin && !/^[a-z][a-z0-9+.-]*:\/\/[^/?#]+$/i.test(o.origin)) {
     log.debug("Leaving dcApiRequest(). Bad origin.");
     throw new Error(JSON.stringify(o.origin) + " is not an origin " +
                     "(scheme://host[:port], no path).");
   }
-  if (!o.signed) {
+  if (!o.signed && !o.multisigned) {
     var data = Object.assign({}, claims);
     ["client_id", "iss", "aud", "expected_origins", "iat", "exp",
      "response_uri", "state"].forEach(function (k) {
@@ -1605,6 +1720,51 @@ async function dcApiRequest(opts) {
     throw new Error("this page's origin " + o.origin + " is not in " +
                     "expected_origins (" + origins.join(", ") + "), so " +
                     "every wallet would refuse the request.");
+  }
+  if (o.multisigned) {
+    var payload = Object.assign({}, claims);
+    ["client_id", "iss", "verifier_info"].forEach(function (k) {
+      delete payload[k];
+    });
+    var seen = {};
+    var signatures = [];
+    for (var i = 0; i < o.signers.length; i++) {
+      var one = o.signers[i];
+      if (!one.clientId || seen[one.clientId]) {
+        log.debug("Leaving dcApiRequest(). Bad or repeated client_id.");
+        throw new Error("each signer of a multisigned request names its " +
+                        "own client_id; got " + JSON.stringify(one.clientId) +
+                        ".");
+      }
+      seen[one.clientId] = true;
+      var own = { client_id: one.clientId };
+      if (one.verifierInfo !== undefined) {
+        own.verifier_info = checkedVerifierInfo(one.verifierInfo,
+                                                claims.dcql_query);
+      }
+      var c = await signRequestObject({
+        claims: Object.assign({}, payload, { client_id: one.clientId }),
+        identity: one.identity, attester: one.attester,
+        attestation: one.attestation, kid: one.kid, now: o.now,
+        payload: payload, header: own });
+      var parts = c.split(".");
+      signatures.push({ protected: parts[0], signature: parts[2],
+                        payloadB64: parts[1] });
+    }
+    var shared = signatures[0].payloadB64;
+    if (signatures.some(function (sig) {
+      return sig.payloadB64 !== shared;
+    })) {
+      log.debug("Leaving dcApiRequest(). Payloads differ.");
+      throw new Error("the signers' payloads came out different; a JWS " +
+                      "JSON Serialization has one payload.");
+    }
+    log.debug("Leaving dcApiRequest(). Multisigned, " + signatures.length +
+              " signatures.");
+    return { protocol: DC_API_PROTOCOLS.multisigned, data: { request: {
+      payload: shared, signatures: signatures.map(function (sig) {
+        return { protected: sig.protected, signature: sig.signature };
+      }) } } };
   }
   var compact = await signRequestObject({ claims: claims,
     identity: o.identity, attester: o.attester, attestation: o.attestation,
@@ -2745,27 +2905,10 @@ async function checkIssuerSignature(s, key, compact, header, payload,
 }
 
 // ---------------------------------------------------------------------------
-// W3C VC Data Integrity proofs (eddsa-rdfc-2022, eddsa-jcs-2022,
-// ecdsa-rdfc-2019, ecdsa-jcs-2019).
-//
-// Every one of the four is the same three steps: canonicalize the proof
-// configuration (the proof without proofValue, given the document's
-// @context) and the document without its proof — RDFC-1.0 or JCS — hash
-// each, and verify the signature over hash(config) || hash(document). EdDSA
-// hashes with SHA-256; ECDSA with SHA-256 on P-256 and SHA-384 on P-384.
-// RDFC uses jsonld with bbs2023.js's document loader, which serves the
-// contexts this deployment ships and never fetches one.
+// W3C VC Data Integrity and Linked Data proofs. data_integrity.js verifies
+// them (see verifyDataIntegrity()); RDFC uses bbs2023.js's document loader,
+// which serves the contexts this deployment ships and never fetches one.
 // ---------------------------------------------------------------------------
-function rdfc(doc) {
-  log.debug("Entering rdfc().");
-  log.debug("Leaving rdfc().");
-  return jsonld.canonize(doc, {
-    algorithm: "URDNA2015",
-    format: "application/n-quads",
-    documentLoader: bbs2023.documentLoader,
-    safe: true
-  });
-}
 
 // The public key a proof's verificationMethod names: a did:key or did:jwk
 // read in place, another DID resolved through did.js, an https URL fetched
@@ -2796,44 +2939,21 @@ async function proofKey(vm, fetchJson) {
     didLib.didKeyToJwk("did:key:" + m.publicKeyMultibase) : null);
 }
 
-// How a suite signs with a key: the jws.js row and the digest.
-function diAlgorithm(family, jwk) {
-  log.debug("Entering diAlgorithm(). " + family);
-  var crv = String((jwk && jwk.crv) || "");
-  if (family === "eddsa" && crv === "Ed25519") {
-    log.debug("Leaving diAlgorithm(). Ed25519.");
-    return { spec: jws.algSpec("EdDSA-Ed25519"), hash: nobleSha256 };
-  }
-  if (family === "ecdsa" && crv === "P-256") {
-    log.debug("Leaving diAlgorithm(). P-256.");
-    return { spec: jws.algSpec("ES256"), hash: nobleSha256 };
-  }
-  if (family === "ecdsa" && crv === "P-384") {
-    log.debug("Leaving diAlgorithm(). P-384.");
-    return { spec: jws.algSpec("ES384"), hash: nobleSha512.sha384 };
-  }
-  log.debug("Leaving diAlgorithm(). Mismatch.");
-  return null;
-}
-
-// The signature over hash(proof options) || hash(document), pure JS.
-function diSignatureValid(alg, jwk, hashData, signature) {
-  log.debug("Entering diSignatureValid().");
-  var ok = false;
-  try {
-    ok = !!jws.verifyOctets(alg.spec, jws.jwkToKey(alg.spec, jwk, false),
-                            hashData, signature);
-  } catch (e) {
-    log.debug("diSignatureValid(): verify threw: " + e.message);
-    ok = false;
-  }
-  log.debug("Leaving diSignatureValid(). " + ok);
-  return ok;
-}
-
 // One Data Integrity proof verified. Answers { valid, unsupported, reason,
-// jwk, suite, verificationMethod }. `opts.purpose` is the proofPurpose the
-// caller expects (authentication for a VP, assertionMethod for a VC).
+// jwk, suite, verificationMethod, diagnosis }. `opts.purpose` is the
+// proofPurpose the caller expects (authentication for a VP,
+// assertionMethod for a VC).
+//
+// THE CRYPTOGRAPHY AND THE CANONICALIZATION ARE data_integrity.js's (#475),
+// the one reading of VC Data Integrity in this tree that the wallet, the
+// issuance pages and this Verifier share. Until then this function had its
+// own copy of the four eddsa/ecdsa suites. What stays here is what that
+// module leaves to its caller: whose key a verificationMethod names
+// (proofKey(), through this Verifier's fetchJson), the proofPurpose the
+// caller asked for, and whether the proof has expired. Every Linked Data
+// proof type data_integrity.js verifies (Ed25519Signature2018/2020,
+// JsonWebSignature2020, EcdsaSecp256k1Signature2019) is verified here as
+// well; a selective-disclosure suite is named as verified elsewhere.
 async function verifyDataIntegrity(doc, opts) {
   log.debug("Entering verifyDataIntegrity().");
   var o = opts || {};
@@ -2843,125 +2963,26 @@ async function verifyDataIntegrity(doc, opts) {
     return { valid: false, reason: "there is no proof." };
   }
   var proof = proofs[0] || {};
-  var suite = String(proof.cryptosuite || "");
-  var vm = String(proof.verificationMethod || "");
-  var out = { valid: false, suite: suite, verificationMethod: vm };
-  if (proof.type !== "DataIntegrityProof") {
-    log.debug("Leaving verifyDataIntegrity(). Not DataIntegrityProof.");
-    return Object.assign(out, { unsupported: true, reason: "proof type " +
-      JSON.stringify(proof.type) + " is not DataIntegrityProof." });
-  }
-  var suiteSpec = DI_SUITES[suite];
-  if (!suiteSpec) {
-    log.debug("Leaving verifyDataIntegrity(). Unsupported suite.");
+  var r = await dataIntegrity.verifyOneProof(doc, proof, {
+    resolveKey: function resolveKey(vm) {
+      log.debug("Entering resolveKey().");
+      log.debug("Leaving resolveKey().");
+      return proofKey(vm, o.fetchJson);
+    },
+    documentLoader: bbs2023.documentLoader
+  });
+  var suite = r.suite || String(proof.cryptosuite || proof.type || "");
+  var vm = r.verificationMethod || String(proof.verificationMethod || "");
+  var out = { valid: false, suite: suite, verificationMethod: vm,
+              jwk: r.jwk, diagnosis: r.diagnosis };
+  if (r.unsupported) {
+    log.debug("Leaving verifyDataIntegrity(). Unsupported.");
     return Object.assign(out, { unsupported: true,
-      reason: DI_SUITES_NOT_VERIFIED[suite] || "cryptosuite " +
-        JSON.stringify(suite) + " is not one this debugger verifies (" +
-        Object.keys(DI_SUITES).join(", ") + ", and bbs-2023 on a " +
-        "credential)." });
+      reason: DI_SUITES_NOT_VERIFIED[suite] || r.reason });
   }
-  var pv = String(proof.proofValue || "");
-  if (pv.charAt(0) !== "z") {
-    log.debug("Leaving verifyDataIntegrity(). Not base58btc.");
-    return Object.assign(out, { reason: "proofValue is not multibase " +
-                                "base58btc (z)." });
-  }
-  var jwk;
-  try {
-    jwk = await proofKey(vm, o.fetchJson);
-  } catch (e) {
-    log.debug("Leaving verifyDataIntegrity(). Key unresolved.");
-    return Object.assign(out, { reason: "verificationMethod " + vm +
-                                " could not be resolved: " + e.message });
-  }
-  if (!jwk) {
-    log.debug("Leaving verifyDataIntegrity(). No key.");
-    return Object.assign(out, { reason: "verificationMethod " + vm +
-                                " resolves to no key." });
-  }
-  out.jwk = jwk;
-  var alg = diAlgorithm(suiteSpec.family, jwk);
-  if (!alg) {
-    log.debug("Leaving verifyDataIntegrity(). Wrong key type.");
-    return Object.assign(out, { reason: suite + " needs " +
-      (suiteSpec.family === "eddsa" ? "an Ed25519" : "a P-256 or P-384") +
-      " key and " + vm + " is " + (jwk.crv || jwk.kty) + "." });
-  }
-  var config = Object.assign({}, proof);
-  delete config.proofValue;
-  var unsecured = Object.assign({}, doc);
-  delete unsecured.proof;
-  var docCtx = [].concat(doc["@context"] || []);
-  var proofCtx = config["@context"] === undefined ? null :
-      [].concat(config["@context"]);
-  var jcsSuite = suiteSpec.canon === "jcs";
-  // The proof's @context against the document's (#469, C14). VC Data
-  // Integrity's EdDSA and ECDSA cryptosuites, "Verify Proof" step 4: when
-  // the proof options carry an @context, the secured document's @context
-  // MUST START WITH all of its values in the same order, and the unsecured
-  // document is then given the proof's @context. A JCS suite hashes the
-  // proof options EXACTLY AS RECEIVED; an RDFC suite needs a context to
-  // expand the proof configuration at all, so it takes the document's,
-  // and a proof that names one must name that same one.
-  if (proofCtx) {
-    var prefixOk = proofCtx.length <= docCtx.length &&
-        proofCtx.every(function (c, i) {
-          return JSON.stringify(c) === JSON.stringify(docCtx[i]);
-        });
-    var sameOk = prefixOk && proofCtx.length === docCtx.length;
-    if (jcsSuite ? !prefixOk : !sameOk) {
-      log.debug("Leaving verifyDataIntegrity(). Context mismatch.");
-      return Object.assign(out, { reason: jcsSuite ? "the document's " +
-        "@context does not start with the proof's @context, in order " +
-        "(VC Data Integrity, Verify Proof step 4.1)." : "the proof's " +
-        "@context is not the document's." });
-    }
-    if (jcsSuite) unsecured["@context"] = config["@context"];
-  }
-  if (!jcsSuite && doc["@context"]) config["@context"] = doc["@context"];
-  var configText;
-  var docText;
-  if (jcsSuite) {
-    configText = vpProtocols.jcs(config);
-    docText = vpProtocols.jcs(unsecured);
-  } else {
-    try {
-      configText = await rdfc(config);
-      docText = await rdfc(unsecured);
-    } catch (e) {
-      log.debug("Leaving verifyDataIntegrity(). Canonicalization failed.");
-      return Object.assign(out, { reason: "RDFC-1.0 canonicalization " +
-        "failed (every context must be one this debugger ships or was " +
-        "given, and every term defined): " + e.message });
-    }
-  }
-  var hashData = bytes.concatBytes(alg.hash(bytes.strBytes(configText)),
-                                   alg.hash(bytes.strBytes(docText)));
-  var signature = didLib.base58Decode(pv.slice(1));
-  var ok = diSignatureValid(alg, jwk, hashData, signature);
-  // The shape this tree's own wallet signed until #469: a JCS proof that
-  // HASHED the document's @context into its proof options and then left
-  // it out of the proof. It is a FAIL — the debugger reads the
-  // specification, and compatibility is not its business — and the old
-  // reading is tried only to say WHY it failed.
-  if (!ok && jcsSuite && !proofCtx && doc["@context"]) {
-    var injected = Object.assign({ "@context": doc["@context"] }, config);
-    if (diSignatureValid(alg, jwk, bytes.concatBytes(
-      alg.hash(bytes.strBytes(vpProtocols.jcs(injected))),
-      alg.hash(bytes.strBytes(docText))), signature)) {
-      log.debug("Leaving verifyDataIntegrity(). Omitted @context.");
-      return Object.assign(out, { reason: "non-conformant: the proof was " +
-        "signed over an @context it does not carry (" + suite + " Verify " +
-        "Proof hashes the proof options exactly as received). It verifies " +
-        "only with the document's @context put back into them, which no " +
-        "conformant verifier does." });
-    }
-  }
-  if (!ok) {
-    log.debug("Leaving verifyDataIntegrity(). Bad signature.");
-    return Object.assign(out, { reason: "the signature does not verify " +
-      "over the canonical document and proof configuration (altered, or " +
-      "signed by another key)." });
+  if (!r.valid) {
+    log.debug("Leaving verifyDataIntegrity(). Invalid.");
+    return Object.assign(out, { reason: r.reason });
   }
   if (o.purpose && proof.proofPurpose !== o.purpose) {
     log.debug("Leaving verifyDataIntegrity(). Wrong purpose.");
@@ -2977,7 +2998,7 @@ async function verifyDataIntegrity(doc, opts) {
   }
   log.debug("Leaving verifyDataIntegrity(). Valid.");
   return Object.assign(out, { valid: true, reason: suite + " (" +
-    alg.spec.alg + ") by " + vm + " verifies" +
+    (r.alg || "?") + ") by " + vm + " verifies" +
     (proofs.length > 1 ? "; it is the first of " + proofs.length +
      " proofs, and only the first is checked" : "") + "." });
 }
@@ -4939,6 +4960,156 @@ function haipSdJwtRows(s, header, payload, parsed) {
   log.debug("Leaving haipSdJwtRows().");
 }
 
+// ---------------------------------------------------------------------------
+// TRANSACTION DATA (OpenID4VP 1.0 section 8.4; #471, E3). The request
+// carries `transaction_data`, base64url JSON objects each { type,
+// credential_ids, ... }; the Wallet "MUST include a representation or
+// reference to the data in the respective Credential presentation", in a
+// way each type defines. Appendix B.3.3.1 is one profile for SD-JWT VC,
+// and the one this Verifier checks: the KB-JWT carries
+// transaction_data_hashes, each the hash of the STRING as received (not
+// base64url-decoded), by sha-256 unless the request listed
+// transaction_data_hashes_alg, in which case the KB-JWT names the one it
+// used. A type that returns its data some other way is reported as not
+// evaluated, never failed.
+// ---------------------------------------------------------------------------
+var TD_HASHES = {
+  "sha-256": nobleSha256,
+  "sha-384": nobleSha512.sha384,
+  "sha-512": nobleSha512.sha512,
+  "sha3-256": nobleSha3.sha3_256,
+  "sha3-384": nobleSha3.sha3_384,
+  "sha3-512": nobleSha3.sha3_512
+};
+
+// The request's transaction_data from objects: each must be { type,
+// credential_ids } with credential_ids naming queries of `dcql`. Appendix
+// B.3.3: an SD-JWT VC query a transaction is bound to must not have
+// require_cryptographic_holder_binding false (a Wallet MUST reject it).
+// Answers the base64url strings, in order.
+function encodeTransactionData(objects, dcql) {
+  log.debug("Entering encodeTransactionData().");
+  if (!isArray(objects) || !objects.length) {
+    log.debug("Leaving encodeTransactionData(). Not a non-empty array.");
+    throw new Error("transaction_data is a non-empty array (section 5.1).");
+  }
+  var queries = ((dcql && dcql.credentials) || []);
+  var out = objects.map(function (td, i) {
+    var where = "transaction_data[" + i + "]";
+    if (!isPlainObject(td) || typeof td.type !== "string" || !td.type) {
+      throw new Error(where + " needs a type string.");
+    }
+    if (!isArray(td.credential_ids) || !td.credential_ids.length) {
+      throw new Error(where + ".credential_ids is a non-empty array.");
+    }
+    td.credential_ids.forEach(function (id) {
+      var q = queries.filter(function (x) {
+        return x.id === id;
+      })[0];
+      if (!q) {
+        throw new Error(where + " names credential " + JSON.stringify(id) +
+                        ", which is no credential query.");
+      }
+      if (q.format === "dc+sd-jwt" &&
+          q.require_cryptographic_holder_binding === false) {
+        throw new Error(where + " is bound to " + id + ", whose query " +
+          "sets require_cryptographic_holder_binding false; Appendix " +
+          "B.3.3: a Wallet MUST reject that.");
+      }
+    });
+    if (td.transaction_data_hashes_alg !== undefined &&
+        (!isArray(td.transaction_data_hashes_alg) ||
+         !td.transaction_data_hashes_alg.length)) {
+      throw new Error(where + ".transaction_data_hashes_alg is a " +
+                      "non-empty array (Appendix B.3.3.1).");
+    }
+    return bytes.bytesToB64u(new TextEncoder().encode(JSON.stringify(td)));
+  });
+  log.debug("Leaving encodeTransactionData(). " + out.length);
+  return out;
+}
+
+// The transaction_data strings of this session that name `queryId`, each
+// with its decoded object.
+function transactionDataFor(session, queryId) {
+  log.debug("Entering transactionDataFor().");
+  var out = [];
+  ((session && session.transactionData) || []).forEach(function (str) {
+    var td = null;
+    try {
+      td = JSON.parse(new TextDecoder().decode(bytes.b64uToBytes(str)));
+    } catch (e) {
+      td = null;
+    }
+    if (td && isArray(td.credential_ids) &&
+        td.credential_ids.indexOf(queryId) !== -1) {
+      out.push({ str: str, td: td });
+    }
+  });
+  log.debug("Leaving transactionDataFor(). " + out.length);
+  return out;
+}
+
+// One row per transaction bound to this query, on the KB-JWT's payload
+// `p`. A hit is recorded in ctx.tdBound, for the response-level row.
+function checkTransactionDataHashes(s, query, p, ctx) {
+  log.debug("Entering checkTransactionDataHashes().");
+  var mine = transactionDataFor(ctx.session, query.id);
+  if (!mine.length) {
+    log.debug("Leaving checkTransactionDataHashes(). None for this query.");
+    return;
+  }
+  var hashes = isArray(p.transaction_data_hashes) ?
+      p.transaction_data_hashes : null;
+  mine.forEach(function (one, i) {
+    var key = "kb.transaction_data[" + i + "]";
+    var label = "The KB-JWT binds transaction " + one.td.type;
+    if (!hashes) {
+      s.add(key, label, SKIP, "the KB-JWT has no transaction_data_hashes. " +
+            "Appendix B.3.3.1 is one profile; a type may define another " +
+            "representation, which this Verifier does not know for " +
+            JSON.stringify(one.td.type) + ". Section 8.4: the Wallet MUST " +
+            "include one.", false);
+      return;
+    }
+    var offered = isArray(one.td.transaction_data_hashes_alg) ?
+        one.td.transaction_data_hashes_alg : null;
+    var alg = p.transaction_data_hashes_alg;
+    if (offered && typeof alg !== "string") {
+      s.add(key, label, FAIL, "the request listed transaction_data_hashes" +
+            "_alg " + JSON.stringify(offered) + ", so the KB-JWT MUST name " +
+            "the one it used (Appendix B.3.3.1); it names none.");
+      return;
+    }
+    alg = typeof alg === "string" ? alg : "sha-256";
+    if (offered ? offered.indexOf(alg) === -1 : alg !== "sha-256") {
+      s.add(key, label, FAIL, "the KB-JWT used " + alg + ", which is not " +
+            (offered ? "one of " + JSON.stringify(offered) :
+             "sha-256, the default when the request lists none") + ".");
+      return;
+    }
+    var fn = TD_HASHES[alg];
+    if (!fn) {
+      s.add(key, label, SKIP, "the KB-JWT used " + alg + ", which this " +
+            "Verifier does not compute.", false);
+      return;
+    }
+    var expected = bytes.bytesToB64u(fn(new TextEncoder().encode(one.str)));
+    var found = hashes.indexOf(expected) !== -1;
+    if (found) {
+      ctx.tdBound = ctx.tdBound || {};
+      ctx.tdBound[one.str] = (ctx.tdBound[one.str] || 0) + 1;
+    }
+    s.add(key, label, found ? PASS : FAIL, found ? alg + " of the " +
+          "transaction_data string as sent, " + expected + ", is in " +
+          "transaction_data_hashes." : "transaction_data_hashes " +
+          JSON.stringify(hashes) + " does not contain " + expected + ", the " +
+          alg + " of the transaction_data string as sent (not decoded " +
+          "first: Appendix B.3.3.1).");
+  });
+  log.debug("Leaving checkTransactionDataHashes().");
+}
+
 async function verifyKbJwt(s, query, parsed, ctx) {
   log.debug("Entering verifyKbJwt().");
   var kbKeys = ["kb.header", "kb.signature", "kb.nonce", "kb.aud",
@@ -5027,6 +5198,7 @@ async function verifyKbJwt(s, query, parsed, ctx) {
   } catch (e) {
     s.add("kb.sd_hash", labels["kb.sd_hash"], FAIL, e.message);
   }
+  checkTransactionDataHashes(s, query, p, ctx);
   log.debug("Leaving verifyKbJwt().");
 }
 
@@ -6232,10 +6404,36 @@ var VERIFIERS = {
   "ldp_vc": verifyLdpVc
 };
 
+// One row per transaction the request carried. Section 5.1: when
+// credential_ids names more than one, "the Wallet MUST use only one of the
+// referenced Credentials". Bound by none is reported, not failed: the type
+// may return it in a way this Verifier does not read (an mdoc data
+// element, a type-specific KB-JWT claim).
+function transactionDataRows(report, ctx) {
+  log.debug("Entering transactionDataRows().");
+  var all = (ctx.session && ctx.session.transactionData) || [];
+  all.forEach(function (str, i) {
+    var n = (ctx.tdBound || {})[str] || 0;
+    var label = "Transaction " + i + " is authorized by one presentation";
+    addCheck(report, "response.transaction_data[" + i + "]", "response",
+             label, n === 1 ? PASS : n > 1 ? FAIL : SKIP, n === 1 ?
+             "one presentation's KB-JWT binds it." : n > 1 ? n +
+             " presentations bind it; section 5.1: the Wallet MUST use " +
+             "only one of the referenced Credentials." : "no presentation " +
+             "binds it by transaction_data_hashes (Appendix B.3.3.1). Its " +
+             "type may define another representation, which this " +
+             "Verifier does not read.", false);
+  });
+  log.debug("Leaving transactionDataRows().");
+}
+
 async function verifyPresentations(report, vpToken, ctx) {
   log.debug("Entering verifyPresentations().");
   var out = [];
   var queries = sdJwtVp.dcqlCredentialQueries(ctx.session.dcql);
+  // Shared by every presentation's ctx copy: how many bound each
+  // transaction (checkTransactionDataHashes()).
+  ctx.tdBound = {};
   for (var qi = 0; qi < queries.length; qi++) {
     var query = queries[qi];
     var list = isArray(vpToken[query.id]) ? vpToken[query.id] : [];
@@ -6270,6 +6468,7 @@ async function verifyPresentations(report, vpToken, ctx) {
       out.push({ queryId: query.id, format: query.format, claims: claims });
     }
   }
+  transactionDataRows(report, ctx);
   log.debug("Leaving verifyPresentations(). " + out.length +
             " presentation(s).");
   return out;
@@ -6478,6 +6677,8 @@ module.exports = {
   signRequestObject: signRequestObject,
   signingAlgsFor: signingAlgsFor,
   planForWalletMetadata: planForWalletMetadata,
+  encodeTransactionData: encodeTransactionData,
+  checkedVerifierInfo: checkedVerifierInfo,
   haipRequestProblems: haipRequestProblems,
   akiValuesFromAnchors: akiValuesFromAnchors,
   encryptRequestObject: encryptRequestObject,

@@ -53,7 +53,9 @@ var VERIFIER_KEYS = [
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
   "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity",
   "vpv_public_base_url", "vpv_issuer_bindings", "vpv_trusted_authorities",
-  "vpv_profile"
+  "vpv_profile", "vpv_claim_sets", "vpv_intent_to_retain", "vpv_request_key",
+  "vpv_scope", "vpv_verifier_info", "vpv_transaction_data",
+  "vpv_dc_multisigned", "vpv_dc_second_prefix"
 ];
 
 // Whether issuer metadata, DID documents and status lists are fetched
@@ -485,6 +487,70 @@ function loadState() {
 
 // "address.country" -> ["address", "country"]; a number is an array index and
 // `*` every element, as DCQL claims paths have them (section 7).
+// transaction_data as typed into pane 2, encoded for `dcql`: undefined
+// when empty.
+function transactionDataFromPage(dcql) {
+  log.debug("Entering transactionDataFromPage().");
+  var text = val("vpv_transaction_data").trim();
+  if (!text) {
+    log.debug("Leaving transactionDataFromPage(). None.");
+    return undefined;
+  }
+  var parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (e) {
+    log.debug("Leaving transactionDataFromPage(). Not JSON.");
+    throw new Error("transaction_data is not JSON: " + e.message);
+  }
+  log.debug("Leaving transactionDataFromPage().");
+  return verifier.encodeTransactionData(parsed, dcql);
+}
+
+// verifier_info as typed into pane 2: undefined when empty, else the parsed
+// JSON (requestObjectClaims() says what is wrong with it).
+function verifierInfoFromPage() {
+  log.debug("Entering verifierInfoFromPage().");
+  var text = val("vpv_verifier_info").trim();
+  if (!text) {
+    log.debug("Leaving verifierInfoFromPage(). None.");
+    return undefined;
+  }
+  try {
+    var parsed = JSON.parse(text);
+    log.debug("Leaving verifierInfoFromPage().");
+    return parsed;
+  } catch (e) {
+    log.debug("Leaving verifierInfoFromPage(). Not JSON.");
+    throw new Error("verifier_info is not JSON: " + e.message);
+  }
+}
+
+// One line of the claims box: "[id:] path [= v1 | v2]".
+function claimOf(line, intent) {
+  log.debug("Entering claimOf().");
+  var m = /^\s*(?:([A-Za-z0-9_-]+)\s*:\s*)?([^=]+?)\s*(?:=\s*(.*))?$/
+    .exec(line);
+  var claim = { path: pathOf(m ? m[2] : line) };
+  if (m && m[1]) {
+    claim.id = m[1];
+  }
+  if (m && m[3] !== undefined && m[3] !== null) {
+    claim.values = m[3].split("|").map(function (v) {
+      var t = v.trim();
+      return t === "true" ? true : t === "false" ? false
+        : /^-?\d+$/.test(t) ? Number(t) : t;
+    }).filter(function (v) {
+      return v !== "";
+    });
+  }
+  if (intent === "true" || intent === "false") {
+    claim.intentToRetain = intent === "true";
+  }
+  log.debug("Leaving claimOf().");
+  return claim;
+}
+
 function pathOf(line) {
   log.debug("Entering pathOf().");
   var path = String(line).trim().split(".").filter(function (one) {
@@ -509,9 +575,22 @@ function querySpec() {
     format: format,
     claims: val("vpv_claims").split(/\n/).filter(function (line) {
       return line.trim().length > 0;
-    }).map(pathOf),
+    }).map(function (line) {
+      return claimOf(line, format === "mso_mdoc" ?
+                     val("vpv_intent_to_retain") : "");
+    }),
     requireBinding: !!val("vpv_binding")
   };
+  var sets = val("vpv_claim_sets").split(/\n/).map(function (line) {
+    return line.split(",").map(function (id) {
+      return id.trim();
+    }).filter(Boolean);
+  }).filter(function (set) {
+    return set.length > 0;
+  });
+  if (sets.length) {
+    spec.claimSets = sets;
+  }
   if (val("vpv_trusted_authorities")) {
     var aki = verifier.akiValuesFromAnchors(trustAnchorsFromPage());
     setText("vpv_trusted_authorities_note", aki.values.length
@@ -791,7 +870,8 @@ async function makeSigner(prefix, dnsName, caIssuersUrl) {
     // request's (#470, B4).
     var held = await ensureIdentity(true);
     signer.identity = await verifier.makeVerifierIdentity({
-      dnsName: dnsName, caIssuersUrl: caIssuersUrl, root: held.root });
+      dnsName: dnsName, caIssuersUrl: caIssuersUrl, root: held.root,
+      keyAlg: val("vpv_request_key") || "ec-p256" });
     signer.trust = "The Verifier's root CA, the same for every request " +
       "while this identity is kept. A wallet that does not follow the " +
       "leaf's Authority Information Access must be given it as a trust " +
@@ -922,6 +1002,8 @@ async function createRequest() {
     var delivery = prefix === "redirect_uri" ? "value"
       : (val("vpv_delivery") || "reference-get");
     var live = delivery === "reference-post";
+    var requestUriMethod = live ? "post"
+      : delivery === "reference-get-explicit" ? "get" : undefined;
     var redirectUri = val("vpv_redirect_uri").trim();
     var create = { liveSigning: live };
     if (redirectUri) {
@@ -952,7 +1034,10 @@ async function createRequest() {
     var claimsInput = {
       clientId: clientId, responseUri: hosted.responseUri,
       responseMode: mode, nonce: nonce, state: state, dcql: dcql,
-      encryptionJwk: encryption ? encryption.publicJwk : undefined
+      encryptionJwk: encryption ? encryption.publicJwk : undefined,
+      scope: val("vpv_scope").trim() || undefined,
+      verifierInfo: verifierInfoFromPage(),
+      transactionData: transactionDataFromPage(dcql)
     };
     var claims = verifier.requestObjectClaims(claimsInput);
     var requestObject = "";
@@ -986,7 +1071,7 @@ async function createRequest() {
         : verifier.authorizationRequestUri({
           scheme: val("vpv_scheme"), clientId: clientId,
           requestUri: hosted.requestUri,
-          requestUriMethod: live ? "post" : undefined,
+          requestUriMethod: requestUriMethod,
           // Section 5.1: under post the Verifier SHOULD send its
           // capabilities beside request_uri (#468, M8).
           clientMetadata: live ? claims.client_metadata : undefined });
@@ -999,6 +1084,7 @@ async function createRequest() {
       live: live,
       session: {
         profile: isHaip() ? "haip" : "",
+        transactionData: claimsInput.transactionData,
         clientId: clientId, nonce: nonce, state: state,
         responseUri: hosted.responseUri, responseMode: mode, dcql: dcql,
         decryptionJwk: encryption ? encryption.privateJwk : undefined
@@ -1040,11 +1126,18 @@ async function askThroughDcApi() {
     if (mode !== "dc_api" && mode !== "dc_api.jwt") {
       mode = "dc_api";
     }
-    var signed = !!val("vpv_dc_signed");
+    var multisigned = !!val("vpv_dc_multisigned");
+    var signed = !!val("vpv_dc_signed") || multisigned;
+    var secondPrefix = val("vpv_dc_second_prefix") ||
+      "decentralized_identifier";
     var origin = window.location.origin;
     var dcql = dcqlFromPage();
     haipGate({ dcApi: true, signed: signed, responseMode: mode, dcql: dcql,
                prefix: val("vpv_client_prefix") || "x509_hash" });
+    if (multisigned) {
+      haipGate({ dcApi: true, signed: true, responseMode: mode, dcql: dcql,
+                 prefix: secondPrefix });
+    }
     var encryption = mode === "dc_api.jwt"
       ? await verifier.responseEncryptionKey() : null;
     var nonce = verifier.randomToken(16);
@@ -1062,12 +1155,30 @@ async function askThroughDcApi() {
     } else {
       clientId = verifier.clientIdFor("origin", null, { origin: origin });
     }
+    var transactionData = transactionDataFromPage(dcql);
     var claims = verifier.requestObjectClaims({
       clientId: signed ? clientId : undefined, responseMode: mode,
-      nonce: nonce, dcql: dcql,
+      nonce: nonce, dcql: dcql, transactionData: transactionData,
       encryptionJwk: encryption ? encryption.publicJwk : undefined,
       expectedOrigins: signed ? [origin] : undefined });
+    var second = null;
+    if (multisigned) {
+      // A second prefix that yields the same client_id as the first (the
+      // same kept request key under decentralized_identifier) is refused by
+      // dcApiRequest(), naming it.
+      second = await makeSigner(secondPrefix, window.location.hostname,
+                                undefined);
+    }
+    var verifierInfo = verifierInfoFromPage();
     var request = await verifier.dcApiRequest({
+      multisigned: multisigned,
+      signers: multisigned ? [
+        { identity: signer.identity, clientId: clientId,
+          attester: signer.attester || undefined,
+          verifierInfo: verifierInfo },
+        { identity: second.identity, clientId: clientIdOf(second, undefined),
+          attester: second.attester || undefined,
+          verifierInfo: verifierInfo }] : undefined,
       signed: signed, claims: claims,
       identity: signer ? signer.identity : undefined, origin: origin,
       attester: signer && signer.attester ? signer.attester : undefined });
@@ -1075,6 +1186,7 @@ async function askThroughDcApi() {
       hosted: null, identity: signer ? signer.identity : {}, signer: signer,
       live: false,
       session: { profile: isHaip() ? "haip" : "",
+                 transactionData: transactionData,
                  clientId: clientId, nonce: nonce, responseMode: mode,
                  dcql: dcql, origin: origin,
                  decryptionJwk: encryption ? encryption.privateJwk

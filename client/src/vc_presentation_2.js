@@ -41,6 +41,8 @@ require("./data_integrity_rdfc");
 var vcFormats = require("./vc_formats");
 // BbsBlsSignature2020: the holder derives a BbsBlsSignatureProof2020 (#475).
 var bbsBls2020 = require("./bbs_bls_2020");
+// ecdsa-sd-2023: derived over the same JSON pointers as bbs-2023 (#476).
+var ecdsaSd = require("./ecdsa_sd_2023");
 var didLib = require("./did");
 var vpProtocols = require("./vp_protocols");
 var cbor = require("./cbor");
@@ -164,8 +166,11 @@ function loadState() {
   // something the verifier cannot read.
   state.formatMismatch = !!(state.requestedFormat && state.heldFormat &&
                             state.requestedFormat !== state.heldFormat);
+  // vc+jwt and vc+cose, like jwt_vc_json, have nothing to select: they go
+  // whole, enveloped (#477).
   state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON &&
-      !ldpWhole();
+      state.format !== sdJwtVc.FORMAT_VC_JWT &&
+      state.format !== sdJwtVc.FORMAT_VC_COSE && !ldpWhole();
   // SIOPv2: whether an ID Token is asked for, and whether it is ALL that is.
   state.wantsIdToken = vpProtocols.asksForIdToken(params);
   state.idTokenOnly = state.wantsIdToken && !vpProtocols.asksForVpToken(params);
@@ -245,6 +250,45 @@ function bbs2020Frame() {
            credentialSubject: subject };
 }
 
+// ecdsa-sd-2023's derivation. It has no presentation header: the issuer's
+// signatures go to the Verifier as they are, so nothing in the derived proof
+// names this request, and two presentations of one credential carry the
+// same signatures (linkable). Freshness is the holder's VP around it.
+function deriveEcdsaSd() {
+  log.debug("Entering deriveEcdsaSd().");
+  log.debug("Leaving deriveEcdsaSd().");
+  return ecdsaSd.deriveProof(state.parsed.document, {
+    selectivePointers: selectedPointers()
+  }).then(function (derived) {
+    var revealed = derived.document;
+    state.built = { presentation: JSON.stringify(revealed),
+        vpElement: revealed, derived: derived,
+        format: sdJwtVc.FORMAT_LDP_VC };
+    setValue("vp_presentation", state.built.presentation);
+    setText("vp_sd_hash", "");
+    setValue("vp_kb_jwt", "");
+    setJson("vp_kb_header", { cryptosuite: ecdsaSd.CRYPTOSUITE,
+      mandatoryStatements: derived.mandatoryCount,
+      disclosed: derived.selectiveCount, of: derived.statementCount });
+    setJson("vp_kb_payload", revealed.proof);
+    setJson("vp_presented_claims", revealed.credentialSubject || null);
+    status("vp_present_status", "Derived an ecdsa-sd-2023 proof: " +
+      derived.mandatoryCount + " mandatory statement(s) and " +
+      derived.selectiveCount + " of " + derived.statementCount +
+      " selectively disclosable ones, each with the issuer's own " +
+      "signature — so this presentation can be linked to any other of " +
+      "the same credential, and only the holder's VP binds it to this " +
+      "request.", "vc-ok");
+    log.debug("Leaving deriveEcdsaSd(). Derived.");
+    return finishResponse();
+  }).catch(function (e) {
+    log.error("could not derive the ecdsa-sd-2023 proof: " + e.message);
+    status("vp_present_status", "Could not derive the proof: " +
+           e.message, "vc-bad");
+    return false;
+  });
+}
+
 function selectedEncoded() {
   log.debug("Entering selectedEncoded().");
   log.debug("Leaving selectedEncoded().");
@@ -292,6 +336,16 @@ function requestedPointers(doc) {
 // the canonicalization check: a context nobody supplied is found HERE, with
 // the JSON-LD Contexts pane to fix it, rather than at Present. Answers false
 // when the credential cannot be presented, having said why.
+// An ecdsa-sd-2023 credential: selected by JSON pointer exactly as a
+// bbs-2023 one is, derived by ecdsa_sd_2023.js (#476).
+function ldpEcdsaSd() {
+  log.debug("Entering ldpEcdsaSd().");
+  var yes = state.format === sdJwtVc.FORMAT_LDP_VC && !!state.parsed &&
+    state.parsed.ldpSuite === ecdsaSd.CRYPTOSUITE;
+  log.debug("Leaving ldpEcdsaSd(). " + yes);
+  return yes;
+}
+
 function prepareLdpPointers() {
   log.debug("Entering prepareLdpPointers().");
   var doc = (state.parsed && state.parsed.document) || null;
@@ -301,12 +355,17 @@ function prepareLdpPointers() {
   }
   var base;
   try {
-    base = bbs2023.parseBaseProofValue((doc.proof || {}).proofValue);
+    // Both parsers answer the base proof's mandatoryPointers, which is all
+    // the rows below need.
+    base = (ldpEcdsaSd() ? ecdsaSd : bbs2023).parseBaseProofValue(
+      (doc.proof || {}).proofValue);
   } catch (e) {
+    var suiteName = ldpEcdsaSd() ? "ecdsa-sd-2023" : "bbs-2023";
     log.warn("the credential's base proof is unreadable: " + e.message);
-    status("vp_present_status", "This credential's bbs-2023 proof cannot " +
-           "be derived from: " + e.message + " Issue it again from an " +
-           "issuer that speaks W3C bbs-2023.", "vc-bad");
+    status("vp_present_status", "This credential's " + suiteName +
+           " proof cannot be derived from: " + e.message + " Issue it " +
+           "again from an issuer that speaks W3C " + suiteName + ".",
+           "vc-bad");
     log.debug("Leaving prepareLdpPointers(). Unreadable base proof.");
     return Promise.resolve(false);
   }
@@ -461,7 +520,8 @@ function renderDisclosureTable() {
         : "<tr><td colspan='3'>This credential carries no claims.</td></tr>") +
       "</tbody>");
     var what = ldpWhole() ? "ldp_vc secured with " +
-        esc(state.parsed.ldpSuite) : "jwt_vc_json";
+        esc(state.parsed.ldpSuite) :
+      sdJwtVc.isJoseCose(state.format) ? esc(state.format) : "jwt_vc_json";
     setHtml("vp_selection_summary",
       '<span class="vc-status vc-pending">This credential is ' + what +
           ', which has no selective ' +
@@ -645,6 +705,10 @@ function buildPresentation() {
       log.debug("Leaving buildPresentation(). ldp_vc not read yet.");
       return Promise.resolve(false);
     }
+    if (ldpEcdsaSd()) {
+      log.debug("Leaving buildPresentation(). ecdsa-sd-2023.");
+      return deriveEcdsaSd();
+    }
     log.debug("Leaving buildPresentation().");
     // The nonce is the BBS presentation header, so a bare reveal document
     // is bound to this request, and one inside a VP is bound twice.
@@ -703,6 +767,10 @@ function buildPresentation() {
     aud: params.client_id,
     nonce: params.nonce,
     keyBinding: keyBinding,
+    // The holder a VC-JOSE-COSE presentation names: the DID the credential's
+    // subject is, when it is one (#477).
+    holderId: /^did:/.test(String((state.parsed || {}).subject || "")) ?
+      state.parsed.subject : undefined,
     // An mdoc's device signature covers the session transcript, which names
     // where the answer goes and, under direct_post.jwt, the key it is
     // encrypted to (OpenID4VP 1.0 Appendix B.2.6.1).
@@ -1636,7 +1704,14 @@ function onload() {
   setText("vp_nonce", params.nonce || "—");
   setText("vp_requested", state.requested.length ?
           state.requested.join(", ") : "—");
-  if (state.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
+  if (state.format === sdJwtVc.FORMAT_VC_JWT ||
+      state.format === sdJwtVc.FORMAT_VC_COSE) {
+    setText("vp_key_binding",
+      "This credential is " + state.format + " (W3C VC-JOSE-COSE), so it " +
+      "goes whole as an EnvelopedVerifiableCredential inside a vp+jwt " +
+      "the holder signs, with this request's nonce and the Verifier's " +
+      "Client Identifier as its nonce and aud claims.");
+  } else if (state.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
     setText("vp_key_binding",
       "This credential is jwt_vc_json, so holder binding is a Verifiable " +
           "Presentation JWT signed with the " +

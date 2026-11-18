@@ -53,6 +53,9 @@ var mdoc = require("./mdoc");
 // The JWS a holder key signs with (#475): not always ES256 any more, since
 // the holder key is whatever kind the issuer accepted.
 var vcFormats = require("./vc_formats");
+// W3C VC-JOSE-COSE presentations (#477).
+var vcJoseCose = require("./vc_jose_cose");
+var bytes = require("./crypto_bytes");
 
 var KEYS = {
   // Which way the presentation is being started (see USE_CASES).
@@ -525,7 +528,8 @@ function claimNameForPath(path, format) {
   // missing here, so step 1 reported every requested ldp_vc claim as "not in
   // the credential you hold" while the presentation itself was fine.
   if ((format === sdJwtVc.FORMAT_JWT_VC_JSON ||
-       format === sdJwtVc.FORMAT_LDP_VC) && parts.length > 1 &&
+       format === sdJwtVc.FORMAT_LDP_VC || sdJwtVc.isJoseCose(format)) &&
+      parts.length > 1 &&
       parts[0] === "credentialSubject") {
     parts = parts.slice(1);
   }
@@ -774,6 +778,27 @@ function buildPresentationFor(opts) {
     log.debug("Leaving buildPresentationFor(). mso_mdoc.");
     return buildMdocPresentation(opts);
   }
+  // vc+jwt and vc+cose go whole, enveloped in a vp+jwt the holder signs
+  // with the request's nonce and the Verifier's Client Identifier.
+  if (format === sdJwtVc.FORMAT_VC_JWT || format === sdJwtVc.FORMAT_VC_COSE) {
+    var alg = holderJws(opts.holderPrivateJwk, opts.acceptedAlgs);
+    log.debug("Leaving buildPresentationFor(). " + format + ", enveloped.");
+    try {
+      var vp = vcJoseCose.presentEnveloped(opts.credential, {
+        privateJwk: Object.assign({}, opts.holderPrivateJwk,
+                                  { alg: alg.headerAlg }),
+        did: opts.holderId || undefined,
+        kid: opts.holderId ? opts.holderId + "#0" : undefined
+      }, { nonce: opts.nonce, aud: opts.aud });
+      return Promise.resolve({ presentation: vp.jwt, prefix: "", sdHash: "",
+        kb: null, vp: { jwt: vp.jwt, header: null, payload: vp.claims },
+        format: format });
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
+  // A W3C vc+sd-jwt is an SD-JWT on the wire: selected Disclosures and a
+  // Key Binding JWT, exactly as a dc+sd-jwt.
   if (format !== sdJwtVc.FORMAT_JWT_VC_JSON) {
     log.debug("Leaving buildPresentationFor().");
     return buildPresentation(opts);
@@ -826,6 +851,27 @@ function presentedClaims(presentation) {
     log.debug("Leaving presentedClaims(). jwt_vc_json, " +
               Object.keys(inner.claims).length + " claim(s).");
     return { parsed: inner, claims: inner.claims, outer: outer };
+  }
+  // A vp+jwt enveloping a VC-JOSE-COSE credential: read the credential out
+  // of the envelope, as the Verifier will.
+  var vpInfo = vcJoseCose.detect(presentation);
+  if (vpInfo && vpInfo.kind === "vp") {
+    var vpParsed = vcJoseCose.parse(presentation);
+    var env = [].concat((vpParsed.document || {}).verifiableCredential ||
+                        [])[0];
+    var innerSecured = vcJoseCose.unenvelope(env).secured;
+    var innerParsed = sdJwtVc.parseCredential(innerSecured instanceof
+      Uint8Array ? bytes.bytesToB64u(innerSecured) : innerSecured);
+    log.debug("Leaving presentedClaims(). " + innerParsed.format +
+              ", enveloped.");
+    return { parsed: innerParsed, claims: innerParsed.claims,
+             outer: vpParsed };
+  }
+  // A W3C vc+sd-jwt presentation reads with every Disclosure that went.
+  if (sdJwtVc.credentialFormat(presentation) === sdJwtVc.FORMAT_VC_SD_JWT) {
+    var w3c = sdJwtVc.parseCredential(presentation);
+    log.debug("Leaving presentedClaims(). vc+sd-jwt.");
+    return { parsed: w3c, claims: w3c.claims };
   }
   var parsed = sdJwtVc.parseSdJwt(presentation);
   var claims = sdJwtVc.disclosedClaims(parsed);

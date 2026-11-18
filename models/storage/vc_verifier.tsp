@@ -98,4 +98,37 @@ model VcVerifierKeys {
   // (#471, E1).
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_profile: unknown;
+
+  // The DCQL claim_sets typed on pane 1, one set per line (#471, E3).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_claim_sets: unknown;
+
+  // "", "true" or "false": intent_to_retain on an mdoc query's claims.
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_intent_to_retain: unknown;
+
+  // "ec-p256", "ec-p384" or "ed25519": the x509 request leaf's key.
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_request_key: unknown;
+
+  // A scope sent instead of dcql_query (section 5.5).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_scope: unknown;
+
+  // verifier_info, a JSON array of attestations (section 5.1).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_verifier_info: unknown;
+
+  // transaction_data objects, a JSON array (section 8.4; #471, E3).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_transaction_data: unknown;
+
+  // "1": sign a DC API request again as a second Client Identifier
+  // (openid4vp-v1-multisigned; #471, E3).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_dc_multisigned: unknown;
+
+  // The second signer's Client Identifier prefix.
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_dc_second_prefix: unknown;
 }

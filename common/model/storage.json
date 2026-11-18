@@ -3782,6 +3782,12 @@
       "area": "local"
     },
     {
+      "key": "vpv_claim_sets",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_claims",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
@@ -3795,6 +3801,18 @@
     },
     {
       "key": "vpv_client_prefix",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_dc_multisigned",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_dc_second_prefix",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"
@@ -3837,6 +3855,12 @@
       "optOut": "vpv_save_identity"
     },
     {
+      "key": "vpv_intent_to_retain",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_issuer_bindings",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
@@ -3867,6 +3891,12 @@
       "area": "local"
     },
     {
+      "key": "vpv_request_key",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_response_mode",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
@@ -3885,6 +3915,18 @@
       "area": "local"
     },
     {
+      "key": "vpv_scope",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_transaction_data",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_trust_anchors",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
@@ -3898,6 +3940,12 @@
     },
     {
       "key": "vpv_type",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_verifier_info",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"

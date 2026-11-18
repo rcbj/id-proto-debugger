@@ -65,8 +65,8 @@ var LDP_SUITES = {
   "eddsa-jcs-2022": { kind: "di", curves: ["Ed25519"] },
   "ecdsa-rdfc-2019": { kind: "di", curves: ["P-256", "P-384"] },
   "ecdsa-jcs-2019": { kind: "di", curves: ["P-256", "P-384"] },
-  "ecdsa-sd-2023": { kind: "di", curves: ["P-256", "P-384"],
-                     selective: true },
+  // P-256 only: its base signature is 64 bytes (section 3.5.8).
+  "ecdsa-sd-2023": { kind: "di", curves: ["P-256"], selective: true },
   "bbs-2023": { kind: "di", curves: ["BLS12-381"], selective: true },
   "Ed25519Signature2020": { kind: "ld", curves: ["Ed25519"] },
   "Ed25519Signature2018": { kind: "ld", curves: ["Ed25519"] },
@@ -139,6 +139,33 @@ var FORMATS = {
     holderBinding: "a Verifiable Presentation with the holder's Data " +
       "Integrity proof", selective: "by cryptosuite",
     typeMember: "credential_definition.type"
+  },
+  // W3C VC-JOSE-COSE (#477). OpenID4VCI 1.0 and OpenID4VP 1.0 define no
+  // format identifier for these; the media types' own names are used.
+  "vc+jwt": {
+    name: "W3C VC 2.0 secured as a JWS (VC-JOSE-COSE)",
+    spec: "W3C VC-JOSE-COSE section 3.1",
+    signingAlgs: JOSE_ALGS, defaultSigningAlgs: ["ES256"],
+    bindingMethods: ["jwk", "did:jwk", "did:key"], defaultBinding: "jwk",
+    proofTypes: ["jwt"],
+    holderBinding: "an EnvelopedVerifiableCredential inside a vp+jwt the " +
+      "holder signs", selective: false, typeMember: "type"
+  },
+  "vc+sd-jwt": {
+    name: "W3C VC 2.0 secured as an SD-JWT (VC-JOSE-COSE)",
+    spec: "W3C VC-JOSE-COSE section 3.2",
+    signingAlgs: JOSE_ALGS, defaultSigningAlgs: ["ES256"],
+    bindingMethods: ["jwk"], defaultBinding: "jwk", proofTypes: ["jwt"],
+    holderBinding: "Key Binding JWT", selective: true, typeMember: "type"
+  },
+  "vc+cose": {
+    name: "W3C VC 2.0 secured as a COSE_Sign1 (VC-JOSE-COSE)",
+    spec: "W3C VC-JOSE-COSE section 3.3",
+    signingAlgs: COSE_ALGS, defaultSigningAlgs: [-7],
+    bindingMethods: ["jwk", "did:jwk", "did:key"], defaultBinding: "jwk",
+    proofTypes: ["jwt"],
+    holderBinding: "an EnvelopedVerifiableCredential inside a vp+jwt the " +
+      "holder signs", selective: false, typeMember: "type"
   },
   "mso_mdoc": {
     name: "ISO/IEC 18013-5 mdoc", spec: "OpenID4VCI 1.0 Appendix A.2",
@@ -399,6 +426,9 @@ function vpFormatsSupported() {
   return {
     "dc+sd-jwt": { "sd-jwt_alg_values": jose, "kb-jwt_alg_values": jose },
     "jwt_vc_json": { alg_values: jose },
+    "vc+jwt": { alg_values: jose },
+    "vc+sd-jwt": { "sd-jwt_alg_values": jose, "kb-jwt_alg_values": jose },
+    "vc+cose": { alg_values: COSE_ALGS.slice() },
     "ldp_vc": { proof_type_values: ldpTypes, cryptosuite_values: ldpDi },
     "mso_mdoc": { issuerauth_alg_values: COSE_ALGS.slice(),
                   deviceauth_alg_values: COSE_ALGS.slice() }

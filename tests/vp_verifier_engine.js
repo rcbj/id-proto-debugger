@@ -126,6 +126,8 @@ const vp = load("vp_protocols.js");
 const x509 = load("x509.js");
 const sdJwtVp = load("sd_jwt_vp.js");
 const bbs2023 = load("bbs2023.js");
+// ecdsa-sd-2023 (#476): the Verifier verifies it through data_integrity.js.
+const ecdsaSd = load("ecdsa_sd_2023.js");
 const bbs = load("bbs.js");
 const didLib = load("did.js");
 const joseJwe = load("jose_jwe.js");
@@ -877,6 +879,7 @@ function presentSdJwt(jwt, discs, kb) {
                       Math.floor(Date.now() / 1000),
                     aud: kb.aud, nonce: kb.nonce,
                     sd_hash: kb.sdHash || sha256b64u(prefix) };
+  Object.assign(payload, kb.extra || {});
   log.debug("Leaving presentSdJwt().");
   return prefix + nodeJws({ alg: "ES256", typ: kb.typ || "kb+jwt" },
                           payload, kb.key);
@@ -1078,6 +1081,78 @@ async function sdJwtRoundTrip(env) {
   eq(r.checks.length, 1, "an error answer is one check");
   log.info("PASS dc+sd-jwt: a full round trip in both response modes, and " +
            "every defect failing exactly its own check.");
+  // #471 E3b: transaction_data (section 8.4, Appendix B.3.3.1). The hash
+  // is node's, over the base64url STRING as sent.
+  const tdObjects = [{ type: "example_type", credential_ids: ["pid"] },
+                     { type: "payment", credential_ids: ["pid"],
+                       transaction_data_hashes_alg: ["sha-384"] }];
+  const tdStrings = verifier.encodeTransactionData(tdObjects, dcql);
+  eq(JSON.parse(Buffer.from(tdStrings[0], "base64url")), tdObjects[0],
+     "E3b: base64url JSON objects");
+  const tdHash = function tdHash(alg, str) {
+    log.debug("Entering tdHash().");
+    log.debug("Leaving tdHash().");
+    return nodeCrypto.createHash(alg).update(str, "utf8").digest("base64url");
+  };
+  const tdSession = Object.assign({}, session, { transactionData: tdStrings });
+  const tdRun = async function tdRun(extra) {
+    log.debug("Entering tdRun().");
+    const res = await run({ fields: vp.formEncode({ vp_token: { pid: [
+      P({ extra: extra })] }, state: session.state }), session: tdSession,
+      fetchJson: fetchJson });
+    log.debug("Leaving tdRun().");
+    return res;
+  };
+  // The second asks for sha-384, so the KB-JWT must name it and hash both
+  // with it; the first then fails, being sha-256 by default.
+  let tr = await tdRun({ transaction_data_hashes: [
+    tdHash("sha256", tdStrings[0])] });
+  eq([checkById(tr, "pid[0].kb.transaction_data[0]").status,
+      checkById(tr, "response.transaction_data[0]").status],
+     ["pass", "pass"], "E3b: sha-256 by default binds transaction 0");
+  ok(/MUST name the one it used/.test(
+     checkById(tr, "pid[0].kb.transaction_data[1]").detail),
+     "E3b: a listed alg the KB-JWT does not name fails");
+  tr = await tdRun({ transaction_data_hashes_alg: "sha-384",
+    transaction_data_hashes: [tdHash("sha384", tdStrings[1])] });
+  eq([checkById(tr, "pid[0].kb.transaction_data[0]").status,
+      checkById(tr, "pid[0].kb.transaction_data[1]").status],
+     ["fail", "pass"], "E3b: sha-384 for the one that lists it");
+  tr = await tdRun({ transaction_data_hashes: [tdHash("sha256",
+    Buffer.from(tdStrings[0], "base64url").toString())] });
+  ok(/not decoded first/.test(checkById(tr,
+     "pid[0].kb.transaction_data[0]").detail),
+     "E3b: a hash of the DECODED object is not the binding");
+  tr = await tdRun({});
+  eq([checkById(tr, "pid[0].kb.transaction_data[0]").status,
+      checkById(tr, "response.transaction_data[0]").status, tr.verdict],
+     ["skip", "skip", "pass"], "E3b: no hashes is reported (another " +
+     "representation may be the type's), not failed");
+  for (const bad of [[], [{ credential_ids: ["pid"] }],
+                     [{ type: "t", credential_ids: ["nope"] }],
+                     [{ type: "t", credential_ids: ["pid"],
+                        transaction_data_hashes_alg: [] }]]) {
+    let why = "";
+    try {
+      verifier.encodeTransactionData(bad, dcql);
+    } catch (e) {
+      why = e.message;
+    }
+    ok(/transaction_data/.test(why), "E3b: refused " + JSON.stringify(bad));
+  }
+  let tdUnbound = "";
+  try {
+    verifier.encodeTransactionData([{ type: "t", credential_ids: ["p"] }],
+      verifier.buildDcql({ queries: [{ id: "p", format: "dc+sd-jwt",
+        vct: VCT, requireBinding: false }] }));
+  } catch (e) {
+    tdUnbound = e.message;
+  }
+  ok(/B\.3\.3/.test(tdUnbound), "E3b: a transaction on an tdUnbound query");
+  const tdClaims = verifier.requestObjectClaims({ clientId: clientId,
+    responseUri: session.responseUri, responseMode: "direct_post",
+    nonce: "n", state: "s", dcql: dcql, transactionData: tdStrings });
+  eq(tdClaims.transaction_data, tdStrings, "E3b: carried in the request");
   log.debug("Leaving sdJwtRoundTrip().");
 }
 
@@ -1434,13 +1509,37 @@ async function ldpVcRoundTrip(env) {
             "relabelled eddsa-rdfc-2022 (that suite needs an Ed25519 key)");
   ok(/Ed25519/.test(checkById(r, "ld[0].vp.proof").detail),
      checkById(r, "ld[0].vp.proof").detail);
+  // A P-256 ecdsa-jcs-2019 proof relabelled ecdsa-sd-2023: that suite is
+  // verified now (#476), and this proofValue is not one of its own.
   const sdSuite = JSON.parse(JSON.stringify(wrapped));
   sdSuite.proof.cryptosuite = "ecdsa-sd-2023";
   r = await send(session, sdSuite);
-  eq(checkById(r, "ld[0].vp.proof").status, "skip",
-     "ecdsa-sd-2023 is a skip that says why");
-  ok(/ecdsa-sd-2023 is not verified/.test(
-     checkById(r, "ld[0].vp.proof").detail));
+  eq(checkById(r, "ld[0].vp.proof").status, "fail",
+     "an ecdsa-jcs-2019 proof relabelled ecdsa-sd-2023 fails");
+
+  // A genuine ecdsa-sd-2023 credential: an issuer base proof by a did:key
+  // P-256 key, derived to one claim by the holder and wrapped in the
+  // holder's VP. Then the same with the disclosed claim changed.
+  const sdIssuer = ecPair();
+  const sdDid = didLib.jwkToDidKey(sdIssuer.publicJwk);
+  const sdBase = await ecdsaSd.createBaseProof(Object.assign({}, unsecured,
+    { issuer: sdDid }), { privateJwk: sdIssuer.privateJwk,
+    verificationMethod: sdDid + "#" + sdDid.slice("did:key:".length),
+    mandatoryPointers: ["/issuer", "/type", "/validFrom"] });
+  const sdDerived = (await ecdsaSd.deriveProof(sdBase,
+    { selectivePointers: ["/credentialSubject/given_name"] })).document;
+  ok(!("family_name" in sdDerived.credentialSubject),
+     "ecdsa-sd-2023: the withheld claim is not disclosed");
+  r = await send(session, await inVp(sdDerived));
+  allPass(r, "ldp_vc ecdsa-sd-2023 derived credential in an " +
+          "ecdsa-jcs-2019 VP");
+  ok(/ecdsa-sd-2023/.test(checkById(r, "ld[0].vc.proof").detail),
+     checkById(r, "ld[0].vc.proof").detail);
+  const sdTampered = JSON.parse(JSON.stringify(sdDerived));
+  sdTampered.credentialSubject.given_name = "Mallory";
+  r = await send(session, await inVp(sdTampered));
+  failsOnly(r, ["ld[0].vc.proof"], "ldp_vc, a tampered ecdsa-sd-2023 " +
+            "disclosure re-wrapped by the holder");
   ok(verifier.vpFormatsSupported().ldp_vc.cryptosuite_values
      .indexOf("bbs-2023") !== -1, "bbs-2023 is advertised");
   log.info("PASS ldp_vc: W3C bbs-2023 reveal documents, bare and in an " +
@@ -1828,10 +1927,49 @@ async function dcApi(env) {
     return verifier.dcApiRequest({ signed: true, claims: signedClaims,
       identity: env.identity, origin: ORIGIN + "/" });
   }, /is not an origin/, "an origin with a trailing slash is a URL");
+  // #471 E3c: openid4vp-v1-multisigned (Appendix A.3.2.2). One payload,
+  // one signature per Client Identifier, client_id only in each protected
+  // header. jose's generalVerify checks each signature against its own key.
   await rejects(function () {
     return verifier.dcApiRequest({ multisigned: true, claims: signedClaims,
-      identity: env.identity });
-  }, /multisigned/);
+      signers: [{ identity: env.identity, clientId: clientId }] });
+  }, /at least two signers/);
+  const didKey = verifier.makeRequestKey();
+  const didCid = verifier.clientIdFor("decentralized_identifier", didKey,
+                                      { didMethod: "jwk" });
+  const info = [{ format: "jwt", data: "eyJhbGciOiJFUzI1NiJ9.e30.sig" }];
+  const multi = await verifier.dcApiRequest({ multisigned: true,
+    claims: signedClaims, origin: ORIGIN, signers: [
+      { identity: env.identity, clientId: clientId },
+      { identity: didKey, clientId: didCid, verifierInfo: info }] });
+  eq([multi.protocol, Object.keys(multi.data.request).sort()],
+     ["openid4vp-v1-multisigned", ["payload", "signatures"]]);
+  const mPayload = JSON.parse(Buffer.from(multi.data.request.payload,
+                                          "base64url"));
+  ok(!("client_id" in mPayload) && !("iss" in mPayload) &&
+     !("verifier_info" in mPayload) && mPayload.nonce === nonce &&
+     mPayload.expected_origins[0] === ORIGIN, "E3c: the payload carries " +
+     "everything but client_id, iss and verifier_info");
+  const headers = multi.data.request.signatures.map(function (sig) {
+    return JSON.parse(Buffer.from(sig.protected, "base64url"));
+  });
+  eq(headers.map(function (h) {
+    return h.client_id;
+  }), [clientId, didCid], "E3c: each header names its client_id");
+  eq([headers[0].x5c, headers[1].verifier_info], [env.identity.x5c, info],
+     "E3c: x5c and verifier_info where they belong");
+  const jose = await import("jose");
+  const keys = [await jose.importJWK(Object.assign({},
+    env.identity.publicJwk, { alg: "ES256" })),
+                await jose.importJWK(Object.assign({}, didKey.publicJwk,
+    { alg: "ES256" }))];
+  for (let k = 0; k < 2; k++) {
+    const one = { payload: multi.data.request.payload,
+                  signatures: [multi.data.request.signatures[k]] };
+    const v = await jose.generalVerify(one, keys[k]);
+    eq(v.protectedHeader.client_id, k === 0 ? clientId : didCid,
+       "E3c: jose verifies signature " + k + " with its own key");
+  }
   await rejects(function () {
     return verifier.dcApiRequest({ claims: verifier.requestObjectClaims({
       clientId: clientId, responseUri: "https://v.example/r", nonce: nonce,
@@ -3272,9 +3410,11 @@ async function securityFindings(env) {
      "u[0].vc.status.revocation.list").detail), "S2: the list row says why");
 
   // --- S4: an unsupported cryptosuite is not a pass. --------------------
+  // (It was ecdsa-sd-2023 until #476 made that suite verifiable; a name no
+  // registry has keeps the case about an UNSUPPORTED suite.)
   const sdSuite = await diSign(uniCred(UNI), "ecdsa-jcs-2019", uniSigner,
                                "assertionMethod");
-  sdSuite.proof.cryptosuite = "ecdsa-sd-2023";
+  sdSuite.proof.cryptosuite = "example-unsupported-2099";
   r = await sendLd(sdSuite);
   eq(failedIds(r), [], "S4: an unsupported cryptosuite fails nothing");
   eq([r.verdict, r.ok, r.incomplete], ["incomplete", false, 1],
@@ -4186,14 +4326,17 @@ async function proofContexts(env) {
   const notPrefix = await diSign(body([A, B]), "eddsa-jcs-2022", key,
                                  "assertionMethod", { "@context": [B] });
   v = await verifier.verifyDataIntegrity(notPrefix);
-  ok(!v.valid && /start with/.test(v.reason), "C14: a JCS proof @context " +
+  // The reasons are data_integrity.js's wording since the Verifier moved
+  // onto it (#475): the same rules, read once in this tree.
+  ok(!v.valid && /does not begin with the proof's @context/.test(v.reason),
+     "C14: a JCS proof @context " +
      "that is not a prefix: " + v.reason);
   const omitted = await diSign(body([A]), "eddsa-jcs-2022", key,
                                "assertionMethod", { omitContext: true });
   ok(!("@context" in omitted.proof), "the omitted shape has no @context");
   v = await verifier.verifyDataIntegrity(omitted);
-  ok(!v.valid && new RegExp("non-conformant: the proof was signed over " +
-     "an @context it does not carry").test(v.reason),
+  ok(!v.valid && /WOULD verify had the document's @context been added/
+       .test(v.reason) && !!v.diagnosis,
      "C14: the old shape FAILS, and says why: " + v.reason);
   const dcql = { credentials: [{ id: "c", format: "ldp_vc",
     require_cryptographic_holder_binding: false }] };
@@ -4211,8 +4354,23 @@ async function proofContexts(env) {
                                   "assertionMethod", { "@context": [A] });
   rdfcPrefix["@context"] = [A, B];
   v = await verifier.verifyDataIntegrity(rdfcPrefix);
-  ok(!v.valid && /is not the document's/.test(v.reason), "C14: an RDFC " +
+  ok(!v.valid && /not the document's/.test(v.reason), "C14: an RDFC " +
      "proof @context that is only a prefix: " + v.reason);
+  // Moved onto data_integrity.js (#475), the Verifier also verifies the
+  // Linked Data proof types that preceded Data Integrity. Signed here by
+  // that module, and a tampered copy fails.
+  const di = load("data_integrity_rdfc.js");
+  const legacy = await di.createProof(body([A]), { suite:
+    "Ed25519Signature2020", privateJwk: Object.assign({},
+      key.privateKey.export({ format: "jwk" })),
+    verificationMethod: key.vm, proofPurpose: "assertionMethod" });
+  v = await verifier.verifyDataIntegrity(legacy, {
+    purpose: "assertionMethod" });
+  ok(v.valid, "an Ed25519Signature2020 proof verifies: " + v.reason);
+  const legacyBad = JSON.parse(JSON.stringify(legacy));
+  legacyBad.credentialSubject = { id: "did:example:someone-else" };
+  v = await verifier.verifyDataIntegrity(legacyBad);
+  ok(!v.valid, "and a tampered one does not: " + v.reason);
   log.info("PASS #469 C14: JCS proof options hashed as received under the " +
            "prefix rule, RDFC under equality, the old shape a FAIL.");
   log.debug("Leaving proofContexts().");
@@ -5068,6 +5226,98 @@ async function walletMetadataHonoured(env) {
   log.debug("Leaving walletMetadataHonoured().");
 }
 
+// #471 E3a: the request options OpenID4VP 1.0 defines and the page now
+// offers. Signatures over the new request keys are checked by jose.
+async function requestOptions(env) {
+  log.debug("Entering requestOptions().");
+  const jose = await import("jose");
+  const dcql = verifier.buildDcql({ queries: [{ id: "pid",
+    format: "dc+sd-jwt", vct: VCT, claims: [["given_name"]] }] });
+  for (const [keyAlg, alg] of [["ec-p384", "ES384"], ["ed25519", "EdDSA"]]) {
+    const id = await verifier.makeVerifierIdentity({
+      dnsName: "verifier.example", keyAlg: keyAlg });
+    const claims = verifier.requestObjectClaims({
+      clientId: verifier.clientIdFor("x509_hash", id, {}),
+      responseUri: "https://verifier.example/response",
+      responseMode: "direct_post", nonce: "n-k", state: "s-k", dcql: dcql });
+    const compact = await verifier.signRequestObject({ claims: claims,
+                                                       identity: id });
+    const header = JSON.parse(Buffer.from(compact.split(".")[0],
+                                          "base64url"));
+    eq(header.alg, alg, "E3: a " + keyAlg + " request key signs " + alg);
+    const leafKey = new nodeCrypto.X509Certificate(id.leafPem).publicKey;
+    const checked = await jose.compactVerify(compact, leafKey);
+    eq(JSON.parse(new TextDecoder().decode(checked.payload)).nonce, "n-k",
+       "E3: jose verifies the " + keyAlg + " Request Object against its " +
+       "certificate");
+  }
+  let refused = "";
+  try {
+    await verifier.makeVerifierIdentity({ dnsName: "v.example",
+                                          keyAlg: "rsa-2048" });
+  } catch (e) {
+    refused = e.message;
+  }
+  ok(/ec-p256, ec-p384 or ed25519/.test(refused), "E3: other keys refused");
+  // scope instead of dcql_query (section 5.1: one, never both).
+  const id = env.identity;
+  const base = { clientId: verifier.clientIdFor("x509_hash", id, {}),
+    responseUri: "https://verifier.example/response",
+    responseMode: "direct_post", nonce: "n", state: "s", dcql: dcql };
+  let claims = verifier.requestObjectClaims(Object.assign({}, base,
+    { scope: "com.example.healthCardCredential_presentation" }));
+  ok(claims.scope === "com.example.healthCardCredential_presentation" &&
+     !("dcql_query" in claims), "E3: scope replaces dcql_query");
+  // verifier_info, section 5.1's own example.
+  const info = [{ format: "jwt", data: "eyJhbGciOiJFUzI1...EF0RBtvPClL71TW" +
+    "HlIQ", credential_ids: ["pid"] }];
+  claims = verifier.requestObjectClaims(Object.assign({}, base,
+    { verifierInfo: info }));
+  eq(claims.verifier_info, info, "E3: verifier_info is carried");
+  for (const bad of [[], [{ data: "x" }], [{ format: "jwt" }],
+                     [{ format: "jwt", data: "x", credential_ids: ["no"] }]]) {
+    let why = "";
+    try {
+      verifier.requestObjectClaims(Object.assign({}, base,
+        { verifierInfo: bad }));
+    } catch (e) {
+      why = e.message;
+    }
+    ok(/verifier_info/.test(why), "E3: refused " + JSON.stringify(bad));
+  }
+  // values, claim ids and claim_sets (section 6.4.1's example shape) and
+  // intent_to_retain (Appendix B.2.4).
+  const q = verifier.buildDcql({ queries: [{ id: "pid", format: "dc+sd-jwt",
+    vct: VCT, claims: [{ id: "a", path: ["last_name"] },
+                       { id: "b", path: ["postal_code"],
+                         values: ["90210", "90211"] },
+                       { id: "c", path: ["address", "street_address"] }],
+    claimSets: [["a", "c"], ["b"]] }] }).credentials[0];
+  eq([q.claims[1].values, q.claim_sets], [["90210", "90211"],
+     [["a", "c"], ["b"]]], "E3: values and claim_sets");
+  for (const spec of [
+    { claims: [{ path: ["x"] }], claimSets: [["x"]] },
+    { claims: [{ id: "a", path: ["x"] }], claimSets: [["z"]] },
+    { claims: [{ id: "a", path: ["x"], values: [] }] },
+    { claims: [{ id: "a", path: ["x"], values: [1.5] }] },
+    { claims: [{ id: "a", path: ["x"], intentToRetain: true }] }]) {
+    let why = "";
+    try {
+      verifier.buildDcql({ queries: [Object.assign({ id: "pid",
+        format: "dc+sd-jwt", vct: VCT }, spec)] });
+    } catch (e) {
+      why = e.message;
+    }
+    ok(why.length > 0, "E3: refused " + JSON.stringify(spec));
+  }
+  const m = verifier.buildDcql({ queries: [{ id: "mdl", format: "mso_mdoc",
+    doctype: "org.iso.18013.5.1.mDL",
+    claims: [{ path: ["org.iso.18013.5.1", "family_name"],
+               intentToRetain: false }] }] }).credentials[0];
+  eq(m.claims[0].intent_to_retain, false, "E3: intent_to_retain on mdoc");
+  log.debug("Leaving requestOptions().");
+}
+
 async function main() {
   log.debug("Entering main().");
   randomTokens();
@@ -5099,6 +5349,7 @@ async function main() {
   await proofContexts(env);
   await requestSideFindings(env);
   await walletMetadataHonoured(env);
+  await requestOptions(env);
   log.info("vp_verifier_engine: " + assertions + " assertions, " +
            checksSeen + " Verifier checks examined.");
   // A floor, so a refactor that silently stops running a section cannot
