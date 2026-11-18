@@ -27,10 +27,14 @@ require("./data_integrity_rdfc");
 var provider = require("./crypto_provider");
 var cbytes = require("./crypto_bytes");
 var didLib = require("./did");
-var qrcode = require("qrcode-generator");
-var jsQR = require("jsqr");
-var pdf417 = require("./pdf417");
 var vpVerifier = require("./vp_verifier");
+// The QR and PDF417 codecs are NOT required here. qrcode-generator (QR
+// encode), jsqr (QR decode) and pdf417.js (PDF417 encode/decode, bwip-js +
+// @zxing/library) together are ~300 KB and are needed only when a QR code or
+// PDF417 symbol is rendered or read, so they live in the vc_barcodes_qr
+// bundle and are loaded on demand by ensureQrCodecs() below. vp_verifier.js
+// is kept here: it is the Bitstring Status List reader, not a codec, and is
+// used whenever a verified barcode's status is checked.
 
 // The log level comes from the same configuration everything else here
 // reads. A caller without one still has to be able to load this module,
@@ -46,6 +50,44 @@ var log = bunyan.createLogger({
     }
   })()
 });
+
+// ---------------------------------------------------------------------------
+// Load the QR encode/decode bundle (vc_barcodes_qr.js) the first time a QR
+// action runs, and reuse it afterwards. The script is served from the same
+// origin as this page, next to this bundle, so a static deployment still
+// works offline — the file ships beside the page. `window.vcbarcodesqr` is
+// the { qrcode, jsQR } that bundle's --standalone global exposes.
+// ---------------------------------------------------------------------------
+var qrCodecsPromise = null;
+
+function ensureQrCodecs() {
+  log.debug("Entering ensureQrCodecs().");
+  if (qrCodecsPromise) {
+    log.debug("Leaving ensureQrCodecs(). Cached.");
+    return qrCodecsPromise;
+  }
+  qrCodecsPromise = new Promise(function (resolve, reject) {
+    if (typeof window !== "undefined" && window.vcbarcodesqr) {
+      resolve(window.vcbarcodesqr);
+      return;
+    }
+    var script = document.createElement("script");
+    script.src = "/js/vc_barcodes_qr.js";
+    script.onload = function () {
+      if (window.vcbarcodesqr) {
+        resolve(window.vcbarcodesqr);
+      } else {
+        reject(new Error("vc_barcodes_qr.js loaded but exposed no codecs."));
+      }
+    };
+    script.onerror = function () {
+      reject(new Error("could not load /js/vc_barcodes_qr.js."));
+    };
+    document.head.appendChild(script);
+  });
+  log.debug("Leaving ensureQrCodecs(). Loading.");
+  return qrCodecsPromise;
+}
 
 // The specification's two Utopia examples (VC Barcodes Appendix C), so the
 // page can be tried with nothing in hand.
@@ -245,31 +287,39 @@ function onImage(event) {
   var url = URL.createObjectURL(file);
   var image = new Image();
   image.onload = function () {
-    try {
-      var px = imagePixels(image);
-      var found = jsQR(px.data, px.width, px.height,
-                       { inversionAttempts: "attemptBoth" });
-      var text = found && found.data ? null : pdf417.readSymbol(
-        pdf417.luminanceOf(px.data, px.width, px.height), px.width,
-        px.height);
-      if (found && found.data) {
-        setVal("vcb_barcode", found.data);
-        setStatus("vcb_read_status", "Read a QR code of " +
-                  found.data.length + " characters from the image.",
-                  "vc-ok");
-      } else if (text) {
-        setVal("vcb_barcode", escapeControls(text));
-        setStatus("vcb_read_status", "Read a PDF417 symbol of " +
-                  text.length + " characters from the image (" +
-                  pdf417.DECODER + ").", "vc-ok");
-      } else {
-        setStatus("vcb_read_status", "No QR code or PDF417 symbol could " +
-                  "be read in that image. Crop it to the symbol, or paste " +
-                  "its text.", "vc-error");
+    // The QR and PDF417 decoders load on demand the first time a picture is
+    // read. QR first (jsQR), then PDF417 (pdf417.js, @zxing/library).
+    ensureQrCodecs().then(function (codecs) {
+      try {
+        var px = imagePixels(image);
+        var found = codecs.jsQR(px.data, px.width, px.height,
+                                { inversionAttempts: "attemptBoth" });
+        var text = found && found.data ? null : codecs.pdf417.readSymbol(
+          codecs.pdf417.luminanceOf(px.data, px.width, px.height),
+          px.width, px.height);
+        if (found && found.data) {
+          setVal("vcb_barcode", found.data);
+          setStatus("vcb_read_status", "Read a QR code of " +
+                    found.data.length + " characters from the image.",
+                    "vc-ok");
+        } else if (text) {
+          setVal("vcb_barcode", escapeControls(text));
+          setStatus("vcb_read_status", "Read a PDF417 symbol of " +
+                    text.length + " characters from the image (" +
+                    codecs.pdf417.DECODER + ").", "vc-ok");
+        } else {
+          setStatus("vcb_read_status", "No QR code or PDF417 symbol could " +
+                    "be read in that image. Crop it to the symbol, or " +
+                    "paste its text.", "vc-error");
+        }
+      } finally {
+        URL.revokeObjectURL(url);
       }
-    } finally {
+    }).catch(function (e) {
       URL.revokeObjectURL(url);
-    }
+      setStatus("vcb_read_status", "Could not load the barcode decoders: " +
+                e.message, "vc-error");
+    });
   };
   image.onerror = function () {
     URL.revokeObjectURL(url);
@@ -382,19 +432,28 @@ async function verifyBarcode() {
 // licence text, to print or to read back with Barcode image.
 function drawReadPdf417() {
   log.debug("Entering drawReadPdf417().");
-  var ok = showPdf417("vcb_read_symbol",
-                      unescapeControls(val("vcb_barcode")));
-  setStatus("vcb_read_status", ok ? "Drew the barcode text as a PDF417 " +
-            "symbol (" + pdf417.ENCODER + ", error correction level " +
-            pdf417.EC_LEVEL + ")." : "Not drawn: " +
-            el("vcb_read_symbol").textContent, ok ? "vc-ok" : "vc-error");
+  // The PDF417 encoder loads on demand the first time a symbol is drawn.
+  el("vcb_read_symbol").textContent = "Loading the PDF417 encoder…";
+  ensureQrCodecs().then(function (codecs) {
+    var ok = showPdf417("vcb_read_symbol",
+                        unescapeControls(val("vcb_barcode")), codecs);
+    setStatus("vcb_read_status", ok ? "Drew the barcode text as a PDF417 " +
+              "symbol (" + codecs.pdf417.ENCODER + ", error correction " +
+              "level " + codecs.pdf417.EC_LEVEL + ")." : "Not drawn: " +
+              el("vcb_read_symbol").textContent, ok ? "vc-ok" : "vc-error");
+  }).catch(function (e) {
+    setStatus("vcb_read_status", "Could not load the PDF417 encoder: " +
+              e.message, "vc-error");
+  });
   log.debug("Leaving drawReadPdf417().");
   return false;
 }
 
 // The text as a PDF417 symbol in the element `id`. The SVG is the
-// encoder's: rectangles from the modules, none of the text.
-function showPdf417(id, text) {
+// encoder's: rectangles from the modules, none of the text. The caller
+// passes the on-demand codec bundle (ensureQrCodecs()'s resolution), since
+// pdf417.js is not in the page bundle.
+function showPdf417(id, text, codecs) {
   log.debug("Entering showPdf417(). " + id);
   var host = el(id);
   host.textContent = "";
@@ -403,7 +462,7 @@ function showPdf417(id, text) {
     return false;
   }
   try {
-    host.innerHTML = pdf417.symbolSvg(text);
+    host.innerHTML = codecs.pdf417.symbolSvg(text);
   } catch (e) {
     host.textContent = e.message;
     log.debug("Leaving showPdf417(). Failed.");
@@ -595,17 +654,23 @@ function showQr(text) {
     log.debug("Leaving showQr(). Nothing.");
     return;
   }
-  try {
-    var code = qrcode(0, "L");
-    code.addData(text, "Alphanumeric");
-    code.make();
-    // createSvgTag() draws rectangles from the bits alone; nothing of the
-    // text reaches the markup.
-    host.innerHTML = code.createSvgTag({ cellSize: 3, margin: 4,
-                                         scalable: true });
-  } catch (e) {
-    host.textContent = "Too long for a QR code: " + e.message;
-  }
+  // The QR encoder loads on demand the first time a code is drawn.
+  host.textContent = "Rendering the QR code…";
+  ensureQrCodecs().then(function (codecs) {
+    try {
+      var code = codecs.qrcode(0, "L");
+      code.addData(text, "Alphanumeric");
+      code.make();
+      // createSvgTag() draws rectangles from the bits alone; nothing of the
+      // text reaches the markup.
+      host.innerHTML = code.createSvgTag({ cellSize: 3, margin: 4,
+                                           scalable: true });
+    } catch (e) {
+      host.textContent = "Too long for a QR code: " + e.message;
+    }
+  }).catch(function (e) {
+    host.textContent = "Could not load the QR encoder: " + e.message;
+  });
   log.debug("Leaving showQr().");
 }
 
@@ -685,8 +750,20 @@ async function issueBarcode() {
   setVal("vcb_issue_output", out.carrier === "pdf417" ?
          escapeControls(carried) : carried);
   showQr(out.carrier === "qr" ? out.text : "");
-  var drawn = out.carrier === "pdf417" && showPdf417("vcb_pdf417", carried);
-  if (out.carrier !== "pdf417") {
+  // The PDF417 encoder loads on demand, so a pdf417 carrier waits for it
+  // before the symbol is drawn and before its status line is written.
+  var drawn = false;
+  var encoderName = "";
+  if (out.carrier === "pdf417") {
+    try {
+      var codecs = await ensureQrCodecs();
+      encoderName = codecs.pdf417.ENCODER;
+      drawn = showPdf417("vcb_pdf417", carried, codecs);
+    } catch (e) {
+      el("vcb_pdf417").textContent =
+        "Could not load the PDF417 encoder: " + e.message;
+    }
+  } else {
     el("vcb_pdf417").textContent = "";
   }
   setStatus("vcb_issue_status", "Issued: " + out.cborld.length + " bytes " +
@@ -697,7 +774,7 @@ async function issueBarcode() {
             "are compact-encoded into its PDF417 is ISO/IEC 18013-2's." :
             "in subfile ZZ, element ZZA of the PDF417 text below" +
             (drawn ? ", drawn as the PDF417 symbol below (" +
-             pdf417.ENCODER + ")." : "; the symbol could not be drawn: " +
+             encoderName + ")." : "; the symbol could not be drawn: " +
              el("vcb_pdf417").textContent)), "vc-ok");
   renderRows("vcb_issue_result", [
     ["Optical data signed", out.canonical, "pre"],
