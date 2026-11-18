@@ -39,6 +39,9 @@ var dataIntegrity = require("./data_integrity_rdfc");
 var vcFormats = require("./vc_formats");
 // W3C VC-JOSE-COSE presentations (#477).
 var vcJoseCose = require("./vc_jose_cose");
+// JPT and SD-CWT presentations (#478).
+var jwpLib = require("./jwp");
+var sdCwt = require("./sd_cwt");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_3',
                                 level: appconfig.logLevel });
@@ -310,6 +313,12 @@ function recheckOwnPresentation() {
   if (vcJoseCose.detect(sent.presentation)) {
     log.debug("Leaving recheckOwnPresentation(). VC-JOSE-COSE.");
     return recheckJoseCose();
+  }
+  if (jwpLib.looksLikeJwp(sent.presentation) ||
+      (String(sent.presentation).indexOf(".") === -1 &&
+       sdCwt.looksLikeSdCwt(sent.presentation))) {
+    log.debug("Leaving recheckOwnPresentation(). JPT / SD-CWT.");
+    return recheckJptSdCwt();
   }
   var whole = wholeLdpPresentation(sent.presentation);
   if (whole) {
@@ -601,6 +610,52 @@ function recheckJoseCose() {
       log.debug("Leaving recheckJoseCose(). " + all.length + " check(s).");
       return true;
     });
+}
+
+// A JPT or an SD-CWT Key Binding Token re-checked from the bytes that went
+// (#478), with the issuer key resolved from its kid / iss, against this
+// request's nonce and the Verifier's Client Identifier.
+function recheckJptSdCwt() {
+  log.debug("Entering recheckJptSdCwt().");
+  var isJpt = jwpLib.looksLikeJwp(sent.presentation);
+  var kid;
+  var iss;
+  if (isJpt) {
+    var h = jwpLib.parse(sent.presentation).issuerHeader.value;
+    kid = h.kid;
+    iss = h.iss;
+  } else {
+    var p = sdCwt.parse(sent.presentation);
+    var k = p.sdCwt.protected.get(sdCwt.HEADER.kid);
+    kid = k instanceof Uint8Array ? new TextDecoder().decode(k) : k;
+    iss = p.sdCwt.payload.get(sdCwt.CLAIMS.iss);
+  }
+  log.debug("Leaving recheckJptSdCwt().");
+  return sdJwtVp.issuerKeyFor(kid, iss).then(function (issuerKey) {
+    var r = isJpt ?
+      jwpLib.verify(sent.presentation, { issuerKey: issuerKey || {},
+                                         nonce: sent.nonce,
+                                         aud: sent.clientId }) :
+      sdCwt.verify(sent.presentation, { issuerKey: issuerKey || undefined,
+                                        aud: sent.clientId,
+                                        cnonce: sent.nonce });
+    var checks = [{
+      name: isJpt ? "JSON Web Proof (" + jwpLib.DRAFT + ", DRAFT)" :
+        "SD-CWT Key Binding Token (" + sdCwt.DRAFT + ", DRAFT)",
+      ok: r.valid,
+      detail: r.valid ? (isJpt ? r.disclosed.length + " payload slot(s) " +
+        "disclosed; the proof, the Presentation Header's nonce and aud " +
+        "verify." : (r.disclosed || []).length + " disclosure(s) went; " +
+        "the issuer's signature, the KBT by the cnf key, aud and cnonce " +
+        "verify.") : (issuerKey ? "" : "The issuer key (" + kid + ") " +
+        "could not be resolved. ") + r.errors.join(" ")
+    }];
+    (r.warnings || []).forEach(function (w) {
+      checks.push({ name: "Note", ok: true, detail: w });
+    });
+    renderRecheck(checks);
+    return true;
+  });
 }
 
 function proofRow(name, result) {

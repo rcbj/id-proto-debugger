@@ -744,7 +744,11 @@ function buildPresentation() {
     });
   }
   var keyBinding = sdJwtVp.requiresKeyBinding(state.credentialQuery);
-  if (keyBinding && !priv) {
+  // A BBS JPT has no holder key: its presentation proof is the binding to
+  // this request (JPA section 7.3.2), so none is needed (#478).
+  var bbsJpt = state.format === sdJwtVc.FORMAT_JPT && state.parsed &&
+    state.parsed.header && state.parsed.header.alg === "BBS";
+  if (keyBinding && !priv && !bbsJpt) {
     status("vp_present_status",
       "This verifier requires a holder proof, but the private half of the " +
           "holder key is not available, " +
@@ -1704,7 +1708,25 @@ function onload() {
   setText("vp_nonce", params.nonce || "—");
   setText("vp_requested", state.requested.length ?
           state.requested.join(", ") : "—");
-  if (state.format === sdJwtVc.FORMAT_VC_JWT ||
+  if (state.format === sdJwtVc.FORMAT_JPT) {
+    var jalg = ((state.parsed || {}).header || {}).alg || "";
+    setText("vp_key_binding",
+      "This credential is a JSON Proof Token (" + jalg + ", " +
+      "draft-ietf-jose-json-web-proof-15, a DRAFT). Each claim is its own " +
+      "payload slot; the Presentation Header carries this Verifier's " +
+      "Client Identifier as aud and the request's nonce, and " +
+      (jalg === "BBS" ? "the BBS presentation proof binds the chosen " +
+       "slots to it, unlinkably and with no holder key." :
+       "the holder signs it with the presentation key the Issuer Header " +
+       "names (hpk). Presenting the same JPT twice is linkable."));
+  } else if (state.format === sdJwtVc.FORMAT_SD_CWT) {
+    setText("vp_key_binding",
+      "This credential is an SD-CWT (draft-ietf-spice-sd-cwt-09, a " +
+      "DRAFT), so holder binding is a Key Binding Token: a COSE_Sign1 by " +
+      "the cnf key carrying the SD-CWT with only the chosen disclosures, " +
+      "this Verifier's Client Identifier as aud, the request's nonce as " +
+      "cnonce, and iat.");
+  } else if (state.format === sdJwtVc.FORMAT_VC_JWT ||
       state.format === sdJwtVc.FORMAT_VC_COSE) {
     setText("vp_key_binding",
       "This credential is " + state.format + " (W3C VC-JOSE-COSE), so it " +

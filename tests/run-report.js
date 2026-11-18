@@ -3935,6 +3935,27 @@ function buildJobs() {
     env: {},
   });
 
+  // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
+  // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
+  // checked by @auth0/cose and node's SHA-256, and what must fail.
+  jobs.push({
+    name: "SD-CWT and Key Binding Tokens (draft -09 examples, @auth0/cose " +
+        "and node crypto, in node)",
+    script: "sd_cwt_engine.js",
+    env: {},
+  });
+
+  // JSON Web Proofs (draft-ietf-jose-json-web-proof-15, JPA-15, JPT-15;
+  // #478): the drafts' Appendix A byte for byte, every offered algorithm
+  // round-tripped and checked by node's crypto, BBS against Digital
+  // Bazaar's bbs-signatures, and what must fail. No services.
+  jobs.push({
+    name: "JSON Web Proofs (JPT/CPT: SU, MAC, BBS; the drafts' examples, " +
+        "node crypto and Digital Bazaar BBS, in node)",
+    script: "jwp_engine.js",
+    env: {},
+  });
+
   // W3C VC-JOSE-COSE (vc+jwt, vc+sd-jwt, vc+cose and their envelopes,
   // #477): both directions against iya-sts's own vc_jose_cose.js (loaded
   // from its image), jose, @sd-jwt/core and @auth0/cose, and the
@@ -4123,6 +4144,16 @@ function buildJobs() {
       name: "VC Presentation — ldp_vc presented whole (eddsa, ecdsa) and " +
           "BbsBlsSignature2020 derived, verified by Digital Bazaar and MATTR",
       script: "ldp_vc_whole_presentation.js",
+      env: {},
+    });
+    // JPT and SD-CWT through the presentation pages (#478, drafts): the
+    // JPA-15 SU-ES256 example, a BBS JPT signed by Digital Bazaar and the
+    // SD-CWT-09 example, each presentation checked by node's crypto,
+    // Digital Bazaar's verifyProof and @auth0/cose. Needs only the client.
+    jobs.push({
+      name: "VC Presentation — JPT (SU-ES256, BBS) and SD-CWT, verified by " +
+          "node crypto, Digital Bazaar and @auth0/cose",
+      script: "jwp_sd_cwt_presentation.js",
       env: {},
     });
     // W3C VC-JOSE-COSE through the presentation pages (#477): a vc+jwt

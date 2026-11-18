@@ -304,6 +304,8 @@ What a row is depends on the format:
 | `ldp_vc` | One per value, named by its JSON pointer; the issuer's mandatory pointers are ticked and cannot be cleared | The `bbs-2023` derived proof over a reveal document, with the `nonce` as its presentation header; under holder binding, also a holder-signed `VerifiablePresentation` |
 | `mso_mdoc` | One per element, named `namespace/element` | A device signature (COSE_Sign1, ES256) over the session transcript |
 | `vc+sd-jwt` (W3C) | One per Disclosure; `@context`, `type` and `issuer` are never among them | A Key Binding JWT, as for `dc+sd-jwt` |
+| `jpt` (DRAFT) | One per payload slot, named by the Issuer Header's `claims` | A Presentation Header with `aud` and `nonce`, signed by the holder (SU, MAC) or bound by the BBS proof itself |
+| `sd-cwt` (DRAFT) | One per disclosure | A Key Binding Token by the `cnf` key, with `aud`, `cnonce` and `iat` |
 | `vc+jwt`, `vc+cose` (W3C) | Every claim listed, none selectable | The credential as an `EnvelopedVerifiableCredential` inside a `vp+jwt` signed with the bound key, carrying the `nonce` and the Client Identifier as `aud` |
 
 ### Holder private key
