@@ -65,8 +65,8 @@ var LDP_SUITES = {
   "eddsa-jcs-2022": { kind: "di", curves: ["Ed25519"] },
   "ecdsa-rdfc-2019": { kind: "di", curves: ["P-256", "P-384"] },
   "ecdsa-jcs-2019": { kind: "di", curves: ["P-256", "P-384"] },
-  "ecdsa-sd-2023": { kind: "di", curves: ["P-256", "P-384"],
-                     selective: true },
+  // P-256 only: its base signature is 64 bytes (section 3.5.8).
+  "ecdsa-sd-2023": { kind: "di", curves: ["P-256"], selective: true },
   "bbs-2023": { kind: "di", curves: ["BLS12-381"], selective: true },
   "Ed25519Signature2020": { kind: "ld", curves: ["Ed25519"] },
   "Ed25519Signature2018": { kind: "ld", curves: ["Ed25519"] },
