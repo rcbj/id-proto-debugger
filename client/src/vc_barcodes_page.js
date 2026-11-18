@@ -23,8 +23,10 @@ require("./data_integrity_rdfc");
 var provider = require("./crypto_provider");
 var cbytes = require("./crypto_bytes");
 var didLib = require("./did");
-var qrcode = require("qrcode-generator");
-var jsQR = require("jsqr");
+// qrcode-generator (QR encode) and jsqr (QR decode) are NOT required here:
+// they are ~300 KB and are needed only when a QR code is rendered or read, so
+// they live in the vc_barcodes_qr bundle and are loaded on demand by
+// ensureQrCodecs() below.
 
 // The log level comes from the same configuration everything else here
 // reads. A caller without one still has to be able to load this module,
@@ -40,6 +42,44 @@ var log = bunyan.createLogger({
     }
   })()
 });
+
+// ---------------------------------------------------------------------------
+// Load the QR encode/decode bundle (vc_barcodes_qr.js) the first time a QR
+// action runs, and reuse it afterwards. The script is served from the same
+// origin as this page, next to this bundle, so a static deployment still
+// works offline — the file ships beside the page. `window.vcbarcodesqr` is
+// the { qrcode, jsQR } that bundle's --standalone global exposes.
+// ---------------------------------------------------------------------------
+var qrCodecsPromise = null;
+
+function ensureQrCodecs() {
+  log.debug("Entering ensureQrCodecs().");
+  if (qrCodecsPromise) {
+    log.debug("Leaving ensureQrCodecs(). Cached.");
+    return qrCodecsPromise;
+  }
+  qrCodecsPromise = new Promise(function (resolve, reject) {
+    if (typeof window !== "undefined" && window.vcbarcodesqr) {
+      resolve(window.vcbarcodesqr);
+      return;
+    }
+    var script = document.createElement("script");
+    script.src = "/js/vc_barcodes_qr.js";
+    script.onload = function () {
+      if (window.vcbarcodesqr) {
+        resolve(window.vcbarcodesqr);
+      } else {
+        reject(new Error("vc_barcodes_qr.js loaded but exposed no codecs."));
+      }
+    };
+    script.onerror = function () {
+      reject(new Error("could not load /js/vc_barcodes_qr.js."));
+    };
+    document.head.appendChild(script);
+  });
+  log.debug("Leaving ensureQrCodecs(). Loading.");
+  return qrCodecsPromise;
+}
 
 // The specification's two Utopia examples (VC Barcodes Appendix C), so the
 // page can be tried with nothing in hand.
@@ -209,23 +249,30 @@ function onImage(event) {
   var url = URL.createObjectURL(file);
   var image = new Image();
   image.onload = function () {
-    try {
-      var px = imagePixels(image);
-      var found = jsQR(px.data, px.width, px.height,
-                       { inversionAttempts: "attemptBoth" });
-      if (found && found.data) {
-        setVal("vcb_barcode", found.data);
-        setStatus("vcb_read_status", "Read a QR code of " +
-                  found.data.length + " characters from the image.",
-                  "vc-ok");
-      } else {
-        setStatus("vcb_read_status", "No QR code could be read in that " +
-                  "image. Crop it to the code, or paste its text.",
-                  "vc-error");
+    // The QR decoder loads on demand the first time a picture is read.
+    ensureQrCodecs().then(function (codecs) {
+      try {
+        var px = imagePixels(image);
+        var found = codecs.jsQR(px.data, px.width, px.height,
+                                { inversionAttempts: "attemptBoth" });
+        if (found && found.data) {
+          setVal("vcb_barcode", found.data);
+          setStatus("vcb_read_status", "Read a QR code of " +
+                    found.data.length + " characters from the image.",
+                    "vc-ok");
+        } else {
+          setStatus("vcb_read_status", "No QR code could be read in that " +
+                    "image. Crop it to the code, or paste its text.",
+                    "vc-error");
+        }
+      } finally {
+        URL.revokeObjectURL(url);
       }
-    } finally {
+    }).catch(function (e) {
       URL.revokeObjectURL(url);
-    }
+      setStatus("vcb_read_status", "Could not load the QR decoder: " +
+                e.message, "vc-error");
+    });
   };
   image.onerror = function () {
     URL.revokeObjectURL(url);
@@ -396,17 +443,23 @@ function showQr(text) {
     log.debug("Leaving showQr(). Nothing.");
     return;
   }
-  try {
-    var code = qrcode(0, "L");
-    code.addData(text, "Alphanumeric");
-    code.make();
-    // createSvgTag() draws rectangles from the bits alone; nothing of the
-    // text reaches the markup.
-    host.innerHTML = code.createSvgTag({ cellSize: 3, margin: 4,
-                                         scalable: true });
-  } catch (e) {
-    host.textContent = "Too long for a QR code: " + e.message;
-  }
+  // The QR encoder loads on demand the first time a code is drawn.
+  host.textContent = "Rendering the QR code…";
+  ensureQrCodecs().then(function (codecs) {
+    try {
+      var code = codecs.qrcode(0, "L");
+      code.addData(text, "Alphanumeric");
+      code.make();
+      // createSvgTag() draws rectangles from the bits alone; nothing of the
+      // text reaches the markup.
+      host.innerHTML = code.createSvgTag({ cellSize: 3, margin: 4,
+                                           scalable: true });
+    } catch (e) {
+      host.textContent = "Too long for a QR code: " + e.message;
+    }
+  }).catch(function (e) {
+    host.textContent = "Could not load the QR encoder: " + e.message;
+  });
   log.debug("Leaving showQr().");
 }
 

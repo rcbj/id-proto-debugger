@@ -9,6 +9,7 @@ Draft, 22 August 2026) and **CBOR-LD 1.0**, on `vc-barcodes.html`.
 | `client/src/vc_barcodes.js` | base45, the MRZ and AAMVA optical data, `issue()` and `verify()` |
 | `client/src/data_integrity.js` | the `ecdsa-xi-2023` row (its `extraInformation` option) |
 | `client/src/vc_barcodes_page.js` | the page (bundle global `vcbarcodespage`) |
+| `client/src/vc_barcodes_qr.js` | the QR encode (qrcode-generator) and decode (jsqr) codecs, in a bundle of their own (global `vcbarcodesqr`) that the page loads ON DEMAND the first time a QR code is drawn or read — ~300 KB that would otherwise sit in the page bundle for every visit. Served beside the page, so a static deployment still works offline |
 | `client/src/contexts/{vc_barcodes_v1,utopia_v2,vital_records_v1rc1}.json` | the three contexts the specification's vectors are written in |
 | `tests/vc_barcodes_engine.js` | node: the spec's vectors, and Digital Bazaar's library byte for byte |
 | `tests/vc_barcodes_browser.js` | Chrome: the page reads, verifies and issues |

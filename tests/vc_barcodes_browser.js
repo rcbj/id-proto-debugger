@@ -130,6 +130,12 @@ async function test() {
       "getElementById('vcb_issue_output').value;");
     assert.ok(/^VC1-R[0-9A-Z $%*+\-./:]+$/.test(issued), "a QR text in the " +
               "alphanumeric set: " + issued.slice(0, 40));
+    // The QR encoder loads on demand (vc_barcodes_qr bundle), so the SVG is
+    // drawn a moment after Issue finishes — wait for it on content.
+    await driver.wait(async function () {
+      return await driver.executeScript("return !!document.querySelector(" +
+        "'#vcb_qr svg');");
+    }, stepWait, "the page should draw the QR code");
     var svg = await driver.executeScript("var s = document.querySelector(" +
       "'#vcb_qr svg'); return s ? s.outerHTML : '';");
     assert.ok(svg, "the page draws the QR code");
