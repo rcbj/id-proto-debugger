@@ -346,38 +346,49 @@ POST /admin-api/applications/create
 
 ### 6. Run the two workflows on idptools.com
 
-**Load a credential (VC Issuance).** The wallet receives a credential from the
-iya-sts issuer.
+**Load a credential (VC Issuance)** — generate the offer in the iya-sts **User
+Portal**, then redeem it in the wallet. This is the pre-authorized flow, which
+is how the default iya-sts issues.
 
-1. Open `https://idptools.com`, choose **VC Issuance**, and go to step 1.
-2. Set **Credential Issuer Metadata URL** to
-   `https://sts.example.com/.well-known/openid-credential-issuer` and
-   **client_id** (in **Configuration Parameters**) to `idptools-wallet`. The
-   page retrieves the issuer and authorization-server metadata.
-3. Choose a credential in **Credential to request** (e.g. `IdentityCredential`,
-   an SD-JWT VC), and press **Start Issuance** for the Authorization Code flow.
-   Sign in at iya-sts as `demo-holder`.
-   - *Or* the **pre-authorized** flow: at `https://sts.example.com/portal/wallet`,
-     sign in as `demo-holder`, choose the configuration and *cross-device*, and
-     make the offer; paste the `openid-credential-offer://` link into step 1 and
-     type the Transaction Code on step 2.
-4. On step 2 the tokens arrive; press **Approve and Request Credential**. Step 3
-   shows the credential, verified — it is now held in the wallet.
+1. On iya-sts, open the **User Portal** at
+   `https://sts.example.com/portal/wallet` and sign in as `demo-holder`. The
+   page is headed **"Add a credential to your wallet."**
+2. Under **"Which credential"**, choose **IdentityCredential** — an SD-JWT VC
+   (`dc+sd-jwt`), the default iya-sts configuration. Under **"When it is
+   issued"**, leave **"As soon as your wallet asks for it."** Press
+   **"Make an offer."**
+3. The portal shows **"Scan this with your wallet"** (a QR of the
+   `openid-credential-offer://` link), **"Then type this Transaction Code into
+   your wallet:"** with the code, and **"The offer, as a link."** Copy the link
+   and note the Transaction Code.
+4. On `https://idptools.com`, choose **VC Issuance**. On step 1, set
+   **client_id** (in **Configuration Parameters**) to `idptools-wallet`, paste
+   the offer link into **Receive a Credential Offer**, and press **Take this
+   offer**. The **Credential Offer** pane names `IdentityCredential` and the
+   pre-authorized grant with its `tx_code`.
+5. Press **Start Issuance** (a pre-authorized offer skips the sign-in). On
+   step 2, type the **Transaction Code**, press **Send the Token Request**,
+   then **Approve and Request Credential**.
+6. Step 3 shows the SD-JWT VC, verified — the credential is now held in the
+   wallet.
 
-**Present it (VC Presentation).** The verifier is **iya-sts's own OpenID4VP
-verifier**. (The debugger's *own* Verifier page needs the self-hosted build, as
-it would store the answer server-side; on the hosted site use iya-sts or the
-browser's Digital Credentials API.)
+**Present it (VC Presentation)** — to **iya-sts's own OpenID4VP verifier**. (The
+debugger's *own* Verifier page needs the self-hosted build, as it would store
+the answer server-side; on the hosted site use iya-sts or the browser's Digital
+Credentials API.)
 
-1. On iya-sts, open `https://sts.example.com/portal/verify`, choose what to ask
-   for, and **start a verification**. It shows an `openid4vp://` request as a
-   link and QR code — a request *by value*, with `response_mode=direct_post`.
+1. As the verifier operator, open the admin console's VC page at
+   `https://sts.example.com/admin/vc`. Under **"Start a verification"**, press
+   **Start**. It asks for the default claims of `IdentityCredential` and shows
+   an `openid4vp://` request — *by value*, `response_mode=direct_post` — as a
+   link and QR code. (The same request comes from
+   `POST /admin-api/verifications/start`.)
 2. On `https://idptools.com`, choose **VC Presentation**. On step 1, paste the
    `openid4vp://` request. The wallet reads it (no fetch needed), and you pick
    the held credential and the claims to disclose.
-3. Press **Present**. The wallet builds the presentation and posts it to
-   iya-sts's `response_uri` (allowed by the CORS origin set in step 3).
-4. iya-sts's verify page shows the presentation **received and verified**.
+3. Press **Present**. The wallet posts the presentation to iya-sts's
+   `response_uri` (allowed by the CORS origin set in step 3).
+4. The admin console shows the presentation **received and verified**.
 
 ### 7. Remove it again
 
