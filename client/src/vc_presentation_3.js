@@ -523,12 +523,27 @@ function wholeLdpPresentation(text) {
     return null;
   }
   var suite = vcFormats.ldpSuiteOf([].concat(credential.proof)[0]);
-  if (vcFormats.isSelectiveLdpSuite(suite)) {
+  // A derived BbsBlsSignatureProof2020 is a whole JSON-LD credential too,
+  // checked the same way; bbs-2023's envelope is not, and has its own path.
+  if (vcFormats.isSelectiveLdpSuite(suite) &&
+      suite !== "BbsBlsSignatureProof2020") {
     log.debug("Leaving wholeLdpPresentation(). Selective: " + suite);
     return null;
   }
   log.debug("Leaving wholeLdpPresentation(). " + suite);
   return { vp: isVp ? doc : null, credential: credential, suite: suite };
+}
+
+// The request's nonce as a derived BbsBlsSignatureProof2020 carries it.
+function bytesToB64(text) {
+  log.debug("Entering bytesToB64().");
+  var bytes = new TextEncoder().encode(String(text));
+  var bin = "";
+  for (var i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  log.debug("Leaving bytesToB64().");
+  return btoa(bin);
 }
 
 function proofRow(name, result) {
@@ -583,11 +598,30 @@ function recheckWholeLdp(whole) {
               "sent it."
         });
       }
-      checks.push({
-        name: "Disclosure", ok: true,
-        detail: "the whole credential went: " + whole.suite + " has no " +
-            "selective disclosure, and its proof covers every statement."
-      });
+      if (whole.suite === "BbsBlsSignatureProof2020") {
+        var derived = [].concat(whole.credential.proof)[0] || {};
+        var expected = sent.nonce ? bytesToB64(sent.nonce) : "";
+        checks.push({
+          name: "Proof nonce",
+          ok: !expected || derived.nonce === expected,
+          detail: "the derived proof's nonce is " + derived.nonce +
+              (expected ? "; the request's nonce, base64, is " + expected +
+              "." : ".")
+        });
+        checks.push({
+          name: "Disclosure", ok: true,
+          detail: ((vcResult.proofs[0] || {}).disclosedStatements || [])
+            .length + " canonical statement(s) went, proved by a " +
+            "BbsBlsSignatureProof2020 derived from the issuer's " +
+            "BbsBlsSignature2020. The rest were never sent."
+        });
+      } else {
+        checks.push({
+          name: "Disclosure", ok: true,
+          detail: "the whole credential went: " + whole.suite + " has no " +
+              "selective disclosure, and its proof covers every statement."
+        });
+      }
       renderRecheck(checks);
       log.debug("Leaving recheckWholeLdp(). " + checks.length + " check(s).");
       return true;
