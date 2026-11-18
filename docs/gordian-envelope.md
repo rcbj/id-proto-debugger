@@ -77,6 +77,3 @@ one, so nothing is lost by refusing.
   not decrypted or decompressed.
 - **SSKR**, recipients, ML-DSA and SSH signatures, and multi-part URs are not
   implemented.
-- The page is linked from Supported Standards. It joins the VC Tools pane
-  beside VC Barcodes once #524 has landed, because the two together must fit
-  issuance step 0's one-screen budget.
