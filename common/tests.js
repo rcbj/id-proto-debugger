@@ -506,6 +506,8 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
                              "/callback");
     await snap(driver, "05-token-request",
                { ids: ["token_expand_button", "token_fieldset"] });
+    await expectLogoutPane(driver, false,
+                           "before the authorization code is exchanged");
     await driver.findElement(token_btn).click();
 
     // Wait for whichever appears first: the access token field or the error
@@ -523,6 +525,8 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     assert.notStrictEqual(jwt.decode(access_token, { complete: true }), null,
       "Cannot obtain access token. Request result: " + (response_text ?
           response_text[1] : "no response text"));
+    await expectLogoutPane(driver, true,
+                           "once the token set has been retrieved");
 
     if (returnRefreshToken) {
       // Capture the refresh token from the Token Endpoint results pane.
@@ -544,6 +548,25 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
     log.info("Begin returning token.");
     log.debug("Leaving getAccessTokenAuthCode().");
     return access_token;
+  }
+
+  // #38: the RP-initiated Logout pane on oauth2_oidc_2.html stays collapsed
+  // until the page has retrieved a token set for an end user. Waits for the
+  // pane's fieldset to reach the expected state, and fails naming #38.
+  async function expectLogoutPane(driver, shown, when) {
+    log.debug("Entering expectLogoutPane(). shown=" + shown);
+    const fieldset = By.id("logout_fieldset");
+    try {
+      await driver.wait(async function () {
+        return (await driver.findElement(fieldset).isDisplayed()) === shown;
+      }, waitTime);
+    } catch (e) {
+      log.debug("Leaving expectLogoutPane(). Wrong state.");
+      throw new Error("The RP-initiated Logout pane should be " +
+                      (shown ? "expanded" : "collapsed") + " " + when +
+                      " (#38).");
+    }
+    log.debug("Leaving expectLogoutPane().");
   }
 
   // Client Credentials grant. No Keycloak login: the token-endpoint form is
@@ -584,13 +607,19 @@ module.exports = ({ By, until, Select, waitTime, log, jwt, assert,
       await snap(driver, "03-token-response",
                  { ids: ["token_endpoint_result"] });
       log.info("Returning visibleAccessTokenElement value.");
-      log.debug("Leaving getAccessTokenClientCredentials().");
-      return await driver.findElement(visibleAccessTokenElement)
-                                      .getAttribute("value");
+      var value = await driver.findElement(visibleAccessTokenElement)
+                                           .getAttribute("value");
     } catch (e) {
       log.error("An error occurred: " + e.message);
+      log.debug("Leaving getAccessTokenClientCredentials(). Error.");
+      return undefined;
     }
+    // Outside the try: its catch only logs, and a Client Credentials grant
+    // opens no end-user session, so Logout must stay collapsed (#38).
+    await expectLogoutPane(driver, false,
+                           "after a Client Credentials grant");
     log.debug("Leaving getAccessTokenClientCredentials().");
+    return value;
   }
 
   // Implicit grant. Logs into Keycloak, then the token is delivered straight to

@@ -213,7 +213,10 @@ Each token comes with buttons and links:
 Further down step 2 are panes that work with the tokens you now hold:
 
 * **RP-initiated Logout**: ends the session at the provider (OpenID Connect
-  RP-Initiated Logout 1.0).
+  RP-Initiated Logout 1.0). It stays collapsed until the page has retrieved
+  a token set for a signed-in user, because before then there is no session
+  to end. A Client Credentials grant signs nobody in, so the pane stays
+  collapsed after one. Click its title to open it at any time.
 * **Token Revocation (RFC 7009)**: revokes any token you paste in.
 * **Token Exchange (RFC 8693)**: exchanges a token for a different one. See
   [Token Exchange](oauth2-grants.md#token-exchange-rfc-8693).
