@@ -162,6 +162,48 @@ async function pageBundleReady(driver) {
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
+// Whether a compact JWS verifies against an issuer's published JWKS. The
+// key is the one the header's kid names, or the x5c leaf when it carries
+// one; with neither, every key is tried, because SD-JWT VC section 4.2 only
+// RECOMMENDS kid. The first key in the set is not necessarily the one that
+// signed: iya-sts 1.1.0 publishes a dedicated credential key after others.
+function verifiesAgainstJwks(jws, keys) {
+  log.debug("Entering verifiesAgainstJwks().");
+  var parts = jws.split(".");
+  var header = JSON.parse(b64uDecode(parts[0]).toString("utf8"));
+  var candidates;
+  if (header.x5c && header.x5c.length) {
+    candidates = [new crypto.X509Certificate(
+      Buffer.from(header.x5c[0], "base64")).publicKey];
+  } else {
+    var named = (keys || []).filter(function (k) {
+      return header.kid !== undefined && k.kid === header.kid;
+    });
+    candidates = (named.length ? named : keys || []).map(function (k) {
+      return crypto.createPublicKey({ key: k, format: "jwk" });
+    });
+  }
+  var m = /^(?:ES|RS|PS)(256|384|512)$/.exec(header.alg || "");
+  var hash = m ? "sha" + m[1] : null;
+  var ok = candidates.some(function (key) {
+    var opts = { key: key };
+    if (/^ES/.test(header.alg || "")) opts.dsaEncoding = "ieee-p1363";
+    if (/^PS/.test(header.alg || "")) {
+      opts.padding = crypto.constants.RSA_PKCS1_PSS_PADDING;
+      opts.saltLength = crypto.constants.RSA_PSS_SALTLEN_DIGEST;
+    }
+    try {
+      return crypto.verify(hash, Buffer.from(parts[0] + "." + parts[1]),
+                           opts, b64uDecode(parts[2]));
+    } catch (e) {
+      return false;
+    }
+  });
+  log.debug("Leaving verifiesAgainstJwks(). " + ok + ", " +
+            candidates.length + " candidate key(s).");
+  return ok;
+}
+
 function b64uDecode(s) {
   log.debug("Entering b64uDecode().");
   log.debug("Leaving b64uDecode().");
@@ -1067,10 +1109,7 @@ async function stepThree(driver, context) {
   assert.ok(jwtVcIssuer.ok && jwtVcIssuer.body.jwks_uri,
     "the issuer must publish JWT VC Issuer Metadata naming its jwks_uri.");
   var jwks = await httpJson(jwtVcIssuer.body.jwks_uri);
-  var key = crypto.createPublicKey({ key: jwks.body.keys[0], format: "jwk" });
-  var signed = issuerJwt.split(".").slice(0, 2).join(".");
-  assert.ok(crypto.verify("sha256", Buffer.from(signed), key,
-            b64uDecode(issuerJwt.split(".")[2])),
+  assert.ok(verifiesAgainstJwks(issuerJwt, jwks.body.keys),
     "the credential's issuer signature must verify against the issuer's " +
         "published key.");
   log.info("[step3] OK — the issuer signature verifies independently of " +
@@ -1366,10 +1405,7 @@ async function stepFour(driver, context) {
   // than taken from the page.
   var jwtVcIssuer = await httpJson(issuerBase + "/.well-known/jwt-vc-issuer");
   var jwks = await httpJson(jwtVcIssuer.body.jwks_uri);
-  var key = crypto.createPublicKey({ key: jwks.body.keys[0], format: "jwk" });
-  var signedPart = refreshed.split("~")[0].split(".").slice(0, 2).join(".");
-  assert.ok(crypto.verify("sha256", Buffer.from(signedPart), key,
-                          b64uDecode(refreshed.split("~")[0].split(".")[2])),
+  assert.ok(verifiesAgainstJwks(refreshed.split("~")[0], jwks.body.keys),
     "the refreshed credential's issuer signature must verify against the " +
         "issuer's published key.");
   newDisclosures.forEach(function (enc) {
