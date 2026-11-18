@@ -423,9 +423,17 @@ function checkSignatures() {
          label + ": a garbage signature did not return false");
     });
     if (c.ecdsa) {
-      // RFC 6979: the js backend's ECDSA is deterministic.
-      eq(P.sign(c.alg, key, message), P.sign(c.alg, key, message),
-         c.alg + ": ECDSA signing is not deterministic");
+      // RFC 6979 when asked for; hedged (section 3.6) by default, so two
+      // signatures of one message differ, as a Web Crypto pair does and as
+      // a replay check (GNAP jwsd) requires.
+      const det = { deterministic: true };
+      eq(P.sign(c.alg, key, message, det), P.sign(c.alg, key, message, det),
+         c.alg + ": ECDSA signing with deterministic is not deterministic");
+      const h1 = P.sign(c.alg, key, message);
+      const h2 = P.sign(c.alg, key, message);
+      ok(hex(h1) !== hex(h2), c.alg + ": two hedged signatures are equal");
+      ok(P.verify(c.alg, pub, message, h1) && P.verify(c.alg, pub, message, h2),
+         c.alg + ": a hedged signature does not verify");
       // raw <-> DER helpers agree with what node writes.
       const size = (key.publicKey.length - 1) / 2;
       for (let i = 0; i < 4; i++) {

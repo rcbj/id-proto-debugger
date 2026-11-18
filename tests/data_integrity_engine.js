@@ -352,7 +352,7 @@ async function secp256k1Vector() {
     suite: "EcdsaSecp256k1Signature2019",
     privateJwk: Object.assign({ d: d }, pubJwk), verificationMethod: kp.id,
     created: Date.parse("2021-04-20T00:00:00Z"), documentLoader: fxLoader,
-    addContext: false });
+    addContext: false, deterministic: true });
   assert.strictEqual(out.proof.jws, want, "Blockcerts' expected JWS");
   var r = await di.verifyProof(out, { resolveKey: async function () {
     return pubJwk;
