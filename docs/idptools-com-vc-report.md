@@ -265,6 +265,11 @@ Out of the box the default realm is **product-mode secure**: it requires a
 MFA-setup screen, and an unusual sign-in can be scored and refused — so a
 plain demo cannot sign in until both are relaxed. For a demonstration wallet:
 
+> **Production note.** On a real deployment you would **not** disable MFA or
+> risk scoring — they are important security controls and are on by default
+> for good reason. We turn them off here only to keep this walkthrough simple,
+> with a throwaway holder account. Step 7 puts them back.
+
 ```text
 # 1. let the realm's policy decide, instead of forcing MFA on everyone
 POST /admin-api/config/set  { "key": "authn.allowOptionalSecondFactor",
