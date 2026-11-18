@@ -445,6 +445,22 @@ function buildCredentialQuery(q, index, seen) {
     out.require_cryptographic_holder_binding = false;
   }
   if (q.multiple === true) out.multiple = true;
+  if (isArray(q.trustedAuthorities) && q.trustedAuthorities.length) {
+    // Section 6.1.1: each entry { type, values }, values a non-empty array
+    // of strings.
+    out.trusted_authorities = q.trustedAuthorities.map(function (ta) {
+      if (!isPlainObject(ta) || typeof ta.type !== "string" || !ta.type ||
+          !isArray(ta.values) || !ta.values.length ||
+          ta.values.some(function (v) {
+            return typeof v !== "string" || !v;
+          })) {
+        throw new Error(where + ": a trusted_authorities entry is " +
+                        "{ type, values }, values a non-empty array of " +
+                        "strings (section 6.1.1).");
+      }
+      return { type: ta.type, values: ta.values.slice() };
+    });
+  }
   log.debug("Leaving buildCredentialQuery().");
   return out;
 }
@@ -2043,6 +2059,8 @@ var OID_EC_KEY = "1.2.840.10045.2.1";
 var OID_ED25519 = "1.3.101.112";
 var OID_SAN = "2.5.29.17";
 var OID_BASIC_CONSTRAINTS = "2.5.29.19";
+var OID_AKI = "2.5.29.35";
+var OID_SKI = "2.5.29.14";
 var EC_CURVES = {
   "1.2.840.10045.3.1.7": p256,
   "1.3.132.0.34": p384,
@@ -2129,7 +2147,9 @@ function readCertificate(der) {
     publicBits: forge.util.binary.raw.decode(spki.value[1].value).slice(1),
     dns: [],
     uri: [],
-    ca: false
+    ca: false,
+    aki: "",
+    ski: ""
   };
   var extsNode = tbs.value.filter(function (n) {
     return n.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC && n.type === 3;
@@ -2143,6 +2163,17 @@ function readCertificate(der) {
         if (gn.type === 2) out.dns.push(String(gn.value).toLowerCase());
         if (gn.type === 6) out.uri.push(String(gn.value));
       });
+    } else if (oid === OID_AKI) {
+      // AuthorityKeyIdentifier ::= SEQUENCE { keyIdentifier [0] IMPLICIT
+      // KeyIdentifier OPTIONAL, ... } (RFC 5280 section 4.2.1.1).
+      forge.asn1.fromDer(body).value.forEach(function (part) {
+        if (part.tagClass === forge.asn1.Class.CONTEXT_SPECIFIC &&
+            part.type === 0) {
+          out.aki = forge.util.bytesToHex(part.value);
+        }
+      });
+    } else if (oid === OID_SKI) {
+      out.ski = forge.util.bytesToHex(forge.asn1.fromDer(body).value);
     } else if (oid === OID_BASIC_CONSTRAINTS) {
       var bc = forge.asn1.fromDer(body).value;
       out.ca = !!(bc[0] && bc[0].type === forge.asn1.Type.BOOLEAN &&
@@ -2308,6 +2339,101 @@ function configuredBinding(trust, iss, bindings) {
   })[0] || null;
   log.debug("Leaving configuredBinding(). " + !!hit);
   return hit;
+}
+
+// The base64url aki values a Verifier asks for (section 6.1.1.1) from
+// trust anchors: each anchor's SubjectKeyIdentifier, which is the
+// AuthorityKeyIdentifier of every certificate it issues (RFC 5280 sections
+// 4.2.1.1 and 4.2.1.2). An anchor with no SubjectKeyIdentifier gives none,
+// and is named in `missing`.
+function akiValuesFromAnchors(anchors) {
+  log.debug("Entering akiValuesFromAnchors().");
+  var values = [];
+  var missing = [];
+  (anchors || []).forEach(function (one) {
+    var cert = readAnchor(one);
+    if (!cert) {
+      missing.push("an unreadable certificate");
+      return;
+    }
+    if (!cert.ski) {
+      missing.push(cert.name);
+      return;
+    }
+    var b64u = bytes.bytesToB64u(bytes.hexToBytes(cert.ski));
+    if (values.indexOf(b64u) === -1) {
+      values.push(b64u);
+    }
+  });
+  log.debug("Leaving akiValuesFromAnchors(). " + values.length);
+  return { values: values, missing: missing };
+}
+
+// The row on DCQL trusted_authorities (OpenID4VP 1.0 section 6.1.1):
+// "Every Credential returned by the Wallet SHOULD match at least one of the
+// conditions". A SHOULD on the wallet, so a credential that matches none is
+// REPORTED (a SKIP that is not essential), never failed; trust in the
+// issuer is decided by the trust rows. `certs` is the credential's X.509
+// chain (readCertificate() output) or null when it carries none.
+//
+//   aki                the AuthorityKeyIdentifier keyIdentifier of a
+//                      certificate in the chain equals a value, as bytes
+//                      (section 6.1.1.1; HAIP 1.0 section 5 makes it a
+//                      MUST to support)
+//   etsi_tl, openid_federation and any other type: not evaluated here, and
+//                      said so by name.
+function trustedAuthoritiesRow(s, key, certs, ctx) {
+  log.debug("Entering trustedAuthoritiesRow().");
+  ctx.authoritiesReported = true;
+  var entries = (ctx.query && ctx.query.trusted_authorities) || [];
+  if (!isArray(entries) || !entries.length) {
+    log.debug("Leaving trustedAuthoritiesRow(). None asked for.");
+    return;
+  }
+  var label = "The credential matches the query's trusted_authorities";
+  var notEvaluated = [];
+  var matched = null;
+  entries.forEach(function (ta) {
+    if (matched || !isPlainObject(ta)) {
+      return;
+    }
+    if (ta.type !== "aki") {
+      notEvaluated.push(String(ta.type));
+      return;
+    }
+    (certs || []).forEach(function (c) {
+      if (matched || !c.aki) {
+        return;
+      }
+      var hit = (ta.values || []).filter(function (v) {
+        try {
+          return bytes.bytesToHex(bytes.b64uToBytes(String(v)))
+            .toLowerCase() === c.aki.toLowerCase();
+        } catch (e) {
+          return false;
+        }
+      })[0];
+      if (hit) {
+        matched = { value: hit, cert: c.name };
+      }
+    });
+  });
+  if (matched) {
+    s.add(key, label, PASS, "aki " + matched.value + " is the " +
+          "AuthorityKeyIdentifier of \"" + matched.cert + "\" in the " +
+          "credential's chain (section 6.1.1.1).", false);
+    log.debug("Leaving trustedAuthoritiesRow(). Matched.");
+    return;
+  }
+  var why = !certs ? "the credential carries no X.509 chain, so an aki " +
+      "value has nothing to match" : "no certificate in its chain of " +
+      certs.length + " has an AuthorityKeyIdentifier equal to an aki value";
+  s.add(key, label, SKIP, "reported: " + why + (notEvaluated.length ?
+        "; types not evaluated by this Verifier: " +
+        notEvaluated.join(", ") : "") + ". Section 6.1.1: the wallet " +
+        "\"SHOULD\" return a credential that matches; the issuer's trust " +
+        "is decided by its own rows.", false);
+  log.debug("Leaving trustedAuthoritiesRow(). No match.");
 }
 
 // The row on whether iss is bound to an x5c end-entity certificate (SD-JWT
@@ -2511,6 +2637,8 @@ async function checkIssuerSignature(s, key, compact, header, payload,
           "certificate is trusted", trust.status, trust.detail, true);
     var base = key.replace(/signature$/, "");
     chainFindingRows(s, base, trust, "The issuer's");
+    trustedAuthoritiesRow(s, base + "trusted-authorities", trust.certs,
+                          ctx);
     if (payload.iss) {
       issBindingRow(s, base + "iss", trust, payload.iss, ctx.session);
     }
@@ -5223,6 +5351,7 @@ async function verifyMdoc(s, query, presentation, ctx) {
     s.add("mdoc.issuer-trust", "The document signer certificate is " +
           "trusted", trust.status, trust.detail, true);
     chainFindingRows(s, "mdoc.issuer-", trust, "The document signer's");
+    trustedAuthoritiesRow(s, "mdoc.trusted-authorities", trust.certs, ctx);
   }
   var docTypeCheck = mdoc.checkDocType(read);
   s.add("mdoc.mso-doctype", docTypeCheck.name, docTypeCheck.ok ? PASS :
@@ -5933,11 +6062,16 @@ async function verifyPresentations(report, vpToken, ctx) {
         continue;
       }
       var claims = null;
+      var one = Object.assign({}, ctx, { query: query,
+                                         authoritiesReported: false });
       try {
-        claims = await verify(s, query, list[i], ctx);
+        claims = await verify(s, query, list[i], one);
       } catch (e) {
         s.add("error", "The presentation could be checked", FAIL,
               e.message);
+      }
+      if (isArray(query.trusted_authorities) && !one.authoritiesReported) {
+        trustedAuthoritiesRow(s, "trusted-authorities", null, one);
       }
       out.push({ queryId: query.id, format: query.format, claims: claims });
     }
@@ -6141,6 +6275,7 @@ module.exports = {
   signRequestObject: signRequestObject,
   signingAlgsFor: signingAlgsFor,
   planForWalletMetadata: planForWalletMetadata,
+  akiValuesFromAnchors: akiValuesFromAnchors,
   encryptRequestObject: encryptRequestObject,
   dcApiRequest: dcApiRequest,
   authorizationRequestUri: authorizationRequestUri,

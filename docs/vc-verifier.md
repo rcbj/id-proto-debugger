@@ -207,6 +207,18 @@ something ties the key to the issuer:
   PASS or a FAIL; without them nothing anchors the chain, the row is an
   essential SKIP, and the verdict is incomplete. The certificate checks are
   pure JavaScript (node-forge ASN.1, @noble/curves, forge RSA).
+* **DCQL `trusted_authorities` (#471, E2).** With "Trusted authorities"
+  ticked, the generated query carries `{ "type": "aki", "values": [...] }`,
+  one value per trust anchor: its SubjectKeyIdentifier in base64url, which
+  is the AuthorityKeyIdentifier of every certificate it issues (OpenID4VP
+  1.0 section 6.1.1.1; HAIP 1.0 section 5 makes `aki` a MUST to support).
+  The query is drawn again when the anchors change. On the answer,
+  `issuer.trusted-authorities` (`mdoc.trusted-authorities` for an mdoc)
+  passes when a certificate in the credential's chain has an AKI equal to
+  a value, as bytes. Otherwise it is a non-essential SKIP naming why: no
+  chain, no match, or a type this Verifier does not evaluate (`etsi_tl`,
+  `openid_federation`). The wallet "SHOULD" return a matching credential;
+  whether the issuer is trusted is still decided by the trust rows.
 * **What is REPORTED and never fails (rcbj, 2026-11-17).** Each is a row of
   its own, a SKIP that is not essential, so neither the signature row nor
   the verdict changes because of it:

@@ -3417,6 +3417,61 @@ async function securityFindings(env) {
      /configured mapping/.test(checkById(r, "p[0].issuer.iss").detail),
      "S3: a configured sha256 mapping binds iss: " +
      JSON.stringify(checkById(r, "p[0].issuer.iss")));
+  // #471 E2: DCQL trusted_authorities (OpenID4VP 1.0 section 6.1.1). The
+  // aki values the page asks for are the anchors' SubjectKeyIdentifiers,
+  // read here by OpenSSL, not by this tree.
+  const opensslSki = function opensslSki(pem) {
+    log.debug("Entering opensslSki().");
+    const out = require("child_process").execFileSync("openssl",
+      ["x509", "-noout", "-ext", "subjectKeyIdentifier"], { input: pem })
+      .toString();
+    const hex = (/([0-9A-F]{2}(:[0-9A-F]{2})+)/.exec(out) || [""])[0]
+      .replace(/:/g, "");
+    log.debug("Leaving opensslSki().");
+    return Buffer.from(hex, "hex").toString("base64url");
+  };
+  const rootAki = opensslSki(root.pem);
+  const interAki = opensslSki(inter.pem);
+  eq(verifier.akiValuesFromAnchors([root.pem, inter.pem]).values,
+     [rootAki, interAki], "E2: aki values are the anchors' SKIs");
+  const taDcql = function taDcql(entries) {
+    log.debug("Entering taDcql().");
+    log.debug("Leaving taDcql().");
+    return verifier.buildDcql({ queries: [{ id: "p", format: "dc+sd-jwt",
+      vct: VCT, requireBinding: false, trustedAuthorities: entries }] });
+  };
+  eq(taDcql([{ type: "aki", values: [rootAki] }]).credentials[0]
+     .trusted_authorities, [{ type: "aki", values: [rootAki] }]);
+  let taRefused = "";
+  try {
+    taDcql([{ type: "aki", values: [] }]);
+  } catch (e) {
+    taRefused = e.message;
+  }
+  ok(/non-empty array of strings/.test(taRefused), "E2: empty values");
+  const taRun = function taRun(entries) {
+    log.debug("Entering taRun().");
+    log.debug("Leaving taRun().");
+    return sendSd(x5cJwt([leaf, inter], GOV), { session: Object.assign({},
+      anchors.session, { dcql: taDcql(entries) }) });
+  };
+  // The leaf's AKI is the intermediate's SKI; the intermediate's is the
+  // root's, so either value matches somewhere in the chain.
+  for (const v of [interAki, rootAki]) {
+    r = await taRun([{ type: "aki", values: [v] }]);
+    ok(checkById(r, "p[0].issuer.trusted-authorities").status === "pass",
+       "E2: aki " + v + " matches: " +
+       JSON.stringify(checkById(r, "p[0].issuer.trusted-authorities")));
+  }
+  r = await taRun([{ type: "aki", values: ["s9tIpPmhxdiuNkHMEWNpYim8S8Y"] },
+                   { type: "etsi_tl", values: ["https://lotl.example.com"] }]);
+  const taMiss = checkById(r, "p[0].issuer.trusted-authorities");
+  ok(taMiss.status === "skip" && !taMiss.essential &&
+     /no certificate in its chain of 2.*etsi_tl.*SHOULD/.test(taMiss.detail),
+     "E2: section 6.1.1.1's example value matches nothing, reported: " +
+     JSON.stringify(taMiss));
+  eq(failedIds(r), [], "E2: a credential outside trusted_authorities " +
+     "fails nothing (the wallet SHOULD, the trust rows decide)");
   // A chain anchored at some OTHER root.
   const otherRootKey = nodePemPair("ec");
   const otherRoot = await testCert({ profile: "root-ca", cn: "Other Root",

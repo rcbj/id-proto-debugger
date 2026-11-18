@@ -88,4 +88,9 @@ model VcVerifierKeys {
 
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_issuer_bindings: unknown;
+
+  // "1": ask for trusted_authorities (aki) built from vpv_trust_anchors
+  // (#471, E2).
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_trusted_authorities: unknown;
 }

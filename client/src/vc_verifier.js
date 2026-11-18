@@ -52,7 +52,7 @@ var VERIFIER_KEYS = [
   "vpv_dcql", "vpv_client_prefix", "vpv_response_mode", "vpv_delivery",
   "vpv_scheme", "vpv_redirect_uri", "vpv_client_id_typed", "vpv_dc_signed",
   "vpv_trust_anchors", "vpv_fetch_via_api", "vpv_save_identity",
-  "vpv_public_base_url", "vpv_issuer_bindings"
+  "vpv_public_base_url", "vpv_issuer_bindings", "vpv_trusted_authorities"
 ];
 
 // Whether issuer metadata, DID documents and status lists are fetched
@@ -511,6 +511,21 @@ function querySpec() {
     }).map(pathOf),
     requireBinding: !!val("vpv_binding")
   };
+  if (val("vpv_trusted_authorities")) {
+    var aki = verifier.akiValuesFromAnchors(trustAnchorsFromPage());
+    setText("vpv_trusted_authorities_note", aki.values.length
+      ? aki.values.length + " aki value(s) from the trust anchors." +
+        (aki.missing.length ? " No SubjectKeyIdentifier in: " +
+          aki.missing.join(", ") + "." : "")
+      : "No trust anchor below has a SubjectKeyIdentifier, so no " +
+        "trusted_authorities can be asked for.",
+      aki.values.length ? "vc-ok" : "vc-bad");
+    if (aki.values.length) {
+      spec.trustedAuthorities = [{ type: "aki", values: aki.values }];
+    }
+  } else {
+    setText("vpv_trusted_authorities_note", "");
+  }
   if (format === "dc+sd-jwt") {
     spec.vct = types;
   } else if (format === "mso_mdoc") {
@@ -556,6 +571,18 @@ function formatChanged() {
   showTypeLabel();
   regenerateDcql();
   log.debug("Leaving formatChanged().");
+  return false;
+}
+
+// The trust anchors changed: the trusted_authorities a generated query asks
+// for are drawn from them, so the query is drawn again when it asks.
+function anchorsChanged() {
+  log.debug("Entering anchorsChanged().");
+  settingsChanged();
+  if (val("vpv_trusted_authorities")) {
+    regenerateDcql();
+  }
+  log.debug("Leaving anchorsChanged().");
   return false;
 }
 
@@ -1682,6 +1709,7 @@ module.exports = {
   regenerateDcql: regenerateDcql,
   formatChanged: formatChanged,
   settingsChanged: settingsChanged,
+  anchorsChanged: anchorsChanged,
   createRequest: createRequest,
   checkPasted: checkPasted,
   askThroughDcApi: askThroughDcApi,
