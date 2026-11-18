@@ -41,6 +41,8 @@
 
 var provider = require("./crypto_provider");
 var bytes = require("./crypto_bytes");
+// Revocation: the CKS accumulator and the non-revocation proof.
+var rev = require("./anoncreds_revocation");
 
 var bunyan = require("bunyan");
 var log = bunyan.createLogger({
@@ -360,7 +362,10 @@ function createCredentialRequest(opts) {
     request.entropy = opts.entropy || dec(rand(80));
   }
   request.cred_def_id = offer.cred_def_id;
-  request.blinded_ms = { u: dec(u), ur: null,
+  // A revocable credential definition: blind vr' as ur = vr'*h2 too.
+  var rk = rev.revocationKey(opts.credentialDefinition);
+  var blinding = rk ? rev.blind(rk) : null;
+  request.blinded_ms = { u: dec(u), ur: blinding ? blinding.ur : null,
                          hidden_attributes: [LINK_SECRET_ATTR],
                          committed_attributes: {} };
   request.blinded_ms_correctness_proof = {
@@ -371,7 +376,7 @@ function createCredentialRequest(opts) {
   return { credentialRequest: request,
            credentialRequestMetadata: {
              link_secret_blinding_data: { v_prime: dec(vPrime),
-                                          vr_prime: null },
+               vr_prime: blinding ? blinding.vrPrime : null },
              nonce: nonce, link_secret_name: opts.linkSecretId || "" } };
 }
 
@@ -439,6 +444,12 @@ function processCredential(credential, opts) {
   }
   var out = JSON.parse(JSON.stringify(credential));
   out.signature.p_credential.v = dec(v);
+  // A revocable credential: vr = vr' + vr'', after the three checks.
+  if (credential.signature.r_credential) {
+    out.signature.r_credential = rev.processRevocation(credential,
+      opts.credentialRequestMetadata.link_secret_blinding_data.vr_prime,
+      opts.credentialDefinition, opts.revocationRegistryDefinition);
+  }
   log.debug("Leaving processCredential().");
   return out;
 }
@@ -594,8 +605,11 @@ function createPresentation(opts) {
     var values = credentialValues(cred, ms);
     var revealed = {};
     var predicates = [];
+    var revealedRefs = [];
+    var predicateRefs = [];
     byEntry[entry].forEach(function (p) {
       if (p.isPredicate) {
+        predicateRefs.push(p.referent);
         var pi = (req.requested_predicates || {})[p.referent];
         if (!pi) throw new Error("no requested predicate " + p.referent);
         predicates.push({ attr_name: attrCommonView(pi.name),
@@ -610,6 +624,7 @@ function createPresentation(opts) {
         requested.unrevealed_attrs[p.referent] = { sub_proof_index: subIndex };
         return;
       }
+      revealedRefs.push(p.referent);
       var names = ai.names || [ai.name];
       var found = {};
       names.forEach(function (nm) {
@@ -697,14 +712,28 @@ function createPresentation(opts) {
       return { p: p, u: u, ri: ri, rDelta: rDelta, t: t, uTilde: uTilde,
                rTilde: rTilde, alphaTilde: alphaTilde };
     });
+    // Revocation: a non-revocation proof when the request asks for an
+    // interval and a revocation state was given; its items go AHEAD of the
+    // primary ones, and it shares the primary m~2.
+    var entryOpts = opts.credentials[entry];
+    var interval = cred.rev_reg_id ? rev.intervalFor(req, revealedRefs,
+                                                     predicateRefs) : null;
+    var nrp = null;
+    if (interval && entryOpts.revocationState) {
+      nrp = rev.proverInit(cred, entryOpts.revocationState, cd, m2Tilde);
+      subC = nrp.cBytes.concat(subC);
+      subTau = nrp.tauBytes.concat(subTau);
+    }
     tauList = tauList.concat(subTau);
     cList = cList.concat(subC);
     states.push({ pk: pk, values: values, revealed: revealed,
                   unrevealed: unrevealed, mTilde: mTilde, m2: m2,
                   m2Tilde: m2Tilde, e: e, eTilde: eTilde, vPrime: vPrime,
-                  vTilde: vTilde, aPrime: aPrime, preds: preds });
+                  vTilde: vTilde, aPrime: aPrime, preds: preds, nrp: nrp });
     identifiers.push({ schema_id: cred.schema_id, cred_def_id:
-                       cred.cred_def_id, rev_reg_id: null, timestamp: null });
+                       cred.cred_def_id, rev_reg_id: cred.rev_reg_id || null,
+                       timestamp: entryOpts.timestamp !== undefined ?
+                         entryOpts.timestamp : null });
   });
   var c = hashInts(tauList.concat(cList, [toBytes(big(req.nonce))]));
   var proofs = states.map(function (st) {
@@ -740,7 +769,7 @@ function createPresentation(opts) {
                    t: tt, predicate: pp.p };
         })
       },
-      non_revoc_proof: null
+      non_revoc_proof: st.nrp ? st.nrp.finalize(c) : null
     };
   });
   if (Object.keys(groups).length) requested.revealed_attr_groups = groups;
@@ -944,13 +973,57 @@ function verifyPresentation(presentation, opts) {
         throw new Error("the schema or credential definition of sub-proof " +
                         idx + " was not supplied.");
       }
-      if (sp.non_revoc_proof) {
-        throw new Error("sub-proof " + idx + " carries a non-revocation " +
-                        "proof, which this debugger does not verify yet.");
-      }
       var pk = primaryKey(cd);
       var eq = sp.primary_proof.eq_proof;
       var c = big(presentation.proof.aggregated_proof.c_hash);
+      // Revocation (anoncreds-rs verifier.rs check_non_revoked_interval and
+      // get_revocation_registry): the interval this sub-proof is asked
+      // for, its timestamp inside it, the status list for exactly that
+      // (rev_reg_id, timestamp), and the non-revocation proof's taus AHEAD
+      // of the primary ones. Stricter than anoncreds-rs 0.2.3, which
+      // verifies a sub-proof with no non-revocation proof as if none had
+      // been asked for: one is REQUIRED when an interval applies.
+      if (pk.revocable) {
+        var refsOf = function (map) {
+          return Object.keys(map || {}).filter(function (ref) {
+            return map[ref].sub_proof_index === idx;
+          });
+        };
+        var interval = rev.intervalFor(req, refsOf(rp.revealed_attrs).concat(
+          refsOf(rp.revealed_attr_groups)), refsOf(rp.predicates));
+        if (interval && !id.rev_reg_id) interval = null;
+        if (interval) {
+          if (id.timestamp === null || id.timestamp === undefined) {
+            throw new Error("sub-proof " + idx + " is asked for a " +
+              "non-revocation interval and names no timestamp.");
+          }
+          if ((interval.from !== undefined && id.timestamp < interval.from) ||
+              (interval.to !== undefined && id.timestamp > interval.to)) {
+            throw new Error("sub-proof " + idx + "'s timestamp " +
+              id.timestamp + " is outside the interval asked for.");
+          }
+          if (!sp.non_revoc_proof) {
+            errors.push("sub-proof " + idx + " is asked to prove it is not " +
+              "revoked and carries no non-revocation proof.");
+          }
+        }
+        if (sp.non_revoc_proof) {
+          var rrd = (opts.revocationRegistryDefinitions || {})[id.rev_reg_id];
+          var list = (opts.revocationStatusLists || []).filter(function (l) {
+            return l.revRegDefId === id.rev_reg_id &&
+              l.timestamp === id.timestamp;
+          })[0];
+          if (!rrd || !list) {
+            throw new Error("sub-proof " + idx + "'s non-revocation proof " +
+              "needs the revocation registry definition " + id.rev_reg_id +
+              " and its status list at timestamp " + id.timestamp + ".");
+          }
+          var nr = rev.verifierTau(sp.non_revoc_proof, cd, rrd,
+                                   list.currentAccumulator, c, big(eq.m2));
+          tau = tau.concat(nr.tauBytes);
+          cExpected = cExpected.concat(nr.cBytes);
+        }
+      }
       var attrs = schemaAttrs(schema).concat([LINK_SECRET_ATTR]);
       var unrevealed = attrs.filter(function (a) {
         return eq.revealed_attrs[a] === undefined;
