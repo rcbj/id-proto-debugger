@@ -136,6 +136,9 @@ var CBC_HMAC = {
 
 // The hash each RSA-OAEP variant uses.
 var JWE_RSA_HASH = { 'RSA-OAEP': 'SHA-1', 'RSA-OAEP-256': 'SHA-256' };
+// The crypto_provider.js scheme each one is.
+var RSA_SCHEME = { 'RSA-OAEP': 'rsa-oaep-sha1',
+                   'RSA-OAEP-256': 'rsa-oaep-sha256' };
 
 // ECDH-ES key-agreement key-wrap variants (RFC 7518 section 4.6) -> AES
 // key-wrap size in bytes. Plain "ECDH-ES" (direct key agreement) is handled
@@ -159,147 +162,54 @@ function isEcdh(alg) {
   return alg === 'ECDH-ES' || ECDH_KW_BYTES[alg] !== undefined;
 }
 // ---------------------------------------------------------------------------
-// WHAT THIS FILE DOES WHEN WEB CRYPTO WILL NOT.
+// NO ALGORITHM HERE DEPENDS ON THE BROWSER (#463, step 2).
 //
-// Chrome implements AES at 128 and 256 and REFUSES 192 — for GCM, for CBC and
-// for key wrapping alike (measured; node's Web Crypto does support them, which
-// is a good way to be misled by a unit test). That takes three registered JOSE
-// algorithms off the table in the one place they are most likely to be met: a
-// browser. A192GCM, A192CBC-HS384 and ECDH-ES+A192KW are not exotic — they are
-// simply the middle size.
-//
-// So the AES-192 operations are performed HERE, in JavaScript, on the same
-// node-forge engine `symmetric_crypto.js` already uses for the Encryption
-// page's ciphers and the Digital Signature page's block-cipher MACs — an
-// engine `tests/crypto_engines.js` drives against the RFCs' own vectors and
-// against OpenSSL. This is the same trade `jws.js` makes for secp256k1 and
-// Ed448, and for the same reason: an algorithm the tool cannot perform is a
-// case it cannot debug.
-//
-// THE RULE IS BY KEY SIZE AND NOT BY A CAPABILITY PROBE, deliberately: 192
-// always goes through the JavaScript path and 128/256 always go through Web
-// Crypto. A probe would make the code path depend on the browser, so a defect
-// in the JavaScript path would be invisible in node (where Web Crypto does 192)
-// and appear only in Chrome. This way both paths are exercised everywhere, and
-// `tests/jose_jwe_encryption.js` checks the two against each other.
+// Until 2026-11-18 this file sent AES at 128 and 256 bits, ECDH and RSA-OAEP
+// to Web Crypto and did AES-192 in JavaScript, because Chrome refuses 192.
+// That made every JWE depend on a secure context: crypto.subtle does not
+// exist on a page served over plain HTTP, so the containerized test origin
+// and an http deployment could encrypt nothing. Every primitive is now
+// crypto_provider.js's, which is pure JS at every size, and
+// tests/jose_jwe_encryption.js runs every alg/enc pair with crypto.subtle
+// removed and has the jose library open each result.
 // ---------------------------------------------------------------------------
-var symmetric = require("./symmetric_crypto");
 var kem = require("./jwe_kem");
+// EVERY PRIMITIVE BELOW IS crypto_provider.js's (#463, step 2): pure JS, and
+// the same in a page served over plain HTTP, in a secure context and in
+// node. Web Crypto is touched in exactly two places now: a CryptoKey a
+// caller hands in is exported to a JWK first (cryptoKeyToJwk()), and the
+// older deriveCek()/unwrapCek() entry points hand a CryptoKey back, because
+// that is what their callers asked for.
+var provider = require("./crypto_provider");
 
-// Web Crypto is used for these key sizes; anything else is done in JavaScript.
-// AES-192 is the size every browser-grade Web Crypto refuses, so it is decided
-// here by a FIXED RULE rather than by the probe — see the block above.
+// The AES key sizes a browser's Web Crypto imports. Only the CryptoKey-
+// shaped deriveCek()/unwrapCek() still need it: they hand a Web Crypto key
+// back, and AES-192 is the size every browser-grade Web Crypto refuses.
 function webCryptoDoesAes(keyBytes) {
   log.debug("Entering webCryptoDoesAes().");
   log.debug("Leaving webCryptoDoesAes().");
   return keyBytes === 16 || keyBytes === 32;
 }
 
-// ---------------------------------------------------------------------------
-// THE ONE PLACE THAT ASKS "CAN WEB CRYPTO DO THIS", AND WHAT THE ANSWER IS FOR.
-//
-// It chooses an ENGINE. It never decides whether an algorithm is available,
-// and nothing downstream of it may: this module implements every algorithm it
-// offers in JavaScript as well, so a browser that refuses one changes which
-// code runs and nothing else. A runtime's gaps are that runtime's business —
-// a debugger that inherited them would refuse to reproduce exactly the case
-// somebody came here with, and would report the refusal as if the ALGORITHM
-// were unavailable rather than one implementation of it.
-//
-// The fixed rule above covers AES-192, which is the known case. This adds the
-// unknown ones: any size or family a particular runtime turns out to refuse
-// falls through to the JavaScript engine instead of failing.
-// ---------------------------------------------------------------------------
-async function webCryptoCanDo(family, keyBytes) {
-  log.debug("Entering webCryptoCanDo(). " + family + "/" + (keyBytes * 8));
-  if (!webCryptoDoesAes(keyBytes)) {
-    log.debug("Leaving webCryptoCanDo(). AES-192 always goes to JavaScript.");
-    return false;
-  }
-  var support = await probeAesSupport();
-  var ok = !(support && support[family] &&
-             support[family][keyBytes * 8] === false);
-  log.debug("Leaving webCryptoCanDo(). " + ok);
-  return ok;
-}
-
-// RFC 3394 key wrapping, on the raw AES block. Web Crypto has this as 'AES-KW'
-// at 128 and 256; this is the same construction for the size it has not.
-var AES_KW_IV = new Uint8Array([0xa6, 0xa6, 0xa6, 0xa6,
-                                0xa6, 0xa6, 0xa6, 0xa6]);
-
+// RFC 3394 key wrapping, by crypto_provider.js. Kept under these names
+// because tests/jose_jwe_encryption.js holds them to RFC 3394's own vectors.
 function aesKwWrapJs(kek, plaintextKey) {
   log.debug("Entering aesKwWrapJs().");
-  var n = plaintextKey.length / 8;
-  var a = AES_KW_IV.slice(0);
-  var r = [];
-  var i;
-  for (i = 0; i < n; i++) {
-    r.push(plaintextKey.slice(i * 8, i * 8 + 8));
-  }
-  for (var j = 0; j < 6; j++) {
-    for (i = 1; i <= n; i++) {
-      var b = symmetric.aesBlock(kek, concatBytes(a, r[i - 1]));
-      a = b.slice(0, 8);
-      // XOR the round counter t = n*j + i into the low-order end of A. It is
-      // written over the last four octets because t cannot exceed 6n and n is
-      // small; the octets above them are always zero.
-      var t = n * j + i;
-      a[7] ^= t & 0xff;
-      a[6] ^= (t >>> 8) & 0xff;
-      a[5] ^= (t >>> 16) & 0xff;
-      a[4] ^= (t >>> 24) & 0xff;
-      r[i - 1] = b.slice(8, 16);
-    }
-  }
-  var out = new Uint8Array(8 * (n + 1));
-  out.set(a, 0);
-  for (i = 0; i < n; i++) {
-    out.set(r[i], 8 * (i + 1));
-  }
+  var out = provider.aesKwWrap(kek, plaintextKey);
   log.debug("Leaving aesKwWrapJs().");
   return out;
 }
 
 function aesKwUnwrapJs(kek, wrapped) {
   log.debug("Entering aesKwUnwrapJs().");
-  var n = wrapped.length / 8 - 1;
-  var a = wrapped.slice(0, 8);
-  var r = [];
-  var i;
-  for (i = 0; i < n; i++) {
-    r.push(wrapped.slice(8 * (i + 1), 8 * (i + 2)));
-  }
-  for (var j = 5; j >= 0; j--) {
-    for (i = n; i >= 1; i--) {
-      var t = n * j + i;
-      var av = a.slice(0);
-      av[7] ^= t & 0xff;
-      av[6] ^= (t >>> 8) & 0xff;
-      av[5] ^= (t >>> 16) & 0xff;
-      av[4] ^= (t >>> 24) & 0xff;
-      var b = symmetric.aesBlockDecrypt(kek, concatBytes(av, r[i - 1]));
-      a = b.slice(0, 8);
-      r[i - 1] = b.slice(8, 16);
-    }
-  }
-  // The integrity check RFC 3394 section 2.2.2 defines, and the only thing that
-  // distinguishes a wrong key-encryption key from a right one here: A must have
-  // come back as the constant it started as.
-  var ok = a.length === AES_KW_IV.length;
-  var diff = 0;
-  for (i = 0; i < AES_KW_IV.length; i++) {
-    diff |= a[i] ^ AES_KW_IV[i];
-  }
-  if (!ok || diff !== 0) {
+  var out;
+  try {
+    out = provider.aesKwUnwrap(kek, wrapped);
+  } catch (e) {
     log.debug("Leaving aesKwUnwrapJs(). The integrity check failed.");
     throw new Error('the wrapped key did not unwrap: its RFC 3394 integrity ' +
         'check failed, which means the key-encryption key is not the one it ' +
         'was wrapped with.');
-  }
-  var out = new Uint8Array(8 * n);
-  for (i = 0; i < n; i++) {
-    out.set(r[i], 8 * i);
   }
   log.debug("Leaving aesKwUnwrapJs().");
   return out;
@@ -492,6 +402,43 @@ function importKey(key, format, params, usages) {
                                  usages);
 }
 
+// A CryptoKey a caller handed in, as a JWK. It must be extractable: the
+// cryptography here is crypto_provider.js's, which reads key bytes.
+async function cryptoKeyToJwk(key) {
+  log.debug("Entering cryptoKeyToJwk().");
+  try {
+    var jwk = await crypto.subtle.exportKey('jwk', key);
+    log.debug("Leaving cryptoKeyToJwk().");
+    return jwk;
+  } catch (e) {
+    log.debug("Leaving cryptoKeyToJwk(). Not extractable.");
+    throw new Error('this module performs JOSE encryption in JavaScript and ' +
+        'needs the key\'s bytes; the CryptoKey given is not extractable. ' +
+        'Pass a JWK or PEM, or an extractable key.');
+  }
+}
+
+// Any accepted key form (a JWK object or text, a PEM, a CryptoKey) as a
+// crypto_provider.js key.
+async function providerKey(key) {
+  log.debug("Entering providerKey().");
+  if (isCryptoKey(key)) {
+    var fromCrypto = provider.importKey(stripJwkForImport(
+      await cryptoKeyToJwk(key)));
+    log.debug("Leaving providerKey(). CryptoKey.");
+    return fromCrypto;
+  }
+  var jwk = asJwk(key);
+  var out = provider.importKey(jwk ? stripJwkForImport(jwk) : String(key));
+  log.debug("Leaving providerKey().");
+  return out;
+}
+
+// The KEY_SPECS name of a curve, for an ephemeral ECDH key on it.
+var EPHEMERAL_SPEC = { 'P-256': 'ec-p256', 'P-384': 'ec-p384',
+                       'P-521': 'ec-p521', 'X25519': 'x25519',
+                       'X448': 'x448' };
+
 // The curve a key names, so ECDH import parameters can be built for it. A JWK
 // says so directly; a PEM does not, so P-256 is assumed — which is what this
 // project's issuers and wallets use, and what encryption chooses anyway.
@@ -550,7 +497,7 @@ async function concatKdf(z, keyBytes, algId, apu, apv) {
   var derived = new Uint8Array(rounds * 32);
   for (var counter = 1; counter <= rounds; counter++) {
     var input = concatBytes(uint32be(counter), new Uint8Array(z), otherInfo);
-    var round = new Uint8Array(await crypto.subtle.digest('SHA-256', input));
+    var round = provider.digest('SHA-256', input);
     derived.set(round, (counter - 1) * 32);
   }
   log.debug("Leaving concatKdf(). " + rounds + " round(s).");
@@ -605,7 +552,7 @@ function partyInfo(protectedHeader, name) {
 //   * The tag is compared in CONSTANT TIME on the way back, because a JWE tag
 //     check that returns early is a padding oracle with extra steps.
 //
-// Web Crypto gives us AES-CBC with PKCS#7 padding, which is exactly what
+// crypto_provider.js's AES-CBC pads with PKCS#7, which is exactly what
 // section 5.2.2.1 step 4 asks for, so the padding is not done by hand.
 // ---------------------------------------------------------------------------
 
@@ -648,10 +595,8 @@ function cbcHalves(enc, cekBytes) {
 
 async function cbcHmacTag(halves, iv, aad, ciphertext) {
   log.debug("Entering cbcHmacTag().");
-  var mac = await crypto.subtle.importKey('raw', halves.macKey,
-      { name: 'HMAC', hash: halves.spec.hash }, false, ['sign']);
-  var signed = new Uint8Array(await crypto.subtle.sign('HMAC', mac,
-      concatBytes(aad, iv, ciphertext, alBlock(aad.length))));
+  var signed = provider.hmac(halves.spec.hash, halves.macKey,
+      concatBytes(aad, iv, ciphertext, alBlock(aad.length)));
   log.debug("Leaving cbcHmacTag().");
   return signed.slice(0, halves.spec.tagBytes);
 }
@@ -742,17 +687,18 @@ async function deriveCekBytes(alg, enc, protectedHeader, recipientPublicKey,
     // invented, and a malformed one is refused before any key is generated.
     var apu = partyInfo(protectedHeader, 'apu');
     var apv = partyInfo(protectedHeader, 'apv');
-    var curve = curveOf(recipientPublicKey, ECDH_CURVE);
-    var recipientPub = await importKey(recipientPublicKey, 'spki',
-      { name: 'ECDH', namedCurve: curve }, []);
-    var ephemeral = await crypto.subtle.generateKey({ name: 'ECDH',
-        namedCurve: curve },
-      true, ['deriveBits']);
-    var z = await crypto.subtle.deriveBits({ name: 'ECDH',
-        public: recipientPub },
-      ephemeral.privateKey, CURVE_BITS[curve] || ECDH_CURVE_BITS);
-    var epk = await crypto.subtle.exportKey('jwk', ephemeral.publicKey);
-    protectedHeader.epk = { kty: epk.kty, crv: epk.crv, x: epk.x, y: epk.y };
+    var recipientPub = await providerKey(recipientPublicKey);
+    var curve = recipientPub.curve || curveOf(recipientPublicKey, ECDH_CURVE);
+    if (!EPHEMERAL_SPEC[curve]) {
+      throw new Error('ECDH-ES needs a key on P-256, P-384, P-521, X25519 ' +
+          'or X448; this one is ' + curve + '.');
+    }
+    var ephemeral = provider.generateKeyPair(EPHEMERAL_SPEC[curve]);
+    var z = provider.ecdh(ephemeral, recipientPub);
+    var epk = provider.exportKey(provider.publicKeyOf(ephemeral), 'jwk');
+    protectedHeader.epk = epk.kty === 'OKP'
+      ? { kty: epk.kty, crv: epk.crv, x: epk.x }
+      : { kty: epk.kty, crv: epk.crv, x: epk.x, y: epk.y };
 
     if (alg === 'ECDH-ES') {
       // Direct: the agreed key IS the CEK and encrypted_key is empty. The
@@ -777,18 +723,15 @@ async function deriveCekBytes(alg, enc, protectedHeader, recipientPublicKey,
       alg);
   // RSA-OAEP / RSA-OAEP-256: a random CEK wrapped with the recipient's key.
   var cek = randomCekBytes(keyBytes);
-  var rsaPub = await importKey(recipientPublicKey, 'spki',
-    { name: 'RSA-OAEP', hash: JWE_RSA_HASH[alg] }, ['encrypt']);
-  var wrappedCek = await crypto.subtle.encrypt({ name: 'RSA-OAEP' }, rsaPub,
-      cek);
+  var wrappedCek = provider.rsaEncrypt(RSA_SCHEME[alg],
+      await providerKey(recipientPublicKey), cek);
   log.debug("Leaving deriveCekBytes(). " + alg + ".");
   return { cekBytes: cek, encryptedKey: bytesToB64u(wrappedCek) };
 }
 
 function randomCekBytes(keyBytes) {
   log.debug("Entering randomCekBytes().");
-  var out = new Uint8Array(keyBytes);
-  crypto.getRandomValues(out);
+  var out = provider.randomBytes(keyBytes);
   log.debug("Leaving randomCekBytes().");
   return out;
 }
@@ -799,117 +742,50 @@ function asCekBytes(value) {
   return value instanceof Uint8Array ? value : new Uint8Array(value);
 }
 
-// AES-KW wraps a KEY, not a buffer, and Web Crypto will not import 48 octets as
-// an AES key — so the CEK is carried through the wrap as an HMAC key, which
-// accepts any length. The hash named here is never used for anything: nothing
-// signs with this key, it exists to be exported straight back out as raw bytes.
+// AES-KW over the raw CEK octets, any length AES-KW takes.
 async function wrapRawBytes(rawBytes, kekBytes) {
   log.debug("Entering wrapRawBytes().");
-  if (!(await webCryptoCanDo('AES-KW', kekBytes.length))) {
-    log.debug("Leaving wrapRawBytes(). JavaScript.");
-    return aesKwWrapJs(kekBytes, rawBytes);
-  }
-  var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' },
-      false, ['wrapKey']);
-  var carrier = await crypto.subtle.importKey('raw', rawBytes,
-      { name: 'HMAC', hash: 'SHA-256' }, true, ['sign']);
-  var wrapped = await crypto.subtle.wrapKey('raw', carrier, kek, 'AES-KW');
-  log.debug("Leaving wrapRawBytes(). Web Crypto.");
-  return new Uint8Array(wrapped);
+  log.debug("Leaving wrapRawBytes().");
+  return aesKwWrapJs(kekBytes, rawBytes);
 }
 
 async function unwrapRawBytes(wrappedBytes, kekBytes) {
   log.debug("Entering unwrapRawBytes().");
-  if (!(await webCryptoCanDo('AES-KW', kekBytes.length))) {
-    log.debug("Leaving unwrapRawBytes(). JavaScript.");
-    return aesKwUnwrapJs(kekBytes, wrappedBytes);
-  }
-  var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-KW' },
-      false, ['unwrapKey']);
-  var carrier = await crypto.subtle.unwrapKey('raw', wrappedBytes, kek,
-      'AES-KW', { name: 'HMAC', hash: 'SHA-256' }, true, ['sign']);
-  var raw = await crypto.subtle.exportKey('raw', carrier);
-  log.debug("Leaving unwrapRawBytes(). Web Crypto.");
-  return new Uint8Array(raw);
+  log.debug("Leaving unwrapRawBytes().");
+  return aesKwUnwrapJs(kekBytes, wrappedBytes);
 }
 
 // ---------------------------------------------------------------------------
-// AES-GCM and AES-CBC, through Web Crypto or through JavaScript depending only
-// on the key size. Both return and take the ciphertext and the tag SEPARATELY,
-// which is what JWE's five segments want — Web Crypto concatenates them and
-// node-forge keeps them apart, so the difference is absorbed here.
+// AES-GCM and AES-CBC, by crypto_provider.js at every key size. Both return
+// and take the ciphertext and the tag SEPARATELY, which is what JWE's five
+// segments want.
 // ---------------------------------------------------------------------------
 async function aesGcmSeal(cekBytes, iv, aad, plaintext) {
   log.debug("Entering aesGcmSeal().");
-  if (!(await webCryptoCanDo('AES-GCM', cekBytes.length))) {
-    var out = symmetric.encrypt({ id: 'AES-' + (cekBytes.length * 8) + '-GCM',
-      key: cekBytes, iv: iv, plaintext: plaintext, aad: aad });
-    log.debug("Leaving aesGcmSeal(). JavaScript.");
-    return { ciphertext: out.ciphertext, tag: out.tag };
-  }
-  var key = await crypto.subtle.importKey('raw', cekBytes,
-      { name: 'AES-GCM' }, false, ['encrypt']);
-  var full = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv, additionalData: aad, tagLength: 128 },
-    key, plaintext));
-  log.debug("Leaving aesGcmSeal(). Web Crypto.");
-  return { ciphertext: full.slice(0, full.length - 16),
-           tag: full.slice(full.length - 16) };
+  var out = provider.aesGcmEncrypt(cekBytes, iv, plaintext, aad);
+  log.debug("Leaving aesGcmSeal().");
+  return { ciphertext: out.ciphertext, tag: out.tag };
 }
 
 async function aesGcmOpen(cekBytes, iv, aad, ciphertext, tag) {
   log.debug("Entering aesGcmOpen().");
-  if (!(await webCryptoCanDo('AES-GCM', cekBytes.length))) {
-    // symmetric.decrypt() returns the plaintext BYTES, not an object around
-    // them — unlike encrypt(), which returns { ciphertext, tag, iv }. The
-    // asymmetry is that module's and is easy to get wrong in exactly one
-    // direction: reading `.plaintext` off a Uint8Array is `undefined`, which
-    // then compares unequal to the input and reads as a cipher that does not
-    // round-trip rather than as a property that does not exist.
-    var plain = symmetric.decrypt({
-      id: 'AES-' + (cekBytes.length * 8) + '-GCM',
-      key: cekBytes, iv: iv, ciphertext: ciphertext, tag: tag, aad: aad });
-    log.debug("Leaving aesGcmOpen(). JavaScript.");
-    return plain;
-  }
-  var key = await crypto.subtle.importKey('raw', cekBytes,
-      { name: 'AES-GCM' }, false, ['decrypt']);
-  var plain = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: iv, additionalData: aad, tagLength: 128 }, key,
-    concatBytes(ciphertext, tag));
-  log.debug("Leaving aesGcmOpen(). Web Crypto.");
-  return new Uint8Array(plain);
+  var plain = provider.aesGcmDecrypt(cekBytes, iv, ciphertext, tag, aad);
+  log.debug("Leaving aesGcmOpen().");
+  return plain;
 }
 
 async function aesCbcSeal(encKey, iv, plaintext) {
   log.debug("Entering aesCbcSeal().");
-  if (!(await webCryptoCanDo('AES-CBC', encKey.length))) {
-    var out = symmetric.encrypt({ id: 'AES-' + (encKey.length * 8) + '-CBC',
-      key: encKey, iv: iv, plaintext: plaintext });
-    log.debug("Leaving aesCbcSeal(). JavaScript.");
-    return out.ciphertext;
-  }
-  var key = await crypto.subtle.importKey('raw', encKey, { name: 'AES-CBC' },
-      false, ['encrypt']);
-  log.debug("Leaving aesCbcSeal(). Web Crypto.");
-  return new Uint8Array(await crypto.subtle.encrypt(
-      { name: 'AES-CBC', iv: iv }, key, plaintext));
+  var out = provider.aesCbcEncrypt(encKey, iv, plaintext);
+  log.debug("Leaving aesCbcSeal().");
+  return out;
 }
 
 async function aesCbcOpen(encKey, iv, ciphertext) {
   log.debug("Entering aesCbcOpen().");
-  if (!(await webCryptoCanDo('AES-CBC', encKey.length))) {
-    var plain = symmetric.decrypt({
-      id: 'AES-' + (encKey.length * 8) + '-CBC',
-      key: encKey, iv: iv, ciphertext: ciphertext });
-    log.debug("Leaving aesCbcOpen(). JavaScript.");
-    return plain;
-  }
-  var key = await crypto.subtle.importKey('raw', encKey, { name: 'AES-CBC' },
-      false, ['decrypt']);
-  log.debug("Leaving aesCbcOpen(). Web Crypto.");
-  return new Uint8Array(await crypto.subtle.decrypt(
-      { name: 'AES-CBC', iv: iv }, key, ciphertext));
+  var plain = provider.aesCbcDecrypt(encKey, iv, ciphertext);
+  log.debug("Leaving aesCbcOpen().");
+  return plain;
 }
 
 async function unwrapCekBytes(alg, enc, protectedHeader, encryptedKey,
@@ -954,14 +830,9 @@ async function unwrapCekBytes(alg, enc, protectedHeader, encryptedKey,
         '"epk" header.');
     var apu = partyInfo(protectedHeader, 'apu');
     var apv = partyInfo(protectedHeader, 'apv');
-    var curve = protectedHeader.epk.crv || ECDH_CURVE;
-    var recipientPriv = await importKey(recipientPrivateKey, 'pkcs8',
-      { name: 'ECDH', namedCurve: curve }, ['deriveBits']);
-    var epk = await crypto.subtle.importKey('jwk', protectedHeader.epk,
-      { name: 'ECDH', namedCurve: curve }, false, []);
-    var z = await crypto.subtle.deriveBits({ name: 'ECDH', public: epk },
-        recipientPriv,
-      CURVE_BITS[curve] || ECDH_CURVE_BITS);
+    var recipientPriv = await providerKey(recipientPrivateKey);
+    var epk = provider.importKey(stripJwkForImport(protectedHeader.epk));
+    var z = provider.ecdh(recipientPriv, epk);
     if (alg === 'ECDH-ES') {
       var direct = await concatKdf(z, keyBytes, enc, apu, apv);
       log.debug("Leaving unwrapCekBytes(). ECDH-ES direct.");
@@ -975,12 +846,10 @@ async function unwrapCekBytes(alg, enc, protectedHeader, encryptedKey,
 
   if (!isRsa(alg)) throw new Error('unsupported key management algorithm: ' +
       alg);
-  var rsaPriv = await importKey(recipientPrivateKey, 'pkcs8',
-    { name: 'RSA-OAEP', hash: JWE_RSA_HASH[alg] }, ['decrypt']);
-  var cek = await crypto.subtle.decrypt({ name: 'RSA-OAEP' }, rsaPriv,
-      b64uToBytes(encryptedKey));
+  var cek = provider.rsaDecrypt(RSA_SCHEME[alg],
+      await providerKey(recipientPrivateKey), b64uToBytes(encryptedKey));
   log.debug("Leaving unwrapCekBytes(). " + alg + ".");
-  return new Uint8Array(cek);
+  return cek;
 }
 
 // The CryptoKey-shaped entry points. AES-GCM only — a CBC-HMAC CEK is not one
@@ -1077,8 +946,7 @@ async function encryptCompact(options) {
   // built with a 12-byte IV is refused by every other implementation and by
   // this one on the way back, so the length comes off the enc rather than
   // being a constant.
-  var iv = new Uint8Array(isCbcHmac(enc) ? 16 : 12);
-  crypto.getRandomValues(iv);
+  var iv = provider.randomBytes(isCbcHmac(enc) ? 16 : 12);
   var plaintextBytes = typeof options.plaintext === "string"
     ? new TextEncoder().encode(options.plaintext)
     : options.plaintext;
@@ -1238,27 +1106,20 @@ async function decryptCompact(options) {
 async function pbes2JweEncrypt(plaintext, password) {
   log.debug("Entering pbes2JweEncrypt().");
   var alg = 'PBES2-HS256+A128KW', enc = 'A256GCM';
-  var p2s = crypto.getRandomValues(new Uint8Array(16));
+  var p2s = provider.randomBytes(16);
   var p2c = 100000;
-  var pwKey = await crypto.subtle.importKey('raw',
-      bytes.strBytes(password), 'PBKDF2', false, ['deriveKey']);
   var saltInput = concatBytes(bytes.strBytes(alg), new Uint8Array([0]), p2s);
-  var wrapKey = await crypto.subtle.deriveKey({ name: 'PBKDF2',
-      salt: saltInput, iterations: p2c, hash: 'SHA-256' },
-    pwKey, { name: 'AES-KW', length: 128 }, false, ['wrapKey']);
-  var cek = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 },
-      true, ['encrypt']);
-  var wrapped = new Uint8Array(await crypto.subtle.wrapKey('raw', cek, wrapKey,
-      'AES-KW'));
+  var wrapKey = provider.pbkdf2('SHA-256', bytes.strBytes(password),
+                                saltInput, p2c, 16);
+  var cek = provider.randomBytes(32);
+  var wrapped = aesKwWrapJs(wrapKey, cek);
   var protectedHeader = { alg: alg, enc: enc, p2s: bytesToB64u(p2s), p2c: p2c };
   var phB64 = strToB64u(JSON.stringify(protectedHeader));
-  var iv = crypto.getRandomValues(new Uint8Array(12));
-  var full = new Uint8Array(await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv: iv, additionalData: bytes.strBytes(phB64),
-     tagLength: 128 },
-    cek, bytes.strBytes(plaintext)));
-  var ct = full.slice(0, full.length - 16);
-  var tag = full.slice(full.length - 16);
+  var iv = provider.randomBytes(12);
+  var sealed = provider.aesGcmEncrypt(cek, iv, bytes.strBytes(plaintext),
+                                      bytes.strBytes(phB64));
+  var ct = sealed.ciphertext;
+  var tag = sealed.tag;
   log.debug("Leaving pbes2JweEncrypt().");
   return [phB64, bytesToB64u(wrapped), bytesToB64u(iv), bytesToB64u(ct),
           bytesToB64u(tag)].join('.');

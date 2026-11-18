@@ -757,6 +757,80 @@ async function tamperingAndBadInputAreRefused() {
   log.debug("Leaving tamperingAndBadInputAreRefused().");
 }
 
+// WITH NO WEB CRYPTO AT ALL (#463, step 2). A page served over plain HTTP
+// has no crypto.subtle, and every primitive here is crypto_provider.js's
+// now, so every key management algorithm and every content encryption must
+// still encrypt and decrypt. crypto.subtle is removed for the duration
+// (getRandomValues stays: it exists outside a secure context). Each JWE is
+// then opened by the `jose` library, which shares no code with this tree.
+async function worksWithNoWebCrypto() {
+  log.debug("Entering worksWithNoWebCrypto().");
+  log.info("=== Every algorithm with no crypto.subtle ===");
+  var ecPair = nodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" });
+  var xPair = nodeCrypto.generateKeyPairSync("x25519");
+  var rsaPair = nodeCrypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+  var jwkOf = function jwkOf(k) {
+    log.debug("Entering jwkOf().");
+    log.debug("Leaving jwkOf().");
+    return k.export({ format: "jwk" });
+  };
+  var cases = [];
+  ["ECDH-ES", "ECDH-ES+A128KW", "ECDH-ES+A192KW", "ECDH-ES+A256KW"]
+    .forEach(function (alg) {
+      cases.push({ alg: alg, pair: ecPair });
+    });
+  cases.push({ alg: "ECDH-ES", pair: xPair });
+  cases.push({ alg: "RSA-OAEP", pair: rsaPair });
+  cases.push({ alg: "RSA-OAEP-256", pair: rsaPair });
+  var encs = ["A128GCM", "A192GCM", "A256GCM", "A128CBC-HS256",
+              "A192CBC-HS384", "A256CBC-HS512"];
+  var made = [];
+  var descriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  var real = globalThis.crypto;
+  Object.defineProperty(globalThis, "crypto", { configurable: true,
+    writable: true, value: { getRandomValues: function (a) {
+      return real.getRandomValues(a);
+    } } });
+  try {
+    assert.strictEqual(typeof crypto.subtle, "undefined");
+    for (var i = 0; i < cases.length; i++) {
+      for (var j = 0; j < encs.length; j++) {
+        var c = cases[i];
+        var text = "no web crypto: " + c.alg + " / " + encs[j];
+        var sealed = await jose.encryptCompact({ alg: c.alg, enc: encs[j],
+          plaintext: text, key: jwkOf(c.pair.publicKey) });
+        var opened = await jose.decryptCompact({ jwe: sealed.jwe,
+          key: jwkOf(c.pair.privateKey) });
+        assert.strictEqual(opened.plaintext, text, text);
+        made.push({ jwe: sealed.jwe, key: c.pair.privateKey, text: text });
+      }
+    }
+    var pw = await jose.pbes2JweEncrypt("secret set", "a password");
+    assert.strictEqual(pw.split(".").length, 5, "PBES2 with no Web Crypto");
+    made.push({ jwe: pw, password: "a password", text: "secret set" });
+  } finally {
+    Object.defineProperty(globalThis, "crypto", descriptor);
+  }
+  var lib = await import("jose");
+  for (var k = 0; k < made.length; k++) {
+    var m = made[k];
+    var out = m.password
+      ? await lib.compactDecrypt(m.jwe, new TextEncoder().encode(m.password),
+                                 { keyManagementAlgorithms: [
+                                   "PBES2-HS256+A128KW"],
+                                   // jose's default cap is 10,000; this
+                                   // module uses 100,000 iterations.
+                                   maxPBES2Count: 100000 })
+      : await lib.compactDecrypt(m.jwe, m.key);
+    assert.strictEqual(new TextDecoder().decode(out.plaintext), m.text,
+                       "jose opens: " + m.text);
+  }
+  log.info("[no web crypto] OK — " + (made.length - 1) + " alg/enc pairs " +
+           "and PBES2 encrypt and decrypt with crypto.subtle absent, and " +
+           "the jose library opens every one.");
+  log.debug("Leaving worksWithNoWebCrypto().");
+}
+
 async function test() {
   log.debug("Entering test().");
   log.info("Starting Test run. Testing client/src/jose_jwe.js directly.");
@@ -767,6 +841,7 @@ async function test() {
   await theJavaScriptAesPathMatchesWebCrypto();
   await keysInEveryForm();
   await tamperingAndBadInputAreRefused();
+  await worksWithNoWebCrypto();
   log.info("Test completed successfully.");
   log.debug("Leaving test().");
 }
