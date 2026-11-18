@@ -19,6 +19,8 @@ var $ = require("jquery");
 // either page. It is one module now, checked in node against OpenSSL and
 // `jsonwebtoken` by tests/jws_engine.js.
 var jwsLib = require("./jws");
+// Digests by crypto_provider.js (#463): pure JS, on every deployment.
+var provider = require("./crypto_provider");
 var jose = require("./jose_jwe");
 var rfc9068 = require("./rfc9068");
 // DOMParser is the browser-native global here (token_detail runs only in the
@@ -512,8 +514,7 @@ async function computeAtHash(value, alg) {
     return null;
   }
   const encoder = new TextEncoder();
-  const hashBuffer = await crypto.subtle.digest(hashAlgo,
-      encoder.encode(value));
+  const hashBuffer = provider.digest(hashAlgo, encoder.encode(value));
   const hashArray = new Uint8Array(hashBuffer);
   const leftHalf = hashArray.slice(0, hashArray.length / 2);
   let binary = '';
