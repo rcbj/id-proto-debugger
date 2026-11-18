@@ -825,7 +825,10 @@ function sendRefreshRequest() {
   // Client authentication is applied by the pane (step 1's method). No
   // accessToken: a refresh presents the REFRESH token in the body, so the
   // DPoP proof carries no ath.
-  clientAuthPane.sendToken(vciWallet, params, endpoint, dpopContext())
+  clientAuthPane.sendToken(vciWallet, params, endpoint, dpopContext(),
+                           function (text) {
+    status("vc_refresh_status", "Refreshing: " + text, "vc-pending");
+  })
     .then(function (result) {
       if (result.body && result.body.token_type) {
         sdJwtVc.set(sdJwtVc.KEYS.DPOP_TOKEN_TYPE,
