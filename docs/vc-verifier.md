@@ -167,6 +167,27 @@ Each is carried as OpenID4VP 1.0 defines it, and `buildDcql()` /
   The root stays P-256. `decentralized_identifier`, `verifier_attestation`
   and pre-registered keep their P-256 request key.
 
+**`transaction_data`** (section 8.4; #471, E3b). The page takes a JSON
+array of `{ type, credential_ids, ... }` objects, and
+`encodeTransactionData()` sends each as base64url JSON. It refuses a
+malformed object, an id that names no query, and a transaction bound to an
+SD-JWT VC query that does not require holder binding (Appendix B.3.3: a
+Wallet MUST reject that). The answer is checked by Appendix B.3.3.1, the
+one profile the spec defines:
+
+* `kb.transaction_data[i]`: the KB-JWT's `transaction_data_hashes`
+  contains the hash of the STRING as sent (it is not base64url-decoded
+  first), by sha-256 unless the object listed `transaction_data_hashes_alg`.
+  In that case the KB-JWT must name the algorithm it used, and it must be
+  one of them. sha-256/384/512 and sha3-256/384/512 are computed.
+* `response.transaction_data[i]`: one presentation binds the transaction.
+  More than one is a FAIL, because section 5.1 lets the Wallet use only one
+  of the referenced credentials.
+
+A KB-JWT with no `transaction_data_hashes`, and an mdoc, whose data element
+is type-specific (Appendix B.2.1), are reported as not evaluated, never
+failed: section 8.4 leaves the representation to each type.
+
 ## The HAIP 1.0 profile (#471, E1)
 
 "Profile" on pane 2 chooses OpenID4VP 1.0 or HAIP 1.0. HAIP is a profile of

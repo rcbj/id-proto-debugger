@@ -62,6 +62,7 @@ var nobleSha1 = require("@noble/hashes/sha1").sha1;
 var forge = require("node-forge");
 var cbor = require("./cbor");
 var nobleSha512 = require("@noble/hashes/sha512");
+var nobleSha3 = require("@noble/hashes/sha3");
 var p256 = require("@noble/curves/p256").p256;
 var p384 = require("@noble/curves/p384").p384;
 var p521 = require("@noble/curves/p521").p521;
@@ -1270,6 +1271,11 @@ function requestObjectClaims(opts) {
   }
   if (o.verifierInfo !== undefined) {
     claims.verifier_info = checkedVerifierInfo(o.verifierInfo, o.dcql);
+  }
+  if (isArray(o.transactionData) && o.transactionData.length) {
+    // Already encoded (encodeTransactionData()): the Verifier hashes these
+    // exact strings when it checks the answer.
+    claims.transaction_data = o.transactionData.slice();
   }
   if (o.walletNonce) claims.wallet_nonce = String(o.walletNonce);
   if (!unsigned) {
@@ -5039,6 +5045,156 @@ function haipSdJwtRows(s, header, payload, parsed) {
   log.debug("Leaving haipSdJwtRows().");
 }
 
+// ---------------------------------------------------------------------------
+// TRANSACTION DATA (OpenID4VP 1.0 section 8.4; #471, E3). The request
+// carries `transaction_data`, base64url JSON objects each { type,
+// credential_ids, ... }; the Wallet "MUST include a representation or
+// reference to the data in the respective Credential presentation", in a
+// way each type defines. Appendix B.3.3.1 is one profile for SD-JWT VC,
+// and the one this Verifier checks: the KB-JWT carries
+// transaction_data_hashes, each the hash of the STRING as received (not
+// base64url-decoded), by sha-256 unless the request listed
+// transaction_data_hashes_alg, in which case the KB-JWT names the one it
+// used. A type that returns its data some other way is reported as not
+// evaluated, never failed.
+// ---------------------------------------------------------------------------
+var TD_HASHES = {
+  "sha-256": nobleSha256,
+  "sha-384": nobleSha512.sha384,
+  "sha-512": nobleSha512.sha512,
+  "sha3-256": nobleSha3.sha3_256,
+  "sha3-384": nobleSha3.sha3_384,
+  "sha3-512": nobleSha3.sha3_512
+};
+
+// The request's transaction_data from objects: each must be { type,
+// credential_ids } with credential_ids naming queries of `dcql`. Appendix
+// B.3.3: an SD-JWT VC query a transaction is bound to must not have
+// require_cryptographic_holder_binding false (a Wallet MUST reject it).
+// Answers the base64url strings, in order.
+function encodeTransactionData(objects, dcql) {
+  log.debug("Entering encodeTransactionData().");
+  if (!isArray(objects) || !objects.length) {
+    log.debug("Leaving encodeTransactionData(). Not a non-empty array.");
+    throw new Error("transaction_data is a non-empty array (section 5.1).");
+  }
+  var queries = ((dcql && dcql.credentials) || []);
+  var out = objects.map(function (td, i) {
+    var where = "transaction_data[" + i + "]";
+    if (!isPlainObject(td) || typeof td.type !== "string" || !td.type) {
+      throw new Error(where + " needs a type string.");
+    }
+    if (!isArray(td.credential_ids) || !td.credential_ids.length) {
+      throw new Error(where + ".credential_ids is a non-empty array.");
+    }
+    td.credential_ids.forEach(function (id) {
+      var q = queries.filter(function (x) {
+        return x.id === id;
+      })[0];
+      if (!q) {
+        throw new Error(where + " names credential " + JSON.stringify(id) +
+                        ", which is no credential query.");
+      }
+      if (q.format === "dc+sd-jwt" &&
+          q.require_cryptographic_holder_binding === false) {
+        throw new Error(where + " is bound to " + id + ", whose query " +
+          "sets require_cryptographic_holder_binding false; Appendix " +
+          "B.3.3: a Wallet MUST reject that.");
+      }
+    });
+    if (td.transaction_data_hashes_alg !== undefined &&
+        (!isArray(td.transaction_data_hashes_alg) ||
+         !td.transaction_data_hashes_alg.length)) {
+      throw new Error(where + ".transaction_data_hashes_alg is a " +
+                      "non-empty array (Appendix B.3.3.1).");
+    }
+    return bytes.bytesToB64u(new TextEncoder().encode(JSON.stringify(td)));
+  });
+  log.debug("Leaving encodeTransactionData(). " + out.length);
+  return out;
+}
+
+// The transaction_data strings of this session that name `queryId`, each
+// with its decoded object.
+function transactionDataFor(session, queryId) {
+  log.debug("Entering transactionDataFor().");
+  var out = [];
+  ((session && session.transactionData) || []).forEach(function (str) {
+    var td = null;
+    try {
+      td = JSON.parse(new TextDecoder().decode(bytes.b64uToBytes(str)));
+    } catch (e) {
+      td = null;
+    }
+    if (td && isArray(td.credential_ids) &&
+        td.credential_ids.indexOf(queryId) !== -1) {
+      out.push({ str: str, td: td });
+    }
+  });
+  log.debug("Leaving transactionDataFor(). " + out.length);
+  return out;
+}
+
+// One row per transaction bound to this query, on the KB-JWT's payload
+// `p`. A hit is recorded in ctx.tdBound, for the response-level row.
+function checkTransactionDataHashes(s, query, p, ctx) {
+  log.debug("Entering checkTransactionDataHashes().");
+  var mine = transactionDataFor(ctx.session, query.id);
+  if (!mine.length) {
+    log.debug("Leaving checkTransactionDataHashes(). None for this query.");
+    return;
+  }
+  var hashes = isArray(p.transaction_data_hashes) ?
+      p.transaction_data_hashes : null;
+  mine.forEach(function (one, i) {
+    var key = "kb.transaction_data[" + i + "]";
+    var label = "The KB-JWT binds transaction " + one.td.type;
+    if (!hashes) {
+      s.add(key, label, SKIP, "the KB-JWT has no transaction_data_hashes. " +
+            "Appendix B.3.3.1 is one profile; a type may define another " +
+            "representation, which this Verifier does not know for " +
+            JSON.stringify(one.td.type) + ". Section 8.4: the Wallet MUST " +
+            "include one.", false);
+      return;
+    }
+    var offered = isArray(one.td.transaction_data_hashes_alg) ?
+        one.td.transaction_data_hashes_alg : null;
+    var alg = p.transaction_data_hashes_alg;
+    if (offered && typeof alg !== "string") {
+      s.add(key, label, FAIL, "the request listed transaction_data_hashes" +
+            "_alg " + JSON.stringify(offered) + ", so the KB-JWT MUST name " +
+            "the one it used (Appendix B.3.3.1); it names none.");
+      return;
+    }
+    alg = typeof alg === "string" ? alg : "sha-256";
+    if (offered ? offered.indexOf(alg) === -1 : alg !== "sha-256") {
+      s.add(key, label, FAIL, "the KB-JWT used " + alg + ", which is not " +
+            (offered ? "one of " + JSON.stringify(offered) :
+             "sha-256, the default when the request lists none") + ".");
+      return;
+    }
+    var fn = TD_HASHES[alg];
+    if (!fn) {
+      s.add(key, label, SKIP, "the KB-JWT used " + alg + ", which this " +
+            "Verifier does not compute.", false);
+      return;
+    }
+    var expected = bytes.bytesToB64u(fn(new TextEncoder().encode(one.str)));
+    var found = hashes.indexOf(expected) !== -1;
+    if (found) {
+      ctx.tdBound = ctx.tdBound || {};
+      ctx.tdBound[one.str] = (ctx.tdBound[one.str] || 0) + 1;
+    }
+    s.add(key, label, found ? PASS : FAIL, found ? alg + " of the " +
+          "transaction_data string as sent, " + expected + ", is in " +
+          "transaction_data_hashes." : "transaction_data_hashes " +
+          JSON.stringify(hashes) + " does not contain " + expected + ", the " +
+          alg + " of the transaction_data string as sent (not decoded " +
+          "first: Appendix B.3.3.1).");
+  });
+  log.debug("Leaving checkTransactionDataHashes().");
+}
+
 async function verifyKbJwt(s, query, parsed, ctx) {
   log.debug("Entering verifyKbJwt().");
   var kbKeys = ["kb.header", "kb.signature", "kb.nonce", "kb.aud",
@@ -5127,6 +5283,7 @@ async function verifyKbJwt(s, query, parsed, ctx) {
   } catch (e) {
     s.add("kb.sd_hash", labels["kb.sd_hash"], FAIL, e.message);
   }
+  checkTransactionDataHashes(s, query, p, ctx);
   log.debug("Leaving verifyKbJwt().");
 }
 
@@ -6332,10 +6489,36 @@ var VERIFIERS = {
   "ldp_vc": verifyLdpVc
 };
 
+// One row per transaction the request carried. Section 5.1: when
+// credential_ids names more than one, "the Wallet MUST use only one of the
+// referenced Credentials". Bound by none is reported, not failed: the type
+// may return it in a way this Verifier does not read (an mdoc data
+// element, a type-specific KB-JWT claim).
+function transactionDataRows(report, ctx) {
+  log.debug("Entering transactionDataRows().");
+  var all = (ctx.session && ctx.session.transactionData) || [];
+  all.forEach(function (str, i) {
+    var n = (ctx.tdBound || {})[str] || 0;
+    var label = "Transaction " + i + " is authorized by one presentation";
+    addCheck(report, "response.transaction_data[" + i + "]", "response",
+             label, n === 1 ? PASS : n > 1 ? FAIL : SKIP, n === 1 ?
+             "one presentation's KB-JWT binds it." : n > 1 ? n +
+             " presentations bind it; section 5.1: the Wallet MUST use " +
+             "only one of the referenced Credentials." : "no presentation " +
+             "binds it by transaction_data_hashes (Appendix B.3.3.1). Its " +
+             "type may define another representation, which this " +
+             "Verifier does not read.", false);
+  });
+  log.debug("Leaving transactionDataRows().");
+}
+
 async function verifyPresentations(report, vpToken, ctx) {
   log.debug("Entering verifyPresentations().");
   var out = [];
   var queries = sdJwtVp.dcqlCredentialQueries(ctx.session.dcql);
+  // Shared by every presentation's ctx copy: how many bound each
+  // transaction (checkTransactionDataHashes()).
+  ctx.tdBound = {};
   for (var qi = 0; qi < queries.length; qi++) {
     var query = queries[qi];
     var list = isArray(vpToken[query.id]) ? vpToken[query.id] : [];
@@ -6370,6 +6553,7 @@ async function verifyPresentations(report, vpToken, ctx) {
       out.push({ queryId: query.id, format: query.format, claims: claims });
     }
   }
+  transactionDataRows(report, ctx);
   log.debug("Leaving verifyPresentations(). " + out.length +
             " presentation(s).");
   return out;
@@ -6578,6 +6762,7 @@ module.exports = {
   signRequestObject: signRequestObject,
   signingAlgsFor: signingAlgsFor,
   planForWalletMetadata: planForWalletMetadata,
+  encodeTransactionData: encodeTransactionData,
   checkedVerifierInfo: checkedVerifierInfo,
   haipRequestProblems: haipRequestProblems,
   akiValuesFromAnchors: akiValuesFromAnchors,

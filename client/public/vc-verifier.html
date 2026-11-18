@@ -161,6 +161,17 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               against the query above, so make it the one the scope stands for.</span></td>
         </tr>
         <tr>
+          <td><label for="vpv_transaction_data">transaction_data (optional)</label></td>
+          <td><textarea id="vpv_transaction_data" class="vc-mono" rows="3" cols="80"
+                        placeholder='[{ "type": "example_type", "credential_ids": ["credential"] }]'
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">A JSON array of transaction objects, each { type, credential_ids, ... }
+              (section 8.4), sent base64url-encoded. For an SD-JWT VC the answer is checked by Appendix B.3.3.1:
+              the KB-JWT's transaction_data_hashes must hold the hash of each string as sent (sha-256, or one of
+              the object's transaction_data_hashes_alg). A query a transaction is bound to must require holder
+              binding (B.3.3).</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_verifier_info">verifier_info (optional)</label></td>
           <td><textarea id="vpv_verifier_info" class="vc-mono" rows="3" cols="80"
                         placeholder='[{ "format": "jwt", "data": "eyJ...", "credential_ids": ["credential"] }]'
