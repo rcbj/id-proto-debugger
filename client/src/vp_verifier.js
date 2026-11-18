@@ -39,7 +39,7 @@
 // ecdsa-rdfc-2019, ecdsa-jcs-2019, eddsa-rdfc-2022 and eddsa-jcs-2022.
 // Status List Tokens are read in both forms, the JWT and the CWT
 // (draft-ietf-oauth-status-list-21 sections 5.1 and 5.2). What it does not
-// verify (ecdsa-sd-2023, a status list behind a COSE_Mac0) is a "skip" that
+// verify (a status list behind a COSE_Mac0) is a "skip" that
 // says so, never a pass.
 //
 // No DOM: tests/vp_verifier_engine.js drives all of it in node.
@@ -183,11 +183,6 @@ var BITSTRING_MIN_ENTRIES = 131072;
 // past this is a decompression bomb, not a status list.
 var MAX_INFLATED_BYTES = 16 * 1024 * 1024;
 var DI_SUITES_NOT_VERIFIED = {
-  "ecdsa-sd-2023": "ecdsa-sd-2023 is not verified by this debugger: a " +
-    "derived proof needs the selective-disclosure machinery of that suite " +
-    "(HMAC-relabelled blank nodes, a CBOR-encoded proofValue carrying the " +
-    "base signature, the ephemeral public key and one signature per " +
-    "non-mandatory statement), which is not implemented here.",
   "bbs-2023": "bbs-2023 secures a CREDENTIAL (a reveal document with a " +
     "derived proof), not a presentation: there is no holder key in it to " +
     "sign a VP with."
