@@ -147,7 +147,8 @@ two into one. The response checks are the `state`, the decryption of a
 answered. Per format:
 
 * **dc+sd-jwt**: the issuer's signature (an `x5c` in the issuer JWT, else
-  JWT VC Issuer Metadata, else a DID), the `typ`, the `vct`, validity, every
+  the DID that `iss` is, else the JWT VC Issuer Metadata of an `https`
+  `iss`), the `typ`, the `vct`, validity, every
   disclosure's digest against `_sd`, and every requested claim disclosed. For
   the Key Binding JWT: its `typ` and `alg`, `nonce`, `aud`, `iat`,
   `sd_hash`, and its signature against `cnf.jwk`.

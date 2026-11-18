@@ -109,7 +109,9 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               </select>
               <span class="vc-note">The certificate is a leaf made for this request, under the Verifier's
               root CA (below), which is kept across runs. The leaf's subjectAltName is the api's host name and
-              its Authority Information Access points at the root, which the api serves.</span></td>
+              its Authority Information Access points at the root, which the api serves. A signed Digital
+              Credentials API request is the exception: its leaf names this page's host (see the note
+              under the response mode).</span></td>
         </tr>
         <tr id="vpv_client_id_row">
           <td><label for="vpv_client_id_typed">Pre-registered client_id</label></td>

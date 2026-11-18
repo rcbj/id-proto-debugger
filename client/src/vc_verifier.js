@@ -574,9 +574,23 @@ function settingsChanged() {
   var mode = val("vpv_response_mode");
   var dcNote = el("vpv_dc_api_note");
   if (dcNote) {
+    // OpenID4VP 1.0 Appendix A.2: an unsigned request carries no client_id
+    // (the audience is "origin:" + this page's origin), so the prefix is not
+    // used; a signed one names its prefix in client_id, and its certificate
+    // is made for THIS PAGE's host, not the api's. redirect_uri cannot be
+    // signed (section 5.9.3).
+    var signedDc = !!(el("vpv_dc_signed") && el("vpv_dc_signed").checked);
     dcNote.textContent = mode === "dc_api" || mode === "dc_api.jwt"
       ? "Nothing is hosted: the browser hands the request to a wallet " +
-        "and the answer comes back to this page."
+        "and the answer comes back to this page. " + (signedDc
+          ? "Signed: client_id carries the Client Identifier prefix above, " +
+            "and the certificate names this page's host (" +
+            window.location.hostname + "), not the api's" +
+            (val("vpv_client_prefix") === "redirect_uri"
+              ? "; redirect_uri cannot be signed, so choose another " +
+                "prefix or untick \"signed\"." : ".")
+          : "Unsigned: no client_id is sent and the prefix above is not " +
+            "used; the audience is origin:" + window.location.origin + ".")
       : "";
   }
   saveState();
