@@ -400,14 +400,19 @@ Credentials API.)
    link and QR code. (The same request comes from
    `POST /admin-api/verifications/start`.)
 2. On `https://idptools.com`, choose **VC Presentation**. Unlike issuance,
-   **OpenID4VP has no metadata document to discover**, so the wallet learns the
-   Verifier's identity from the request plus a couple of values you set by hand
-   on step 0: set **Verifier base URL** to `https://localhost:8081` and press
-   **Save**. (The **Verifier JWKS URL** defaults to `<base>/oauth2/jwks`, used
-   to check a signed request from a pre-registered client; the **x509 trust
-   anchor** is needed only for an `x509_hash` / HAIP verifier. This request
-   names its client by the `redirect_uri` prefix and is unsigned, so neither is
-   required here.)
+   **OpenID4VP has no metadata document to discover**, so you set the Verifier's
+   identity by hand on step 0, then press **Save**:
+
+   | Field | Value |
+   |---|---|
+   | **Verifier base URL** (`vp_verifier_base_url`) | `https://localhost:8081` |
+   | **Verifier JWKS URL** (`vp_verifier_jwks_url`) | `https://localhost:8081/oauth2/jwks` |
+   | **x509 trust anchor (PEM)** (`vp_x509_trust_anchor`) | *leave empty* |
+
+   The JWKS URL defaults to `<base>/oauth2/jwks`, so filling the base URL alone
+   is enough; it is shown here for completeness. The x509 trust anchor is needed
+   only for an `x509_hash` / HAIP verifier — this request names its client by
+   the `redirect_uri` prefix and is unsigned, so it is left empty.
 3. On step 1, paste the `openid4vp://` request. The wallet reads it (no fetch
    needed), and you pick the held credential and the claims to disclose.
 4. Press **Present**. The wallet posts the presentation to iya-sts's
