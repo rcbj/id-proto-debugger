@@ -166,8 +166,11 @@ function loadState() {
   // something the verifier cannot read.
   state.formatMismatch = !!(state.requestedFormat && state.heldFormat &&
                             state.requestedFormat !== state.heldFormat);
+  // vc+jwt and vc+cose, like jwt_vc_json, have nothing to select: they go
+  // whole, enveloped (#477).
   state.selectable = state.format !== sdJwtVc.FORMAT_JWT_VC_JSON &&
-      !ldpWhole();
+      state.format !== sdJwtVc.FORMAT_VC_JWT &&
+      state.format !== sdJwtVc.FORMAT_VC_COSE && !ldpWhole();
   // SIOPv2: whether an ID Token is asked for, and whether it is ALL that is.
   state.wantsIdToken = vpProtocols.asksForIdToken(params);
   state.idTokenOnly = state.wantsIdToken && !vpProtocols.asksForVpToken(params);
@@ -517,7 +520,8 @@ function renderDisclosureTable() {
         : "<tr><td colspan='3'>This credential carries no claims.</td></tr>") +
       "</tbody>");
     var what = ldpWhole() ? "ldp_vc secured with " +
-        esc(state.parsed.ldpSuite) : "jwt_vc_json";
+        esc(state.parsed.ldpSuite) :
+      sdJwtVc.isJoseCose(state.format) ? esc(state.format) : "jwt_vc_json";
     setHtml("vp_selection_summary",
       '<span class="vc-status vc-pending">This credential is ' + what +
           ', which has no selective ' +
@@ -763,6 +767,10 @@ function buildPresentation() {
     aud: params.client_id,
     nonce: params.nonce,
     keyBinding: keyBinding,
+    // The holder a VC-JOSE-COSE presentation names: the DID the credential's
+    // subject is, when it is one (#477).
+    holderId: /^did:/.test(String((state.parsed || {}).subject || "")) ?
+      state.parsed.subject : undefined,
     // An mdoc's device signature covers the session transcript, which names
     // where the answer goes and, under direct_post.jwt, the key it is
     // encrypted to (OpenID4VP 1.0 Appendix B.2.6.1).
@@ -1696,7 +1704,14 @@ function onload() {
   setText("vp_nonce", params.nonce || "—");
   setText("vp_requested", state.requested.length ?
           state.requested.join(", ") : "—");
-  if (state.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
+  if (state.format === sdJwtVc.FORMAT_VC_JWT ||
+      state.format === sdJwtVc.FORMAT_VC_COSE) {
+    setText("vp_key_binding",
+      "This credential is " + state.format + " (W3C VC-JOSE-COSE), so it " +
+      "goes whole as an EnvelopedVerifiableCredential inside a vp+jwt " +
+      "the holder signs, with this request's nonce and the Verifier's " +
+      "Client Identifier as its nonce and aud claims.");
+  } else if (state.format === sdJwtVc.FORMAT_JWT_VC_JSON) {
     setText("vp_key_binding",
       "This credential is jwt_vc_json, so holder binding is a Verifiable " +
           "Presentation JWT signed with the " +

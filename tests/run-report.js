@@ -4125,6 +4125,17 @@ function buildJobs() {
       script: "ldp_vc_whole_presentation.js",
       env: {},
     });
+    // W3C VC-JOSE-COSE through the presentation pages (#477): a vc+jwt
+    // (jose) and a vc+cose (@auth0/cose) enveloped in the holder's vp+jwt,
+    // and a vc+sd-jwt (@sd-jwt/core) presented as one Disclosure and a Key
+    // Binding JWT, each verified by the library that made it. Needs only
+    // the client.
+    jobs.push({
+      name: "VC Presentation — W3C vc+jwt, vc+cose (enveloped) and " +
+          "vc+sd-jwt, verified by jose, @auth0/cose and @sd-jwt/core",
+      script: "vc_jose_cose_presentation.js",
+      env: {},
+    });
     jobs.push({
       name: "VC Presentation — ldp_vc / bbs-2023 (statement disclosure, " +
           "unlinkable)",

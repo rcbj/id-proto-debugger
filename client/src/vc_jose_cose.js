@@ -760,6 +760,91 @@ async function verifyCose(secured, out, resolveKey) {
   log.debug("Leaving verifyCose().");
 }
 
+// ---------------------------------------------------------------------------
+// The wallet's reading, synchronous and unverified: the shape sd_jwt_vc.js
+// parseCredential() gives every format. `payload` is the signed payload as
+// it stands (so cnf and _sd are where a reader of the JWT finds them),
+// `document` the credential with every Disclosure applied, `disclosures`
+// the SD-JWT ones in sd_jwt_vc.js's row form.
+// ---------------------------------------------------------------------------
+function parse(secured) {
+  log.debug("Entering parse().");
+  var info = detect(secured);
+  if (!info) {
+    log.debug("Leaving parse(). Not VC-JOSE-COSE.");
+    throw new Error("not a VC-JOSE-COSE credential.");
+  }
+  var out = { serialized: secured, form: info.form, kind: info.kind,
+              format: info.format, disclosures: [], kbJwt: "" };
+  if (info.form === "cose") {
+    var raw = secured instanceof Uint8Array ? secured :
+      /^[0-9a-fA-F]+$/.test(String(secured).trim()) ?
+        bytes.hexToBytes(String(secured).trim()) :
+        bytes.b64uToBytes(String(secured).trim());
+    var s = readSign1(raw);
+    out.document = JSON.parse(bytes.bytesToStr(s.payload));
+    out.payload = out.document;
+    out.header = { alg: COSE_ALGS[String(s.protected.get(COSE_ALG))] || "",
+                   typ: s.protected.get(COSE_TYP) || "" };
+    out.signature = bytes.bytesToB64u(s.signature);
+    log.debug("Leaving parse(). COSE.");
+    return out;
+  }
+  var text = String(secured).trim();
+  var parts = text.split("~");
+  var jws = parts[0].split(".");
+  out.issuerJwt = parts[0];
+  out.header = b64uJson(jws[0]);
+  out.payload = b64uJson(jws[1]);
+  out.signature = jws[2];
+  if (info.form === "sdjwt") {
+    var encoded = parts.slice(1, parts.length - 1).filter(Boolean);
+    out.kbJwt = parts[parts.length - 1] || "";
+    out.disclosures = encoded.map(function (e) {
+      var arr = b64uJson(e);
+      return { encoded: e, salt: arr[0],
+               name: arr.length === 3 ? arr[1] : null,
+               value: arr.length === 3 ? arr[2] : arr[1],
+               arrayElement: arr.length === 2, error: "" };
+    });
+    out.document = processDisclosures(out.payload, encoded).document;
+  } else {
+    out.document = out.payload;
+  }
+  log.debug("Leaving parse(). " + info.form);
+  return out;
+}
+
+// The holder's presentation of a vc+jwt or vc+cose credential: a vp+jwt
+// whose payload is a VerifiablePresentation carrying the credential as an
+// EnvelopedVerifiableCredential, signed by the holder, with the request's
+// nonce and the Verifier as JWT claims (section 3: further claims MAY be
+// present). holder: { privateJwk, did, kid }.
+function presentEnveloped(secured, holder, request) {
+  log.debug("Entering presentEnveloped().");
+  var info = detect(secured);
+  if (!info || info.form === "sdjwt") {
+    log.debug("Leaving presentEnveloped(). Not an enveloping form.");
+    throw new Error("presentEnveloped() takes a vc+jwt or vc+cose " +
+                    "credential; a vc+sd-jwt is presented as an SD-JWT.");
+  }
+  var raw = info.form === "cose" && !(secured instanceof Uint8Array) ?
+    (/^[0-9a-fA-F]+$/.test(String(secured).trim()) ?
+      bytes.hexToBytes(String(secured).trim()) :
+      bytes.b64uToBytes(String(secured).trim())) : secured;
+  var vp = { "@context": [V2], type: ["VerifiablePresentation"],
+             verifiableCredential: [envelope(info.form, "vc", raw)] };
+  if (holder.did) vp.holder = holder.did;
+  var r = request || {};
+  var claims = { iat: Math.floor(Date.now() / 1000) };
+  if (r.nonce !== undefined) claims.nonce = r.nonce;
+  if (r.aud !== undefined) claims.aud = r.aud;
+  var jwt = secureJwt(vp, { privateJwk: holder.privateJwk,
+                            kid: holder.kid }, claims);
+  log.debug("Leaving presentEnveloped().");
+  return { jwt: jwt, presentation: vp, claims: claims };
+}
+
 module.exports = {
   FORMAT_VC_JWT: FORMAT_VC_JWT,
   FORMAT_VC_SD_JWT: FORMAT_VC_SD_JWT,
@@ -780,5 +865,7 @@ module.exports = {
   presentSdJwt: presentSdJwt,
   verificationMethodFor: verificationMethodFor,
   defaultResolveKey: defaultResolveKey,
-  verify: verify
+  verify: verify,
+  parse: parse,
+  presentEnveloped: presentEnveloped
 };

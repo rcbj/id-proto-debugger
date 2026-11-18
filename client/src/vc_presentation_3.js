@@ -37,6 +37,8 @@ var bbs2023 = require("./bbs2023");
 // holder's and the issuer's, RDFC suites included.
 var dataIntegrity = require("./data_integrity_rdfc");
 var vcFormats = require("./vc_formats");
+// W3C VC-JOSE-COSE presentations (#477).
+var vcJoseCose = require("./vc_jose_cose");
 
 var log = bunyan.createLogger({ name: 'vc_presentation_3',
                                 level: appconfig.logLevel });
@@ -305,6 +307,10 @@ function recheckOwnPresentation() {
     return Promise.resolve(false);
   }
   // A whole-credential ldp_vc (#475): both proofs, by data_integrity.js.
+  if (vcJoseCose.detect(sent.presentation)) {
+    log.debug("Leaving recheckOwnPresentation(). VC-JOSE-COSE.");
+    return recheckJoseCose();
+  }
   var whole = wholeLdpPresentation(sent.presentation);
   if (whole) {
     log.debug("Leaving recheckOwnPresentation(). ldp_vc, whole.");
@@ -545,6 +551,56 @@ function bytesToB64(text) {
   }
   log.debug("Leaving bytesToB64().");
   return btoa(bin);
+}
+
+// A VC-JOSE-COSE presentation re-checked from the bytes that went (#477):
+// a vp+jwt and the credential enveloped in it, or a vc+sd-jwt and its Key
+// Binding JWT, each verified by vc_jose_cose.js.
+function recheckJoseCose() {
+  log.debug("Entering recheckJoseCose().");
+  var checks = [];
+  var row = function (name, r, detail) {
+    log.debug("Entering row(). " + name);
+    log.debug("Leaving row().");
+    checks.push({ name: name, ok: !!r.valid, detail: r.valid ? detail +
+      (r.warnings && r.warnings.length ? " Note: " + r.warnings.join(" ") :
+       "") : r.errors.join(" ") });
+  };
+  log.debug("Leaving recheckJoseCose().");
+  return vcJoseCose.verify(sent.presentation, { kbNonce: sent.nonce,
+                                                kbAudience: sent.clientId })
+    .then(function (outer) {
+      if (outer.kind === "vp") {
+        row("Holder's vp+jwt", outer, "signed by " +
+            outer.verificationMethod + ".");
+        var claims = outer.document || {};
+        checks.push({ name: "Nonce and audience",
+          ok: claims.nonce === sent.nonce && claims.aud === sent.clientId,
+          detail: "nonce " + claims.nonce + " (the request's is " +
+            sent.nonce + "), aud " + claims.aud + " (the Verifier is " +
+            sent.clientId + ")." });
+        var env = [].concat(claims.verifiableCredential || [])[0];
+        var inner = vcJoseCose.unenvelope(env).secured;
+        return vcJoseCose.verify(inner).then(function (vc) {
+          row("Enveloped credential", vc, vc.format + " signed by " +
+              vc.verificationMethod + ", carried as " +
+              "EnvelopedVerifiableCredential.");
+          return checks;
+        });
+      }
+      row("Issuer's vc+sd-jwt", outer, (outer.disclosed || []).length +
+          " Disclosure(s) went, signed by " + outer.verificationMethod + ".");
+      var kb = outer.keyBinding || {};
+      checks.push({ name: "Key Binding JWT", ok: !kb.present || !!kb.valid,
+        detail: kb.present ? (kb.valid ? "nonce, audience and sd_hash " +
+          "are this request's and the bytes that went." : kb.reason) :
+          "none was sent." });
+      return checks;
+    }).then(function (all) {
+      renderRecheck(all);
+      log.debug("Leaving recheckJoseCose(). " + all.length + " check(s).");
+      return true;
+    });
 }
 
 function proofRow(name, result) {
