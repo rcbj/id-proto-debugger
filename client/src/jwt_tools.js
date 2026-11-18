@@ -14,6 +14,8 @@ var appconfig = require(process.env.CONFIG_FILE);
 var bunyan = require("bunyan");
 // JWE, and the byte helpers it needs, shared with the OID4VCI issuance panes.
 var jose = require("./jose_jwe");
+// Key generation and export by crypto_provider.js (#463): pure JS.
+var provider = require("./crypto_provider");
 // Key pairs, the PEM<->JWK conversion and every keystore format used to live in
 // THIS file. They were extracted into these two so that the PKI page
 // (client/public/pki.html) could have the same key-pair pane and the same
@@ -1538,21 +1540,19 @@ async function generateEncryptionKeys() {
     return false;
   }
   try {
+    // crypto_provider.js generates the pair (#463): pure JS, every
+    // deployment. An RSA-OAEP key is just an RSA key; the hash is the alg's.
     var pair;
     if (isEcdh(alg)) {
-      pair = await crypto.subtle.generateKey({ name: 'ECDH',
-          namedCurve: ECDH_CURVE }, true, ['deriveBits']);
+      pair = provider.generateKeyPair({ 'P-256': 'ec-p256',
+        'P-384': 'ec-p384', 'P-521': 'ec-p521' }[ECDH_CURVE] || 'ec-p256');
     } else {
       var jweBits = parseInt(val('jwe_rsa_bits'), 10) || 2048;
-      pair = await crypto.subtle.generateKey(
-        { name: 'RSA-OAEP', modulusLength: jweBits,
-         publicExponent: new Uint8Array([1, 0, 1]), hash: JWE_RSA_HASH[alg] },
-        true, ['encrypt', 'decrypt']);
+      pair = provider.generateKeyPair('rsa', { bits: jweBits });
     }
-    setVal('jwe_public_key', derToPem(await crypto.subtle.exportKey('spki',
-           pair.publicKey), 'PUBLIC KEY'));
-    setVal('jwe_private_key', derToPem(await crypto.subtle.exportKey('pkcs8',
-           pair.privateKey), 'PRIVATE KEY'));
+    setVal('jwe_public_key', provider.exportKey(provider.publicKeyOf(pair),
+           'spki-pem'));
+    setVal('jwe_private_key', provider.exportKey(pair, 'pkcs8-pem'));
     await applyKeyFormat('enc'); // honor the PEM/JWK toggle
     setVal('jwe_status', 'Generated ' + alg + ' key material' + (isEcdh(alg) ?
            ' (P-256).' : '.'));

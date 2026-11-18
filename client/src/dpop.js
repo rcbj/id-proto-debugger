@@ -54,7 +54,8 @@ var log = bunyan.createLogger({
 });
 
 var metadataClient = require("./metadata_client");
-// Digests by crypto_provider.js (#463): pure JS, on every deployment.
+// Digests, key generation and export by crypto_provider.js (#463): pure JS,
+// on every deployment.
 var provider = require("./crypto_provider");
 var jws = require("./jws");
 var bytes = require("./crypto_bytes");
@@ -174,18 +175,17 @@ function privateJwkOf(alg, pair) {
     return Promise.resolve(jws.privateJwk(alg, pair.privateKey,
                                           pair.publicKey));
   }
-  // A PEM: import it as an EXTRACTABLE key and let Web Crypto write the JWK.
-  // `bytes.pemToDer()` and not `jws.pkcs8PrivateBits()` — the latter extracts
-  // the key's own bits for the raw algorithms and returns 257 bytes for an RSA
-  // key, which importKey refuses with `Invalid keyData`, a message that names
-  // neither the function nor the format.
-  var spec = jws.algSpec(alg);
-  return crypto.subtle.importKey("pkcs8", bytes.pemToDer(pair.privateKey),
-      jws.webCryptoImportParams(spec), true, ["sign"])
-    .then(function (key) {
-      log.debug("Leaving privateJwkOf(). Web Crypto export.");
-      return crypto.subtle.exportKey("jwk", key);
-    });
+  // A PEM: crypto_provider.js reads it and writes the JWK (#463), so this
+  // works on a plain-HTTP page as well.
+  var jwk;
+  try {
+    jwk = provider.exportKey(provider.importKey(pair.privateKey), "jwk");
+  } catch (e) {
+    log.debug("Leaving privateJwkOf(). Unreadable PEM.");
+    return Promise.reject(e);
+  }
+  log.debug("Leaving privateJwkOf(). Provider export.");
+  return Promise.resolve(jwk);
 }
 
 function generateKeyPair(alg) {

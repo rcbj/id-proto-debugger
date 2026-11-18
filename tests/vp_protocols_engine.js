@@ -478,9 +478,40 @@ function deliveries() {
   log.debug("Leaving deliveries().");
 }
 
+// #463 cleanup 2: a certificate's key and the pairwise subject key come from
+// crypto_provider.js now, not Web Crypto. node's crypto is the reference.
+async function keysWithoutWebCrypto() {
+  log.debug("Entering keysWithoutWebCrypto().");
+  const pki = await verifierPki();
+  const jwk = await vp.certificatePublicJwk(pki.leafDer, "ES256");
+  const ref = new nodeCrypto.X509Certificate(Buffer.from(pki.leafDer))
+    .publicKey.export({ format: "jwk" });
+  assert.deepStrictEqual(jwk, ref, "the leaf's public JWK is node's");
+  let refused = "";
+  try {
+    await vp.certificatePublicJwk(pki.leafDer, "RS256");
+  } catch (e) {
+    refused = e.message;
+  }
+  assert.ok(/cannot verify RS256/.test(refused),
+            "an EC certificate for an RS256 alg is refused: " + refused);
+  const subject = await vp.generateSubjectKey();
+  const priv = nodeCrypto.createPrivateKey({ key: subject, format: "jwk" });
+  const sig = nodeCrypto.sign("sha256", Buffer.from("x"), priv);
+  assert.ok(nodeCrypto.verify("sha256", Buffer.from("x"),
+    nodeCrypto.createPublicKey({ key: { kty: subject.kty, crv: subject.crv,
+      x: subject.x, y: subject.y }, format: "jwk" }), sig),
+    "the subject key is a working P-256 pair node can use");
+  assert.ok(!("key_ops" in subject) && !("ext" in subject),
+            "and carries no Web Crypto members");
+  log.info("PASS keys: certificate JWK and subject key, no Web Crypto.");
+  log.debug("Leaving keysWithoutWebCrypto().");
+}
+
 async function main() {
   log.debug("Entering main().");
   await x509ClientIdentifiers();
+  await keysWithoutWebCrypto();
   await encryptedResponse();
   await selfIssuedIdTokens();
   await jcsAndDataIntegrity();
