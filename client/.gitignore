@@ -23,6 +23,7 @@ src/pqc.js
 src/hbs.js
 src/crypto_keys.js
 src/crypto_provider.js
+src/crypto_webcrypto.js
 # The other copies build.js stages into src/ and removes again: common/krb5,
 # common/spiffe and common/xmldsig.js, named for the same reason. Until
 # 2026-11-17 thirteen krb5 copies were TRACKED here, three of them drifted
