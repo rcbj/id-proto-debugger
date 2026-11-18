@@ -187,7 +187,18 @@ async function issuerRootOutOfBand(x5c) {
       log.debug("Leaving issuerRootOutOfBand(). No AIA.");
       return "";
     }
-    const got = await fetch(m[1]);
+    log.info("  following caIssuers of \"" + cert.subject
+      .replace(/\n/g, ", ") + "\": " + m[1]);
+    let got;
+    try {
+      got = await fetch(m[1]);
+    } catch (e) {
+      throw new Error("could not fetch the issuer's caIssuers URL " + m[1] +
+          " (from the certificate \"" + cert.subject.replace(/\n/g, ", ") +
+          "\"): " + (e.cause ? e.cause.code || e.cause.message : e.message) +
+          ". iya-sts writes it from PKI_DISTRIBUTION_BASE_URL; is it set to " +
+          "an address the tests container can reach?");
+    }
     const body = Buffer.from(await got.arrayBuffer());
     assert.strictEqual(got.status, 200, m[1] + " answered " + got.status);
     const text = body.toString("utf8");

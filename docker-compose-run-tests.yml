@@ -471,6 +471,20 @@ services:
       # ---------------------------------------------------------------------
       - STS_TLS_CERT_FILE=/etc/idptools/tls/stack-tls-cert.pem
       - STS_TLS_KEY_FILE=/etc/idptools/tls/stack-tls-key.pem
+      # ---------------------------------------------------------------------
+      # WHERE A CERTIFICATE THIS SERVICE MINTS SAYS ITS ISSUER IS. iya-sts
+      # writes an Authority Information Access caIssuers URL into every
+      # certificate it issues, <base>/pki/ca/<file>.cer, and <base> defaults
+      # to http://<first tls.hostname, i.e. localhost>:<pki.httpPort> — a
+      # URL nothing but that container can follow. tests/
+      # vc_verifier_oid4vc_wallet.js follows it from the issuer's x5c to
+      # reach iya-sts's root out of band (the way an operator configures a
+      # Verifier's trust), so it must name this service by its compose name.
+      # 8082 is pki.httpPort inside the container. Plain HTTP is right for
+      # caIssuers (RFC 5280 section 4.2.2.1). It applies to certificates
+      # minted after start, and the stack starts fresh.
+      # ---------------------------------------------------------------------
+      - PKI_DISTRIBUTION_BASE_URL=http://sts:8082
     volumes:
       # Shared with the tests container so `spiffe_protocol.js` can dial it.
       # A socket is a rendezvous point rather than a file — it holds no bytes,
