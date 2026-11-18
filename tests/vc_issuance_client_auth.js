@@ -286,6 +286,14 @@ async function redeem(driver, offered, methodName, fields, secret, shownRe,
         said + " | token response: " + String(answer).slice(0, 600) +
         " | browser console: " + consoleLines.join(" / ").slice(0, 1500));
     }
+    if (methodName === "attest_jwt_client_auth") {
+      // The challenge the realm requires comes from its challenge_endpoint
+      // (draft -12 section 6.1), fetched before the first token request.
+      var issuedSaid = await value(driver, "vc_token_status");
+      assert.ok(/challenge from challenge_endpoint/.test(issuedSaid),
+                methodName + ": the PoP's challenge came from the AS's " +
+                "challenge_endpoint: " + issuedSaid);
+    }
   } else {
     await waitForStatus(driver, "vc_token_status", function (s) {
       return /refused/.test(s);

@@ -1328,7 +1328,8 @@ function sendTokenRequest() {
     .then(function (result) {
       recordTokenBinding(result);
       return { ok: result.response.ok, statusCode: result.response.status,
-               body: result.body, raw: result.text };
+               body: result.body, raw: result.text,
+               challengeSource: result.challengeSource };
     })
     .then(function (response) {
       var box = el("vc_token_response");
@@ -1366,8 +1367,10 @@ function sendTokenRequest() {
       buildRequestBody();
       renderDpopPane();
       status("vc_token_status",
-        "An access token was issued. The credential request below can now be " +
-            "authorized with it.", "vc-ok");
+        "An access token was issued" + (response.challengeSource ? " (the " +
+            "Client Attestation PoP carried a challenge from " +
+            response.challengeSource + ")" : "") + ". The credential " +
+            "request below can now be authorized with it.", "vc-ok");
       // Through showRequestConfig(), because the token response is what says
       // which claims were granted — the approval pane described the request
       // this page was ABOUT to make, and now there is an answer to describe.
