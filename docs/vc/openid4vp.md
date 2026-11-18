@@ -181,8 +181,8 @@ decryption) and then by each credential: the format, the issuer's signature
 the validity window, the holder proof's signature, `nonce`, `aud`, freshness
 and `sd_hash`, the claims asked for, and the credential's status
 ([status-lists.md](status-lists.md)). The verdict is *passed*, *failed*, or
-*incomplete* when a check could not be performed. It reads four formats:
-`dc+sd-jwt`, `jwt_vc_json`, `mso_mdoc` and `ldp_vc`.
+*incomplete* when a check could not be performed. It reads five formats:
+`dc+sd-jwt`, `jwt_vc_json`, `mso_mdoc`, `ldp_vc` and `anoncreds`.
 
 ![The Verifier page's checks on an answer from the debugger's own wallet](images/vp-openid4vp-17-verifier-checks.png)
 

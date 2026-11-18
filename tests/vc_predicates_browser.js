@@ -36,6 +36,9 @@ const nodeCrypto = require("crypto");
 const browserFlags = require("./browser_flags.js");
 const { Command, Option } = require("commander");
 const { loadUrl } = require("./page_load.js");
+// The user guide's pictures (docs/vc/). Inert unless DOC_SCREENSHOT_DIR is
+// set, so an ordinary run takes none.
+const docShots = require("./doc_screenshots.js");
 const waitForContent = require("./wait_for.js");
 const { waitForStatus, waitForValue } = require("./wait_for");
 const paths = require("./module_paths.js");
@@ -148,6 +151,7 @@ async function plant(driver, credential, holderJwk) {
 // One round trip: compose on the page, prove in the wallet, verify back.
 async function roundTrip(driver, ac, iss, language) {
   log.debug("Entering roundTrip(). " + language);
+  docShots.setPrefix("vc-predicates-" + language);
   await plant(driver, JSON.stringify(iss.held), iss.lsJwk);
   await loadUrl(driver, baseUrl + "/vc-predicates.html");
   await waitForContent.waitForPageBundle(driver, "the predicates page");
@@ -167,6 +171,9 @@ async function roundTrip(driver, ac, iss, language) {
   assert.match(mapping, /requested_predicates[\s\S]*"p_type": ">="/,
                language + ": the page shows the AnonCreds request with the " +
                "predicate");
+  await docShots.snap(driver, "01-compose", { ids: ["pane_vcp_compose"] });
+  await docShots.snap(driver, "02-anoncreds-request",
+                      { ids: ["pane_vcp_mapping"] });
   await click(driver, "vcp_send_button");
   await driver.wait(until.urlContains("vc-presentation-1.html"), stepWait,
                     language + ": Send should open the wallet");
@@ -184,6 +191,8 @@ async function roundTrip(driver, ac, iss, language) {
   var lang = await statusOf(driver, "vp_query_language");
   assert.match(lang, language === "pe" ? /removed in 1\.0/ : /DCQL/,
                language + ": the query language is labelled");
+  await docShots.snap(driver, "03-wallet-what-is-asked",
+                      { ids: ["pane_requested"] });
   await click(driver, "vp_continue_button");
   await driver.wait(until.urlContains("vc-presentation-2.html"), stepWait,
                     language + ": Continue should reach step 2");
@@ -211,6 +220,9 @@ async function roundTrip(driver, ac, iss, language) {
     "return null;");
   assert.deepStrictEqual(ageRow, { disabled: true, checked: false },
                          language + ": the age row cannot be ticked");
+  await docShots.snap(driver, "04-wallet-choose", { ids: ["pane_choose"] });
+  await docShots.snap(driver, "05-wallet-presentation",
+                      { ids: ["pane_presentation"] });
   var pres = JSON.parse(text.trim());
   assert.deepStrictEqual(Object.keys(pres.requested_proof.revealed_attrs),
                          ["name"], language + ": only name is revealed");
@@ -258,6 +270,7 @@ async function roundTrip(driver, ac, iss, language) {
                " — " + await statusOf(driver, "vcp_inspect_result"));
   var result = await statusOf(driver, "vcp_inspect_result");
   assert.match(result, /PROVEN in zero knowledge/);
+  await docShots.snap(driver, "06-verified", { ids: ["pane_vcp_inspect"] });
   if (language === "pe") {
     assert.match(result, /presentation_submissionmatches the definition/);
   }
@@ -342,6 +355,9 @@ async function valuesCase(driver, value) {
     assert.match(st, /holds false.*treated as if it did not exist/,
                  "and step 1 says why: " + st);
     assert.match(claims, /value-mismatch/, "the claim row says why");
+    docShots.setPrefix("vc-predicates-values");
+    await docShots.snap(driver, "01-false-refused",
+                        { ids: ["pane_requested"] });
     var off = await driver.executeScript("var b=document.getElementById(" +
       "'vp_continue_button'); return !!b && b.disabled;");
     assert.strictEqual(off, true, "Continue is off: the credential is not " +
@@ -370,6 +386,8 @@ async function verifierPage(driver) {
   assert.deepStrictEqual(dcql.credentials[0].claims, [{ path: ["name"] }],
                          "the predicated claim is not in claims");
   assert.match(await statusOf(driver, "vpv_dcql_status"), /non-standard/);
+  docShots.setPrefix("vc-predicates-verifier");
+  await docShots.snap(driver, "01-dcql-extension", { ids: ["pane_query"] });
   await driver.executeScript(
     "document.getElementById('vpv_query_language').value = 'pe';" +
     "vcverifier.regenerateDcql();");
@@ -381,6 +399,8 @@ async function verifierPage(driver) {
   assert.strictEqual(fields[1].predicate, "required");
   assert.match(await statusOf(driver, "vpv_dcql_status"),
                /removed in 1\.0/);
+  await docShots.snap(driver, "02-presentation-definition",
+                      { ids: ["pane_query"] });
   log.info("PASS the Verifier page builds age >= 18 as the DCQL " +
            "extension and as a presentation_definition.");
   log.debug("Leaving verifierPage().");

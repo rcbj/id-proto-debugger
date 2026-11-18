@@ -3,8 +3,9 @@
 The three credential formats on the **VC Tools** row are not issued or
 presented over OpenID4VCI / OpenID4VP; each has a page of its own that
 issues, reads and verifies them entirely in the browser. None of the three
-needs the api or a network peer, none stores anything, and all three ship
-to the static sites. Each page carries the sample input these tutorials
+needs the api, none stores anything, and all three ship to the static sites;
+the only network use is a barcode's status list, which the browser fetches
+when you ask it to. Each page carries the sample input these tutorials
 start from.
 
 Reference: [reference-tools.md](reference-tools.md). Format guides:
@@ -51,9 +52,29 @@ fields — so the barcode cannot be moved to another document.
    The private JWK in this picture belongs to a key generated for that run
    alone. Nothing on this page is ever stored, the key included.
 
-A status entry in a barcode is only **expanded** (the status list is not
-fetched), and PDF417 symbols are neither drawn nor read from images — paste
-what a scanner reads.
+### Going further with barcodes
+
+* **A driver's licence.** Choose **Driver's licence (AAMVA PDF417)** as the
+  document, tick the AAMVA fields the signature should protect, and **Issue**:
+  the credential is added to the licence's PDF417 text as subfile `ZZ`, and
+  the whole is drawn as a **PDF417 symbol**. Save the symbol as an image and
+  choose it in pane 1's **Barcode image** to read it back — the page reads QR
+  codes and PDF417 symbols from pictures, in the page. **Draw as PDF417**
+  draws whatever text is in pane 1's **Barcode** box, the specification's
+  licence example included.
+* **An ISO licence** (Appendix B, *informative*). **Load an ISO licence
+  example** loads data groups as `DGn: …` lines with the credential in DG11;
+  **Verify** checks the data groups the signature protects. Issuing one takes
+  the data groups already separated, and protects any of DG1–DG10 (DG11
+  carries the credential and cannot be protected). No ISO symbol is drawn.
+* **The status list.** A barcode carrying a terse status entry is expanded,
+  on **Verify**, into a Bitstring Status List entry in pane 2. **Fetch and
+  Check** fetches the list from the browser (the server must send CORS
+  headers; otherwise paste the list and **Check Pasted**), verifies the list's
+  own proof and reads the bit: **NOT REVOKED**, **REVOKED** or **SUSPENDED** —
+  or **UNVERIFIED** when the list itself did not verify. For the
+  specification's licence example, set **Status list length** to 131072
+  (2^17), the length its own example works with.
 
 ## Issue a Gordian Envelope credential and present it with claims elided
 
@@ -87,6 +108,30 @@ verifies. A holder presents by eliding; nothing is re-signed.
 Tick **Salt claims** when issuing your own credential, so that an elided
 claim with a guessable value cannot be recovered from its digest.
 
+### Going further with envelopes
+
+The four panes below the issue pane are collapsed when the page opens; click
+a pane's title to open it. Each has a **Read It** button that shows its
+result in pane 1, and none keeps a key or password beyond the page load.
+
+* **Encrypt to a recipient.** In **Encrypt and Decrypt**, press **Make Keys**
+  (X25519 from a seed, or an ML-KEM-512/768/1024 pair): the public keys go
+  into **Recipients** and the private keys into **Private keys**. Paste an
+  envelope, press **Encrypt** — the content key is made for you and sealed to
+  each recipient — then **Decrypt** with the private keys. A password
+  (Argon2id, PBKDF2, scrypt or HKDF) locks the content key the same way. The
+  digests do not change, so a signature over the envelope still verifies.
+* **Compress** an envelope, or only its subject; its digest is unchanged.
+* **Split with SSKR.** In **SSKR: Split and Join**, give groups such as
+  `2-of-3` and a group threshold and press **Split**; delete some share lines,
+  keeping enough to meet the thresholds, and **Join** rebuilds the envelope.
+* **Send it as a multi-part UR.** **Make Parts** cuts the envelope into
+  `ur:envelope/<seq>-<count>/…` parts plus fountain parts; delete a few and
+  **Join Parts** still rebuilds it. Pane 1 reads the parts directly too.
+* **Sign with ML-DSA or SSH.** Choose ML-DSA-44/65/87 or SSH Ed25519 as the
+  scheme before **Issue**. Pane 1 verifies against the public key the issue
+  pane shows, or an OpenSSH public key line.
+
 ## Issue, verify and revoke an ACDC
 
 Authentic Chained Data Containers (Trust over IP's ACDC, over KERI and
@@ -113,7 +158,36 @@ which is signed. Verifying one is walking that chain.
    ![REVOKED](images/acdc-03-revoked.png)
 
 4. Change one character of an attribute in the stream in pane 1 and press
-   **Verify**: **INVALID**, naming the SAID that no longer matches.
+   **Verify Credential**: **INVALID**, naming the SAID that no longer
+   matches.
 
-The page reads the CESR version 1 streams the released KERI libraries
-produce (signify-ts, which vLEI uses), and refuses CESR version 2 by name.
+### Going further with ACDC
+
+The issue pane's options each add one part of the KERI suite to the stream,
+and **Verify It** checks it:
+
+* **CESR version 2** — the current specification: version 2 events and an
+  `acm` credential whose SAID is over its most compact form, in a `rip` /
+  `upd` registry. Version 1 is what signify-ts and KERIA issue; the page reads
+  both, mixed in one stream.
+* **Signing keys** and a **weighted threshold** such as
+  `["1/2","1/2","1/2"]` — the KEL's signatures must reach it.
+* **Witnesses** and a **witness threshold** — each event carries the
+  witnesses' receipts; an event short of the threshold is refused.
+* **Delegated issuer** — a delegator's KEL first, approving the issuer's
+  inception.
+* **Registry backers** (version 1) — a backer registry whose events need the
+  backers' receipts.
+* **Chain to a parent** — a second issuer issues a parent credential, and
+  this one's edge points to it; verifying checks the parent too (a far node
+  that is revoked, invalid or missing makes its edge invalid).
+* **Aggregate** — attributes as blinded blocks. In **Disclose Selectively**,
+  choose the blocks to reveal and **Verify It**: in version 2 the SAID, and so
+  the registry's binding, is unchanged.
+* **IPEX Grant** — appends a grant of the credential to its issuee (the
+  credential must have been issued with an **Issuee AID**). **Verify It**
+  moves the stream to pane 1; **Verify IPEX Grant** then checks the exchange
+  and the credential it carries.
+
+**Verify It** also copies the schema(s) the issue pane generated into
+**Schemas**, so the credential is validated against its JSON Schema as well.

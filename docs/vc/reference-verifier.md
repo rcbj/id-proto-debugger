@@ -57,13 +57,16 @@ what is sent.
 | Field | id | What it is | Spec | Default |
 |---|---|---|---|---|
 | Credential query id | `vpv_query_id` | The query's `id`. The wallet's `vp_token` is keyed by it. | OpenID4VP 1.0 §6.1, §8.1 | `credential` |
-| Format | `vpv_format` | `dc+sd-jwt` (SD-JWT VC), `jwt_vc_json`, `mso_mdoc` (ISO mdoc) or `ldp_vc` (W3C VC with a Data Integrity proof). These four are the formats this Verifier checks. | Appendix B | `dc+sd-jwt` |
+| Format | `vpv_format` | `dc+sd-jwt` (SD-JWT VC), `jwt_vc_json`, `mso_mdoc` (ISO mdoc), `ldp_vc` (W3C VC with a Data Integrity proof) or `anoncreds` (AnonCreds, legacy or W3C form; this debugger's identifier, since OpenID4VP defines none). These five are the formats this Verifier checks. | Appendix B | `dc+sd-jwt` |
 | vct / doctype / type values | `vpv_type` | The label follows the format. For `dc+sd-jwt` it is `meta.vct_values` (separate several with spaces). For an mdoc it is `meta.doctype_value` (one). For the two W3C formats it is `meta.type_values`. Appendix B makes it **required**: when it is empty the query is not generated, and `vpv_dcql_status` says why. | Appendix B | Empty |
 | Claims (one path per line) | `vpv_claims` | One claim path per line, with segments separated by dots. A number is an array index and `*` means every element. For an mdoc the first segment is the namespace. A line may start with `id:` and end with `= v1 \| v2` to constrain the values (a whole number becomes an integer, and `true`/`false` become booleans). | §6.3, §7 | Empty |
 | Claim sets (optional) | `vpv_claim_sets` | One set per line: claim ids separated by commas, most preferred first. Every claim then needs an id. | §6.1 `claim_sets` | Empty |
 | Intent to retain (mdoc) | `vpv_intent_to_retain` | Sets `intent_to_retain` (true or false) on every claim of an `mso_mdoc` query. "not said" leaves it out. | Appendix B.2.4 | not said |
 | Holder binding | `vpv_binding` | `require_cryptographic_holder_binding`: whether the answer must carry a Key Binding JWT, a signed VP or a device signature. | §6.1 | On |
 | Trusted authorities | `vpv_trusted_authorities` | Asks for credentials whose X.509 chain lies under the issuer anchors in pane 2. This is DCQL `trusted_authorities`, type `aki`: each anchor's SubjectKeyIdentifier, base64url. `vpv_trusted_authorities_note` counts the values found and names anchors without one. A credential that does not match is reported on its own row. | §6.1.1.1; HAIP 1.0 §5 | Off |
+| Predicates (optional) | `vpv_predicates` | One per line, `name op integer`, op one of `>=` `>` `<=` `<`: prove it, do not show it. In DCQL they go in this debugger's **non-standard** extension (`x_debugger_predicates`, marked critical); in Presentation Exchange they are its standard Predicate Feature. Only AnonCreds proves a range in zero knowledge; an mdoc answers an age bound with `age_over_NN`; any other format fails the predicate. A predicate's claim must not also be in Claims. See [presentation-exchange.md](presentation-exchange.md) and [reference-predicates.md](reference-predicates.md). | — (extension); DIF PE 2.1.1 | Empty |
+| Query language | `vpv_query_language` | **DCQL** (OpenID4VP 1.0), or **Presentation Exchange 2.1.1** — sent as `presentation_definition` and answered with a `presentation_submission`, as the OpenID4VP drafts defined (*removed in 1.0*). This Verifier checks a Presentation Exchange answer in AnonCreds only, and reports any other format's as incomplete. | §6; OpenID4VP drafts | DCQL |
+| AnonCreds issuer material | `vpv_anoncreds_material` | An AnonCreds bundle (schema and credential definition, and for a revocable credential its registry definition, status list and tails), given out of band to a Verifier with no ledger. Without it an AnonCreds answer is *incomplete*. | — | Empty; **never stored** |
 | DCQL query | `vpv_dcql` | The query that is sent. Generated from the fields above whenever one of them changes. | §6 | Generated on first load |
 
 ---
@@ -322,6 +325,18 @@ those in `client/src/vp_verifier.js`; some rows appear only when they apply.
 - The VP proof's domain is this Verifier's Client Identifier.
 - The holder is the credential's subject.
 
+**Each `anoncreds` presentation**
+
+- The presentation is an AnonCreds presentation (legacy JSON or the W3C
+  `anoncreds-2023` form).
+- The AnonCreds proof verifies (CL), including the non-revocation proof when
+  a status list applies. SKIP without the issuer material, or without the
+  status list a revocable credential needs.
+- One row per requested predicate: *Predicate name op value*.
+- Every requested claim is disclosed.
+
+See [format-anoncreds.md](format-anoncreds.md#the-verifier-page).
+
 **Credential status** (group `status`, "Credential status (revocation)")
 
 The IETF **Token Status List** (*draft-ietf-oauth-status-list-21, a draft*),
@@ -349,7 +364,7 @@ A status list behind a COSE_Mac0 is a SKIP that says so.
 **Fallbacks**
 
 - The format is one this Verifier reads. This fails for any format outside
-  the four above.
+  the five above.
 - The presentation could be checked. This fails when checking threw.
 
 ---

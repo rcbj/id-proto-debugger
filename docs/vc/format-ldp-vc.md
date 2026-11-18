@@ -110,8 +110,9 @@ nonce* where a derived proof has one, and *Disclosure*.
 `vc-verifier.html` can ask for `ldp_vc`; a query needs `type_values`. Its
 `vp_formats_supported` is `proof_type_values: ["DataIntegrityProof"]` and
 `cryptosuite_values` `bbs-2023`, `ecdsa-rdfc-2019`, `ecdsa-jcs-2019`,
-`eddsa-rdfc-2022`, `eddsa-jcs-2022`. The Linked Data proof types are verified
-if they arrive. Rows:
+`eddsa-rdfc-2022`, `eddsa-jcs-2022`. A derived `ecdsa-sd-2023` proof and the
+Linked Data proof types are verified if they arrive, although the request
+does not list them. Rows:
 
 | Row | Check |
 |---|---|

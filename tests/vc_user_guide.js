@@ -24,9 +24,13 @@
 // What it drives, in order:
 //
 //   1. step 0's use-case chooser;
-//   2. a pre-authorized offer with a Transaction Code, taken on step 1,
-//      redeemed on step 2, verified on step 3, and shown on step 4 with its
-//      Credential History and refresh panes;
+//   2. the Authorization Code flow as the wallet's registered public client
+//      (VC_GUIDE_CLIENT_ID; declared by the job unless
+//      VC_GUIDE_NO_PROVISION=1), then step 4: the refresh token, the
+//      Credential Endpoint asked again, What Changed, and the refreshed
+//      credential kept as the Credential History's second generation;
+//      then a pre-authorized offer with a Transaction Code, taken on step 1,
+//      redeemed on step 2 and verified on step 3;
 //   3. the same with DPoP turned on at step 2;
 //   4. a deferred offer (the Deferred Issuance pane on step 2);
 //   5. the jwt_vc_json and ldp_vc configurations, when the issuer offers
@@ -64,6 +68,7 @@ var log = bunyan.createLogger({ name: "vc_user_guide",
 log.info("Log initialized. logLevel=" + log.level());
 const browserFlags = require("./browser_flags.js");
 const common = require("./jwt_vc_json_common.js");
+const registry = require("./sts_applications.js");
 const consentScreen = require("./consent_screen.js");
 const docShots = require("./doc_screenshots.js");
 const { usernameFor } = require("./random_username.js");
@@ -93,6 +98,14 @@ const NO_PROVISION = process.env.VC_GUIDE_NO_PROVISION === "1";
 // that: the requests and the screens are the ones a listed origin gets.
 // Never set by a launcher.
 const IGNORE_CORS = process.env.VC_GUIDE_IGNORE_CORS === "1";
+// THE WALLET'S CLIENT AT THE ISSUER'S AUTHORIZATION SERVER. In a provisioning
+// run this job declares it (public, with this client's /callback as its
+// redirect URI); in a no-provision run it is a client somebody registered
+// already, and with none named the pages keep their own client_id.
+const GUIDE_CLIENT_ID = String(process.env.VC_GUIDE_CLIENT_ID ||
+    (process.env.VC_GUIDE_NO_PROVISION === "1" ? "" : "vc-user-guide-wallet"));
+// Who signs in, and the client the pages name: set by setUpTheIssuer().
+const holder = { username: "", password: "" };
 const WAIT = Number(process.env.TEST_WAIT_TIME_MS) > 0
   ? Math.max(20000, Number(process.env.TEST_WAIT_TIME_MS) * 4) : 20000;
 require("./wait_for").configure({ timeout: WAIT });
@@ -149,8 +162,8 @@ async function offerFor(driver, configuration, mode, label) {
   log.debug("Entering offerFor(). " + configuration + " " + mode);
   const screen = await common.offerFromThePortalWallet(driver, {
     By: By, until: until, stsBase: ISSUER,
-    username: HOLDER_USERNAME || usernameFor(label || "guide"),
-    password: HOLDER_PASSWORD || undefined, mode: mode,
+    username: holder.username || usernameFor(label || "guide"),
+    password: holder.password || undefined, mode: mode,
     configuration: configuration, wait: WAIT, consentScreen: consentScreen });
   assert.ok(/credential_offer(_uri)?=/.test(screen.offerUri),
     "the issuer's offer page should show a Credential Offer: " +
@@ -189,6 +202,7 @@ async function takeOffer(driver, screen, shots) {
     await snap(driver, "05-configuration", ["pane_config"], 1800);
   }
   ok("step 1 took the offer and retrieved the issuer's metadata");
+  await useTheWalletClient(driver);
   await clickId(driver, "start_issuance_button");
   await driver.wait(until.urlContains("vc-issuance-2.html"), WAIT,
     "a pre-authorized offer goes straight to the Token Request");
@@ -287,15 +301,6 @@ async function preAuthorizedWithTxCode(driver) {
   assert.ok(!/signature (is )?invalid/i.test(body),
     "step 3 should not report an invalid issuer signature");
   ok("step 3 verified the SD-JWT VC");
-  docShots.setPrefix("vc-refresh");
-  await openPage(driver, "vc-issuance-4.html");
-  await driver.wait(until.elementLocated(By.id("pane_current")), WAIT);
-  await driver.sleep(1500);
-  await snap(driver, "01-current", ["pane_current"]);
-  await snap(driver, "02-history", ["pane_history"]);
-  await snap(driver, "03-refresh-token", ["pane_refresh"]);
-  await snap(driver, "04-reissue", ["pane_reissue"]);
-  ok("step 4 showed the credential and its history");
   log.debug("Leaving preAuthorizedWithTxCode().");
 }
 
@@ -363,6 +368,155 @@ async function otherFormats(driver) {
     ok("step 3 read the " + format + " credential");
   }
   log.debug("Leaving otherFormats().");
+}
+
+// The account and the client the offer and authorization code sections use.
+// What is created is named in the log, so a run against somebody else's
+// issuer leaves a list of what to remove.
+async function setUpTheIssuer() {
+  log.debug("Entering setUpTheIssuer().");
+  holder.username = HOLDER_USERNAME || usernameFor("guide");
+  holder.password = HOLDER_PASSWORD;
+  if (NO_PROVISION) {
+    log.debug("Leaving setUpTheIssuer(). Nothing is provisioned.");
+    return;
+  }
+  if (!holder.password) {
+    holder.password = "Guide-" + nodeCrypto.randomBytes(9)
+      .toString("base64url") + "-Aa1!";
+  }
+  const meta = await common.issuerMetadata(ISSUER);
+  const scopes = ["openid", "profile", "email", "offline_access"]
+    .concat(common.credentialScopes(meta));
+  await common.provisionWallet(ISSUER, {
+    clientId: GUIDE_CLIENT_ID, name: "VC user guide wallet",
+    grantTypes: ["urn:ietf:params:oauth:grant-type:pre-authorized_code",
+                 "authorization_code", "refresh_token"],
+    redirectUris: [BASE + "/callback"], scopes: scopes,
+    why: "the wallet the user guide's tutorials collect credentials with" });
+  await registry.ensurePerson(registry.stsBaseFor(ISSUER), holder.username,
+                              holder.password);
+  log.info("Provisioned at " + ISSUER + ": the public client " +
+           GUIDE_CLIENT_ID + " (redirect URI " + BASE + "/callback) and " +
+           "the account " + holder.username + ".");
+  log.debug("Leaving setUpTheIssuer().");
+}
+
+// Step 1's client_id, set to the wallet's registration and saved, when this
+// run has one; otherwise the pages keep their own.
+async function useTheWalletClient(driver) {
+  log.debug("Entering useTheWalletClient().");
+  if (!GUIDE_CLIENT_ID) {
+    log.debug("Leaving useTheWalletClient(). No client named.");
+    return;
+  }
+  await driver.executeScript(
+    "document.getElementById('client_id').value = arguments[0];" +
+    "document.getElementById('config_save_button').click();",
+    GUIDE_CLIENT_ID);
+  await driver.sleep(500);
+  log.debug("Leaving useTheWalletClient().");
+}
+
+async function waitForStatusText(driver, id, re, why) {
+  log.debug("Entering waitForStatusText(). " + id);
+  let said = "";
+  await driver.wait(async function () {
+    said = await textOf(driver, id) || "";
+    return re.test(said);
+  }, WAIT, why);
+  log.debug("Leaving waitForStatusText().");
+  return said;
+}
+
+// Appendix H.6: step 1 already holds the issuer's metadata (from
+// issuerMetadataPanes()); Start Issuance runs the Authorization Code flow,
+// the holder signs in at the authorization server, and step 2 requests.
+async function authorizationCode(driver) {
+  log.debug("Entering authorizationCode().");
+  log.info("=== the Authorization Code flow ===");
+  docShots.setPrefix("vc-authorization-code");
+  await useTheWalletClient(driver);
+  await driver.navigate().refresh();
+  await waitForContent.waitForPageBundle(driver,
+    "vc-issuance-1.html should reload", WAIT);
+  await driver.wait(until.elementLocated(By.id("start_issuance_button")),
+    WAIT);
+  await driver.sleep(1000);
+  await snap(driver, "01-authorize-issuance", ["pane_handoff"]);
+  await clickId(driver, "start_issuance_button");
+  await driver.wait(until.elementLocated(By.id("username")), WAIT,
+    "Start Issuance should reach the authorization server's sign-in");
+  await driver.findElement(By.id("username")).sendKeys(holder.username);
+  await driver.findElement(By.id("password")).sendKeys(holder.password);
+  await driver.findElement(By.id("kc-login")).click();
+  await consentScreen.passInBrowser(driver, By);
+  await driver.wait(until.urlContains("vc-issuance-2.html"), WAIT,
+    "the code should be exchanged and step 2 opened");
+  await waitForContent.waitForPageBundle(driver,
+    "vc-issuance-2.html should load", WAIT);
+  await driver.wait(async function () {
+    return !!(await driver.executeScript(
+      "var e = document.getElementById('vc_access_token');" +
+      "return e ? (e.value || e.textContent || '').trim() : '';"));
+  }, WAIT, "step 2 should show the access token the code bought");
+  await driver.sleep(1500);
+  await snap(driver, "02-tokens", ["pane_tokens"]);
+  await snap(driver, "03-credential-request", ["pane_request"]);
+  ok("the Authorization Code flow returned to step 2 with tokens");
+  await clickId(driver, "vc_approve_button");
+  await waitForStep3(driver);
+  await snap(driver, "04-credential", ["pane_credential"]);
+  ok("step 3 holds the credential issued by authorization code");
+  log.debug("Leaving authorizationCode().");
+}
+
+// Step 4 on the credential in hand: refresh the access token, ask the
+// Credential Endpoint again, compare, keep, and the history.
+async function refreshIt(driver) {
+  log.debug("Entering refreshIt().");
+  log.info("=== step 4: refresh ===");
+  docShots.setPrefix("vc-refresh");
+  await openPage(driver, "vc-issuance-4.html");
+  await driver.wait(until.elementLocated(By.id("pane_current")), WAIT);
+  await driver.sleep(1500);
+  await snap(driver, "01-current", ["pane_current"]);
+  await snap(driver, "02-history", ["pane_history"]);
+  const refreshToken = await textOf(driver, "vc_refresh_token_value");
+  if (!refreshToken) {
+    await snap(driver, "03-refresh-token", ["pane_refresh"]);
+    log.info("The authorization server issued no refresh token; step 4 " +
+             "says so, and the refresh is not driven.");
+    log.debug("Leaving refreshIt(). No refresh token.");
+    return;
+  }
+  await clickId(driver, "vc_refresh_button");
+  const said = await waitForStatusText(driver, "vc_refresh_status",
+    new RegExp("fresh access token was issued|refused the refresh|" +
+               "refresh request failed|nothing to send"),
+    "the refresh should finish");
+  assert.ok(/fresh access token was issued/.test(said),
+    "the refresh should succeed: " + said);
+  await snap(driver, "03-refresh-token", ["pane_refresh"]);
+  ok("the refresh token bought a fresh access token");
+  await clickId(driver, "vc_reissue_button");
+  const reissued = await waitForStatusText(driver, "vc_reissue_status",
+    /returned a credential|refused|failed|not ready/,
+    "the Credential Request should finish");
+  assert.ok(/returned a credential/.test(reissued),
+    "the issuer should return a refreshed credential: " + reissued);
+  await driver.sleep(1000);
+  await snap(driver, "04-reissue", ["pane_reissue"]);
+  await snap(driver, "05-what-changed", ["pane_compare"]);
+  await clickId(driver, "vc_replace_button");
+  await driver.wait(async function () {
+    return /^generation 2 of 2/.test(
+      await textOf(driver, "vc_history_position") || "");
+  }, WAIT, "keeping it should add a generation to the history");
+  await driver.sleep(800);
+  await snap(driver, "06-history-after", ["pane_history"]);
+  ok("the refreshed credential was kept as generation 2");
+  log.debug("Leaving refreshIt().");
 }
 
 // Step 1 with no offer at all: the issuer's metadata retrieved from its URL,
@@ -692,17 +846,22 @@ async function test() {
   try {
     await driver.manage().window().setRect({ width: 1280, height: 1000 });
     await stepZero(driver);
+    await setUpTheIssuer();
     await issuerMetadataPanes(driver);
     if (NO_PROVISION && !HOLDER_USERNAME) {
-      log.info("SKIPPED the four sections that take an offer: this is a " +
-               "documentation run against an issuer this job may not " +
+      log.info("SKIPPED the sections that take an offer or sign in: this " +
+               "is a documentation run against an issuer this job may not " +
                "register anything at (VC_GUIDE_NO_PROVISION=1), and no " +
                "account to sign in with was named " +
                "(VC_GUIDE_HOLDER_USERNAME).");
     } else {
-      if (!NO_PROVISION) {
-        await common.provisionWallet(ISSUER, { why: "the wallet the user " +
-          "guide's tutorials collect credentials with" });
+      if (GUIDE_CLIENT_ID && holder.password) {
+        await authorizationCode(driver);
+        await refreshIt(driver);
+      } else {
+        log.info("SKIPPED the Authorization Code flow: it needs a " +
+                 "registered client (VC_GUIDE_CLIENT_ID) and the holder's " +
+                 "password.");
       }
       await preAuthorizedWithTxCode(driver);
       await withDpop(driver);

@@ -171,10 +171,15 @@ it, is at the foot of `docs/oauth2-oidc/index.md`.
 `vc_user_guide.js`, which walks the guide's tutorials against whatever
 OpenID4VCI issuer `OID4VCI_ISSUER_URL` names and is an ordinary scheduled job
 (`sts-vc` lock) whether or not pictures are taken. Its three `VC_GUIDE_*`
-variables exist for a DOCUMENTATION run against an issuer this repository
-does not own — `VC_GUIDE_NO_PROVISION=1` registers nothing there,
-`VC_GUIDE_HOLDER_USERNAME`/`_PASSWORD` name the account its offer page signs
-in as, and `VC_GUIDE_IGNORE_CORS=1` adds `--disable-web-security` for a
+variables (four, with `VC_GUIDE_CLIENT_ID`) exist for a DOCUMENTATION run
+against an issuer this repository does not own. Without
+`VC_GUIDE_NO_PROVISION=1` the job declares its own public client
+(`vc-user-guide-wallet`, redirect URI `<client>/callback`) and its holder
+account through `/admin-api`, as the other wallet jobs do; with it, it
+registers nothing, `VC_GUIDE_HOLDER_USERNAME`/`_PASSWORD` name the account
+its offer page and the authorization server sign in as,
+`VC_GUIDE_CLIENT_ID` names an already-registered client (the Authorization
+Code and refresh sections run only with one), and `VC_GUIDE_IGNORE_CORS=1` adds `--disable-web-security` for a
 build served from an origin that issuer's CORS policy does not list. No
 launcher sets any of them. The regeneration commands are at the foot of
 `docs/vc/index.md`.

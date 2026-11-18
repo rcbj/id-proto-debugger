@@ -287,9 +287,11 @@ answered. Per format:
     and `ecdsa-jcs-2019`, on the presentation and on each credential;
   * the proof's challenge and domain.
 
-  `ecdsa-sd-2023` is reported as SKIP; its derived proofs are not
-  implemented. Of bbs-2023's feature options only `baseline` is; a proof
-  using anonymous holder binding or pseudonyms is refused by name.
+  `ecdsa-sd-2023` derived proofs are verified too (#476): `vp_verifier.js`
+  loads `data_integrity_rdfc.js`, which registers `ecdsa_sd_2023.js` with
+  `data_integrity.js`. Of bbs-2023's feature options only `baseline` is
+  implemented; a proof using anonymous holder binding or pseudonyms is
+  refused by name.
 
 **Whose key it is (#467).** A signature that verifies says nothing until
 something ties the key to the issuer:

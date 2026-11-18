@@ -16,6 +16,9 @@ the answer, one row per check. The second half does the same under
   [tutorials-issuance.md](tutorials-issuance.md) received from your issuer,
   or any other.
 
+If your issuer is iya-sts, [setup-iya-sts.md](setup-iya-sts.md) shows one
+way to create the account, client and offers (optional, iya-sts only).
+
 The pictures present a test SD-JWT VC (`vct` `urn:example:guide:identity`,
 claims `given_name`, `family_name`, `birthdate`, `email`) from a test issuer
 named by `did:jwk`, so the Verifier page can check the issuer's signature

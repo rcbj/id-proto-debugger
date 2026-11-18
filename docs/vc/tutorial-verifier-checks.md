@@ -27,8 +27,9 @@ box is what is sent, so you can also write several queries or
 
 ![Pane 1](images/vc-verifier-01-what-to-ask.png)
 
-The page reads four formats: `dc+sd-jwt`, `jwt_vc_json`, `mso_mdoc` and
-`ldp_vc`.
+The page reads five formats: `dc+sd-jwt`, `jwt_vc_json`, `mso_mdoc`,
+`ldp_vc` and `anoncreds`. It can also ask for a predicate ("age >= 18")
+instead of a value; see [tutorial-predicates.md](tutorial-predicates.md).
 
 ## 2. How to ask
 

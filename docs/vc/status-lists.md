@@ -10,13 +10,16 @@ suspended. Two mechanisms are checked, one per family of formats:
 
 AnonCreds revocation is a different, zero-knowledge mechanism; see
 [format-anoncreds.md](format-anoncreds.md). A VC Barcode's
-`TerseBitstringStatusListEntry` is expanded on its page but not fetched; see
-[format-vc-barcodes.md](format-vc-barcodes.md).
+`TerseBitstringStatusListEntry` expands to a Bitstring Status List entry,
+which the VC Barcodes page's **Check the Status List** pane fetches (from the
+browser, or pasted) and checks with the Verifier page's own reader; see
+[format-vc-barcodes.md](format-vc-barcodes.md#check-the-status-list).
 
 ## Where status is checked
 
-**Only on the Verifier page** (`vc-verifier.html`), for each credential in
-each answer. The wallet pages do not look a credential's status up. Issuance
+**On the Verifier page** (`vc-verifier.html`), for each credential in each
+answer, and — for a VC Barcode's Bitstring Status List entry, with the same
+reader — on the VC Barcodes page. The wallet pages do not look a credential's status up. Issuance
 step 4 shows a refreshed credential's status entry (`index N on <uri>`, or `—`
 when the issuer sets none) beside the old one, as one row of what changed.
 

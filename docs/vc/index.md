@@ -49,6 +49,12 @@ does not, upload the document from a file (issuance step 1), or send the
 call through the api (presentation step 0, and the Verifier page's
 issuer-side fetches).
 
+## Optional: iya-sts setup
+
+[setup-iya-sts.md](setup-iya-sts.md) — **for iya-sts only**: creating a
+holder account, wallet clients and offers there. Every other issuer has its
+own way, and the tutorials never depend on this page.
+
 ## Configuration reference
 
 Every pane, field and button, with its element id, the specification that
@@ -61,6 +67,7 @@ where — it is stored.
 | `vc-presentation-0.html` … `vc-presentation-3.html` | [reference-presentation.md](reference-presentation.md) |
 | `vc-verifier.html` | [reference-verifier.md](reference-verifier.md) |
 | `did-tools.html`, `vc-barcodes.html`, `gordian-envelope.html`, `acdc.html`, the VC Tools row | [reference-tools.md](reference-tools.md) |
+| `vc-predicates.html`, and what the wallet and Verifier pages do with a predicate query | [reference-predicates.md](reference-predicates.md) |
 
 ## Protocol and format guides
 
@@ -74,6 +81,7 @@ implements.
 | [openid4vp.md](openid4vp.md) | OpenID4VP 1.0: DCQL, request by value and by reference, `request_uri_method=post`, Client Identifier prefixes, `direct_post` / `direct_post.jwt`, the Digital Credentials API |
 | [haip.md](haip.md) | HAIP 1.0, the high-assurance profile, on both ends |
 | [siopv2.md](siopv2.md) | SIOPv2 self-issued ID Tokens |
+| [presentation-exchange.md](presentation-exchange.md) | Predicates: DIF Presentation Exchange 2.1.1 (OpenID4VP drafts — removed in 1.0), the debugger's non-standard DCQL predicate extension, and OpenID4VP 1.0 §6.4.1 `values` matching |
 
 | Credential formats and status | |
 |---|---|
@@ -98,6 +106,7 @@ implements.
 | [Present selected claims to the debugger's own Verifier](tutorial-present-to-verifier.md) | both ends of OpenID4VP 1.0 in one browser, then HAIP 1.0 with an encrypted answer | the debugger's own Verifier page (needs the api); any OpenID4VP Verifier for the wallet half | yes |
 | [The Verifier page, and reading its checks](tutorial-verifier-checks.md) | DCQL, the Verifier's identity, the hand-off, every check row, `direct_post.jwt`, a wrong nonce, a request signed live for a `wallet_nonce` | any OpenID4VP wallet (needs the api) | yes |
 | [Resolve an issuer's DID and check its domain linkage](tutorial-did-linkage.md) | `did:web` resolution and the DIF Domain Linkage Credential | any site that publishes them | yes |
+| [Prove age >= 18 without revealing it](tutorial-predicates.md) | a predicate query by Presentation Exchange and by the DCQL extension, answered with an AnonCreds proof; a `values` mismatch refused | none — the page and the wallet carry everything | yes |
 | [VC Barcodes, Gordian Envelope and ACDC](tutorials-tools.md) | verify and issue a barcode; elide claims of an envelope; issue, verify and revoke an ACDC | none — the pages carry their own samples | yes |
 
 **What needs another issuer or verifier.** Everything above runs against
@@ -107,7 +116,9 @@ offers them:
 
 * **Receiving a credential** needs an issuer account (a pre-authorized offer
   is made for a person the issuer knows) or a client registered at its
-  authorization server (the Authorization Code flow). The pictures in this
+  authorization server (the Authorization Code flow). If your issuer is
+  iya-sts, [setup-iya-sts.md](setup-iya-sts.md) shows one way to create
+  them; it is optional help for that one product. The pictures in this
   edition were taken against an issuer in product mode where the
   documentation run had neither, which is why that tutorial has none; the
   job that takes them is ready to (see below).
@@ -149,7 +160,7 @@ picture here.
 
 | Job | Pictures |
 |---|---|
-| `vc_user_guide.js` | `vc-issuance-*`, `vc-metadata-*`, `did-tools-*`, `vp-openid4vp-*`, `vp-haip-*`; and, when it can take offers, `vc-pre-authorized-*`, `vc-refresh-*`, `vc-dpop-*`, `vc-deferred-*`, `vc-jwt-vc-json-*`, `vc-ldp-vc-*` |
+| `vc_user_guide.js` | `vc-issuance-*`, `vc-metadata-*`, `did-tools-*`, `vp-openid4vp-*`, `vp-haip-*`; and, when it can sign in and take offers, `vc-authorization-code-*`, `vc-refresh-*`, `vc-pre-authorized-*`, `vc-dpop-*`, `vc-deferred-*`, `vc-jwt-vc-json-*`, `vc-ldp-vc-*` |
 | `vc_verifier_page.js` | `vc-verifier-*` |
 | `vc_barcodes_browser.js` | `vc-barcodes-*` |
 | `gordian_envelope_browser.js` | `gordian-envelope-*` |
@@ -162,8 +173,9 @@ ordinary protocol use:
 
 | Variable | Effect |
 |---|---|
-| `VC_GUIDE_NO_PROVISION=1` | register nothing at the issuer (the suite's run declares its shared test wallet in the issuer's registry, as every wallet job there does) |
-| `VC_GUIDE_HOLDER_USERNAME`, `VC_GUIDE_HOLDER_PASSWORD` | the account to sign in with on the issuer's offer page; without them, a run with `VC_GUIDE_NO_PROVISION=1` skips the sections that take offers |
+| `VC_GUIDE_NO_PROVISION=1` | register nothing at the issuer. Without it, the job declares a public wallet client (`vc-user-guide-wallet`, with this client's `/callback` as its redirect URI) and the holder account in iya-sts's registry through `/admin-api`, which needs an admin token |
+| `VC_GUIDE_HOLDER_USERNAME`, `VC_GUIDE_HOLDER_PASSWORD` | the account to sign in with, on the issuer's offer page and at its authorization server; without them, a run with `VC_GUIDE_NO_PROVISION=1` skips the sections that sign in or take offers. Pass the password only in the environment |
+| `VC_GUIDE_CLIENT_ID` | the wallet's registered `client_id`; the Authorization Code and refresh sections run only with one |
 | `VC_GUIDE_IGNORE_CORS=1` | start Chrome with `--disable-web-security`, for a build served from an origin the issuer's CORS policy does not list |
 
 The pictures here were taken like this, from a client build served on a

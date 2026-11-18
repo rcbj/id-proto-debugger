@@ -17,6 +17,9 @@ wallet it has never seen. The Authorization Code flow needs the wallet's
 edition; the screens are described in
 [reference-issuance.md](reference-issuance.md).
 
+If your issuer is iya-sts, [setup-iya-sts.md](setup-iya-sts.md) shows one
+way to create the account, client and offers (optional, iya-sts only).
+
 - [Receive an SD-JWT VC by pre-authorized code, with a Transaction Code](#receive-an-sd-jwt-vc-by-pre-authorized-code-with-a-transaction-code)
 - [Take an offer from its QR code](#take-an-offer-from-its-qr-code)
 - [Receive a credential by authorization code](#receive-a-credential-by-authorization-code)
