@@ -73,7 +73,26 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                         placeholder="given_name&#10;address.country"
                         onchange="return vcverifier.regenerateDcql();"></textarea>
               <span class="vc-note">Segments separated by dots; a number is an array index and * is every
-              element. For an mdoc, the first segment is the namespace.</span></td>
+              element. For an mdoc, the first segment is the namespace. A line may start with a claim id and a
+              colon (<code>a: address.country</code>), and end with the values it must have
+              (<code>= DE | AT</code>; a whole number is an integer, true and false are booleans).</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_claim_sets">Claim sets (optional)</label></td>
+          <td><textarea id="vpv_claim_sets" rows="2" cols="60" placeholder="a, c&#10;b"
+                        onchange="return vcverifier.regenerateDcql();"></textarea>
+              <span class="vc-note">One set per line, the claim ids above separated by commas, most preferred
+              first (DCQL <code>claim_sets</code>, OpenID4VP 1.0 section 6.1). Every claim then needs an id.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_intent_to_retain">Intent to retain (mdoc)</label></td>
+          <td><select id="vpv_intent_to_retain" onchange="return vcverifier.regenerateDcql();">
+                <option value="">not said</option>
+                <option value="true">true: this Verifier will keep the elements</option>
+                <option value="false">false: it will not</option>
+              </select>
+              <span class="vc-note">intent_to_retain on every claim of an mso_mdoc query (Appendix B.2.4,
+              ISO/IEC 18013-5's IntentToRetain).</span></td>
         </tr>
         <tr>
           <td><label for="vpv_binding">Holder binding</label></td>
@@ -123,6 +142,33 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
               <span class="vc-note" id="vpv_profile_note">&nbsp;</span></td>
         </tr>
         <tr>
+          <td><label for="vpv_request_key">Request key</label></td>
+          <td><select id="vpv_request_key" onchange="return vcverifier.settingsChanged();">
+                <option value="ec-p256">P-256 (ES256)</option>
+                <option value="ec-p384">P-384 (ES384)</option>
+                <option value="ed25519">Ed25519 (EdDSA)</option>
+              </select>
+              <span class="vc-note">The key of the leaf certificate an x509_hash or x509_san_dns request is
+              signed with. The root stays P-256. HAIP 1.0 section 7 makes ES256 the one every wallet must
+              verify.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_scope">Ask by scope (optional)</label></td>
+          <td><input type="text" id="vpv_scope" size="60" placeholder="com.example.healthCardCredential_presentation"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Sent INSTEAD of dcql_query (section 5.1: one or the other, never both). A scope
+              is an alias for a DCQL query the wallet already knows (section 5.5); this page checks the answer
+              against the query above, so make it the one the scope stands for.</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_verifier_info">verifier_info (optional)</label></td>
+          <td><textarea id="vpv_verifier_info" class="vc-mono" rows="3" cols="80"
+                        placeholder='[{ "format": "jwt", "data": "eyJ...", "credential_ids": ["credential"] }]'
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">A JSON array of attestations about this Verifier, each { format, data,
+              credential_ids? } (section 5.1). Carried as given; the wallet decides whether to use them.</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_client_prefix">Client Identifier prefix</label></td>
           <td><select id="vpv_client_prefix" onchange="return vcverifier.settingsChanged();">
                 <option value="x509_hash">x509_hash (the hash of the request's certificate)</option>
@@ -168,6 +214,7 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
           <td><select id="vpv_delivery" onchange="return vcverifier.settingsChanged();">
                 <option value="reference-get">by reference: request_uri, fetched with GET</option>
                 <option value="reference-post">by reference: request_uri_method=post</option>
+                <option value="reference-get-explicit">by reference: request_uri_method=get (said explicitly)</option>
                 <option value="value">by value: the signed Request Object in the link</option>
               </select>
               <span class="vc-note">Under request_uri_method=post the wallet may send a wallet_nonce; this page

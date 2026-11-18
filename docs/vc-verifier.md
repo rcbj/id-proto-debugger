@@ -139,6 +139,34 @@ to its `d` and that the root's key is the one in its certificate. The import
 field is never stored. **Make a new identity** discards it, and every wallet
 must then be given the new one.
 
+## Request options (#471, E3)
+
+These are on top of the format, type, claims and holder binding fields.
+Each is carried as OpenID4VP 1.0 defines it, and `buildDcql()` /
+`requestObjectClaims()` refuse a malformed one and say why.
+
+* **Claim ids, `values` and `claim_sets`** (section 6). A claims line may
+  be `id: path = v1 | v2`, and the "Claim sets" box takes one set of ids
+  per line. `values` are strings, integers or booleans (6.3). Every claim
+  needs an id when claim sets are given. The answer is held to them as
+  before: a claim matches only with one of its values, and one claim set
+  must be met.
+* **`intent_to_retain`** on every claim of an `mso_mdoc` query (Appendix
+  B.2.4). It is refused for other formats.
+* **Ask by `scope`** (section 5.5). It is sent INSTEAD of `dcql_query`;
+  section 5.1 allows one or the other, never both. A scope is an alias the
+  wallet resolves, so the answer is checked against the query on the page,
+  which should be the one the scope stands for.
+* **`verifier_info`** (section 5.1): a JSON array of `{ format, data,
+  credential_ids? }`, carried as given. `credential_ids` must name the
+  query's credential ids.
+* **`request_uri_method=get`, said explicitly.** The default GET delivery
+  omits the parameter, which means the same to a wallet (RFC 9101).
+* **The request key**: P-256 (ES256), P-384 (ES384) or Ed25519 (EdDSA),
+  for the leaf an `x509_hash` or `x509_san_dns` request is signed with.
+  The root stays P-256. `decentralized_identifier`, `verifier_attestation`
+  and pre-registered keep their P-256 request key.
+
 ## The HAIP 1.0 profile (#471, E1)
 
 "Profile" on pane 2 chooses OpenID4VP 1.0 or HAIP 1.0. HAIP is a profile of
