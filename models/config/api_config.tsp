@@ -158,6 +158,13 @@ model ApiConfig {
 
   /** The largest Request Object or CA certificate a page may publish. */
   oid4vpVerifierMaxRequestObjectBytes?: int32;
+
+  /** Live signing: how long a Wallet's request_uri POST waits for the page
+   *  to sign, ms, before the pre-signed object is served. */
+  oid4vpVerifierLiveSignWaitMs?: int32;
+
+  /** Live signing: Wallets waiting on one session at once. */
+  oid4vpVerifierMaxPendingSignings?: int32;
   /** The hosted SSF transmitter (#363): api/ssf_transmitter.js. */
   ssfTransmitterEnabled?: boolean;
   ssfTransmitterTtlMs?: int32;

@@ -103,17 +103,37 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                 <option value="x509_hash">x509_hash (the hash of the request's certificate)</option>
                 <option value="x509_san_dns">x509_san_dns (a DNS name in the certificate)</option>
                 <option value="redirect_uri">redirect_uri (an unsigned request)</option>
+                <option value="decentralized_identifier">decentralized_identifier (a did:jwk of the request key)</option>
+                <option value="verifier_attestation">verifier_attestation (a Verifier Attestation JWT from an attester made for this run)</option>
+                <option value="pre-registered">pre-registered (no prefix: a client_id the wallet already knows)</option>
               </select>
               <span class="vc-note">The certificate is made for this run: a root, and a leaf whose
               subjectAltName is the api's host name and whose Authority Information Access points at the root,
               which the api serves.</span></td>
+        </tr>
+        <tr id="vpv_client_id_row">
+          <td><label for="vpv_client_id_typed">Pre-registered client_id</label></td>
+          <td><input type="text" id="vpv_client_id_typed" size="40" placeholder="verifier-1"
+                     onchange="return vcverifier.settingsChanged();" />
+              <span class="vc-note">Only for the pre-registered prefix. The request is signed with a key made for
+              this run; pane 3 shows the JWKS the wallet must have registered for it.</span></td>
         </tr>
         <tr>
           <td><label for="vpv_response_mode">Response mode</label></td>
           <td><select id="vpv_response_mode" onchange="return vcverifier.settingsChanged();">
                 <option value="direct_post">direct_post (a form POST to response_uri)</option>
                 <option value="direct_post.jwt">direct_post.jwt (the same, encrypted to a key made for this run)</option>
-              </select></td>
+                <option value="dc_api">dc_api (the browser's Digital Credentials API)</option>
+                <option value="dc_api.jwt">dc_api.jwt (the same, encrypted)</option>
+              </select>
+              <span class="vc-note" id="vpv_dc_api_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_dc_signed">Digital Credentials API request</label></td>
+          <td><label><input type="checkbox" id="vpv_dc_signed" checked="checked"
+                            onchange="return vcverifier.settingsChanged();" />
+              signed (openid4vp-v1-signed); unticked, unsigned (openid4vp-v1-unsigned) and the
+              Client Identifier is this page's origin</label></td>
         </tr>
         <tr>
           <td><label for="vpv_delivery">Request delivery</label></td>
@@ -121,7 +141,11 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                 <option value="reference-get">by reference: request_uri, fetched with GET</option>
                 <option value="reference-post">by reference: request_uri_method=post</option>
                 <option value="value">by value: the signed Request Object in the link</option>
-              </select></td>
+              </select>
+              <span class="vc-note">Under request_uri_method=post the wallet may send a wallet_nonce; this page
+              signs a fresh Request Object holding it while the wallet waits (the api holds its request open).
+              If it cannot in time, the wallet is answered HTTP 503 (section 5.10.2), never an object without
+              its nonce.</span></td>
         </tr>
         <tr>
           <td><label for="vpv_scheme">Wallet invocation scheme</label></td>
@@ -129,18 +153,44 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
                      onchange="return vcverifier.settingsChanged();" /></td>
         </tr>
         <tr>
+          <td><label for="vpv_trust_anchors">Trust anchors for issuers (PEM, optional)</label></td>
+          <td><textarea id="vpv_trust_anchors" class="vc-mono" rows="4" cols="80"
+                        placeholder="-----BEGIN CERTIFICATE-----"
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">The roots (an IACA for mdoc) an issuer's x5c must chain to. With none, an
+              x5c-signed credential's issuer trust is reported as not performed, and the verdict is
+              incomplete rather than a pass: a certificate is not trusted just because it is in x5c
+              (SD-JWT VC section 2.5).</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_issuer_bindings">Issuer bindings (optional)</label></td>
+          <td><textarea id="vpv_issuer_bindings" class="vc-mono" rows="3" cols="80"
+                        placeholder="https://issuer.example = sha256:3f2a...&#10;https://issuer.example = cn:Example Issuer"
+                        onchange="return vcverifier.settingsChanged();"></textarea>
+              <span class="vc-note">One per line: an iss, then the certificate it is bound to, by the SHA-256 of
+              the signing certificate, a certificate of its chain or the anchor it chains to
+              (<code>sha256:&lt;hex&gt;</code>), or by the signing certificate's common name
+              (<code>cn:&lt;name&gt;</code>). SD-JWT VC section 2.5 lets a Verifier configure such a mapping;
+              without one, an iss that no subjectAltName names is reported as not authenticated by the
+              certificate, and never fails the signature.</span></td>
+        </tr>
+        <tr>
           <td><label for="vpv_redirect_uri">Send the wallet's browser to (optional)</label></td>
           <td><input type="text" id="vpv_redirect_uri" size="60"
                      placeholder="https://verifier.example/done"
                      onchange="return vcverifier.settingsChanged();" />
               <span class="vc-note">Returned as <code>redirect_uri</code> in the answer to the wallet&rsquo;s
-              POST (section 8.2). Empty: none.</span></td>
+              POST (section 8.2), with a fresh random <code>response_code</code> added for each answer, as
+              section 8.2 requires. Empty: none &mdash; which a same-device flow should not be (HAIP 1.0
+              section 5.1: Verifiers MUST include one).</span></td>
         </tr>
       </tbody>
     </table>
     <p>
       <input class="btn2" id="btn_vpv_create" type="button" value="Create the request"
              onclick="return vcverifier.createRequest();" />
+      <input class="btn2" id="btn_vpv_dc_api" type="button" value="Ask through the Digital Credentials API"
+             onclick="return vcverifier.askThroughDcApi();" />
       <input class="btn2" id="btn_vpv_reset" type="button" value="Start over"
              onclick="return vcverifier.reset();" />
       <span class="vc-status" id="vpv_create_status">&nbsp;</span>
@@ -157,7 +207,19 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
         <tr>
           <td><label for="vpv_invocation">Authorization Request</label></td>
           <td><textarea id="vpv_invocation" class="vc-mono" rows="4" cols="80" readonly="readonly"></textarea>
-              <br/><a id="vpv_invocation_link" href="#" style="display: none;">Open it on this device</a></td>
+              <br/><a id="vpv_invocation_link" href="#" style="display: none;">Open it on this device</a>
+              <span class="vc-status" id="vpv_same_device_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td>For a wallet on another device</td>
+          <td><div id="vpv_qr" class="vc-qr"></div>
+              <span class="vc-note" id="vpv_qr_note">&nbsp;</span></td>
+        </tr>
+        <tr>
+          <td><label for="vpv_trust_out">What a wallet must trust</label></td>
+          <td><textarea id="vpv_trust_out" class="vc-mono" rows="6" cols="80" readonly="readonly"></textarea>
+              <span class="vc-note">The attester's key for verifier_attestation, the JWKS for a pre-registered
+              client_id, the DID document for decentralized_identifier.</span></td>
         </tr>
         <tr>
           <td><label for="vpv_client_id">client_id</label></td>

@@ -49,4 +49,16 @@ model VcVerifierKeys {
 
   @storageKey(#{ area: "local", class: "ordinary" })
   vpv_type: unknown;
+
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_client_id_typed: unknown;
+
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_dc_signed: unknown;
+
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_trust_anchors: unknown;
+
+  @storageKey(#{ area: "local", class: "ordinary" })
+  vpv_issuer_bindings: unknown;
 }

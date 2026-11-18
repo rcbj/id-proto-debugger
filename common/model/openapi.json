@@ -2317,7 +2317,7 @@
       },
       "post": {
         "operationId": "oid4vpVerifierRequestPost",
-        "description": "A Wallet fetches the Request Object by POST, request_uri_method=post\n(section 5.10), carrying wallet_metadata and wallet_nonce.",
+        "description": "A Wallet fetches the Request Object by POST, request_uri_method=post\n(section 5.10), carrying wallet_metadata and wallet_nonce. Under live\nsigning the answer waits for the page, up to\noid4vpVerifierLiveSignWaitMs; a Wallet that sent a wallet_nonce is then\nanswered 503, and one that sent none gets the pre-signed object.",
         "parameters": [
           {
             "name": "id",
@@ -2348,6 +2348,16 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "request_uri_method=post: the Wallet sent a wallet_nonce, which section\n5.10 says the Verifier MUST put in the Request Object, and the page did\nnot sign one carrying it in time (or too many Wallets already wait).\nSection 5.10.2: any HTTP error makes the Wallet terminate.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.WalletError"
+                }
+              }
+            }
           }
         },
         "tags": [
@@ -2361,15 +2371,135 @@
                 "type": "object",
                 "additionalProperties": {}
               }
+            },
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": {}
+              }
             }
           }
         }
       }
     },
+    "/oid4vp/verifier/{id}/request/{signingId}": {
+      "put": {
+        "operationId": "oid4vpVerifierPublishFor",
+        "description": "Answer ONE Wallet held under live signing with the Request Object the\npage signed for its wallet_nonce (section 5.10).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "signingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "200 with a JSON body.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "400: this service refused the request, and says why.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/Oid4vp.PageError"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ModelRefusal"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "A page call without the session's secret.",
+            "headers": {
+              "WWW-Authenticate": {
+                "required": true,
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No session has that id: never created, deleted, or expired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Oid4vp.PageError"
+                }
+              }
+            }
+          }
+        },
+        "tags": [
+          "OpenID4VP"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Oid4vp.VerifierPublishForRequest"
+              }
+            }
+          }
+        },
+        "x-checked-in-code": "api/oid4vp_verifier.js: the session exists (404), the Bearer secret is its own (401), a Wallet is waiting on signingId (404)"
+      }
+    },
     "/oid4vp/verifier/{id}/response": {
       "post": {
         "operationId": "oid4vpVerifierResponse",
-        "description": "A Wallet's answer (section 8.2), kept field by field as it arrived.",
+        "description": "A Wallet's answer (section 8.2), kept field by field as it arrived. A\nJSON body is kept too, and its `response` event carries a `problem`\nnaming section 8.2's form-encoding MUST. `redirect_uri`, when the page\nset one, carries a fresh `response_code` for this answer.",
         "parameters": [
           {
             "name": "id",
@@ -10720,6 +10850,17 @@
             ],
             "description": "The session's lifetime untouched, ms.",
             "x-checked-in-code": "api/oid4vp_verifier.js: a positive whole number, at most oid4vpVerifierIdleTtlMs"
+          },
+          "liveSigning": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hold a Wallet's request_uri POST (section 5.10) for the page to sign\na Request Object carrying its wallet_nonce."
           }
         },
         "description": "A Verifier session, as the page asks for one."
@@ -10732,6 +10873,7 @@
           "requestUri",
           "responseUri",
           "caIssuersUrl",
+          "liveSigning",
           "expiresAt"
         ],
         "properties": {
@@ -10751,6 +10893,10 @@
           },
           "caIssuersUrl": {
             "type": "string"
+          },
+          "liveSigning": {
+            "type": "boolean",
+            "description": "Whether a Wallet's request_uri POST is held for the page to sign."
           },
           "expiresAt": {
             "type": "string",
@@ -10777,7 +10923,7 @@
           },
           "kind": {
             "type": "string",
-            "description": "request-fetched, ca-fetched, response or response-refused."
+            "description": "request-fetched, request-signed, ca-fetched, response or\nresponse-refused."
           },
           "method": {
             "type": "string"
@@ -10785,6 +10931,10 @@
           "contentType": {
             "type": "string",
             "description": "The Content-Type header as the Wallet sent it."
+          },
+          "accept": {
+            "type": "string",
+            "description": "request-fetched by POST: the Accept header as the Wallet sent it.\nSection 5.10 says it MUST be application/oauth-authz-req+jwt."
           },
           "fields": {
             "type": "object",
@@ -10800,7 +10950,41 @@
           },
           "problem": {
             "type": "string",
-            "description": "Why something that arrived was not kept."
+            "description": "What was wrong with what arrived. On response-refused, why it was\nnot kept. On request-fetched and response, a MUST the Wallet broke\nwhile the api still served or kept it (accept and report): a\nrequest_uri POST that is not application/x-www-form-urlencoded or\nhas no Accept of application/oauth-authz-req+jwt (section 5.10), a\nJSON answer to response_uri (section 8.2), a wallet_nonce no\npre-signed object can carry."
+          },
+          "redirectUri": {
+            "type": "string",
+            "description": "response: the redirect_uri the Wallet was answered with, carrying\nthis answer's response_code."
+          },
+          "responseCode": {
+            "type": "string",
+            "description": "response: the fresh, cryptographically random value (128 bits,\nbase64url) added to redirect_uri as `response_code` for this one\nanswer (section 8.2; the name is section 13.3's)."
+          },
+          "signingId": {
+            "type": "string",
+            "description": "Live signing: on a request-fetched event, the Wallet is held and the\npage signs for it at /request/{signingId}; on request-signed, which\nwait it closes (absent when the cap meant no wait at all)."
+          },
+          "waitMs": {
+            "type": "number",
+            "format": "double",
+            "description": "request-fetched under live signing: how long the Wallet is held."
+          },
+          "signBy": {
+            "type": "string",
+            "description": "request-fetched under live signing: when the wait runs out."
+          },
+          "liveSigned": {
+            "type": "boolean",
+            "description": "request-signed: true when the Wallet got the page's live object."
+          },
+          "reason": {
+            "type": "string",
+            "description": "request-signed with liveSigned false: why the page's object was not\nserved, and what the Wallet got instead."
+          },
+          "httpStatus": {
+            "type": "integer",
+            "format": "int32",
+            "description": "request-signed: the HTTP error the Wallet was answered with — 503\nwhen it sent a wallet_nonce no Request Object could be signed with in\ntime (OpenID4VP section 5.10.2). Absent when it got an object."
           }
         },
         "description": "One thing a Wallet did."
@@ -10848,6 +11032,8 @@
           "maxResponseBytes",
           "maxRequestObjectBytes",
           "maxSessionBytes",
+          "liveSignWaitMs",
+          "maxPendingSignings",
           "held",
           "requestObjectMediaType",
           "caMediaType",
@@ -10890,6 +11076,14 @@
             "type": "number",
             "format": "double"
           },
+          "liveSignWaitMs": {
+            "type": "number",
+            "format": "double"
+          },
+          "maxPendingSignings": {
+            "type": "number",
+            "format": "double"
+          },
           "held": {
             "type": "integer",
             "format": "int32",
@@ -10919,6 +11113,25 @@
           }
         },
         "description": "The Verifier role's bounds, and whether this service hosts it."
+      },
+      "Oid4vp.VerifierPublishForRequest": {
+        "type": "object",
+        "properties": {
+          "requestObject": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The signed Request Object, a compact JWS.",
+            "x-passthrough": true,
+            "x-checked-in-code": "api/oid4vp_verifier.js: required, three base64url segments, at most oid4vpVerifierMaxRequestObjectBytes"
+          }
+        },
+        "description": "The Request Object the page signed for ONE held Wallet."
       },
       "Oid4vp.VerifierPublishRequest": {
         "type": "object",

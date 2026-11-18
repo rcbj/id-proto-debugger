@@ -3788,7 +3788,19 @@
       "area": "local"
     },
     {
+      "key": "vpv_client_id_typed",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_client_prefix",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_dc_signed",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"
@@ -3807,6 +3819,12 @@
     },
     {
       "key": "vpv_format",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_issuer_bindings",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"
@@ -3831,6 +3849,12 @@
     },
     {
       "key": "vpv_scheme",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_trust_anchors",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"

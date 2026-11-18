@@ -570,3 +570,19 @@ table.vc-table tr.vc-history-active td { font-weight: 600; }
    until it is kept. */
 table.vc-table tr.vc-history-pending { background-color: #fff8e1; }
 table.vc-table tr.vc-history-pending td { font-style: italic; }
+
+/* The Verifier page (vc-verifier.html, #364): one row per check, and the QR
+   code a wallet on another device scans. */
+table.vc-checks { border-collapse: collapse; margin: 8px 0; width: 100%; }
+table.vc-checks td { border-top: 1px solid #e3e3ea; padding: 4px 8px;
+  vertical-align: top; }
+table.vc-checks td:first-child { font-weight: 700; white-space: nowrap; }
+tr.vc-check-pass td:first-child { color: #1b7a3a; }
+tr.vc-check-fail td:first-child { color: #b3261e; }
+tr.vc-check-skip td:first-child { color: #6b6b78; }
+tr.vc-check-fail { background: #fdf1f0; }
+/* An essential check not performed (#467): not a failure, not a pass. */
+tr.vc-check-unperformed td:first-child { color: #8a5a00; }
+tr.vc-check-unperformed { background: #fff8e6; }
+.vc-status.vc-warn { color: #8a5a00; }
+.vc-qr svg { width: 240px; height: 240px; background: #fff; }

@@ -151,6 +151,18 @@ model VerifierCreateRequest {
   /** The session's lifetime untouched, ms. */
   @checkedInCode("api/oid4vp_verifier.js: a positive whole number, at most oid4vpVerifierIdleTtlMs")
   idleTtlMs?: float64 | string | null;
+
+  /** Hold a Wallet's request_uri POST (section 5.10) for the page to sign
+   *  a Request Object carrying its wallet_nonce. */
+  liveSigning?: boolean | null;
+}
+
+/** The Request Object the page signed for ONE held Wallet. */
+model VerifierPublishForRequest {
+  /** The signed Request Object, a compact JWS. */
+  @checkedInCode("api/oid4vp_verifier.js: required, three base64url segments, at most oid4vpVerifierMaxRequestObjectBytes")
+  @passthrough
+  requestObject?: string | null;
 }
 
 /** What the page signed, to be served at request_uri. */
@@ -183,6 +195,9 @@ model VerifierCreated {
   responseUri: string;
   caIssuersUrl: string;
 
+  /** Whether a Wallet's request_uri POST is held for the page to sign. */
+  liveSigning: boolean;
+
   /** The sooner of the two expiries. */
   expiresAt: string;
 }
@@ -194,13 +209,18 @@ model VerifierEvent {
 
   at: string;
 
-  /** request-fetched, ca-fetched, response or response-refused. */
+  /** request-fetched, request-signed, ca-fetched, response or
+   *  response-refused. */
   kind: string;
 
   method?: string;
 
   /** The Content-Type header as the Wallet sent it. */
   contentType?: string;
+
+  /** request-fetched by POST: the Accept header as the Wallet sent it.
+   *  Section 5.10 says it MUST be application/oauth-authz-req+jwt. */
+  accept?: string;
 
   /** The answer's fields, each the text that arrived. */
   fields?: Record<unknown>;
@@ -211,8 +231,46 @@ model VerifierEvent {
   walletNonce?: unknown;
   remoteAddress?: string;
 
-  /** Why something that arrived was not kept. */
+  /** What was wrong with what arrived. On response-refused, why it was
+   *  not kept. On request-fetched and response, a MUST the Wallet broke
+   *  while the api still served or kept it (accept and report): a
+   *  request_uri POST that is not application/x-www-form-urlencoded or
+   *  has no Accept of application/oauth-authz-req+jwt (section 5.10), a
+   *  JSON answer to response_uri (section 8.2), a wallet_nonce no
+   *  pre-signed object can carry. */
   problem?: string;
+
+  /** response: the redirect_uri the Wallet was answered with, carrying
+   *  this answer's response_code. */
+  redirectUri?: string;
+
+  /** response: the fresh, cryptographically random value (128 bits,
+   *  base64url) added to redirect_uri as `response_code` for this one
+   *  answer (section 8.2; the name is section 13.3's). */
+  responseCode?: string;
+
+  /** Live signing: on a request-fetched event, the Wallet is held and the
+   *  page signs for it at /request/{signingId}; on request-signed, which
+   *  wait it closes (absent when the cap meant no wait at all). */
+  signingId?: string;
+
+  /** request-fetched under live signing: how long the Wallet is held. */
+  waitMs?: float64;
+
+  /** request-fetched under live signing: when the wait runs out. */
+  signBy?: string;
+
+  /** request-signed: true when the Wallet got the page's live object. */
+  liveSigned?: boolean;
+
+  /** request-signed with liveSigned false: why the page's object was not
+   *  served, and what the Wallet got instead. */
+  reason?: string;
+
+  /** request-signed: the HTTP error the Wallet was answered with — 503
+   *  when it sent a wallet_nonce no Request Object could be signed with in
+   *  time (OpenID4VP section 5.10.2). Absent when it got an object. */
+  httpStatus?: int32;
 }
 
 /** What Wallets did since the cursor. */
@@ -239,6 +297,8 @@ model VerifierLimits {
   maxResponseBytes: float64;
   maxRequestObjectBytes: float64;
   maxSessionBytes: float64;
+  liveSignWaitMs: float64;
+  maxPendingSignings: float64;
 
   /** How many sessions this process holds now. */
   held: int32;
@@ -268,6 +328,15 @@ model Unauthorized {
   @statusCode statusCode: 401;
   @header("WWW-Authenticate") challenge: string;
   @body body: PageError;
+}
+
+/** request_uri_method=post: the Wallet sent a wallet_nonce, which section
+ *  5.10 says the Verifier MUST put in the Request Object, and the page did
+ *  not sign one carrying it in time (or too many Wallets already wait).
+ *  Section 5.10.2: any HTTP error makes the Wallet terminate. */
+model LiveSignUnavailable {
+  @statusCode statusCode: 503;
+  @body body: WalletError;
 }
 
 /** No session has that id: never created, deleted, or expired. */
@@ -313,6 +382,23 @@ op verifierPublish(
 }> | BadRequest<PageError | IdProtoDebugger.Api.ModelRefusal> |
   Unauthorized | NoSession<PageError>;
 
+/** Answer ONE Wallet held under live signing with the Request Object the
+ *  page signed for its wallet_nonce (section 5.10). */
+@tag("OpenID4VP")
+@route("/oid4vp/verifier/{id}/request/{signingId}")
+@put
+@operationId("oid4vpVerifierPublishFor")
+@checkedInCode("api/oid4vp_verifier.js: the session exists (404), the Bearer secret is its own (401), a Wallet is waiting on signingId (404)")
+op verifierPublishFor(
+  @path id: string,
+  @path signingId: string,
+  @header("Authorization") authorization?: string,
+  @body body: VerifierPublishForRequest,
+): Ok<{
+  ok: true;
+}> | BadRequest<PageError | IdProtoDebugger.Api.ModelRefusal> |
+  Unauthorized | NoSession<PageError>;
+
 /** A Wallet fetches the Request Object (section 5.7). */
 @tag("OpenID4VP")
 @route("/oid4vp/verifier/{id}/request")
@@ -325,21 +411,27 @@ op verifierRequestGet(@path id: string): {
 } | NoSession<WalletError>;
 
 /** A Wallet fetches the Request Object by POST, request_uri_method=post
- *  (section 5.10), carrying wallet_metadata and wallet_nonce. */
+ *  (section 5.10), carrying wallet_metadata and wallet_nonce. Under live
+ *  signing the answer waits for the page, up to
+ *  oid4vpVerifierLiveSignWaitMs; a Wallet that sent a wallet_nonce is then
+ *  answered 503, and one that sent none gets the pre-signed object. */
 @tag("OpenID4VP")
 @route("/oid4vp/verifier/{id}/request")
 @post
 @operationId("oid4vpVerifierRequestPost")
 op verifierRequestPost(
   @path id: string,
-  @header contentType: "application/x-www-form-urlencoded",
+  /** Section 5.10 makes it a form; a JSON body is still served, and its
+   *  request-fetched event carries a `problem` saying so. */
+  @header contentType: "application/x-www-form-urlencoded" |
+    "application/json",
   @passthrough
   @body body: Record<unknown>,
 ): {
   @statusCode statusCode: 200;
   @header contentType: "application/oauth-authz-req+jwt";
   @body body: string;
-} | NoSession<WalletError>;
+} | NoSession<WalletError> | LiveSignUnavailable;
 
 /** The Verifier's root CA certificate, at the leaf's AIA caIssuers URL. */
 @tag("OpenID4VP")
@@ -352,7 +444,10 @@ op verifierCa(@path id: string): {
   @body body: bytes;
 } | NoSession<WalletError>;
 
-/** A Wallet's answer (section 8.2), kept field by field as it arrived. */
+/** A Wallet's answer (section 8.2), kept field by field as it arrived. A
+ *  JSON body is kept too, and its `response` event carries a `problem`
+ *  naming section 8.2's form-encoding MUST. `redirect_uri`, when the page
+ *  set one, carries a fresh `response_code` for this answer. */
 @tag("OpenID4VP")
 @route("/oid4vp/verifier/{id}/response")
 @post
