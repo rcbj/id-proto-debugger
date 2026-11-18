@@ -3912,6 +3912,40 @@ function buildJobs() {
     env: {},
   });
 
+  // Every `name.member` in the browser bundles' source names something bound
+  // in that file or a known global: a missing require is an Uncaught
+  // ReferenceError on the page that no node test sees (#482 lost five jobs
+  // to one). Reads client/src and the staged common/ modules. Needs nothing.
+  jobs.push({
+    name: "Browser bundle source binds every module it uses (no missing " +
+        "require, in node)",
+    script: "client_module_bindings.js",
+    env: {},
+  });
+
+  // Every Data Integrity cryptosuite and legacy Linked Data proof type an
+  // ldp_vc arrives with (client/src/data_integrity.js, #475), in both
+  // directions against Digital Bazaar's and Blockcerts' released
+  // implementations and jose, with two byte-for-byte vectors. Needs
+  // nothing.
+  jobs.push({
+    name: "Data Integrity proofs (eddsa/ecdsa rdfc and jcs, Ed25519 " +
+        "2018/2020, JWS 2020, secp256k1 2019; cross-implementation, in node)",
+    script: "data_integrity_engine.js",
+    env: {},
+  });
+
+  // The same engine against iya-sts's own vc_data_integrity.js, loaded in
+  // process from the image the stack runs: its credentials verified here,
+  // ours there, and the wallet's holder VP through its Verifier. Fails,
+  // naming the image, when that tree cannot be had.
+  jobs.push({
+    name: "Data Integrity proofs against iya-sts (both directions, and the " +
+        "wallet's holder VP through its Verifier, in node)",
+    script: "data_integrity_iyasts.js",
+    env: {},
+  });
+
   // The debugger as an OpenID4VP 1.0 VERIFIER (#364): the DCQL builder, the
   // Verifier's x509 identity (read back by node and by the wallet's own
   // verifyX509Request), and verifyResponse() over dc+sd-jwt, mso_mdoc,
@@ -4111,12 +4145,14 @@ function buildJobs() {
   }
 
   // The cryptosuite ABOVE the primitive: JSON-LD canonicalization, the base
-  // proof, and selective disclosure. The STS issues with one BBS implementation
-  // and the wallet derives with the other, so neither marks its own homework.
+  // proof, and selective disclosure, as W3C Data Integrity BBS Cryptosuites
+  // v1.0 has them. Held to the specification's own Appendix A vectors and to
+  // Digital Bazaar's independent implementation in both directions, so
+  // nothing here marks its own homework. Node only, never skipped.
   {
     jobs.push({
-      name: "bbs-2023 cryptosuite (ldp_vc issue, derive, verify across two " +
-          "implementations)",
+      name: "bbs-2023 cryptosuite (W3C vc-di-bbs vectors, and Digital " +
+          "Bazaar's implementation both ways)",
       script: "bbs2023_cryptosuite.js",
       env: {},
     });

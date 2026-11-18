@@ -271,6 +271,26 @@ var ALGS = {
           label: 'none — Unsecured JWS (NO signature)' }
 };
 
+// FULLY-SPECIFIED ALIASES (draft-ietf-jose-fully-specified-algorithms-13,
+// section 2.2): "Ed25519" and "Ed448" are `alg` values that each name ONE
+// curve, where RFC 8037's "EdDSA" names two and leaves the curve to the key.
+// OpenID4VP 1.0 Appendix B.3.4 has a Verifier advertise these for SD-JWT VC
+// (#468, M7), so a JWS whose header says "Ed25519" has to verify here. They
+// are accepted by algSpec() and algForHeader() — a caller may name them, and
+// a header may carry them — and signing under one writes that `alg`. They
+// are NOT rows of ALGS, so algIds() and every algorithm menu built from it
+// are unchanged: the same curve already has its row there.
+var FULLY_SPECIFIED = {
+  Ed25519: { alg: 'Ed25519', family: 'okp', curve: ed25519, crv: 'Ed25519',
+             pubBytes: 32, req: 'Optional',
+             spec: 'draft-ietf-jose-fully-specified-algorithms §2.2',
+             label: 'Ed25519 — EdDSA on Ed25519, fully specified' },
+  Ed448: { alg: 'Ed448', family: 'okp', curve: ed448, crv: 'Ed448',
+           pubBytes: 57, req: 'Optional',
+           spec: 'draft-ietf-jose-fully-specified-algorithms §2.2',
+           label: 'Ed448 — EdDSA on Ed448, fully specified' }
+};
+
 function algIds() {
   log.debug("Entering algIds().");
   log.debug("Leaving algIds().");
@@ -279,7 +299,7 @@ function algIds() {
 
 function algSpec(algId) {
   log.debug("Entering algSpec().");
-  var a = ALGS[algId];
+  var a = ALGS[algId] || FULLY_SPECIFIED[algId];
   if (!a) throw new Error('Unknown JWS algorithm: ' + algId);
   log.debug("Leaving algSpec().");
   return a;
@@ -293,7 +313,7 @@ function algSpec(algId) {
 function algForHeader(headerAlg, keyBytes) {
   log.debug("Entering algForHeader().");
   if (headerAlg !== 'EdDSA') {
-    var direct = ALGS[headerAlg];
+    var direct = ALGS[headerAlg] || FULLY_SPECIFIED[headerAlg];
     if (!direct) throw new Error('Unsupported "alg" header value: ' +
         headerAlg);
     log.debug("Leaving algForHeader().");
@@ -1491,8 +1511,12 @@ function prepareVerify(options) {
       var b64 = header.b64 === false ? false : true;
       one.b64 = b64;
       one.alg = header.alg;
-      var spec = options.algId ? algSpec(options.algId)
-        : algForHeader(header.alg, keyLengthHint(keyInput, header));
+      // A verifier that chose "EdDSA" chose RFC 8037's family, whose curve
+      // only the key can name; it is resolved the way a header's is.
+      var spec = options.algId && options.algId !== 'EdDSA'
+        ? algSpec(options.algId)
+        : algForHeader(options.algId || header.alg,
+                       keyLengthHint(keyInput, header));
       if (options.algId && spec.alg !== header.alg) {
         // A verifier that trusts the header's `alg` over its own expectation
         // is the algorithm-confusion bug, so the caller's choice wins and the

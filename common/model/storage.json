@@ -3651,7 +3651,7 @@
     {
       "key": "vc_jsonld_contexts",
       "class": "ordinary",
-      "group": "client/src/bbs2023.js"
+      "group": "client/src/jsonld_contexts.js"
     },
     {
       "key": "vci_authorization_servers",
@@ -3788,7 +3788,19 @@
       "area": "local"
     },
     {
+      "key": "vpv_client_id_typed",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_client_prefix",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_dc_signed",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"
@@ -3806,7 +3818,32 @@
       "area": "local"
     },
     {
+      "key": "vpv_fetch_via_api",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_format",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_identity",
+      "class": "keypair",
+      "group": "client/src/vc_verifier.js",
+      "area": "local",
+      "optOut": "vpv_save_identity"
+    },
+    {
+      "key": "vpv_issuer_bindings",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_public_base_url",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"
@@ -3830,7 +3867,19 @@
       "area": "local"
     },
     {
+      "key": "vpv_save_identity",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
       "key": "vpv_scheme",
+      "class": "ordinary",
+      "group": "client/src/vc_verifier.js",
+      "area": "local"
+    },
+    {
+      "key": "vpv_trust_anchors",
       "class": "ordinary",
       "group": "client/src/vc_verifier.js",
       "area": "local"

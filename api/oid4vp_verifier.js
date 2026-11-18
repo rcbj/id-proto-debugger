@@ -62,6 +62,36 @@
 // refused what it could not check would be unable to show anybody WHY,
 // which is the question the workflow exists to answer.
 //
+// ---------------------------------------------------------------------------
+// LIVE SIGNING (request_uri_method=post, section 5.10). A Wallet that POSTs
+// to request_uri sends `wallet_nonce` (and `wallet_metadata`), and section
+// 5.10 is not optional about it: "When received, the Verifier MUST use it
+// as the wallet_nonce value in the signed authorization request object."
+// The key is in the page, so this service cannot sign one; a session
+// created with `liveSigning: true` therefore HOLDS the Wallet's POST open,
+// for at most `oid4vpVerifierLiveSignWaitMs`, and records a
+// `request-fetched` event with a `signingId`. The page sees it on its next
+// poll of /events, signs an object carrying that wallet_nonce, and PUTs it
+// to /oid4vp/verifier/:id/request/:signingId; the held Wallet is answered
+// with it and a `request-signed` event says `liveSigned: true`.
+//
+// **A Wallet that sent a wallet_nonce is never handed the pre-signed
+// object**, which cannot carry it: section 5.10.1 has the Wallet "terminate
+// request processing" on such an object, so serving it would only be a
+// slower, quieter failure. When the page does not sign in time, or
+// `oid4vpVerifierMaxPendingSignings` Wallets already wait on the session,
+// that Wallet is answered 503 `temporarily_unavailable` — section 5.10.2:
+// "If the Verifier responds with any HTTP error response, the Wallet MUST
+// terminate the process" — and `request-signed` records `liveSigned:
+// false`, `httpStatus: 503` and why. A POST WITHOUT a wallet_nonce has
+// nothing to echo, so it still falls back to the pre-signed object. A
+// session WITHOUT live signing serves the pre-signed object to every POST,
+// as a debugging affordance (a Wallet that does not terminate on it is the
+// finding), and the `request-fetched` event carries a `problem` saying the
+// object does not carry the nonce. Every wait is a timer, and every timer
+// is cleared when its session ends — deleted, expired, swept, reset or at
+// shutdown() — so a session never outlives itself in the event loop.
+//
 // IT IS IN MEMORY AND DIES WITH THE PROCESS, for the SSF receiver's reason:
 // what is held is a person's presented credentials, and this service writes
 // nothing to disk anywhere else.
@@ -103,14 +133,19 @@ var DEFAULTS = {
   maxEvents: 50,
   maxResponseBytes: 256 * 1024,
   maxRequestObjectBytes: 64 * 1024,
-  maxSessionBytes: 1024 * 1024
+  maxSessionBytes: 1024 * 1024,
+  liveSignWaitMs: 15000,
+  maxPendingSignings: 4
 };
 
 // Text members a page may set, and the most of each it may.
 var MAX_REDIRECT_URI = 4096;
 
 // id -> { id, secret, caller, createdAt, lastUsedAt, ttlMs, idleTtlMs,
-//        redirectUri, requestObject, caDer, events, total, dropped, bytes }
+//        redirectUri, requestObject, caDer, events, total, dropped, bytes,
+//        liveSigning, pending }
+// `pending` is signingId -> { signingId, timer, resolve }: the Wallets held
+// open under live signing.
 var sessions = new Map();
 
 // The clock, replaceable by the tests so an expiry is asserted without
@@ -128,6 +163,58 @@ function setClock(fn) {
   log.debug('Entering setClock().');
   clock = typeof fn === 'function' ? fn : Date.now;
   log.debug('Leaving setClock().');
+}
+
+// The timers a live-signing wait runs on, replaceable by the tests the way
+// the clock is, so a timeout is fired rather than waited for.
+var timers = { set: setTimeout, clear: clearTimeout };
+
+function setTimers(impl) {
+  log.debug('Entering setTimers().');
+  timers = impl && typeof impl.set === 'function' &&
+      typeof impl.clear === 'function' ? impl
+    : { set: setTimeout, clear: clearTimeout };
+  log.debug('Leaving setTimers().');
+}
+
+// A Request Object answer to a Wallet.
+function served(jws) {
+  log.debug('Entering served().');
+  var out = { ok: true, status: 200, contentType: REQUEST_OBJECT_MEDIA_TYPE,
+    body: jws };
+  log.debug('Leaving served().');
+  return out;
+}
+
+// End a session: forget it, and release every Wallet it holds open with a
+// 404 naming why — the session the Wallet would answer to is gone, so a
+// Request Object now would only send it to a response_uri that 404s.
+function endSession(one, why) {
+  log.debug('Entering endSession(). ' + one.id);
+  sessions.delete(one.id);
+  var released = 0;
+  one.pending.forEach(function (entry) {
+    timers.clear(entry.timer);
+    entry.resolve(walletError(404, why));
+    released++;
+  });
+  one.pending.clear();
+  log.debug('Leaving endSession(). ' + released + ' wait(s) released.');
+  return released;
+}
+
+// How many Wallets are held open, in all or in one session: the bookkeeping
+// that says no wait outlived its session.
+function pendingCount(id) {
+  log.debug('Entering pendingCount().');
+  var count = 0;
+  sessions.forEach(function (one) {
+    if (id === undefined || one.id === id) {
+      count += one.pending.size;
+    }
+  });
+  log.debug('Leaving pendingCount(). ' + count);
+  return count;
 }
 
 function setting(appconfig, name, fallback) {
@@ -171,6 +258,86 @@ function urlsFor(base, id) {
   return out;
 }
 
+// AN EXTERNALLY REACHABLE BASE (#470, B5). The URLs a session hands out are
+// read by a WALLET, which is often a phone that scanned a QR code — and the
+// Host the page reached this service at (`localhost`, `api`) names nothing
+// that phone can reach. So the base is, in order: the page's own
+// `publicBaseUrl` on create, this service's `oid4vpVerifierPublicBaseUrl`,
+// and only then the base the caller used (server.js's publicBaseUrl()).
+//
+// LETTING THE PAGE CHOOSE IT IS SAFE, and the reason is what the base is
+// used for: three strings handed back to the page that asked. This service
+// fetches nothing from it, redirects nobody to it and serves on its own
+// host whatever it says; the page could write any request_uri it liked into
+// the invocation without asking, and the Wallet reaches whatever it names.
+// A base that does not lead back here simply makes a request no Wallet can
+// answer. It is held to the shape a Wallet will accept — an absolute https
+// URL with no query, fragment or credentials — so a typing mistake is
+// refused by name rather than discovered on a phone.
+var MAX_PUBLIC_BASE_URL = 2048;
+
+function readPublicBaseUrl(value, name) {
+  log.debug('Entering readPublicBaseUrl(). ' + name);
+  if (value === undefined || value === null ||
+      String(value).trim() === '') {
+    log.debug('Leaving readPublicBaseUrl(). None.');
+    return { value: '' };
+  }
+  var text = String(value).trim();
+  if (text.length > MAX_PUBLIC_BASE_URL) {
+    log.debug('Leaving readPublicBaseUrl(). Too long.');
+    return { error: name + ' is ' + text.length + ' characters and this ' +
+        'service takes at most ' + MAX_PUBLIC_BASE_URL + '.' };
+  }
+  var url;
+  try {
+    url = new URL(text);
+  } catch (e) {
+    log.debug('Leaving readPublicBaseUrl(). Not a URL.');
+    return { error: name + ' must be an absolute https:// URL; ' +
+        JSON.stringify(text) + ' is not a URL.' };
+  }
+  if (url.protocol !== 'https:') {
+    log.debug('Leaving readPublicBaseUrl(). Not https.');
+    return { error: name + ' must be an https:// URL: a Wallet fetches ' +
+        'request_uri and posts to response_uri over TLS. It was ' +
+        JSON.stringify(text) + '.' };
+  }
+  if (url.username || url.password || url.search || url.hash) {
+    log.debug('Leaving readPublicBaseUrl(). Extra parts.');
+    return { error: name + ' must be a base URL: no credentials, query ' +
+        'or fragment, because the session\'s paths are appended to it. ' +
+        'It was ' + JSON.stringify(text) + '.' };
+  }
+  log.debug('Leaving readPublicBaseUrl().');
+  return { value: url.origin + url.pathname.replace(/\/+$/, '') };
+}
+
+// The configured base, '' when unset. A malformed one is logged and
+// ignored, so the role keeps working on the caller's base.
+function configuredPublicBaseUrl(appconfig) {
+  log.debug('Entering configuredPublicBaseUrl().');
+  var read = readPublicBaseUrl(appconfig &&
+      appconfig.oid4vpVerifierPublicBaseUrl, 'oid4vpVerifierPublicBaseUrl');
+  if (read.error) {
+    log.warn('Ignoring oid4vpVerifierPublicBaseUrl: ' + read.error);
+    log.debug('Leaving configuredPublicBaseUrl(). Malformed.');
+    return '';
+  }
+  log.debug('Leaving configuredPublicBaseUrl(). ' + read.value);
+  return read.value;
+}
+
+// The base a session's URLs are built from: the page's, the setting's, or
+// the one the caller reached this service at.
+function publicBase(appconfig, asked, callerBase) {
+  log.debug('Entering publicBase().');
+  var base = asked || configuredPublicBaseUrl(appconfig) ||
+      String(callerBase || '');
+  log.debug('Leaving publicBase(). ' + base);
+  return base;
+}
+
 // Drop what has expired. From every entry point rather than on a timer,
 // for the SSF receiver's reason: a timer keeps the event loop alive for a
 // feature nobody is using.
@@ -184,7 +351,7 @@ function sweep(appconfig) {
   sessions.forEach(function (one, id) {
     if (at - one.createdAt >= Math.min(one.ttlMs, ttl) ||
         at - one.lastUsedAt >= Math.min(one.idleTtlMs, idle)) {
-      sessions.delete(id);
+      endSession(one, NO_SUCH_SESSION);
       gone++;
     }
   });
@@ -252,7 +419,8 @@ function readRedirectUri(value) {
 }
 
 // ---------------------------------------------------------------------------
-// POST /oid4vp/verifier. `options` is { redirectUri?, ttlMs?, idleTtlMs? };
+// POST /oid4vp/verifier. `options` is { redirectUri?, ttlMs?, idleTtlMs?,
+// liveSigning?, publicBaseUrl? };
 // `caller` is the request's address, which the per-caller cap counts.
 // ---------------------------------------------------------------------------
 function create(appconfig, options, caller) {
@@ -308,6 +476,17 @@ function create(appconfig, options, caller) {
     log.debug('Leaving create(). idleTtlMs refused.');
     return { ok: false, status: 400, error: idle.error };
   }
+  var base = readPublicBaseUrl(asked.publicBaseUrl, 'publicBaseUrl');
+  if (base.error) {
+    log.debug('Leaving create(). publicBaseUrl refused.');
+    return { ok: false, status: 400, error: base.error };
+  }
+  var live = asked.liveSigning;
+  if (live !== undefined && live !== null && typeof live !== 'boolean') {
+    log.debug('Leaving create(). liveSigning refused.');
+    return { ok: false, status: 400, error: 'liveSigning must be true or ' +
+        'false; it was ' + JSON.stringify(live) + '.' };
+  }
   var at = now();
   var one = {
     id: crypto.randomBytes(16).toString('hex'),
@@ -323,12 +502,15 @@ function create(appconfig, options, caller) {
     events: [],
     total: 0,
     dropped: 0,
-    bytes: 0
+    bytes: 0,
+    liveSigning: live === true,
+    pending: new Map()
   };
   sessions.set(one.id, one);
   log.debug('Leaving create(). ' + one.id);
   return { ok: true, status: 201, id: one.id, secret: one.secret,
-    expiresAt: expiresAt(one) };
+    liveSigning: one.liveSigning, expiresAt: expiresAt(one),
+    publicBaseUrl: base.value };
 }
 
 function find(appconfig, id) {
@@ -413,6 +595,37 @@ function readCertificate(value) {
 // replaces the first: a page that re-signs after changing a setting serves
 // the new object at the same request_uri.
 // ---------------------------------------------------------------------------
+// The `requestObject` member of a page's PUT, by the rules both publishes
+// share: required, at most oid4vpVerifierMaxRequestObjectBytes, a compact
+// JWS by shape.
+function readRequestObject(appconfig, asked) {
+  log.debug('Entering readRequestObject().');
+  var jws = asked.requestObject === undefined || asked.requestObject === null
+    ? '' : String(asked.requestObject).trim();
+  if (jws === '') {
+    log.debug('Leaving readRequestObject(). No request object.');
+    return { error: 'requestObject is required: the signed Request ' +
+        'Object, as a compact JWS, that the Wallet will fetch from ' +
+        'request_uri.' };
+  }
+  var limit = setting(appconfig, 'oid4vpVerifierMaxRequestObjectBytes',
+                      DEFAULTS.maxRequestObjectBytes);
+  var size = Buffer.byteLength(jws, 'utf8');
+  if (size > limit) {
+    log.debug('Leaving readRequestObject(). Too large: ' + size);
+    return { error: 'requestObject is ' + size + ' bytes and this service ' +
+        'serves at most ' + limit + ' (oid4vpVerifierMaxRequestObjectBytes).' };
+  }
+  if (!COMPACT_JWS.test(jws)) {
+    log.debug('Leaving readRequestObject(). Not a compact JWS.');
+    return { error: 'requestObject is not a compact JWS: three base64url ' +
+        'segments separated by dots, the first two not empty. An encrypted ' +
+        'Request Object (five segments) is not served here.' };
+  }
+  log.debug('Leaving readRequestObject(). ' + size + ' bytes.');
+  return { jws: jws, size: size, limit: limit };
+}
+
 function publish(appconfig, id, authorization, body) {
   log.debug('Entering publish(). ' + id);
   var auth = authorized(appconfig, id, authorization);
@@ -422,30 +635,14 @@ function publish(appconfig, id, authorization, body) {
   }
   var one = auth.session;
   var asked = body || {};
-  var jws = asked.requestObject === undefined || asked.requestObject === null
-    ? '' : String(asked.requestObject).trim();
-  if (jws === '') {
-    log.debug('Leaving publish(). No request object.');
-    return { ok: false, status: 400, error: 'requestObject is required: ' +
-        'the signed Request Object, as a compact JWS, that the Wallet ' +
-        'will fetch from request_uri.' };
+  var object = readRequestObject(appconfig, asked);
+  if (object.error) {
+    log.debug('Leaving publish(). requestObject refused.');
+    return { ok: false, status: 400, error: object.error };
   }
-  var limit = setting(appconfig, 'oid4vpVerifierMaxRequestObjectBytes',
-                      DEFAULTS.maxRequestObjectBytes);
-  var size = Buffer.byteLength(jws, 'utf8');
-  if (size > limit) {
-    log.debug('Leaving publish(). Too large: ' + size);
-    return { ok: false, status: 400, error: 'requestObject is ' + size +
-        ' bytes and this service serves at most ' + limit +
-        ' (oid4vpVerifierMaxRequestObjectBytes).' };
-  }
-  if (!COMPACT_JWS.test(jws)) {
-    log.debug('Leaving publish(). Not a compact JWS.');
-    return { ok: false, status: 400, error: 'requestObject is not a ' +
-        'compact JWS: three base64url segments separated by dots, the ' +
-        'first two not empty. An encrypted Request Object (five segments) ' +
-        'is not served here.' };
-  }
+  var jws = object.jws;
+  var size = object.size;
+  var limit = object.limit;
   var der = one.caDer;
   if (asked.caCertificate !== undefined && asked.caCertificate !== null &&
       asked.caCertificate !== '') {
@@ -573,22 +770,74 @@ function sizeOf(request) {
 }
 
 // A Wallet-facing refusal, in OAuth's `{error, error_description}` shape,
-// since that is the one error shape a Wallet is sure to read.
-function walletError(status, description) {
+// since that is the one error shape a Wallet is sure to read. `code`
+// overrides the error code (RFC 6749 section 4.1.2.1's
+// temporarily_unavailable, for a live signature that could not be had).
+function walletError(status, description, code) {
   log.debug('Entering walletError(). ' + status);
-  var out = { ok: false, status: status, error: status === 404
-    ? 'not_found' : 'invalid_request', error_description: description };
+  var out = { ok: false, status: status, error: code || (status === 404
+    ? 'not_found' : 'invalid_request'), error_description: description };
   log.debug('Leaving walletError().');
   return out;
 }
 
+// One more thing wrong with what arrived, added to the event's `problem`
+// rather than replacing what is already there: a POST can be both the
+// wrong media type and missing its Accept.
+function addProblem(event, text) {
+  log.debug('Entering addProblem().');
+  event.problem = event.problem ? event.problem + ' ' + text : text;
+  log.debug('Leaving addProblem().');
+}
+
+// Does an Accept header name this media type? Each media range is compared
+// without its parameters (q=, charset), case-insensitively (RFC 9110
+// section 12.5.1). A wildcard does not count: section 5.10 says the header
+// is SET TO application/oauth-authz-req+jwt.
+function accepts(accept, type) {
+  log.debug('Entering accepts().');
+  var found = String(accept || '').split(',').some(function (range) {
+    return range.split(';')[0].trim().toLowerCase() === type;
+  });
+  log.debug('Leaving accepts(). ' + found);
+  return found;
+}
+
+// The two MUSTs of OpenID4VP 1.0 section 5.10 on a request_uri POST (#469,
+// D1): "The request MUST use the HTTP POST method with the https scheme,
+// and the content type application/x-www-form-urlencoded and the Accept
+// header set to application/oauth-authz-req+jwt." A POST that breaks either
+// is still SERVED — a debugger shows what the Wallet does next — and the
+// event's `problem` names the rule, so the page prints it.
+function requestPostProblems(event, asked, read) {
+  log.debug('Entering requestPostProblems().');
+  var type = mediaTypeOf(asked.contentType);
+  if (type !== 'application/x-www-form-urlencoded') {
+    addProblem(event, 'The POST was sent as ' + (type ? (read.kind ===
+        'json' ? 'JSON ("' + type + '")' : '"' + type + '"') :
+        'no Content-Type') + '. OpenID4VP section 5.10: it MUST use ' +
+        'the content type application/x-www-form-urlencoded.');
+  }
+  if (!accepts(asked.accept, REQUEST_OBJECT_MEDIA_TYPE)) {
+    addProblem(event, 'The POST ' + (asked.accept ? 'had Accept "' +
+        String(asked.accept) + '"' : 'had no Accept header') + '. ' +
+        'OpenID4VP section 5.10: it MUST have the Accept header set to ' +
+        REQUEST_OBJECT_MEDIA_TYPE + '.');
+  }
+  log.debug('Leaving requestPostProblems().');
+}
+
 // ---------------------------------------------------------------------------
 // GET or POST /oid4vp/verifier/:id/request — a Wallet fetches the Request
-// Object. `request` is { method, contentType, rawBody, parsed,
+// Object. `request` is { method, contentType, accept, rawBody, parsed,
 // remoteAddress }. Under request_uri_method=post (section 5.10) the body
-// carries `wallet_metadata` and `wallet_nonce`, which are recorded; the
-// object served is still the one the page signed, which CANNOT echo a
-// wallet_nonce it never saw — the page reports that.
+// carries `wallet_metadata` and `wallet_nonce`, which are recorded. Without
+// live signing the object served is the one the page signed beforehand,
+// which CANNOT echo a wallet_nonce it never saw, and the event's `problem`
+// says so (section 5.10: the Verifier MUST use it). With it, a POST is held
+// for the page to sign (waitForSigning()), and the answer is `{ ok, status,
+// signingId, pending, cancel }`: `pending` is a promise of the answer, and
+// `cancel()` releases the wait early (the Wallet went away).
 // ---------------------------------------------------------------------------
 function fetchRequest(appconfig, id, request) {
   log.debug('Entering fetchRequest(). ' + id);
@@ -602,12 +851,17 @@ function fetchRequest(appconfig, id, request) {
   var method = String(asked.method || 'GET').toUpperCase();
   var event = { kind: 'request-fetched', method: method };
   var bytes = 0;
+  var nonceSent = false;
   if (asked.remoteAddress) {
     event.remoteAddress = String(asked.remoteAddress);
   }
   if (method === 'POST') {
     var read = fieldsOf(asked);
     event.contentType = String(asked.contentType || '');
+    if (asked.accept) {
+      event.accept = String(asked.accept);
+    }
+    requestPostProblems(event, asked, read);
     if (read.fields) {
       var meta = read.fields.wallet_metadata;
       if (meta !== undefined) {
@@ -624,6 +878,7 @@ function fetchRequest(appconfig, id, request) {
       }
       if (read.fields.wallet_nonce !== undefined) {
         event.walletNonce = read.fields.wallet_nonce;
+        nonceSent = true;
       }
     }
     bytes = sizeOf(asked);
@@ -633,15 +888,157 @@ function fetchRequest(appconfig, id, request) {
       // not what came with it.
       delete event.walletMetadata;
       delete event.walletNonce;
-      event.problem = 'The POST body was ' + bytes + ' bytes, above ' +
-          'oid4vpVerifierMaxResponseBytes, and was not kept.';
+      addProblem(event, 'The POST body was ' + bytes + ' bytes, above ' +
+          'oid4vpVerifierMaxResponseBytes, and was not kept.');
       bytes = 0;
+    }
+    if (one.liveSigning) {
+      log.debug('Leaving fetchRequest(). Live signing.');
+      return waitForSigning(appconfig, one, event, bytes, nonceSent);
+    }
+    if (nonceSent) {
+      addProblem(event, 'The Wallet sent a wallet_nonce and this session ' +
+          'has no live signing, so it was served the Request Object ' +
+          'signed in advance, which does not carry it. OpenID4VP section ' +
+          '5.10: the Verifier MUST use it; section 5.10.1: a Wallet given ' +
+          'an object without it MUST terminate.');
     }
   }
   record(appconfig, one, event, bytes);
   log.debug('Leaving fetchRequest(). Served.');
-  return { ok: true, status: 200, contentType: REQUEST_OBJECT_MEDIA_TYPE,
-    body: one.requestObject };
+  return served(one.requestObject);
+}
+
+// The `request-signed` event that closes a wait, and the Wallet's answer:
+// the page's object when it signed one; else, for a Wallet that sent a
+// wallet_nonce, a 503 (section 5.10.2), since whatever the page published
+// beforehand cannot carry that nonce; else the pre-signed object (read
+// NOW, so a re-publish during the wait is what is served). `gone` is a
+// Wallet that closed the connection: there is nobody left to answer.
+function settle(appconfig, one, signingId, jws, reason, gone) {
+  log.debug('Entering settle(). ' + signingId);
+  var entry = one.pending.get(signingId);
+  if (!entry) {
+    log.debug('Leaving settle(). Already settled.');
+    return false;
+  }
+  one.pending.delete(signingId);
+  timers.clear(entry.timer);
+  var signed = { kind: 'request-signed', signingId: signingId,
+    liveSigned: Boolean(jws) };
+  var answer;
+  if (jws) {
+    answer = served(jws);
+  } else if (gone) {
+    signed.reason = reason;
+    answer = walletError(503, reason, 'temporarily_unavailable');
+  } else if (entry.nonceSent) {
+    signed.reason = reason + ' The Wallet sent a wallet_nonce, which the ' +
+        'Request Object signed in advance cannot carry, so it was answered ' +
+        '503 (OpenID4VP section 5.10.2) rather than given an object it ' +
+        'MUST refuse.';
+    signed.httpStatus = 503;
+    answer = walletError(503, reason + ' A Request Object carrying this ' +
+        'wallet_nonce could not be signed in time.',
+        'temporarily_unavailable');
+  } else {
+    signed.reason = reason + ' The Wallet sent no wallet_nonce, so the ' +
+        'Request Object signed in advance was served.';
+    answer = served(one.requestObject);
+  }
+  record(appconfig, one, signed, 0);
+  entry.resolve(answer);
+  log.debug('Leaving settle(). liveSigned=' + signed.liveSigned);
+  return true;
+}
+
+// Hold a Wallet's POST for the page to sign. At the cap, answer at once: a
+// 503 when the Wallet sent a wallet_nonce (section 5.10.2), else the
+// pre-signed object, and say which and why.
+function waitForSigning(appconfig, one, event, bytes, nonceSent) {
+  log.debug('Entering waitForSigning(). ' + one.id);
+  var max = setting(appconfig, 'oid4vpVerifierMaxPendingSignings',
+                    DEFAULTS.maxPendingSignings);
+  if (one.pending.size >= max) {
+    var full = 'This session already holds ' + one.pending.size +
+        ' Wallet(s) waiting for the page to sign and ' +
+        'oid4vpVerifierMaxPendingSignings is ' + max + '.';
+    record(appconfig, one, event, bytes);
+    if (nonceSent) {
+      record(appconfig, one, { kind: 'request-signed', liveSigned: false,
+        httpStatus: 503, reason: full + ' The Wallet sent a wallet_nonce, ' +
+          'which the Request Object signed in advance cannot carry, so it ' +
+          'was answered 503 (OpenID4VP section 5.10.2) at once.' }, 0);
+      log.debug('Leaving waitForSigning(). At the cap: 503.');
+      return walletError(503, full + ' No Request Object carrying this ' +
+          'wallet_nonce can be signed now.', 'temporarily_unavailable');
+    }
+    record(appconfig, one, { kind: 'request-signed', liveSigned: false,
+      reason: full + ' The Wallet sent no wallet_nonce, so the ' +
+        'pre-signed Request Object was served at once.' }, 0);
+    log.debug('Leaving waitForSigning(). At the cap.');
+    return served(one.requestObject);
+  }
+  var wait = setting(appconfig, 'oid4vpVerifierLiveSignWaitMs',
+                     DEFAULTS.liveSignWaitMs);
+  var signingId = crypto.randomBytes(16).toString('hex');
+  event.signingId = signingId;
+  event.waitMs = wait;
+  event.signBy = new Date(now() + wait).toISOString();
+  record(appconfig, one, event, bytes);
+  var entry = { signingId: signingId, nonceSent: Boolean(nonceSent) };
+  var pending = new Promise(function (resolve) {
+    entry.resolve = resolve;
+  });
+  entry.timer = timers.set(function () {
+    settle(appconfig, one, signingId, null, 'The page did not sign ' +
+        'within oid4vpVerifierLiveSignWaitMs (' + wait + ' ms).');
+  }, wait);
+  // A held Wallet's socket keeps the process alive; the timer need not.
+  if (entry.timer && typeof entry.timer.unref === 'function') {
+    entry.timer.unref();
+  }
+  one.pending.set(signingId, entry);
+  log.debug('Leaving waitForSigning(). ' + signingId + ', ' + wait + ' ms.');
+  return { ok: true, status: 200, signingId: signingId, pending: pending,
+    cancel: function () {
+      settle(appconfig, one, signingId, null, 'The Wallet closed the ' +
+          'connection before the page signed.', true);
+    } };
+}
+
+var NO_SUCH_SIGNING = 'No Wallet is waiting on that signingId in this ' +
+    'session. It was never issued, it was already answered, or its wait ' +
+    '(oid4vpVerifierLiveSignWaitMs) ran out and the Wallet was answered ' +
+    'without it.';
+
+// ---------------------------------------------------------------------------
+// PUT /oid4vp/verifier/:id/request/:signingId — the page answers ONE held
+// Wallet with the object it signed for it. `body` is { requestObject }, by
+// publish()'s rules. The session's pre-signed object is not replaced: this
+// one carries one Wallet's wallet_nonce and is served to that Wallet only.
+// ---------------------------------------------------------------------------
+function publishFor(appconfig, id, signingId, authorization, body) {
+  log.debug('Entering publishFor(). ' + id + ' ' + signingId);
+  var auth = authorized(appconfig, id, authorization);
+  if (!auth.ok) {
+    log.debug('Leaving publishFor(). ' + auth.status);
+    return auth;
+  }
+  var one = auth.session;
+  var key = String(signingId || '');
+  if (!one.pending.has(key)) {
+    log.debug('Leaving publishFor(). No such wait.');
+    return { ok: false, status: 404, error: NO_SUCH_SIGNING };
+  }
+  var object = readRequestObject(appconfig, body || {});
+  if (object.error) {
+    log.debug('Leaving publishFor(). requestObject refused.');
+    return { ok: false, status: 400, error: object.error };
+  }
+  settle(appconfig, one, key, object.jws);
+  log.debug('Leaving publishFor(). Signed live.');
+  return { ok: true, status: 200 };
 }
 
 // GET /oid4vp/verifier/:id/ca — the AIA caIssuers URL of the leaf in the
@@ -664,12 +1061,49 @@ function fetchCa(appconfig, id, remoteAddress) {
     body: one.caDer };
 }
 
+// The redirect_uri answered to ONE Wallet's POST, carrying a fresh,
+// cryptographically random value (#468, M3). OpenID4VP 1.0 section 8.2:
+// "The Verifier MUST include a fresh, cryptographically random value in
+// the URL. This value is used to ensure only the receiver of the redirect
+// can fetch and process the Authorization Response. ... It is RECOMMENDED
+// to use a cryptographic random value of 128 bits or more." It is added as
+// `response_code`, section 13.3's name for it, 128 bits in base64url, and
+// a new one for every answer: the page's configured redirect_uri is the
+// same for every Wallet, so on its own it is no such value.
+function redirectWithCode(redirectUri) {
+  log.debug('Entering redirectWithCode().');
+  var code = crypto.randomBytes(16).toString('base64url');
+  var uri;
+  try {
+    var url = new URL(redirectUri);
+    url.searchParams.append('response_code', code);
+    uri = url.toString();
+  } catch (e) {
+    // Not an absolute URL (the page may hold anything): the parameter goes
+    // before any fragment, by hand.
+    var hash = redirectUri.indexOf('#');
+    var head = hash === -1 ? redirectUri : redirectUri.slice(0, hash);
+    var tail = hash === -1 ? '' : redirectUri.slice(hash);
+    uri = head + (head.indexOf('?') === -1 ? '?' :
+        (/[?&]$/.test(head) ? '' : '&')) + 'response_code=' + code + tail;
+  }
+  log.debug('Leaving redirectWithCode().');
+  return { uri: uri, code: code };
+}
+
 // ---------------------------------------------------------------------------
 // POST /oid4vp/verifier/:id/response — a Wallet's answer under direct_post
 // (vp_token, state, ...) or direct_post.jwt (response, the JWE). Every field
 // is kept VERBATIM and nothing is checked: the page decrypts and judges.
 // The answer is section 8.2's: 200 with a JSON object, carrying
-// `redirect_uri` when the page set one.
+// `redirect_uri` when the page set one — with a fresh `response_code` in it
+// (redirectWithCode()), which the `response` event records.
+//
+// A JSON body is ACCEPTED and REPORTED (#469, D2): section 8.2, "The
+// Authorization Response MUST be encoded in the request body using the
+// format defined by the application/x-www-form-urlencoded HTTP content
+// type." The fields are kept and the event carries a `problem` naming that
+// MUST, which the page turns into a FAIL row of the verdict.
 // ---------------------------------------------------------------------------
 function respond(appconfig, id, request) {
   log.debug('Entering respond(). ' + id);
@@ -710,8 +1144,20 @@ function respond(appconfig, id, request) {
   if (asked.remoteAddress) {
     event.remoteAddress = String(asked.remoteAddress);
   }
+  if (read.kind === 'json') {
+    event.problem = 'The answer was sent as JSON ("' +
+        mediaTypeOf(contentType) + '"). OpenID4VP 1.0 section 8.2: the ' +
+        'Authorization Response MUST be encoded in the request body as ' +
+        'application/x-www-form-urlencoded. It was kept and is checked.';
+  }
+  var body = {};
+  if (one.redirectUri) {
+    var redirect = redirectWithCode(one.redirectUri);
+    body.redirect_uri = redirect.uri;
+    event.redirectUri = redirect.uri;
+    event.responseCode = redirect.code;
+  }
   record(appconfig, one, event, size);
-  var body = one.redirectUri ? { redirect_uri: one.redirectUri } : {};
   log.debug('Leaving respond(). Recorded.');
   return { ok: true, status: 200, body: body };
 }
@@ -757,7 +1203,7 @@ function remove(appconfig, id, authorization) {
     log.debug('Leaving remove(). ' + auth.status);
     return auth;
   }
-  sessions.delete(auth.session.id);
+  endSession(auth.session, NO_SUCH_SESSION);
   log.debug('Leaving remove(). Deleted.');
   return { ok: true, status: 200, deleted: auth.session.id };
 }
@@ -784,6 +1230,13 @@ function limits(appconfig) {
       'oid4vpVerifierMaxRequestObjectBytes', DEFAULTS.maxRequestObjectBytes),
     maxSessionBytes: setting(appconfig, 'oid4vpVerifierMaxSessionBytes',
                              DEFAULTS.maxSessionBytes),
+    liveSignWaitMs: setting(appconfig, 'oid4vpVerifierLiveSignWaitMs',
+                            DEFAULTS.liveSignWaitMs),
+    maxPendingSignings: setting(appconfig,
+      'oid4vpVerifierMaxPendingSignings', DEFAULTS.maxPendingSignings),
+    // '' when unset: the URLs then use the base the page reached this
+    // service at, which a phone may not be able to reach (#470, B5).
+    publicBaseUrl: configuredPublicBaseUrl(appconfig),
     held: sessions.size,
     requestObjectMediaType: REQUEST_OBJECT_MEDIA_TYPE,
     caMediaType: CA_MEDIA_TYPE,
@@ -802,9 +1255,23 @@ function limits(appconfig) {
 function reset() {
   log.debug('Entering reset().');
   var gone = sessions.size;
-  sessions.clear();
+  Array.from(sessions.values()).forEach(function (one) {
+    endSession(one, NO_SUCH_SESSION);
+  });
   log.debug('Leaving reset(). ' + gone + ' dropped.');
   return gone;
+}
+
+// When the process stops: release every held Wallet and clear every timer,
+// so a closing listener is not kept waiting on a live-signing wait.
+function shutdown() {
+  log.debug('Entering shutdown().');
+  var released = 0;
+  Array.from(sessions.values()).forEach(function (one) {
+    released += endSession(one, 'This service is shutting down.');
+  });
+  log.debug('Leaving shutdown(). ' + released + ' wait(s) released.');
+  return released;
 }
 
 module.exports = {
@@ -813,8 +1280,12 @@ module.exports = {
   DEFAULTS: DEFAULTS,
   enabled: enabled,
   urlsFor: urlsFor,
+  readPublicBaseUrl: readPublicBaseUrl,
+  configuredPublicBaseUrl: configuredPublicBaseUrl,
+  publicBase: publicBase,
   create: create,
   publish: publish,
+  publishFor: publishFor,
   fetchRequest: fetchRequest,
   fetchCa: fetchCa,
   respond: respond,
@@ -825,5 +1296,8 @@ module.exports = {
   sameSecret: sameSecret,
   readForm: readForm,
   setClock: setClock,
-  reset: reset
+  setTimers: setTimers,
+  pendingCount: pendingCount,
+  reset: reset,
+  shutdown: shutdown
 };

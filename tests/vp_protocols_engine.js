@@ -326,7 +326,11 @@ async function jcsAndDataIntegrity() {
   assert.strictEqual(proof.cryptosuite, "ecdsa-jcs-2019");
   assert.strictEqual(proof.challenge, "n-2");
   assert.strictEqual(proof.domain, "x509_hash:abc");
-  const config = Object.assign({}, proof, { "@context": doc["@context"] });
+  // The proof options are hashed EXACTLY AS RECEIVED (VC Data Integrity,
+  // Verify Proof, #469 C14), so the proof must carry its @context.
+  assert.deepStrictEqual(proof["@context"], doc["@context"],
+    "the ecdsa-jcs-2019 proof carries the @context it was signed with");
+  const config = Object.assign({}, proof);
   delete config.proofValue;
   const hash = function (v) {
     return nodeCrypto.createHash("sha256").update(vp.jcs(v)).digest();
@@ -418,6 +422,35 @@ function protocolRules() {
   log.debug("Leaving protocolRules().");
 }
 
+// #469, C18: section 5.9.3 defines seven Client Identifier Prefixes and
+// "pre-registered" is none of them; section 10.1 lists it only among the
+// client_id_prefixes_supported VALUES, where it "represents the behavior
+// when no Client Identifier Prefix is used". The cases are the spec's own
+// examples (section 5.9.2: "client_id=example-client"; section 5.9.3:
+// "redirect_uri:https://client.example.org/cb", "x509_san_dns:client.
+// example.org", "decentralized_identifier:did:example:123").
+function clientIdPrefixes() {
+  log.debug("Entering clientIdPrefixes().");
+  [["example-client", "", "example-client"],
+   ["redirect_uri:https://client.example.org/cb", "redirect_uri",
+    "https://client.example.org/cb"],
+   ["x509_san_dns:client.example.org", "x509_san_dns",
+    "client.example.org"],
+   ["decentralized_identifier:did:example:123", "decentralized_identifier",
+    "did:example:123"],
+   ["pre-registered:example-client", "", "pre-registered:example-client"],
+   ["pre-registered", "", "pre-registered"],
+   ["unknown:abc", "", "unknown:abc"]
+  ].forEach(function (c) {
+    assert.deepStrictEqual(vp.clientIdPrefix(c[0]),
+      { prefix: c[1], value: c[2] }, "clientIdPrefix(" +
+      JSON.stringify(c[0]) + ")");
+  });
+  log.info("PASS clientIdPrefix: pre-registered is a supported-prefixes " +
+           "value, not a prefix (section 10.1).");
+  log.debug("Leaving clientIdPrefixes().");
+}
+
 function deliveries() {
   log.debug("Entering deliveries().");
   const fields = { id_token: "a.b.c", state: "s" };
@@ -452,6 +485,7 @@ async function main() {
   await selfIssuedIdTokens();
   await jcsAndDataIntegrity();
   protocolRules();
+  clientIdPrefixes();
   deliveries();
   log.info("vp_protocols_engine: all checks passed.");
   log.debug("Leaving main().");

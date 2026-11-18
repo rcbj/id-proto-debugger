@@ -318,10 +318,10 @@ async function present(driver, c) {
   const call = await waitForValue(driver, "vp_assembled_call", function (v) {
     return c.form ? /BROWSER submits/.test(v) : /^POST /.test(v);
   }, c.label + ": step 2 should assemble the answer", stepWait);
-  // A holder-bound ldp_vc must disclose the statement naming its holder
-  // (the credential's credentialSubject): without it the holder's proof is
-  // by a key the credential never mentions, and iya-sts refuses on
-  // "Holder binding". The selection used to leave it out.
+  // A holder-bound ldp_vc must disclose what names its holder, the JSON
+  // pointer /credentialSubject/id (W3C bbs-2023 selects by pointer): without
+  // it the holder's proof is by a key the credential never mentions, and
+  // iya-sts refuses on "Holder binding". The selection used to leave it out.
   if (c.ldp && c.idToken) {
     const subjectChecked = await driver.executeScript(
       "var rows = document.querySelectorAll(" +
@@ -329,10 +329,11 @@ async function present(driver, c) {
       "return Array.prototype.some.call(rows, function (r) {" +
       "  var b = r.querySelector('input[type=checkbox]');" +
       "  return b && b.checked &&" +
-      "    /[#\\/]credentialSubject>/.test(r.textContent);" +
+      "    Array.prototype.some.call(r.querySelectorAll('td'), function (t) {" +
+      "      return t.textContent.trim() === '/credentialSubject/id'; });" +
       "});");
     assert.strictEqual(subjectChecked, true, c.label + ": step 2 must " +
-      "select the credentialSubject statement by default for a " +
+      "select /credentialSubject/id by default for a " +
       "holder-bound ldp_vc");
   }
   if (c.encrypted) {

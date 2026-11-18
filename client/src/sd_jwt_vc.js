@@ -40,6 +40,9 @@ var log = bunyan.createLogger({
 var metadataClient = require("./metadata_client");
 var vciMetadata = require("./vci_metadata");
 var mdoc = require("./mdoc");
+// Which proofs make a JSON object an ldp_vc, and which of them the holder
+// derives a presentation from (#475).
+var vcFormats = require("./vc_formats");
 
 var KEYS = {
   // "active" while the workflow is driving oauth2_oidc_1.html /
@@ -1472,9 +1475,7 @@ function credentialFormat(serialized) {
   // "{" — which neither of the others can.
   if (serialized && typeof serialized === "object") {
     log.debug("Leaving credentialFormat().");
-    return (serialized.proof &&
-            serialized.proof.type === "DataIntegrityProof") ?
-            FORMAT_LDP_VC : "";
+    return vcFormats.isLdpSecured(serialized) ? FORMAT_LDP_VC : "";
   }
   var raw = String(serialized || "").trim();
   if (!raw) {
@@ -1484,7 +1485,7 @@ function credentialFormat(serialized) {
   if (raw.charAt(0) === "{") {
     try {
       var doc = JSON.parse(raw);
-      if (doc && doc.proof && doc.proof.type === "DataIntegrityProof") {
+      if (vcFormats.isLdpSecured(doc)) {
         log.debug("Leaving credentialFormat().");
         return FORMAT_LDP_VC;
       }
@@ -1524,15 +1525,24 @@ function parseLdpVc(serialized) {
   var doc = (serialized && typeof serialized === "object")
     ? serialized : JSON.parse(String(serialized));
   var subject = doc.credentialSubject || {};
-  log.debug("Leaving parseLdpVc().");
+  // A proof SET is several proofs; the first one this wallet recognises is
+  // the one that decides how the credential is presented.
+  var proof = [].concat(doc.proof || []).filter(function (p) {
+    return vcFormats.isLdpSecured({ proof: p });
+  })[0] || {};
+  var suite = vcFormats.ldpSuiteOf(proof);
+  log.debug("Leaving parseLdpVc(). " + suite);
   return {
     serialized: typeof serialized === "string" ?
         serialized : JSON.stringify(doc),
     document: doc,
-    header: { cryptosuite: (doc.proof || {}).cryptosuite, type: (doc.proof ||
-             {}).type },
+    header: { cryptosuite: proof.cryptosuite, type: proof.type },
+    // The cryptosuite of a DataIntegrityProof, or the proof type of a legacy
+    // one, and whether the holder derives what it presents from it.
+    ldpSuite: suite,
+    ldpSelective: vcFormats.isSelectiveLdpSuite(suite),
     payload: doc,
-    signature: (doc.proof || {}).proofValue || "",
+    signature: proof.proofValue || proof.jws || "",
     credentialSubject: subject,
     disclosures: [],
     kbJwt: ""
@@ -1642,8 +1652,11 @@ function parseCredential(serialized) {
   parsed.claims = claimsOf(parsed);
   // ldp_vc IS selectively disclosable — more so than SD-JWT, and unlinkably —
   // but over canonical statements rather than Disclosures.
+  // Which ldp_vc depends on its proof: a bbs-2023 (or ecdsa-sd-2023)
+  // credential is derived from, an eddsa-rdfc-2022 one is presented whole.
   parsed.selectivelyDisclosable = format === FORMAT_SD_JWT ||
-      format === FORMAT_LDP_VC || format === FORMAT_MSO_MDOC;
+      (format === FORMAT_LDP_VC && parsed.ldpSelective) ||
+      format === FORMAT_MSO_MDOC;
   // What the credential says it IS: a vct for an SD-JWT VC, a type array for a
   // W3C VC. Both are surfaced so a caller can name the credential without
   // knowing which format it holds.
@@ -1856,17 +1869,26 @@ function presentationReadiness() {
     ? "the " + credentialLabel(parsed) + " above — all " +
         Object.keys(parsed.claims).length +
       " of its claims, because jwt_vc_json has no selective disclosure"
-    : parsed.format === FORMAT_LDP_VC
+    : parsed.format === FORMAT_LDP_VC && parsed.ldpSelective
       ? "the " + credentialLabel(parsed) +
-          " above (ldp_vc, bbs-2023) — you choose which statements " +
-        "go, and each presentation is a fresh proof that cannot be linked to the last"
+          " above (ldp_vc, " + parsed.ldpSuite + ") — you choose which " +
+        "claims go, and each presentation is a fresh proof that cannot " +
+        "be linked to the last"
+    : parsed.format === FORMAT_LDP_VC
+      ? "the " + credentialLabel(parsed) + " above (ldp_vc, " +
+        parsed.ldpSuite + ") — all " + Object.keys(parsed.claims).length +
+        " of its claims, because " + parsed.ldpSuite + " has no selective " +
+        "disclosure, inside a Verifiable Presentation the holder signs"
       : "the " + credentialLabel(parsed) + " above, with its " +
         parsed.disclosures.length + " selectively-disclosable claim(s)";
-  // ldp_vc needs no holder private key to present: the BBS derived proof IS the
-  // holder's act, and the credential names its subject by DID rather than by a
-  // cnf key the wallet must sign with. Gating it on a holder key would strand
-  // the user for a reason that does not apply to this format.
-  if (parsed.format === FORMAT_LDP_VC) {
+  // A selectively disclosable ldp_vc (bbs-2023) needs no holder private key
+  // to present: the BBS derived proof IS the holder's act, and the credential
+  // names its subject by DID rather than by a cnf key the wallet must sign
+  // with. Gating it on a holder key would strand the user for a reason that
+  // does not apply to it. Every other ldp_vc is presented whole inside a VP
+  // the holder signs, so it falls through to the holder-key checks below,
+  // exactly as a jwt_vc_json does.
+  if (parsed.format === FORMAT_LDP_VC && parsed.ldpSelective) {
     log.debug("Leaving presentationReadiness(). ldp_vc, ready.");
     return { ready: true, level: "vc-ok",
             message: "A Verifier would be offered " + offered + "." };

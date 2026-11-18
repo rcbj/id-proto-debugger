@@ -29,6 +29,7 @@
     "logops": "latest",
     "node-forge": "^1.4.3",
     "pkijs": "^3.4.0",
+    "qrcode-generator": "1.4.4",
     "rdf-canonize": "^3.4.0"
   },
   "devDependencies": {

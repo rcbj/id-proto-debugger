@@ -1,0 +1,547 @@
+{
+  "_source": {
+    "specification": "W3C Data Integrity BBS Cryptosuites v1.0, Appendix A (Test Vectors): A.1 Baseline Basic Example (prc/) and A.2 Baseline Enhanced Example (the windsurf files). https://www.w3.org/TR/2026/CRD-vc-di-bbs-20260910/",
+    "repository": "https://github.com/w3c/vc-di-bbs/tree/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors",
+    "commit": "495310858ad0b54c4b6cb1423c59a90a22091459",
+    "files": {
+      "BBSDeriveMaterial.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/BBSDeriveMaterial.json",
+      "BBSKeyMaterial.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/BBSKeyMaterial.json",
+      "addHashData.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/addHashData.json",
+      "addProofConfig.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/addProofConfig.json",
+      "addSignedSDBase.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/addSignedSDBase.json",
+      "derivedRevealDocument.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/derivedRevealDocument.json",
+      "prCredMandatory.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/prCredMandatory.json",
+      "prCredSelective.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/prCredSelective.json",
+      "prc/addHashData.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/prc/addHashData.json",
+      "prc/addProofConfig.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/prc/addProofConfig.json",
+      "prc/addSignedSDBase.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/prc/addSignedSDBase.json",
+      "prc/derivedRevealDocument.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/prc/derivedRevealDocument.json",
+      "windDoc.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/windDoc.json",
+      "windMandatory.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/windMandatory.json",
+      "windSelective.json": "https://github.com/w3c/vc-di-bbs/blob/495310858ad0b54c4b6cb1423c59a90a22091459/TestVectors/windSelective.json"
+    },
+    "note": "Copied verbatim, one member per file, keyed by its path under TestVectors/. A.1's unsigned input is the document of prc/addSignedSDBase.json without its proof: TestVectors/prCredUnsigned.json at this commit has a different description from the one the published base proof signs.",
+    "contexts": {
+      "https://w3id.org/citizenship/v4rc1": "fetched from https://w3id.org/citizenship/v4rc1 (Accept: application/ld+json) on 2026-11-17; A.1's credential uses it and this debugger does not ship it"
+    }
+  },
+  "vectors": {
+    "BBSDeriveMaterial.json": {
+      "presentationHeaderHex": "113377aa",
+      "pseudoRandSeedHex": "332e313431353932363533353839373933323338343632363433333833323739"
+    },
+    "BBSKeyMaterial.json": {
+      "publicKeyHex": "a4ef1afa3da575496f122b9b78b8c24761531a8a093206ae7c45b80759c168ba4f7a260f9c3367b6c019b4677841104b10665edbe70ba3ebe7d9cfbffbf71eb016f70abfbb163317f372697dc63efd21fc55764f63926a8f02eaea325a2a888f",
+      "privateKeyHex": "66d36e118832af4c5e28b2dfe1b9577857e57b042a33e06bdea37b811ed09ee0",
+      "hmacKeyString": "00112233445566778899AABBCCDDEEFF00112233445566778899AABBCCDDEEFF"
+    },
+    "addHashData.json": {
+      "proofHash": "3a5bbf25d34d90b18c35cd2357be6a6f42301e94fc9e52f77e93b773c5614bdf",
+      "mandatoryHash": "555de05f898817e31301bac187d0c3ff2b03e2cbdb4adb4d568c17de961f9a18"
+    },
+    "addProofConfig.json": {
+      "type": "DataIntegrityProof",
+      "cryptosuite": "bbs-2023",
+      "created": "2023-08-15T23:36:38Z",
+      "verificationMethod": "did:key:zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ#zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ",
+      "proofPurpose": "assertionMethod",
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        {
+          "@vocab": "https://windsurf.grotto-networking.com/selective#"
+        }
+      ]
+    },
+    "addSignedSDBase.json": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        {
+          "@vocab": "https://windsurf.grotto-networking.com/selective#"
+        }
+      ],
+      "type": [
+        "VerifiableCredential"
+      ],
+      "issuer": "https://vc.example/windsurf/racecommittee",
+      "credentialSubject": {
+        "sailNumber": "Earth101",
+        "sails": [
+          {
+            "size": 5.5,
+            "sailName": "Kihei",
+            "year": 2023
+          },
+          {
+            "size": 6.1,
+            "sailName": "Lahaina",
+            "year": 2023
+          },
+          {
+            "size": 7,
+            "sailName": "Lahaina",
+            "year": 2020
+          },
+          {
+            "size": 7.8,
+            "sailName": "Lahaina",
+            "year": 2023
+          }
+        ],
+        "boards": [
+          {
+            "boardName": "CompFoil170",
+            "brand": "Wailea",
+            "year": 2022
+          },
+          {
+            "boardName": "Kanaha Custom",
+            "brand": "Wailea",
+            "year": 2019
+          }
+        ]
+      },
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "bbs-2023",
+        "created": "2023-08-15T23:36:38Z",
+        "verificationMethod": "did:key:zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ#zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ",
+        "proofPurpose": "assertionMethod",
+        "proofValue": "u2V0ChVhQgzH1WtRY_lwyJCCyy4BvmiDqayuKKdUXEAJtcazl2ggAZLSIgY78daQ5UlvQMUUIIqajMtp4GSbhk2C5AWZDESTvzz0GD7x1DGEixxTAf3FYQDpbvyXTTZCxjDXNI1e-am9CMB6U_J5S936Tt3PFYUvfVV3gX4mIF-MTAbrBh9DD_ysD4svbSttNVowX3pYfmhhYYKTvGvo9pXVJbxIrm3i4wkdhUxqKCTIGrnxFuAdZwWi6T3omD5wzZ7bAGbRneEEQSxBmXtvnC6Pr59nPv_v3HrAW9wq_uxYzF_NyaX3GPv0h_FV2T2OSao8C6uoyWiqIj1ggABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v-FZy9pc3N1ZXJ4HS9jcmVkZW50aWFsU3ViamVjdC9zYWlsTnVtYmVyeBovY3JlZGVudGlhbFN1YmplY3Qvc2FpbHMvMXggL2NyZWRlbnRpYWxTdWJqZWN0L2JvYXJkcy8wL3llYXJ4Gi9jcmVkZW50aWFsU3ViamVjdC9zYWlscy8y"
+      }
+    },
+    "derivedRevealDocument.json": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        {
+          "@vocab": "https://windsurf.grotto-networking.com/selective#"
+        }
+      ],
+      "type": [
+        "VerifiableCredential"
+      ],
+      "issuer": "https://vc.example/windsurf/racecommittee",
+      "credentialSubject": {
+        "sailNumber": "Earth101",
+        "sails": [
+          {
+            "size": 6.1,
+            "sailName": "Lahaina",
+            "year": 2023
+          },
+          {
+            "size": 7,
+            "sailName": "Lahaina",
+            "year": 2020
+          }
+        ],
+        "boards": [
+          {
+            "year": 2022,
+            "boardName": "CompFoil170",
+            "brand": "Wailea"
+          },
+          {
+            "boardName": "Kanaha Custom",
+            "brand": "Wailea",
+            "year": 2019
+          }
+        ]
+      },
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "bbs-2023",
+        "created": "2023-08-15T23:36:38Z",
+        "verificationMethod": "did:key:zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ#zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ",
+        "proofPurpose": "assertionMethod",
+        "proofValue": "u2V0DhVkCEJgxugaFJpT7ROtWzZ9mWBMw2Uk2caOtXtKGEMJVDFv9psrafLrzfprwyHOk7GgTv4V9U5VDvEW6E0n-MjO0RvbEYZDECqhFbZgxLtdTXDAD46d691Ltb37hYt9OOKJorYfMWhD_ONzGYzgQ4IrFqA2s_m597DymX7HauNGw2iK48mBAI4xwC4MQ3pLJwuwRiy3msMzccvvdMynM97xymCnoSS0KeW9uCRMYhPb90N-AKNXvjwXZqpgXhyWYxWQhUm2-XbQFhs0rg6RUZS9xY35XkXq9IvRbtn1I_OvfVGRnGuwuhF-H-HwdDrk02z-54jENSD1nEQtfZBJ4J4iOjNklnqePZoMYTKTnGEW4A9k6NVT0V3cW-Tm9NvJut0B3G9XDUkfvSrwrDnAXIabo7fYqY686Ay34lc3gbQsVyowadQckkRj50Jb8xaP5o57BqHDvYZ76avYf2Tt0uCskMX3vWfmB_I7CtWM9jrhxGxCFUre250hkhQP-zfUqwKduyokwY2EmLMR2e7uE6QTRp1I7wZ1nvFAceJSWFr72VHCwZ_gXWdmin5wndcCIikYXtXAY7OER5izYNltHg_vlO87IRr9yS93cGW_O0FxZw167c1rqmoPw5SM825-7j9LjsAfuf2nK_DfEmT3fx0fXeTtI6kghMVS0WSYMKdpt1B3pU5ozUoVa-jmLK6_UfQfXZaYAAgEEAgMDBwQGBQCOAAECBQYICQoODxAREhOGAwQFCAkKRBEzd6o"
+      }
+    },
+    "prCredMandatory.json": [
+      "/issuer"
+    ],
+    "prCredSelective.json": [
+      "/validFrom",
+      "/validUntil",
+      "/credentialSubject/birthCountry"
+    ],
+    "prc/addHashData.json": {
+      "proofHash": "3a5bbf25d34d90b18c35cd2357be6a6f42301e94fc9e52f77e93b773c5614bdf",
+      "mandatoryHash": "8e7cc22c318dd2094e02d0bf06c5d73a5dba717611a40f6d1bedc5ea7c300fd6"
+    },
+    "prc/addProofConfig.json": {
+      "type": "DataIntegrityProof",
+      "cryptosuite": "bbs-2023",
+      "created": "2023-08-15T23:36:38Z",
+      "verificationMethod": "did:key:zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ#zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ",
+      "proofPurpose": "assertionMethod",
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://w3id.org/citizenship/v4rc1"
+      ]
+    },
+    "prc/addSignedSDBase.json": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://w3id.org/citizenship/v4rc1"
+      ],
+      "type": [
+        "VerifiableCredential",
+        "PermanentResidentCardCredential"
+      ],
+      "issuer": {
+        "id": "did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg",
+        "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4z/DiPwAG0ALnwgz64QAAAABJRU5ErkJggg=="
+      },
+      "name": "Permanent Resident Card",
+      "description": "Permanent Resident Card from Government of Utopia.",
+      "credentialSubject": {
+        "type": [
+          "PermanentResident",
+          "Person"
+        ],
+        "givenName": "JANE",
+        "familyName": "SMITH",
+        "gender": "Female",
+        "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4v43hPwAHIgK1v4tX6wAAAABJRU5ErkJggg==",
+        "residentSince": "2015-01-01",
+        "commuterClassification": "C1",
+        "birthCountry": "Arcadia",
+        "birthDate": "1978-07-17",
+        "permanentResidentCard": {
+          "type": [
+            "PermanentResidentCard"
+          ],
+          "identifier": "83627465",
+          "lprCategory": "C09",
+          "lprNumber": "999-999-999"
+        }
+      },
+      "validFrom": "2024-12-16T00:00:00Z",
+      "validUntil": "2025-12-16T23:59:59Z",
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "bbs-2023",
+        "created": "2023-08-15T23:36:38Z",
+        "verificationMethod": "did:key:zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ#zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ",
+        "proofPurpose": "assertionMethod",
+        "proofValue": "u2V0ChVhQhhaN0rXQx8alajD0IS7RFqU97wXQ1nCCB9SDx_8gU676ItJLp2WdYIUmlPjYW-D6Ktw5dMfcTMaLPbF7JCOXUEcQQWLCRQK0FZGHmsJPG7FYQDpbvyXTTZCxjDXNI1e-am9CMB6U_J5S936Tt3PFYUvfjnzCLDGN0glOAtC_BsXXOl26cXYRpA9tG-3F6nwwD9ZYYKTvGvo9pXVJbxIrm3i4wkdhUxqKCTIGrnxFuAdZwWi6T3omD5wzZ7bAGbRneEEQSxBmXtvnC6Pr59nPv_v3HrAW9wq_uxYzF_NyaX3GPv0h_FV2T2OSao8C6uoyWiqIj1ggABEiM0RVZneImaq7zN3u_wARIjNEVWZ3iJmqu8zd7v-BZy9pc3N1ZXI"
+      }
+    },
+    "prc/derivedRevealDocument.json": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        "https://w3id.org/citizenship/v4rc1"
+      ],
+      "type": [
+        "VerifiableCredential",
+        "PermanentResidentCardCredential"
+      ],
+      "issuer": {
+        "id": "did:key:zDnaeTHxNEBZoKaEo6PdA83fq98ebiFvo3X273Ydu4YmV96rg",
+        "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIW2P4z/DiPwAG0ALnwgz64QAAAABJRU5ErkJggg=="
+      },
+      "validFrom": "2024-12-16T00:00:00Z",
+      "validUntil": "2025-12-16T23:59:59Z",
+      "credentialSubject": {
+        "type": [
+          "PermanentResident",
+          "Person"
+        ],
+        "birthCountry": "Arcadia"
+      },
+      "proof": {
+        "type": "DataIntegrityProof",
+        "cryptosuite": "bbs-2023",
+        "created": "2023-08-15T23:36:38Z",
+        "verificationMethod": "did:key:zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ#zUC7DerdEmfZ8f4pFajXgGwJoMkV1ofMTmEG5UoNvnWiPiLuGKNeqgRpLH2TV4Xe5mJ2cXV76gRN7LFQwapF1VFu6x2yrr5ci1mXqC1WNUrnHnLgvfZfMH7h6xP6qsf9EKRQrPQ",
+        "proofPurpose": "assertionMethod",
+        "proofValue": "u2V0DhVkC0JasX_e4m_LYsPPMUcVH8aIrAeJOJGV50hI2LN9r8Pq-GL4MnR-EyQS7TGxhP9Dsq7etkuYVNB2pekWpGHIWJsyFnEVbRzo245VyVh1fxIPGN0JHF6Q9z_s7Ew2P4R-IqIAvOyMe_iRE-LR_7e0LYh49XNIss-wj68T23KdFtcHOL0KnELklEKcSJafTngDgwm2i-uJCzfFU6T3kIBcnC5kCP-lbQsQqRhouqxngSqRIOa85qnH4MBYstCSlqgrMBG3H57i9_HPPNkHHau63-7Vs2TZ3YFDb1jK_f8gNM8Yh3GuDcYSt5hljD3K9Jdiupia6mU0Vpl3vGw3IrwnFSgz15bVNGxsoBHqi2_Y4Bf7JUzurRtEjScpH39g_8wRUztrNI9pOuaPr4ZjICsGZLiogP_z0avqjSCpjt7AAM98aLaNh1gChz9UTm-AQyjAuCCr37jSl_z0kzHBi9X-jbUeEbt1SGeWb1DhXa_9wm_15INa62DZ7D-jHSTGO-HJr7anB2Qlb7XOOT9HDgzOif08gcaIahjZxtD_lIfc3REvoZeiHy_M8qjkib7gBMANyHjfG2UmGe--6HIt79kG9ZHhRrZKu09qRr1LxfQWKn3TrMHRDBMBYE4QL5qUo9UzVoktzri9C3sG_wuE1T7BhqWwN86uW3cmtqWy4glcczLiXdPzwMm4ciyuHzEz06vvXVjJRiRnL5Yqfhq3hKw9picCIbjWNgBuZsd0yx-blamU8DiZKhLUdLSNnnHXigkUa87yqbxnse8OqYD_sh9taV9QpYeKQfYmaj9XRzhfd6Kdc0RkklM2TsRLad3TCuy9nn1tLQE2r5IXXigF7K-geX_i6z5DV8ksug6tBafj1XKb3AxQfkVZau-x0RebPRmP140uRiCg9V87fNsWGsYoTC4NlJDa_aGJnPd7r2a79wvv8l93oDjZINJHENXzNL8Ex-6IAAAEChAAEBQeGAAEHERITRBEzd6o"
+      }
+    },
+    "windDoc.json": {
+      "@context": [
+        "https://www.w3.org/ns/credentials/v2",
+        {
+          "@vocab": "https://windsurf.grotto-networking.com/selective#"
+        }
+      ],
+      "type": [
+        "VerifiableCredential"
+      ],
+      "issuer": "https://vc.example/windsurf/racecommittee",
+      "credentialSubject": {
+        "sailNumber": "Earth101",
+        "sails": [
+          {
+            "size": 5.5,
+            "sailName": "Kihei",
+            "year": 2023
+          },
+          {
+            "size": 6.1,
+            "sailName": "Lahaina",
+            "year": 2023
+          },
+          {
+            "size": 7.0,
+            "sailName": "Lahaina",
+            "year": 2020
+          },
+          {
+            "size": 7.8,
+            "sailName": "Lahaina",
+            "year": 2023
+          }
+        ],
+        "boards": [
+          {
+            "boardName": "CompFoil170",
+            "brand": "Wailea",
+            "year": 2022
+          },
+          {
+            "boardName": "Kanaha Custom",
+            "brand": "Wailea",
+            "year": 2019
+          }
+        ]
+      }
+    },
+    "windMandatory.json": [
+      "/issuer",
+      "/credentialSubject/sailNumber",
+      "/credentialSubject/sails/1",
+      "/credentialSubject/boards/0/year",
+      "/credentialSubject/sails/2"
+    ],
+    "windSelective.json": [
+      "/credentialSubject/boards/0",
+      "/credentialSubject/boards/1"
+    ]
+  },
+  "contexts": {
+    "https://w3id.org/citizenship/v4rc1": {
+      "@context": {
+        "@protected": true,
+        "image": {
+          "@id": "https://schema.org/image",
+          "@type": "@id"
+        },
+        "QuantitativeValue": {
+          "@id": "https://schema.org/QuantitativeValue",
+          "@context": {
+            "@protected": true,
+            "unitCode": "https://schema.org/unitCode",
+            "value": "https://schema.org/value"
+          }
+        },
+        "PostalAddress": {
+          "@id": "https://schema.org/PostalAddress",
+          "@context": {
+            "@protected": true,
+            "addressCountry": "https://schema.org/addressCountry",
+            "addressLocality": "https://schema.org/addressLocality",
+            "addressRegion": "https://schema.org/addressRegion"
+          }
+        },
+        "Person": {
+          "@id": "https://schema.org/Person",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "additionalName": "https://schema.org/additionalName",
+            "birthCountry": "https://w3id.org/citizenship#birthCountry",
+            "birthDate": {
+              "@id": "https://schema.org/birthDate",
+              "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+            },
+            "familyName": "https://schema.org/familyName",
+            "gender": "https://schema.org/gender",
+            "givenName": "https://schema.org/givenName",
+            "height": "https://schema.org/height",
+            "image": {
+              "@id": "https://schema.org/image",
+              "@type": "@id"
+            },
+            "maritalStatus": "https://w3id.org/citizenship#maritalStatus",
+            "marriageCertificateNumber": "https://w3id.org/citizenship#marriageCertificateNumber",
+            "marriageLocation": {
+              "@id": "https://w3id.org/citizenship#marriageLocation",
+              "@type": "@id"
+            }
+          }
+        },
+        "PermanentResident": {
+          "@id": "https://w3id.org/citizenship#PermanentResident",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "commuterClassification": "https://w3id.org/citizenship#commuterClassification",
+            "formerNationality": "https://w3id.org/citizenship#formerNationality",
+            "permanentResidentCard": {
+              "@id": "https://w3id.org/citizenship#permanentResidentCard",
+              "@type": "@id"
+            },
+            "residence": {
+              "@id": "https://w3id.org/citizenship#residence",
+              "@type": "@id"
+            },
+            "residentSince": {
+              "@id": "https://w3id.org/citizenship#residentSince",
+              "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+            }
+          }
+        },
+        "PermanentResidentCard": {
+          "@id": "https://w3id.org/citizenship#PermanentResidentCard",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "filingLocation": {
+              "@id": "https://w3id.org/citizenship#filingLocation",
+              "@type": "@id"
+            },
+            "identifier": "https://schema.org/identifier",
+            "lprCategory": "https://w3id.org/citizenship#lprCategory",
+            "lprNumber": "https://w3id.org/citizenship#lprNumber",
+            "mrzHash": {
+              "@id": "https://w3id.org/citizenship#mrzHash",
+              "@type": "https://w3id.org/security#multibase"
+            }
+          }
+        },
+        "PermanentResidentCardCredential": "https://w3id.org/citizenship#PermanentResidentCardCredential",
+        "EmployablePerson": {
+          "@id": "https://w3id.org/citizenship#EmployablePerson",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "commuterClassification": "https://w3id.org/citizenship#commuterClassification",
+            "employmentAuthorizationDocument": {
+              "@id": "https://w3id.org/citizenship#employmentAuthorizationDocument",
+              "@type": "@id"
+            },
+            "formerNationality": "https://w3id.org/citizenship#formerNationality",
+            "residence": {
+              "@id": "https://w3id.org/citizenship#residence",
+              "@type": "@id"
+            },
+            "residentSince": {
+              "@id": "https://w3id.org/citizenship#residentSince",
+              "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+            }
+          }
+        },
+        "EmploymentAuthorizationDocument": {
+          "@id": "https://w3id.org/citizenship#EmploymentAuthorizationDocument",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "filingLocation": {
+              "@id": "https://w3id.org/citizenship#filingLocation",
+              "@type": "@id"
+            },
+            "identifier": "https://schema.org/identifier",
+            "lprCategory": "https://w3id.org/citizenship#lprCategory",
+            "lprNumber": "https://w3id.org/citizenship#lprNumber",
+            "mrzHash": {
+              "@id": "https://w3id.org/citizenship#mrzHash",
+              "@type": "https://w3id.org/security#multibase"
+            }
+          }
+        },
+        "EmploymentAuthorizationDocumentCredential": "https://w3id.org/citizenship#EmploymentAuthorizationDocumentCredential",
+        "NaturalizedPerson": {
+          "@id": "https://w3id.org/citizenship#NaturalizedPerson",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "formerNationality": "https://w3id.org/citizenship#formerNationality",
+            "certificateOfNaturalization": {
+              "@id": "https://w3id.org/citizenship#certificateOfNaturalization",
+              "@type": "@id"
+            },
+            "residence": {
+              "@id": "https://w3id.org/citizenship#residence",
+              "@type": "@id"
+            },
+            "residentSince": {
+              "@id": "https://w3id.org/citizenship#residentSince",
+              "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+            },
+            "commuterClassification": "https://w3id.org/citizenship#commuterClassification"
+          }
+        },
+        "CertificateOfNaturalization": {
+          "@id": "https://w3id.org/citizenship#CertificateOfNaturalization",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "ceremonyDate": {
+              "@id": "https://w3id.org/citizenship#ceremonyDate",
+              "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+            },
+            "ceremonyLocation": {
+              "@id": "https://w3id.org/citizenship#ceremonyLocation",
+              "@type": "@id"
+            },
+            "filingLocation": {
+              "@id": "https://w3id.org/citizenship#filingLocation",
+              "@type": "@id"
+            },
+            "naturalizationLocation": {
+              "@id": "https://w3id.org/citizenship#naturalizationLocation",
+              "@type": "@id"
+            },
+            "naturalizedBy": "https://w3id.org/citizenship#naturalizedBy",
+            "identifier": "https://schema.org/identifier",
+            "insRegistrationNumber": "https://w3id.org/citizenship#insRegistrationNumber"
+          }
+        },
+        "CertificateOfNaturalizationCredential": "https://w3id.org/citizenship#CertificateOfNaturalizationCredential",
+        "Citizen": {
+          "@id": "https://w3id.org/citizenship#Citizen",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "certificateOfCitizenship": {
+              "@id": "https://w3id.org/citizenship#certificateOfCitizenship",
+              "@type": "@id"
+            }
+          }
+        },
+        "CertificateOfCitizenship": {
+          "@id": "https://w3id.org/citizenship#CertificateOfCitizenship",
+          "@context": {
+            "@protected": true,
+            "id": "@id",
+            "type": "@type",
+            "filingLocation": {
+              "@id": "https://w3id.org/citizenship#filingLocation",
+              "@type": "@id"
+            },
+            "identifier": "https://schema.org/identifier",
+            "ceremonyDate": {
+              "@id": "https://w3id.org/citizenship#ceremonyDate",
+              "@type": "http://www.w3.org/2001/XMLSchema#dateTime"
+            },
+            "ceremonyLocation": {
+              "@id": "https://w3id.org/citizenship#ceremonyLocation",
+              "@type": "@id"
+            },
+            "cisRegistrationNumber": "https://w3id.org/citizenship#cisRegistrationNumber"
+          }
+        },
+        "CertificateOfCitizenshipCredential": "https://w3id.org/citizenship#CertificateOfCitizenshipCredential"
+      }
+    }
+  }
+}

@@ -301,7 +301,7 @@ What a row is depends on the format:
 |---|---|---|
 | `dc+sd-jwt` | One per Disclosure | A Key Binding JWT: `typ` `kb+jwt`, the request's `nonce`, the Client Identifier as `aud`, `iat`, and `sd_hash` over the bytes sent |
 | `jwt_vc_json` | Every claim listed, none selectable. The format has no selective disclosure, so every claim goes | A Verifiable Presentation JWT signed with the bound key |
-| `ldp_vc` | One per canonical statement (N-Quad), numbered | The `bbs-2023` derived proof; under holder binding, also a holder-signed `VerifiablePresentation` |
+| `ldp_vc` | One per value, named by its JSON pointer; the issuer's mandatory pointers are ticked and cannot be cleared | The `bbs-2023` derived proof over a reveal document, with the `nonce` as its presentation header; under holder binding, also a holder-signed `VerifiablePresentation` |
 | `mso_mdoc` | One per element, named `namespace/element` | A device signature (COSE_Sign1, ES256) over the session transcript |
 
 ### Holder private key
@@ -321,6 +321,11 @@ pane then says which key signs, and explains why OpenID4VP has no DPoP.
 
 ### ldp_vc
 
+The credential's `bbs-2023` proof is W3C Data Integrity BBS Cryptosuites
+v1.0. A credential from an issuer that predates it (iya-sts before 1.1.0,
+whose base proof is a bare BBS signature) cannot be presented, and the
+status says so.
+
 The page canonicalizes the credential before it can show rows. It uses only
 the JSON-LD contexts it ships and any you add in **JSON-LD Contexts**: paste
 the context URL exactly as the credential's `@context` names it, and the
@@ -330,9 +335,9 @@ canonicalized, so no bbs-2023 proof can be derived from it: ...*.
 
 When the query requires holder binding (DCQL's default), or an ID Token goes
 with it, the derived credential is wrapped in a `VerifiablePresentation`
-signed by the DID in `credentialSubject.id`. The statement linking the
-credential to its subject is then selected by default, because it names that
-DID. Signing needs the private key of that DID. Without it the status says
+signed by the DID in `credentialSubject.id`. `/credentialSubject/id` is
+then selected by default, because it names that DID. Signing needs the
+private key of that DID. Without it the status says
 *This request needs a holder proof around the ldp_vc presentation, and the
 private key of `<did>` is not available ...*.
 

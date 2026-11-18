@@ -77,15 +77,21 @@ var issuerBase = process.env.OID4VCI_ISSUER_URL || stsUrl.replace(/\/sts\/?$/,
     "");
 const ROOT = path.join(__dirname, "..");
 const paths = require("./module_paths.js");
-const stsSuite = paths.requireSharedModule(
-  // The tests image's flattened copy first, then wherever iya-sts's tree
-  // keeps it. NOT a hardcoded ROOT/sts/bbs2023.js any more: iya-sts 0f986b3
-  // ("Reorganizing source code.") moved every module into a subdirectory, and
-  // this one is in common/crypto_impl/. mockStsModule() is the single place
-  // that answers that question — see tests/module_paths.js.
-  [path.join(__dirname, "sts_bbs2023.js"),
-   paths.mockStsModule("bbs2023.js") || ""],
-  "the STS's bbs-2023 cryptosuite");
+// iya-sts's W3C bbs-2023 (Data Integrity BBS Cryptosuites v1.0, iya-sts
+// 1.1.0): oid4vc/vc_bbs.js verifies a base proof, and
+// common/crypto_impl/bbs2023.js decodes the issuer's Multikey. Both come from
+// iya-sts's tree, and mockStsModule() is the single place that knows where it
+// keeps them (tests/module_paths.js). Its legacy* functions are the pre-W3C
+// format, which this debugger no longer speaks, and are not used.
+const stsBbs = paths.requireSharedModule(
+  [paths.mockStsModule("vc_bbs.js") || ""],
+  "iya-sts's W3C bbs-2023 cryptosuite (oid4vc/vc_bbs.js)");
+const stsBbsKeys = paths.requireSharedModule(
+  [paths.mockStsModule("bbs2023.js") || ""],
+  "iya-sts's BBS key encoding (common/crypto_impl/bbs2023.js)");
+// A W3C bbs-2023 BASE proof is multibase base64url of CBOR tag 0xd95d02,
+// which base64url-encodes to "u2V0C" (a derived one, 0xd95d03, is "u2V0D").
+const BASE_PROOF_PREFIX = /^u2V0C/;
 // The wallet's own module — the one both issuance step 2 and step 4 use.
 // Driving it is the point: it is the code under test, not a stand-in for it.
 const wallet = paths.requireSharedModule(
@@ -389,6 +395,9 @@ async function test() {
   const refreshedCredential = JSON.parse(got.stored);
   assert.strictEqual((refreshedCredential.proof || {}).cryptosuite, "bbs-2023",
     "the refreshed credential is secured the same way.");
+  assert.ok(BASE_PROOF_PREFIX.test(refreshedCredential.proof.proofValue),
+    "with a W3C bbs-2023 base proof (CBOR tag 0xd95d02). Got " +
+    String(refreshedCredential.proof.proofValue).slice(0, 12) + "...");
   // What a refresh actually owes the holder: a later validity window. That is
   // the benefit — the credential in hand expires and this one does not, or not
   // as soon. Asserted before the proof, because a differing proof is a
@@ -439,18 +448,18 @@ async function test() {
   const km =
       (await common.httpJson(refreshedCredential.proof.verificationMethod))
       .body;
-  const pk = stsSuite.multibaseToBytes(km.publicKeyMultibase);
-  const verdict = await stsSuite.verifyBase(refreshedCredential, pk);
+  const pk = stsBbsKeys.publicKeyFromMultibase(km.publicKeyMultibase);
+  const verdict = await stsBbs.verifyBaseProof(refreshedCredential, pk);
   assert.strictEqual(verdict.ok, true,
     "the refreshed credential's base proof must verify against the issuer's " +
         "published BBS key.");
   const tampered = JSON.parse(got.stored);
   tampered.credentialSubject.given_name = "Mallory";
-  assert.strictEqual((await stsSuite.verifyBase(tampered, pk)).ok, false,
+  assert.strictEqual((await stsBbs.verifyBaseProof(tampered, pk)).ok, false,
     "and an edited claim must break it — the control that shows the check " +
         "above is not always-true.");
   log.info("[14.5/2] OK — the refreshed proof verifies over " +
-           verdict.statements.length +
+           (verdict.mandatory + verdict.nonMandatory) +
     " statements; an edit breaks it.");
 
   // --- what differs between two refreshes inside one second -----------------
@@ -483,33 +492,47 @@ async function test() {
         "both would mean revoking either revoked the other. A=" +
     indexOf(aDoc) + " B=" + indexOf(bDoc));
 
+  // WHAT MAY DIFFER, now that the proof is W3C bbs-2023. Its base proof
+  // carries the HMAC key that relabels its blank nodes, "locally generated"
+  // for each base proof (vc-di-bbs, bbs-2023 base proof), so the PROOF of two
+  // issuances normally differs within one second: the old "BBS Sign draws
+  // no randomness" premise was the pre-W3C envelope's and is gone. The
+  // CREDENTIAL around it is
+  // another matter: only members that exist to be per-issuance may differ,
+  // its status entry and its own `id` (VC Data Model 2.0 section 4.4), plus
+  // the timestamps when the two straddled a second. Anything else differing
+  // is named here, so it is added on purpose.
   const sameSecond = aDoc.proof.created === bDoc.proof.created;
-  if (sameSecond) {
-    // Everything but the status entry and the proof over it: BBS Sign draws no
-    // randomness and this format carries no salts, so with the one per-issuance
-    // member removed the two must still be byte-identical.
-    const strip = function (doc) {
-      const copy = JSON.parse(JSON.stringify(doc));
-      delete copy.credentialStatus;
-      delete copy.proof;
-      return JSON.stringify(copy);
-    };
-    assert.strictEqual(strip(aDoc), strip(bDoc),
-      "two ldp_vc issuances stamped with the same second must differ ONLY in " +
-          "their status entry: BBS Sign draws no randomness and this format " +
-          "carries no salts. If this fails, something ELSE per-issuance has " +
-          "been added — good, but it should be named here.");
-    log.info("[determinism] OK — same second, identical but for the status " +
-             "entry each credential needs of its own.");
-  } else {
-    // The two straddled a second boundary. Not a failure and not a pass either:
-    // say so rather than logging OK for a check that did not run.
-    assert.notStrictEqual(aStr, bStr,
-      "these two straddled a second boundary, so they must differ.");
-    log.info("[determinism] straddled a second boundary — the identity check " +
-             "did not run this time; " +
-      "the differing-timestamp case was checked instead.");
+  const perIssuance = ["credentialStatus", "proof", "id"];
+  if (!sameSecond) {
+    perIssuance.push("validFrom", "validUntil", "issuanceDate",
+                     "expirationDate");
   }
+  const differing = Array.from(new Set(Object.keys(aDoc)
+    .concat(Object.keys(bDoc)))).filter(function (k) {
+    return JSON.stringify(aDoc[k]) !== JSON.stringify(bDoc[k]);
+  });
+  const unexpected = differing.filter(function (k) {
+    return perIssuance.indexOf(k) === -1;
+  });
+  assert.deepStrictEqual(unexpected, [],
+    "two ldp_vc issuances " + (sameSecond ? "stamped with the same second "
+      : "") + "may differ only in " + perIssuance.join(", ") + "; these " +
+      "differ too: " + unexpected.join(", ") + " (A=" +
+      JSON.stringify(unexpected.map(function (k) {
+        return aDoc[k];
+      })) + " B=" + JSON.stringify(unexpected.map(function (k) {
+        return bDoc[k];
+      })) + "). If that is deliberate, name it here.");
+  // A reused HMAC key is not forbidden in so many words, but it links every
+  // presentation derived from either credential, so it is reported.
+  if (JSON.stringify(aDoc.proof) === JSON.stringify(bDoc.proof)) {
+    log.warn("[per-issuance] the two base proofs are IDENTICAL: the issuer " +
+             "reused its HMAC key, so presentations from either link.");
+  }
+  log.info("[per-issuance] OK — " + (sameSecond ? "same second; " :
+    "straddled a second; ") + "the two differ in " + differing.join(", ") +
+    ", each of which is per-issuance.");
 
   // --- binding the refresh to a NEW key -------------------------------------
   log.info("=== The other key mode: bind the refresh to a new key ===");

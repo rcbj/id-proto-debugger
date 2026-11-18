@@ -560,6 +560,22 @@ function captureRawBody(sink) {
   };
 }
 
+// captureRawBody()'s sibling for a response read as an arraybuffer: the
+// bytes are kept as they arrived (sink.bytes) and their UTF-8 reading is
+// what the trace shows (sink.raw). Nothing is parsed.
+function captureRawBytes(sink) {
+  log.debug("Entering captureRawBytes().");
+  log.debug("Leaving captureRawBytes().");
+  return function (data) {
+    var bytes = Buffer.isBuffer(data) ? data :
+        (data === null || data === undefined) ? Buffer.alloc(0) :
+        Buffer.from(data);
+    sink.bytes = bytes;
+    sink.raw = bytes.toString('utf8');
+    return bytes;
+  };
+}
+
 // The headers of an axios response, as a plain object. axios 1.x returns an
 // AxiosHeaders instance, which JSON.stringify renders as {} without toJSON().
 function traceHeaders(headers) {
@@ -3835,15 +3851,20 @@ app.post('/oid4vp/call', model.route('oid4vpCall'), function (req, res) {
   var sink = {};
   var startedAt = Date.now();
   var sentHeaders = withUserAgent(described.headers);
+  // Under responseEncoding "base64" the body is read as BYTES (a status
+  // list may be a binary CWT), kept in sink.bytes, and its UTF-8 reading
+  // goes to the trace (#470, B3).
+  var binary = described.responseEncoding === 'base64';
   axios({
     method: described.method.toLowerCase(),
     url: described.url,
     data: described.body === null ? undefined : described.body,
-    responseType: 'text',
+    responseType: binary ? 'arraybuffer' : 'text',
     timeout: CALL_TIMEOUT,
     maxContentLength: MAX_CONTENT_LENGTH,
     maxRedirects: MAX_REDIRECTS,
-    transformResponse: [captureRawBody(sink)],
+    transformResponse: [binary ? captureRawBytes(sink) :
+                        captureRawBody(sink)],
     // A Verifier's 400 is its ANSWER (invalid_request naming the check that
     // failed), so it must not throw.
     validateStatus: function () {
@@ -3855,7 +3876,8 @@ app.post('/oid4vp/call', model.route('oid4vpCall'), function (req, res) {
   })
     .then(function (response) {
       var answer = oid4vpProxy.readResponse(response.status,
-          traceHeaders(response.headers), sink.raw);
+          traceHeaders(response.headers), binary ? sink.bytes : sink.raw,
+          described.responseEncoding);
       var trace = buildHttpTrace({ method: described.method,
           url: described.url, headers: sentHeaders,
           body: described.body === null ? '' : described.body },
@@ -4149,12 +4171,13 @@ app.delete('/ssf/receiver/:id', model.route('ssfReceiverDelete'),
  * and a page can be neither — the SSF push receiver's reason exactly.
  *
  * `api/oid4vp_verifier.js` holds every decision and every bound; these
- * handlers are wiring. Five routes are the PAGE's (create, publish, events,
- * delete, limits; the last three after create carry `Authorization: Bearer
- * <secret>`), and three are a WALLET's (the Request Object by GET or POST,
- * the CA certificate, the answer), which present no credential and are
- * bounded structurally. The page signs the Request Object; this service
- * only stores and serves it, and verifies nothing a Wallet sends.
+ * handlers are wiring. Six routes are the PAGE's (limits, create, and four
+ * that carry `Authorization: Bearer <secret>`: publish, the live-signing
+ * publish, events, delete), and three are a WALLET's (the
+ * Request Object by GET or POST, the CA certificate, the answer), which
+ * present no credential and are bounded structurally. The page signs the
+ * Request Object; this service only stores and serves it, and verifies
+ * nothing a Wallet sends.
  *
  * The limits route is registered first, so that `limits` is never read as
  * a session id by a route added later under /oid4vp/verifier/:id.
@@ -4175,10 +4198,13 @@ app.post('/oid4vp/verifier', model.route('oid4vpVerifierCreate'),
     log.debug('Leaving POST /oid4vp/verifier. Refused: ' + made.error);
     return res.status(made.status).json({ error: made.error });
   }
-  // This api's address AS THE CALLER REACHED IT, for the SSF receiver's
-  // reason: the Wallet has to reach these URLs, and behind the embedding
-  // proxy they carry the prefix it stripped. See publicBaseUrl().
-  var urls = oid4vpVerifier.urlsFor(publicBaseUrl(req), made.id);
+  // The page's publicBaseUrl, else oid4vpVerifierPublicBaseUrl, else this
+  // api's address AS THE CALLER REACHED IT, for the SSF receiver's reason:
+  // the Wallet has to reach these URLs, and behind the embedding proxy they
+  // carry the prefix it stripped. See publicBaseUrl() and, for why the
+  // first two exist, publicBase() in oid4vp_verifier.js (#470, B5).
+  var urls = oid4vpVerifier.urlsFor(oid4vpVerifier.publicBase(appconfig,
+      made.publicBaseUrl, publicBaseUrl(req)), made.id);
   log.debug('Leaving POST /oid4vp/verifier. ' + made.id);
   return res.status(201).json({
     id: made.id,
@@ -4186,6 +4212,7 @@ app.post('/oid4vp/verifier', model.route('oid4vpVerifierCreate'),
     requestUri: urls.requestUri,
     responseUri: urls.responseUri,
     caIssuersUrl: urls.caIssuersUrl,
+    liveSigning: made.liveSigning,
     expiresAt: made.expiresAt
   });
 });
@@ -4221,9 +4248,56 @@ app.put('/oid4vp/verifier/:id/request',
 });
 
 /**
+ * LIVE SIGNING: the page answers one held Wallet POST (section 5.10) with
+ * the Request Object it signed for that Wallet's wallet_nonce. See
+ * waitForSigning() in api/oid4vp_verifier.js.
+ */
+app.put('/oid4vp/verifier/:id/request/:signingId',
+        model.route('oid4vpVerifierPublishFor'), function (req, res) {
+  log.debug('Entering PUT /oid4vp/verifier/:id/request/:signingId.');
+  var out = oid4vpVerifier.publishFor(appconfig, req.params.id,
+    req.params.signingId, req.get('authorization') || '', req.body || {});
+  if (!out.ok) {
+    log.debug('Leaving PUT /oid4vp/verifier/:id/request/:signingId. ' +
+        out.status);
+    return oid4vpVerifierRefusal(res, out);
+  }
+  log.debug('Leaving PUT /oid4vp/verifier/:id/request/:signingId. Signed.');
+  return res.status(STATUS_200).json({ ok: true });
+});
+
+/**
+ * Send a Wallet the Request Object, or a Wallet-facing refusal.
+ *
+ * @param {object} res - the Express response.
+ * @param {object} out - the module's answer.
+ * @returns {object} the response, or undefined when the Wallet has gone.
+ */
+function oid4vpVerifierSendRequest(res, out) {
+  log.debug('Entering oid4vpVerifierSendRequest(). ' + out.status);
+  if (res.destroyed || res.writableEnded) {
+    log.debug('Leaving oid4vpVerifierSendRequest(). The Wallet has gone.');
+    return undefined;
+  }
+  if (!out.ok) {
+    log.debug('Leaving oid4vpVerifierSendRequest(). ' + out.status);
+    return res.status(out.status).json({ error: out.error,
+      error_description: out.error_description });
+  }
+  log.debug('Leaving oid4vpVerifierSendRequest(). Served.');
+  // As a Buffer, so express adds no `; charset=utf-8` to a media type
+  // (RFC 9101 section 10.2) that a Wallet may compare exactly.
+  res.set('Cache-Control', 'no-store');
+  return res.status(STATUS_200).type(out.contentType)
+    .send(Buffer.from(out.body, 'utf8'));
+}
+
+/**
  * The Request Object, to a Wallet: by GET (section 5.7), or by POST with
  * wallet_metadata and wallet_nonce under request_uri_method=post (section
- * 5.10). Both answer the compact JWS the page published.
+ * 5.10). Both answer the compact JWS the page published — except a POST to
+ * a session created with liveSigning, which is HELD until the page signs
+ * one for it or oid4vpVerifierLiveSignWaitMs runs out.
  *
  * @param {object} req - the Express request.
  * @param {object} res - the Express response.
@@ -4234,21 +4308,28 @@ function oid4vpVerifierServeRequest(req, res) {
   var out = oid4vpVerifier.fetchRequest(appconfig, req.params.id, {
     method: req.method,
     contentType: req.get('content-type') || '',
+    accept: req.get('accept') || '',
     rawBody: req.oid4vpRawBody,
     parsed: req.body,
     remoteAddress: req.ip
   });
-  if (!out.ok) {
-    log.debug('Leaving oid4vpVerifierServeRequest(). ' + out.status);
-    return res.status(out.status).json({ error: out.error,
-      error_description: out.error_description });
+  if (out.pending) {
+    // `close` on the RESPONSE, not the request: since Node 16 a request's
+    // `close` fires once its body is read, which here is immediately.
+    res.on('close', function () {
+      if (!res.writableFinished) {
+        out.cancel();
+      }
+    });
+    out.pending.then(function (answer) {
+      oid4vpVerifierSendRequest(res, answer);
+    });
+    log.debug('Leaving oid4vpVerifierServeRequest(). Held: ' +
+        out.signingId);
+    return undefined;
   }
-  log.debug('Leaving oid4vpVerifierServeRequest(). Served.');
-  // As a Buffer, so express adds no `; charset=utf-8` to a media type
-  // (RFC 9101 section 10.2) that a Wallet may compare exactly.
-  res.set('Cache-Control', 'no-store');
-  return res.status(STATUS_200).type(out.contentType)
-    .send(Buffer.from(out.body, 'utf8'));
+  log.debug('Leaving oid4vpVerifierServeRequest().');
+  return oid4vpVerifierSendRequest(res, out);
 }
 
 app.get('/oid4vp/verifier/:id/request',
@@ -4946,12 +5027,18 @@ app.get('/tls/server-certificate',
 const server = tlsListener.listen(app, appconfig,
     { name: 'api', port: PORT, host: HOST, socketPath: LISTEN_SOCKET });
 
+// Whatever closes the listener, no live-signing wait outlives it.
+server.on('close', function () {
+  oid4vpVerifier.shutdown();
+});
+
 // When running under coverage (c8), exit cleanly on container stop so the V8
 // coverage is flushed to NODE_V8_COVERAGE before the process is terminated.
 if (process.env.COVERAGE === 'true') {
   ['SIGTERM', 'SIGINT'].forEach(function (signal) {
     process.on(signal, function () {
       log.info('Received ' + signal + '; exiting to flush coverage.');
+      oid4vpVerifier.shutdown();
       process.exit(0);
     });
   });
@@ -4970,6 +5057,9 @@ if (process.env.COVERAGE === 'true') {
       setTimeout(function () {
         process.exit(0);
       }, 2000).unref();
+      // Release any Wallet held for live signing, so close() is not kept
+      // waiting on it.
+      oid4vpVerifier.shutdown();
       server.close(function () {
         process.exit(0);
       });

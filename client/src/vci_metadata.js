@@ -94,7 +94,10 @@ var VCI_CONFIG_METADATA = [
     desc: "REQUIRED. The credential format. dc+sd-jwt is the SD-JWT VC " +
         "format identifier (vc+sd-jwt in earlier drafts); jwt_vc_json is a " +
         "W3C Verifiable Credential secured as a JWT, which has no selective " +
-        "disclosure." },
+        "disclosure; ldp_vc is one secured with a Data Integrity proof; " +
+        "mso_mdoc is an ISO/IEC 18013-5 mdoc. Changing it resets the " +
+        "binding method and signing algorithms below to ones that format " +
+        "defines, unless they were edited by hand." },
   { name: "credential_definition", type: "json", dflt: "",
     desc: "REQUIRED for jwt_vc_json. The W3C credential definition — its " +
         "`type` array is what identifies the credential in that format, in " +
@@ -107,12 +110,21 @@ var VCI_CONFIG_METADATA = [
     desc: "OPTIONAL. The OAuth 2.0 scope that asks the authorization server " +
         "for authorization to issue this credential." },
   { name: "cryptographic_binding_methods_supported", type: "array", dflt: "jwk",
+    formatDependent: true,
     desc: "OPTIONAL. How the credential can be bound to the holder's key. " +
         "jwk means the holder's public key goes in the credential's " +
-        "cnf claim." },
+        "cnf claim; did:jwk and did:key name it as the credentialSubject's " +
+        "DID; cose_key puts it in an mdoc's MSO. Defaults to what the " +
+        "format defines." },
   { name: "credential_signing_alg_values_supported", type: "array",
-   dflt: "RS256",
-    desc: "The algorithms the issuer will sign the credential with." },
+   dflt: "ES256", formatDependent: true,
+    desc: "The algorithms the issuer will sign the credential with, in the " +
+        "format's own identifiers: JOSE alg names for the JWT formats, " +
+        "Data Integrity cryptosuites (eddsa-rdfc-2022, ecdsa-rdfc-2019, " +
+        "bbs-2023, ...) or Linked Data proof types (Ed25519Signature2020, " +
+        "JsonWebSignature2020, ...) for ldp_vc, and COSE algorithm numbers " +
+        "(-7 is ES256) for mso_mdoc. Defaults to what the format " +
+        "defines." },
   { name: "proof_signing_alg_values_supported", type: "array",
    dflt: "ES256, RS256",
     desc: "From proof_types_supported.jwt: the algorithms the issuer accepts " +
@@ -120,6 +132,8 @@ var VCI_CONFIG_METADATA = [
 ];
 
 var metadataClient = require("./metadata_client");
+// What each credential format allows, for the defaults below (#474).
+var vcFormats = require("./vc_formats");
 // The "-->not defined<--" marking is implemented once, for the OpenID Provider
 // half of the same pane; the OID4VCI half gets it from there so the two cannot
 // drift apart. (No cycle: op_metadata does not know about this module.)
@@ -173,6 +187,22 @@ function writeToLocalStorage() {
   log.debug("Leaving writeToLocalStorage().");
 }
 
+// A member's placeholder value. The format-dependent ones (binding method,
+// signing algorithms) follow the format, so a wallet that has not read an
+// issuer's metadata yet still shows a combination the format defines.
+function defaultValue(m, formatId) {
+  log.debug("Entering defaultValue(). " + m.name);
+  if (m.formatDependent) {
+    var d = vcFormats.metadataDefaults(formatId || "dc+sd-jwt");
+    if (d && d[m.name] !== undefined) {
+      log.debug("Leaving defaultValue(). From the format.");
+      return d[m.name];
+    }
+  }
+  log.debug("Leaving defaultValue().");
+  return m.dflt;
+}
+
 function loadFromLocalStorage() {
   log.debug("Entering loadFromLocalStorage().");
   VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
@@ -182,9 +212,43 @@ function loadFromLocalStorage() {
     } catch (e) {
       // No storage available in this context.
     }
-    setFieldValue(idFor(m.name), (v === null || v === undefined) ? m.dflt : v);
+    // `format` comes before the members that depend on it, so its field
+    // already holds this load's value when they are reached.
+    setFieldValue(idFor(m.name), (v === null || v === undefined) ?
+        defaultValue(m, fieldValue(idFor("format"))) : v);
   });
   log.debug("Leaving loadFromLocalStorage().");
+}
+
+// Every member back to its placeholder, the format-dependent ones for the
+// default format.
+function restoreDefaultFields() {
+  log.debug("Entering restoreDefaultFields().");
+  VCI_METADATA.concat(VCI_CONFIG_METADATA).forEach(function (m) {
+    setFieldValue(idFor(m.name), defaultValue(m, fieldValue(idFor("format"))));
+  });
+  log.debug("Leaving restoreDefaultFields().");
+}
+
+// The format field changed from `previous`: every format-dependent member
+// still holding previous's default, or nothing, takes the new format's. One
+// the user typed is theirs and is left alone. Answers the names changed.
+function onFormatChange(previous) {
+  log.debug("Entering onFormatChange(). from " + previous);
+  var now = fieldValue(idFor("format"));
+  var changed = [];
+  VCI_CONFIG_METADATA.forEach(function (m) {
+    if (!m.formatDependent) return;
+    var current = fieldValue(idFor(m.name)).trim();
+    var wasDefault = !current || current === defaultValue(m, previous) ||
+        current === m.dflt;
+    if (wasDefault && vcFormats.format(now)) {
+      setFieldValue(idFor(m.name), defaultValue(m, now));
+      changed.push(m.name);
+    }
+  });
+  log.debug("Leaving onFormatChange(). " + changed.join(", "));
+  return changed;
 }
 
 function clearFields() {
@@ -291,5 +355,8 @@ module.exports = {
   clearFields: clearFields,
   clearStorage: clearStorage,
   populateFromMetadata: populateFromMetadata,
+  defaultValue: defaultValue,
+  restoreDefaultFields: restoreDefaultFields,
+  onFormatChange: onFormatChange,
   currentRequestConfig: currentRequestConfig
 };

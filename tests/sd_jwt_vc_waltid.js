@@ -1070,6 +1070,14 @@ async function optionalFeaturesAbsentHere(driver) {
   await authorizeAtWaltid(driver);
 
   // Step 2 must offer neither batching nor encryption against this issuer.
+  // The page draws these options only once the request body is built, after
+  // the holder proof is signed, so the access token alone is not the
+  // signal: wait for the batch note the drawing writes.
+  await driver.wait(async function () {
+    return (await driver.executeScript(
+      "var n = document.getElementById('vc_batch_note');" +
+      "return n ? n.textContent.trim() : '';")) !== "";
+  }, fetchWait, "step 2 never drew its request options (vc_batch_note)");
   var options = await driver.executeScript(
     "return { batchDisabled: " +
         "document.getElementById('vc_batch_size').disabled," +
