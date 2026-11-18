@@ -3959,7 +3959,9 @@ function buildJobs() {
   // VC Barcodes (#480, W3C Working Draft): CBOR-LD 1.0 and ecdsa-xi-2023 —
   // the specification's three printed payloads, its PDF417 and QR text, and
   // Digital Bazaar's released cborld 8.1.0 and ecdsa-xi-2023-cryptosuite
-  // 1.2.0 byte for byte and both ways. No services.
+  // 1.2.0 byte for byte and both ways; the ISO (Appendix B) vector built
+  // there; status lists against @digitalbazaar/vc-bitstring-status-list
+  // 2.0.1 both ways; and the PDF417 draw/read round trip. No services.
   jobs.push({
     name: "VC Barcodes (CBOR-LD and ecdsa-xi-2023 against the spec's " +
         "vectors and Digital Bazaar's library, in node)",
@@ -4226,8 +4228,9 @@ function buildJobs() {
     });
     // The VC Barcodes page (#480): the specification's two examples, a
     // changed MRZ refused, and an MRZ and an AAMVA barcode issued in the
-    // page, the drawn QR code read back from its image. Needs only the
-    // client.
+    // page, the drawn QR code and PDF417 symbol read back from their
+    // images; the ISO example and an ISO issue; a status list fetched from
+    // a server the job runs itself, and pasted. Needs only the client.
     jobs.push({
       name: "VC Barcodes page — read, verify and issue (MRZ QR code, " +
           "AAMVA PDF417)",
