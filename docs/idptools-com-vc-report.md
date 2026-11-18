@@ -23,6 +23,242 @@ proprietary to one product, and emerging drafts are labelled as drafts.
 
 ---
 
+## Specifications implemented
+
+Every specification the debugger implements, grouped and linked as on the live [Supported Standards](https://idptools.com/supported_standards.html) page. The final group names the ones it deliberately does **not** implement, and why.
+
+### OAuth 2.0
+
+- [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749) — The OAuth 2.0 Authorization Framework
+- [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750) — Bearer Token Usage
+- [RFC 7009](https://www.rfc-editor.org/rfc/rfc7009) — Token Revocation
+- [RFC 7591](https://www.rfc-editor.org/rfc/rfc7591) — Dynamic Client Registration
+- [RFC 7592](https://www.rfc-editor.org/rfc/rfc7592) — Dynamic Client Registration Management
+- [RFC 7636](https://www.rfc-editor.org/rfc/rfc7636) — PKCE
+- [RFC 7662](https://www.rfc-editor.org/rfc/rfc7662) — Token Introspection
+- [RFC 7800](https://www.rfc-editor.org/rfc/rfc7800) — Proof-of-Possession Key Semantics
+- [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252) — OAuth 2.0 for Native Apps
+- [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414) — Authorization Server Metadata
+- [RFC 8628](https://www.rfc-editor.org/rfc/rfc8628) — Device Authorization Grant
+- [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693) — Token Exchange
+- [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707) — Resource Indicators
+- [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068) — JWT Profile for OAuth 2.0 Access Tokens
+- [RFC 9101](https://www.rfc-editor.org/rfc/rfc9101) — JWT-Secured Authorization Request (JAR)
+- [RFC 9207](https://www.rfc-editor.org/rfc/rfc9207) — Authorization Server Issuer Identification
+- [RFC 9396](https://www.rfc-editor.org/rfc/rfc9396) — Rich Authorization Requests
+- [RFC 9449](https://www.rfc-editor.org/rfc/rfc9449) — DPoP
+- [RFC 9700](https://www.rfc-editor.org/rfc/rfc9700) — OAuth 2.0 Security Best Current Practice
+- [OAuth 2.0 Form Post Response Mode](https://openid.net/specs/oauth-v2-form-post-response-mode-1_0.html)
+
+### OpenID Connect
+
+- [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
+- [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
+- [OpenID Connect RP-Initiated Logout 1.0](https://openid.net/specs/openid-connect-rpinitiated-1_0.html)
+- [OpenID Connect Dynamic Client Registration 1.0](https://openid.net/specs/openid-connect-registration-1_0.html)
+- [UserInfo endpoint](https://openid.net/specs/openid-connect-core-1_0.html#UserInfo) — (Core 1.0 section 5.3)
+
+### JOSE — JWS, JWE, JWK, JWA and JWT
+
+- [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515) — JSON Web Signature
+- [RFC 7516](https://www.rfc-editor.org/rfc/rfc7516) — JSON Web Encryption
+- [RFC 7517](https://www.rfc-editor.org/rfc/rfc7517) — JSON Web Key
+- [RFC 7518](https://www.rfc-editor.org/rfc/rfc7518) — JSON Web Algorithms
+- [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519) — JSON Web Token
+- [RFC 7638](https://www.rfc-editor.org/rfc/rfc7638) — JWK Thumbprint
+- [RFC 7797](https://www.rfc-editor.org/rfc/rfc7797) — JWS Unencoded Payload Option
+- [RFC 8037](https://www.rfc-editor.org/rfc/rfc8037) — CFRG Curves in JOSE
+- [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725) — JSON Web Token Best Current Practices
+- [RFC 8812](https://www.rfc-editor.org/rfc/rfc8812) — secp256k1 in JOSE / COSE
+
+### SAML 2.0 and SAML 1.1
+
+- [SAML 2.0 Core](https://docs.oasis-open.org/security/saml/v2.0/saml-core-2.0-os.pdf)
+- [SAML 2.0 Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf)
+- [SAML 2.0 Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf)
+- [SAML 2.0 Metadata](https://docs.oasis-open.org/security/saml/v2.0/saml-metadata-2.0-os.pdf)
+- [SAML 2.0 Authentication Context](https://docs.oasis-open.org/security/saml/v2.0/saml-authn-context-2.0-os.pdf)
+- [SAML 1.1 Core](https://www.oasis-open.org/committees/download.php/3406/oasis-sstc-saml-core-1.1.pdf)
+- [SAML 1.1 Bindings](https://www.oasis-open.org/committees/download.php/3405/oasis-sstc-saml-bindings-1.1.pdf) — and Profiles
+
+### WS-Trust, WS-Federation and WS-Security
+
+- [WS-Trust 1.4](https://docs.oasis-open.org/ws-sx/ws-trust/v1.4/ws-trust.html) — (and 1.0, 1.1, 1.2, 1.3)
+- [WS-Security UsernameToken Profile 1.1](https://docs.oasis-open.org/wss/v1.1/wss-v1.1-spec-os-UsernameTokenProfile.pdf)
+- [WS-Security SOAP Message Security](https://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0.pdf) — and WS-Addressing
+- [WS-Federation 1.2](https://docs.oasis-open.org/wsfed/federation/v1.2/os/ws-federation-1.2-spec-os.html)
+
+### XML Signature and XML Encryption
+
+- [XML Signature Syntax and Processing 1.1](https://www.w3.org/TR/xmldsig-core1/) — (RFC 3275)
+- [Exclusive XML Canonicalization 1.0](https://www.w3.org/TR/xml-exc-c14n/) — and Canonical XML 1.0
+- [XML Encryption Syntax and Processing 1.1](https://www.w3.org/TR/xmlenc-core1/)
+- [RFC 4051](https://www.rfc-editor.org/rfc/rfc4051) — , RFC 6931 and RFC 9231 — additional XML Security URIs
+
+### Verifiable credentials — SD-JWT VC, OID4VCI and OID4VP
+
+- [OpenID for Verifiable Credential Issuance 1.0](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html)
+- [OpenID for Verifiable Presentations 1.0](https://openid.net/specs/openid-4-verifiable-presentations-1_0.html)
+- [RFC 9901](https://www.rfc-editor.org/rfc/rfc9901) — Selective Disclosure for JWTs (SD-JWT)
+- [SD-JWT-based Verifiable Credentials](https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/)
+- [Verifiable Credentials Data Model 1.1 and 2.0](https://www.w3.org/TR/vc-data-model-2.0/)
+- [SD-JWT VC — dc+sd-jwt](https://datatracker.ietf.org/doc/draft-ietf-oauth-sd-jwt-vc/)
+- [W3C VC as a JWT — jwt_vc_json](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#appendix-A.1.1)
+- [W3C VC as a JWT, JSON-LD — jwt_vc_json-ld](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#appendix-A.1.2)
+- [W3C VC with a Data Integrity proof — ldp_vc](https://openid.net/specs/openid-4-verifiable-credential-issuance-1_0.html#appendix-A.1.3)
+- [Securing Verifiable Credentials using JOSE and COSE — vc+jwt, vc+sd-jwt, vc+cose](https://www.w3.org/TR/vc-jose-cose/)
+- [ISO/IEC 18013-5 mobile document — mso_mdoc](https://www.iso.org/standard/69084.html)
+- [JSON Web Proof, JSON Proof Algorithms and JSON Proof Token — jpt](https://datatracker.ietf.org/doc/draft-ietf-jose-json-web-proof/)
+- [Selective Disclosure CBOR Web Token — sd-cwt](https://datatracker.ietf.org/doc/draft-ietf-spice-sd-cwt/)
+- [AnonCreds — anoncreds](https://hyperledger.github.io/anoncreds-spec/)
+- [Presentation Exchange 2.1.1 and predicate queries](https://identity.foundation/presentation-exchange/spec/v2.1.1/)
+- [Verifiable Credential Barcodes v1.0](https://www.w3.org/TR/vc-barcodes/)
+- [Gordian Envelope](https://datatracker.ietf.org/doc/draft-mcnally-envelope/)
+- [Authentic Chained Data Containers (ACDC)](https://trustoverip.github.io/kswg-acdc-specification/)
+
+### Decentralized identifiers and Data Integrity
+
+- [DID Core 1.0](https://www.w3.org/TR/did-1.0/)
+- [Well Known DID Configuration](https://identity.foundation/well-known-did-configuration/resources/did-configuration/)
+- [Verifiable Credential Data Integrity 1.0](https://www.w3.org/TR/vc-data-integrity/)
+- [Data Integrity EdDSA Cryptosuites — eddsa-rdfc-2022, eddsa-jcs-2022](https://www.w3.org/TR/vc-di-eddsa/)
+- [Data Integrity ECDSA Cryptosuites — ecdsa-rdfc-2019, ecdsa-jcs-2019, ecdsa-sd-2023](https://www.w3.org/TR/vc-di-ecdsa/)
+- [Legacy Linked Data proofs — Ed25519Signature2018, Ed25519Signature2020, JsonWebSignature2020, EcdsaSecp256k1Signature2019](https://w3c-ccg.github.io/lds-ed25519-2020/)
+- [BBS+ Signatures 2020 — BbsBlsSignature2020, BbsBlsSignatureProof2020](https://w3c-ccg.github.io/ldp-bbs2020/)
+- [Data Integrity BBS Cryptosuites — bbs-2023](https://www.w3.org/TR/vc-di-bbs/)
+- [RDF Dataset Canonicalization (RDFC-1.0 / URDNA2015)](https://www.w3.org/TR/rdf-canon/) — and JSON-LD 1.1
+- [BBS Signatures](https://datatracker.ietf.org/doc/draft-irtf-cfrg-bbs-signatures/)
+
+### WebAuthn
+
+- [Web Authentication Level 3](https://www.w3.org/TR/webauthn-3/)
+- [RFC 9052](https://www.rfc-editor.org/rfc/rfc9052) — and RFC 9053 — COSE
+- [RFC 8949](https://www.rfc-editor.org/rfc/rfc8949) — CBOR
+
+### Kerberos v5
+
+- [RFC 4120](https://www.rfc-editor.org/rfc/rfc4120) — The Kerberos Network Authentication Service (V5)
+- [RFC 3961](https://www.rfc-editor.org/rfc/rfc3961) — , 3962, 8009 and 4757 — Kerberos encryption
+- [RFC 4121](https://www.rfc-editor.org/rfc/rfc4121) — and RFC 2743 — the Kerberos GSS-API mechanism
+- [[MS-PAC]](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-pac/) — Privilege Attribute Certificate
+- [[MS-SFU]](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-sfu/) — Service for User and Constrained Delegation
+- [[MS-KILE]](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kile/) — Kerberos Protocol Extensions
+- [MIT keytab file format](https://web.mit.edu/kerberos/krb5-latest/doc/formats/keytab_file_format.html)
+
+### SPNEGO
+
+- [RFC 4178](https://www.rfc-editor.org/rfc/rfc4178) — SPNEGO (and its predecessor RFC 2478)
+- [RFC 4559](https://www.rfc-editor.org/rfc/rfc4559) — SPNEGO-based HTTP Authentication
+- [[MS-SPNG]](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-spng/)
+
+### LDAP
+
+- [RFC 4511](https://www.rfc-editor.org/rfc/rfc4511) — LDAP v3: The Protocol
+- [RFC 4512](https://www.rfc-editor.org/rfc/rfc4512) — Directory Information Models
+- [RFC 4514](https://www.rfc-editor.org/rfc/rfc4514) — String Representation of Distinguished Names
+- [RFC 4515](https://www.rfc-editor.org/rfc/rfc4515) — String Representation of Search Filters
+- [RFC 4519](https://www.rfc-editor.org/rfc/rfc4519) — Schema for User Applications
+- [RFC 2696](https://www.rfc-editor.org/rfc/rfc2696) — Simple Paged Results Control
+
+### SCIM 2.0
+
+- [RFC 7642](https://www.rfc-editor.org/rfc/rfc7642) — SCIM: Definitions, Overview, Concepts and Requirements
+- [RFC 7643](https://www.rfc-editor.org/rfc/rfc7643) — SCIM: Core Schema
+- [RFC 7644](https://www.rfc-editor.org/rfc/rfc7644) — SCIM: Protocol
+- [RFC 7235](https://www.rfc-editor.org/rfc/rfc7235) — , 7617, 7616 and 7486 — HTTP authentication schemes
+
+### Shared Signals — SSF, Security Event Tokens, subject identifiers
+
+- [OpenID Shared Signals Framework 1.0](https://openid.net/specs/openid-sharedsignals-framework-1_0-final.html) — final, 2 September 2025
+- [OpenID CAEP 1.0](https://openid.net/specs/openid-caep-1_0-final.html) — Continuous Access Evaluation Profile
+- [OpenID RISC 1.0](https://openid.net/specs/openid-risc-1_0-final.html) — Risk Incident Sharing and Coordination
+- [RFC 8417](https://www.rfc-editor.org/rfc/rfc8417) — Security Event Token (SET)
+- [RFC 9493](https://www.rfc-editor.org/rfc/rfc9493) — Subject Identifiers for Security Event Tokens
+- [RFC 8935](https://www.rfc-editor.org/rfc/rfc8935) — Push-Based Delivery of Security Event Tokens
+- [RFC 8936](https://www.rfc-editor.org/rfc/rfc8936) — Poll-Based Delivery of Security Event Tokens
+
+### SPIFFE and SPIRE
+
+- [SPIFFE-ID](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE-ID.md)
+- [X509-SVID](https://github.com/spiffe/spiffe/blob/main/standards/X509-SVID.md) — and JWT-SVID
+- [SPIFFE Trust Domain and Bundle](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE_Trust_Domain_and_Bundle.md)
+- [SPIFFE Workload API and Workload Endpoint](https://github.com/spiffe/spiffe/blob/main/standards/SPIFFE_Workload_API.md)
+- [SPIRE Server API](https://github.com/spiffe/spire-api-sdk)
+
+### PKI, X.509 and TLS
+
+- [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280) — X.509 certificates and CRLs
+- [RFC 2986](https://www.rfc-editor.org/rfc/rfc2986) — PKCS#10 Certification Request
+- [RFC 7633](https://www.rfc-editor.org/rfc/rfc7633) — TLS Feature (“must-staple”)
+- [RFC 4556](https://www.rfc-editor.org/rfc/rfc4556) — PKINIT
+- [RFC 8446](https://www.rfc-editor.org/rfc/rfc8446) — (TLS 1.3) and RFC 5246 (TLS 1.2)
+
+### Cryptographic algorithms and key formats
+
+- [RFC 8017](https://www.rfc-editor.org/rfc/rfc8017) — PKCS #1 v2.2 (RSA)
+- [FIPS 186-5](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.186-5.pdf) — and SEC 2 — ECDSA and the named curves
+- [RFC 8032](https://www.rfc-editor.org/rfc/rfc8032) — EdDSA
+- [RFC 7748](https://www.rfc-editor.org/rfc/rfc7748) — and RFC 8410 — X25519/X448 and their ASN.1 encoding
+- [FIPS 203](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.203.pdf) — , FIPS 204 and FIPS 205 — ML-KEM, ML-DSA, SLH-DSA
+- [FIPS 197](https://csrc.nist.gov/pubs/fips/197/final) — and NIST SP 800-38A/D — AES and its modes
+- [RFC 8439](https://www.rfc-editor.org/rfc/rfc8439) — ChaCha20 and Poly1305
+- [RFC 2104](https://www.rfc-editor.org/rfc/rfc2104) — and RFC 4493 — HMAC and AES-CMAC
+- [RFC 5869](https://www.rfc-editor.org/rfc/rfc5869) — (HKDF), RFC 8018 (PBKDF2 / PKCS #5) and RFC 7914 (scrypt)
+- [RFC 3526](https://www.rfc-editor.org/rfc/rfc3526) — MODP Diffie-Hellman groups
+- [FIPS 180-4](https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.180-4.pdf) — , FIPS 202 and RFC 7693 — hash functions
+- [RFC 5958](https://www.rfc-editor.org/rfc/rfc5958) — PKCS #8 (), PKCS #12 (RFC 7292), PKCS #9, PEM (RFC 7468) and RFC 5915
+- [ITU-T X.680 / X.690](https://www.itu.int/rec/T-REC-X.690) — ASN.1 and DER
+
+### Encoding, registries and infrastructure
+
+- [RFC 4648](https://www.rfc-editor.org/rfc/rfc4648) — Base16, Base32, Base64 and Base64url
+- [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986) — Uniform Resource Identifier
+- [RFC 4122](https://www.rfc-editor.org/rfc/rfc4122) — UUIDs
+- [RFC 1951](https://www.rfc-editor.org/rfc/rfc1951) — DEFLATE
+- [IANA JSON Web Token Claims Registry](https://www.iana.org/assignments/jwt/jwt.xml)
+- [XML 1.0](https://www.w3.org/TR/xml/) — and Namespaces in XML
+
+### XACML 3.0
+
+- [XACML 3.0](https://docs.oasis-open.org/xacml/3.0/xacml-3.0-core-spec-os-en.html)
+- [JSON Profile of XACML 3.0](https://docs.oasis-open.org/xacml/xacml-json-http/v1.1/xacml-json-http-v1.1.html)
+
+### GNAP
+
+- [RFC 9635](https://www.rfc-editor.org/rfc/rfc9635) — Grant Negotiation and Authorization Protocol
+- [RFC 9421](https://www.rfc-editor.org/rfc/rfc9421) — HTTP Message Signatures, and RFC 9530 Digest Fields
+- [RFC 7515](https://www.rfc-editor.org/rfc/rfc7515) — JSON Web Signature
+- [RFC 9767](https://www.rfc-editor.org/rfc/rfc9767) — GNAP resource servers
+
+### Smart cards and YubiKey applications
+
+- [ISO/IEC 7816-4](https://www.iso.org/standard/77180.html) — Interindustry commands for interchange
+- [PC/SC](https://pcscworkgroup.com/specifications/) — Interoperability Specification, and USB CCID 1.1
+- [Yubico OTP](https://developers.yubico.com/OTP/OTPs_Explained.html) — and modhex
+- [Validation Protocol 2.0](https://developers.yubico.com/OTP/Specifications/OTP_validation_protocol.html)
+- [OTP challenge-response](https://developers.yubico.com/OTP/OTP_challenge-response.html) — , over HID and CCID
+- [WebHID](https://wicg.github.io/webhid/)
+- [RFC 4226](https://www.rfc-editor.org/rfc/rfc4226) — HOTP, RFC 6238 TOTP, RFC 4648 base32
+- [Key URI Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format) — (otpauth://)
+- [YKOATH](https://developers.yubico.com/OATH/YKOATH_Protocol.html)
+- [NIST SP 800-73-4](https://csrc.nist.gov/pubs/sp/800/73/pt1/4/upd1/final) — PIV interfaces, SP 800-78-5 algorithms, FIPS 201-3
+- [Yubico PIV extensions](https://developers.yubico.com/PIV/Introduction/Yubico_extensions.html)
+- [Triple DES](https://csrc.nist.gov/pubs/sp/800/67/r2/final) — Management-key mutual authentication (SP 800-73-4 GENERAL AUTHENTICATE), with  or AES (FIPS 197)
+- [RFC 1952](https://www.rfc-editor.org/rfc/rfc1952) — gzip
+- [PIV attestation](https://developers.yubico.com/PIV/Introduction/PIV_attestation.html)
+- [OpenPGP smart card application](https://gnupg.org/ftp/specs/OpenPGP-smart-card-application-3.4.1.pdf) — 3.4.1
+- [RFC 4880](https://www.rfc-editor.org/rfc/rfc4880) — and RFC 9580 v4 fingerprints, RFC 6637 ECC
+- [User Interaction Flag](https://developers.yubico.com/PGP/) — (touch policy)
+- [YubiHSM Auth](https://developers.yubico.com/yubikey-manager/YubiHSM_Auth.html)
+- [RFC 8018](https://www.rfc-editor.org/rfc/rfc8018) — PBKDF2
+
+### Named here, and deliberately not implemented
+
+- [Web Smart Card API](https://wicg.github.io/web-smart-card/) — *Not usable from a web page. It would let a browser speak PC/SC itself, but Chrome offers it only to installed isolated web apps, and no other browser has it; WebUSB refuses the smart-card class. So the smart-card page reaches PIV, OATH, the OpenPGP card and YubiHSM Auth through the API's reader relay instead.*
+- [RFC 8705](https://www.rfc-editor.org/rfc/rfc8705) — mTLS client authentication and certificate-bound tokens — *Named on the DPoP pane as the other way to sender-constrain a token. The debugger does mutual TLS on the PKI page, but it does not do RFC 8705 token binding at an OAuth token endpoint.*
+- [[MS-KKDCP]](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-kkdcp/) — Kerberos KDC Proxy — *The bundled mock KDC answers it; the debugger’s own Kerberos transport is raw TCP and UDP only.*
+- [RFC 6113](https://www.rfc-editor.org/rfc/rfc6113) — Kerberos FAST — *The FX-COOKIE pre-authentication type is recognised and named in a decoded message. The armoured exchange itself is not performed.*
+
 ## How the hosted site works — and what it will and will not do
 
 idptools.com is served as **static content from a CDN. It runs no server of
