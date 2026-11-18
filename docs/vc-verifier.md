@@ -188,6 +188,20 @@ A KB-JWT with no `transaction_data_hashes`, and an mdoc, whose data element
 is type-specific (Appendix B.2.1), are reported as not evaluated, never
 failed: section 8.4 leaves the representation to each type.
 
+**Multisigned DC API requests** (Appendix A.3.2.2; #471, E3c). With
+"multisigned" ticked, the request is `openid4vp-v1-multisigned`. Its
+`data.request` is a JWS JSON Serialization: ONE payload, and one signature
+per Client Identifier, by the prefix chosen above and a second one. Each
+signature's protected header carries its `client_id` (and `verifier_info`
+when given) and nothing else does. `iss`, which names the client_id for an
+x509 prefix, is left out of the shared payload for the same reason. The
+answer's audience is `origin:` plus the page's origin whichever signature
+the wallet used, so it is checked as before.
+
+`org-iso-mdoc` (ISO/IEC 18013-7 Annex C) is NOT implemented. Its request
+and its HPKE-encrypted response are defined there, not in OpenID4VP, and
+the debugger has no copy of that text to implement it from.
+
 ## The HAIP 1.0 profile (#471, E1)
 
 "Profile" on pane 2 chooses OpenID4VP 1.0 or HAIP 1.0. HAIP is a profile of

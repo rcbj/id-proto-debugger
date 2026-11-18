@@ -218,7 +218,19 @@ side, the debugger as the <strong>Wallet</strong>, is <a href="/vc-presentation-
           <td><label><input type="checkbox" id="vpv_dc_signed" checked="checked"
                             onchange="return vcverifier.settingsChanged();" />
               signed (openid4vp-v1-signed); unticked, unsigned (openid4vp-v1-unsigned) and the
-              Client Identifier is this page's origin</label></td>
+              Client Identifier is this page's origin</label>
+              <br /><label><input type="checkbox" id="vpv_dc_multisigned"
+                            onchange="return vcverifier.settingsChanged();" />
+              multisigned (openid4vp-v1-multisigned): signed again as a second Client Identifier,</label>
+              <select id="vpv_dc_second_prefix" onchange="return vcverifier.settingsChanged();">
+                <option value="decentralized_identifier">decentralized_identifier</option>
+                <option value="x509_hash">x509_hash</option>
+                <option value="x509_san_dns">x509_san_dns</option>
+                <option value="verifier_attestation">verifier_attestation</option>
+              </select>
+              <span class="vc-note">One payload, one signature per Client Identifier, in a JWS JSON Serialization
+              (Appendix A.3.2.2). client_id and verifier_info go in each signature's protected header only. The
+              first signer is the prefix chosen above.</span></td>
         </tr>
         <tr>
           <td><label for="vpv_delivery">Request delivery</label></td>

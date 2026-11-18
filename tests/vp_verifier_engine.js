@@ -1901,10 +1901,49 @@ async function dcApi(env) {
     return verifier.dcApiRequest({ signed: true, claims: signedClaims,
       identity: env.identity, origin: ORIGIN + "/" });
   }, /is not an origin/, "an origin with a trailing slash is a URL");
+  // #471 E3c: openid4vp-v1-multisigned (Appendix A.3.2.2). One payload,
+  // one signature per Client Identifier, client_id only in each protected
+  // header. jose's generalVerify checks each signature against its own key.
   await rejects(function () {
     return verifier.dcApiRequest({ multisigned: true, claims: signedClaims,
-      identity: env.identity });
-  }, /multisigned/);
+      signers: [{ identity: env.identity, clientId: clientId }] });
+  }, /at least two signers/);
+  const didKey = verifier.makeRequestKey();
+  const didCid = verifier.clientIdFor("decentralized_identifier", didKey,
+                                      { didMethod: "jwk" });
+  const info = [{ format: "jwt", data: "eyJhbGciOiJFUzI1NiJ9.e30.sig" }];
+  const multi = await verifier.dcApiRequest({ multisigned: true,
+    claims: signedClaims, origin: ORIGIN, signers: [
+      { identity: env.identity, clientId: clientId },
+      { identity: didKey, clientId: didCid, verifierInfo: info }] });
+  eq([multi.protocol, Object.keys(multi.data.request).sort()],
+     ["openid4vp-v1-multisigned", ["payload", "signatures"]]);
+  const mPayload = JSON.parse(Buffer.from(multi.data.request.payload,
+                                          "base64url"));
+  ok(!("client_id" in mPayload) && !("iss" in mPayload) &&
+     !("verifier_info" in mPayload) && mPayload.nonce === nonce &&
+     mPayload.expected_origins[0] === ORIGIN, "E3c: the payload carries " +
+     "everything but client_id, iss and verifier_info");
+  const headers = multi.data.request.signatures.map(function (sig) {
+    return JSON.parse(Buffer.from(sig.protected, "base64url"));
+  });
+  eq(headers.map(function (h) {
+    return h.client_id;
+  }), [clientId, didCid], "E3c: each header names its client_id");
+  eq([headers[0].x5c, headers[1].verifier_info], [env.identity.x5c, info],
+     "E3c: x5c and verifier_info where they belong");
+  const jose = await import("jose");
+  const keys = [await jose.importJWK(Object.assign({},
+    env.identity.publicJwk, { alg: "ES256" })),
+                await jose.importJWK(Object.assign({}, didKey.publicJwk,
+    { alg: "ES256" }))];
+  for (let k = 0; k < 2; k++) {
+    const one = { payload: multi.data.request.payload,
+                  signatures: [multi.data.request.signatures[k]] };
+    const v = await jose.generalVerify(one, keys[k]);
+    eq(v.protectedHeader.client_id, k === 0 ? clientId : didCid,
+       "E3c: jose verifies signature " + k + " with its own key");
+  }
   await rejects(function () {
     return verifier.dcApiRequest({ claims: verifier.requestObjectClaims({
       clientId: clientId, responseUri: "https://v.example/r", nonce: nonce,
