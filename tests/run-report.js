@@ -3935,6 +3935,16 @@ function buildJobs() {
     env: {},
   });
 
+  // SD-CWT (draft-ietf-spice-sd-cwt-09; #478): the working group's encoded
+  // examples (issued, nested, decoys, both KBTs), our issuance and KBTs
+  // checked by @auth0/cose and node's SHA-256, and what must fail.
+  jobs.push({
+    name: "SD-CWT and Key Binding Tokens (draft -09 examples, @auth0/cose " +
+        "and node crypto, in node)",
+    script: "sd_cwt_engine.js",
+    env: {},
+  });
+
   // JSON Web Proofs (draft-ietf-jose-json-web-proof-15, JPA-15, JPT-15;
   // #478): the drafts' Appendix A byte for byte, every offered algorithm
   // round-tripped and checked by node's crypto, BBS against Digital

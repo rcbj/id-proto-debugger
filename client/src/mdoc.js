@@ -131,8 +131,19 @@ function compareBytes(a, b) {
   return a.length - b.length;
 }
 
+// A CBOR simple value other than false/true/null/undefined, which SD-CWT
+// needs as a map key (simple(59), redacted_claim_keys). A class, so that a
+// plain object that happens to have a "simple" member is never mistaken
+// for one.
+function Simple(value) {
+  this.simple = value;
+}
+
 function encodeParts(v) {
   if (v === null || v === undefined) return [v === null ? 0xf6 : 0xf7];
+  if (v instanceof Simple) {
+    return v.simple < 24 ? [0xe0 | v.simple] : [0xf8, v.simple];
+  }
   if (v === false) return [0xf4];
   if (v === true) return [0xf5];
   if (v instanceof Uint8Array) {
@@ -625,6 +636,7 @@ module.exports = {
   FORMAT: FORMAT,
   ES256: ES256,
   encode: encode,
+  Simple: Simple,
   embed: embed,
   looksLikeMdoc: looksLikeMdoc,
   looksLikeDeviceResponse: looksLikeDeviceResponse,
