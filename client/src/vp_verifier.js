@@ -82,13 +82,22 @@ var coseLib = require("./cose");
 var bbs2023 = require("./bbs2023");
 var didLib = require("./did");
 var jsonld = require("jsonld");
+// Predicate queries (#474): Presentation Exchange (OpenID4VP drafts), the
+// debugger's DCQL predicate extension, and AnonCreds predicate proofs.
+var vpQuery = require("./vp_query");
+var anoncredsWallet = require("./anoncreds_wallet");
 
 var FORMAT_SD_JWT = "dc+sd-jwt";
 var FORMAT_JWT_VC_JSON = "jwt_vc_json";
 var FORMAT_MSO_MDOC = "mso_mdoc";
 var FORMAT_LDP_VC = "ldp_vc";
+// AnonCreds is no OpenID4VP Credential Format; "anoncreds" is this
+// debugger's identifier for it (anoncreds_wallet.js), so it is a format a
+// query may name (QUERY_FORMATS) and not one FORMATS lists.
+var FORMAT_ANONCREDS = "anoncreds";
 var FORMATS = [FORMAT_SD_JWT, FORMAT_JWT_VC_JSON, FORMAT_MSO_MDOC,
                FORMAT_LDP_VC];
+var QUERY_FORMATS = FORMATS.concat([FORMAT_ANONCREDS]);
 
 var REQUEST_AUD = "https://self-issued.me/v2";
 var REQUEST_TYP = "oauth-authz-req+jwt";
@@ -364,6 +373,11 @@ function queryMeta(q, where) {
                       "\"REQUIRED. A non-empty array of strings\".");
     }
     meta.vct_values = vct.map(String);
+  } else if (q.format === FORMAT_ANONCREDS) {
+    // AnonCreds defines no DCQL meta; section 6.1 has meta REQUIRED and an
+    // empty one places no constraint.
+    log.debug("Leaving queryMeta(). AnonCreds.");
+    return meta;
   } else if (q.format === FORMAT_MSO_MDOC) {
     if (!isNonEmptyString(q.doctype)) {
       log.debug("Leaving queryMeta(). No doctype.");
@@ -411,10 +425,11 @@ function buildCredentialQuery(q, index, seen) {
     throw new Error('credential query id "' + q.id + '" is used twice.');
   }
   seen[q.id] = true;
-  if (FORMATS.indexOf(q.format) === -1) {
+  if (QUERY_FORMATS.indexOf(q.format) === -1) {
     log.debug("Leaving buildCredentialQuery(). Unknown format.");
     throw new Error('credential query "' + q.id + '": unknown format "' +
-                    q.format + '" (one of ' + FORMATS.join(", ") + ").");
+                    q.format + '" (one of ' + QUERY_FORMATS.join(", ") +
+                    ").");
   }
   var where = 'credential query "' + q.id + '"';
   var out = { id: String(q.id), format: q.format,
@@ -479,6 +494,20 @@ function buildCredentialQuery(q, index, seen) {
     out.require_cryptographic_holder_binding = false;
   }
   if (q.multiple === true) out.multiple = true;
+  if (isArray(q.predicates) && q.predicates.length) {
+    // The debugger's DCQL predicate extension (vp_query.js; NOT OpenID4VP):
+    // the predicates in their own member, marked critical, never in claims.
+    var ext = vpQuery.buildQuery({ language: "dcql", id: out.id,
+      format: out.format, predicates: q.predicates }).dcql_query
+      .credentials[0];
+    out[vpQuery.EXT_PREDICATES] = ext[vpQuery.EXT_PREDICATES];
+    out[vpQuery.EXT_CRIT] = ext[vpQuery.EXT_CRIT];
+    var read = vpQuery.readExtension(out);
+    if (read.refuse) {
+      log.debug("Leaving buildCredentialQuery(). Bad predicates.");
+      throw new Error(where + ": " + read.refuse);
+    }
+  }
   if (isArray(q.trustedAuthorities) && q.trustedAuthorities.length) {
     // Section 6.1.1: each entry { type, values }, values a non-empty array
     // of strings.
@@ -536,6 +565,36 @@ function buildDcql(spec) {
   log.debug("Leaving buildDcql(). " + dcql.credentials.length +
             " credential query(ies).");
   return dcql;
+}
+
+// A DIF Presentation Exchange 2.1.1 presentation_definition — the query
+// the OpenID4VP DRAFTS carried, removed in 1.0 — with its Predicate
+// Feature. spec: { id, descriptors: [{ id, format, reveal, predicates:
+// [{ name, p_type, p_value, mode }], restrictions, purpose }],
+// submissionRequirements }.
+function buildPresentationDefinition(spec) {
+  log.debug("Entering buildPresentationDefinition().");
+  if (!spec || !isArray(spec.descriptors) || !spec.descriptors.length) {
+    log.debug("Leaving buildPresentationDefinition(). No descriptors.");
+    throw new Error("a presentation_definition needs at least one Input " +
+                    "Descriptor.");
+  }
+  var pd = { id: spec.id || "pd-" + randomToken(8),
+    input_descriptors: spec.descriptors.map(function (d) {
+      return vpQuery.buildQuery(Object.assign({ language: "pe" }, d))
+        .presentation_definition.input_descriptors[0];
+    }) };
+  if (isArray(spec.submissionRequirements) &&
+      spec.submissionRequirements.length) {
+    pd.submission_requirements = spec.submissionRequirements;
+  }
+  var read = vpQuery.readDefinition(pd);
+  if (read.errors.length) {
+    log.debug("Leaving buildPresentationDefinition(). Invalid.");
+    throw new Error(read.errors.join(" "));
+  }
+  log.debug("Leaving buildPresentationDefinition().");
+  return pd;
 }
 
 // ---------------------------------------------------------------------------
@@ -1256,6 +1315,10 @@ function requestObjectClaims(opts) {
   // then what this Verifier takes it to mean, and checks answers against.
   if (o.scope) {
     claims.scope = String(o.scope);
+  } else if (o.presentationDefinition && !o.dcql) {
+    // The OpenID4VP DRAFTS' query (DIF Presentation Exchange), removed in
+    // 1.0: sent only when the caller asks for it instead of DCQL.
+    claims.presentation_definition = o.presentationDefinition;
   } else {
     claims.dcql_query = o.dcql;
   }
@@ -1273,6 +1336,10 @@ function requestObjectClaims(opts) {
     claims.exp = iat + (o.ttlSeconds || DEFAULT_TTL_SECONDS);
   }
   var metadata = { vp_formats_supported: vpFormatsSupported() };
+  if (o.advertisePredicates) {
+    // Not OpenID4VP: this debugger's predicate capability (vp_query.js).
+    metadata[vpQuery.EXT_METADATA] = vpQuery.verifierMetadataExtension();
+  }
   if (isEncryptedMode(mode)) {
     if (!o.encryptionJwk) {
       log.debug("Leaving requestObjectClaims(). No encryption key.");
@@ -6392,11 +6459,172 @@ function checkQueries(report, vpToken, dcql) {
   log.debug("Leaving checkQueries(). " + problems.length + " problem(s).");
 }
 
+// ---------------------------------------------------------------------------
+// AnonCreds (#474, #479). No OpenID4VP specification defines AnonCreds, so
+// the AnonCreds presentation request a presentation answers is the one
+// this debugger maps the query onto (vp_query.js nominalPlan() and
+// anoncredsRequestFor(), the nonce by anoncreds_wallet.js nonceFor()); the
+// CL proof is verified against it with anoncreds.js, every predicate the
+// query asks for included. With no ledger, the issuer's schema and
+// credential definition (and a revocable credential's registry definition
+// and status list) come in session.anoncreds; without them nothing about
+// authenticity can be established, which is an essential check not
+// performed.
+// ---------------------------------------------------------------------------
+function anoncredsItemFor(query, ctx) {
+  log.debug("Entering anoncredsItemFor().");
+  if (ctx.peItem) {
+    log.debug("Leaving anoncredsItemFor(). Presentation Exchange.");
+    return ctx.peItem;
+  }
+  log.debug("Leaving anoncredsItemFor(). DCQL.");
+  return vpQuery.normalise({ dcql_query: { credentials: [query] } })
+    .items[0];
+}
+
+async function verifyAnoncreds(s, query, presentation, ctx) {
+  log.debug("Entering verifyAnoncreds().");
+  var m = (ctx.session && ctx.session.anoncreds) || null;
+  var pres = presentation;
+  if (typeof pres === "string") {
+    try {
+      pres = JSON.parse(pres);
+    } catch (e) {
+      s.add("parse", "The presentation is an AnonCreds presentation", FAIL,
+            "it is not JSON: " + e.message + ".");
+      log.debug("Leaving verifyAnoncreds(). Not JSON.");
+      return null;
+    }
+  }
+  if (!anoncredsWallet.looksLikePresentation(pres)) {
+    s.add("parse", "The presentation is an AnonCreds presentation", FAIL,
+          "it is neither the legacy JSON (proof, requested_proof) nor the " +
+          "W3C form (anoncreds-2023).");
+    log.debug("Leaving verifyAnoncreds(). Not AnonCreds.");
+    return null;
+  }
+  var item = anoncredsItemFor(query, ctx);
+  if (!m || !m.schemas || !m.credentialDefinitions) {
+    s.add("proof", "The AnonCreds proof verifies (CL)", SKIP, "the " +
+          "issuer's schema and credential definition were not given " +
+          "(session.anoncreds), and AnonCreds has no ledger-free way to " +
+          "find them, so the proof was not checked.", true);
+    log.debug("Leaving verifyAnoncreds(). No issuer material.");
+    return null;
+  }
+  var w3cForm = !!(pres.type && [].concat(pres.type)
+    .indexOf("VerifiablePresentation") !== -1);
+  var ids = [];
+  try {
+    ids = w3cForm ? anoncredsWallet.legacyPresentation(pres, null)
+      .identifiers : (pres.identifiers || []);
+  } catch (e) {
+    log.debug("verifyAnoncreds(): identifiers: " + e.message);
+  }
+  var revocable = ids.some(function (id) {
+    return !!id.rev_reg_id;
+  });
+  if (revocable && !(m.revocationStatusLists || []).length) {
+    s.add("proof", "The AnonCreds proof verifies (CL)", SKIP, "the " +
+          "credential is revocable and no status list was given " +
+          "(session.anoncreds.revocationStatusLists), so neither its " +
+          "non-revocation proof nor the proof around it was checked.", true);
+    log.debug("Leaving verifyAnoncreds(). No status list.");
+    return null;
+  }
+  var r = anoncredsWallet.verifyForQuery({ presentation: pres, item: item,
+    nonce: ctx.session.nonce, schemas: m.schemas,
+    credentialDefinitions: m.credentialDefinitions,
+    revocationRegistryDefinitions: m.revocationRegistryDefinitions || {},
+    revocationStatusLists: m.revocationStatusLists || [] });
+  s.add("proof", "The AnonCreds proof verifies (CL)", r.valid ? PASS : FAIL,
+        r.valid ? "verified against the AnonCreds request this debugger " +
+        "maps the query onto (nonce " + r.request.nonce + ", from the " +
+        "OpenID4VP nonce)" + (w3cForm ? ", in the W3C form (anoncreds-" +
+        "2023)" : "") + (revocable ? ", with its non-revocation proof" :
+        "") + "." : r.errors.join(" "), true);
+  r.predicates.forEach(function (p) {
+    var ok = p.answered && r.valid;
+    s.add("predicate." + p.referent, "Predicate " + p.name + " " + p.p_type +
+          " " + p.p_value + " is proven", ok ? PASS : FAIL, ok ?
+          "proven in zero knowledge by sub-proof " + p.subProofIndex +
+          "; the value of " + p.name + " is not in the presentation." :
+          "the presentation does not prove it" + (r.valid ? "." : " (the " +
+          "proof does not verify).") + " A predicate is never answered by " +
+          "a value here.");
+  });
+  var revealed = r.revealed || {};
+  var have = Object.keys(revealed).map(function (n) {
+    return String(n).replace(/ /g, "").toLowerCase();
+  });
+  var present = function (c) {
+    log.debug("Entering present().");
+    var name = vpQuery.attributeOf(c.path || []);
+    var ok = have.indexOf(String(name).replace(/ /g, "").toLowerCase()) !==
+      -1 && (!isArray(c.values) || c.values.indexOf(revealed[name]) !== -1);
+    log.debug("Leaving present(). " + ok);
+    return ok;
+  };
+  if (ctx.peItem) {
+    var missing = item.claims.filter(function (c) {
+      return !c.optional && !present(c);
+    });
+    s.add("claims", "Every requested claim is disclosed", missing.length ?
+          FAIL : PASS, missing.length ? "not disclosed: " +
+          missing.map(function (c) {
+            return c.attribute;
+          }).join(", ") + "." : "every field's claim is revealed.");
+  } else {
+    checkRequestedClaims(s, query, present);
+  }
+  log.debug("Leaving verifyAnoncreds().");
+  return revealed;
+}
+
+// The predicates of the debugger's DCQL extension, for a format that is not
+// AnonCreds (whose proof carries them): an mdoc's issuer-computed
+// age_over_NN answers a lower bound on an age claim; any other format
+// cannot prove one, and a disclosed value is NOT accepted in its place —
+// the extension's predicates are required.
+function checkQueryPredicates(s, query, claims) {
+  log.debug("Entering checkQueryPredicates().");
+  var ext = vpQuery.readExtension(query);
+  if (!ext.honoured || query.format === FORMAT_ANONCREDS) {
+    log.debug("Leaving checkQueryPredicates(). Nothing to check here.");
+    return;
+  }
+  ext.predicates.forEach(function (p) {
+    var label = "Predicate " + vpQuery.describePredicate(p.attribute,
+      p.ops) + " is proven (" + vpQuery.LABEL_EXT + ")";
+    var nn = query.format === FORMAT_MSO_MDOC ?
+      vpQuery.ageOverThreshold(p) : null;
+    if (nn === null) {
+      s.add("predicate." + p.id, label, FAIL, query.format + " cannot " +
+            "prove a predicate: " + vpQuery.capabilityOf(query.format).how);
+      return;
+    }
+    var element = "age_over_" + (nn < 10 ? "0" + nn : String(nn));
+    var value;
+    Object.keys(claims || {}).forEach(function (ns) {
+      if (isPlainObject(claims[ns]) && claims[ns][element] !== undefined) {
+        value = claims[ns][element];
+      }
+    });
+    s.add("predicate." + p.id, label, value === true ? PASS : FAIL,
+          value === true ? "the issuer-signed " + element + " is true " +
+          "(ISO/IEC 18013-5's age attestation; this debugger's mapping of " +
+          "the predicate)." : element + " is " + (value === undefined ?
+          "not disclosed" : JSON.stringify(value)) + ".");
+  });
+  log.debug("Leaving checkQueryPredicates().");
+}
+
 var VERIFIERS = {
   "dc+sd-jwt": verifySdJwt,
   "jwt_vc_json": verifyJwtVcJson,
   "mso_mdoc": verifyMdoc,
-  "ldp_vc": verifyLdpVc
+  "ldp_vc": verifyLdpVc,
+  "anoncreds": verifyAnoncreds
 };
 
 // One row per transaction the request carried. Section 5.1: when
@@ -6453,6 +6681,7 @@ async function verifyPresentations(report, vpToken, ctx) {
                                          authoritiesReported: false });
       try {
         claims = await verify(s, query, list[i], one);
+        checkQueryPredicates(s, query, claims);
       } catch (e) {
         s.add("error", "The presentation could be checked", FAIL,
               e.message);
@@ -6502,11 +6731,80 @@ function finish(report, presentations) {
            presentations: presentations || [], profile: profile };
 }
 
+// An answer to a presentation_definition (#474): the OpenID4VP DRAFTS'
+// shape, removed in 1.0 — the vp_token is the presentation (or an array of
+// them) and a presentation_submission maps each Input Descriptor to it.
+// The submission is held to the definition and to the vp_token (DIF
+// Presentation Exchange 2.1.1); each mapped presentation is then checked.
+// This Verifier checks one in AnonCreds (anoncreds, or di_vp for the W3C
+// form) and reports any other format's as an essential check not
+// performed, so such an answer is "incomplete", never a pass.
+async function verifyPeAnswer(report, parsed, ctx) {
+  log.debug("Entering verifyPeAnswer().");
+  var g = "response";
+  addCheck(report, "response.query_language", g, "The query is a " +
+           "presentation_definition", PASS, vpQuery.LABEL_PE + ": DIF " +
+           "Presentation Exchange " + vpQuery.PE_VERSION + ", answered by " +
+           "a vp_token and a presentation_submission as the drafts " +
+           "defined.");
+  var model = vpQuery.normalise({ presentation_definition:
+                                  ctx.session.presentationDefinition });
+  if (model.errors.length) {
+    addCheck(report, "response.presentation_definition", g, "The " +
+             "presentation_definition is well formed", FAIL,
+             model.errors.join(" "));
+    log.debug("Leaving verifyPeAnswer(). Bad definition.");
+    return [];
+  }
+  var raw = parsed.raw || {};
+  var token = parsed.vpTokenError ? raw.vp_token : parsed.vpToken;
+  var chk = vpQuery.checkSubmission(model.read, raw.presentation_submission,
+                                    token);
+  addCheck(report, "response.presentation_submission", g,
+           "presentation_submission maps the vp_token to the definition",
+           chk.ok ? PASS : FAIL, chk.ok ? "answers " +
+           chk.answered.join(", ") + "." : chk.errors.join(" "));
+  var out = [];
+  for (var i = 0; i < chk.entries.length; i++) {
+    var entry = chk.entries[i];
+    var item = model.items.filter(function (it) {
+      return it.id === entry.id;
+    })[0];
+    if (!item) continue;
+    var s = scope(report, entry.id + " " + entry.format, entry.id + "[" + i +
+                  "].");
+    var claims = null;
+    if (entry.format === FORMAT_ANONCREDS || entry.format === "di_vp") {
+      try {
+        claims = await verifyAnoncreds(s, { id: item.id,
+          format: FORMAT_ANONCREDS }, entry.target, Object.assign({}, ctx,
+          { peItem: item }));
+      } catch (e) {
+        s.add("error", "The presentation could be checked", FAIL,
+              e.message);
+      }
+    } else {
+      s.add("format", "The presentation is checked", SKIP, "this " +
+            "Verifier checks a presentation_definition answer in AnonCreds " +
+            "(anoncreds, di_vp) only; " + entry.format + " was not " +
+            "checked.", true);
+    }
+    out.push({ queryId: item.id, format: entry.format, claims: claims });
+  }
+  log.debug("Leaving verifyPeAnswer(). " + out.length + " presentation(s).");
+  return out;
+}
+
 // Check a Wallet's answer. opts:
 //   fields     what arrived: the direct_post form (a string, URLSearchParams
 //              or an object), or the DC API's data object ({ vp_token } or
 //              { response }), as an object or its JSON
 //   session    { clientId, nonce, state, responseMode, responseUri, dcql,
+//                presentationDefinition (the OpenID4VP drafts' query,
+//                answered with a presentation_submission, when there is no
+//                dcql), anoncreds ({ schemas, credentialDefinitions,
+//                revocationRegistryDefinitions, revocationStatusLists }:
+//                what an AnonCreds proof is verified with),
 //                decryptionJwk, origin, trustAnchors } — origin is the
 //              page's origin, and is what a DC API answer's audience is
 //              (Appendix A.4); trustAnchors (PEM or base64 DER) are what
@@ -6614,6 +6912,19 @@ async function verifyResponse(opts) {
              "(Appendix A.4)." : "session.origin was not given, so there is " +
              "no audience to hold the presentations to.");
   }
+  var maxAgeOf = typeof o.maxAgeSeconds === "number" ? o.maxAgeSeconds :
+      typeof session.maxAgeSeconds === "number" ? session.maxAgeSeconds :
+      MAX_AGE_SECONDS;
+  if (!session.dcql && session.presentationDefinition) {
+    var peCtx = { session: session, fetchJson: o.fetchJson,
+                  fetchText: o.fetchText, audience: audience,
+                  maxAgeSeconds: maxAgeOf,
+                  statusSigningEku: [].concat(o.statusSigningEku || []),
+                  now: nowSeconds(o.now) };
+    var peAnswered = await verifyPeAnswer(report, parsed, peCtx);
+    log.debug("Leaving verifyResponse(). presentation_definition.");
+    return finish(report, peAnswered);
+  }
   var vpToken = parsed.vpToken;
   if (parsed.vpTokenError || !isPlainObject(vpToken)) {
     addCheck(report, "response.queries", g, "vp_token answers the query",
@@ -6655,6 +6966,8 @@ module.exports = {
   VERIFIER_ATTESTATION_TYP: VERIFIER_ATTESTATION_TYP,
   randomToken: randomToken,
   buildDcql: buildDcql,
+  buildPresentationDefinition: buildPresentationDefinition,
+  QUERY_FORMATS: QUERY_FORMATS,
   makeVerifierIdentity: makeVerifierIdentity,
   makeVerifierRoot: makeVerifierRoot,
   verifierIdentityFile: verifierIdentityFile,

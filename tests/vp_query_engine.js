@@ -677,6 +677,155 @@ async function w3cForm(ac) {
   log.debug("Leaving w3cForm().");
 }
 
+// --- the Verifier engine (vp_verifier.js) ---------------------------------
+// The [verifier] half: a predicate request built by the Verifier in both
+// languages, answered by our wallet AND by anoncreds-rs (an independent
+// implementation proving the request the query maps onto), checked by
+// verifyResponse(): the CL proof, one row per predicate, the claims, the
+// presentation_submission. What must not pass: a weaker predicate, a
+// presentation that ignored the extension (no predicate), another
+// definition_id, and — with no issuer material — "incomplete", not a pass.
+function theirPresentation(ac, held, iss, request, w3cForm) {
+  log.debug("Entering theirPresentation().");
+  var prove = Object.keys(request.requested_attributes).map(function (ref) {
+    return { entryIndex: 0, referent: ref, isPredicate: false,
+             reveal: true };
+  }).concat(Object.keys(request.requested_predicates).map(function (ref) {
+    return { entryIndex: 0, referent: ref, isPredicate: true, reveal: true };
+  }));
+  var opts = Object.assign({ credentials: [{ credential: held.theirs }],
+    credentialsProve: prove, selfAttest: {}, linkSecret: held.ls },
+    ctxFor(iss, request));
+  log.debug("Leaving theirPresentation().");
+  return (w3cForm ? ac.W3cPresentation : ac.Presentation).create(opts)
+    .toJson();
+}
+
+function rowsOf(result, re) {
+  log.debug("Entering rowsOf().");
+  log.debug("Leaving rowsOf().");
+  return result.checks.filter(function (c) {
+    return re.test(c.id);
+  }).map(function (c) {
+    return c.status;
+  });
+}
+
+async function verifierEngine(ac) {
+  log.debug("Entering verifierEngine().");
+  const verifier = load("vp_verifier.js");
+  var iss = makeIssuer(ac, 3, ["name", "age"]);
+  var held = issue(ac, iss, { name: "Dana", age: "30" });
+  var material = { schemas: ctxFor(iss).schemas,
+                   credentialDefinitions: ctxFor(iss).credentialDefinitions };
+  var nonce = "verifier-nonce-1";
+  var state = "st-1";
+  // DCQL with the extension, built by the Verifier.
+  var dcql = verifier.buildDcql({ queries: [{ id: "pid",
+    format: "anoncreds", claims: [["name"]],
+    predicates: [{ name: "age", p_type: ">=", p_value: 18 }] }] });
+  assert.deepStrictEqual(dcql.credentials[0].x_debugger_crit,
+                         ["x_debugger_predicates"]);
+  assert.deepStrictEqual(dcql.credentials[0].meta, {}, "AnonCreds: an " +
+                         "empty meta (section 6.1: no constraint)");
+  assert.throws(function () {
+    verifier.buildDcql({ queries: [{ id: "pid", format: "anoncreds",
+      claims: [["age"]], predicates: [{ name: "age", p_type: ">=",
+                                        p_value: 18 }] }] });
+  }, /also requests/, "the Verifier never asks to see what it predicates");
+  var session = { clientId: "redirect_uri:https://verifier.example/cb",
+    nonce: nonce, state: state, responseMode: "direct_post", dcql: dcql,
+    anoncreds: material };
+  var answer = function (pres, sess) {
+    log.debug("Entering answer().");
+    log.debug("Leaving answer().");
+    return verifier.verifyResponse({ fields: { vp_token: JSON.stringify(
+      { pid: [pres] }), state: state }, session: sess || session });
+  };
+  var mine = walletPresents({ dcql_query: dcql }, held, nonce);
+  var res = await answer(mine.made.presentation);
+  assert.strictEqual(res.verdict, "pass", "our wallet's answer passes: " +
+    JSON.stringify(res.checks.filter(function (c) {
+      return c.status !== "pass";
+    })));
+  assert.deepStrictEqual(rowsOf(res, /predicate\./), ["pass"],
+                         "one predicate row, passed");
+  var request = q.anoncredsRequestFor(q.nominalPlan(mine.model.items[0]),
+    { nonce: wallet.nonceFor(nonce) });
+  var theirs = theirPresentation(ac, held, iss, request);
+  res = await answer(theirs);
+  assert.strictEqual(res.verdict, "pass", "anoncreds-rs's answer passes");
+  var weaker = JSON.parse(JSON.stringify(request));
+  Object.keys(weaker.requested_predicates).forEach(function (k) {
+    weaker.requested_predicates[k].p_value = 17;
+  });
+  res = await answer(theirPresentation(ac, held, iss, weaker));
+  assert.strictEqual(res.verdict, "fail", "a proof of age >= 17 fails");
+  var ignored = JSON.parse(JSON.stringify(request));
+  ignored.requested_predicates = {};
+  res = await answer(theirPresentation(ac, held, iss, ignored));
+  assert.strictEqual(res.verdict, "fail", "a wallet that ignored the " +
+                     "extension (no predicate proof) fails");
+  assert.deepStrictEqual(rowsOf(res, /predicate\./), ["fail"]);
+  res = await answer(mine.made.presentation, Object.assign({}, session,
+    { anoncreds: null }));
+  assert.strictEqual(res.verdict, "incomplete", "no issuer material: " +
+                     "incomplete, not a pass");
+  // Presentation Exchange (OpenID4VP drafts), built by the Verifier.
+  var pd = verifier.buildPresentationDefinition({ id: "pd-age",
+    descriptors: [{ id: "adult", format: "anoncreds", reveal: ["name"],
+      predicates: [{ name: "age", p_type: ">=", p_value: 21 }] }] });
+  var claims = verifier.requestObjectClaims({ clientId: session.clientId,
+    responseUri: "https://verifier.example/cb", nonce: nonce,
+    presentationDefinition: pd, advertisePredicates: true });
+  assert.ok(claims.presentation_definition && !claims.dcql_query,
+            "the request carries presentation_definition and no dcql_query");
+  assert.ok(claims.client_metadata.x_debugger_predicates_supported
+    .formats.anoncreds, "and advertises the predicate extension");
+  var peSession = Object.assign({}, session, { dcql: undefined,
+                                               presentationDefinition: pd });
+  var pe = walletPresents({ presentation_definition: pd }, held, nonce);
+  var sub = q.buildSubmission(pd.id, [{ id: "adult", format: "anoncreds",
+                                        path: "$" }]);
+  var peAnswer = function (pres, submission) {
+    log.debug("Entering peAnswer().");
+    log.debug("Leaving peAnswer().");
+    return verifier.verifyResponse({ fields: { vp_token:
+      JSON.stringify(pres), presentation_submission:
+      JSON.stringify(submission), state: state }, session: peSession });
+  };
+  res = await peAnswer(pe.made.presentation, sub);
+  assert.strictEqual(res.verdict, "pass", "PE: our wallet's answer passes: " +
+    JSON.stringify(res.checks.filter(function (c) {
+      return c.status !== "pass";
+    })));
+  res = await peAnswer(pe.made.presentation, Object.assign({}, sub,
+    { definition_id: "another" }));
+  assert.strictEqual(res.verdict, "fail", "PE: another definition_id");
+  // anoncreds-rs, in the W3C form: di_vp with a nested di_vc.
+  var w3cHeld = issue(ac, iss, { name: "Dana", age: "30" }, true);
+  var peRequest = q.anoncredsRequestFor(q.nominalPlan(pe.model.items[0]),
+    { nonce: wallet.nonceFor(nonce) });
+  var w3cPres = theirPresentation(ac, w3cHeld, iss, peRequest, true);
+  res = await peAnswer(w3cPres, q.buildSubmission(pd.id, [{ id: "adult",
+    format: "di_vp", path: "$", path_nested: { id: "adult",
+    format: "di_vc", path: "$.verifiableCredential[0]" } }]));
+  assert.strictEqual(res.verdict, "pass", "PE: anoncreds-rs's W3C answer " +
+    "passes: " + JSON.stringify(res.checks.filter(function (c) {
+      return c.status !== "pass";
+    })));
+  res = await peAnswer("eyJhbGciOiJFUzI1NiJ9.e30.sig~", q.buildSubmission(
+    pd.id, [{ id: "adult", format: "dc+sd-jwt", path: "$" }]));
+  assert.strictEqual(res.verdict, "incomplete", "PE: a format this " +
+                     "Verifier does not check there is incomplete");
+  log.info("PASS the Verifier (vp_verifier.js): predicate requests built " +
+           "in DCQL-extension and PE form; our wallet's and anoncreds-rs's " +
+           "answers (legacy and W3C, with presentation_submission) pass; a " +
+           "weaker predicate, an ignored extension and another " +
+           "definition_id fail; no issuer material is incomplete.");
+  log.debug("Leaving verifierEngine().");
+}
+
 async function main() {
   log.debug("Entering main().");
   presentationExchange();
@@ -684,6 +833,7 @@ async function main() {
   extension();
   failClosed();
   await anoncredsInterop();
+  await verifierEngine((await witness.load()).ac);
   log.info("vp_query_engine: all checks passed.");
   log.debug("Leaving main().");
 }
