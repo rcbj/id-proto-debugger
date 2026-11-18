@@ -433,7 +433,7 @@ COPY client/src/mdoc.js client/src/vp_protocols.js ./
 # holder's VP through data_integrity.js; data_integrity_rdfc.js is what
 # registers RDFC-1.0 with it, and requires bbs_bls_2020.js (which needs
 # bbs_plus_2020.js) so the BbsBlsSignature2020 suites register too.
-COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js client/src/anoncreds.js client/src/anoncreds_wallet.js client/src/anoncreds_revocation.js client/src/amcl_bn254.js ./
+COPY client/src/vc_formats.js client/src/data_integrity.js client/src/data_integrity_rdfc.js client/src/bbs_bls_2020.js client/src/bbs_plus_2020.js client/src/ecdsa_sd_2023.js client/src/vc_jose_cose.js client/src/jwp.js client/src/sd_cwt.js client/src/anoncreds.js client/src/anoncreds_wallet.js client/src/anoncreds_revocation.js client/src/amcl_bn254.js client/src/client_auth.js client/src/vc_client_auth_pane.js ./
 # The node-only test of that wallet module. It is called sd_jwt_vc_engine.js
 # and NOT sd_jwt_vc.js for the reason the neighbouring COPY comments give: this
 # directory is flat and the last COPY wins, so a test of that name would
@@ -454,7 +454,7 @@ COPY tests/vp_verifier_engine.js ./
 # And tests/client_module_bindings.js: every name the browser bundles use is
 # bound (client/src and the staged common/ modules, read from
 # /usr/src/source-tree).
-COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js tests/anoncreds_engine.js tests/anoncreds_witness.js tests/anoncreds_presentation.js ./
+COPY tests/data_integrity_engine.js tests/data_integrity_iyasts.js tests/client_module_bindings.js tests/bbs_bls_2020_engine.js tests/holder_key_algs.js tests/ldp_vc_whole_presentation.js tests/ecdsa_sd_2023_engine.js tests/vc_jose_cose_engine.js tests/vc_jose_cose_presentation.js tests/jwp_engine.js tests/sd_cwt_engine.js tests/jwp_sd_cwt_presentation.js tests/anoncreds_engine.js tests/anoncreds_witness.js tests/anoncreds_presentation.js tests/client_auth_engine.js tests/vc_issuance_client_auth.js ./
 # The Verifier page (#364): the debugger as the OpenID4VP Verifier, in a
 # browser, with node playing the wallet.
 COPY tests/vc_verifier_page.js ./

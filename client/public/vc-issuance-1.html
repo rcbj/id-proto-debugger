@@ -428,6 +428,15 @@ function vcSetAllPanes(expand) {
   </fieldset>
 </div>
 
+<!-- ============ Client authentication at the token endpoint ============ -->
+<div class="step0 dbg-pane" id="pane_client_auth">
+  <legend class="dbg-legend">Client Authentication (token endpoint)</legend>
+  <fieldset>
+    <p class="vc-note">How the wallet authenticates to the authorization server's token endpoint, for every token call in this workflow: the authorization code exchange, the pre-authorized code grant and the refresh. Defaults to the first method the server advertises. A client secret is never stored; it is typed on the page that sends it.</p>
+    <div id="vc_client_auth_pane"></div>
+  </fieldset>
+</div>
+
 <!-- ============ Pane 4: Which claims to ask for ============ -->
 <div class="step0 dbg-pane" id="pane_claims">
   <legend class="dbg-legend" id="claims_expand_button" onclick="return vcissuance1.togglePane('claims_fieldset');">Claims to Request</legend>

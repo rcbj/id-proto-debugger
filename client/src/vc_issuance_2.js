@@ -31,6 +31,8 @@ var sdJwtVc = require("./sd_jwt_vc");
 // and reading the response — shared with step 4, which makes the same call to
 // refresh the credential (OID4VCI section 14.5).
 var vciWallet = require("./vci_wallet");
+// Client authentication at the token endpoint.
+var clientAuthPane = require("./vc_client_auth_pane");
 // What each format and key allows: the holder key's algorithm (#475).
 var vcFormats = require("./vc_formats");
 // Which claims the wallet asked for, chosen on step 1. Shared with that page so
@@ -1186,8 +1188,10 @@ function tokenRequestBody() {
     grant_type: sdJwtVc.PRE_AUTHORIZED_GRANT,
     "pre-authorized_code": offer.code
   };
-  var clientId = sdJwtVc.get("client_id") || "";
-  if (clientId) params.client_id = clientId;
+  // The client's identity and authentication are vc_client_auth_pane.js's to
+  // add (OID4VCI section 6.1 leaves it to the authorization server whether
+  // this grant needs client authentication; when it does, it is the method
+  // chosen on step 1).
   var typed = (el("vc_tx_code") && el("vc_tx_code").value || "").trim();
   if (typed) params.tx_code = typed;
   // A pre-authorized issuance has no authorization request, so this is the ONLY
@@ -1213,16 +1217,16 @@ function renderTokenRequest() {
     log.debug("Leaving renderTokenRequest(). Nothing to render.");
     return "";
   }
-  var text = vciWallet.describeCall({
-    method: "POST",
-    url: endpoint ||
-        "(no token_endpoint is configured — retrieve the metadata in step 1)",
-    contentType: "application/x-www-form-urlencoded",
-    body: vciWallet.encodeForm(params)
-  });
-  setValue("vc_token_request", text);
+  clientAuthPane.applyTo(params, endpoint ||
+      "(no token_endpoint is configured — retrieve the metadata in step 1)")
+    .then(function (applied) {
+      setValue("vc_token_request", applied.text + (applied.notes.length ?
+        "\n\n# " + applied.notes.join("\n# ") : ""));
+    }).catch(function (e) {
+      setValue("vc_token_request", "Client authentication: " + e.message);
+    });
   log.debug("Leaving renderTokenRequest().");
-  return text;
+  return "";
 }
 
 function onTxCodeChange() {
@@ -1241,6 +1245,11 @@ function showPreAuthorizedPane() {
     log.debug("Leaving showPreAuthorizedPane().");
     return false;
   }
+  // The client authentication pane belongs to the token call, which this
+  // page makes only in the pre-authorized flow (the authorization code is
+  // exchanged on oauth2_oidc_2.html).
+  if (el("pane_client_auth")) el("pane_client_auth").style.display =
+      offer ? "" : "none";
   if (!offer) {
     pane.style.display = "none";
     log.debug("Leaving showPreAuthorizedPane(). Not a pre-authorized " +
@@ -1307,15 +1316,11 @@ function sendTokenRequest() {
   ensureDpopKey()
     .then(function (pair) {
       if (pair) pageDpopKey = pair;
-      return vciWallet.fetchProtected({
-        url: endpoint,
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: vciWallet.encodeForm(params),
-        context: dpopContext()
-        // No accessToken: this request is how one is obtained, so the proof
-        // carries no ath.
-      });
+      // Client authentication (step 1's method) is applied by the pane, which
+      // also answers an attestation challenge once. No accessToken: this
+      // request is how one is obtained, so the DPoP proof carries no ath.
+      return clientAuthPane.sendToken(vciWallet, params, endpoint,
+                                      dpopContext());
     })
     .then(function (result) {
       recordTokenBinding(result);
@@ -1910,6 +1915,11 @@ function togglePane(id) {
 
 function onload() {
   log.debug("Entering onload().");
+  // Client authentication: the method chosen on step 1, and the secret or
+  // key typed on this page when it is not (or cannot be) kept.
+  clientAuthPane.render("vc_client_auth_pane", "call", function () {
+    renderTokenRequest();
+  });
   // The hand-off has done its job; from here the workflow is on its own pages.
   sdJwtVc.endFlow();
   sdJwtVc.renderUseCaseBadge();

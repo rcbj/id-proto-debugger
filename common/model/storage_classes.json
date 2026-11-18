@@ -8,7 +8,8 @@
     "token_client_secret",
     "token_password",
     "tokenexchange_client_secret",
-    "userinfo_client_secret"
+    "userinfo_client_secret",
+    "vc_client_secret"
   ],
   "sessionKeys": [
     "dcr_initial_access_token",
@@ -32,6 +33,12 @@
     ],
     "sc_save_api_key": [
       "sc_otp_api_key"
+    ],
+    "sdjwtvc_save_client_key": [
+      "sdjwtvc_client_attestation",
+      "sdjwtvc_client_attester_private_jwk",
+      "sdjwtvc_client_instance_private_jwk",
+      "sdjwtvc_client_private_jwk"
     ],
     "sdjwtvc_save_holder_key": [
       "sdjwtvc_dpop_private_jwk",
